@@ -5,6 +5,12 @@ id: ono.socket/1
 name: Socket
 summary: A socket with its endpoints, owner and state.
 identity: [inode]
+# A socket in `time-wait` has no inode — the kernel has already released it — and three of sixteen
+# connections in one live snapshot carried a wholly null identity because of it. The connection is
+# still a real thing the kernel is reporting, and what names it is the tuple every network stack
+# names it by, so that tuple joins the identity for exactly the sockets the inode cannot identify
+# (ADR-0554).
+identity_fallback: [protocol, local, remote]
 fields:
   protocol:
     type: enum

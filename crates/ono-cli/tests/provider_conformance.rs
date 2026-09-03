@@ -55,6 +55,7 @@ async fn should_advertise_exactly_what_container_engine_declares() {
             harness::CapabilityClaim { id: "container.manage", risk: "mutate", elevation: "conditional" },
         ],
         schemas: &["ono.container/1", "ono.image/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -66,6 +67,7 @@ async fn should_shape_ono_container_1_the_way_container_engine_declares_it() {
         targets: &["container", "image"],
         schema: "ono.container/1",
         identity: &["id"],
+        identity_fallback: &[],
         default_view: &["id", "name", "image", "state", "created"],
         fields: &[
             harness::FieldContract { name: "id", ty: "string", required: true, nullable: false, unit: None },
@@ -87,6 +89,7 @@ async fn should_shape_ono_image_1_the_way_container_engine_declares_it() {
         targets: &["container", "image"],
         schema: "ono.image/1",
         identity: &["id"],
+        identity_fallback: &[],
         default_view: &["reference", "id", "size", "created"],
         fields: &[
             harness::FieldContract { name: "id", ty: "string", required: true, nullable: false, unit: None },
@@ -136,6 +139,7 @@ async fn should_advertise_exactly_what_linux_netlink_serving_interface_declares(
             harness::CapabilityClaim { id: "interface.set", risk: "mutate", elevation: "required" },
         ],
         schemas: &["ono.interface/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -147,6 +151,7 @@ async fn should_shape_ono_interface_1_the_way_linux_netlink_serving_interface_de
         targets: &["interface"],
         schema: "ono.interface/1",
         identity: &["index"],
+        identity_fallback: &[],
         default_view: &["name", "state", "addresses", "mtu", "mac"],
         fields: &[
             harness::FieldContract { name: "name", ty: "string", required: true, nullable: false, unit: None },
@@ -186,6 +191,7 @@ async fn should_advertise_exactly_what_linux_netlink_serving_route_declares() {
             harness::CapabilityClaim { id: "route.set", risk: "mutate", elevation: "required" },
         ],
         schemas: &["ono.route/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -197,6 +203,7 @@ async fn should_shape_ono_route_1_the_way_linux_netlink_serving_route_declares_i
         targets: &["route"],
         schema: "ono.route/1",
         identity: &["table", "family", "destination", "gateway", "interface"],
+        identity_fallback: &[],
         default_view: &["destination", "gateway", "interface", "metric", "protocol"],
         fields: &[
             harness::FieldContract { name: "destination", ty: "ipnetwork", required: false, nullable: true, unit: None },
@@ -237,6 +244,7 @@ async fn should_advertise_exactly_what_linux_netlink_serving_neighbor_declares()
             harness::CapabilityClaim { id: "neighbor.list", risk: "read", elevation: "none" },
         ],
         schemas: &["ono.neighbor/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -248,6 +256,7 @@ async fn should_shape_ono_neighbor_1_the_way_linux_netlink_serving_neighbor_decl
         targets: &["neighbor"],
         schema: "ono.neighbor/1",
         identity: &["address", "interface"],
+        identity_fallback: &[],
         default_view: &["address", "mac", "interface", "state"],
         fields: &[
             harness::FieldContract { name: "address", ty: "ip", required: true, nullable: false, unit: None },
@@ -287,6 +296,7 @@ async fn should_advertise_exactly_what_linux_sock_diag_declares() {
             harness::CapabilityClaim { id: "socket.close", risk: "destructive", elevation: "required" },
         ],
         schemas: &["ono.socket/1", "ono.endpoint/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -298,6 +308,7 @@ async fn should_shape_ono_socket_1_the_way_linux_sock_diag_declares_it() {
         targets: &["socket", "connection"],
         schema: "ono.socket/1",
         identity: &["inode"],
+        identity_fallback: &["protocol", "local", "remote"],
         default_view: &["protocol", "local", "remote", "state", "process"],
         fields: &[
             harness::FieldContract { name: "protocol", ty: "enum<tcp|udp|unix|raw|sctp|dccp|packet|unknown>", required: true, nullable: false, unit: None },
@@ -320,6 +331,7 @@ async fn should_shape_ono_endpoint_1_the_way_linux_sock_diag_declares_it() {
         targets: &["socket", "connection"],
         schema: "ono.endpoint/1",
         identity: &[],
+        identity_fallback: &[],
         default_view: &["address", "port"],
         fields: &[
             harness::FieldContract { name: "address", ty: "ip", required: false, nullable: true, unit: None },
@@ -369,6 +381,7 @@ async fn should_advertise_exactly_what_linux_packages_declares() {
             harness::CapabilityClaim { id: "package.manage", risk: "mutate", elevation: "required" },
         ],
         schemas: &["ono.package/1"],
+        identity_token: Some("dpkg"),
     }).await;
 }
 
@@ -380,6 +393,7 @@ async fn should_shape_ono_package_1_the_way_linux_packages_declares_it() {
         targets: &["package"],
         schema: "ono.package/1",
         identity: &["provider", "name"],
+        identity_fallback: &[],
         default_view: &["name", "version", "installed", "description"],
         fields: &[
             harness::FieldContract { name: "name", ty: "string", required: true, nullable: false, unit: None },
@@ -417,6 +431,7 @@ async fn should_advertise_exactly_what_linux_packages_rpm_declares() {
             harness::CapabilityClaim { id: "package.manage", risk: "mutate", elevation: "required" },
         ],
         schemas: &["ono.package/1"],
+        identity_token: Some("rpm"),
     }).await;
 }
 
@@ -428,6 +443,7 @@ async fn should_shape_ono_package_1_the_way_linux_packages_rpm_declares_it() {
         targets: &["package"],
         schema: "ono.package/1",
         identity: &["provider", "name"],
+        identity_fallback: &[],
         default_view: &["name", "version", "installed", "description"],
         fields: &[
             harness::FieldContract { name: "name", ty: "string", required: true, nullable: false, unit: None },
@@ -466,6 +482,7 @@ async fn should_advertise_exactly_what_linux_procfs_declares() {
             harness::CapabilityClaim { id: "process.set", risk: "mutate", elevation: "conditional" },
         ],
         schemas: &["ono.process/1", "ono.process-detail/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -477,6 +494,7 @@ async fn should_shape_ono_process_1_the_way_linux_procfs_declares_it() {
         targets: &["process", "signal"],
         schema: "ono.process/1",
         identity: &["pid", "started"],
+        identity_fallback: &[],
         default_view: &["pid", "name", "cpu", "memory", "user"],
         fields: &[
             harness::FieldContract { name: "pid", ty: "int", required: true, nullable: false, unit: None },
@@ -509,6 +527,7 @@ async fn should_shape_ono_process_detail_1_the_way_linux_procfs_declares_it() {
         targets: &["process", "signal"],
         schema: "ono.process-detail/1",
         identity: &["pid", "started"],
+        identity_fallback: &[],
         default_view: &["pid", "name", "parent", "user", "cpu", "memory", "started", "service", "cgroup", "open_files", "sockets"],
         fields: &[
             harness::FieldContract { name: "pid", ty: "int", required: true, nullable: false, unit: None },
@@ -583,6 +602,7 @@ async fn should_advertise_exactly_what_linux_fs_declares() {
             harness::CapabilityClaim { id: "dir.list", risk: "read", elevation: "conditional" },
         ],
         schemas: &["ono.file/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -594,6 +614,7 @@ async fn should_shape_ono_file_1_the_way_linux_fs_declares_it() {
         targets: &["file", "dir"],
         schema: "ono.file/1",
         identity: &["device", "inode"],
+        identity_fallback: &[],
         default_view: &["name", "kind", "size", "modified", "owner"],
         fields: &[
             harness::FieldContract { name: "path", ty: "path", required: true, nullable: false, unit: None },
@@ -653,6 +674,7 @@ async fn should_advertise_exactly_what_linux_nss_declares() {
             harness::CapabilityClaim { id: "group.manage", risk: "mutate", elevation: "required" },
         ],
         schemas: &["ono.user/1", "ono.group/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -664,6 +686,7 @@ async fn should_shape_ono_user_1_the_way_linux_nss_declares_it() {
         targets: &["user", "group"],
         schema: "ono.user/1",
         identity: &["uid"],
+        identity_fallback: &[],
         default_view: &["uid", "name", "home", "shell"],
         fields: &[
             harness::FieldContract { name: "uid", ty: "int", required: true, nullable: false, unit: None },
@@ -684,6 +707,7 @@ async fn should_shape_ono_group_1_the_way_linux_nss_declares_it() {
         targets: &["user", "group"],
         schema: "ono.group/1",
         identity: &["gid"],
+        identity_fallback: &[],
         default_view: &["gid", "name", "members"],
         fields: &[
             harness::FieldContract { name: "gid", ty: "int", required: true, nullable: false, unit: None },
@@ -730,6 +754,7 @@ async fn should_advertise_exactly_what_ono_session_declares() {
             harness::CapabilityClaim { id: "env.read", risk: "read", elevation: "none" },
         ],
         schemas: &["ono.env-var/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -741,6 +766,7 @@ async fn should_shape_ono_env_var_1_the_way_ono_session_declares_it() {
         targets: &["env"],
         schema: "ono.env-var/1",
         identity: &["name"],
+        identity_fallback: &[],
         default_view: &["name", "value", "exported"],
         fields: &[
             harness::FieldContract { name: "name", ty: "string", required: true, nullable: false, unit: None },
@@ -790,6 +816,7 @@ async fn should_advertise_exactly_what_ono_shell_declares() {
             harness::CapabilityClaim { id: "finding.list", risk: "read", elevation: "none" },
         ],
         schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/1", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -801,6 +828,7 @@ async fn should_shape_ono_job_1_the_way_ono_shell_declares_it() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "audit", "assistant", "model", "finding"],
         schema: "ono.job/1",
         identity: &["id"],
+        identity_fallback: &[],
         default_view: &["id", "state", "kind", "command", "started"],
         fields: &[
             harness::FieldContract { name: "id", ty: "int", required: true, nullable: false, unit: None },
@@ -824,6 +852,7 @@ async fn should_shape_ono_link_1_the_way_ono_shell_declares_it() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "audit", "assistant", "model", "finding"],
         schema: "ono.link/1",
         identity: &["name"],
+        identity_fallback: &[],
         default_view: &["name", "host", "transport", "mode", "state", "targets"],
         fields: &[
             harness::FieldContract { name: "name", ty: "string", required: true, nullable: false, unit: None },
@@ -853,6 +882,7 @@ async fn should_shape_ono_host_1_the_way_ono_shell_declares_it() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "audit", "assistant", "model", "finding"],
         schema: "ono.host/1",
         identity: &["name"],
+        identity_fallback: &[],
         default_view: &["name", "address", "source", "link", "transport"],
         fields: &[
             harness::FieldContract { name: "name", ty: "string", required: true, nullable: false, unit: None },
@@ -874,6 +904,7 @@ async fn should_shape_ono_host_key_1_the_way_ono_shell_declares_it() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "audit", "assistant", "model", "finding"],
         schema: "ono.host-key/1",
         identity: &["host"],
+        identity_fallback: &[],
         default_view: &["host", "algorithm", "fingerprint"],
         fields: &[
             harness::FieldContract { name: "host", ty: "string", required: true, nullable: false, unit: None },
@@ -892,6 +923,7 @@ async fn should_shape_ono_client_key_1_the_way_ono_shell_declares_it() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "audit", "assistant", "model", "finding"],
         schema: "ono.client-key/1",
         identity: &["fingerprint"],
+        identity_fallback: &[],
         default_view: &["fingerprint", "label", "observe", "actions"],
         fields: &[
             harness::FieldContract { name: "fingerprint", ty: "string", required: true, nullable: false, unit: None },
@@ -911,6 +943,7 @@ async fn should_shape_ono_plugin_1_the_way_ono_shell_declares_it() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "audit", "assistant", "model", "finding"],
         schema: "ono.plugin/1",
         identity: &["id", "version"],
+        identity_fallback: &[],
         default_view: &["id", "version", "state", "trust", "jobs", "memory"],
         fields: &[
             harness::FieldContract { name: "id", ty: "string", required: true, nullable: false, unit: None },
@@ -948,6 +981,7 @@ async fn should_shape_ono_plugin_package_1_the_way_ono_shell_declares_it() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "audit", "assistant", "model", "finding"],
         schema: "ono.plugin-package/1",
         identity: &["id", "version", "source"],
+        identity_fallback: &[],
         default_view: &["name", "version", "publisher", "signature", "source", "installed"],
         fields: &[
             harness::FieldContract { name: "id", ty: "string", required: true, nullable: false, unit: None },
@@ -981,6 +1015,7 @@ async fn should_shape_ono_plugin_inspection_1_the_way_ono_shell_declares_it() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "audit", "assistant", "model", "finding"],
         schema: "ono.plugin-inspection/1",
         identity: &["plugin"],
+        identity_fallback: &[],
         default_view: &["plugin", "origin", "memory_current", "open_streams", "restart_count", "last_error"],
         fields: &[
             harness::FieldContract { name: "plugin", ty: "ref<ono.plugin/1>", required: true, nullable: false, unit: None },
@@ -1016,6 +1051,7 @@ async fn should_shape_ono_capability_grant_1_the_way_ono_shell_declares_it() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "audit", "assistant", "model", "finding"],
         schema: "ono.capability-grant/1",
         identity: &["id"],
+        identity_fallback: &[],
         default_view: &["plugin", "capability", "scope", "duration", "decision", "expires_at"],
         fields: &[
             harness::FieldContract { name: "id", ty: "uuid", required: true, nullable: false, unit: None },
@@ -1049,6 +1085,7 @@ async fn should_shape_ono_plugin_audit_event_1_the_way_ono_shell_declares_it() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "audit", "assistant", "model", "finding"],
         schema: "ono.plugin-audit-event/1",
         identity: &["id"],
+        identity_fallback: &[],
         default_view: &["at", "plugin", "capability", "action", "target", "result"],
         fields: &[
             harness::FieldContract { name: "id", ty: "uuid", required: true, nullable: false, unit: None },
@@ -1077,6 +1114,7 @@ async fn should_shape_ono_assistant_1_the_way_ono_shell_declares_it() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "audit", "assistant", "model", "finding"],
         schema: "ono.assistant/1",
         identity: &["id"],
+        identity_fallback: &[],
         default_view: &["id", "plugin", "state", "model", "autonomy", "tools"],
         fields: &[
             harness::FieldContract { name: "id", ty: "string", required: true, nullable: false, unit: None },
@@ -1105,6 +1143,7 @@ async fn should_shape_ono_model_provider_1_the_way_ono_shell_declares_it() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "audit", "assistant", "model", "finding"],
         schema: "ono.model-provider/1",
         identity: &["id"],
+        identity_fallback: &[],
         default_view: &["name", "kind", "location", "context_window", "tools", "data_policy"],
         fields: &[
             harness::FieldContract { name: "id", ty: "string", required: true, nullable: false, unit: None },
@@ -1134,6 +1173,7 @@ async fn should_shape_ono_finding_1_the_way_ono_shell_declares_it() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "audit", "assistant", "model", "finding"],
         schema: "ono.finding/1",
         identity: &["id"],
+        identity_fallback: &[],
         default_view: &["severity", "subject", "title", "confidence", "source"],
         fields: &[
             harness::FieldContract { name: "id", ty: "uuid", required: true, nullable: false, unit: None },
@@ -1308,6 +1348,7 @@ async fn should_advertise_exactly_what_linux_mountinfo_declares() {
             harness::CapabilityClaim { id: "mount.manage", risk: "mutate", elevation: "required" },
         ],
         schemas: &["ono.mount/1", "ono.filesystem/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -1319,6 +1360,7 @@ async fn should_shape_ono_mount_1_the_way_linux_mountinfo_declares_it() {
         targets: &["mount", "filesystem"],
         schema: "ono.mount/1",
         identity: &["target"],
+        identity_fallback: &[],
         default_view: &["target", "source", "filesystem", "read_only"],
         fields: &[
             harness::FieldContract { name: "source", ty: "string", required: true, nullable: false, unit: None },
@@ -1340,6 +1382,7 @@ async fn should_shape_ono_filesystem_1_the_way_linux_mountinfo_declares_it() {
         targets: &["mount", "filesystem"],
         schema: "ono.filesystem/1",
         identity: &["uuid", "source"],
+        identity_fallback: &["device_number"],
         default_view: &["source", "type", "size", "used", "available", "target"],
         fields: &[
             harness::FieldContract { name: "source", ty: "string", required: true, nullable: false, unit: None },
@@ -1351,6 +1394,7 @@ async fn should_shape_ono_filesystem_1_the_way_linux_mountinfo_declares_it() {
             harness::FieldContract { name: "used", ty: "bytesize", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "available", ty: "bytesize", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "read_only", ty: "bool", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "device_number", ty: "string", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "device", ty: "ref<ono.device/1>", required: false, nullable: true, unit: None },
         ],
     }).await;
@@ -1393,6 +1437,7 @@ async fn should_advertise_exactly_what_linux_sysfs_declares() {
             harness::CapabilityClaim { id: "device.list", risk: "read", elevation: "none" },
         ],
         schemas: &["ono.device/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -1404,6 +1449,7 @@ async fn should_shape_ono_device_1_the_way_linux_sysfs_declares_it() {
         targets: &["device"],
         schema: "ono.device/1",
         identity: &["path"],
+        identity_fallback: &[],
         default_view: &["path", "kind", "major", "minor", "size", "subsystem"],
         fields: &[
             harness::FieldContract { name: "path", ty: "path", required: true, nullable: false, unit: None },
@@ -1441,6 +1487,7 @@ async fn should_advertise_exactly_what_linux_resolver_declares() {
             harness::CapabilityClaim { id: "dns.resolve", risk: "read", elevation: "none" },
         ],
         schemas: &["ono.dns-record/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -1452,6 +1499,7 @@ async fn should_shape_ono_dns_record_1_the_way_linux_resolver_declares_it() {
         targets: &["dns"],
         schema: "ono.dns-record/1",
         identity: &["name", "type", "address"],
+        identity_fallback: &[],
         default_view: &["name", "type", "address"],
         fields: &[
             harness::FieldContract { name: "name", ty: "string", required: true, nullable: false, unit: None },
@@ -1485,6 +1533,7 @@ async fn should_advertise_exactly_what_ono_probe_declares() {
             harness::CapabilityClaim { id: "port.probe", risk: "observe", elevation: "none" },
         ],
         schemas: &["ono.probe-result/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -1496,6 +1545,7 @@ async fn should_shape_ono_probe_result_1_the_way_ono_probe_declares_it() {
         targets: &["port"],
         schema: "ono.probe-result/1",
         identity: &[],
+        identity_fallback: &[],
         default_view: &["host", "port", "protocol", "reachable", "duration", "error"],
         fields: &[
             harness::FieldContract { name: "host", ty: "string", required: true, nullable: false, unit: None },
@@ -1537,6 +1587,7 @@ async fn should_advertise_exactly_what_systemd_declares() {
             harness::CapabilityClaim { id: "service.manage", risk: "mutate", elevation: "required" },
         ],
         schemas: &["ono.service/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -1548,6 +1599,7 @@ async fn should_shape_ono_service_1_the_way_systemd_declares_it() {
         targets: &["service"],
         schema: "ono.service/1",
         identity: &["provider", "name"],
+        identity_fallback: &[],
         default_view: &["name", "state", "substate", "enabled", "description"],
         fields: &[
             harness::FieldContract { name: "name", ty: "string", required: true, nullable: false, unit: None },
@@ -1588,6 +1640,7 @@ async fn should_advertise_exactly_what_systemd_journal_declares() {
             harness::CapabilityClaim { id: "log.read", risk: "read", elevation: "conditional" },
         ],
         schemas: &["ono.journal-event/1", "ono.log-record/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -1599,6 +1652,7 @@ async fn should_shape_ono_journal_event_1_the_way_systemd_journal_declares_it() 
         targets: &["journal", "log"],
         schema: "ono.journal-event/1",
         identity: &["cursor"],
+        identity_fallback: &[],
         default_view: &["timestamp", "priority", "identifier", "message"],
         fields: &[
             harness::FieldContract { name: "timestamp", ty: "timestamp", required: true, nullable: false, unit: None },
@@ -1623,6 +1677,7 @@ async fn should_shape_ono_log_record_1_the_way_systemd_journal_declares_it() {
         targets: &["journal", "log"],
         schema: "ono.log-record/1",
         identity: &["cursor"],
+        identity_fallback: &[],
         default_view: &["timestamp", "level", "unit", "message"],
         fields: &[
             harness::FieldContract { name: "timestamp", ty: "timestamp", required: true, nullable: false, unit: None },
@@ -1677,6 +1732,7 @@ async fn should_advertise_exactly_what_systemd_logind_declares() {
             harness::CapabilityClaim { id: "session.list", risk: "read", elevation: "none" },
         ],
         schemas: &["ono.session/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -1688,6 +1744,7 @@ async fn should_shape_ono_session_1_the_way_systemd_logind_declares_it() {
         targets: &["session"],
         schema: "ono.session/1",
         identity: &["id"],
+        identity_fallback: &[],
         default_view: &["id", "user", "seat", "tty", "type", "state", "since"],
         fields: &[
             harness::FieldContract { name: "id", ty: "string", required: true, nullable: false, unit: None },

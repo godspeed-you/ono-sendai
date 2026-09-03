@@ -328,6 +328,10 @@ pub fn socket_schema() -> Arc<Schema> {
                              none, as it does for a socket in `time-wait`.",
                 ))
                 .identity(["inode"])
+                // A `time-wait` socket has no inode, and it is still a connection the kernel is
+                // reporting. The tuple every network stack names a connection by joins the
+                // identity for exactly those sockets (ADR-0554).
+                .identity_fallback(["protocol", "local", "remote"])
                 .default_view(["protocol", "local", "remote", "state", "process"]),
         )
     }))

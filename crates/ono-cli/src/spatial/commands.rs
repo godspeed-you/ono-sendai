@@ -65,7 +65,12 @@ impl CommandImpl for Look {
 
     fn invoke_async<'a>(&'a self, ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
         Box::pin(async move {
-            let arguments = ctx.arguments();
+            // A words-mode command that reads values resolves its arguments first: `--type
+            // ["process"]`, `--limit (1 + 1)` and `--changed (1h)` are expressions until
+            // something evaluates them, and an option nobody evaluated reads as an option nobody
+            // wrote (ADR-0219, ADR-0556).
+            let arguments = ctx.arguments().evaluated(ctx.scope())?;
+            let arguments = &arguments;
             let all = arguments.flag("all");
             let json = arguments.flag("json");
             let now = Timestamp::now();
@@ -485,6 +490,35 @@ pub async fn observe_adapted(values: &[ono_value::Value]) {
     session.absorb(&records, now);
 }
 
+/// Whether `group` is an exit the request actually asked about (ADR-0557).
+///
+/// A relation names one exit and the query layer has already kept only the groups it names, so
+/// every group left is one that was asked for. `--type` is different: it filters *members*, so a
+/// place's other exits are still in the answer with nothing in them, and treating any of them as
+/// the refusal would answer `near --type connection` with "the `service` of this place could not
+/// be read". A group is asked about by type when the type it leads to is the type that was
+/// asked for, which the relation registry says: the far end of the edge at this end of it.
+fn asked_about(
+    group: &ono_spatial_core::NeighborhoodGroup,
+    wanted: Option<ono_spatial_core::SpatialType>,
+) -> bool {
+    let Some(wanted) = wanted else {
+        return true;
+    };
+    let Some(relation) = group.relation() else {
+        // A group the geography built rather than a relation — a directory's `children` — says
+        // nothing about the type behind it, and a refusal has to be about something.
+        return false;
+    };
+    let spec = relation.spec();
+    let leads_to = if group.label() == spec.canonical_group {
+        spec.target
+    } else {
+        spec.source
+    };
+    leads_to.is_a(wanted)
+}
+
 /// The refusal for an exit that was named and cannot be read (§35.2, §40, ADR-0275).
 ///
 /// `None` where the group is genuinely empty or was answered: those are answers, not refusals.
@@ -562,15 +596,29 @@ impl CommandImpl for Near {
 
     fn invoke_async<'a>(&'a self, ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
         Box::pin(async move {
-            let arguments = ctx.arguments();
+            // A words-mode command that reads values resolves its arguments first: `--type
+            // ["process"]`, `--limit (1 + 1)` and `--changed (1h)` are expressions until
+            // something evaluates them, and an option nobody evaluated reads as an option nobody
+            // wrote (ADR-0219, ADR-0556).
+            let arguments = ctx.arguments().evaluated(ctx.scope())?;
+            let arguments = &arguments;
             let mut request = NeighborhoodRequest::new().all(arguments.flag("all"));
             let named_relation = arguments.selector("relation").and_then(text_of);
             if let Some(relation) = named_relation.clone() {
                 request = request.along(relation);
             }
-            if let Some(value) = arguments.option("type") {
-                request = request.of_type(crate::spatial::spatial_type(value)?);
-            }
+            let named_type = match arguments.option("type") {
+                Some(value) => {
+                    let wanted = crate::spatial::spatial_type(value)?;
+                    request = request.of_type(wanted);
+                    Some(wanted)
+                }
+                None => None,
+            };
+            // Whether this `near` asked about one exit rather than about the whole horizon.
+            // Both spellings narrow, so both owe the caller the §42.4 answer for a group that
+            // was named and could not be read.
+            let narrowed = named_relation.is_some() || named_type.is_some();
             let limit = match arguments.option("limit") {
                 Some(Value::Int(limit)) => usize::try_from(*limit).ok(),
                 _ => None,
@@ -598,10 +646,19 @@ impl CommandImpl for Near {
             // empty one. `near sockets` on a process whose descriptors are unreadable answered
             // with an empty stream and status 0, which is the false-empty rendering §42.4
             // forbids — `look` has always said `permission denied` in the same situation.
-            if named_relation.is_some()
-                && let Some(group) = neighborhood.groups().first()
-                && group.members().is_empty()
-                && let Some(refusal) = withheld_exit(group)
+            // `--type X` is the second spelling of "answer about this one exit", and the guard
+            // was written for the first only, so a refused group answered through `--type` fell
+            // back through to the empty stream §42.4 forbids (issue #26, ADR-0557).
+            if narrowed
+                && neighborhood
+                    .groups()
+                    .iter()
+                    .all(|group| group.members().is_empty())
+                && let Some(refusal) = neighborhood
+                    .groups()
+                    .iter()
+                    .filter(|group| asked_about(group, named_type))
+                    .find_map(withheld_exit)
             {
                 return Err(refusal);
             }
@@ -1057,7 +1114,12 @@ impl CommandImpl for Follow {
 
     fn invoke_async<'a>(&'a self, ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
         Box::pin(async move {
-            let arguments = ctx.arguments();
+            // A words-mode command that reads values resolves its arguments first: `--type
+            // ["process"]`, `--limit (1 + 1)` and `--changed (1h)` are expressions until
+            // something evaluates them, and an option nobody evaluated reads as an option nobody
+            // wrote (ADR-0219, ADR-0556).
+            let arguments = ctx.arguments().evaluated(ctx.scope())?;
+            let arguments = &arguments;
             let relation = arguments
                 .selector("relation")
                 .and_then(text_of)

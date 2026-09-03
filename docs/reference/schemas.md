@@ -465,6 +465,8 @@ A filesystem and its capacity, mounted or not.
 
 Identity: `uuid`, `source`
 
+When that identity is incomplete, it is joined by: `device_number`
+
 Default view: `source`, `type`, `size`, `used`, `available`, `target`
 
 | field | type | unit | presence | meaning |
@@ -478,6 +480,7 @@ Default view: `source`, `type`, `size`, `used`, `available`, `target`
 | `used` | `bytesize` | — | nullable | Space in use. |
 | `available` | `bytesize` | — | nullable | Space available to this user. Distinct from `size - used`, because reserved blocks are counted as used space nobody unprivileged can have. |
 | `read_only` | `bool` | — | nullable | Whether the filesystem is currently mounted read-only; null when not mounted. |
+| `device_number` | `string` | — | nullable | The `major:minor` number of the superblock, as `mountinfo(5)` prints it. Unlike `device` this is present for anonymous devices too — `0:31` is a pstore mount — which is what makes it the discriminator for filesystems that carry no UUID. Null when the provider cannot read it. |
 | `device` | `ref<ono.device/1>` | — | nullable | The backing device; null for network and pseudo-filesystems. |
 
 ## Finding — `ono.finding/1`
@@ -1608,6 +1611,8 @@ Default view: `kind`, `at`, `socket`, `changed`
 A socket with its endpoints, owner and state.
 
 Identity: `inode`
+
+When that identity is incomplete, it is joined by: `protocol`, `local`, `remote`
 
 Default view: `protocol`, `local`, `remote`, `state`, `process`
 

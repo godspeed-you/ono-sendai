@@ -15,6 +15,7 @@ use ono_value::{
     ErrorValue, FieldAccess, MapValue, Provenance, RecordValue, Schema, SchemaId, Value,
 };
 
+use crate::bind::BoundArguments;
 use crate::contract::CommandContract;
 use crate::invoke::{CommandImpl, Invocation, Outcome};
 use crate::registry::CommandRegistry;
@@ -56,10 +57,14 @@ impl CommandImpl for MetaCommand {
     }
 
     fn invoke(&self, ctx: &mut Invocation<'_>) -> Result<Outcome, ErrorValue> {
+        // A words-mode command that reads values resolves its arguments first: `help ("get")`,
+        // `get command --verb ["get"]` and `type ($subject)` are expressions until something
+        // evaluates them, and an option nobody evaluated reads as an option nobody wrote
+        // (ADR-0219, ADR-0556).
+        let written = ctx.arguments().evaluated(ctx.scope())?;
         match self.kind {
             Kind::Help => {
-                let topic = ctx
-                    .arguments()
+                let topic = written
                     .selector("topic")
                     .and_then(|value| value.as_str().ok())
                     .unwrap_or_default()
@@ -68,7 +73,7 @@ impl CommandImpl for MetaCommand {
                 Ok(values([page.to_value()]))
             }
             Kind::Explain => {
-                let subject = ctx.arguments().require_selector("subject")?.as_str()?;
+                let subject = written.require_selector("subject")?.as_str()?;
                 let parsed = ono_parser::parse(subject);
                 let pipeline = parsed
                     .program()
@@ -94,18 +99,22 @@ impl CommandImpl for MetaCommand {
                 Ok(values([plan.to_value()]))
             }
             Kind::GetContext => Ok(values(context_records(ctx))),
-            Kind::Type => self.describe_type(ctx),
-            Kind::Inspect => self.inspect(ctx),
-            Kind::GetCommand => Ok(values(self.commands(ctx))),
-            Kind::FindCommand => Ok(values(self.found(ctx))),
+            Kind::Type => self.describe_type(ctx, &written),
+            Kind::Inspect => self.inspect(ctx, &written),
+            Kind::GetCommand => Ok(values(self.commands(&written))),
+            Kind::FindCommand => Ok(values(self.found(&written))),
         }
     }
 }
 
 impl MetaCommand {
     /// `type` — the schema of what a pipeline produces, without producing it.
-    fn describe_type(&self, ctx: &mut Invocation<'_>) -> Result<Outcome, ErrorValue> {
-        if let Some(subject) = subject_text(ctx.arguments().selector("subject")) {
+    fn describe_type(
+        &self,
+        ctx: &mut Invocation<'_>,
+        arguments: &BoundArguments,
+    ) -> Result<Outcome, ErrorValue> {
+        if let Some(subject) = subject_text(arguments.selector("subject")) {
             let subject = subject.as_str();
             let parsed = ono_parser::parse(subject);
             let pipeline = parsed
@@ -168,8 +177,12 @@ impl MetaCommand {
     }
 
     /// `inspect` — every field, its access, and where the record came from (spec §15.2, §25.2).
-    fn inspect(&self, ctx: &mut Invocation<'_>) -> Result<Outcome, ErrorValue> {
-        if let Some(subject) = ctx.arguments().selector("subject") {
+    fn inspect(
+        &self,
+        ctx: &mut Invocation<'_>,
+        arguments: &BoundArguments,
+    ) -> Result<Outcome, ErrorValue> {
+        if let Some(subject) = arguments.selector("subject") {
             return Ok(values([inspection(subject)]));
         }
         let input = ctx.take_input().ok_or_else(|| {
@@ -192,8 +205,7 @@ impl MetaCommand {
     }
 
     /// `get command` — the registry as objects (spec §15.4).
-    fn commands(&self, ctx: &Invocation<'_>) -> Vec<Value> {
-        let arguments = ctx.arguments();
+    fn commands(&self, arguments: &BoundArguments) -> Vec<Value> {
         let name = arguments
             .selector("name")
             .and_then(|value| value.as_str().ok());
@@ -226,9 +238,8 @@ impl MetaCommand {
     /// included, because "the command that lists listening sockets" is how someone actually looks
     /// for `get socket --listening`. Results are ranked by how many of the query's words they
     /// answer, so the closest match is first rather than buried.
-    fn found(&self, ctx: &Invocation<'_>) -> Vec<Value> {
-        let query = ctx
-            .arguments()
+    fn found(&self, arguments: &BoundArguments) -> Vec<Value> {
+        let query = arguments
             .selector("query")
             .and_then(|value| value.as_str().ok())
             .unwrap_or_default()

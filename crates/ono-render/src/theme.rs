@@ -253,7 +253,9 @@ impl Theme {
         }
     }
 
-    /// Renders `text` in `token`'s style, as far as `presentation` allows.
+    /// Renders `text` in `token`'s style, as far as `presentation` allows: its marker where a
+    /// person is reading without colour, its colour where there is colour, and nothing where the
+    /// bytes are the answer.
     ///
     /// Control characters in `text` are neutralised whatever the destination: a value read from
     /// the system is data, and must never be able to drive the terminal (spec §49,
@@ -263,9 +265,55 @@ impl Theme {
     /// use ono_render::{Presentation, Theme, Token};
     /// let theme = Theme::default();
     /// assert_eq!(theme.paint("nginx", Token::ValueString, Presentation::Pipe), "nginx");
+    /// assert_eq!(theme.paint("failed", Token::Danger, Presentation::Plain), "!! failed");
     /// ```
     #[must_use]
     pub fn paint(&self, text: &str, token: Token, presentation: Presentation) -> String {
+        self.colour(&self.mark(text, token, presentation), token, presentation)
+    }
+
+    /// `text` with `token`'s marker beside it, where the destination has no colour to carry the
+    /// meaning instead (spec §44, ADR-0558).
+    ///
+    /// The text is sanitised here too, so a caller that measures the marked text and paints it
+    /// afterwards measures exactly what it will print.
+    ///
+    /// Nothing is added when the destination is not one a person reads without colour
+    /// ([`Presentation::marks`]), when the token carries no marker, when there is no text to
+    /// mark, or when the marker would only repeat what the text already says — `ui.value.null`
+    /// is marked `null` and a null cell already reads `null`.
+    ///
+    /// ```
+    /// use ono_render::{Presentation, Theme, Token};
+    /// let theme = Theme::default();
+    /// assert_eq!(theme.mark("failed", Token::Danger, Presentation::Plain), "!! failed");
+    /// assert_eq!(theme.mark("failed", Token::Danger, Presentation::Pipe), "failed");
+    /// assert_eq!(theme.mark("null", Token::ValueNull, Presentation::Plain), "null");
+    /// ```
+    #[must_use]
+    pub fn mark(&self, text: &str, token: Token, presentation: Presentation) -> String {
+        let safe = sanitise(text);
+        if !presentation.marks() {
+            return safe;
+        }
+        match self.style(token).marker() {
+            Some(marker) if !safe.is_empty() && safe != marker => format!("{marker} {safe}"),
+            _ => safe,
+        }
+    }
+
+    /// `text` in `token`'s style, and nothing else.
+    ///
+    /// The half of [`paint`](Self::paint) that adds only colour. A caller that has to *measure*
+    /// what it prints — a table column, which has to fit — marks its text first, lays the marked
+    /// text out, and colours it here, so the escape sequences are still added last and still
+    /// cannot move a column.
+    ///
+    /// Control characters in `text` are neutralised whatever the destination: a value read from
+    /// the system is data, and must never be able to drive the terminal (spec §49,
+    /// `docs/ACCEPTANCE.md` §4.4).
+    #[must_use]
+    pub fn colour(&self, text: &str, token: Token, presentation: Presentation) -> String {
         let safe = sanitise(text);
         if !presentation.allows_color() {
             return safe;

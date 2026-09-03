@@ -279,6 +279,205 @@ Two class-c issues remain and are tranches of their own, which is what the label
 (the wasm-component tier and ten of §31.12's sixteen host API domains) and **#5**
 (`ono-model-broker`, whose design is written out in the issue and whose first line of code is not).
 
+## What the tranche delivered
+
+One entry per phase, newest first. The reasoning is kept because each entry records something the
+issue that ordered the work did not know.
+
+
+- **#29 closed (2026-09-02).** `docs/ACCEPTANCE.md` §4.8 is the v0.4.1 definition of done: 118
+  unticked boxes in fourteen subsubsections following the H0–H12 phase sequence, every one of the
+  tranche's 101 issues cited by the box that closes it, and every bullet of §66.1–§66.9 covered.
+  ADR-0429 records the five decisions behind the form. Acceptance-case numbers **180–200** are
+  reserved for the tranche and ascend with the phase order.
+  `xtask/tests/spatial_evidence.rs` now reads §4.7 up to `### 4.8`, so §4.7's evidence harvester
+  stops at the tranche boundary instead of sweeping 257 not-yet-written test names into itself;
+  the v0.4.1 counterpart `xtask/tests/hardening_evidence.rs` is §4.8.1's first box and the last
+  box of the tranche to close. From here `scripts/release-check.sh` fails on §4.8's first open
+  box, and that is the correct state for a tranche that has just started.
+- **#31 closed (2026-09-02).** All four failure proofs are in, red by design, tracked under
+  *Deferred* above (ADR-0430, ADR-0431). Two diagnoses came out of writing them and belong to the
+  phases that own the fix: the `map --live` pathology is **unconditional rather than
+  cardinality-driven** — `map --live --json | take 1` answers in 0.2 s, and the second value never
+  comes because the root projection is domains and collections while `MapSnapshot` compares node
+  and edge labels only, so a picture made of names that cannot change never reports a change
+  (#22); and issue **#20**'s instance measures 29.7 s at Profile M, inside §33.3's thirty-second
+  budget by 0.3 s and sixty times outside §33.2's target, so it needs a phase-H7 frame-budget
+  proof under a terminal rather than a watchdog that would be a coin toss (ADR-0252, #21).
+- **The five load-sensitive tests, and three product defects behind them (2026-09-03).** Six
+  commits. **Two of the five were the product rather than the test**, which means the flakes were
+  the only thing reporting a real fault — and twice this board had recorded one as "known and
+  pre-existing" and moved on.
+
+  `ono --agent` **died of its own startup summary**: `eprintln!` panics on a failed write, and a
+  fixture that reads the first two of §11.2's nine lines and drops its receiver closes the pipe
+  under it. On a quiet machine all nine are already buffered; on a busy one the agent exits **101
+  between announcing the socket and serving it**, so the *first* `link host` gets
+  `E0601 … Connection refused`. Measured: 11 of 30 agents with a minimal harness, and every time
+  with `/dev/full` as stderr. `authenticated_link.rs` keeps its receiver alive **with a comment
+  saying why**; the product was never brought along. `ono_core::diagnostic!` is `eprintln!` with the
+  write discarded (ADR-0549, `e7e22a8`).
+
+  **A completion that runs out of budget silences completion for five seconds**: the
+  nanosecond-budget probe's detached read finds nothing and writes that nothing into ADR-0252's
+  process-wide cache, where `FRESH` keeps it — the opposite of what that ADR's own comment
+  promises. No window a test could honestly wait in would have covered it, which is why ADR-0517's
+  scaling was never going to be enough (ADR-0550, `84612cb`).
+
+  The three test defects were fixed by **removing the dependence rather than widening a
+  tolerance**: the repaint test waits for the frame it asserts about; the width comparison earns a
+  third read when two disagree and skips honestly if the host will not hold still (ADR-0552); and
+  the trace filter binds its own loopback connection, because its assertion was **unsatisfiable by
+  any correct implementation** — 84 of 256 nodes are sockets with other peers, and reaching them is
+  what §22 is for. It was green only because the command refused, and it refused only because this
+  host held no TEST-NET-1 connection (ADR-0551).
+
+  Tally: 12 × `cargo test --workspace --all-features` at load 8–13 on 8 processors — all eight
+  tests **0 failures, 0 skips**.
+
+- **Nine of the ten class-b defects outside the tranche (2026-09-03), #9–#26.** Twelve commits,
+  ADR-0553 … ADR-0562, cases 201–206, `acceptance: 134 passed`. The **acceptance suite caught a
+  wrong fix**: #26's first attempt took the refusal from the first withheld group, which is right
+  for a relation and wrong for `--type`, and case 094 said so. #9's reproduction no longer held —
+  ADR-0517's load-scaled watchdog had closed that half — but the cost was real (`ListUnits` already
+  answers with each unit's object path and the provider asked `LoadUnit` for it again; 1361 D-Bus
+  calls → 793), and **the ADR carries the release figure that does not move as well as the debug
+  figure that does**. #17 stays open as a tranche: a mutation acts on an object it names (§11.5)
+  and a refresh has no package to name, so `ono.repository/1` comes first (ADR-0562).
+
+- **H0 complete (2026-09-03), #30, #117, #118 — last rather than first, and that changed two of
+  them.** #118's inventory holds §6.1's twelve rows with `input_trust` and `required_enforcement`
+  copied character for character, and the test holds them against a table typed from the
+  specification rather than read from the file — so the registry cannot drift and take its own
+  check with it. It unblocks what H2 recorded as owed, and **a fifth method on the `RemoteService`
+  trait is now a red gate**. #117 indexes all seventeen contracts, and the decision that gives the
+  index teeth is that `validated_by` must be under `xtask/`; a numeric value in a
+  `remote_limits.yaml` ceiling row is now a failure. **#30's honest answer is that it can no longer
+  do what it was written for** — the "before" is twelve phases gone — so ADR-0548 carries a
+  `Spec deviation` heading and the file says which state it holds. ADR-0546, ADR-0547, ADR-0548.
+
+- **H11 complete (2026-09-03), #104–#110.** Seven commits. The reproducibility work was *run*
+  rather than asserted, and the result was not what the issue expected: with ADR-0526's determinism
+  block deleted and a build forced under `de_DE.UTF-8`, `Australia/Eucla` (+08:45) and `umask 077`,
+  the packages came out **byte-identical anyway** — cargo-deb 3.7.0 and cargo-generate-rpm 0.21.0
+  both honour `SOURCE_DATE_EPOCH`, emit no `BUILDHOST`, write uid 0/gid 0 and sort glob-expanded
+  assets. What the probe did find is that the second build's *files* were mode `0600`, so
+  `compare-builds` now compares the artifact's mode as well as its bytes. Two smaller findings came
+  out of writing the tests: `dpkg-deb --contents` renders mtimes in the **reader's** timezone, and
+  both packaging tools write numeric `0/0` rather than `root/root`.
+
+  #109's glibc floor is **read out of the ELF** rather than assumed (first run measured
+  `GLIBC_2.34`), and #110 replaces `action-gh-release` with verify → draft → upload → download back
+  and compare digests → clear the draft, so the bytes that were tested are the bytes that are
+  published. ADR-0526 … ADR-0532, case 199, `acceptance: 127 passed, 0 failed`.
+
+  **#107's box is open on purpose** — see *Deferred* — and that is the second time this tranche a
+  phase has declined to tick a box it could not prove (H8's #94 was the first).
+
+- **H8 complete (2026-09-02), #88–#94 and the three flaky-test defects #6, #7, #27.** Eleven
+  commits on `implementation-h8-test-truthfulness`. Three findings are worth more than the boxes:
+
+  **The skip marker had never reached a log.** libtest captures the print macros and shows them
+  only for a *failed* test, so every §38.1 skip this repository thought it was announcing was
+  invisible to anything reading the output. `skipped` now writes to `std::io::stderr()` directly,
+  and `cargo xtask skip-check <log>` is §38.3's verification step. RED for #88 was 41 unannounced
+  bare `return;`s plus one multi-line `eprintln!("skipped: …")` in `spatial_map.rs` that had
+  survived ADR-0428 for a whole release.
+
+  **The 331 leaked processes were not the systemd fixture.** `ono_process::PtySession` had **no
+  `Drop` at all**, so every PTY test orphaned its session leader and everything under it, and
+  `Shell::try_run` reported an overrun and walked away from the child. Both are fixed; ADR-0431's
+  deliberate difference between `run_bounded` and `Shell` survives. Stated residual: `Shell` kills
+  the child rather than a group, because `ono-testkit` forbids `unsafe` and a group needs
+  `pre_exec`.
+
+  **#6's test was hiding a product defect.** Written so that it really needs a resize, it went red
+  *every* time and named the cause: `ready_key` called `read_event_timeout` every 5 ms during a
+  projection and dropped everything that was not a key — including the resize. `read_event_timeout`
+  now reports a size change until `remember_terminal_size` acknowledges it, which also closes the
+  case where a resize beat crossterm's SIGWINCH handler into existence. The test went from 45 s to
+  2.5 s.
+
+  Also: #27 and #7 are **one** defect — a thread forking between the test's `open` and `close`
+  inherits the descriptor and `execve` answers `ETXTBSY`, arriving as exit 126. And **eight**
+  §4.8.13 boxes named an acceptance case that does not exist under that name. ADR-0513 … ADR-0522.
+
+- **H7 complete (2026-09-02), #82–#87 and the five class-b defects #8, #20, #21, #22, #25.**
+  Sixteen commits on `implementation-h7-spatial-performance`, merged without a conflict. Measured
+  before optimised, on the named reference environment `ryzen-3900x-ubuntu-2604` with the run's own
+  load average recorded beside every figure: `spatial.map_first_frame` at Profile L falls from
+  **25 748 ms to 3 514 ms**, a selector miss at Profile M from **530 ms to 181 ms**, and
+  `service.enumeration` at S from **870 ms to 422 ms**.
+
+  Two diagnoses overturned the assumption in the issue that carried them. `enter compute;
+  look --json` costs **942 ms with no extra processes and 1 135 ms with sixteen hundred** — an
+  almost flat curve from the origin, so the Profile M failure was never cardinality; it was 569
+  systemd units against three *sequential* D-Bus round trips. And two thirds of the Profile L map
+  cost sat in `MapHorizon::place`, which deduplicated by scanning the vector it was building — five
+  billion comparisons at 100 000 sockets, and not the global graph build #87 named.
+
+  §33.3's floor is now met by a live map that **says it is waiting** rather than falling silent,
+  and the stillness clock resets on a value being *sent* rather than on an event arriving — timing
+  each wait never fired, because events arrive that change no picture. `Comparison` answers
+  `Unmeasured` and `ForeignEnvironment` as distinct verdicts so §65.10's skip-as-pass cannot happen
+  to a benchmark. ADR-0488 … ADR-0498, `E1401`, cases 195–198.
+
+  **#71's measured half is written**, and it was cheap once `cargo xtask perf` existed: `cancel_ms`
+  is the p95 of twenty samples rather than one measurement — 2.2–4.5 ms at S and M, 20.9 ms at L,
+  against §23.3's p95 < 100 ms. A p99 wants about a hundred samples; that is the only difference.
+
+- **H3 complete (2026-09-02), #51–#57.** One central `Limits` contract whose every setter clamps
+  into the range `limits.yaml` declares, so an unlimited instance cannot be written down;
+  `docs/spec/hardening/remote_limits.yaml` created as §52.1's registry holding **no numbers** — one
+  row per ceiling pointing at its `limit_key`, its refusal, its audit class and its enforcement
+  stage. A `ConnectionRegistry` behind a real 32-connection ceiling, a pending-handshake semaphore
+  that gates *TCP accept* (so nothing is spent on the peer and §13.1 is not violated by sending a
+  refusal frame), a 10 s timeout wrapping both TLS and the opening `Hello`, a per-fingerprint limit
+  keyed on the authenticated fingerprint rather than the address, and TLS moved off the accept loop
+  onto a per-connection task. `AuditKind::ConnectionLimitDenied` — declared by H2, unreachable
+  until now — is raised. `E1501`, `E1502`. ADR-0501 … ADR-0505, case 188, §4.8.4 ticked.
+
+  **Live revocation landed rather than being deferred a second time.** ADR-0470 deferred it on one
+  stated condition — that H3 would build the registry — and the agent treated the expiry of that
+  condition as binding: a one-second sweep re-reads the store and closes every session whose
+  fingerprint it no longer lists, well inside §12.5's five seconds, with ADR-0470's immutable
+  per-connection `AuthorizationContext` untouched. The *grant* is still fixed for the life of the
+  connection; only the connection's existence changes.
+
+- **H6 complete (2026-09-02), #75–#81.** `each` streams. `eval.rs::run_each_block` and its second
+  `StageList` are gone: `each { … }` is bound and assembled as a stage of its own pipeline, and the
+  stage asks the evaluator over a bounded channel of one while a driver loop answers and drains at
+  the same time. Both H0 failure proofs are un-ignored with **no assertion touched** — the diff of
+  `each_streaming.rs` is the two `#[ignore]`/`// REASON:` blocks and one paragraph of module doc —
+  and the `where` differential stayed green throughout. `each {…} | each {…}` works at all now; it
+  answered `provider.unsupported` before. Memory is measured rather than asserted: two block
+  invocations for a 200-value source and two for a 2000-value one. #78's capture inventory is 21
+  classified sites in `docs/spec/hardening/streaming.yaml` with a gate that fails in four
+  directions, and it caught two real removals as the code changed under it. ADR-0479 … ADR-0483,
+  cases 193 and 194, §4.8.7 written and ticked. No code in the reserved `E1301`–`E1319` range was
+  needed: every refusal this tranche makes already had one.
+
+- **H2 complete (2026-09-02), #40–#50.** A v0.4.1 listening agent now authenticates every client
+  **and authorizes only the ones an operator listed**: §59.1 moved from "the unknown client reads
+  the provider inventory" to "the unknown client is refused with `Ono-Sendai-E1202` before provider
+  negotiation". `authorized_clients` with a fail-closed parser that distinguishes *missing* from
+  *corrupt* and exits before `bind` on the latter; atomic updates; four `client-key` commands;
+  observe-only by default, with no option on `add` that could grant an action; `ActionGrant` as a
+  newtype whose only constructor refuses to represent a wildcard; an immutable per-connection
+  `AuthorizationContext` built from the fingerprint alone; `ServerConfig::offer()` replaced by
+  `offer_for(&PeerAuthorization)`; dispatch checked again independently on all four paths;
+  `E1201`–`E1204`; audit events whose record has no field a payload could occupy; and the four
+  trust words as four fields on `ono.link/1`. ADR-0466 … ADR-0475, cases 182–187, §4.8.3 ticked.
+
+- **#98, #99, #100 closed (2026-09-02), out of phase order and deliberately so.** H10 touches
+  `.github/`, `docker/`, `scripts/` and `xtask/` and no runtime code, so running it beside H1 and
+  H4 delays no safety work; §57's staging rule is about refactoring landing before safety work,
+  and nothing here refactors anything. Seven third-party Actions are pinned by commit SHA and four
+  release-critical images by digest, `release.yml` drops from workflow-wide `contents: write` to
+  the publishing job alone, and `pull_request_target` is banned outright. The gate scan
+  `xtask/src/supply_chain.rs` keeps all three true — 28 tests in `xtask/tests/supply_chain.rs`,
+  ADR-0433. Three boxes of §4.8.11 are ticked.
+
 ## Session records (2026-08-27 … 2026-08-29)
 
 Every session below is complete. They are kept because each carries the reasoning behind a
@@ -1670,6 +1869,116 @@ gh issue view <NN>               # the evidence for one problem
 gh issue list --label class-c    # the large ones, a tranche each
 ```
 
+**A refused link reports `remote.unreachable` instead of `remote.unauthorized` (2026-09-03).**
+§12.5's revocation sweep (1 s) calls `ConnectionRegistry::revoke_absent`, which closes **any** live
+connection whose fingerprint is not in the store — including the one `serve_registry` is at that
+moment refusing for exactly that reason. `closed` wins the `select!`, the transport is dropped, and
+the peer sees a socket that went away rather than a refusal that says why. Audit from a probe run:
+`connection.disconnected connection_id=revoked … error_code=remote.unauthorized` at `…130200136Z`,
+then `connection_id=conn-1 source_address=127.0.0.1:37036` at `…130412437Z` — the sweep beat the
+refusal by 200 µs. Fails `authenticated_link::should_refuse_an_authenticated_client_the_agent_never_authorized`
+and `::should_report_an_authenticated_but_unauthorized_link_as_exactly_that` in 2 of 6 workspace
+runs at load 22–26, 0 of 12 at load 9–13, and 2/15 in isolation at load 23. §54.1 and §59.9 require
+the refusal to arrive. **Likely fix:** arm `closed` only when `store.client(fingerprint).is_some()`
+at admit — a client that was never granted is not a grant being withdrawn. Needs an ADR; it touches
+§12.5 semantics. **Exit test:** both tests green over 30 runs at load 25.
+
+**The suite leaks long-lived children, and one test's final assertion never checked (2026-09-03).**
+Found on this host: **158** orphaned `journalctl --follow` stubs, the oldest 25 hours, scratch
+directories long deleted, from `adapters.rs::should_follow_the_journal_live_at_the_terminal_until_interrupted`
+— whose closing assertion *says* "the follower is gone" and only checks that the prompt returned,
+so a real leak has been passing for as long as the test has existed. Plus **8** `ono -c 'enter
+socket …; map --live --json | take 3'` from `spatial_relationships.rs`, alive eleven minutes at
+~30 % CPU each (231 % together), left behind when a failing `cargo test` ends early. Both pollute
+the host population the timing-sensitive tests are sensitive to, so this feeds the flakes above.
+ADR-0516 closed the `PtySession` half; this is the rest. **Exit test:** a `cargo test --workspace`
+that *fails* leaves no `ono` or fixture child behind, and the follower test asserts the child's
+death rather than the prompt's return.
+
+**`ono` still panics on a closed stderr outside the agent (2026-09-03).** ADR-0549 introduced
+`ono_core::diagnostic!` and applied it to the agent paths, where the defect was costing a live
+listener. **95 `eprintln!` call sites remain** across the workspace — `ono -c … 2>&1 | head -0`,
+the usage path and `--print-peer-key` among them. The stakes are lower because the process is
+ending anyway, but it turns exit 1 into exit 101, which is the difference between a refusal and a
+crash to anything reading the status. **Exit test:** no `ono` invocation exits 101 because nobody
+read its diagnostics.
+
+**`jobs_native::should_finish_a_bounded_background_pipeline_and_say_so` waits a fixed 0.4 s
+(2026-09-03).** `get process | count &; sleep 0.4; jobs` — under load the job has not finished. 1 of
+12 workspace runs at load ~10. **Exit test:** it polls `jobs` for `done` under a watchdog instead of
+sleeping.
+
+**`spatial_topology::should_stream_neighbors_as_pipeline_objects_when_near_runs_at_the_root`
+compares two runs of `near` (2026-09-03).** Got 36 against 35: two separate `ono` invocations, and
+the host moved between them. Same family as ADR-0552's width comparison. 1 of 12 workspace runs.
+**Exit test:** both counts come from one shell run.
+
+**Profile L's live map sets the ceiling on how loaded a gate machine may be (2026-09-03).**
+`spatial_first_output::should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture`
+failed 4 of 6 workspace runs at load 22–26 and 0 of 12 at load 9–13. Its 30 s `run_bounded` budget
+is deliberately **unscaled** (ADR-0517, ADR-0431), because there the duration *is* the observation —
+so this is an accepted cost written down rather than a new defect. What it establishes is a number
+worth knowing: the gate can be trusted up to roughly **1.5× `nproc`** and not beyond. **Exit test:**
+either the Profile L live map answers inside 30 s at load 25, or the case names the machine its
+budget is measured on.
+
+**`get filesystem` calls two tmpfs superblocks one filesystem (2026-09-03).**
+`stream_filesystems` dedupes by `(source, type)`, which is right for a bind mount and wrong for two
+independent anonymous mounts: `/run` and `/dev/shm` are both `tmpfs|tmpfs` with different device
+numbers (`0:29`, `0:69`) and only the first is reported.
+`ono -c 'get filesystem | where type == "tmpfs" | count | to json'` answers `[1]` on a host whose
+`/proc/self/mountinfo` holds four. Now that `ono.filesystem/1` carries `device_number` (ADR-0553),
+the honest dedupe key is the superblock. It changes what `get filesystem` answers, so it needs its
+own increment and its own acceptance evidence. **Exit test:** the count matches the superblocks.
+
+**An option whose evaluated value does not fit its declared type is dropped rather than refused
+(2026-09-03).** With ADR-0556 in, `get command --verb ["get"]` now *reaches* the command as a
+one-element list where `docs/spec/commands/meta.yaml` declares `string`; `as_str()` fails, the
+filter is skipped, and the reader who asked a narrower question receives the whole registry. §2.6
+again — a filter that silently did not apply is worse than a refusal. The check belongs in the
+binding layer beside the declared type rather than in each command. **Exit test:** a wrongly typed
+option is refused by name.
+
+**`enter process/1` was ambiguous on any host with an ssh login — fixed 2026-09-03 (`3278d58`).**
+`argv[0]` is memory a process owns, and `sshd-session: william@pts/1` is a status line rather than
+a path. Taking its last slash-separated segment as a program name gave that session the **exact**
+alias `1`, beside pid 1. The gate went red between two runs an hour apart on an unchanged tree, the
+moment a user logged in at 11:57, taking
+`spatial_contracts::should_report_denied_information_as_denied_rather_than_as_an_empty_collection`
+and `::should_serve_every_relation_it_declares_and_declare_every_relation_it_serves` with it. No
+name is derived from a `command[0]` containing whitespace, and the test carries a
+`CommandExt::arg0` decoy.
+
+*A correction to this board.* An earlier version of this entry — written by the orchestrator on
+the class-b report — read it as §27.1's **fuzzy** step matching `1293543` by substring, and
+proposed rewriting the two tests to `find place … | take 1 | enter`. That was reasoning from the
+shape of the escalation rather than from evidence, and it was wrong: `Resolution::Ambiguous` is by
+construction the set of **exact** matches, the refusal named exactly two candidates where the fuzzy
+step names about a hundred (`find place process/1` does), and removing the bogus alias makes
+`enter process/1` resolve to pid 1 with a decoy present. It was a product defect, and changing the
+tests would have hidden it.
+
+**`cargo xtask perf` cannot adjudicate on a shared machine, and says nothing about that
+(2026-09-03).** All eight Profile S benchmarks read three to five times their checked-in baseline —
+`shell.cold_start` at 132 ms against 26 ms — while a second build tree held the load. Absolute
+tolerance is right for release qualification (§32.4); what is missing is that the comparison
+**reports a regression** where it should report that the environment was not the reference one.
+`Comparison` already answers `ForeignEnvironment` for the wrong machine (ADR-0489); it needs the
+same honesty for the right machine under the wrong conditions. **Exit test:** a benchmark run under
+load reports that rather than a regression.
+
+**`SECURITY.md`'s boundary table is a hand transcription and nothing compares it to the inventory
+(2026-09-03).** `docs/spec/hardening/security_boundaries.yaml` exists and
+`docs/reference/security-boundaries.md` is generated from it; `SECURITY.md`'s copy is still typed,
+so a renamed boundary leaves it silently wrong. §4.8.12's box for #114 says so. **Exit test:** a
+boundary renamed in the inventory turns the gate red where `SECURITY.md` disagrees.
+
+**One machine-readable contract lives outside the indexed directory (2026-09-03).**
+`docs/baselines/v0.4.1.json` is validated by `xtask::baseline::check` in `spec-check`, but
+`registries.yaml` indexes `docs/spec/hardening/` only, so §52.3's "every contract is indexed"
+property has a deliberate exception recorded in ADR-0548's *Consequences*. **Exit test:** either
+the index reaches contracts outside that directory, or the snapshot moves into it.
+
 **`rustls-pemfile` is archived, and the dependency policy now says so out loud (2026-09-02).**
 RUSTSEC-2025-0134: the crate is unmaintained. It is waived in `deny.toml` with a reason and an
 `expires = "2027-03-01"`, and `xtask/src/supply_chain.rs` fails the gate once a waiver's deadline
@@ -1775,23 +2084,6 @@ another run is using.
 `xtask checksums` covers every file there, so a local manifest lists 0.3.0 packages beside 0.4.0.
 Truthful about that directory and wrong about a release. **Exit test:** release-check builds into a
 directory it owns.
-
-**`client_keys::should_refuse_the_next_connection_after_a_client_key_is_removed` fails about one
-run in thirty (2026-09-02).** The agent's own ephemeral port answers `Ono-Sendai-E0601
-remote.unreachable … Connection refused` *after* the harness has already read `listening on` from
-its stderr — so the listener existed and then was gone. Reproduced in isolation over 30 sequential
-runs, and present on `a8c4d2c` before H8's branch, so it is not H8's. Suspicion, unproven: `add
-client-key`'s atomic rename racing the agent's store watcher (#41, #56, ADR-0505). A hundred runs
-with the agent's stderr echoed produced no failure, which means the probe changed the timing —
-worth knowing before someone repeats it. **Exit test:** the suite green over a hundred sequential
-runs.
-
-**`options_and_selectors::should_trace_nothing_else_when_no_connection_has_the_requested_remote`
-fails under a full parallel workspace run (2026-09-02).** `trace connection --remote 192.0.2.1`
-returns graphs holding unrelated sockets — TCP listeners other suites bound, and unix sockets —
-when the host's socket table is busy. Green in isolation. Same class as H7's fix *"stop a filter
-test failing on the shells its own suite spawns"*. **Exit test:** the test asserts about sockets
-the fixture created rather than about the host's table.
 
 **`ETXTBSY` becomes exit 126 with "found and not executable" (2026-09-02).** A user running a
 script somebody else is still writing is told the file is not executable, when it is.

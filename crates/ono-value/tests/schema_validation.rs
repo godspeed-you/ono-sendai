@@ -231,3 +231,65 @@ fn should_report_the_identity_values_of_a_record() {
     assert_eq!(identity.len(), 1);
     assert_eq!(identity.get("id"), Some(&Value::Int(42)));
 }
+
+/// A schema whose identity can be incomplete, and which names what tells those records apart
+/// (ADR-0553).
+fn schema_with_a_fallback() -> Arc<Schema> {
+    Arc::new(
+        Schema::builder(SchemaId::new("ono.test.thing", 1), "Thing")
+            .field(FieldDef::new("id", FieldType::Int).nullable())
+            .field(FieldDef::new("name", FieldType::String).required())
+            .field(FieldDef::new("slot", FieldType::String).nullable())
+            .identity(["id"])
+            .identity_fallback(["slot"])
+            .build()
+            .unwrap(),
+    )
+}
+
+fn record_with_a_fallback(id: Value, slot: &str) -> RecordValue {
+    RecordValue::builder(
+        schema_with_a_fallback(),
+        Provenance::local("test", SchemaId::new("ono.test.thing", 1)),
+    )
+    .set("id", id)
+    .unwrap()
+    .set("name", Value::String("thing".into()))
+    .unwrap()
+    .set("slot", Value::String(slot.into()))
+    .unwrap()
+    .build()
+}
+
+#[test]
+fn should_identify_a_record_by_its_declared_identity_alone_when_that_identity_is_complete() {
+    let identity = record_with_a_fallback(Value::Int(42), "left").identity();
+
+    assert_eq!(
+        identity.len(),
+        1,
+        "the fallback is for records that need it"
+    );
+    assert_eq!(identity.get("id"), Some(&Value::Int(42)));
+}
+
+#[test]
+fn should_tell_two_records_apart_by_the_fallback_when_their_declared_identity_is_null() {
+    let left = record_with_a_fallback(Value::Null, "left").identity();
+    let right = record_with_a_fallback(Value::Null, "right").identity();
+
+    assert_eq!(left.get("slot"), Some(&Value::String("left".into())));
+    assert_ne!(left, right, "two different things are not one object");
+}
+
+#[test]
+fn should_reject_a_schema_whose_identity_fallback_names_no_field() {
+    let error = Schema::builder(SchemaId::new("ono.test.thing", 1), "Thing")
+        .field(FieldDef::new("id", FieldType::Int).required())
+        .identity(["id"])
+        .identity_fallback(["nope"])
+        .build()
+        .expect_err("an identity fallback must be made of declared fields");
+
+    assert_eq!(error.code(), ErrorCode::TypeUnknownField);
+}

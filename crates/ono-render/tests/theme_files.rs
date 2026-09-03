@@ -153,11 +153,11 @@ fn should_refuse_a_marker_long_enough_to_break_a_layout() {
 }
 
 #[test]
-fn should_paint_nothing_at_all_whatever_the_theme_when_the_destination_takes_no_colour() {
-    // Spec §44's closing rule, held against every theme that can exist: a theme decides colour on
-    // a colour-capable terminal and decides nothing anywhere else. A theme file therefore cannot
-    // make output unreadable in a pipe, on a dumb terminal or under NO_COLOR, because in those
-    // destinations no theme is consulted at all.
+fn should_paint_nothing_at_all_whatever_the_theme_when_the_bytes_are_the_answer() {
+    // Spec §44's closing rule, held against every theme that can exist, wherever the destination
+    // is a machine: a pipe, a file and a script get the value and nothing else, so no theme file
+    // can change what another program reads (ADR-0332 rule 1, narrowed by ADR-0558 to the
+    // destinations the rule was for).
     let loud = Theme::parse(
         "loud",
         "[tokens]\n\"ui.fg\" = { color = 16 }\n\"ui.value.string\" = { color = 16 }\n",
@@ -169,7 +169,6 @@ fn should_paint_nothing_at_all_whatever_the_theme_when_the_destination_takes_no_
             Presentation::Pipe,
             Presentation::Redirect,
             Presentation::Script,
-            Presentation::Plain,
         ] {
             for token in Token::ALL {
                 assert_eq!(
@@ -183,6 +182,60 @@ fn should_paint_nothing_at_all_whatever_the_theme_when_the_destination_takes_no_
             }
         }
     }
+}
+
+#[test]
+fn should_mark_a_token_at_a_terminal_that_has_no_colour_to_carry_its_meaning() {
+    // The other half of §44's closing rule. A `Plain` destination is a person reading without
+    // colour, and the marker is what the token means to them (ADR-0558).
+    let theme = Theme::default();
+
+    assert_eq!(
+        theme.paint("restart", Token::Danger, Presentation::Plain),
+        "!! restart"
+    );
+    assert_eq!(
+        theme.paint("restart", Token::Success, Presentation::Plain),
+        "ok restart"
+    );
+    assert_ne!(
+        theme.paint("restart", Token::Danger, Presentation::Plain),
+        theme.paint("restart", Token::Success, Presentation::Plain),
+        "the two meanings a theme must keep apart are kept apart in the output, not only in the \
+         theme"
+    );
+}
+
+#[test]
+fn should_not_repeat_a_marker_that_only_says_what_the_text_already_says() {
+    // `ui.value.null` is marked `null`, and a null cell already reads `null`. A marker that
+    // repeats its text tells a reader nothing and costs a table column.
+    let theme = Theme::default();
+    assert_eq!(
+        theme.paint("null", Token::ValueNull, Presentation::Plain),
+        "null"
+    );
+}
+
+#[test]
+fn should_carry_a_theme_files_own_marker_to_a_colourless_terminal() {
+    // A marker is a theme's text, so a theme file decides it — within the four characters and
+    // the control-character refusal ADR-0332 checks when the file is read.
+    let theme = Theme::parse(
+        "loud",
+        "[tokens]\n\"ui.danger\" = { color = 9, marker = \"BAD\" }\n",
+    )
+    .expect("a valid theme file");
+
+    assert_eq!(
+        theme.paint("restart", Token::Danger, Presentation::Plain),
+        "BAD restart"
+    );
+    assert_eq!(
+        theme.paint("restart", Token::Danger, Presentation::Pipe),
+        "restart",
+        "and it still cannot reach a pipe"
+    );
 }
 
 #[test]

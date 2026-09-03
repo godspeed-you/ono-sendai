@@ -109,6 +109,39 @@ impl SystemBus {
         Ok(properties)
     }
 
+    /// Reads and decodes one unit's properties at an object path already in hand.
+    ///
+    /// `ListUnits` answers with the path, so an enumeration does not have to ask `LoadUnit` for
+    /// it again — one round trip per unit that buys nothing (ADR-0561).
+    async fn read_at(
+        &self,
+        path: &OwnedObjectPath,
+        unit: &str,
+    ) -> Result<Option<UnitProperties>, BusError> {
+        let properties = match self.properties(path, unit).await {
+            Ok(properties) => properties,
+            Err(BusError::NoSuchUnit(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+
+        Ok(Some(UnitProperties {
+            name: text(&properties, "Id").unwrap_or_else(|| unit.to_owned()),
+            description: text(&properties, "Description"),
+            load_state: text(&properties, "LoadState"),
+            active_state: text(&properties, "ActiveState"),
+            sub_state: text(&properties, "SubState"),
+            unit_file_state: text(&properties, "UnitFileState"),
+            fragment_path: text(&properties, "FragmentPath"),
+            state_change_usec: number::<u64>(&properties, "StateChangeTimestamp"),
+            main_pid: number::<u32>(&properties, "MainPID"),
+            memory_current: number::<u64>(&properties, "MemoryCurrent"),
+            tasks_current: number::<u64>(&properties, "TasksCurrent"),
+            result: text(&properties, "Result"),
+            exec_main_status: number::<i32>(&properties, "ExecMainStatus"),
+            dependencies: dependencies(&properties),
+        }))
+    }
+
     async fn load(&self, unit: &str) -> Result<OwnedObjectPath, BusError> {
         budgeted(
             "org.freedesktop.systemd1.Manager.LoadUnit",
@@ -165,6 +198,7 @@ impl SystemdBus for SystemBus {
                 load_state: non_empty(row.2),
                 active_state: non_empty(row.3),
                 sub_state: non_empty(row.4),
+                path: non_empty(row.6.as_str().to_owned()),
             })
             .collect())
     }
@@ -175,28 +209,20 @@ impl SystemdBus for SystemBus {
             Err(BusError::NoSuchUnit(_)) => return Ok(None),
             Err(error) => return Err(error),
         };
-        let properties = match self.properties(&path, unit).await {
-            Ok(properties) => properties,
-            Err(BusError::NoSuchUnit(_)) => return Ok(None),
-            Err(error) => return Err(error),
-        };
+        self.read_at(&path, unit).await
+    }
 
-        Ok(Some(UnitProperties {
-            name: text(&properties, "Id").unwrap_or_else(|| unit.to_owned()),
-            description: text(&properties, "Description"),
-            load_state: text(&properties, "LoadState"),
-            active_state: text(&properties, "ActiveState"),
-            sub_state: text(&properties, "SubState"),
-            unit_file_state: text(&properties, "UnitFileState"),
-            fragment_path: text(&properties, "FragmentPath"),
-            state_change_usec: number::<u64>(&properties, "StateChangeTimestamp"),
-            main_pid: number::<u32>(&properties, "MainPID"),
-            memory_current: number::<u64>(&properties, "MemoryCurrent"),
-            tasks_current: number::<u64>(&properties, "TasksCurrent"),
-            result: text(&properties, "Result"),
-            exec_main_status: number::<i32>(&properties, "ExecMainStatus"),
-            dependencies: dependencies(&properties),
-        }))
+    async fn unit_properties_at(
+        &self,
+        unit: &str,
+        path: &str,
+    ) -> Result<Option<UnitProperties>, BusError> {
+        let Ok(path) = OwnedObjectPath::try_from(path) else {
+            // A path this process cannot parse is not one systemd gave us; ask for it again
+            // rather than guess.
+            return self.unit_properties(unit).await;
+        };
+        self.read_at(&path, unit).await
     }
 
     async fn queue_job(&self, unit: &str, job: JobKind) -> Result<(), BusError> {

@@ -75,13 +75,17 @@ fn generic(record: &RecordValue) -> String {
         .strip_prefix("ono.")
         .unwrap_or_else(|| record.schema_id().name())
         .to_owned();
+    // The first identity value that says something. A schema whose declared identity a record
+    // cannot fill names a fallback that can (ADR-0553), and `socket/null` is not a name for
+    // anything.
     let identity = record
         .schema()
-        .identity()
+        .identity_for(record)
         .iter()
-        .find(|field| &***field != "provider")
-        .and_then(|field| record.get(field))
-        .and_then(|value| canonical_text(value).ok());
+        .filter(|field| &***field != "provider")
+        .filter_map(|field| record.get(field))
+        .filter(|value| !value.is_null())
+        .find_map(|value| canonical_text(value).ok());
     match identity {
         Some(identity) => format!("{short}/{identity}"),
         None => short,

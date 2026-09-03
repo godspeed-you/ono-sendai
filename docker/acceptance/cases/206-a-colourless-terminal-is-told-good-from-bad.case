@@ -1,0 +1,45 @@
+# Issue #12: ADR-0332 gave every §44 token a marker, made distinct markers a requirement of every
+# theme and checked them when a theme file is read — and no renderer ever emitted one, so §44's
+# "No functionality may depend on color alone" was enforced on the theme and unused by the output.
+# ADR-0558 emits the marker where the reader is a person with no colour to read.
+#
+# `script(1)` gives `ono` a terminal of its own, as case 150 does, because a shell writing into a
+# pipe is painted by no theme at all — and NO_COLOR on that terminal is exactly the reader the
+# marker exists for.
+case: a colourless terminal is told good from bad by more than a colour
+timeout: 120
+run: |
+  plain() {
+    printf '%s\n' "$1" > /tmp/marker-script.ono
+    NO_COLOR=1 script --quiet --return --command "ono /tmp/marker-script.ono" /dev/null 2>/dev/null | cat -v
+  }
+
+  echo "== a mutation that fails, at a terminal with no colour =="
+  out=$(plain 'remove file /no/such/path/at/all')
+  printf '%s\n' "$out"
+  if printf '%s' "$out" | grep -q '!! failed'; then
+    echo "the-failure-is-marked"
+  else
+    echo "WRONG a failed result carried no marker"
+  fi
+  if printf '%s' "$out" | grep -q 'ESC\['; then
+    echo "WRONG a colourless terminal was sent an escape sequence"
+  fi
+
+  echo "== and the same run into a pipe carries no marker at all =="
+  ono --no-config -c 'remove file /no/such/path/at/all' > /tmp/piped.txt 2>&1
+  cat /tmp/piped.txt
+  if grep -q '!!' /tmp/piped.txt; then
+    echo "WRONG a pipe was given the theme's marker"
+  else
+    echo "the-pipe-is-unchanged"
+  fi
+  if grep -q 'failed' /tmp/piped.txt; then echo "the-pipe-still-says-what-happened"; fi
+
+  echo done=ok
+exit: 0
+stdout-contains: the-failure-is-marked
+stdout-contains: the-pipe-is-unchanged
+stdout-contains: the-pipe-still-says-what-happened
+stdout-contains: done=ok
+stdout-not-contains: WRONG

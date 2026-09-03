@@ -34,6 +34,8 @@ struct Declaration {
     targets: Vec<String>,
     capabilities: Vec<String>,
     schemas: Vec<String>,
+    /// The token this provider's records give for a `provider` identity field (ADR-0559).
+    identity_token: Option<String>,
     exercises: Vec<(String, String)>,
     identity_strategy: Option<String>,
     /// The Rust identifier fragment this entry's tests are named after.
@@ -43,6 +45,7 @@ struct Declaration {
 /// One schema, as `docs/spec/schemas/*.v1.yaml` fixes it.
 struct SchemaDecl {
     identity: Vec<String>,
+    identity_fallback: Vec<String>,
     default_view: Vec<String>,
     fields: Vec<FieldDecl>,
 }
@@ -244,6 +247,11 @@ fn write_surface(
         "        schemas: &[{}],",
         quoted(&declaration.schemas)
     );
+    let token = declaration
+        .identity_token
+        .as_ref()
+        .map_or_else(|| "None".to_owned(), |token| format!("Some(\"{token}\")"));
+    let _ = writeln!(body, "        identity_token: {token},");
     let _ = writeln!(body, "    }}).await;");
     let _ = writeln!(body, "}}\n");
     Ok(())
@@ -276,6 +284,11 @@ fn write_schema_contract(
     );
     let _ = writeln!(body, "        schema: \"{schema}\",");
     let _ = writeln!(body, "        identity: &[{}],", quoted(&decl.identity));
+    let _ = writeln!(
+        body,
+        "        identity_fallback: &[{}],",
+        quoted(&decl.identity_fallback)
+    );
     let _ = writeln!(
         body,
         "        default_view: &[{}],",
@@ -402,6 +415,7 @@ fn read_declarations(spec: &Path) -> Result<Vec<Declaration>, GenerateError> {
             declarations.push(Declaration {
                 ident: String::new(),
                 exercises,
+                identity_token: string_at(provider, "identity_token"),
                 identity_strategy: provider
                     .get("spatial")
                     .and_then(|spatial| string_at(spatial, "identity_strategy")),
@@ -564,6 +578,7 @@ fn read_schemas(spec: &Path) -> Result<BTreeMap<String, SchemaDecl>, GenerateErr
             id,
             SchemaDecl {
                 identity: string_sequence(&document, "identity"),
+                identity_fallback: string_sequence(&document, "identity_fallback"),
                 default_view: document
                     .get("default_view")
                     .map(|view| string_sequence(view, "columns"))

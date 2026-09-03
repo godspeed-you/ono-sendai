@@ -52,6 +52,9 @@ pub struct Surface {
     pub capabilities: &'static [CapabilityClaim],
     /// The schemas it emits.
     pub schemas: &'static [&'static str],
+    /// The token its records give for a `provider` identity field, when its target is one two
+    /// providers can claim (ADR-0559).
+    pub identity_token: Option<&'static str>,
 }
 
 /// One field, as `docs/spec/schemas/*.v1.yaml` fixes it.
@@ -78,6 +81,8 @@ pub struct SchemaContract {
     pub schema: &'static str,
     /// The fields that identify one object.
     pub identity: &'static [&'static str],
+    /// The fields that join the identity when the declared one is incomplete (ADR-0553).
+    pub identity_fallback: &'static [&'static str],
     /// The columns a table shows by default.
     pub default_view: &'static [&'static str],
     /// Every field, in the order the registry declares them.
@@ -226,6 +231,14 @@ pub async fn assert_surface(surface: &Surface) {
         surface.provider
     );
 
+    assert_eq!(
+        provider.identity_token(),
+        surface.identity_token,
+        "`{}` must answer for the identity token its declaration names, or an action on a record \
+         it made would be performed by whichever provider registered first (ADR-0559)",
+        surface.provider
+    );
+
     let mut emitted: Vec<String> = provider
         .schemas()
         .iter()
@@ -292,6 +305,17 @@ pub async fn assert_schema_contract(contract: &SchemaContract) {
     assert_eq!(
         identity, contract.identity,
         "{} identifies an object by the fields its contract names",
+        contract.schema
+    );
+    let fallback: Vec<&str> = schema
+        .identity_fallback()
+        .iter()
+        .map(|name| &**name)
+        .collect();
+    assert_eq!(
+        fallback, contract.identity_fallback,
+        "{} falls back to the fields its contract names when its declared identity is \
+         incomplete",
         contract.schema
     );
     let view: Vec<&str> = schema.default_view().iter().map(|name| &**name).collect();
@@ -436,9 +460,11 @@ fn assert_records_conform(case: &TargetCase, values: &[Value]) {
                     case.identity_strategy.unwrap_or_default()
                 );
             }
+            // The identity a record actually carries, which for a schema with a fallback is
+            // wider than the declared one (ADR-0553).
             let complete = record
                 .schema()
-                .identity()
+                .identity_for(record)
                 .iter()
                 .all(|field| !matches!(record.get(field), None | Some(Value::Null)));
             if complete {

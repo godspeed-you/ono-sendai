@@ -416,6 +416,18 @@ fn schemas_page(files: &BTreeMap<String, Yaml>) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+        let fallback = string_sequence(document, "identity_fallback");
+        if !fallback.is_empty() {
+            let _ = writeln!(
+                page,
+                "\nWhen that identity is incomplete, it is joined by: {}",
+                fallback
+                    .iter()
+                    .map(|field| format!("`{field}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
         let columns = document
             .get("default_view")
             .map(|view| string_sequence(view, "columns"))

@@ -1286,3 +1286,72 @@ fn should_answer_an_empty_stream_for_an_exit_that_exists_and_holds_nothing() {
         run.output()
     );
 }
+
+#[test]
+fn should_refuse_a_withheld_group_when_it_was_asked_for_by_type_rather_than_by_relation() {
+    // §42.4 and §35.2: a group this user may not read is not an empty one. ADR-0271 turned the
+    // false empty into a structured refusal for `near <relation>`, and the guard was written
+    // `if named_relation.is_some()`, so `near --type socket` — the other spelling of the same
+    // question — still fell through to an empty stream at status 0 (issue #26, ADR-0557).
+    let by_relation = ono("enter process 1; near sockets");
+    if by_relation.status().is_success() {
+        ono_testkit::skipped(
+            SkipReason::MissingPrivilege,
+            "this run may read pid 1's descriptors, so no group of that place is withheld",
+        );
+        return;
+    }
+    assert!(
+        by_relation.stderr().contains("Ono-Sendai-E1008"),
+        "the premise: the `sockets` exit of pid 1 is refused to this user, got {:?}",
+        by_relation.stderr()
+    );
+
+    let by_type = ono("enter process 1; near --type socket");
+
+    assert!(
+        !by_type.status().is_success(),
+        "a refused group answered through `--type` is a refusal, not an empty stream at status \
+         0: stdout {:?}, stderr {:?}",
+        by_type.stdout(),
+        by_type.stderr()
+    );
+    assert!(
+        by_type.stderr().contains("Ono-Sendai-E1008"),
+        "the two spellings of one question give one answer, got {:?}",
+        by_type.stderr()
+    );
+}
+
+#[test]
+fn should_answer_an_empty_stream_when_the_type_asked_for_is_not_what_a_refused_exit_leads_to() {
+    // The other half of the same rule. `--type` filters *members*, so a place's other exits are
+    // still in the answer with nothing in them, and a refusal taken from any of them would
+    // answer `near --type mount` with "the `files` of this place could not be read" — a refusal
+    // about a question nobody asked (ADR-0557). A group is asked about by type when the type it
+    // leads to is the type that was asked for.
+    let denied = ono("enter process 1; near files");
+    if denied.status().is_success() {
+        ono_testkit::skipped(
+            SkipReason::MissingPrivilege,
+            "this run may read pid 1's descriptors, so no exit of that place is refused",
+        );
+        return;
+    }
+
+    let run = ono("enter process 1; near --type mount | count | to json");
+
+    assert!(
+        run.status().is_success(),
+        "pid 1 has no mount exit, and that is an answer rather than a refusal about its files: \
+         stdout {:?}, stderr {:?}",
+        run.stdout(),
+        run.stderr()
+    );
+    assert_eq!(
+        run.stdout().lines().rfind(|line| line.starts_with('[')),
+        Some("[0]"),
+        "got {:?}",
+        run.output()
+    );
+}
