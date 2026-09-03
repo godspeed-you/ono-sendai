@@ -65,7 +65,12 @@ impl CommandImpl for Look {
 
     fn invoke_async<'a>(&'a self, ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
         Box::pin(async move {
-            let arguments = ctx.arguments();
+            // A words-mode command that reads values resolves its arguments first: `--type
+            // ["process"]`, `--limit (1 + 1)` and `--changed (1h)` are expressions until
+            // something evaluates them, and an option nobody evaluated reads as an option nobody
+            // wrote (ADR-0219, ADR-0556).
+            let arguments = ctx.arguments().evaluated(ctx.scope())?;
+            let arguments = &arguments;
             let all = arguments.flag("all");
             let json = arguments.flag("json");
             let now = Timestamp::now();
@@ -562,7 +567,12 @@ impl CommandImpl for Near {
 
     fn invoke_async<'a>(&'a self, ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
         Box::pin(async move {
-            let arguments = ctx.arguments();
+            // A words-mode command that reads values resolves its arguments first: `--type
+            // ["process"]`, `--limit (1 + 1)` and `--changed (1h)` are expressions until
+            // something evaluates them, and an option nobody evaluated reads as an option nobody
+            // wrote (ADR-0219, ADR-0556).
+            let arguments = ctx.arguments().evaluated(ctx.scope())?;
+            let arguments = &arguments;
             let mut request = NeighborhoodRequest::new().all(arguments.flag("all"));
             let named_relation = arguments.selector("relation").and_then(text_of);
             if let Some(relation) = named_relation.clone() {
@@ -1057,7 +1067,12 @@ impl CommandImpl for Follow {
 
     fn invoke_async<'a>(&'a self, ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
         Box::pin(async move {
-            let arguments = ctx.arguments();
+            // A words-mode command that reads values resolves its arguments first: `--type
+            // ["process"]`, `--limit (1 + 1)` and `--changed (1h)` are expressions until
+            // something evaluates them, and an option nobody evaluated reads as an option nobody
+            // wrote (ADR-0219, ADR-0556).
+            let arguments = ctx.arguments().evaluated(ctx.scope())?;
+            let arguments = &arguments;
             let relation = arguments
                 .selector("relation")
                 .and_then(text_of)

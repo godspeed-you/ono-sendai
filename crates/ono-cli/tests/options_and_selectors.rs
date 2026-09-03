@@ -641,3 +641,79 @@ fn should_trace_the_connection_that_does_have_the_requested_remote() {
     drop(accepted);
     drop(client);
 }
+
+// --- an option written as an expression is an option (issue #24, ADR-0420, ADR-0556) ----------
+//
+// A words-mode command's option may be written as a word or as an expression: the language
+// spells a list `["get"]` and an arithmetic argument `(1 + 1)`, and ADR-0009 keeps an expression
+// unevaluated until something knows what it means. A command that reads `option()` without
+// evaluating first sees nothing and takes the absence for "not written", so the reader asks a
+// narrower question and gets a wider answer with nothing said about it. ADR-0420 closed that in
+// `trace`; these three close the sites it recorded and left.
+
+/// How many values a script answered with.
+fn counted(script: &str) -> i64 {
+    let run = Shell::new().args(["-c", script]).run();
+    run.assert_success();
+    let counted: Value = serde_yaml_ng::from_str(run.stdout()).unwrap_or(Value::Null);
+    counted
+        .as_sequence()
+        .and_then(|items| items.first())
+        .and_then(serde_yaml_ng::Value::as_i64)
+        .unwrap_or_else(|| panic!("a count answers with one number, got {:?}", run.stdout()))
+}
+
+#[test]
+fn should_filter_get_command_by_a_verb_written_as_an_expression() {
+    let written_as_a_word = counted("get command --verb get | count | to json");
+    let computed = counted("get command --verb (\"ge\" + \"t\") | count | to json");
+    let unfiltered = counted("get command | count | to json");
+
+    assert!(
+        written_as_a_word < unfiltered,
+        "the premise: `--verb get` restricts the registry"
+    );
+    assert_eq!(
+        computed, written_as_a_word,
+        "`--verb (\"ge\" + \"t\")` is the same question as `--verb get`, written as the \
+         expression the language lets an argument be"
+    );
+}
+
+#[test]
+fn should_restrict_a_table_to_columns_written_as_a_list() {
+    let run = Shell::new()
+        .args([
+            "-c",
+            "get process | take 2 | format table --columns [\"pid\"]",
+        ])
+        .env("NO_COLOR", "1")
+        .run();
+    run.assert_success();
+    let header = run.stdout().lines().next().unwrap_or_default().to_owned();
+
+    assert_eq!(
+        header.split_whitespace().collect::<Vec<_>>(),
+        ["PID"],
+        "`--columns [\"pid\"]` names one column, so the table shows one: {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_honour_a_near_limit_written_as_an_expression() {
+    let unlimited = counted("near | count | to json");
+    assert!(
+        unlimited > 2,
+        "the premise: a place on a running Linux host has more than two neighbours, and this \
+         one answered with {unlimited}"
+    );
+    let written_as_a_word = counted("near --limit 2 | count | to json");
+    let written_as_an_expression = counted("near --limit (1 + 1) | count | to json");
+
+    assert_eq!(written_as_a_word, 2, "the premise: `--limit 2` limits");
+    assert_eq!(
+        written_as_an_expression, written_as_a_word,
+        "`--limit (1 + 1)` is a limit of two, and an option written as an expression is an option"
+    );
+}

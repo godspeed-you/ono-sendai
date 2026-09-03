@@ -329,7 +329,7 @@ async fn should_render_a_table_with_a_column_per_field() {
 #[tokio::test]
 async fn should_render_only_the_columns_that_were_asked_for() {
     let ran = run(
-        "get process | format table --columns [name]",
+        "get process | format table --columns [\"name\"]",
         &providers(FixtureProvider::new()),
     )
     .await
@@ -337,7 +337,26 @@ async fn should_render_only_the_columns_that_were_asked_for() {
 
     let text = ran.text();
     assert!(text.contains("NAME"), "{text}");
-    assert!(!text.contains("OWNER"), "{text}");
+    assert!(
+        !text.contains("PID"),
+        "`--columns` names the whole table, so a default-view column nobody asked for is not in \
+         it: {text}"
+    );
+}
+
+#[tokio::test]
+async fn should_refuse_a_column_list_holding_a_bare_name() {
+    // ADR-0420's third row, at the second site: `[name]` is a list holding a bare name, and a
+    // bare name in an expression is a field of the current value. There is none, so the answer
+    // is the structured refusal of §43 rather than a table nobody asked for (ADR-0556).
+    let error = run(
+        "get process | format table --columns [name]",
+        &providers(FixtureProvider::new()),
+    )
+    .await
+    .expect_err("`name` is not a value this shell was given");
+
+    assert_eq!(error.code(), ErrorCode::TypeMismatch);
 }
 
 #[tokio::test]

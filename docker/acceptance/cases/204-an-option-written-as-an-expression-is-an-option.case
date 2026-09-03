@@ -1,0 +1,38 @@
+# Issue #24: a words-mode command that reads `option()` without evaluating first drops an argument
+# written as an expression, silently — the reader asks a narrower question and gets a wider answer
+# with nothing said about it. ADR-0420 closed it in `trace` and recorded the three sites it left;
+# ADR-0556 closes those: `get command`/`help`/`type`, `to text`/`format table`, and the spatial
+# `look`/`near`/`follow`.
+case: an option written as an expression is the option it spells
+timeout: 90
+env: NO_COLOR=1
+run: |
+  echo "== get command --verb =="
+  word=$(ono --no-config -c 'get command --verb get | count | to json' | tr -d '[] ')
+  computed=$(ono --no-config -c 'get command --verb ("ge" + "t") | count | to json' | tr -d '[] ')
+  all=$(ono --no-config -c 'get command | count | to json' | tr -d '[] ')
+  echo "verb-as-a-word=$word verb-computed=$computed all=$all"
+  if [ "$word" -lt "$all" ]; then echo "the-word-spelling-restricts"; else echo "WRONG --verb get restricted nothing"; fi
+  if [ "$computed" = "$word" ]; then echo "the-computed-spelling-restricts-the-same"; else echo "WRONG the computed verb was dropped"; fi
+
+  echo "== format table --columns =="
+  ono --no-config -c 'get process | take 2 | format table --columns ["pid"]' > /tmp/columns.txt
+  cat /tmp/columns.txt
+  header=$(head -1 /tmp/columns.txt | tr -s ' ' | sed 's/^ *//;s/ *$//')
+  if [ "$header" = "PID" ]; then echo "the-table-shows-the-column-that-was-named"; else echo "WRONG the header is $header"; fi
+
+  echo "== near --limit =="
+  unlimited=$(ono --no-config -c 'near | count | to json' | tr -d '[] ')
+  limited=$(ono --no-config -c 'near --limit 2 | count | to json' | tr -d '[] ')
+  expression=$(ono --no-config -c 'near --limit (1 + 1) | count | to json' | tr -d '[] ')
+  echo "near=$unlimited limit-2=$limited limit-expression=$expression"
+  if [ "$expression" = "$limited" ]; then echo "the-computed-limit-limits"; else echo "WRONG the computed limit was dropped"; fi
+
+  echo done=ok
+exit: 0
+stdout-contains: the-word-spelling-restricts
+stdout-contains: the-computed-spelling-restricts-the-same
+stdout-contains: the-table-shows-the-column-that-was-named
+stdout-contains: the-computed-limit-limits
+stdout-contains: done=ok
+stdout-not-contains: WRONG
