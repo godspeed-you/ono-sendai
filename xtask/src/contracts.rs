@@ -462,6 +462,17 @@ fn collect_schemas(
                 });
             }
         }
+        for column in string_sequence(document, "identity_fallback") {
+            if !fields.contains(&column) {
+                problems.push(Problem {
+                    location: location.clone(),
+                    detail: format!(
+                        "`{id}` falls back to `{column}` to identify what its declared identity \
+                         cannot, and `{column}` is not one of its fields"
+                    ),
+                });
+            }
+        }
         for column in default_view_columns(document) {
             if !fields.contains(&column) {
                 problems.push(Problem {

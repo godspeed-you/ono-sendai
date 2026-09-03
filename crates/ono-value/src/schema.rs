@@ -368,6 +368,10 @@ pub struct Schema {
     fields: Arc<[FieldDef]>,
     positions: HashMap<Arc<str>, usize>,
     identity: Arc<[Arc<str>]>,
+    identity_fallback: Arc<[Arc<str>]>,
+    /// `identity` followed by `identity_fallback`, assembled once so
+    /// [`Schema::identity_for`] can hand back a slice rather than build one per record.
+    identity_extended: Arc<[Arc<str>]>,
     default_view: Arc<[Arc<str>]>,
     doc: Option<Arc<str>>,
 }
@@ -381,6 +385,7 @@ impl Schema {
             name: name.into(),
             fields: Vec::new(),
             identity: Vec::new(),
+            identity_fallback: Vec::new(),
             default_view: Vec::new(),
             doc: None,
         }
@@ -395,6 +400,8 @@ impl Schema {
             fields: Arc::from(Vec::new()),
             positions: HashMap::new(),
             identity: Arc::from(Vec::new()),
+            identity_fallback: Arc::from(Vec::new()),
+            identity_extended: Arc::from(Vec::new()),
             default_view: Arc::from(Vec::new()),
             doc: None,
         }
@@ -441,6 +448,39 @@ impl Schema {
     #[must_use]
     pub fn identity(&self) -> &[Arc<str>] {
         &self.identity
+    }
+
+    /// The fields that join the identity when the declared one is incomplete (ADR-0553).
+    ///
+    /// A declared identity can be right about the objects that carry it and silent about the
+    /// ones that do not: a filesystem with no UUID, a `TIME_WAIT` connection with no inode. The
+    /// fallback names what tells those apart, and it is used only for them.
+    #[must_use]
+    pub fn identity_fallback(&self) -> &[Arc<str>] {
+        &self.identity_fallback
+    }
+
+    /// The fields that identify `record`.
+    ///
+    /// The declared identity, unless one of its components is null in this record — then the
+    /// fallback fields join it, because a null is the absence of a value rather than a value
+    /// (spec §10.5), and an identity with a hole in it cannot tell two objects apart. The
+    /// declared components stay in the identity either way: what the record does say about which
+    /// object it is remains part of the answer.
+    #[must_use]
+    pub fn identity_for(&self, record: &RecordValue) -> &[Arc<str>] {
+        if self.identity_fallback.is_empty() {
+            return &self.identity;
+        }
+        let complete = self
+            .identity
+            .iter()
+            .all(|name| record.get(name).is_some_and(|value| !value.is_null()));
+        if complete {
+            &self.identity
+        } else {
+            &self.identity_extended
+        }
     }
 
     /// The columns a table shows unless the user asks for others (spec §27.3).
@@ -528,6 +568,7 @@ impl PartialEq for Schema {
             && self.name == other.name
             && self.fields == other.fields
             && self.identity == other.identity
+            && self.identity_fallback == other.identity_fallback
             && self.default_view == other.default_view
     }
 }
@@ -539,6 +580,7 @@ pub struct SchemaBuilder {
     name: Arc<str>,
     fields: Vec<FieldDef>,
     identity: Vec<Arc<str>>,
+    identity_fallback: Vec<Arc<str>>,
     default_view: Vec<Arc<str>>,
     doc: Option<Arc<str>>,
 }
@@ -555,6 +597,14 @@ impl SchemaBuilder {
     #[must_use]
     pub fn identity<'a>(mut self, fields: impl IntoIterator<Item = &'a str>) -> Self {
         self.identity = fields.into_iter().map(Arc::from).collect();
+        self
+    }
+
+    /// Declares the fields that join the identity when the declared one is incomplete
+    /// (ADR-0553).
+    #[must_use]
+    pub fn identity_fallback<'a>(mut self, fields: impl IntoIterator<Item = &'a str>) -> Self {
+        self.identity_fallback = fields.into_iter().map(Arc::from).collect();
         self
     }
 
@@ -588,7 +638,12 @@ impl SchemaBuilder {
                 ));
             }
         }
-        for name in self.identity.iter().chain(self.default_view.iter()) {
+        for name in self
+            .identity
+            .iter()
+            .chain(self.identity_fallback.iter())
+            .chain(self.default_view.iter())
+        {
             if !positions.contains_key(name) {
                 return Err(ErrorValue::new(
                     ErrorCode::TypeUnknownField,
@@ -596,12 +651,20 @@ impl SchemaBuilder {
                 ));
             }
         }
+        let identity_extended: Arc<[Arc<str>]> = self
+            .identity
+            .iter()
+            .chain(self.identity_fallback.iter())
+            .cloned()
+            .collect();
         Ok(Schema {
             id: self.id,
             name: self.name,
             fields: self.fields.into(),
             positions,
             identity: self.identity.into(),
+            identity_fallback: self.identity_fallback.into(),
+            identity_extended,
             default_view: self.default_view.into(),
             doc: self.doc,
         })
@@ -849,7 +912,7 @@ pub fn classify_change(old: &Schema, new: &Schema) -> SchemaDiff {
             detail: format!("the type was renamed from {} to {}", old.name(), new.name()).into(),
         });
     }
-    if old.identity() != new.identity() {
+    if old.identity() != new.identity() || old.identity_fallback() != new.identity_fallback() {
         changes.push(SchemaChange {
             field: None,
             kind: SchemaChangeKind::IdentityChanged,

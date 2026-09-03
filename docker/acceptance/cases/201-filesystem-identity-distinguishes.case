@@ -1,0 +1,35 @@
+# Issue #11: `ono.filesystem/1` identified by `(uuid, source)`, and a pseudo filesystem carries
+# neither a UUID nor a distinguishing source — several call themselves `none` — so two different
+# filesystems reduced to one identity. ADR-0553 lets a schema name a fallback the identity is
+# joined by when a record cannot complete the declared one, and `ono.filesystem/1` names the
+# superblock's device number. What a person can check from the shell is what this case checks:
+# every filesystem the container has is its own object.
+case: every filesystem answers with an identity no other filesystem shares
+timeout: 120
+env: NO_COLOR=1
+run: |
+  ono --no-config -c 'get filesystem | inspect | to json' > /tmp/fs.json
+
+  total=$(ono --no-config -c 'get filesystem | count | to json' | tr -d '[]' | tr -d ' ')
+  unique=$(grep -o '"identity":{[^}]*}' /tmp/fs.json | sort -u | wc -l)
+  echo "filesystems=$total identities=$unique"
+  if [ "$total" -gt 1 ]; then echo "more-than-one-filesystem"; else echo "WRONG too few filesystems to tell apart: $total"; fi
+  if [ "$total" = "$unique" ]; then echo "every-filesystem-is-its-own-object"; else echo "WRONG $total filesystems share $unique identities"; fi
+
+  echo "== a filesystem with no UUID is identified by its device number =="
+  ono --no-config -c 'get filesystem | where uuid == null | take 1 | inspect | to json' > /tmp/nouuid.json
+  if grep -q '"device_number"' /tmp/nouuid.json; then
+    grep -q '"identity":{[^}]*"device_number"' /tmp/nouuid.json && echo "identity-names-the-device-number"
+  else
+    echo "no-uuid-less-filesystem-here"
+  fi
+
+  echo "== the declared identity is still what the reference page says =="
+  ono --no-config -c 'get filesystem | take 1 | inspect | to json' | grep -q '"source"' && echo "identity-still-names-the-source"
+  echo done=ok
+exit: 0
+stdout-contains: more-than-one-filesystem
+stdout-contains: every-filesystem-is-its-own-object
+stdout-contains: identity-still-names-the-source
+stdout-contains: done=ok
+stdout-not-contains: WRONG

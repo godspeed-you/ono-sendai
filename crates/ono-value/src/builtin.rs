@@ -229,6 +229,10 @@ fn parse_schema(contract: &str) -> Result<Schema, ErrorValue> {
     if !identity.is_empty() {
         builder = builder.identity(identity.iter().map(String::as_str));
     }
+    let fallback: Vec<String> = list(&document, "identity_fallback");
+    if !fallback.is_empty() {
+        builder = builder.identity_fallback(fallback.iter().map(String::as_str));
+    }
     let columns: Vec<String> = document
         .get("default_view")
         .map(|view| list(view, "columns"))

@@ -71,6 +71,10 @@ impl ObjectId {
     ///
     /// One present component is enough. `ono.route/1` identifies by five fields and the default
     /// route has no destination; that route is still an object.
+    ///
+    /// Which fields those are is the record's own answer rather than the schema's: a schema that
+    /// declares an identity fallback extends the identity with it for exactly the records whose
+    /// declared identity has a hole in it (ADR-0553).
     #[must_use]
     pub fn of(record: &RecordValue) -> Option<Self> {
         let schema = record.schema();
@@ -78,7 +82,7 @@ impl ObjectId {
             return None;
         }
         let values: Vec<Value> = schema
-            .identity()
+            .identity_for(record)
             .iter()
             .map(|field| record.get(field).cloned().unwrap_or(Value::Null))
             .collect();

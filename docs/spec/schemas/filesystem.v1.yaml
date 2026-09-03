@@ -6,6 +6,11 @@ id: ono.filesystem/1
 name: Filesystem
 summary: A filesystem and its capacity, mounted or not.
 identity: [uuid, source]
+# A pseudo filesystem carries no UUID and often no distinguishing source either — three mounts on
+# an ordinary desktop call themselves `none` — so `(uuid, source)` makes several different things
+# one object. The superblock's device number tells them apart, and it joins the identity exactly
+# when the declared one is incomplete (ADR-0553).
+identity_fallback: [device_number]
 fields:
   source:
     type: string
@@ -45,6 +50,14 @@ fields:
     type: bool
     nullable: true
     doc: Whether the filesystem is currently mounted read-only; null when not mounted.
+  device_number:
+    type: string
+    nullable: true
+    doc: >-
+      The `major:minor` number of the superblock, as `mountinfo(5)` prints it. Unlike `device`
+      this is present for anonymous devices too — `0:31` is a pstore mount — which is what makes
+      it the discriminator for filesystems that carry no UUID. Null when the provider cannot
+      read it.
   device:
     type: ref<ono.device/1>
     nullable: true
