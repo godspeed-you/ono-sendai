@@ -41,6 +41,7 @@ capabilities:
     - secret.use: {secrets: ["api-token"]}
     - process.exec: {programs: ["/bin/**", "/usr/bin/**"]}
     - network.connect: {hosts: ["127.0.0.1"], ports: ["*"]}
+    - network.listen: {ports: ["*"]}
 network:
   outbound: none
 "#,
@@ -250,4 +251,44 @@ fn should_broker_a_tcp_connection_for_a_granted_package() {
         "the bytes went out and came back through the broker; stdout {shown:?} stderr {:?}",
         run.stderr()
     );
+}
+
+#[test]
+fn should_broker_a_listener_for_a_granted_package_and_answer_its_first_peer() {
+    use std::io::{Read, Write};
+    // A free port, released again so the package can bind it.
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("a port")
+        .local_addr()
+        .expect("addr")
+        .port();
+    let home = scratch();
+    plugin_home(&home);
+    let peer = std::thread::spawn(move || {
+        for _ in 0..50 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if let Ok(mut socket) = std::net::TcpStream::connect(("127.0.0.1", port)) {
+                let _ = socket.write_all(b"hello\n");
+                let mut reply = String::new();
+                let _ = socket.read_to_string(&mut reply);
+                return reply;
+            }
+        }
+        String::new()
+    });
+    let run = ono(
+        &home,
+        &format!(
+            r#"grant capability network.listen --plugin dev.example.echo --scope "ports={port}" | count; load plugin dev.example.echo; echo:listen --port {port} | to json"#
+        ),
+    );
+    let reply = peer.join().expect("the peer thread");
+    run.assert_success();
+    let shown = run.stdout();
+    assert!(
+        shown.contains("\"heard: hello\""),
+        "the package heard its peer through the broker; stdout {shown:?} stderr {:?}",
+        run.stderr()
+    );
+    assert_eq!(reply.trim(), "ack: hello", "and the peer heard the package");
 }

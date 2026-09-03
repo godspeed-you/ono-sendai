@@ -89,6 +89,7 @@ capabilities:
     - secret.use: {secrets: ["api-token"]}
     - process.exec: {programs: ["/bin/**", "/usr/bin/**"]}
     - network.connect: {hosts: ["127.0.0.1"], ports: ["8080"]}
+    - network.listen: {ports: ["9090"]}
 network:
   outbound: none
 "#
@@ -127,6 +128,7 @@ fn fully_granted(host: TestHost) -> TestHost {
         .grant(Capability::SecretUse)
         .grant(Capability::ProcessExec)
         .grant(Capability::NetworkConnect)
+        .grant(Capability::NetworkListen)
 }
 
 fn values_of(events: &[StreamEvent]) -> Vec<Value> {
@@ -1158,6 +1160,7 @@ async fn should_refuse_the_context_and_the_schemas_to_a_package_without_the_gran
 #[derive(Debug, Default)]
 struct FakeHost {
     signals: std::sync::Mutex<Vec<(Json, String)>>,
+    heard: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     appended: std::sync::Mutex<Vec<(String, Json)>>,
     contributed: std::sync::Mutex<Vec<(String, Json)>>,
 }
@@ -1348,6 +1351,41 @@ impl ono_kuang_supervisor::HostServices for FakeHost {
             }
         });
         Ok(ono_kuang_supervisor::Connection { incoming, outgoing })
+    }
+    async fn network_listen(
+        &self,
+        port: u16,
+        _protocol: String,
+    ) -> Result<
+        tokio::sync::mpsc::Receiver<(String, ono_kuang_supervisor::Connection)>,
+        ono_kuang_supervisor::HostError,
+    > {
+        // One peer connects a moment after the listener opens, says hello, and reports what
+        // the package answered into the host's own log.
+        let (accepted_tx, accepted) = tokio::sync::mpsc::channel(2);
+        let heard = std::sync::Arc::clone(&self.heard);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            let (in_tx, incoming) = tokio::sync::mpsc::channel(4);
+            let (outgoing, mut out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(4);
+            let chunk = Value::Bytes(bytes::Bytes::from_static(b"hello from the peer\n"));
+            let _ = in_tx
+                .send(Ok(json!({"bytes": ono_value::to_json(&chunk)})))
+                .await;
+            let _ = accepted_tx
+                .send((
+                    format!("peer:{port}"),
+                    ono_kuang_supervisor::Connection { incoming, outgoing },
+                ))
+                .await;
+            while let Some(bytes) = out_rx.recv().await {
+                heard
+                    .lock()
+                    .expect("lock")
+                    .push(String::from_utf8_lossy(&bytes).into_owned());
+            }
+        });
+        Ok(accepted)
     }
     async fn secret_request(
         &self,
@@ -1896,6 +1934,56 @@ async fn should_broker_a_connection_within_the_granted_hosts_and_ports_and_refus
             .any(|event| event.capability == "network.connect"
                 && event.result == AuditResult::Denied),
         "every destination is audited, the refused one too (spec §31.21)"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_broker_a_listener_and_hand_each_accepted_connection_to_the_package_as_a_handle() {
+    let host = std::sync::Arc::new(FakeHost::default());
+    let mut scope = JsonMap::new();
+    scope.insert("ports".to_owned(), json!(["9090"]));
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .host(host.clone())
+        .grant_scoped(Capability::NetworkListen, scope)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.listen",
+            args(&[("port", json!(9090))]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    assert_eq!(
+        strings(&events),
+        ["listening", "heard: hello from the peer"],
+        "the accepted connection is a handle the package reads like one it opened"
+    );
+    assert_eq!(
+        host.heard.lock().expect("lock").as_slice(),
+        ["ack: hello from the peer\n"],
+        "and writes like one it opened"
+    );
+
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.listen",
+            args(&[("port", json!(22))]),
+        )
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Failed);
+    assert_eq!(
+        result.error.expect("structured").name,
+        "capability.scope_violation",
+        "a port outside the granted list is refused before the host"
     );
     plugin
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)

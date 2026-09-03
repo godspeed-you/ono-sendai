@@ -285,6 +285,18 @@ One entry per phase, newest first. The reasoning is kept because each entry reco
 issue that ordered the work did not know.
 
 
+- **#3, fifth increment (2026-09-03): `network.listen`, and `network.request` decided.**
+  ADR-0571, decided with the user: a request is the package's own protocol over the brokered
+  connection, so the host carries no HTTP client and answers `network.request` with
+  `provider.unavailable` naming `network.connect`. A listener is checked against `ports`,
+  audited, bound on the loopback address, and read as a stream whose values are
+  `{connection: handle, peer}`; each handle is a connection the package reads and writes like
+  one it opened. What the increment found: a listener's accepted connections must become handles
+  inside `streams.next` itself, because the actor that owns the handle table is the one waiting
+  in that call — routing them through its message loop waits out the deadline. Proven by a
+  conformance case over the fake host, a run through the binary with a real peer, and acceptance
+  case 216. Fifteen of sixteen domains have every call the host will serve; `views` is the last
+  and is next, as the full lens.
 - **#3, fourth increment (2026-09-03): `process.exec` and `network.connect`.** ADR-0570. A
   program is checked as the resolved path against the `programs` glob scope (ADR-0015 T11) and
   runs through the same confined spawn a native package gets, in a directory of its own with

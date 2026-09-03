@@ -225,6 +225,12 @@ fn honest() -> Plugin {
             &["network.connect"],
         ))
         .contribute_command(command(
+            "listen",
+            "Listen on a brokered port, answer the first connection, and report what it said.",
+            "stream<string>",
+            &["network.listen"],
+        ))
+        .contribute_command(command(
             "models",
             "List the model providers this package may use, through the broker.",
             "stream<string>",
@@ -672,6 +678,68 @@ fn honest() -> Plugin {
                 Err(error) => return Outcome::Failed(error),
             }
             let _ = ctx.host_call(method::NETWORK_CLOSE, json!({"connection": handle}));
+            Outcome::Completed
+        })
+        .command(&format!("{PACKAGE}.command.listen"), |ctx| {
+            let port = int_argument(ctx, "port", 0);
+            let listener = match ctx.host_call(
+                method::NETWORK_LISTEN,
+                json!({"port": port, "protocol": "tcp"}),
+            ) {
+                Ok(opened) => opened.get("handle").and_then(serde_json::Value::as_u64),
+                Err(error) => return Outcome::Failed(error),
+            };
+            let Some(listener) = listener else {
+                return Outcome::Completed;
+            };
+            let _ = ctx.emit(&Value::String("listening".into()));
+            // The first connection: read one chunk, answer it, and close both.
+            let accepted = match ctx.host_call(
+                method::STREAMS_NEXT,
+                json!({"handle": listener, "max": 1, "deadline": 10}),
+            ) {
+                Ok(answer) => answer
+                    .get("values")
+                    .and_then(serde_json::Value::as_array)
+                    .and_then(|values| values.first())
+                    .and_then(|value| value.get("connection"))
+                    .and_then(serde_json::Value::as_u64),
+                Err(error) => return Outcome::Failed(error),
+            };
+            let Some(connection) = accepted else {
+                let _ = ctx.emit(&Value::String("nobody connected".into()));
+                let _ = ctx.host_call(method::NETWORK_CLOSE, json!({"connection": listener}));
+                return Outcome::Completed;
+            };
+            if let Ok(answer) = ctx.host_call(
+                method::STREAMS_NEXT,
+                json!({"handle": connection, "max": 1, "deadline": 5}),
+            ) {
+                for value in answer
+                    .get("values")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    let hex = value
+                        .get("bytes")
+                        .and_then(|bytes| bytes.get("$bytes"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default();
+                    let decoded: Vec<u8> = (0..hex.len())
+                        .step_by(2)
+                        .filter_map(|at| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok())
+                        .collect();
+                    let heard = String::from_utf8_lossy(&decoded).trim().to_owned();
+                    let _ = ctx.emit(&Value::String(format!("heard: {heard}").into()));
+                    let _ = ctx.host_call(
+                        method::STREAMS_EMIT,
+                        json!({"handle": connection, "values": [format!("ack: {heard}\n")]}),
+                    );
+                }
+            }
+            let _ = ctx.host_call(method::NETWORK_CLOSE, json!({"connection": connection}));
+            let _ = ctx.host_call(method::NETWORK_CLOSE, json!({"connection": listener}));
             Outcome::Completed
         })
         .command(&format!("{PACKAGE}.command.models"), |ctx| {

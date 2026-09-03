@@ -1,0 +1,58 @@
+# Issue #3 (c), ADR-0571: `network.listen`. A package granted `network.listen` for a port binds
+# it through the host, is handed each accepted connection as a handle, reads what the peer said
+# and answers it; the peer is the case itself over bash's `/dev/tcp`. `network.request` is not
+# the host's to serve and says where the door is.
+case: a package listens on a brokered port
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - network.listen: {ports: ["40000-40999"]}
+  network:
+    outbound: none
+  MANIFEST
+  port=40123
+
+  echo "== the package listens, and the case is its peer (§31.21) =="
+  ( for i in $(seq 1 50); do sleep 0.2; if exec 3<>/dev/tcp/127.0.0.1/$port 2>/dev/null; then printf 'hello\n' >&3; read -r reply <&3; echo "peer heard: $reply"; exec 3>&-; break; fi; done ) &
+  ono -c "grant capability network.listen --plugin dev.example.echo --scope \"ports=$port\" | count; load plugin dev.example.echo; echo:listen --port $port | to json"
+  wait
+  ono -c "grant capability network.listen --plugin dev.example.echo --scope \"ports=$port\" | count; load plugin dev.example.echo; echo:listen --port $port | to json" > "$home/second.out" 2>&1 &
+  ( for i in $(seq 1 50); do sleep 0.2; if exec 3<>/dev/tcp/127.0.0.1/$port 2>/dev/null; then printf 'again\n' >&3; read -r reply <&3; echo "peer heard: $reply"; exec 3>&-; break; fi; done )
+  wait
+  grep -q '"heard: again"' "$home/second.out" && echo "package-heard-its-peer"
+
+  echo "== a port outside the granted list is refused (§31.16) =="
+  export XDG_STATE_HOME="$home/state-port"
+  ono -c 'grant capability network.listen --plugin dev.example.echo --scope "ports=40123" | count; load plugin dev.example.echo; echo:listen --port 41000 | to json; get audit --plugin dev.example.echo | where action == "network.listen" | select result | to json' | grep -q '"result":"denied"' && echo "port-outside-scope-denied"
+exit: 0
+stdout-contains: peer heard: ack: hello
+stdout-contains: peer heard: ack: again
+stdout-contains: package-heard-its-peer
+stdout-contains: port-outside-scope-denied

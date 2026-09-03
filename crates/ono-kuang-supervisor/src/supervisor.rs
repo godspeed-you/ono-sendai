@@ -1069,6 +1069,8 @@ struct Inbound {
     live: Option<crate::host::LiveStream>,
     /// Where the plugin's own bytes go, when the stream is a connection.
     writer: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
+    /// The connections a listener accepted and the plugin has not been handed yet.
+    accepted: Option<tokio::sync::mpsc::Receiver<(String, crate::host::Connection)>>,
     complete: bool,
     error: Option<WireError>,
 }
@@ -1932,15 +1934,18 @@ impl Actor {
             method::PROCESS_EXEC => self.host_process_exec(seq, params).await,
             method::NETWORK_CONNECT => self.host_network_connect(seq, params).await,
             method::NETWORK_CLOSE => self.host_network_close(seq, params).await,
-            method::NETWORK_REQUEST | method::NETWORK_LISTEN => {
-                // Declared, not served: a request needs the operator's trust store behind a TLS
-                // client the shell does not carry, and a listener needs accepted connections
-                // delivered as handles inside a stream. Both say so rather than pretend.
+            method::NETWORK_LISTEN => self.host_network_listen(seq, params).await,
+            method::NETWORK_REQUEST => {
+                // Not the host's to serve (ADR-0571): a request is a package's own protocol over
+                // the brokered connection, so the trust decision stays where §31.21 puts it — in
+                // the operator's scope for `network.connect` — and the shell carries no client
+                // for a protocol it does not speak.
                 self.reply_err(
                     seq,
                     WireError::from_core(
                         ono_core::ErrorCode::ProviderUnavailable,
-                        format!("this host serves no `{method_name}` yet; `network.connect` is the brokered path"),
+                        "this host serves no `network.request`: a request is the package's own \
+                         protocol over `network.connect` (ADR-0571)",
                     ),
                 )
                 .await;
@@ -2401,6 +2406,7 @@ impl Actor {
                 values: values.into(),
                 live: None,
                 writer: None,
+                accepted: None,
                 complete: true,
                 error: None,
             },
@@ -2418,6 +2424,7 @@ impl Actor {
                 values: std::collections::VecDeque::new(),
                 live: Some(live),
                 writer: None,
+                accepted: None,
                 complete: false,
                 error: None,
             },
@@ -2435,6 +2442,7 @@ impl Actor {
                 values: std::collections::VecDeque::new(),
                 live: Some(connection.incoming),
                 writer: Some(connection.outgoing),
+                accepted: None,
                 complete: false,
                 error: None,
             },
@@ -2451,14 +2459,49 @@ impl Actor {
             .as_ref()
             .and_then(duration_of)
             .unwrap_or(Duration::from_millis(self.contract.limits.call_deadline_ms));
-        let Some(stream) = self.inbound.get_mut(&next.handle) else {
+        let Some(mut stream) = self.inbound.remove(&next.handle) else {
             return Err(protocol_violation(format!(
                 "`streams.next` on handle {}, which the host never opened",
                 next.handle
             )));
         };
         let max = usize::try_from(next.max).unwrap_or(usize::MAX);
-        stream.fill(max, deadline).await;
+        // A listener's values are connections, and each becomes a handle of its own in the
+        // table this call is reading from — so the listener is taken out, filled, and put back.
+        if let Some(accepted) = stream.accepted.as_mut() {
+            while stream.values.len() < max {
+                let next_peer = if stream.values.is_empty() {
+                    match tokio::time::timeout(deadline, accepted.recv()).await {
+                        Ok(peer) => peer,
+                        Err(_) => break,
+                    }
+                } else {
+                    match accepted.try_recv() {
+                        Ok(peer) => Some(peer),
+                        Err(_) => break,
+                    }
+                };
+                match next_peer {
+                    Some((peer, connection)) => {
+                        let handle = self.open_connection(connection);
+                        stream
+                            .values
+                            .push_back(json!({"connection": handle, "peer": peer}));
+                    }
+                    None => {
+                        stream.complete = true;
+                        stream.accepted = None;
+                        break;
+                    }
+                }
+            }
+        } else {
+            stream.fill(max, deadline).await;
+        }
+        self.inbound.insert(next.handle, stream);
+        let Some(stream) = self.inbound.get_mut(&next.handle) else {
+            return Ok(());
+        };
         let mut values = Vec::with_capacity(max.min(stream.values.len()));
         while values.len() < max {
             let Some(value) = stream.values.pop_front() else {
@@ -3076,6 +3119,63 @@ impl Actor {
             seq,
             ono_kuang_protocol::Capability::NetworkConnect,
             "network.connect",
+            target,
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `network.listen`: a listener within the granted `ports` scope. Accepted connections
+    /// arrive on the listener's stream as `{connection: handle, peer}` values, each handle a
+    /// connection the package reads and writes like one it opened (spec §31.21).
+    async fn host_network_listen(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let port = params
+            .get("port")
+            .and_then(Json::as_u64)
+            .and_then(|port| u16::try_from(port).ok())
+            .unwrap_or_default();
+        let protocol = params
+            .get("protocol")
+            .and_then(Json::as_str)
+            .unwrap_or("tcp")
+            .to_owned();
+        let target = Some(json!({"port": port, "protocol": protocol}));
+        if let Err(error) = self.broker_check(
+            ono_kuang_protocol::Capability::NetworkListen,
+            "network.listen",
+            &[ScopeUse::Port {
+                key: "ports",
+                value: port,
+            }],
+            target.clone(),
+        ) {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let outcome = host.network_listen(port, protocol).await.map(|accepted| {
+            // Each accepted connection becomes a handle of its own when the plugin pulls the
+            // listener's stream; until then it waits here.
+            let handle = self.next_handle;
+            self.next_handle += 1;
+            self.inbound.insert(
+                handle,
+                Inbound {
+                    values: std::collections::VecDeque::new(),
+                    live: None,
+                    writer: None,
+                    accepted: Some(accepted),
+                    complete: false,
+                    error: None,
+                },
+            );
+            json!({"handle": handle})
+        });
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::NetworkListen,
+            "network.listen",
             target,
             outcome,
         )

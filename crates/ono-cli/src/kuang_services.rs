@@ -601,38 +601,40 @@ impl HostServices for ShellHost {
             code: ono_core::ErrorCode::ProviderUnavailable,
             message: format!("`{host}:{port}` could not be reached: {error}"),
         })?;
-        let (mut reader, mut writer) = stream.into_split();
-        let (in_tx, incoming) = tokio::sync::mpsc::channel(64);
-        let (outgoing, mut out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+        Ok(brokered(stream))
+    }
+
+    async fn network_listen(
+        &self,
+        port: u16,
+        protocol: String,
+    ) -> Result<tokio::sync::mpsc::Receiver<(String, ono_kuang_supervisor::Connection)>, HostError>
+    {
+        if protocol != "tcp" {
+            return Err(HostError::unavailable(&format!(
+                "`{protocol}` listeners: `tcp` is the brokered transport this build carries"
+            )));
+        }
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+            .await
+            .map_err(|error| HostError {
+                code: ono_core::ErrorCode::ProviderUnavailable,
+                message: format!("port {port} could not be bound: {error}"),
+            })?;
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
         tokio::spawn(async move {
-            use tokio::io::AsyncReadExt;
-            let mut buffer = vec![0u8; 16 * 1024];
             loop {
-                match reader.read(&mut buffer).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(count) => {
-                        let chunk = Value::Bytes(bytes::Bytes::copy_from_slice(&buffer[..count]));
-                        if in_tx
-                            .send(Ok(json!({"bytes": to_json(&chunk)})))
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                }
-            }
-        });
-        tokio::spawn(async move {
-            use tokio::io::AsyncWriteExt;
-            while let Some(bytes) = out_rx.recv().await {
-                if writer.write_all(&bytes).await.is_err() {
+                let (stream, peer) = match listener.accept().await {
+                    Ok(accepted) => accepted,
+                    Err(_) => break,
+                };
+                let connection = brokered(stream);
+                if tx.send((peer.to_string(), connection)).await.is_err() {
                     break;
                 }
             }
-            let _ = writer.shutdown().await;
         });
-        Ok(ono_kuang_supervisor::Connection { incoming, outgoing })
+        Ok(rx)
     }
 
     async fn secret_request(
@@ -643,4 +645,40 @@ impl HostServices for ShellHost {
     ) -> Result<(), HostError> {
         Err(HostError::unavailable("secret store"))
     }
+}
+
+/// A socket the host holds, as the package sees it: chunks in, bytes out, nothing else.
+fn brokered(stream: tokio::net::TcpStream) -> ono_kuang_supervisor::Connection {
+    let (mut reader, mut writer) = stream.into_split();
+    let (in_tx, incoming) = tokio::sync::mpsc::channel(64);
+    let (outgoing, mut out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+    tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        let mut buffer = vec![0u8; 16 * 1024];
+        loop {
+            match reader.read(&mut buffer).await {
+                Ok(0) | Err(_) => break,
+                Ok(count) => {
+                    let chunk = Value::Bytes(bytes::Bytes::copy_from_slice(&buffer[..count]));
+                    if in_tx
+                        .send(Ok(json!({"bytes": to_json(&chunk)})))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    tokio::spawn(async move {
+        use tokio::io::AsyncWriteExt;
+        while let Some(bytes) = out_rx.recv().await {
+            if writer.write_all(&bytes).await.is_err() {
+                break;
+            }
+        }
+        let _ = writer.shutdown().await;
+    });
+    ono_kuang_supervisor::Connection { incoming, outgoing }
 }

@@ -135,6 +135,14 @@ pub trait HostServices: Send + Sync + std::fmt::Debug {
         port: u16,
         protocol: String,
     ) -> Result<Connection, HostError>;
+    /// `network.listen`: a brokered listener on `port`; every accepted connection arrives on
+    /// the channel with the peer's address, and the supervisor hands the package a handle for
+    /// each. Dropping the receiver closes the listener.
+    async fn network_listen(
+        &self,
+        port: u16,
+        protocol: String,
+    ) -> Result<mpsc::Receiver<(String, Connection)>, HostError>;
     /// `secrets.request`: whether the named secret exists for the package. The material stays
     /// with the host; the supervisor hands the package an opaque handle.
     async fn secret_request(
@@ -222,6 +230,13 @@ impl HostServices for NoHost {
         _port: u16,
         _protocol: String,
     ) -> Result<Connection, HostError> {
+        Err(HostError::unavailable("network"))
+    }
+    async fn network_listen(
+        &self,
+        _port: u16,
+        _protocol: String,
+    ) -> Result<mpsc::Receiver<(String, Connection)>, HostError> {
         Err(HostError::unavailable("network"))
     }
     async fn secret_request(
