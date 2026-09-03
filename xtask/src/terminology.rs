@@ -285,6 +285,7 @@ fn describes_the_native_tier(lower: &str) -> bool {
 #[must_use]
 pub fn check_documents(root: &Path) -> Vec<Problem> {
     let mut problems = check_registry();
+    problems.extend(check_security_document(root));
     for name in USER_FACING {
         let Ok(text) = std::fs::read_to_string(root.join(name)) else {
             continue;
@@ -337,6 +338,133 @@ pub fn check_wiki(checkout: &Path) -> Vec<Problem> {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
         problems.extend(check_text(&name, &text));
+    }
+    problems
+}
+
+/// v0.4.1 §5.1's nine protected assets, as the phrases a security page has to carry.
+///
+/// §5.1's table is in an immutable specification, so it cannot be read as a contract
+/// (AGENTS.md §5.1). This is the copy that is one, and it is short on purpose: each entry is the
+/// noun §5.1 uses, not its sentence, so the page may say it in its own words as long as it says
+/// which asset it means.
+const PROTECTED_ASSETS: [(&str, &str); 9] = [
+    ("confidentiality of system data", "§5.1's first asset"),
+    ("integrity of provider actions", "§5.1's second asset"),
+    (
+        "identity of remote systems and remote clients",
+        "§5.1's third asset",
+    ),
+    ("local files", "§5.1's fourth asset"),
+    ("network access", "§5.1's fifth asset"),
+    ("credentials", "§5.1's sixth asset"),
+    ("availability", "§5.1's seventh asset"),
+    (
+        "integrity of published release artifacts",
+        "§5.1's eighth asset",
+    ),
+    (
+        "trustworthiness of test and release claims",
+        "§5.1's ninth asset",
+    ),
+];
+
+/// What §51.4 asks the security page to say beyond the model.
+///
+/// Three of §51.4's four points are about the reporting path rather than the boundaries, and each
+/// is checked by the words a page cannot answer them without. A finder needs a channel, a
+/// timescale and a reason not to open an issue; a page that says "report responsibly" gives none
+/// of the three.
+const REPORTING_POINTS: [(&str, &str); 4] = [
+    (
+        "report",
+        "how to report a vulnerability privately — §51.4's second point. Name the channel;          `https://github.com/godspeed-you/ono-sendai/security/advisories/new` is GitHub's private          reporting on this repository and needs no third-party service.",
+    ),
+    (
+        "days",
+        "what a finder may expect and by when. §51.4 asks for a front door, and a door with no          answer behind it sends the next report to the public tracker instead.",
+    ),
+    (
+        "supported",
+        "which versions receive security fixes — §51.4's first point. A page that does not say          implies every version, which is a maintenance commitment nobody made.",
+    ),
+    (
+        "public issue",
+        "that a public issue is the wrong place for an unpatched exploitable vulnerability —          §51.4's fourth point, and the one a well-intentioned finder most often gets wrong.",
+    ),
+];
+
+/// Reports what `SECURITY.md` does not say (v0.4.1 §51.4, §5.1, §5.3).
+///
+/// §51.4 calls this file the front door and not the model: it "does not replace the architectural
+/// security specification". What it must do is let a reader act — report privately, know which
+/// versions are fixed, and see the boundaries and the assets behind them without reading a
+/// four-thousand-line specification first.
+///
+/// The out-of-scope statement is checked here rather than left to prose. §5.3 ends with a sentence
+/// no other section has — *"The product MUST say this plainly"* — about the compromised kernel,
+/// the root attacker on the same host and the native plugin that is not isolated from the account
+/// it runs as. [`check_text`] holds the same file to §15.2's native trust statement, because
+/// `SECURITY.md` is one of the user-facing documents.
+#[must_use]
+pub fn check_security_document(root: &Path) -> Vec<Problem> {
+    match std::fs::read_to_string(root.join("SECURITY.md")) {
+        Ok(text) => check_security_text(&text),
+        Err(_) => vec![Problem::new(
+            "SECURITY.md",
+            "does not exist. v0.4.1 §51.4 asks the project to add or strengthen one: supported \
+             versions, how to report privately, the high-level trust boundaries, and that a \
+             public issue is the wrong place for an unpatched exploitable vulnerability."
+                .to_owned(),
+        )],
+    }
+}
+
+/// The §51.4 rules, applied to one document's text.
+#[must_use]
+pub fn check_security_text(text: &str) -> Vec<Problem> {
+    let lower = normalise(text);
+    let mut problems = Vec::new();
+
+    for (phrase, detail) in REPORTING_POINTS {
+        if !mentions(&lower, phrase) {
+            problems.push(Problem::new(
+                "SECURITY.md",
+                format!("does not say {detail} (the word `{phrase}` does not appear)."),
+            ));
+        }
+    }
+
+    for (asset, which) in PROTECTED_ASSETS {
+        if !mentions(&lower, asset) {
+            problems.push(Problem::new(
+                "SECURITY.md",
+                format!(
+                    "does not name `{asset}`, {which}. §51.4 asks the page to state the \
+                     high-level trust boundaries, and a boundary is only meaningful beside what \
+                     it protects."
+                ),
+            ));
+        }
+    }
+
+    // §5.3: "The product MUST say this plainly." Three things, and the section says all three are
+    // out of scope rather than merely unaddressed.
+    for (phrase, which) in [
+        ("compromised kernel", "a fully compromised kernel"),
+        ("root", "an attacker who is already root on the same host"),
+        ("hardware", "malicious hardware or firmware"),
+    ] {
+        if !mentions(&lower, phrase) {
+            problems.push(Problem::new(
+                "SECURITY.md",
+                format!(
+                    "does not say that {which} is out of scope. v0.4.1 §5.3 ends with a sentence \
+                     no other section has — \"The product MUST say this plainly\" — and a security \
+                     page that lists only what is defended implies the rest."
+                ),
+            ));
+        }
     }
     problems
 }

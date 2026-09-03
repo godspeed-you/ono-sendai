@@ -11,8 +11,8 @@ use std::path::Path;
 
 use ono_testkit::scratch;
 use xtask::terminology::{
-    check_decision, check_decisions, check_documents, check_remote_trust, check_text, check_wiki,
-    terms,
+    check_decision, check_decisions, check_documents, check_remote_trust, check_security_document,
+    check_security_text, check_text, check_wiki, terms,
 };
 
 #[test]
@@ -337,4 +337,43 @@ fn should_not_read_a_denial_as_the_claim_it_denies() {
         .is_empty(),
         "a denial elsewhere in the document does not excuse the claim"
     );
+}
+
+// --- §51.4: the security page states the model and the reporting path (issue #114, ADR-0541) ----
+
+#[test]
+fn should_find_every_protected_asset_of_the_threat_model_in_the_security_document() {
+    // §51.4 asks for "high-level trust boundaries" on the front page, and §5.1 is the list of
+    // what they protect. A security page that names eight of the nine has silently dropped one
+    // from the model a reader is being shown.
+    let problems = check_security_document(repo_root());
+    assert!(
+        problems.is_empty(),
+        "v0.4.1 §51.4: SECURITY.md does not state the model it is the front door to:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_find_a_reporting_channel_and_a_response_expectation_in_the_security_document() {
+    // §51.4's four points, three of which are about the reporting path rather than the model: how
+    // to report privately, which versions are supported, and that a public issue is the wrong
+    // place for an unpatched exploitable vulnerability. A page that says "report responsibly" and
+    // names no channel and no timescale has told a finder nothing they can act on.
+    let silent = check_security_text(
+        "SECURITY.md\n\nPlease report vulnerabilities responsibly. The trust boundaries are \
+         described in the specification.",
+    );
+    for expected in ["report", "supported", "public issue"] {
+        assert!(
+            silent
+                .iter()
+                .any(|problem| problem.detail.contains(expected)),
+            "a page missing `{expected}` is reported, got {silent:?}"
+        );
+    }
 }

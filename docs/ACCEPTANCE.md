@@ -2031,12 +2031,16 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       `::should_report_a_remote_page_that_leaves_one_of_the_six_to_be_inferred` (#113, §51.3;
       ADR-0538). The `boundary` each concept carries is recorded and not yet joined to §6.1's
       inventory, which `docs/spec/hardening/security_boundaries.yaml` will hold and #118 owns.
-- [ ] **P3 · `SECURITY.md` states the model and the reporting path.** Supported versions, the
-      reporting channel, the response expectation and the boundaries §5 protects are stated, and the
-      file is held against the boundary inventory so a new boundary cannot be added without
-      appearing there — `xtask/tests/terminology.rs::should_find_every_protected_asset_of_the_threat_model_in_the_security_document`,
+- [x] **P3 · `SECURITY.md` states the model and the reporting path.** Supported versions, the
+      reporting channel, the response expectation, all nine protected assets of §5.1 and §5.3's
+      out-of-scope statement — the compromised kernel, the root attacker on the same host,
+      malicious hardware, and the native plugin that is not isolated from the account it runs as —
+      are stated, and the gate reports the page that drops one of them —
+      `xtask/tests/terminology.rs::should_find_every_protected_asset_of_the_threat_model_in_the_security_document`,
       `::should_find_a_reporting_channel_and_a_response_expectation_in_the_security_document`
-      (#114, §51.4, §5.1).
+      (#114, §51.4, §5.1, §5.3; ADR-0541). The boundary table is transcribed by hand from §6.1,
+      because no generator can read it yet: `docs/spec/hardening/security_boundaries.yaml` does not
+      exist and #118 owns it.
 - [ ] **P2 · The status documents agree.** `docs/STATE.md`, this checklist and the release notes
       state the same thing about what is done: *In progress* is empty, the workspace holds no
       `#[ignore]`d test, every *Deferred* entry names an ADR saying why it does not block the
