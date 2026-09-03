@@ -231,8 +231,10 @@ fn should_broker_a_tcp_connection_for_a_granted_package() {
         if let Ok((mut socket, _)) = listener.accept() {
             let mut buffer = [0u8; 64];
             if let Ok(count) = socket.read(&mut buffer) {
-                let _ = socket.write_all(b"pong: ");
-                let _ = socket.write_all(&buffer[..count]);
+                // One write: the package reads one chunk, and two writes may arrive as two.
+                let mut answer = b"pong: ".to_vec();
+                answer.extend_from_slice(&buffer[..count]);
+                let _ = socket.write_all(&answer);
             }
         }
     });
