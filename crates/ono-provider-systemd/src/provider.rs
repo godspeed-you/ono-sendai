@@ -278,9 +278,12 @@ impl Provider for SystemdProvider {
             PipelineConfig::new(),
             Boundedness::Bounded,
             move |sink| async move {
-                let names = match &plan.named {
+                // Each unit, and where it is when the listing already said: `ListUnits`
+                // answers with the object path, so asking `LoadUnit` for it again is a round
+                // trip per unit that buys nothing (ADR-0561).
+                let units: Vec<(String, Option<String>)> = match &plan.named {
                     Some(name) => match load_unit(&bus, name).await {
-                        Ok(Some(properties)) => vec![properties.name.clone()],
+                        Ok(Some(properties)) => vec![(properties.name.clone(), None)],
                         Ok(None) => Vec::new(),
                         Err(error) => {
                             let _ = sink.fail(error.into_error()).await;
@@ -288,7 +291,10 @@ impl Provider for SystemdProvider {
                         }
                     },
                     None => match bus.list_units().await {
-                        Ok(listings) => listings.into_iter().map(|unit| unit.name).collect(),
+                        Ok(listings) => listings
+                            .into_iter()
+                            .map(|unit| (unit.name, unit.path))
+                            .collect(),
                         Err(error) => {
                             let _ = sink.fail(error.into_error()).await;
                             return;
@@ -305,9 +311,14 @@ impl Provider for SystemdProvider {
                 // order is still `ListUnits` order, and a slow unit no longer delays the ones
                 // behind it.
                 use futures::StreamExt as _;
-                let reads = futures::stream::iter(names.into_iter().map(|name| {
+                let reads = futures::stream::iter(units.into_iter().map(|(name, path)| {
                     let bus = Arc::clone(&bus);
-                    async move { bus.unit_properties(&name).await }
+                    async move {
+                        match path {
+                            Some(path) => bus.unit_properties_at(&name, &path).await,
+                            None => bus.unit_properties(&name).await,
+                        }
+                    }
                 }))
                 .buffered(UNITS_IN_FLIGHT);
                 futures::pin_mut!(reads);
