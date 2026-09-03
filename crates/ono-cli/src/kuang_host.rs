@@ -136,6 +136,13 @@ pub struct Host {
     trust: TrustContext,
     /// Which stores the trust in memory was read from, so they are read once per session.
     trust_read: Option<(PathBuf, Option<PathBuf>)>,
+    /// The operator's model providers (spec §31.43's `get model` table, ADR-0566).
+    models: ono_model_broker::Catalogue,
+    /// Which catalogue the providers in memory were read from, so it is read once per session.
+    models_read: Option<PathBuf>,
+    /// Why the catalogue could not be read, when it could not: shown beside `get model`'s rows
+    /// rather than swallowed, because a catalogue nobody can read is not an empty one.
+    models_problem: Option<ErrorValue>,
 }
 
 /// What the operator's trust stores say, as a verification needs it.
@@ -187,8 +194,68 @@ impl Host {
         self.state_dir = state_dir;
         self.config_dir = config_dir;
         self.read_policy();
+        self.read_models();
         self.read_trust(system_trust);
         self.read_audit();
+    }
+
+    /// Where the operator's model providers are declared: beside `policy.yaml` (ADR-0566).
+    fn models_path(&self) -> Option<PathBuf> {
+        self.config_dir
+            .as_ref()
+            .map(|dir| dir.join("kuang").join("models.yaml"))
+    }
+
+    /// Reads the model catalogue, once per path.
+    fn read_models(&mut self) {
+        let Some(path) = self.models_path() else {
+            return;
+        };
+        if self.models_read.as_ref() == Some(&path) {
+            return;
+        }
+        self.models_read = Some(path.clone());
+        match ono_model_broker::Catalogue::read(&path) {
+            Ok(catalogue) => {
+                self.models = catalogue;
+                self.models_problem = None;
+            }
+            Err(error) => {
+                self.models = ono_model_broker::Catalogue::default();
+                self.models_problem = Some(
+                    ErrorValue::new(
+                        ErrorCode::ProviderSchemaViolation,
+                        format!("`{}`: {error}", path.display()),
+                    )
+                    .with_help(
+                        "the file declares `providers`, one entry per model provider, as \
+                         `docs/spec/kuang/model-broker.v1.yaml` describes",
+                    ),
+                );
+            }
+        }
+    }
+
+    /// The `ono.model-provider/1` records of `get model` (spec §31.43), and the catalogue's
+    /// problem beside them when it has one.
+    pub fn model_records(&self) -> Result<(Vec<RecordValue>, Vec<ErrorValue>), ErrorValue> {
+        let schema = schema("ono.model-provider")?;
+        let path = std::env::var_os("PATH");
+        let mut records = Vec::new();
+        for provider in self.models.providers() {
+            records.push(model_provider_record(&schema, provider, path.as_ref())?);
+        }
+        Ok((records, self.models_problem.iter().cloned().collect()))
+    }
+
+    /// The broker a loaded package's `models.*` calls reach: the catalogue, over the
+    /// `ono-model/1` command transport.
+    #[must_use]
+    pub fn model_broker(&self) -> Arc<dyn ono_model_broker::ModelBroker> {
+        Arc::new(ono_model_broker::CommandBroker::new(
+            self.models.clone(),
+            std::env::var_os("PATH"),
+        ))
     }
 
     /// Reads both trust stores into this session, once per pair of paths (spec §31.36).
@@ -776,6 +843,52 @@ impl Host {
         }
         Ok((records, failures))
     }
+}
+
+/// One `ono.model-provider/1` record, field for field from the catalogue entry (ADR-0566).
+fn model_provider_record(
+    schema: &Arc<Schema>,
+    provider: &ono_model_broker::ModelProvider,
+    path: Option<&std::ffi::OsString>,
+) -> Result<RecordValue, ErrorValue> {
+    let unavailable = provider.unavailable_reason(path);
+    let strings =
+        |items: Vec<String>| Value::list(items.into_iter().map(|item| Value::string(&item)));
+    let transformed: ono_value::MapValue = provider
+        .transformed_classes()
+        .into_iter()
+        .map(|(class, how)| (Arc::<str>::from(class.as_str()), Value::string(&how)))
+        .collect();
+    Ok(RecordValue::builder(Arc::clone(schema), provenance(schema))
+        .set("id", Value::string(&provider.id))?
+        .set("name", Value::string(&provider.name))?
+        .set("kind", Value::string(provider.kind.as_str()))?
+        .set("location", Value::string(&provider.location))?
+        .set(
+            "endpoint",
+            provider
+                .shown_endpoint()
+                .map_or(Value::Null, |endpoint| Value::string(&endpoint)),
+        )?
+        .set(
+            "context_window",
+            provider
+                .context_window
+                .map_or(Value::Null, |tokens| Value::Int(i128::from(tokens))),
+        )?
+        .set("tools", Value::Bool(provider.tools))?
+        .set("structured_output", Value::Bool(provider.structured_output))?
+        .set("streaming", Value::Bool(provider.streaming))?
+        .set("data_policy", Value::string(provider.data_policy.as_str()))?
+        .set("allowed_classes", strings(provider.allowed_classes()))?
+        .set("transformed_classes", Value::Map(Arc::new(transformed)))?
+        .set("denied_classes", strings(provider.denied_classes()))?
+        .set("available", Value::Bool(unavailable.is_none()))?
+        .set(
+            "unavailable_reason",
+            unavailable.map_or(Value::Null, |why| Value::string(&why)),
+        )?
+        .build())
 }
 
 /// Every package directory under `root`, with the problems of those that do not validate.

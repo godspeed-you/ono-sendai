@@ -293,6 +293,8 @@ pub fn load_plugin_with(
     // The instance runs in its own directory under the state root, not in the user's (spec
     // §31.10, §31.31, ADR-0283).
     config.private_dir = session.with_kuang(|host| host.private_dir(id));
+    // What `models.list` and `models.infer` reach: the operator's catalogue (ADR-0566).
+    config.models = session.with_kuang(|host| host.model_broker());
     let (runtime, _) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,

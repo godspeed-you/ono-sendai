@@ -1,0 +1,91 @@
+# KUANG/11 model broker protocol: `ono-model/1`.
+#
+# Source: spec §31.12 (the `models` domain), §31.43 (model broker), §31.44 (data classification),
+# §31.52 (origin labels), §31.67 (an assistant never blocks input), §31.82 (privacy UX).
+# `assistants.v1.yaml` names `model_broker_protocol: ono-model/1` and shapes the request and the
+# response; `protocol.v1.yaml` declares the host calls `models.list` and `models.infer`. This file
+# is the third piece: how a configured provider is declared and how the host talks to it.
+# Decisions: ADR-0022, ADR-0566. Implemented by `crates/ono-model-broker` and the supervisor.
+#
+# The design rule (AUTONOMOUS_IMPLEMENTATION.md §15, `assistants.v1.yaml` →
+# `no-model-in-privileged-path`): the component that talks to models cannot reach a grant or a
+# decision. The supervisor chooses the provider, checks the grant against that provider's id,
+# applies the data policy, and only then hands an already-classified request to a broker that
+# has no way to do any of those things.
+
+version: 1
+protocol: ono-model/1
+
+# ---------------------------------------------------------------------------------------------
+# The catalogue — `<config>/kuang/models.yaml`, beside `policy.yaml` (spec §31.19). The operator
+# writes it; `get model` reads it back as `ono.model-provider/1` records (spec §31.43's table).
+# No file means no providers, which is the typed, empty answer.
+# ---------------------------------------------------------------------------------------------
+catalogue:
+  path: "<config>/kuang/models.yaml"
+  document:
+    providers: {type: list<provider>, required: true, doc: "One entry per configured provider, in the operator's order."}
+  provider:
+    fields:
+      id: {type: string, required: true, doc: "The configured id, e.g. `local-code`. Unique in the file."}
+      name: {type: string, required: true, doc: "The display name."}
+      kind: {type: enum, required: true, values: [local, remote], doc: "Where inference happens. The data policy hangs on it, and the privacy plan of §31.82 is disclosed before the first `remote` call."}
+      location: {type: string, required: true, doc: "Where it runs, in the operator's words: `workstation`, `configured`, `enterprise`."}
+      command: {type: list<string>, required: false, doc: "The program that speaks `ono-model/1`, and its arguments. A bare name is looked up on `PATH`. Absent or not runnable means `available: false`, with the reason."}
+      endpoint: {type: string, required: false, doc: "For the record only; the host never connects to it. Rendered `[redacted]` when it carries credentials (spec §17.5)."}
+      context_window: {type: int, required: false, doc: "The usable context in tokens; absent when unknown, which is not zero."}
+      tools: {type: bool, required: false, default: false}
+      structured_output: {type: bool, required: false, default: false}
+      streaming: {type: bool, required: false, default: false}
+      data_policy: {type: enum, required: true, values: [local-only, external-ok, redacted-only], doc: "The policy name. The three lists below default from it and may be spelled out to override."}
+      allow: {type: list<string>, required: false, doc: "Classes sent as they are."}
+      transform: {type: record, required: false, doc: "Class to transformation. The one transformation is `redact`: the segment's content is replaced by `[redacted: <class>]` before the request leaves."}
+      deny: {type: list<string>, required: false, doc: "Classes that may never be sent here. A request carrying one is refused whole with `model.policy_denied`."}
+  defaults:
+    local-only:    {allow: [public, system-metadata, source-code, logs, credentials, personal, secret, operator-marked-sensitive], transform: {}, deny: []}
+    external-ok:   {allow: [public, system-metadata, source-code], transform: {logs: redact}, deny: [credentials, personal, secret, operator-marked-sensitive]}
+    redacted-only: {allow: [public, system-metadata], transform: {logs: redact, source-code: redact}, deny: [credentials, personal, secret, operator-marked-sensitive]}
+  rules:
+    - "A class no list names is denied. The policy is a guardrail (spec §31.44), and a guardrail with a hole for the unexpected is not one."
+    - "A class outside `assistants.v1.yaml` → `data_classes`, or a transformation other than `redact`, refuses the whole file: an operator's typo must not become a silent allow."
+    - "The file is read once per session, when the host is configured. `get model` shows what was read, and a file that could not be read is reported beside the rows rather than as an empty catalogue."
+
+# ---------------------------------------------------------------------------------------------
+# The transport — one JSON document on the provider's standard input, one on its standard
+# output. There is no HTTP client in the shell: a `kind: remote` provider is a local bridge
+# process the operator installed, and what it does with the request is its business and the
+# operator's. `ONO_MODEL_PROTOCOL=ono-model/1` is in its environment.
+# ---------------------------------------------------------------------------------------------
+transport:
+  kind: command
+  request:
+    fields:
+      protocol: {type: string, required: true, value: ono-model/1}
+      provider: {type: string, required: true, doc: "The catalogue id, so one program can serve several entries."}
+      request: {type: model_request, required: true, doc: "`assistants.v1.yaml` → `model_request`, after the host applied the policy: labels set, transformed segments replaced, nothing denied."}
+  response:
+    fields:
+      protocol: {type: string, required: true, value: ono-model/1}
+      parts: {type: list<part>, required: false, doc: "`assistants.v1.yaml` → `model_response`, as data: `{kind: text, text}`, `{kind: structured, value}`, `{kind: tool_intent, tool, arguments}`, `{kind: citation, object}`."}
+      error: {type: record, required: false, doc: "`{message}` when the provider failed in its own terms. Reported as `model.provider_unavailable`."}
+  rules:
+    - "The provider is given the turn's budget: `deadline` in the request, defaulted to 30 s and clamped to 300 s. A provider still running at the deadline is killed and the call is `runtime.timeout` (spec §31.67)."
+    - "A document that is not `ono-model/1` — prose, a different protocol, no JSON — is `model.provider_unavailable` with what was wrong. Nothing is scraped from it (spec §31.58)."
+    - "A `tool_intent` part is returned to the package as data. It reaches nothing else until the planner and the capability broker have validated it (spec §31.46, §31.52)."
+
+# ---------------------------------------------------------------------------------------------
+# What the host does around a call — the order is the boundary.
+# ---------------------------------------------------------------------------------------------
+host_calls:
+  models.list:
+    doc: "The catalogue filtered by the `providers` scope of the package's `model.infer` grant: exact ids, `*`, `operator-selected` (the operator chooses, so every provider is a candidate) and `prefix*` globs. The package sees what it may use, not the operator's whole configuration."
+  models.infer:
+    order:
+      - "choose: the named provider, or the first available one inside the grant's `providers` scope; none is `model.provider_unavailable`"
+      - "check: `model.infer` against the chosen provider's id, through the capability broker — audited, allowed or `capability.scope_violation`"
+      - "classify: every segment's label is set by the host (a package authors `PLUGIN_KNOWLEDGE` or `UNTRUSTED_TEXT`, nothing else); every segment's class meets the provider's policy — allowed, transformed, or the whole request is `model.policy_denied` naming the classes"
+      - "disclose: before the first `remote` inference of an instance, the data-boundary plan of §31.82 — provider, kind, location, policy, what is sent and what was redacted, counted by class — is written to the audit trail as `model.disclosure`, where `get audit --plugin <id>` keeps it inspectable"
+      - "send: the broker runs the command with the classified request and returns the parts; the answer carries `provider`, `plan` and `parts`"
+    rules:
+      - "Every request is audited, whether it succeeded, was denied or failed (`assistants.v1.yaml` → `everything-is-audited`)."
+      - "A package with `model.infer` and no configured provider loads and is told `model.provider_unavailable` on the turn (`degrades-without-a-model`)."

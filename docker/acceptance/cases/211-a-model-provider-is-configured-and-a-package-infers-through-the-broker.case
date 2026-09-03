@@ -1,0 +1,121 @@
+# Issue #5, C-6 (spec §31.43, §31.44, §31.52, §31.82; ADR-0566): the model broker. The operator
+# configures a provider in `<config>/kuang/models.yaml` — here a shell script speaking
+# `ono-model/1` that echoes what it was sent — `get model` shows it, and the example package,
+# granted `model.infer` scoped to that provider, asks it through the broker. A denied data class
+# is refused whole and named; untrusted text asking for a capability changes no grant; every
+# request is in the audit trail.
+case: a model provider is configured, and a package infers through the broker
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/config/ono/kuang" "$home/bin"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    model_broker: ono-model/1
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - model.infer: {providers: ["*"]}
+  network:
+    outbound: none
+  MANIFEST
+
+  # A model that speaks ono-model/1: one JSON document in, one out, echoing the first segment.
+  cat > "$home/bin/echo-model" <<'MODEL'
+  #!/bin/sh
+  doc=$(cat)
+  text=$(printf '%s' "$doc" | grep -o '"content":"[^"]*"' | head -1 | cut -d'"' -f4)
+  printf '{"protocol":"ono-model/1","parts":[{"kind":"text","text":"echo: %s"}]}' "$text"
+  MODEL
+  chmod +x "$home/bin/echo-model"
+  cat > "$home/config/ono/kuang/models.yaml" <<MODELS
+  providers:
+    - id: local-echo
+      name: Local echo
+      kind: local
+      location: workstation
+      command: [$home/bin/echo-model]
+      context_window: 4096
+      data_policy: local-only
+    - id: remote-echo
+      name: Remote echo
+      kind: remote
+      location: configured
+      command: [$home/bin/echo-model]
+      data_policy: external-ok
+    - id: absent
+      name: Not installed
+      kind: local
+      location: workstation
+      command: [/nonexistent/model]
+      data_policy: local-only
+  MODELS
+
+  echo "== get model is the operator's catalogue (§31.43) =="
+  ono -c 'get model | select id kind data_policy available | to json'
+  ono -c 'get model | to json' | grep -q '"id":"local-echo"' && echo "lists-local"
+  ono -c 'get model | to json' | grep -q '"kind":"remote"' && echo "lists-remote"
+  ono -c 'get model absent | to json' | grep -q '"available":false' && echo "absent-is-unavailable"
+  ono -c 'get model absent | to json' | grep -q '"unavailable_reason":"' && echo "says-why"
+  ono -c 'get model remote-echo | to json' | grep -q '"denied_classes":\["credentials"' && echo "external-ok-denies-credentials"
+
+  echo "== a package granted model.infer asks the model through the broker =="
+  ono -c 'grant capability model.infer --plugin dev.example.echo --scope "providers=local-echo,remote-echo" --duration always | select capability | to json'
+  ono -c 'load plugin dev.example.echo; echo:infer --prompt hello | to json'
+  ono -c 'load plugin dev.example.echo; echo:infer --prompt hello | to json' | grep -q '"echo: hello"' && echo "model-answered"
+  ono -c 'load plugin dev.example.echo; echo:models | to json' | grep -q 'local-echo' && echo "lists-within-scope"
+  ono -c 'load plugin dev.example.echo; echo:models | to json' | grep -q 'absent' || echo "scope-hides-the-rest"
+
+  echo "== the data policy is applied before anything leaves (§31.44) =="
+  ono -c 'load plugin dev.example.echo; echo:infer --prompt "AKIA..." --class credentials --provider remote-echo | to json' | grep -q 'AKIA' || echo "denied-class-not-sent"
+  ono -c 'load plugin dev.example.echo; echo:infer --prompt "AKIA..." --class credentials --provider remote-echo | to json; get audit --plugin dev.example.echo | where action == "models.infer" | select result | to json' | grep -q '"result":"failed"' && echo "denied-class-refused"
+  ono -c 'load plugin dev.example.echo; echo:infer --prompt "sshd: password=x" --class logs --provider remote-echo | to json' | grep -q 'redacted: logs' && echo "logs-leave-redacted"
+
+  echo "== untrusted text cannot instruct (§31.52) =="
+  ono -c 'load plugin dev.example.echo; echo:inject | to json' | grep -q 'filesystem.read:denied' && echo "injection-changed-no-grant"
+
+  echo "== every request is audited, and the plan was disclosed (§31.37, §31.82) =="
+  # A fresh state root, and one session: the remote inference and the trail it left, read before
+  # the process ends. The grant lives in the config root and carries over. (The persisted trail
+  # keeps one session's event ids and hides the next session's — recorded in docs/STATE.md as
+  # found, not filed — so the trail is read where nothing earlier collides with it.)
+  export XDG_STATE_HOME="$home/state-fresh"
+  ono -c 'load plugin dev.example.echo; echo:infer --prompt x --class logs --provider remote-echo | count; get audit --plugin dev.example.echo | select action result | to json'
+  ono -c 'load plugin dev.example.echo; echo:infer --prompt x --class logs --provider remote-echo | count; get audit --plugin dev.example.echo | to json' | grep -q '"action":"models.infer"' && echo "requests-audited"
+  ono -c 'load plugin dev.example.echo; echo:infer --prompt x --class logs --provider remote-echo | count; get audit --plugin dev.example.echo | to json' | grep -q '"action":"model.disclosure"' && echo "plan-disclosed"
+exit: 0
+stdout-contains: lists-local
+stdout-contains: lists-remote
+stdout-contains: absent-is-unavailable
+stdout-contains: says-why
+stdout-contains: external-ok-denies-credentials
+stdout-contains: model-answered
+stdout-contains: lists-within-scope
+stdout-contains: scope-hides-the-rest
+stdout-contains: denied-class-not-sent
+stdout-contains: denied-class-refused
+stdout-contains: logs-leave-redacted
+stdout-contains: injection-changed-no-grant
+stdout-contains: requests-audited
+stdout-contains: plan-disclosed

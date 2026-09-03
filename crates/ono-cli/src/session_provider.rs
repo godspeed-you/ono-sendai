@@ -197,9 +197,12 @@ impl SessionProvider {
             }
             "capability" => Ok((self.lock().kuang.capability_records(None)?, Vec::new())),
             "audit" => Ok((self.lock().kuang.audit_records()?, Vec::new())),
-            // No assistant package is loaded, no model provider is configured, no analysis has
-            // run: the typed, empty answer (ADR-0111 §3).
-            "assistant" | "model" | "finding" => Ok((Vec::new(), Vec::new())),
+            // The operator's model providers, from `<config>/kuang/models.yaml` (spec §31.43,
+            // ADR-0566); no file is the typed, empty answer.
+            "model" => self.lock().kuang.model_records(),
+            // No assistant package is loaded, no analysis has run: the typed, empty answer
+            // (ADR-0111 §3).
+            "assistant" | "finding" => Ok((Vec::new(), Vec::new())),
             other => Err(ErrorValue::new(
                 ErrorCode::ResolveTargetNotFound,
                 format!("{PROVIDER_ID} has no table `{other}`"),

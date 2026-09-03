@@ -188,6 +188,7 @@ layering:
         - ono-render
         - ono-adapter
         - ono-kuang-protocol
+        - ono-model-broker
         - ono-spatial-render
     - layer: capability
       of: what the shell can observe and act on, and the boundaries around it

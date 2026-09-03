@@ -63,6 +63,7 @@ package:
 compatibility:
   kuang_api: ">=11.1 <12"
   ono_language: ">=0.2"
+  model_broker: ono-model/1
   platforms: [linux-amd64, linux-arm64]
 runtime:
   kind: native-process
@@ -77,6 +78,7 @@ capabilities:
     - filesystem.read: {paths: ["/tmp/**"]}
     - state.persist
     - process.signal
+    - model.infer: {providers: ["*"]}
 network:
   outbound: none
 "#
@@ -104,6 +106,7 @@ fn fully_granted(host: TestHost) -> TestHost {
         .grant(Capability::FilesystemRead)
         .grant(Capability::StatePersist)
         .grant(Capability::ProcessSignal)
+        .grant(Capability::ModelInfer)
 }
 
 fn values_of(events: &[StreamEvent]) -> Vec<Value> {
@@ -705,6 +708,286 @@ async fn should_audit_a_granted_call_with_the_virtual_clock() {
         .expect("the granted call is audited");
     assert_eq!(success.capability, "clock.read");
     assert_eq!(success.invocation, "command:dev.example.echo.command.clock");
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+// --- the model broker (spec §31.43, §31.44, §31.52, §31.82; ADR-0566) ---------------------------
+
+/// A model that echoes the first context segment it was sent, speaking `ono-model/1`.
+fn echo_model(directory: &std::path::Path) -> String {
+    let script = directory.join("echo-model");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\ndoc=$(cat)\ntext=$(printf '%s' \"$doc\" | grep -o '\"content\":\"[^\"]*\"' | head -1 | cut -d'\"' -f4)\nprintf '{\"protocol\":\"ono-model/1\",\"parts\":[{\"kind\":\"text\",\"text\":\"echo: %s\"},{\"kind\":\"citation\",\"object\":\"ono.process/1[1]\"}]}' \"$text\"\n",
+    )
+    .expect("write the model");
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    script.to_string_lossy().into_owned()
+}
+
+/// Two providers over the echo model: one local, one remote with the external-ok policy.
+fn two_providers(directory: &std::path::Path) -> std::sync::Arc<dyn ono_model_broker::ModelBroker> {
+    let command = echo_model(directory);
+    let catalogue = ono_model_broker::Catalogue::parse(&format!(
+        "providers:\n  - id: local-echo\n    name: Local echo\n    kind: local\n    location: workstation\n    command: [{command}]\n    data_policy: local-only\n  - id: remote-echo\n    name: Remote echo\n    kind: remote\n    location: configured\n    command: [{command}]\n    data_policy: external-ok\n"
+    ))
+    .expect("a catalogue");
+    std::sync::Arc::new(ono_model_broker::CommandBroker::new(catalogue, None))
+}
+
+fn providers_scope(names: &[&str]) -> JsonMap<String, Json> {
+    let mut scope = JsonMap::new();
+    scope.insert("providers".to_owned(), json!(names));
+    scope
+}
+
+#[tokio::test]
+async fn should_list_only_the_model_providers_within_the_grants_scope() {
+    let models = tempfile::tempdir().expect("tempdir");
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .models(two_providers(models.path()))
+        .grant_scoped(Capability::ModelInfer, providers_scope(&["local-echo"]))
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke("dev.example.echo.command.models", args(&[]))
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed);
+    assert_eq!(
+        values_of(&events),
+        vec![Value::String("local-echo".into())],
+        "a package sees the providers it may use, not the operator's whole configuration"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_answer_an_inference_through_the_operator_configured_command() {
+    let models = tempfile::tempdir().expect("tempdir");
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .models(two_providers(models.path()))
+        .grant_scoped(Capability::ModelInfer, providers_scope(&["*"]))
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.infer",
+            args(&[("prompt", json!("hello"))]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    let answered = values_of(&events);
+    assert_eq!(answered[0], Value::String("echo: hello".into()));
+    assert!(
+        matches!(&answered[1], Value::String(text) if text.starts_with("citation: ")),
+        "every part comes back as data; got {answered:?}"
+    );
+    let audit = plugin.audit();
+    let request = audit
+        .iter()
+        .find(|event| event.action == "models.infer" && event.result == AuditResult::Success)
+        .expect("every model request is audited");
+    assert_eq!(request.capability, "model.infer");
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_a_provider_outside_the_granted_scope_and_audit_the_attempt() {
+    let models = tempfile::tempdir().expect("tempdir");
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .models(two_providers(models.path()))
+        .grant_scoped(Capability::ModelInfer, providers_scope(&["local-echo"]))
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.infer",
+            args(&[
+                ("prompt", json!("hello")),
+                ("provider", json!("remote-echo")),
+            ]),
+        )
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Failed);
+    let error = result.error.expect("structured");
+    assert_eq!(error.name, "capability.scope_violation");
+    let audit = plugin.audit();
+    assert!(
+        audit
+            .iter()
+            .any(|event| event.result == AuditResult::Denied && event.capability == "model.infer"),
+        "the denied request is in the trail (spec §31.37)"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_a_request_carrying_a_class_the_provider_may_not_receive() {
+    let models = tempfile::tempdir().expect("tempdir");
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .models(two_providers(models.path()))
+        .grant_scoped(Capability::ModelInfer, providers_scope(&["*"]))
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.infer",
+            args(&[
+                ("prompt", json!("AKIA...")),
+                ("class", json!("credentials")),
+                ("provider", json!("remote-echo")),
+            ]),
+        )
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Failed);
+    let error = result.error.expect("structured");
+    assert_eq!(error.name, "model.policy_denied");
+    assert_eq!(
+        error.metadata.get("denied_classes"),
+        Some(&json!(["credentials"])),
+        "the refusal names the class, so the boundary is visible (spec §31.44)"
+    );
+    let audit = plugin.audit();
+    assert!(
+        audit
+            .iter()
+            .any(|event| event.action == "models.infer" && event.result == AuditResult::Failed),
+        "the refused request is in the trail"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_send_a_transformed_class_redacted_and_disclose_the_plan_before_the_first_remote_call()
+ {
+    let models = tempfile::tempdir().expect("tempdir");
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .models(two_providers(models.path()))
+        .grant_scoped(Capability::ModelInfer, providers_scope(&["*"]))
+        .load()
+        .await
+        .expect("loads");
+    for _ in 0..2 {
+        let invocation = plugin
+            .invoke(
+                "dev.example.echo.command.infer",
+                args(&[
+                    ("prompt", json!("Sep 03 sshd: password=hunter2")),
+                    ("class", json!("logs")),
+                    ("provider", json!("remote-echo")),
+                ]),
+            )
+            .await
+            .expect("starts");
+        let (events, result) = invocation.collect().await;
+        assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+        assert_eq!(
+            values_of(&events)[0],
+            Value::String("echo: [redacted: logs]".into()),
+            "the log line left redacted, as `external-ok` transforms logs (spec §31.44)"
+        );
+    }
+    let audit = plugin.audit();
+    let disclosures: Vec<_> = audit
+        .iter()
+        .filter(|event| event.action == "model.disclosure")
+        .collect();
+    assert_eq!(
+        disclosures.len(),
+        1,
+        "the data-boundary plan is disclosed before the first remote inference, once (spec §31.82)"
+    );
+    let plan = disclosures[0]
+        .target
+        .clone()
+        .expect("the plan is the target");
+    assert_eq!(plan["provider"], json!("remote-echo"));
+    assert_eq!(plan["kind"], json!("remote"));
+    assert_eq!(plan["redacted"]["logs"], json!(1));
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_change_no_grant_when_untrusted_text_asks_for_a_capability() {
+    // The prompt-injection fixture of spec §31.52 and §31.74: `assistants.v1.yaml`'s
+    // `no-model-in-privileged-path` and `untrusted-text-cannot-instruct`.
+    let models = tempfile::tempdir().expect("tempdir");
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .models(two_providers(models.path()))
+        .grant_scoped(Capability::ModelInfer, providers_scope(&["*"]))
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke("dev.example.echo.command.inject", args(&[]))
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    let answered = values_of(&events);
+    assert!(
+        answered.contains(&Value::String("filesystem.read:denied".into())),
+        "the text asked for a capability and the grant is what it was; got {answered:?}"
+    );
+    let audit = plugin.audit();
+    assert!(
+        !audit
+            .iter()
+            .any(|event| event.capability == "filesystem.read"
+                && event.result == AuditResult::Success),
+        "nothing was granted and nothing was read"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_answer_provider_unavailable_when_no_model_is_configured() {
+    // `degrades-without-a-model`: the package loads, and the turn says why it cannot answer.
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .grant_scoped(Capability::ModelInfer, providers_scope(&["*"]))
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.infer",
+            args(&[("prompt", json!("hello"))]),
+        )
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Failed);
+    assert_eq!(
+        result.error.expect("structured").name,
+        "model.provider_unavailable"
+    );
     plugin
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
         .await;

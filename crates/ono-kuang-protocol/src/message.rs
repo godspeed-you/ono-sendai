@@ -55,6 +55,10 @@ pub mod method {
     pub const CLOCK_NOW: &str = "clock.now";
     /// Plugin → host: read file bytes under the granted `paths` scope.
     pub const FILESYSTEM_READ: &str = "filesystem.read";
+    /// Plugin → host: the model providers this package may use (spec §31.43).
+    pub const MODELS_LIST: &str = "models.list";
+    /// Plugin → host: operator-approved inference through the model broker (spec §31.43).
+    pub const MODELS_INFER: &str = "models.infer";
 }
 
 /// One frame's payload: the opening hello, a call, or an answer.

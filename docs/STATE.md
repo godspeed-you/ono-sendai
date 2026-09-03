@@ -275,9 +275,9 @@ identity-constrained and fails closed — and the first `v*` tag is the run that
 Pushing that tag is the user's action, as promoting `implementation` to `main` is (AGENTS.md
 §12.1). Their two boxes in `docs/ACCEPTANCE.md` say so in their own text.
 
-Two class-c issues remain and are tranches of their own, which is what the label means: **#3**
-(the wasm-component tier and ten of §31.12's sixteen host API domains) and **#5**
-(`ono-model-broker`, whose design is written out in the issue and whose first line of code is not).
+One class-c issue remains and is a tranche of its own, which is what the label means: **#3**
+(the wasm-component tier and nine of §31.12's sixteen host API domains — `models` is delivered
+by #5, below).
 
 ## What the tranche delivered
 
@@ -285,6 +285,25 @@ One entry per phase, newest first. The reasoning is kept because each entry reco
 issue that ordered the work did not know.
 
 
+- **#5 closed (2026-09-03).** `ono-model-broker` exists (ADR-0566). The crate is the catalogue
+  (`<config>/kuang/models.yaml`, beside `policy.yaml`), the data-class policy of §31.44 with the
+  three named policies defaulting their lists, the `ono-model/1` wire
+  (`docs/spec/kuang/model-broker.v1.yaml`: one JSON document in, one out, over a program the
+  operator configured — no HTTP client), and a broker trait that takes an already-chosen
+  provider and an already-classified request and has no way to reach a grant. The supervisor
+  answers `models.list` (the catalogue filtered by the grant's `providers` scope) and
+  `models.infer` (choose, check the grant against the provider id, classify every segment,
+  disclose the §31.82 plan to the trail before the first remote call, then send); `get model`
+  reads the catalogue; the example package gained `models`, `infer` and `inject`. Proven by
+  thirteen unit tests in the crate, seven conformance cases under the test host — scope filter,
+  an answer through a configured command, a provider outside the scope refused and audited, a
+  denied class refused with the classes named, a transformed class sent redacted with the plan
+  disclosed once, untrusted text asking for a capability changing no grant, and no configured
+  model told so on the turn — five runs through the binary (`crates/ono-cli/tests/models.rs`) and
+  acceptance case 211. What the issue did not know: its resume pointers (ADRs 0377–0400, cases
+  190+) were long taken, and the shell swallows a plugin invocation's mid-flight failure (above,
+  *Found, not yet filed*), so the refusals are proven through the trail rather than the exit
+  status.
 - **#17 closed (2026-09-03).** `apt update` has a spelling: `refresh package-source <id>`, or
   `get package-source | refresh package-source` over all of them. ADR-0562's sequence, delivered,
   with its first point corrected by ADR-0565: the target is `package-source`, not `repo`, because
@@ -1900,6 +1919,29 @@ the provider samples — and no assertion changed.
 
 
 ## Found, not yet filed
+
+- **The persisted audit trail keeps one session's events and drops the next session's.** Three
+  `ono -c 'load plugin dev.example.echo; echo:clock | count'` runs under one `XDG_STATE_HOME`,
+  with `clock.read` granted `--duration always`, leave `<state>/ono/kuang/audit.jsonl` with one
+  `clock.now` line, and `get audit --plugin dev.example.echo | where action == "clock.now" |
+  count` answers `[1]`. The event ids are deterministic per process —
+  `3a2ecab3-0000-4000-8000-000000000001` for the first event of a source in every session — and
+  the flush appends only ids not yet on disk (`written_audit`), so the second session's first
+  event is taken for the first session's and never written. Found 2026-09-03 while proving #5:
+  acceptance case 211 had to read the trail in the session that wrote it. What closes it: an
+  event id that is unique across sessions (a session nonce or the timestamp in the id), and a
+  test that runs two sessions and counts two `clock.now` lines on disk.
+- **A plugin command that fails after it started is an empty stream with exit status 0.** With
+  the example package loaded and `filesystem.read` granted for `<dir>/allowed/**`, `echo:read-file
+  --path <dir>/secret.txt | to json` prints `[]` and exits 0, while the supervisor's trail
+  records the `capability.scope_violation` and the plugin's invocation ended `Failed`. A command
+  refused *before* it starts — `echo:clock` with no `clock.read` grant — prints
+  `Ono-Sendai-K11301` and exits 1, so the difference is where the failure happens: a
+  `Outcome::Failed` the plugin returns mid-invocation reaches the shell as an end of stream, not
+  as the pipeline's failure. Found 2026-09-03 while proving #5 (`echo:infer --provider
+  <outside-scope>` behaves the same). What closes it: the invocation's terminal error becomes the
+  pipeline's per-item failure (spec §16.5) and carries the exit status; a test through the binary
+  asserting `K11304` on stderr and status 1 for the read-file case above.
 
 Problems found while working, before they are issues. **The backlog is the GitHub issue tracker**
 (ADR-0425): one problem is one issue, and its evidence — reproduction, files, measurements, ADRs,

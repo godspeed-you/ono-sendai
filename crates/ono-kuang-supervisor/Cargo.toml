@@ -12,6 +12,7 @@ authors.workspace = true
 ono-adapter.workspace = true
 ono-core.workspace = true
 ono-kuang-protocol.workspace = true
+ono-model-broker.workspace = true
 ono-value.workspace = true
 globset.workspace = true
 jiff.workspace = true

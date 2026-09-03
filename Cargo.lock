@@ -763,6 +763,7 @@ dependencies = [
  "ono-history",
  "ono-kuang-protocol",
  "ono-kuang-supervisor",
+ "ono-model-broker",
  "ono-parser",
  "ono-pipeline",
  "ono-process",
@@ -892,6 +893,7 @@ dependencies = [
  "ono-kuang-protocol",
  "ono-kuang-supervisor",
  "ono-kuang-testhost",
+ "ono-model-broker",
  "ono-value",
  "serde_json",
  "tempfile",
@@ -909,6 +911,7 @@ dependencies = [
  "ono-adapter",
  "ono-core",
  "ono-kuang-protocol",
+ "ono-model-broker",
  "ono-value",
  "serde",
  "serde_json",
@@ -924,9 +927,23 @@ dependencies = [
  "ono-adapter",
  "ono-kuang-protocol",
  "ono-kuang-supervisor",
+ "ono-model-broker",
  "ono-spatial-core",
  "ono-testkit",
  "serde_json",
+]
+
+[[package]]
+name = "ono-model-broker"
+version = "0.4.0"
+dependencies = [
+ "async-trait",
+ "jiff",
+ "ono-testkit",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "tokio",
 ]
 
 [[package]]

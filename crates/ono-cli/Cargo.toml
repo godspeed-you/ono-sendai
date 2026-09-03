@@ -24,6 +24,7 @@ ono-graph.workspace = true
 ono-history.workspace = true
 ono-kuang-protocol.workspace = true
 ono-kuang-supervisor.workspace = true
+ono-model-broker.workspace = true
 ono-parser.workspace = true
 ono-process.workspace = true
 ono-render.workspace = true

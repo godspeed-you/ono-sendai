@@ -36,6 +36,7 @@ pub struct TestHost {
     limits: HostLimits,
     platform: Option<String>,
     confinement: std::sync::Arc<dyn ConfinementPlatform>,
+    models: Option<std::sync::Arc<dyn ono_model_broker::ModelBroker>>,
 }
 
 impl std::fmt::Debug for TestHost {
@@ -64,6 +65,7 @@ impl TestHost {
             limits: HostLimits::default(),
             platform: None,
             confinement: NativePlatform::shared(),
+            models: None,
         }
     }
 
@@ -75,6 +77,14 @@ impl TestHost {
     #[must_use]
     pub fn confinement(mut self, platform: std::sync::Arc<dyn ConfinementPlatform>) -> Self {
         self.confinement = platform;
+        self
+    }
+
+    /// The model broker `models.list` and `models.infer` reach. Without one, nothing is
+    /// configured and `models.infer` answers `model.provider_unavailable`.
+    #[must_use]
+    pub fn models(mut self, broker: std::sync::Arc<dyn ono_model_broker::ModelBroker>) -> Self {
+        self.models = Some(broker);
         self
     }
 
@@ -135,6 +145,9 @@ impl TestHost {
         config.limits = self.limits;
         config.clock = HostClock::Fixed(VIRTUAL_NOW.to_owned());
         config.confinement = self.confinement;
+        if let Some(models) = self.models {
+            config.models = models;
+        }
         if let Some(platform) = self.platform {
             config.platform = platform;
         }

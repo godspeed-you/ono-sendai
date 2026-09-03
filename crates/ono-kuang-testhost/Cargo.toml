@@ -13,6 +13,7 @@ ono-adapter.workspace = true
 ono-spatial-core.workspace = true
 ono-kuang-protocol.workspace = true
 ono-kuang-supervisor.workspace = true
+ono-model-broker.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]

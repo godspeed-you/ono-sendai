@@ -92,6 +92,9 @@ pub struct LoadConfig {
     /// no arrangement outside the process can make that call fail — so the platform is a seam
     /// the caller supplies rather than a constant this module reaches for (ADR-0443).
     pub confinement: Arc<dyn ConfinementPlatform>,
+    /// The model broker `models.list` and `models.infer` reach (spec §31.43, ADR-0566). The
+    /// default answers for a host with no catalogue: nothing configured, nothing answers.
+    pub models: Arc<dyn ono_model_broker::ModelBroker>,
 }
 
 impl std::fmt::Debug for LoadConfig {
@@ -125,6 +128,7 @@ impl LoadConfig {
             platform: host_platform(),
             private_dir: None,
             confinement: NativePlatform::shared(),
+            models: Arc::new(ono_model_broker::NoModels),
         }
     }
 }
@@ -187,6 +191,7 @@ impl Supervisor {
             platform,
             private_dir,
             confinement,
+            models,
         } = config;
         manifest.check_host(HOST_API, &platform)?;
         // Negotiation before code: a denied required capability means nothing is spawned.
@@ -296,6 +301,8 @@ impl Supervisor {
             audit: audit.clone(),
             policy,
             clock,
+            models,
+            disclosed_remote: false,
             contract: contract.clone(),
             state: StateStore::new(contract.limits.state_quota),
             package_id: package_id.clone(),
@@ -921,6 +928,10 @@ struct Actor {
     audit: AuditTrail,
     policy: Policy,
     clock: HostClock,
+    /// What `models.*` reach (ADR-0566).
+    models: Arc<dyn ono_model_broker::ModelBroker>,
+    /// Whether the data-boundary plan of spec §31.82 has been disclosed for a remote provider.
+    disclosed_remote: bool,
     contract: PluginContract,
     state: StateStore,
     package_id: String,
@@ -1600,6 +1611,8 @@ impl Actor {
             method::STATE_DELETE => self.host_state_delete(seq, params).await,
             method::CLOCK_NOW => self.host_clock_now(seq).await,
             method::FILESYSTEM_READ => self.host_filesystem_read(seq, params).await,
+            method::MODELS_LIST => self.host_models_list(seq).await,
+            method::MODELS_INFER => self.host_models_infer(seq, params).await,
             unknown => Err(protocol_violation(format!(
                 "a call to `{unknown}`, which the negotiated host API does not carry"
             ))),
@@ -2005,6 +2018,186 @@ impl Actor {
         Ok(())
     }
 
+    /// `models.list`: the providers this package may use — the catalogue, filtered by the
+    /// grant's `providers` scope (spec §31.43, ADR-0566).
+    async fn host_models_list(&mut self, seq: u64) -> Result<(), KuangError> {
+        match self.broker_check(
+            ono_kuang_protocol::Capability::ModelInfer,
+            "models.list",
+            &[],
+            None,
+        ) {
+            Ok(grant) => {
+                let path = std::env::var_os("PATH");
+                let listed: Vec<Json> = self
+                    .models
+                    .providers()
+                    .iter()
+                    .filter(|provider| scope_names(&grant, "providers", &provider.id))
+                    .map(|provider| provider.to_json(path.as_ref()))
+                    .collect();
+                self.reply_ok(seq, Json::Array(listed)).await;
+            }
+            Err(error) => self.reply_err(seq, error.into()).await,
+        }
+        Ok(())
+    }
+
+    /// `models.infer`: operator-approved inference (spec §31.43, §31.44, §31.82; ADR-0566).
+    ///
+    /// The order is the boundary: the provider is chosen, the grant is checked against that
+    /// provider's id, the data policy is applied to every segment, the plan is disclosed before
+    /// the first remote call, and only then does anything leave. The broker that talks to the
+    /// model receives an already-checked provider and an already-classified request; it has no
+    /// way to reach a grant or a decision.
+    async fn host_models_infer(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let params: ModelsInferParams = Self::parse_params(params)?;
+        let request = params.request;
+        let path = std::env::var_os("PATH");
+        let providers = self.models.providers();
+        let within_scope = match self
+            .policy
+            .evaluate(ono_kuang_protocol::Capability::ModelInfer, &[])
+        {
+            Evaluation::Allowed(grant) => Some(grant),
+            _ => None,
+        };
+        let chosen = match request.provider.as_deref() {
+            Some(id) => providers.iter().find(|provider| provider.id == id).cloned(),
+            None => providers
+                .iter()
+                .filter(|provider| {
+                    within_scope
+                        .as_ref()
+                        .is_none_or(|grant| scope_names(grant, "providers", &provider.id))
+                })
+                .find(|provider| provider.unavailable_reason(path.as_ref()).is_none())
+                .cloned(),
+        };
+        let label = self.invocation_label();
+        let Some(provider) = chosen else {
+            let error = KuangError::new(
+                KuangErrorCode::ModelProviderUnavailable,
+                match request.provider.as_deref() {
+                    Some(id) => format!("no configured model provider is called `{id}`"),
+                    None => "no configured model provider is available within this package's \
+                             grant"
+                        .to_owned(),
+                },
+            )
+            .with_help("`get model` lists what the operator configured; `<config>/kuang/models.yaml` is where a provider is added");
+            self.audit.record(
+                &self.package_id,
+                &label,
+                "model.infer",
+                None,
+                Enforcement::Broker,
+                "models.infer",
+                request.provider.clone().map(Json::String),
+                self.now(),
+                AuditResult::Failed,
+                Some(error.clone().into()),
+            );
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        };
+        let target = Some(Json::String(provider.id.clone()));
+        if let Err(error) = self.broker_check(
+            ono_kuang_protocol::Capability::ModelInfer,
+            "models.infer",
+            &[ScopeUse::Name {
+                key: "providers",
+                value: provider.id.clone(),
+            }],
+            target.clone(),
+        ) {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let (prepared, plan) = match ono_model_broker::classify(&provider, &request) {
+            Ok(prepared) => prepared,
+            Err(denied) => {
+                let error = KuangError::new(
+                    KuangErrorCode::ModelPolicyDenied,
+                    format!(
+                        "the request carries {} `{}` may not receive: {}",
+                        if denied.classes.len() == 1 { "a data class" } else { "data classes" },
+                        provider.id,
+                        denied.classes.join(", ")
+                    ),
+                )
+                .with_metadata(
+                    "denied_classes",
+                    Json::Array(denied.classes.iter().cloned().map(Json::String).collect()),
+                )
+                .with_help("nothing was sent. The request is refused whole rather than trimmed, so the boundary stays visible (spec §31.44)");
+                self.audit.record(
+                    &self.package_id,
+                    &label,
+                    "model.infer",
+                    None,
+                    Enforcement::Broker,
+                    "models.infer",
+                    target,
+                    self.now(),
+                    AuditResult::Failed,
+                    Some(error.clone().into()),
+                );
+                self.reply_err(seq, error.into()).await;
+                return Ok(());
+            }
+        };
+        let plan_json = serde_json::to_value(&plan).unwrap_or(Json::Null);
+        // Spec §31.82: before the first remote inference, the data-boundary plan is shown. It
+        // is an audit record, so `get audit --plugin <id>` is where it stays inspectable.
+        if provider.kind == ono_model_broker::Kind::Remote && !self.disclosed_remote {
+            self.disclosed_remote = true;
+            self.audit.record(
+                &self.package_id,
+                &label,
+                "model.infer",
+                None,
+                Enforcement::Broker,
+                "model.disclosure",
+                Some(plan_json.clone()),
+                self.now(),
+                AuditResult::Success,
+                None,
+            );
+        }
+        let models = Arc::clone(&self.models);
+        match models.infer(&provider, &prepared).await {
+            Ok(parts) => {
+                self.reply_ok(
+                    seq,
+                    json!({"provider": provider.id, "plan": plan_json, "parts": parts}),
+                )
+                .await;
+            }
+            Err(failure) => {
+                let code = match failure {
+                    ono_model_broker::InferenceError::Timeout(_) => KuangErrorCode::RuntimeTimeout,
+                    _ => KuangErrorCode::ModelProviderUnavailable,
+                };
+                let error = KuangError::new(code, failure.to_string());
+                self.audit.record(
+                    &self.package_id,
+                    &label,
+                    "model.infer",
+                    None,
+                    Enforcement::Broker,
+                    "models.infer",
+                    target,
+                    self.now(),
+                    AuditResult::Failed,
+                    Some(error.clone().into()),
+                );
+                self.reply_err(seq, error.into()).await;
+            }
+        }
+        Ok(())
+    }
+
     async fn host_filesystem_read(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
         let read: FilesystemReadParams = Self::parse_params(params)?;
         // Check against the value the operation will actually use: the resolved path, with no
@@ -2211,4 +2404,32 @@ mod tests {
     fn should_not_claim_a_ceiling_that_does_not_exist() {
         assert!(!at_memory_ceiling(0, 0));
     }
+}
+
+/// The parameters of `models.infer`: the request, as `assistants.v1.yaml` shapes it.
+#[derive(Debug, serde::Deserialize)]
+struct ModelsInferParams {
+    request: ono_model_broker::ModelRequest,
+}
+
+/// Whether `name` is inside the `key` name-list of `grant`'s scope: an absent scope or key
+/// admits every name; `*`, `operator-selected` and a `prefix*` glob admit by pattern.
+fn scope_names(grant: &crate::policy::Grant, key: &str, name: &str) -> bool {
+    let Some(scope) = grant.scope.as_ref() else {
+        return true;
+    };
+    let Some(Json::Array(patterns)) = scope.get(key) else {
+        return true;
+    };
+    patterns.iter().any(|pattern| match pattern {
+        Json::String(pattern) => {
+            pattern == name
+                || pattern == "*"
+                || pattern == "operator-selected"
+                || pattern
+                    .strip_suffix('*')
+                    .is_some_and(|prefix| name.starts_with(prefix))
+        }
+        _ => false,
+    })
 }
