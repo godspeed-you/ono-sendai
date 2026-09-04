@@ -576,13 +576,6 @@ fn should_read_the_v041_checklist_apart_from_the_v04_one() {
     );
 }
 
-// Every proof §4.8 names now exists, and what keeps this red is the second half of its own rule:
-// a named proof must also run un-ignored. Three of them do not yet — ADR-0496's Profile L
-// watchdog, and the two §4.8.14 guards below, which forty open boxes keep red. §4.8.1's box says
-// this one closes last, and this is what that means mechanically.
-// REASON: red until no proof §4.8 names is `#[ignore]`d, itself included. Un-ignored by the
-// increment that ticks the last box (ADR-0575).
-#[ignore = "red until no proof §4.8 names is still ignored (ADR-0575)"]
 #[test]
 fn should_find_every_test_the_v041_checklist_names_as_a_proof() {
     // §3's rule for every subsection: a box is ticked by a named test running un-ignored in the
@@ -645,10 +638,6 @@ fn should_find_every_acceptance_case_the_v041_checklist_names() {
     );
 }
 
-// §4.8 holds forty open boxes, fourteen of them P0 and twelve P1, because the tranche's checklist
-// was never reconciled with the work that closed its hundred and one issues.
-// REASON: red at HEAD. Un-ignored by the increment that ticks the last mandatory box (ADR-0575).
-#[ignore = "red until every P0 and P1 box of §4.8 is ticked (ADR-0575)"]
 #[test]
 fn should_find_every_p0_and_p1_box_of_the_v041_checklist_ticked() {
     // §66.9, the binding release criterion of this tranche: "There MUST be no known unresolved P0
@@ -677,10 +666,6 @@ fn should_find_every_p0_and_p1_box_of_the_v041_checklist_ticked() {
     );
 }
 
-// An open box that is not an exclusion names no ADR, and forty of them are open.
-// REASON: red at HEAD, for the same reason as the test above it. Un-ignored by the increment that
-// leaves only the recorded exclusions open (ADR-0575).
-#[ignore = "red until the only open boxes of §4.8 are the recorded exclusions (ADR-0575)"]
 #[test]
 fn should_find_a_dated_adr_for_every_box_the_checklist_leaves_open() {
     // §66.9's second sentence: "A P2/P3 issue MAY remain only if it is explicitly excluded from

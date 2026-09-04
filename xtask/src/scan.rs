@@ -2102,6 +2102,98 @@ fn normalise_source(text: &str) -> String {
 
 /// How far after a resize the assertion about it may be written.
 const RESIZE_ASSERTION_WINDOW: usize = 30;
+/// Reports release notes that disagree with `docs/ACCEPTANCE.md` about what is done
+/// (v0.4.1 §66.8's fifth bullet, ADR-0577).
+///
+/// §66.8 asks that *"`docs/STATE.md`, acceptance documentation and release notes agree on
+/// status"*. `state-check` already holds the first two against each other (ADR-0402); the notes
+/// were the surface nothing read, and a release note is the one document a reader outside the
+/// repository actually sees. Three ways it can disagree, and all three are the same failure —
+/// a release that says it is more finished than its own checklist does:
+///
+/// * there is no `docs/releases/v<version>.md` for the version the workspace declares;
+/// * the notes do not open by naming that version;
+/// * the checklist leaves a box open and the notes do not name it.
+///
+/// The third is the one worth having. A box left open is a decision, taken deliberately and
+/// recorded in an ADR (§66.9); a release whose notes are silent about it has taken that decision
+/// on the reader's behalf without telling them.
+#[must_use]
+pub fn check_release_notes(root: &Path) -> Vec<Problem> {
+    let Some(version) = workspace_version(root) else {
+        return vec![Problem::new(
+            "Cargo.toml",
+            "declares no workspace version, so no release note can be held against one",
+        )];
+    };
+    let relative = format!("docs/releases/v{version}.md");
+    let Ok(notes) = std::fs::read_to_string(root.join(&relative)) else {
+        return vec![Problem::new(
+            relative.clone(),
+            format!(
+                "does not exist, and the workspace declares version {version}. §66.8's fifth                  bullet asks that the release notes agree with the checklist about status, and a                  document nobody wrote agrees with nothing"
+            ),
+        )];
+    };
+
+    let mut problems = Vec::new();
+    let opening = notes.lines().next().unwrap_or_default();
+    if !opening.contains(&format!("v{version}")) {
+        problems.push(Problem::new(
+            format!("{relative}:1"),
+            format!(
+                "opens `{opening}` and the workspace declares version {version}. A release note                  that names another version is a note about another release"
+            ),
+        ));
+    }
+
+    let Ok(acceptance) = std::fs::read_to_string(root.join("docs/ACCEPTANCE.md")) else {
+        return problems;
+    };
+    for (line, title) in open_boxes(&acceptance) {
+        if !notes.contains(&title) {
+            problems.push(Problem::new(
+                format!("docs/ACCEPTANCE.md:{line}"),
+                format!(
+                    "is an open box — {title} — that `{relative}` does not mention. §66.9 permits                      an open box only as a recorded exclusion, and §66.8 asks the release notes to                      say so: a reader learns what was left undone from the notes or from nowhere"
+                ),
+            ));
+        }
+    }
+    problems
+}
+
+/// The `version` of the `[workspace.package]` table.
+fn workspace_version(root: &Path) -> Option<String> {
+    let manifest = std::fs::read_to_string(root.join("Cargo.toml")).ok()?;
+    manifest
+        .lines()
+        .skip_while(|line| line.trim() != "[workspace.package]")
+        .find_map(|line| line.strip_prefix("version = "))
+        .map(|value| value.trim().trim_matches('"').to_owned())
+}
+
+/// Every unticked box of `docs/ACCEPTANCE.md`, as its line number and the phrase it opens with.
+///
+/// The phrase is what a release note would have to quote to be talking about the same box, and it
+/// is the box's own bolded title with the priority prefix taken off — a reader of the notes has no
+/// use for `P2 ·`.
+fn open_boxes(acceptance: &str) -> Vec<(usize, String)> {
+    let mut found = Vec::new();
+    for (index, line) in acceptance.lines().enumerate() {
+        let Some(rest) = line.trim_start().strip_prefix("- [ ] **") else {
+            continue;
+        };
+        let Some((title, _)) = rest.split_once("**") else {
+            continue;
+        };
+        let title = title
+            .split_once(" · ")
+            .map_or(title, |(_, without_priority)| without_priority);
+        found.push((index + 1, title.trim_end_matches('.').to_owned()));
+    }
+    found
+}
 
 /// Checks that a test which resizes a terminal asserts on the size it resized to.
 ///

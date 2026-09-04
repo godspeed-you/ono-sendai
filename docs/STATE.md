@@ -261,22 +261,18 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [agent-S12 | 2026-09-04] **The v0.4.1 checklist is reconciled with the tree and the tranche is
-  brought to a release-ready state** — `docs/ACCEPTANCE.md` §4.8, `docs/STATE.md`,
-  `xtask/tests/hardening_evidence.rs`, `xtask/tests/spatial_evidence.rs`,
-  `xtask/tests/support/mod.rs`, `xtask/src/scan.rs`, `crates/ono-cli/src/spatial/`,
-  `crates/ono-provider-systemd/`, `crates/ono-provider-net/`, `docs/releases/v0.4.1.md`.
-  Five phases: the §4.8 harvester (ADR-0575), §4.8.2's names, the boxes whose proofs already exist,
-  ADR-0496's bounded observation, and the release mechanics.
-
 ## What is left, and why
 
-*Empty.* The v0.4.1 tranche is delivered — thirteen phases, and what remains is recorded below
-rather than claimed here.
+*Empty.* The v0.4.1 tranche is delivered — thirteen phases — and **116 of `docs/ACCEPTANCE.md`
+§4.8's 118 boxes are ticked**, each by a named automated proof that
+`xtask/tests/hardening_evidence.rs` resolves on every gate run (ADR-0575). The workspace declares
+`0.4.1`, `docs/releases/v0.4.1.md` is written and held against the checklist by
+`xtask::scan::check_release_notes` (ADR-0577), and no test in the workspace is `#[ignore]`d.
 
-Two issues stay open because **no release has been signed**, and neither is work anybody can do at
-a keyboard: **#107** (signature over the checksum manifest) and **#115** (documenting installer
-verification). Keyless Sigstore needs an OIDC token that exists only inside a release run, and
+**The two boxes that remain open are the two `scripts/release-check.sh` will report, and pushing
+the tag is what closes them.** They stay open because **no release has been signed**, and neither
+is work anybody can do at a keyboard: **#107** (signature over the checksum manifest) and **#115**
+(documenting installer verification). Keyless Sigstore needs an OIDC token that exists only inside a release run, and
 §40.2 denies the acceptance container a network. The code is complete on both sides —
 `scripts/sign-release.sh` refuses without an identity, `scripts/verify-release.sh` is
 identity-constrained and fails closed — and the first `v*` tag is the run that proves them.
@@ -320,6 +316,28 @@ issue that ordered the work did not know.
   undefined-behaviour job. Nothing either tool reported was a finding in the product — the fifth
   cause would have been one, and there was no fifth. Found on the way: two decisions had both
   taken the number 0571, and the later one — the brokered connection of #3 — is now ADR-0573.
+- **The checklist that decides what is done was not being checked (2026-09-04).** ADR-0575,
+  ADR-0577. `docs/ACCEPTANCE.md` §4.8.1's first box says `xtask/tests/hardening_evidence.rs` holds
+  §4.8 the way `spatial_evidence.rs` holds §4.7, and names three tests it must carry; §4.8.14 names
+  three more. None had been written, so for the whole tranche every tick in §4.8 was a claim
+  nothing checked — and the checklist had drifted: thirty-two proofs it named resolved to nothing,
+  nine of them the whole of §4.8.2. None of the thirty-two was missing work. The checklist was
+  written before the tranche and guessed at the test names its increments would use; the increments
+  named their tests after what they assert, which is §11's rule, and nobody reconciled the two.
+
+  The seven guards exist now, on helpers both harvesters share (§39.1): every proof resolves and
+  runs un-ignored, every case claimed is collected and every case recorded absent really is, no P0
+  or P1 box is open, every open box is a P2/P3 exclusion naming an ADR dated before the
+  release-candidate freeze — 2026-09-04, stated in §4.8.14 — and every bullet of §66.1–§66.8 has
+  exactly one box naming its proof. Acceptance case `181` (§59.6) was written: three boxes and
+  §4.8.13's prose had claimed it since 2026-09-02 and nobody had. `xtask::scan::check_release_notes`
+  closed the last documentation box by holding `docs/releases/v0.4.1.md` against the checklist, so
+  a box left open that the notes are silent about fails the gate.
+
+  What it cost to find out: nothing, once the harvester existed — it printed its own worklist. What
+  it would have cost not to: a release whose definition of done was 78 ticks of 118, forty of them
+  open for reasons that had already been dealt with, and no way to tell those from the ones that
+  had not.
 - **§34.4's second half, and the last of §57 H0's four red proofs (2026-09-04).** ADR-0576,
   finishing what ADR-0496 §4 stated as owed: an orientation asked a provider for every object when
   it needed a bounded view of them. It now reads `limits.orientation_objects` of a target — 128,

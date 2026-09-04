@@ -634,6 +634,7 @@ fn spec_check() -> ExitCode {
             .chain(scan::check_unannounced_skips(&root))
             .chain(scan::check_expected_skips(&root))
             .chain(scan::check_duplicate_helpers(&root))
+            .chain(scan::check_release_notes(&root))
             .chain(scan::check_pty_resize_assertions(&root))
             .chain(scan::check_confinement_syscalls(&root))
             .chain(scan::check_evaluator_captures(&root))

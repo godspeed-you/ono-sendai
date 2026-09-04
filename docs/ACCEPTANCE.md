@@ -1152,7 +1152,7 @@ Four conventions this subsection relies on:
 
 #### 4.8.1 Baseline and guardrails (H0 — §57 H0, §0.5, §6, §52)
 
-- [ ] **P0 · Every proof this subsection names resolves.** `xtask/tests/hardening_evidence.rs`
+- [x] **P0 · Every proof this subsection names resolves.** `xtask/tests/hardening_evidence.rs`
       holds §4.8 the way `xtask/tests/spatial_evidence.rs` holds §4.7, on the helpers both of them
       now share (`xtask/tests/support/mod.rs`, §39.1) —
       `xtask/tests/hardening_evidence.rs::should_find_every_test_the_v041_checklist_names_as_a_proof`
@@ -2149,17 +2149,21 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       is rendered from it (#118, ADR-0546). Holding `SECURITY.md`'s copy to the inventory is a
       documentation check of its own and is not part of #118's increment, so the transcription is
       still a transcription.
-- [ ] **P2 · The status documents agree.** `docs/STATE.md`, this checklist and the release notes
+- [x] **P2 · The status documents agree.** `docs/STATE.md`, this checklist and the release notes
       state the same thing about what is done: *In progress* is empty, the workspace holds no
       `#[ignore]`d test, every *Deferred* entry names an ADR saying why it does not block the
       release, and the release notes name the same tranche state — the bar §4.5, §4.6.5 and §4.7.2
       already set, checked by `cargo xtask state-check` on every `scripts/release-check.sh` run
-      (ADR-0402, `xtask/tests/scan.rs`). **The extension this box names —
-      scan.rs::should_report_release_notes_that_disagree_with_the_checklist, written here in prose
-      because it is a name no test answers to yet (ADR-0401's convention, applied to a proof rather
-      than to a case) — does not exist**, and neither does a `docs/releases/v0.4.1.md` for it to read — §66.8's fifth bullet is
-      owed by whichever increment writes the release notes, and this box cannot be ticked before
-      then. Found on 2026-09-03 while closing §4.8.12's seven documentation boxes.
+      (ADR-0402, `xtask/tests/scan.rs`). The extension this box names is
+      `xtask/tests/scan.rs::should_report_release_notes_that_disagree_with_the_checklist`, with
+      `::should_accept_release_notes_that_name_every_box_the_checklist_leaves_open`,
+      `::should_report_release_notes_that_do_not_exist_for_the_version_the_workspace_declares`,
+      `::should_report_release_notes_that_open_by_naming_another_version` and
+      `::should_find_this_repositorys_release_notes_in_agreement_with_its_checklist`: it reads
+      `docs/releases/v<version>.md` for the version the workspace declares and reports a box this
+      checklist leaves open that the notes are silent about, because §66.9 permits an open box only
+      as a recorded exclusion and a reader outside this repository learns what was left undone from
+      the notes or from nowhere. Owed since 2026-09-03 and delivered by ADR-0577.
 
 #### 4.8.13 The fourteen acceptance families (§40.3) and the scenarios they carry
 
@@ -2237,7 +2241,7 @@ when an ADR made *before* the freeze excludes it, so the date has to be written 
 from here rather than inferred; `xtask/tests/hardening_evidence.rs` reads this line, and an
 exclusion ADR dated after it is refused (ADR-0575).
 
-- [ ] **No known unresolved P0 or P1 issue in v0.4.1 scope remains at final release.** Every issue
+- [x] **No known unresolved P0 or P1 issue in v0.4.1 scope remains at final release.** Every issue
       of the tranche labelled `p0` or `p1` is closed, and closure means the commit that closed it
       said `Closes #NN` and the box that names its proof is ticked here —
       `xtask/tests/hardening_evidence.rs::should_find_every_p0_and_p1_box_of_the_v041_checklist_ticked`
@@ -2245,7 +2249,7 @@ exclusion ADR dated after it is refused (ADR-0575).
       refuses a release-ready verdict while *In progress* holds a claim or a *Deferred* entry names
       no ADR (ADR-0402). This box is ticked last of all, after §4.8.1's first box proves that every
       proof named here resolves.
-- [ ] **Every P2 or P3 exclusion is an ADR written before release-candidate freeze.** An excluded
+- [x] **Every P2 or P3 exclusion is an ADR written before release-candidate freeze.** An excluded
       item is recorded in an ADR that states what is excluded, why, and what the user-visible
       consequence is; the ADR predates the freeze; and it is named in the box it leaves open, so an
       exclusion is readable from the checklist rather than from the tracker —

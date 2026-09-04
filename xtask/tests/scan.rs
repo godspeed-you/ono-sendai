@@ -12,8 +12,8 @@ use ono_testkit::{Scratch, scratch};
 use xtask::scan::{
     ExpectedSkips, check_acceptance_case_references, check_authentication_flags,
     check_duplicate_helpers, check_expected_skips, check_pty_resize_assertions,
-    check_release_board, check_silent_skips, check_unannounced_skips, check_unfinished_work,
-    verify_observed_skips,
+    check_release_board, check_release_notes, check_silent_skips, check_unannounced_skips,
+    check_unfinished_work, verify_observed_skips,
 };
 
 /// Builds a throwaway repository shaped like this one.
@@ -1351,5 +1351,124 @@ fn should_report_this_repository_as_asserting_on_every_resize_it_makes() {
         check_pty_resize_assertions(root),
         Vec::new(),
         "a test that resizes a terminal says what the new size produced (v0.4.1 §43.4, §65.10)"
+    );
+}
+
+// --- release notes against the checklist (v0.4.1 §66.8, ADR-0577) -------------------------------
+
+/// A workspace manifest declaring `version`, in the shape `check_release_notes` reads.
+fn manifest(version: &str) -> String {
+    format!(
+        "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"{version}\"\nedition = \"2024\"\n"
+    )
+}
+
+#[test]
+fn should_report_release_notes_that_disagree_with_the_checklist() {
+    // §66.8's fifth bullet: the status documents agree. The disagreement that matters is a
+    // release whose notes are silent about a box its own checklist leaves open — the reader
+    // outside the repository has no other way to learn what was left undone.
+    let repo = fixture(&[
+        ("Cargo.toml", &manifest("9.9.9")),
+        (
+            "docs/ACCEPTANCE.md",
+            "### 4.8 The tranche\n\n- [x] **P2 · A thing that is done.** Proven.\n             - [ ] **P2 · The manifest is signed.** Waits on a signed release (ADR-0529).\n",
+        ),
+        (
+            "docs/releases/v9.9.9.md",
+            "# Ono-Sendai v9.9.9 — everything is finished\n\nNothing was left out.\n",
+        ),
+    ]);
+
+    let problems = check_release_notes(repo.path());
+
+    assert_eq!(
+        problems.len(),
+        1,
+        "the one open box is the one disagreement, got {problems:?}"
+    );
+    assert!(
+        problems[0].detail.contains("The manifest is signed"),
+        "the report names the box the notes are silent about, got {}",
+        problems[0].detail
+    );
+}
+
+#[test]
+fn should_accept_release_notes_that_name_every_box_the_checklist_leaves_open() {
+    let repo = fixture(&[
+        ("Cargo.toml", &manifest("9.9.9")),
+        (
+            "docs/ACCEPTANCE.md",
+            "### 4.8 The tranche\n\n- [ ] **P2 · The manifest is signed.** Waits (ADR-0529).\n",
+        ),
+        (
+            "docs/releases/v9.9.9.md",
+            "# Ono-Sendai v9.9.9\n\nOne box is open: *The manifest is signed* waits on a signed\n             release, and this tag is the run that produces it.\n",
+        ),
+    ]);
+
+    assert!(
+        check_release_notes(repo.path()).is_empty(),
+        "notes that say what is open agree with the checklist"
+    );
+}
+
+#[test]
+fn should_report_release_notes_that_do_not_exist_for_the_version_the_workspace_declares() {
+    let repo = fixture(&[
+        ("Cargo.toml", &manifest("9.9.9")),
+        ("docs/ACCEPTANCE.md", "### 4.8 The tranche\n"),
+        ("docs/releases/v9.9.8.md", "# Ono-Sendai v9.9.8\n"),
+    ]);
+
+    let problems = check_release_notes(repo.path());
+
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0].location.contains("v9.9.9.md"),
+        "the report names the document nobody wrote, got {}",
+        problems[0].location
+    );
+}
+
+#[test]
+fn should_report_release_notes_that_open_by_naming_another_version() {
+    let repo = fixture(&[
+        ("Cargo.toml", &manifest("9.9.9")),
+        ("docs/ACCEPTANCE.md", "### 4.8 The tranche\n"),
+        (
+            "docs/releases/v9.9.9.md",
+            "# Ono-Sendai v9.9.8 — last one\n",
+        ),
+    ]);
+
+    let problems = check_release_notes(repo.path());
+
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0].detail.contains("another version"),
+        "got {}",
+        problems[0].detail
+    );
+}
+
+#[test]
+fn should_find_this_repositorys_release_notes_in_agreement_with_its_checklist() {
+    // The rule is only worth having if the repository it guards obeys it.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+
+    let problems = check_release_notes(root);
+
+    assert!(
+        problems.is_empty(),
+        "this release's notes and its checklist disagree:\n{}",
+        problems
+            .iter()
+            .map(|problem| format!("  {} — {}", problem.location, problem.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
     );
 }
