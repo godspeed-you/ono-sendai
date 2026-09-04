@@ -619,11 +619,33 @@ fn commit_everything(dir: &Path) {
     }
 }
 
+/// Puts every platform's crates in the local registry, because the offline runs below walk the
+/// whole graph.
+///
+/// `cargo metadata` and `cargo tree` resolve for every target, so the graph names crates a Linux
+/// build never downloads — `mach2` for macOS and `winapi-util` for Windows arrived with wasmtime
+/// (ADR-0569). A machine that only ever built this workspace has them in its lock file and not on
+/// its disk, and the offline run then fails on the download rather than on the policy. `cargo
+/// fetch` is what completes it: unlike a build it fetches every target's dependencies. On a
+/// machine that already has them it is a no-op.
+fn complete_the_crate_graph() {
+    let status = std::process::Command::new("cargo")
+        .args(["fetch", "--locked"])
+        .current_dir(this_repository())
+        .status()
+        .expect("cargo must be runnable in the gate");
+    assert!(
+        status.success(),
+        "`cargo fetch --locked` could not complete the crate graph the offline runs walk"
+    );
+}
+
 #[test]
 fn should_fail_the_dependency_policy_on_a_denied_advisory_fixture() {
     // The advisory arm can only fire on a crate that came from a registry, so the graph under
     // test is this workspace and the database is the fixture: one advisory, invented here,
     // against a crate this repository really depends on.
+    complete_the_crate_graph();
     let lock = std::fs::read_to_string(this_repository().join("Cargo.lock")).expect("Cargo.lock");
     let (name, version) = first_registry_crate(&lock);
 
