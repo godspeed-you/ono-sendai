@@ -2366,11 +2366,6 @@ script somebody else is still writing is told the file is not executable, when i
 `spawn::exec_failure`'s catch-all arm is where "text file busy" would be said instead. ADR-0520
 §Consequences. **Exit test:** running a file held open for writing names the busy file.
 
-**Acceptance case `181` (§59.6, private-key permissions) does not exist (2026-09-02).**
-`docs/ACCEPTANCE.md` §4.8.2 names it in three boxes for #34 and #37, and §4.8.13's prose counts it
-among the seven the tranche adds. Both H1 issues are closed, so the case was promised and not
-written. **Exit test:** `181` exists and runs.
-
 **Case 152's §34 budget sits one millisecond from its limit (2026-09-02).**
 `docker/acceptance/cases/152-pathological-sockets.case` measures `get socket | take 1` against a
 50 ms budget as the median of 20 runs. In a full 125-case run on a machine at load 6.8 it read
@@ -4109,15 +4104,12 @@ opposite of a silenced requirement: they are the requirement, written down befor
 
 The v0.4.1 checklist's own guards, red by design (ADR-0575):
 
-- **`docs/ACCEPTANCE.md` §4.8 names proofs that do not exist**, because the checklist was written
-  before the tranche and guessed at the test names its increments would use. `§4.8.2`'s nine boxes
-  are the bulk of it: they name `authentication.rs::…`, `link_identity.rs::…`, `agent_startup.rs`
-  and `handshake.rs`, and the mutual-authentication work landed as
-  `crates/ono-remote/tests/client_authentication.rs`, `peer_identity.rs`, `downgrade_resistance.rs`
-  and `crates/ono-cli/tests/listening_agent.rs`.
+- **Three proofs `docs/ACCEPTANCE.md` §4.8 names are still `#[ignore]`d**, and its first box
+  requires that none be. Two are the §4.8.14 guards below; the third is ADR-0496's Profile L
+  watchdog. Until all three run,
   `xtask/tests/hardening_evidence.rs::should_find_every_test_the_v041_checklist_names_as_a_proof`
-  is `#[ignore]`d and red, and the report it prints is the reconciling increment's worklist.
-  ADR-0575. Un-ignored by that increment.
+  is `#[ignore]`d and red — which is what §4.8.1's "this box closes last" means mechanically.
+  ADR-0575. Un-ignored by the increment that ticks the last box.
 - **Forty boxes of §4.8 are open**, of which fourteen are P0 and twelve P1, so
   `xtask/tests/hardening_evidence.rs::should_find_every_p0_and_p1_box_of_the_v041_checklist_ticked`
   and `::should_find_a_dated_adr_for_every_box_the_checklist_leaves_open` are `#[ignore]`d and red.

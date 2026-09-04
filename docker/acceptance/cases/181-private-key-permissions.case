@@ -1,0 +1,63 @@
+# v0.4.1 §59.6, §8.3 and §8.5, and §59.9 over both. The private half of a link identity is the
+# one secret this shell keeps on disk, so the product-level questions are: does it create the file
+# only its owner can read, does it refuse the file once somebody else can, does the refusal say
+# which path and which mode without printing key material, and does the non-secret half — the
+# fingerprint an operator has to compare with the far end — print under both documented spellings.
+# §59.9 requires every trust failure to be non-interactive and deterministic in a script, so the
+# refusal here is the same diagnostic and the same status on every attempt, with no terminal
+# attached (ADR-0468). The stable code behind it — `Ono-Sendai-E0604`, `remote.identity_permissions`
+# — is asserted where a script can read it, in
+# `crates/ono-cli/tests/peer_identity.rs::should_refuse_a_group_or_world_readable_identity_and_establish_no_link`;
+# what a startup flag prints is a diagnostic line, and this case holds that line to §59.6's two
+# obligations.
+case: an exposed link identity is refused, and the fingerprint prints under both spellings
+timeout: 120
+env: NO_COLOR=1
+run: |
+  HOME=$(mktemp -d)
+  export HOME
+  export XDG_CONFIG_HOME="$HOME"
+
+  echo "== the fingerprint prints under the canonical spelling and the existing one =="
+  CANONICAL=$(ono --print-peer-key)
+  EXISTING=$(ono --agent --print-host-key)
+  case "$CANONICAL" in sha256:*) echo "the canonical spelling prints a fingerprint" ;; esac
+  [ "$CANONICAL" = "$EXISTING" ] && echo "both spellings name one identity"
+
+  echo "== the identity file is the owner's alone =="
+  IDENTITY=$(find "$HOME" -name link_identity.pem | head -1)
+  echo "identity mode=$(stat -c '%a' "$IDENTITY")"
+
+  echo "== once anyone else can read it, it is refused =="
+  chmod 644 "$IDENTITY"
+  set +e
+  ono --print-peer-key > "$HOME/out" 2> "$HOME/err"
+  echo "exposed identity exit=$?"
+  set -e
+  if grep -q 'sha256:' "$HOME/out"; then echo "LEAKED A FINGERPRINT"; else echo "nothing printed on the way to the refusal"; fi
+  if grep -qE 'PRIVATE KEY|BEGIN [A-Z]+ KEY' "$HOME/err" "$HOME/out"; then echo "LEAKED KEY MATERIAL"; fi
+  sed -e 's|'"$HOME"'|$HOME|g' "$HOME/err"
+
+  echo "== and it is the same refusal every time, with no terminal attached =="
+  set +e
+  ono --print-peer-key > /dev/null 2> "$HOME/err2"
+  echo "second attempt exit=$?"
+  set -e
+  if cmp -s "$HOME/err" "$HOME/err2"; then echo "the refusal is deterministic"; fi
+
+  echo "== restoring the mode restores the identity, and it is the one it always was =="
+  chmod 600 "$IDENTITY"
+  [ "$(ono --print-peer-key)" = "$CANONICAL" ] && echo "the identity survived the refusal"
+exit: 0
+stdout-contains: the canonical spelling prints a fingerprint
+stdout-contains: both spellings name one identity
+stdout-contains: identity mode=600
+stdout-contains: exposed identity exit=1
+stdout-contains: nothing printed on the way to the refusal
+stdout-contains: link_identity.pem is readable by group or others
+stdout-contains: it must be 0600
+stdout-contains: the refusal is deterministic
+stdout-contains: the identity survived the refusal
+stdout-not-contains: LEAKED A FINGERPRINT
+stdout-not-contains: LEAKED KEY MATERIAL
+stdout-not-contains: panicked

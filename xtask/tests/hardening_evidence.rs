@@ -576,12 +576,13 @@ fn should_read_the_v041_checklist_apart_from_the_v04_one() {
     );
 }
 
-// §4.8 was written before the tranche and names the test names its increments were *expected* to
-// write; several of them landed under different names, so the checklist points at proofs that do
-// not exist while the work behind them does.
-// REASON: red at HEAD, and the report it prints is the worklist. Un-ignored by the increment that
-// reconciles §4.8's boxes with the tests that were written (ADR-0575).
-#[ignore = "red until §4.8's boxes name the tests that were actually written (ADR-0575)"]
+// Every proof §4.8 names now exists, and what keeps this red is the second half of its own rule:
+// a named proof must also run un-ignored. Three of them do not yet — ADR-0496's Profile L
+// watchdog, and the two §4.8.14 guards below, which forty open boxes keep red. §4.8.1's box says
+// this one closes last, and this is what that means mechanically.
+// REASON: red until no proof §4.8 names is `#[ignore]`d, itself included. Un-ignored by the
+// increment that ticks the last box (ADR-0575).
+#[ignore = "red until no proof §4.8 names is still ignored (ADR-0575)"]
 #[test]
 fn should_find_every_test_the_v041_checklist_names_as_a_proof() {
     // §3's rule for every subsection: a box is ticked by a named test running un-ignored in the
@@ -590,12 +591,6 @@ fn should_find_every_test_the_v041_checklist_names_as_a_proof() {
     assert_proofs_exist(&checklist(), "docs/ACCEPTANCE.md §4.8", 150);
 }
 
-// §4.8.13's preamble names case `181` — §59.6, the private-key permission scenario — as one of
-// the seven the tranche adds, and §4.8.2's boxes name it as their proof. No such file exists;
-// `docs/STATE.md` has carried the finding since 2026-09-02.
-// REASON: red at HEAD. Un-ignored by the increment that writes case 181 and reconciles §4.8.2
-// (ADR-0575).
-#[ignore = "red until acceptance case 181 exists (ADR-0575)"]
 #[test]
 fn should_find_every_acceptance_case_the_v041_checklist_names() {
     // ADR-0401's convention, applied to the whole subsection: a case named in backticks is a

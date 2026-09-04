@@ -1153,14 +1153,17 @@ Four conventions this subsection relies on:
 #### 4.8.1 Baseline and guardrails (H0 — §57 H0, §0.5, §6, §52)
 
 - [ ] **P0 · Every proof this subsection names resolves.** `xtask/tests/hardening_evidence.rs`
-      holds §4.8 the way `xtask/tests/spatial_evidence.rs` holds §4.7 —
-      `hardening_evidence.rs::should_find_every_test_the_v041_checklist_names_as_a_proof` (each
-      `file.rs::name` exists, lives under a crate's `tests/` or under `xtask/tests/`, and carries
-      no `#[ignore]`), `::should_find_every_acceptance_case_the_v041_checklist_names` (each case
-      number is a `*.case` file `scripts/acceptance.sh` collects) and
-      `::should_read_the_v041_checklist_apart_from_the_v04_one` (the §4.7 passage ends at this
-      heading, so neither harvester can silently read the other's boxes). This box closes last: it
-      is the mechanical statement that no other box here is ticked by nothing (#29, §3).
+      holds §4.8 the way `xtask/tests/spatial_evidence.rs` holds §4.7, on the helpers both of them
+      now share (`xtask/tests/support/mod.rs`, §39.1) —
+      `xtask/tests/hardening_evidence.rs::should_find_every_test_the_v041_checklist_names_as_a_proof`
+      (every proof named below exists, lives under a workspace member `cargo test --workspace`
+      runs, and carries no `#[ignore]`),
+      `::should_find_every_acceptance_case_the_v041_checklist_names` (every case this subsection
+      claims is a `*.case` file `scripts/acceptance.sh` collects, and every one it records absent
+      really is) and `::should_read_the_v041_checklist_apart_from_the_v04_one` (the §4.7 passage
+      ends at this heading, so neither harvester can silently read the other's boxes). This box
+      closes last: it is the mechanical statement that no other box here is ticked by nothing
+      (#29, §3; ADR-0575).
 - [ ] **P0 · The four failing proofs of §57 H0 exist and are green.** §57 requires the failure
       before the fix, and §0.5 names the four defects the tranche is built around: the
       unauthenticated TLS client that reaches the protocol handshake (§0.5.1), the plugin that
@@ -1168,10 +1171,10 @@ Four conventions this subsection relies on:
       until its source closes (§0.5.5), and the high-cardinality spatial fixture that produces
       neither output nor progress (§0.5.7). Each was committed red — `#[ignore]`d with a
       `// REASON:` and a *Deferred* entry — by #31, and each is inverted by the phase that closes
-      it: `crates/ono-remote/tests/authentication.rs::should_refuse_the_tls_handshake_when_the_client_presents_no_certificate`,
+      it: `crates/ono-remote/tests/client_authentication.rs::should_refuse_a_tls_client_that_presents_no_certificate`,
       `crates/ono-kuang-supervisor/tests/confinement.rs::should_never_exec_the_plugin_when_a_mandatory_control_cannot_be_installed`,
       `crates/ono-cli/tests/streaming.rs::should_emit_the_first_value_before_the_source_closes`,
-      `crates/ono-spatial-query/tests/profiles.rs::should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture`.
+      `crates/ono-cli/tests/spatial_first_output.rs::should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture`.
       The box is ticked when all four run un-ignored and green, and `docs/STATE.md` records that
       each was red first (#31).
 - [x] **P2 · The frozen baseline exists and is readable by the gate.** `docs/baselines/v0.4.1.json`
@@ -1244,63 +1247,83 @@ authentication without performing it is exactly §3.1's release blocker.
       `PeerIdentity` that names either end of a link, the runtime user of a session stays a
       separate field from the transport credential (§7.3), and the SSH-carried stdio agent keeps
       its existing external authentication (§4.3) —
-      `crates/ono-protocol/tests/trust.rs::should_carry_the_peer_identity_of_either_end_of_a_link`,
-      `::should_keep_the_runtime_user_separate_from_the_transport_credential`,
-      `crates/ono-remote/tests/agentless.rs` still green over the ssh path (#32, §7.2, §56.1).
+      `crates/ono-remote/tests/peer_identity.rs::should_carry_the_public_material_and_the_storage_location_of_the_file_it_came_from`,
+      `::should_describe_itself_by_fingerprint_algorithm_and_storage_location`,
+      `crates/ono-cli/tests/authenticated_link.rs::should_show_the_proved_identity_and_the_reported_one_as_separate_fields`,
+      `::should_distinguish_authenticated_authorized_pinned_and_self_reported_on_a_link`, and
+      `crates/ono-remote/tests/agentless.rs::should_report_what_the_far_side_said_it_is` still
+      green over the ssh path (#32, §7.2, §56.1).
 - [ ] **P0 · A client has a persistent identity of its own.** `~/.config/ono/link_identity.pem`
       is created on first use with `0600`, is reused across invocations so the fingerprint an
       operator authorizes stays the same, and an existing `host_key.pem` migrates without a manual
-      step (§8.2) — `crates/ono-cli/tests/link_identity.rs::should_create_a_client_identity_with_owner_only_permissions_on_first_use`,
-      `::should_present_the_same_fingerprint_on_every_later_invocation`,
-      `::should_migrate_an_existing_host_key_file_into_the_canonical_identity_path` (#33, §8.1,
-      §8.4).
+      step (§8.2) — `crates/ono-cli/tests/peer_identity.rs::should_generate_one_identity_and_keep_it_across_calls`,
+      `::should_reuse_a_legacy_host_key_rather_than_generate_a_second_unrelated_identity`,
+      `::should_prefer_an_existing_link_identity_over_the_legacy_file`,
+      `::should_generate_a_fresh_identity_when_the_legacy_file_does_not_parse`, and
+      `crates/ono-remote/tests/peer_identity.rs::should_use_an_identity_file_only_its_owner_can_reach`
+      (#33, §8.1, §8.4).
 - [ ] **P0 · A readable private key is refused, and the diagnostic prints no key material.** A
       `link_identity.pem` that is group- or world-readable stops the operation and names the path
       and the required mode —
-      `crates/ono-cli/tests/link_identity.rs::should_refuse_an_identity_file_that_is_group_or_world_readable`,
-      `::should_name_the_path_and_the_required_permissions_without_printing_key_material`, and the
-      §59.6 half of case `181` (#34, §8.3).
+      `crates/ono-cli/tests/peer_identity.rs::should_refuse_a_group_or_world_readable_identity_and_establish_no_link`,
+      `::should_refuse_an_exposed_legacy_host_key_rather_than_generate_a_second_identity`,
+      `::should_refuse_to_print_from_an_identity_file_anyone_can_read`,
+      `crates/ono-remote/tests/peer_identity.rs::should_never_render_private_key_material_in_any_rendering_or_diagnostic`,
+      `::should_refuse_an_identity_file_that_anyone_else_can_read`,
+      `::should_refuse_an_identity_file_that_anyone_else_can_write`, and the §59.6 half of case
+      `181` (#34, §8.3).
 - [ ] **P0 · The listener requires an authenticated client certificate.** No protocol byte from an
       unauthenticated TCP client reaches the agent, and `peer_key()` is `Some` for every accepted
-      network client — `crates/ono-remote/tests/authentication.rs::should_refuse_the_tls_handshake_when_the_client_presents_no_certificate`,
-      `::should_refuse_a_malformed_client_certificate`,
-      `::should_refuse_a_client_certificate_whose_signature_proof_fails`,
-      `::should_expose_the_authenticated_fingerprint_of_every_accepted_client`, and
-      `crates/ono-remote/tests/agent.rs::should_reach_no_protocol_frame_from_an_unauthenticated_tcp_client`
-      (#35, the work package written out in §58.1; §2.1, §2.2, §7, §13.1).
+      network client — `crates/ono-remote/tests/client_authentication.rs::should_refuse_a_tls_client_that_presents_no_certificate`,
+      which drives a real anonymous peer to the point where it would read the provider inventory
+      and asserts it never gets there,
+      `::should_refuse_a_tls_client_whose_certificate_is_malformed`,
+      `::should_refuse_a_tls_client_that_cannot_prove_it_holds_the_key_it_presents`, and
+      `::should_report_the_key_the_accepted_client_proved_it_holds` (#35, the work package written
+      out in §58.1; §2.1, §2.2, §7, §13.1).
 - [ ] **P0 · The client verifies the server the same way the server verifies the client.** Both
       ends prove possession of a persistent key, and a client that cannot verify the server's
       identity refuses the link rather than continuing —
-      `crates/ono-remote/tests/authentication.rs::should_prove_possession_of_a_persistent_key_at_both_ends_of_a_link`,
-      `::should_refuse_the_link_when_the_server_identity_cannot_be_verified`, case `180` (#36,
+      `crates/ono-remote/tests/downgrade_resistance.rs::should_refuse_a_server_that_does_not_ask_for_a_client_certificate`,
+      `::should_know_the_key_of_a_server_it_did_agree_to_speak_to`,
+      `crates/ono-remote/tests/trust.rs::should_refuse_an_unpinned_peer_however_privileged_it_says_it_is`,
+      `crates/ono-remote/tests/tls.rs::should_keep_one_identity_across_restarts`, case `180` (#36,
       §7.1, §7.3).
 - [ ] **P0 · Downgrade is impossible and never automatic.** ALPN is `ono/2`, the negotiated
       protocol version is bound to the authenticated handshake, a wrong ALPN is refused, and no
       code path falls back to the legacy unauthenticated direct protocol on failure —
-      `crates/ono-remote/tests/authentication.rs::should_refuse_a_client_that_offers_the_wrong_alpn_protocol`,
-      `::should_never_retry_a_failed_authenticated_link_as_an_unauthenticated_one`,
-      `crates/ono-protocol/tests/handshake.rs::should_bind_the_negotiated_version_to_the_authenticated_handshake`
-      (#38, §13.2, §13.3, §13.4).
+      `crates/ono-remote/tests/client_authentication.rs::should_refuse_a_tls_client_that_asks_for_another_application_protocol`,
+      `crates/ono-remote/tests/downgrade_resistance.rs::should_speak_the_mutual_authentication_token_and_no_older_one`,
+      `::should_refuse_a_client_that_asks_for_the_older_protocol_token`,
+      `::should_not_try_again_after_a_server_refuses_mutual_authentication`, and
+      `crates/ono-remote/tests/tls.rs::should_carry_the_link_protocol_over_the_authenticated_transport`,
+      which is where the negotiated version is bound to the authenticated handshake — the link
+      protocol runs over that transport and over no other (#38, §13.2, §13.3, §13.4).
 - [ ] **P0 · No unauthenticated network mode is reachable from the CLI.** No flag, config key or
       environment variable turns the canonical agent into an unauthenticated listener, and the
       attempt is refused with a stable error rather than ignored —
-      `crates/ono-cli/tests/agent_startup.rs::should_offer_no_flag_that_starts_an_unauthenticated_network_listener`,
-      `::should_refuse_a_configuration_that_asks_for_an_unauthenticated_network_mode`, and
-      `xtask/tests/contracts.rs::should_declare_no_unauthenticated_transport_for_the_tcp_boundary`
-      against the §6.1 inventory (#39, §7.4).
+      `crates/ono-cli/tests/listening_agent.rs::should_have_no_flag_that_turns_client_authentication_off_for_a_listening_agent`,
+      `::should_offer_exactly_one_listening_form_and_it_authenticates_its_clients`,
+      `::should_report_a_usage_error_rather_than_listening_when_asked_to_authenticate_nobody`, and
+      `xtask/tests/scan.rs::should_find_no_authentication_disabling_flag_in_this_repository`, which
+      holds the rule over the whole tree rather than over the flags anyone thought to list
+      (#39, §7.4).
 - [ ] **P1 · The fingerprint an operator has to compare is printable at both ends.**
       `ono --print-peer-key` prints the client fingerprint in the §8.5 display form, and
       `ono --agent --print-host-key` keeps working for the agent —
-      `crates/ono-cli/tests/link_identity.rs::should_print_the_client_fingerprint_in_the_documented_display_form`,
-      `::should_keep_printing_the_agent_host_key_under_the_existing_flag`, case `181` (#37, §8.5).
+      `crates/ono-cli/tests/peer_identity.rs::should_print_the_same_fingerprint_however_it_is_asked_for`,
+      `::should_print_the_identity_a_machine_already_had`,
+      `::should_point_new_users_at_the_canonical_spelling_in_the_help`, case `181` (#37, §8.5).
 - [ ] **P0 · Host-key pinning is live on the production transport.** ADR-0037 §4 left ssh links on
       `TrustPolicy::Unauthenticated`, so the complete trust store of
       `crates/ono-remote/tests/trust.rs` was never consulted in production and no case asserted the
       E0603 refusal. The authenticated TCP transport this phase builds is what its exit test needs
       (ADR-0274) — `crates/ono-remote/tests/trust.rs::should_refuse_a_changed_host_key_with_the_stable_safety_code`
       reached through the production path by
-      `crates/ono-cli/tests/authenticated_link.rs::should_consult_the_pin_store_on_the_transport_a_user_actually_gets`,
-      and case `180` asserting E0603 in the container (#18).
+      `crates/ono-cli/tests/authenticated_link.rs::should_refuse_a_changed_host_key_with_the_stable_safety_code`,
+      `::should_link_to_a_host_whose_key_is_pinned`,
+      `::should_refuse_a_host_whose_key_was_never_pinned`, and case `180` asserting E0603 in the
+      container (#18).
 
 #### 4.8.3 Authorization derives from the authenticated identity (H2 — §66.1, §9, §10, §14)
 
@@ -1498,7 +1521,7 @@ sandbox when it provides no filesystem or network isolation.
 - [ ] **P1 · The four plugin failure classes are distinguishable.** Launch failure, protocol
       quarantine, resource-limit termination and crash are separate outcomes with separate codes,
       and a crash of one plugin leaves the shell and the other plugins running —
-      `crates/ono-kuang-supervisor/tests/failure_classes.rs::should_distinguish_a_launch_failure_from_a_quarantine_a_resource_kill_and_a_crash`,
+      `crates/ono-kuang-sdk/tests/failure_classes.rs::should_distinguish_a_launch_failure_from_a_quarantine_a_resource_kill_and_a_crash`,
       `::should_keep_the_shell_and_the_other_plugins_running_when_one_plugin_crashes`, case `189`
       (#62, §18).
 - [ ] **P0 · The documentation states the native tier honestly.** README, Wiki, `help` and the
@@ -1857,7 +1880,7 @@ a pass. ADR-0428 already made every skip announce itself; this phase makes an un
       skip-as-pass defect in a different costume).
 - [x] **P2 · The two known flaky tests are deterministic.**
       `should_report_a_failing_streamed_child_after_its_records` (#7) and
-      `ono-process::should_run_a_text_script_without_a_shebang_through_the_shell` (#27) are one
+      `crates/ono-process/tests/external_command.rs::should_run_a_text_script_without_a_shebang_through_the_shell` (#27) are one
       defect, fixed at its source: both run a script the test has just written, and a thread that
       forks between the write's `open` and `close` inherits the descriptor, so `execve` answers
       `ETXTBSY` — reported as exit 126 about a file that is executable. ADR-0520 waits that out
@@ -2058,7 +2081,8 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       `xtask/tests/reference.rs::should_render_the_security_terms_into_the_generated_reference`
       (#112, §19.1, §19.2, §51.1; ADR-0536). **The Wiki is a separate git repository and no gate run
       reaches it**: `cargo xtask terminology --wiki <path>` applies the identical rules to a named
-      checkout — `::should_check_a_wiki_checkout_when_one_is_given` — and running it stays a manual
+      checkout — `xtask/tests/terminology.rs::should_check_a_wiki_checkout_when_one_is_given` — and
+      running it stays a manual
       step until the release workflow clones the Wiki.
 - [ ] **P2 · Verification instructions exist and work.** The install documentation shows a short
       copyable sequence that verifies `SHA256SUMS` and its signature before installation, needs no
@@ -2130,9 +2154,10 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       `#[ignore]`d test, every *Deferred* entry names an ADR saying why it does not block the
       release, and the release notes name the same tranche state — the bar §4.5, §4.6.5 and §4.7.2
       already set, checked by `cargo xtask state-check` on every `scripts/release-check.sh` run
-      (ADR-0402, `xtask/tests/scan.rs`). **The extension this box names,
-      `xtask/tests/scan.rs::should_report_release_notes_that_disagree_with_the_checklist`, does not
-      exist**, and neither does a `docs/releases/v0.4.1.md` for it to read — §66.8's fifth bullet is
+      (ADR-0402, `xtask/tests/scan.rs`). **The extension this box names —
+      scan.rs::should_report_release_notes_that_disagree_with_the_checklist, written here in prose
+      because it is a name no test answers to yet (ADR-0401's convention, applied to a proof rather
+      than to a case) — does not exist**, and neither does a `docs/releases/v0.4.1.md` for it to read — §66.8's fifth bullet is
       owed by whichever increment writes the release notes, and this box cannot be ticked before
       then. Found on 2026-09-03 while closing §4.8.12's seven documentation boxes.
 
