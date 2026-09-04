@@ -283,6 +283,40 @@ One entry per phase, newest first. The reasoning is kept because each entry reco
 issue that ordered the work did not know.
 
 
+- **GitHub Actions was red for five runs, and none of the four causes was the product
+  (2026-09-04).** The tracker had been failing since the wasm increment of 2026-09-03 while every
+  local gate was green, which is the gap this entry exists to close: four environment
+  dependencies, each in a test or in the gate's own observation.
+
+  **A refusal that depended on the host's path layout.** The conformance case for `process.exec`
+  granted the directory `/bin/echo` really lives in and expected `/usr/sbin/reboot` to be refused.
+  On a merged-usr machine that canonicalises to `/usr/bin/systemctl` — inside the grant whenever
+  `/bin/echo` is `/usr/bin/echo` — so the refusal happened here and not on the runner. The
+  refused program now lives in a directory the test makes.
+
+  **An offline run that needed another platform's crates.** `xtask/tests/supply_chain.rs` runs
+  `cargo deny --offline` over this workspace, and `cargo metadata` resolves for every target:
+  wasmtime brought `mach2` and `winapi-util` into the lock file, which a Linux build never
+  downloads. The fixture now runs `cargo fetch --locked` first, which fetches every target's
+  dependencies and is a no-op where they are already there.
+
+  **A subject picked from the first ten units.** The systemd provider's agreement test read ten
+  units and looked for an active `.service` among them; the runner's first ten held none, so it
+  skipped where the registry expects it to run. The schema check still reads ten and the subject
+  comes from the whole list.
+
+  **The gate's own skip observation, lost to interleaving.** Standard error is unbuffered, so
+  `writeln!` with arguments left `SKIPPED <test>: <category>: <detail>` in the pipe in fragments,
+  and `cargo test`'s `test <name> ... ` from another thread landed inside it. `skip-check` then
+  reported a declared skip as gone and failed a green run — it failed exactly this way on the
+  development machine once the other three were fixed. The marker is built as one string and
+  written once, and the reader finds it anywhere in a line, guarded by the six categories so
+  prose is not read as an observation.
+
+  What this cost: five red runs nobody was watching while six increments landed. What would have
+  caught it earlier: `ONO_CANONICAL_CI=1 scripts/gate.sh`, which selects the packaging suite and
+  runs `skip-check` the way the runner does. It is the local emulation of the gate job and it
+  found the fourth cause.
 - **#3, sixth increment and close (2026-09-03): `views`, the full lens.** ADR-0572, decided
   with the user ("views with the full lens"). A package contributes a view beside its commands
   and drives it by events: `views.open` mounts it when a terminal is there and answers
