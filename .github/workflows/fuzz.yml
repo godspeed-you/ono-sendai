@@ -93,6 +93,11 @@ jobs:
         run: |
           set -euo pipefail
           seconds=$(( MINUTES * 60 ))
+          # libFuzzer refuses a corpus directory that is not there, and the first directory is
+          # the campaign's own memory: the cache above restores it and creates nothing when there
+          # is no cache yet, which is every first run (2026-09-04). The committed seeds beside it
+          # are read-only input; this is where new inputs are written.
+          mkdir -p fuzz/coverage-guided/corpus/'${{ matrix.target }}'
           # `-timeout` is §41.5: a single input that takes longer than ten seconds is reported as
           # a hang and written where it can be reproduced, rather than being absorbed into a long
           # job nobody reads. `-rss_limit_mb` is the same rule for memory.
