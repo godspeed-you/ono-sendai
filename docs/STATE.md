@@ -261,6 +261,14 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [agent-S12 | 2026-09-04] **The v0.4.1 checklist is reconciled with the tree and the tranche is
+  brought to a release-ready state** — `docs/ACCEPTANCE.md` §4.8, `docs/STATE.md`,
+  `xtask/tests/hardening_evidence.rs`, `xtask/tests/spatial_evidence.rs`,
+  `xtask/tests/support/mod.rs`, `xtask/src/scan.rs`, `crates/ono-cli/src/spatial/`,
+  `crates/ono-provider-systemd/`, `crates/ono-provider-net/`, `docs/releases/v0.4.1.md`.
+  Five phases: the §4.8 harvester (ADR-0575), §4.8.2's names, the boxes whose proofs already exist,
+  ADR-0496's bounded observation, and the release mechanics.
+
 ## What is left, and why
 
 *Empty.* The v0.4.1 tranche is delivered — thirteen phases, and what remains is recorded below
@@ -2156,6 +2164,12 @@ the host population the timing-sensitive tests are sensitive to, so this feeds t
 ADR-0516 closed the `PtySession` half; this is the rest. **Exit test:** a `cargo test --workspace`
 that *fails* leaves no `ono` or fixture child behind, and the follower test asserts the child's
 death rather than the prompt's return.
+  *Recurred 2026-09-04, unchanged:* **46** more of the same stubs on this host, oldest 24 h, every
+  `/tmp/ono-test-*` directory already gone, all reparented to `systemd --user`. Each is a busy loop
+  spawning `sleep 0.2` — ~230 spawns/s across the set, 93 MB RSS, ~30 s CPU each. Killed by hand
+  again. Note for whoever fixes it: `pgrep -f 'ono-test-.*journalctl'` matches the killing shell's
+  own command line, so the sweep must select on `argv[0] == /bin/sh` and `argv[1]` under
+  `/tmp/ono-test-`, not on the pattern.
 
 **`ono` still panics on a closed stderr outside the agent (2026-09-03).** ADR-0549 introduced
 `ono_core::diagnostic!` and applied it to the agent paths, where the defect was costing a live
@@ -4092,6 +4106,24 @@ opposite of a silenced requirement: they are the requirement, written down befor
   are **two runners** per architecture, so there the binary is compiled twice and the comparison
   covers the whole chain — same script, both places. **Exit test:** a machine with the disk runs
   `rebuild-check.sh` over two independent compiles.
+
+The v0.4.1 checklist's own guards, red by design (ADR-0575):
+
+- **`docs/ACCEPTANCE.md` §4.8 names proofs that do not exist**, because the checklist was written
+  before the tranche and guessed at the test names its increments would use. `§4.8.2`'s nine boxes
+  are the bulk of it: they name `authentication.rs::…`, `link_identity.rs::…`, `agent_startup.rs`
+  and `handshake.rs`, and the mutual-authentication work landed as
+  `crates/ono-remote/tests/client_authentication.rs`, `peer_identity.rs`, `downgrade_resistance.rs`
+  and `crates/ono-cli/tests/listening_agent.rs`.
+  `xtask/tests/hardening_evidence.rs::should_find_every_test_the_v041_checklist_names_as_a_proof`
+  is `#[ignore]`d and red, and the report it prints is the reconciling increment's worklist.
+  ADR-0575. Un-ignored by that increment.
+- **Forty boxes of §4.8 are open**, of which fourteen are P0 and twelve P1, so
+  `xtask/tests/hardening_evidence.rs::should_find_every_p0_and_p1_box_of_the_v041_checklist_ticked`
+  and `::should_find_a_dated_adr_for_every_box_the_checklist_leaves_open` are `#[ignore]`d and red.
+  §66.9 allows an open box only as a P2/P3 exclusion recorded in an ADR dated before the
+  release-candidate freeze, and §4.8.14 now states that freeze as 2026-09-04. ADR-0575.
+  Un-ignored by the increment that ticks the last mandatory box.
 
 The H0 failure proofs, red by design (issue #31, ADR-0430):
 

@@ -2207,6 +2207,11 @@ non-interactive and deterministic with no terminal attached (#91).
 
 §66.9 is the binding release criterion of this tranche, and it governs every box above.
 
+The release-candidate freeze is **2026-09-04**. §66.9 allows a P2 or P3 item to remain open only
+when an ADR made *before* the freeze excludes it, so the date has to be written down once and read
+from here rather than inferred; `xtask/tests/hardening_evidence.rs` reads this line, and an
+exclusion ADR dated after it is refused (ADR-0575).
+
 - [ ] **No known unresolved P0 or P1 issue in v0.4.1 scope remains at final release.** Every issue
       of the tranche labelled `p0` or `p1` is closed, and closure means the commit that closed it
       said `Closes #NN` and the box that names its proof is ticked here —

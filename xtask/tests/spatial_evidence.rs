@@ -24,10 +24,9 @@
 )]
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 
 mod support;
-use support::{read, repo};
+use support::{assert_proofs_exist, declared, locate, named_tests, read, repo};
 
 /// The text of `docs/ACCEPTANCE.md` §4.7, which is the v0.4 definition of done.
 ///
@@ -46,114 +45,6 @@ fn checklist() -> String {
         .find_map(|marker| acceptance[start..].find(marker))
         .map_or(acceptance.len(), |offset| start + offset);
     acceptance[start..end].to_owned()
-}
-
-/// Every `` `file.rs::test_name` `` a passage names, with the file each one belongs to.
-///
-/// The checklist writes a file once and then lists several of its tests as bare `::name`, the
-/// way a reader reads it; the file in force is carried along.
-fn named_tests(passage: &str) -> Vec<(String, String)> {
-    let mut found = Vec::new();
-    let mut current: Option<String> = None;
-    for token in passage.split('`').skip(1).step_by(2) {
-        let Some((file, name)) = token.split_once("::") else {
-            if token.ends_with(".rs") && !token.contains(' ') {
-                current = Some(token.to_owned());
-            }
-            continue;
-        };
-        if !file.is_empty() {
-            current = Some(file.to_owned());
-        }
-        let name = name.trim();
-        if name.is_empty() || !name.starts_with("should_") {
-            continue;
-        }
-        let Some(file) = current.clone() else {
-            panic!("`::{name}` is named before any file it could belong to");
-        };
-        found.push((file, name.to_owned()));
-    }
-    found
-}
-
-/// Where a test file named in the checklist actually lives.
-///
-/// The checklist names some of them by their whole path and some by their bare file name; both
-/// have to resolve to exactly one file that the workspace's `cargo test` runs.
-fn locate(file: &str) -> PathBuf {
-    for candidate in [repo().join(file), repo().join("crates").join(file)] {
-        if candidate.is_file() {
-            return candidate;
-        }
-    }
-    let mut hits: Vec<PathBuf> = Vec::new();
-    for crate_dir in std::fs::read_dir(repo().join("crates"))
-        .expect("the crates directory exists")
-        .flatten()
-    {
-        let candidate = crate_dir.path().join("tests").join(file);
-        if candidate.is_file() {
-            hits.push(candidate);
-        }
-    }
-    assert_eq!(
-        hits.len(),
-        1,
-        "docs/ACCEPTANCE.md §4.7 names `{file}` as a proof; it must be exactly one file under a \
-         crate's `tests/`, found {hits:?}"
-    );
-    hits.into_iter().next().expect("one hit")
-}
-
-/// Whether `source` declares `name` as a test, and whether that test is ignored.
-fn declared(source: &str, name: &str) -> Option<bool> {
-    let needle = format!("fn {name}(");
-    let at = source.find(&needle)?;
-    let before = &source[..at];
-    let ignored = before
-        .lines()
-        .rev()
-        .take_while(|line| {
-            let line = line.trim_start();
-            line.starts_with('#') || line.starts_with("//") || line.is_empty()
-        })
-        .any(|line| line.trim_start().starts_with("#[ignore"));
-    Some(ignored)
-}
-
-fn assert_proofs_exist(passage: &str, what: &str, least: usize) {
-    let mut missing = Vec::new();
-    let mut ignored = Vec::new();
-    let named = named_tests(passage);
-    assert!(
-        named.len() >= least,
-        "{what} names at least {least} tests; the harvester found {} — it has stopped reading \
-         what it is meant to read",
-        named.len()
-    );
-    for (file, name) in named {
-        let path = locate(&file);
-        assert!(
-            path.starts_with(repo().join("crates")) || path.starts_with(repo().join("xtask")),
-            "{what} names `{file}::{name}`, which is outside the suites the gate runs"
-        );
-        let source = std::fs::read_to_string(&path).expect("a named test file is readable");
-        match declared(&source, &name) {
-            None => missing.push(format!("{file}::{name}")),
-            Some(true) => ignored.push(format!("{file}::{name}")),
-            Some(false) => {}
-        }
-    }
-    assert!(
-        missing.is_empty(),
-        "{what} names proofs that do not exist — rename them there in the increment that renames \
-         the test: {missing:?}"
-    );
-    assert!(
-        ignored.is_empty(),
-        "{what} names proofs that are `#[ignore]`d, so they prove nothing: {ignored:?}"
-    );
 }
 
 #[test]
@@ -394,7 +285,9 @@ fn should_report_a_checklist_proof_that_no_longer_exists() {
         )],
         "the harvester reads a box's named proof"
     );
-    let source = std::fs::read_to_string(locate(&found[0].0)).expect("the suite is readable");
+    let path = locate("docs/ACCEPTANCE.md §4.7", &found[0].0)
+        .expect("the suite the fixture names is a real file");
+    let source = std::fs::read_to_string(path).expect("the suite is readable");
     assert!(
         declared(&source, &found[0].1).is_none(),
         "a test nobody wrote must not be reported as declared"
