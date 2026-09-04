@@ -1130,6 +1130,42 @@ fn should_accept_a_run_whose_skips_are_exactly_the_declared_ones() {
 }
 
 #[test]
+fn should_read_a_marker_the_harness_printed_a_running_test_in_front_of() {
+    // `cargo test` writes `test <name> ... ` without a newline and the verdict later, so a skip
+    // announced by another thread in between lands in the middle of that line. The marker is
+    // still the run's observation: a gate that loses it reports a declared skip as gone and
+    // fails a green run (seen on 2026-09-04).
+    let expected = expectation(
+        "  - id: \"crates/a/tests/thing.rs::should_cross_a_mount\"\n    category: fixture_not_applicable\n",
+        "    - \"crates/a/tests/thing.rs::should_cross_a_mount\"\n",
+    );
+    assert_eq!(
+        verify_observed_skips(
+            &expected,
+            "test should_do_something_else ... SKIPPED should_cross_a_mount: \
+             fixture_not_applicable: no second mount\nok\n"
+        ),
+        Vec::new()
+    );
+}
+
+#[test]
+fn should_not_take_prose_that_mentions_the_marker_for_an_observation() {
+    // The tolerance above cannot become a second way to declare a skip: what follows the word
+    // has to look like a marker, with one of §38.4's categories.
+    let expected = expectation(
+        "  - id: \"crates/a/tests/thing.rs::should_cross_a_mount\"\n    category: fixture_not_applicable\n",
+        "    - \"crates/a/tests/thing.rs::should_cross_a_mount\"\n",
+    );
+    let problems = verify_observed_skips(
+        &expected,
+        "SKIPPED should_cross_a_mount: fixture_not_applicable: no second mount\n\
+         note: the log said SKIPPED something: for reasons of its own\n",
+    );
+    assert_eq!(problems, Vec::new(), "got {problems:?}");
+}
+
+#[test]
 fn should_report_this_repositorys_observed_skips_as_exactly_the_declared_set() {
     // The registry against the tree, in both directions: a skip the tree can take and the file
     // does not declare, and a row whose test no longer skips, are both failures (§38.2).

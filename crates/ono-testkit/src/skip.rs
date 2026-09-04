@@ -123,8 +123,17 @@ pub fn skipped(reason: SkipReason, detail: &str) {
     // harness captures the macros and prints them only for tests that *failed*. A skip belongs to
     // a test that passed, so through the macro the marker would exist and never be seen — and
     // §38.1 asks for the skip to be visible in the harness output, not merely emitted.
+    // One write, not one per fragment: standard error is unbuffered, so a `writeln!` with
+    // arguments reaches the pipe in pieces, and `cargo test`'s own output from another thread
+    // lands between them. A gate that reads the halves sees no marker (seen on 2026-09-04).
     let mut stderr = std::io::stderr().lock();
-    let _ = writeln!(stderr, "SKIPPED {test}: {}: {detail}", reason.category());
+    let _ = stderr.write_all(marker(&test, reason, detail).as_bytes());
+}
+
+/// The marker line of ADR-0513, as one string: `SKIPPED <test>: <category>: <detail>`.
+#[must_use]
+pub fn marker(test: &str, reason: SkipReason, detail: &str) -> String {
+    format!("SKIPPED {test}: {}: {detail}\n", reason.category())
 }
 
 /// The prerequisite helper of v0.4.1 Appendix G: `require(condition, category, detail)`.
@@ -211,5 +220,23 @@ pub fn require_descriptors(needed: u64) -> Result<(), DescriptorShortfall> {
             soft: reached,
             hard,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SkipReason, marker};
+
+    #[test]
+    fn should_build_the_whole_marker_as_one_string_so_it_reaches_the_log_in_one_write() {
+        assert_eq!(
+            marker(
+                "should_cross_a_mount",
+                SkipReason::FixtureNotApplicable,
+                "this host reports no mount below `/`"
+            ),
+            "SKIPPED should_cross_a_mount: fixture_not_applicable: this host reports no mount \
+             below `/`\n"
+        );
     }
 }

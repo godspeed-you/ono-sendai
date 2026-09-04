@@ -1846,14 +1846,26 @@ pub fn verify_observed_skips(expected: &ExpectedSkips, log: &str) -> Vec<Problem
 fn observed_skips(log: &str) -> Vec<(String, String)> {
     let mut observed = Vec::new();
     for line in log.lines() {
-        let Some(rest) = line.trim_start().strip_prefix("SKIPPED ") else {
-            continue;
-        };
-        let Some((test, rest)) = rest.split_once(": ") else {
-            continue;
-        };
-        let category = rest.split(':').next().unwrap_or_default().trim();
-        observed.push((test.trim().to_owned(), category.to_owned()));
+        // The marker is looked for anywhere in the line, not only at its start: `cargo test`
+        // writes `test <name> ... ` and the verdict in two pieces, so a skip another thread
+        // announced in between is printed inside that line. What makes the tolerance safe is the
+        // shape that has to follow — a name, one of §38.4's categories, and a detail — so prose
+        // that merely says the word is not read as an observation.
+        let mut search = line;
+        while let Some(at) = search.find("SKIPPED ") {
+            let rest = &search[at + "SKIPPED ".len()..];
+            search = rest;
+            let Some((test, rest)) = rest.split_once(": ") else {
+                continue;
+            };
+            let Some((category, _)) = rest.split_once(':') else {
+                continue;
+            };
+            let category = category.trim();
+            if ono_testkit::SkipReason::from_category(category).is_some() {
+                observed.push((test.trim().to_owned(), category.to_owned()));
+            }
+        }
     }
     observed.sort();
     observed.dedup();
