@@ -771,7 +771,27 @@ async fn should_agree_with_the_running_service_manager_when_one_is_present() {
     // Only an *active* service is a stable subject: systemd unloads inactive units from memory,
     // so a condition-failed daemon that shows up in one enumeration can be gone by the next
     // query — which is exactly what happened to `hv_kvp_daemon.service` on a CI runner.
-    let Some(service) = records
+    // The ten read above are whatever the manager listed first, and on a CI runner those ten
+    // were slices and sockets: the subject is looked for in the whole list rather than in a
+    // window whose contents are the host's business (this skip fired on `ubuntu-latest`).
+    let everything = tokio::time::timeout(
+        BUDGET,
+        provider
+            .snapshot(&Query::target("service"))
+            .expect("available")
+            .collect(),
+    )
+    .await
+    .expect("reading the unit list must not hang");
+    let loaded: Vec<Arc<RecordValue>> = everything
+        .into_values()
+        .into_iter()
+        .filter_map(|value| match value {
+            Value::Record(record) => Some(record),
+            _ => None,
+        })
+        .collect();
+    let Some(service) = loaded
         .iter()
         .filter(|record| text(record, "state") == "active")
         .map(|record| text(record, "name"))
