@@ -296,7 +296,12 @@ issue that ordered the work did not know.
   alternate screen, a layout for each component, keys named as `view.event` names them — and the
   test host's records every tree and injects events, so the conformance suite proves the
   lifecycle without a terminal. Proven by four conformance cases, the renderer's unit tests, a
-  pseudo-terminal test through the binary, and acceptance case 217. With it, every call
+  pseudo-terminal test through the binary, and acceptance case 217. It also explains a flake this
+  board had staged for filing: `host_domains.rs::should_broker_a_tcp_connection_for_a_granted_package`
+  failed once in eight gate runs with `["pong:"]` and no payload, and the cause was the test's own
+  peer writing its answer in two calls while the package reads one chunk — a test defect, fixed in
+  `032fa8d`, and taken off the staging area. The example plugin's connection reads also waited five
+  milliseconds, which is a coin toss under gate load; they wait two seconds now. With it, every call
   `protocol.v1.yaml` declares is served or answered with ADR-0571's honest refusal, and the
   manifest no longer refuses a view contribution. Closed with `gh issue close 3`.
 - **#3, fifth increment (2026-09-03): `network.listen`, and `network.request` decided.**
@@ -2009,13 +2014,6 @@ the provider samples — and no assertion changed.
   is the class the board's 2026-09-03 entry on load-sensitive tests warns about. Not
   investigated here: it is outside #3's scope and the user triages. Reproduce with
   `scripts/gate.sh` or `cargo test -p ono-cli` under CPU load.
-- **`host_domains.rs::should_broker_a_tcp_connection_for_a_granted_package` fails once in
-  eight in the gate and never alone.** In the gate run of 2026-09-03 the plugin loaded as
-  `degraded` and `echo:connect` produced no `pong`; five runs of the test on its own pass in
-  0,07 s. The test binary runs its eight tests in parallel, each loading `dev.example.echo` from
-  its own scratch home, so the suspects are a shared resource the loads contend for (the
-  supervisor's port or socket, or the fixture package's private directory) rather than the
-  broker itself. Evidence: `target/gate-test.log` of that run.
 - **`docs/spec/schemas/limit.v1.yaml` is not embedded.** `ono_value::builtin_schemas()` lists
   ninety contracts by hand and this one is not among them, so `ono.limit/1` is a schema the
   registry cannot answer for although the document exists. Found while writing the fidelity test
