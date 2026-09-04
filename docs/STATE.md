@@ -2426,6 +2426,15 @@ defect ADR-0576 had to fix in its first form. Measured by
 in `docs/spec/hardening/performance_baseline.json`. **Exit test:** `spatial.selector_miss` at
 Profile M under 250 ms p95.
 
+**Four suites still exec a file they have just written (2026-09-04).** ADR-0578 took the race out
+of `ono-model-broker` after CI hit it — a concurrent test's `fork` inherits the write descriptor
+and the `exec` answers `ETXTBSY` — by running the script through `/bin/sh` instead. The same shape
+is in `crates/ono-kuang-sdk/tests/conformance.rs`, `crates/ono-kuang-supervisor/tests/confinement.rs`,
+`crates/ono-cli/tests/adapters.rs` and `crates/ono-provider-linux/tests/package_sources.rs`, and
+`ono_testkit::executable` is the shared helper behind several of them. None has been observed
+failing, so none was changed. **Exit test:** the helper writes through a temporary name and renames,
+or the suites take ADR-0578's route, and no `ETXTBSY` appears in a CI log again.
+
 **Case 152's §34 budget sits one millisecond from its limit (2026-09-02).**
 `docker/acceptance/cases/152-pathological-sockets.case` measures `get socket | take 1` against a
 50 ms budget as the median of 20 runs. In a full 125-case run on a machine at load 6.8 it read

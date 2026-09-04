@@ -1074,10 +1074,12 @@ mod tests {
             "#!/bin/sh\nread -r doc\ncase \"$doc\" in\n  *hello*) printf '{\"protocol\":\"ono-model/1\",\"parts\":[{\"kind\":\"text\",\"text\":\"echo: hello\"},{\"kind\":\"citation\",\"object\":\"ono.process/1[42]\"}]}';;\n  *) printf '{\"protocol\":\"ono-model/1\",\"error\":{\"message\":\"no hello\"}}';;\nesac\n",
         )
         .expect("write");
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         let mut provider = provider(DataPolicy::LocalOnly);
-        provider.command = vec![script.to_string_lossy().into_owned()];
+        // `/bin/sh <script>` rather than the script itself: `exec` of a file this process has
+        // just written races every other test that forks, because the child inherits the write
+        // descriptor between `fork` and its own `exec` and the kernel answers `ETXTBSY`. The
+        // shell is never written by a test, and the script is data it reads (ADR-0578).
+        provider.command = vec!["/bin/sh".to_owned(), script.to_string_lossy().into_owned()];
         let broker = CommandBroker::new(
             Catalogue {
                 providers: vec![provider.clone()],
@@ -1117,10 +1119,12 @@ mod tests {
         let directory = ono_testkit::scratch();
         let script = directory.path().join("chatty");
         std::fs::write(&script, "#!/bin/sh\necho 'Hello! How can I help?'\n").expect("write");
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         let mut provider = provider(DataPolicy::LocalOnly);
-        provider.command = vec![script.to_string_lossy().into_owned()];
+        // `/bin/sh <script>` rather than the script itself: `exec` of a file this process has
+        // just written races every other test that forks, because the child inherits the write
+        // descriptor between `fork` and its own `exec` and the kernel answers `ETXTBSY`. The
+        // shell is never written by a test, and the script is data it reads (ADR-0578).
+        provider.command = vec!["/bin/sh".to_owned(), script.to_string_lossy().into_owned()];
         let broker = CommandBroker::new(
             Catalogue {
                 providers: vec![provider.clone()],
@@ -1139,10 +1143,12 @@ mod tests {
         let directory = ono_testkit::scratch();
         let script = directory.path().join("slow");
         std::fs::write(&script, "#!/bin/sh\nsleep 5\n").expect("write");
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         let mut provider = provider(DataPolicy::LocalOnly);
-        provider.command = vec![script.to_string_lossy().into_owned()];
+        // `/bin/sh <script>` rather than the script itself: `exec` of a file this process has
+        // just written races every other test that forks, because the child inherits the write
+        // descriptor between `fork` and its own `exec` and the kernel answers `ETXTBSY`. The
+        // shell is never written by a test, and the script is data it reads (ADR-0578).
+        provider.command = vec!["/bin/sh".to_owned(), script.to_string_lossy().into_owned()];
         let broker = CommandBroker::new(
             Catalogue {
                 providers: vec![provider.clone()],
