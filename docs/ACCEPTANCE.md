@@ -1735,7 +1735,7 @@ mode this phase removes.
       pass — `xtask/tests/perf.rs::should_run_the_declared_benchmarks_and_write_their_records`,
       `::should_name_the_reference_environment_on_every_recorded_figure`,
       `::should_distinguish_a_warm_measurement_from_a_cold_one` (#84, §37.1–§37.4).
-- [ ] **P1 · Time to first result is measured, and a blank hang fails.** The §33.2 targets hold on
+- [x] **P1 · Time to first result is measured, and a blank hang fails.** The §33.2 targets hold on
       the reference environment — cached `look`/`near` first result under 50 ms p95, Profile M
       spatial query under 150 ms p95, Profile M `map --live` first frame under 500 ms p95, Profile L
       initial progress or a deterministic cost refusal under 1.5 s — and a supported interactive

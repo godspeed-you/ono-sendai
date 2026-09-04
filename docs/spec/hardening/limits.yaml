@@ -153,6 +153,41 @@ limits:
   # range declared below, and `ono_remote::ListeningAgent` applies them at the two moments
   # `docs/spec/hardening/remote_limits.yaml` names. That file describes the enforcement and
   # references these keys; the numbers stay here, once (§52.2).
+  # --- orientation, §34.4 ---------------------------------------------------------------------
+  - key: limits.orientation_objects
+    type: int
+    default: 128
+    min: 1
+    max: 1000000
+    unit: objects
+    enforced_by: ono-cli
+    spec: "v0.4.1 §34.4, Appendix A"
+    doc: >-
+      How many objects one orientation — `look`, `near`, the first frame of `map --live` — reads
+      from a provider target before it stops reading and counts the rest instead. §34.4 asks that
+      a local question not require the complete system graph "when provider APIs can answer the
+      neighborhood incrementally"; the bound is what asks for the incremental answer, and the
+      population the provider states beside it is what keeps the count honest (§2.17, ADR-0576).
+      A place with fewer objects than this never notices it. The default sits above §34.2's
+      hundred-node view budget, so no view ever shows fewer places because of the bound — it only
+      stops the shell from reading objects it would cluster away unseen. Zero is excluded: an
+      orientation that reads nothing is not a lower-detail view, it is a blank one.
+  - key: limits.orientation_ceiling
+    type: int
+    default: 16384
+    min: 1
+    max: 100000000
+    unit: objects
+    enforced_by: ono-cli
+    spec: "v0.4.1 §34.4, Appendix A"
+    doc: >-
+      The same bound, for a target whose count an orientation cannot keep true. A provider states
+      one population per query, and a target that serves several kinds of place — `socket` serves
+      both listeners and connections — cannot have that one figure split between them without
+      inventing the split (§2.17). Such a target is therefore read whole on any ordinary host, and
+      this is the ceiling at which "whole" stops: far above what a machine has, and far below what
+      a pathological one has (§33.3's bounded lower-detail strategy). Past it the exits report no
+      count and say why, rather than counting a sample as though it were the collection.
   - key: limits.remote_connections
     type: int
     default: 32

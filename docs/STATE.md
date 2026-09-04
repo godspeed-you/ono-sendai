@@ -320,6 +320,35 @@ issue that ordered the work did not know.
   undefined-behaviour job. Nothing either tool reported was a finding in the product — the fifth
   cause would have been one, and there was no fifth. Found on the way: two decisions had both
   taken the number 0571, and the later one — the brokered connection of #3 — is now ADR-0573.
+- **§34.4's second half, and the last of §57 H0's four red proofs (2026-09-04).** ADR-0576,
+  finishing what ADR-0496 §4 stated as owed: an orientation asked a provider for every object when
+  it needed a bounded view of them. It now reads `limits.orientation_objects` of a target — 128,
+  above §34.2's hundred-node view budget, so no view shows fewer places for it — and the provider
+  states the population beside the bounded answer, so the count a reader sees is still the count
+  that is there. systemd counts what `ListUnits` already enumerated, procfs the pid list it already
+  read, and sock_diag walks a dump's message headers without building a record for any of it: ten
+  milliseconds where decoding a hundred thousand sockets is a second. A query that filters states
+  no population, because counting what would survive needs the records the bound exists to avoid;
+  a target that serves two kinds of place — `socket` serves listeners and connections — reports no
+  count at all rather than an invented split, and is bounded instead at
+  `limits.orientation_ceiling`, above what any ordinary machine has.
+
+  All four of §33.2's reference targets now hold on `ryzen-3900x-ubuntu-2604` at twenty
+  iterations: the cached first result at 1.1 ms of 50, the Profile M query at **122 ms of 150**
+  where it was 595, the Profile M first frame at **220 ms of 500** where it was 805, and the
+  Profile L first frame at **572 ms of 1500** where it was 3 514.
+  `spatial_first_output.rs::should_hold_every_time_to_first_result_target_of_the_reference_targets_table`
+  is un-ignored and green — the last of the four H0 failure proofs, and the last `#[ignore]` in
+  the workspace.
+
+  What the tests caught, and the reason the ADR exists: the first form bounded *every* read that
+  went through `view::observe`, and `spatial_contracts.rs::should_refuse_an_ambiguous_selector_in_a_script_rather_than_open_a_picker`
+  went red. `enter <name>` resolves by sweeping the targets that could hold the name, through that
+  same function, so a bound that stopped at 128 objects reported `not_found` about a process that
+  was running — a latency budget turned into a correctness defect. The observation now carries its
+  `Purpose`: an orientation may be bounded, a resolution never is, and a resolution will not read
+  back a cached observation that was bounded. The selector figures are therefore what they always
+  were, and the Profile M miss stays on the staging area above.
 - **GitHub Actions was red for five runs, and none of the four causes was the product
   (2026-09-04).** The tracker had been failing since the wasm increment of 2026-09-03 while every
   local gate was green, which is the gap this entry exists to close: four environment
@@ -2366,6 +2395,19 @@ script somebody else is still writing is told the file is not executable, when i
 `spawn::exec_failure`'s catch-all arm is where "text file busy" would be said instead. ADR-0520
 §Consequences. **Exit test:** running a file held open for writing names the busy file.
 
+**A selector miss at Profile M costs 900 ms against §36.1's 250 ms target (2026-09-04).**
+Unchanged by ADR-0576, and measured again by it: a miss sweeps every acquisition class before it
+can say `not_found`, and the last class is the systemd enumeration. A hit that resolves out of the
+index costs 197 ms. §36.1's MUST — that a miss not be substantially more expensive than a hit
+*solely because the system scans an unnecessarily complete global candidate set* — is met by the
+cheapest-first sweep of ADR-0497; the 250 ms p95 target is not, and what is left is the cost of
+the last class rather than the size of the candidate set. Bounding the sweep is not the answer: an
+`enter` that stopped early would report `not_found` about something that is there, which is the
+defect ADR-0576 had to fix in its first form. Measured by
+`cargo run -p xtask -- perf --profile M --iterations 20` on `ryzen-3900x-ubuntu-2604` and recorded
+in `docs/spec/hardening/performance_baseline.json`. **Exit test:** `spatial.selector_miss` at
+Profile M under 250 ms p95.
+
 **Case 152's §34 budget sits one millisecond from its limit (2026-09-02).**
 `docker/acceptance/cases/152-pathological-sockets.case` measures `get socket | take 1` against a
 50 ms budget as the median of 20 runs. In a full 125-case run on a machine at load 6.8 it read
@@ -4116,19 +4158,6 @@ The v0.4.1 checklist's own guards, red by design (ADR-0575):
   §66.9 allows an open box only as a P2/P3 exclusion recorded in an ADR dated before the
   release-candidate freeze, and §4.8.14 now states that freeze as 2026-09-04. ADR-0575.
   Un-ignored by the increment that ticks the last mandatory box.
-
-The H0 failure proofs, red by design (issue #31, ADR-0430):
-
-- **An orientation query asks a provider for every object when it needs a bounded view.**
-  `crates/ono-cli/tests/spatial_first_output.rs::should_hold_every_time_to_first_result_target_of_the_reference_targets_table`
-  is `#[ignore]`d and red: three of §33.2's four targets are missed — 595 ms against 150 ms,
-  805 ms against 500 ms, 3 514 ms against 1 500 ms — and after H7 the remaining cause is a single
-  one. `enter compute; look --json` pays 405 ms for 569 systemd units on **every** orientation, and
-  `enter network; look --json` pays 3.4 s for 100 000 socket records. Neither is cardinality in the
-  profile's sense; both are §34.4's second half. The fix is a bounded observation that **still
-  reports the true count**, because an answer that lies about how much it left out trades a latency
-  defect for an honesty defect (§2.6) — so it changes the observation contract and is its own
-  increment. ADR-0496. Un-ignored by that increment.
 
 Two entries left this section on 2026-08-29:
 

@@ -500,6 +500,10 @@ pub(crate) async fn observe_children(
         places: std::collections::BTreeMap::new(),
         refusal: None,
         served: false,
+        // §33.3 makes the filesystem query-driven: this asks about one named path, so what came
+        // back is the whole answer and there is no population a bound left out (ADR-0576).
+        population: None,
+        bounded: false,
     };
     match providers.snapshot(&query) {
         Err(error) => {

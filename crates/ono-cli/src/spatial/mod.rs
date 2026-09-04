@@ -99,6 +99,10 @@ pub fn configure_from(settings: &crate::settings::Settings) {
         tombstone_lifetime: duration("spatial.tombstone.lifetime")
             .unwrap_or(fallback.tombstone_lifetime),
         live_interval: duration("spatial.live.interval").unwrap_or(fallback.live_interval),
+        orientation_objects: usize::try_from(integer("limits.orientation_objects", 128).max(1))
+            .unwrap_or(fallback.orientation_objects),
+        orientation_ceiling: usize::try_from(integer("limits.orientation_ceiling", 16_384).max(1))
+            .unwrap_or(fallback.orientation_ceiling),
     };
     session::configure(preferences, thresholds);
     session::configure_values(

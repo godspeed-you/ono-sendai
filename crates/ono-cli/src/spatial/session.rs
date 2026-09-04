@@ -123,7 +123,26 @@ pub struct TargetObservation {
     pub refusal: Option<(ono_spatial_core::PermissionState, String)>,
     /// Whether the target answered at all, which is what tells `empty` from `unsupported`.
     pub served: bool,
+    /// How many objects the target holds, when the answer was bounded and the provider said.
+    ///
+    /// `None` where nobody stated one — an unbounded answer, or a provider that could not count
+    /// what it left out. A caller that bounded a query and got `None` here shows the objects it
+    /// read and no count, because a count of the sample would be a claim about the whole
+    /// (v0.4.1 §34.4, §2.17; ADR-0576).
+    pub population: Option<u64>,
+    /// Whether the answer stopped at the orientation bound rather than at the end of the target.
+    pub bounded: bool,
 }
+
+/// Appendix A's default for `limits.orientation_objects`, for a session nobody configured.
+///
+/// The catalogue in `crate::settings` is the declaration; this is the fallback a
+/// [`ViewPreferences::default`] uses, and `crates/ono-cli/tests/resource_limits.rs` holds the two
+/// to the same number.
+pub const ORIENTATION_OBJECTS: usize = 128;
+
+/// Appendix A's default for `limits.orientation_ceiling`.
+pub const ORIENTATION_CEILING: usize = 16_384;
 
 /// The view settings a session carries between commands (§46's `view_preferences`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,6 +155,10 @@ pub struct ViewPreferences {
     pub tombstone_lifetime: ono_value::Duration,
     /// How often a live view re-reads its sources where nothing subscribes (§25.1).
     pub live_interval: ono_value::Duration,
+    /// How many objects one orientation reads from a provider target (§34.4, Appendix A).
+    pub orientation_objects: usize,
+    /// The same, for a target whose count an orientation cannot keep true (§34.4, Appendix A).
+    pub orientation_ceiling: usize,
 }
 
 impl Default for ViewPreferences {
@@ -144,6 +167,8 @@ impl Default for ViewPreferences {
         Self {
             change_window: ono_value::Duration::from_nanoseconds(5 * 60 * 1_000_000_000),
             map_node_budget: ono_spatial_query::MAP_NODE_BUDGET,
+            orientation_objects: ORIENTATION_OBJECTS,
+            orientation_ceiling: ORIENTATION_CEILING,
             // §10.3 says "short-lived" and nothing more; a minute is long enough that a `back`
             // onto a process that has just exited arrives, and short enough that a place cannot
             // come back from the dead in the middle of an investigation (ADR-0179).

@@ -13,9 +13,11 @@ mod support;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 
-use ono_provider_netlink::{SocketProtocol, decode_inet_sockets, decode_unix_sockets};
+use ono_provider_netlink::{
+    SocketProtocol, count_diag_sockets, decode_inet_sockets, decode_unix_sockets,
+};
 use ono_value::{RecordValue, Value};
-use support::{attr, concat, inet_diag_msg, listening_tcp, message, sockid, unix_diag_msg};
+use support::{attr, concat, done, inet_diag_msg, listening_tcp, message, sockid, unix_diag_msg};
 
 /// An established TCP connection from `10.0.0.2:51000` to `10.0.0.1:443`.
 fn established_tcp() -> Vec<u8> {
@@ -308,5 +310,47 @@ fn should_give_a_time_wait_connection_the_same_identity_on_a_second_observation(
     assert_eq!(
         earlier, later,
         "spec v0.4 §42.1: repeated observations of one live object resolve to one id"
+    );
+}
+
+/// v0.4.1 §34.4 and §2.17: an orientation may take a bounded answer, and it may not then be
+/// vague about how much it left out. The count has to cost nothing next to the dump itself, so
+/// it is read from the message headers rather than from records nobody asked for (ADR-0576).
+#[test]
+fn should_count_a_dump_without_building_a_record_for_any_of_it() {
+    let dump = concat(&[listening_tcp(), established_tcp(), ipv6_udp(), done()]);
+
+    let counted = count_diag_sockets(&dump);
+
+    assert_eq!(
+        counted,
+        Some(3),
+        "the dump holds three sockets, and counting them is not the same work as decoding them"
+    );
+    assert_eq!(
+        decode_inet_sockets(&dump, SocketProtocol::Tcp, None)
+            .records()
+            .len(),
+        3,
+        "and the count is the count the decoder would have arrived at"
+    );
+}
+
+/// A count nobody can stand behind is worse than no count: the caller would show it. A dump that
+/// stops early, or carries a frame this crate cannot read, has no population.
+#[test]
+fn should_refuse_to_count_a_dump_it_cannot_walk_to_the_end() {
+    let unterminated = concat(&[listening_tcp(), established_tcp()]);
+    let truncated = concat(&[listening_tcp(), vec![8, 0, 0, 0]]);
+
+    assert_eq!(
+        count_diag_sockets(&unterminated),
+        None,
+        "a dump with no `NLMSG_DONE` may have been cut short, so its count is unknown"
+    );
+    assert_eq!(
+        count_diag_sockets(&truncated),
+        None,
+        "a frame this crate cannot read is not a socket it may count"
     );
 }

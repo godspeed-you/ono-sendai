@@ -44,6 +44,19 @@ pub struct Exit {
     members: Vec<SpatialId>,
     state: PermissionState,
     detail: Option<String>,
+    /// How many places lie behind the exit, when that is more than the members it carries.
+    ///
+    /// `None` — the ordinary case — means the members *are* the population, and the count is
+    /// theirs. `Some(n)` is the figure a provider stated beside a bounded answer: the shell read
+    /// fewer objects than exist and was told how many exist, so the count it shows stays true
+    /// while the work it did stays bounded (v0.4.1 §34.4, §2.17; ADR-0576).
+    population: Option<usize>,
+    /// Whether the members are all of them, or as many as the orientation stopped at.
+    ///
+    /// A bounded read whose provider stated no population has no count at all: the members are a
+    /// sample, and reporting how big the sample is as though it were the collection is the
+    /// fabricated figure §2.17 forbids. `count` is then null and the group says why (§42.4).
+    bounded: bool,
 }
 
 impl Exit {
@@ -60,7 +73,27 @@ impl Exit {
             members,
             state,
             detail: None,
+            population: None,
+            bounded: false,
         }
+    }
+
+    /// An exit whose members are a bounded read of a collection of `population` places.
+    ///
+    /// The members are what the shell holds and can rank; the population is what the count says.
+    /// §34.4 permits the bounded read — "a local neighborhood query SHOULD NOT require
+    /// construction of the complete system graph when provider APIs can answer the neighborhood
+    /// incrementally" — and §2.17 requires the difference to be visible rather than absorbed.
+    #[must_use]
+    pub fn sampled(
+        label: impl Into<String>,
+        members: Vec<SpatialId>,
+        population: Option<usize>,
+    ) -> Self {
+        let mut exit = Self::open(label, members);
+        exit.bounded = true;
+        exit.population = population.filter(|population| *population > exit.members.len());
+        exit
     }
 
     /// An exit that is there, and whose contents could not be read (§4, §35.2).
@@ -79,6 +112,8 @@ impl Exit {
             members: Vec::new(),
             state,
             detail: Some(detail.into()),
+            population: None,
+            bounded: false,
         }
     }
 
@@ -98,6 +133,12 @@ impl Exit {
     #[must_use]
     pub fn state(&self) -> PermissionState {
         self.state
+    }
+
+    /// How many places lie behind it, where that is more than it carries (§34.4).
+    #[must_use]
+    pub const fn population(&self) -> Option<usize> {
+        self.population
     }
 }
 
@@ -192,6 +233,8 @@ fn bound(
         members,
         state,
         detail,
+        population,
+        bounded,
     } = exit;
     if !state.is_complete() {
         // Nothing was read, so there is nothing to rank and no total a budget could bound. The
@@ -203,11 +246,22 @@ fn bound(
         return group.observed(Freshness::Unknown);
     }
 
+    let held = members.len();
     let mut members: Vec<SpatialId> = members
         .into_iter()
         .filter(|id| keeps(index, id, request, now))
         .collect();
-    let total = members.len();
+    // The stated population is a figure about the whole collection, so it survives a bound and
+    // not a filter: once `--type`, `--changed` or a predicate has refused one of the members the
+    // shell holds, nobody knows how many of the ones it never read would have been refused too.
+    // Then the count is what is really in hand, which is the honest smaller claim (§2.17).
+    let total = match population {
+        Some(population) if members.len() == held => Some(population),
+        // A bounded read nobody counted: the members are a sample, and their number is a fact
+        // about the reading rather than about the place (§2.17, §42.4).
+        None if bounded && members.len() == held => None,
+        _ => Some(members.len()),
+    };
     // Declared geography keeps the order §4 and §41.1 declare it in — the six domains are drawn
     // in one order everywhere, and `processes, services, jobs, cgroups` is COMPUTE's own list.
     // Observed objects have no such order, so they are ranked (§3.6).
@@ -218,7 +272,11 @@ fn bound(
         members.sort_by_cached_key(|id| rank_of(index, id, pinned));
     }
     members.truncate(budget);
-    NeighborhoodGroup::available(label, members)
-        .of_total(total)
-        .observed(Freshness::Fresh)
+    let group = NeighborhoodGroup::reported(label, PermissionState::Available, members, total);
+    let group = if total.is_none() {
+        group.explained("read as far as the orientation bound; the whole count is not known")
+    } else {
+        group
+    };
+    group.observed(Freshness::Fresh)
 }

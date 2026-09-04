@@ -207,19 +207,17 @@ const REFERENCE_TARGETS: [(&str, &str, &str, &str, f64); 4] = [
 ];
 
 // §33.2's four rows are measured with `cargo xtask perf` at twenty iterations and recorded in the
-// baseline. Three of them are outside their budget on the reference environment (ADR-0491), and
-// the remaining cause is one thing rather than two: an *acquisition* that costs more than the
-// budget allows, per object, from outside this shell.
+// baseline. Three of them were outside their budget on the reference environment (ADR-0491) for
+// one reason: an *acquisition* that cost more than the budget allowed, per object, from outside
+// this shell — six hundred systemd units at three D-Bus round trips each on every orientation of
+// COMPUTE, and a hundred thousand socket records absorbed before anything was drawn at Profile L.
+// Neither was the cardinality the profile is named for and neither was a planner defect; both
+// were the shell asking a provider for every object when it needed a bounded view of them, which
+// is §34.4's sentence and what its remaining half owed.
 //
-// COMPUTE pays about 400 ms on every orientation for the systemd service enumeration — 569 units
-// at three D-Bus round trips each, already made concurrent, and §34.2's `external` class by
-// construction. Profile L pays for absorbing a hundred thousand socket records before anything is
-// drawn. Neither is the cardinality the profile is named for, and neither is a planner defect:
-// both are the shell asking a provider for every object when it needs a bounded view of them,
-// which is §34.4's sentence and what its remaining half owes.
-// REASON: red at HEAD; un-ignored by the increment that lets an orientation query take a bounded
-// answer from a provider instead of the complete one (§34.4). Defended by ADR-0491 and ADR-0496.
-#[ignore = "red until an orientation query can take a bounded answer from a provider (§34.4; ADR-0496)"]
+// ADR-0576 is that half: the orientation reads `limits.orientation_objects` of a target and the
+// provider states the population beside the answer, so the count a reader is shown stays the
+// count that is there. All four rows now hold.
 #[test]
 fn should_hold_every_time_to_first_result_target_of_the_reference_targets_table() {
     let baseline = recorded_baseline();

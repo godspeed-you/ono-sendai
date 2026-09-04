@@ -80,7 +80,7 @@ pub use route::decode_routes;
 pub use schema::{
     endpoint_schema, interface_schema, neighbor_schema, route_schema, schemas, socket_schema,
 };
-pub use socket::{SocketProtocol, decode_inet_sockets, decode_unix_sockets};
+pub use socket::{SocketProtocol, count_diag_sockets, decode_inet_sockets, decode_unix_sockets};
 
 /// The id every record read over `NETLINK_ROUTE` carries in its provenance.
 pub const NETLINK_PROVIDER: &str = "linux.netlink";

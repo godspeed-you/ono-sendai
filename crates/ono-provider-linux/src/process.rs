@@ -949,11 +949,21 @@ impl Provider for ProcessProvider {
             }
             None => None,
         };
+        // v0.4.1 §34.4: an orientation asks for a bounded view of the process table, and §2.17
+        // requires that the count it then shows be the real one. `/proc` has already been read
+        // for the pid list, so the population costs nothing — but only when nothing may refuse a
+        // pid afterwards, because the population is the count of what would have been *answered*
+        // (ADR-0576).
+        let population = (enumerating && query.selectors().is_empty()).then_some(pids.len());
         let query = query.clone();
         Ok(ValueStream::spawn(
             PipelineConfig::new(),
             Boundedness::Bounded,
             move |sink| async move {
+                if let Some(population) = population {
+                    sink.diagnostics()
+                        .record_population(population.try_into().unwrap_or(u64::MAX));
+                }
                 if let Some(interval) = sample {
                     reader.sample_now(&pids);
                     tokio::time::sleep(interval).await;

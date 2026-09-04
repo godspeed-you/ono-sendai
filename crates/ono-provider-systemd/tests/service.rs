@@ -829,3 +829,42 @@ async fn should_agree_with_the_running_service_manager_when_one_is_present() {
         "`get service {bare}` must find {service}"
     );
 }
+
+/// v0.4.1 §34.4 and §2.17, at the provider boundary: a bounded answer that did not also say how
+/// much it left out is an answer that lies about the size of what it describes.
+///
+/// The orientation of a place asks for a bounded view of a collection it is only going to count
+/// and rank — reading the full properties of six hundred units costs three D-Bus round trips each
+/// — and it may only do that if the count it shows stays the count that is really there. So the
+/// provider states the population beside the bounded answer, and `ono-cli` shows that figure
+/// (ADR-0576).
+#[tokio::test]
+async fn should_state_the_whole_population_when_a_query_bounds_what_it_answers() {
+    let provider = provider_over(RecordedSystemd::running()).await;
+
+    let whole = collected(&provider, &Query::target("service")).await;
+    let bounded = collected(&provider, &Query::target("service").limit(2)).await;
+
+    let population = whole.values().len();
+    assert!(
+        population > 2,
+        "the recorded manager must hold more units than the bound, or nothing is left out"
+    );
+    assert_eq!(
+        bounded.values().len(),
+        2,
+        "the bound is what the answer honours"
+    );
+    assert_eq!(
+        bounded.diagnostics().population(),
+        Some(population as u64),
+        "§34.4: the bounded answer states the population it would have answered with, so a caller \
+         that shows a count shows the real one"
+    );
+    assert_eq!(
+        whole.diagnostics().population(),
+        Some(population as u64),
+        "an unbounded answer states the same figure; a caller must not have to know whether it \
+         bounded the query to read the count"
+    );
+}

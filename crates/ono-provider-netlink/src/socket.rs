@@ -85,6 +85,38 @@ pub fn decode_inet_sockets(
     Decoded::from_items(inet_sockets(bytes, protocol, owners))
 }
 
+/// How many sockets a `sock_diag` dump holds, without building a record for any of them.
+///
+/// v0.4.1 §34.4 lets an orientation take a bounded answer from a provider, and §2.17 forbids it
+/// from then lying about how big the collection was. The count has to be free, or the bound buys
+/// nothing: building a hundred thousand records costs about a second, and walking the same dump's
+/// message headers costs about ten milliseconds.
+///
+/// `None` where the dump cannot be walked to its end — a malformed frame, an error message, a
+/// dump with no `NLMSG_DONE`. A count nobody can stand behind is worse than no count, because a
+/// caller would show it (§2.17, ADR-0576).
+///
+/// ```
+/// use ono_provider_netlink::count_diag_sockets;
+/// assert_eq!(count_diag_sockets(&[]), None);
+/// ```
+#[must_use]
+pub fn count_diag_sockets(bytes: &[u8]) -> Option<u64> {
+    let mut counted = 0;
+    for frame in wire::frames(bytes) {
+        let Frame::Message(message) = frame else {
+            return None;
+        };
+        match message.kind {
+            sys::NLMSG_DONE => return Some(counted),
+            sys::SOCK_DIAG_BY_FAMILY => counted += 1,
+            kind if wire::control(kind) => {}
+            _ => return None,
+        }
+    }
+    None
+}
+
 /// Walks an `inet_diag` dump one message at a time.
 ///
 /// The whole dump is in memory — the kernel answered it in one go — but nothing in it becomes a

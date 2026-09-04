@@ -92,7 +92,7 @@ pub async fn observe_space(
         .filter(|source| affordable(source.cost, complete))
         .flat_map(|source| source.targets.iter().copied())
         .collect();
-    let observed = observe(providers, session, &targets, now).await;
+    let observed = observe(providers, session, &targets, now, Purpose::Orientation).await;
     let cached = observed.cached;
 
     let held = indexed_members(session.index());
@@ -150,7 +150,14 @@ fn exit_of(
         // A provider that refused says nothing about the places something else observed, and a
         // group that can name a member is not one nobody could answer for (§2.17, §35.2, §37.1).
         Some(_) => Exit::open(label, held),
-        None => Exit::open(label, union(observed.of_types(source.accepts), held)),
+        None => {
+            let members = union(observed.of_types(source.accepts), held);
+            if observed.bounded_any(source.targets) {
+                Exit::sampled(label, members, observed.population_of(source.accepts))
+            } else {
+                Exit::open(label, members)
+            }
+        }
     }
 }
 
@@ -183,6 +190,15 @@ fn union(mut first: Vec<SpatialId>, second: Vec<SpatialId>) -> Vec<SpatialId> {
     first
 }
 
+/// Whether a bounded read of `target` can still be counted truthfully (§34.4, ADR-0576).
+///
+/// A provider states one population per query. Where the target serves exactly one kind of place
+/// that figure *is* the count of the exit it fills; where it serves several, no split of it is
+/// anything but invented (§2.17).
+fn attributable(target: &str) -> bool {
+    matches!(ono_spatial_core::types_of_target(target), [_])
+}
+
 /// Whether a source of this cost is enumerated by an orientation command (§32.1, §33.3).
 fn affordable(cost: CostClass, _complete: bool) -> bool {
     cost != CostClass::Expensive
@@ -194,6 +210,15 @@ struct Observed {
     by_type: BTreeMap<SpatialType, Vec<SpatialId>>,
     refused: BTreeMap<&'static str, (PermissionState, String)>,
     served: BTreeSet<&'static str>,
+    /// What a bounded target said its whole population was, by the one spatial type it serves.
+    ///
+    /// Only a target that serves exactly one type contributes: `socket` answers both
+    /// `network.listeners` and `network.connections`, and the number of sockets is not the number
+    /// of listeners. Attributing it to either would be the fabricated figure §2.17 forbids, so a
+    /// multi-type target states nothing and its exits count what they hold (ADR-0576).
+    population: BTreeMap<SpatialType, usize>,
+    /// The targets whose answer stopped at the orientation bound (§34.4).
+    bounded: BTreeSet<&'static str>,
     /// Whether every target this observation needed was still fresh in the session's index, so
     /// no provider was asked at all (§33.1, §25.3).
     cached: bool,
@@ -210,6 +235,33 @@ impl Observed {
             .filter_map(|kind| self.by_type.get(kind))
             .flat_map(|ids| ids.iter().cloned())
             .collect()
+    }
+
+    /// How many places of these types the providers said there are, where an orientation read
+    /// fewer than that (§34.4).
+    ///
+    /// `None` unless every type the exit accepts was counted: an exit that mixes a counted kind
+    /// with an uncounted one has no total anybody measured, and adding what is known to what is
+    /// not is how a figure stops meaning anything (§2.17).
+    fn population_of(&self, accepts: &[SpatialType]) -> Option<usize> {
+        let mut total = 0;
+        let mut counted = false;
+        for kind in accepts {
+            match self.population.get(kind) {
+                Some(population) => {
+                    total += *population;
+                    counted = true;
+                }
+                None if self.by_type.contains_key(kind) => return None,
+                None => {}
+            }
+        }
+        counted.then_some(total)
+    }
+
+    /// Whether any of these targets stopped at the orientation bound rather than at its end.
+    fn bounded_any(&self, targets: &[&'static str]) -> bool {
+        targets.iter().any(|target| self.bounded.contains(target))
     }
 
     /// Why these targets could not answer, when none of them did (§35.2).
@@ -261,7 +313,7 @@ pub async fn observe_targets(
     targets: &BTreeSet<&'static str>,
     now: Timestamp,
 ) {
-    let _ = observe(providers, session, targets, now).await;
+    let _ = observe(providers, session, targets, now, Purpose::Resolution).await;
 }
 
 /// The same, where the caller holds the registry rather than an invocation — `cd` and
@@ -273,7 +325,22 @@ pub(crate) async fn observe_targets_with(
     now: Timestamp,
 ) {
     let targets: BTreeSet<&'static str> = targets.iter().copied().collect();
-    let _ = observe(providers, session, &targets, now).await;
+    let _ = observe(providers, session, &targets, now, Purpose::Resolution).await;
+}
+
+/// Why a target is being asked, which decides whether the answer may be bounded (§34.4).
+///
+/// The two are the same observation and not the same question. An **orientation** builds a view:
+/// it counts and ranks, it shows at most §34.2's hundred places, and §34.4 lets it take a bounded
+/// answer as long as the count stays true (ADR-0576). A **resolution** is looking for one named
+/// object, and an answer that stopped early is an answer that can say `not_found` about something
+/// that is there — so it is never bounded, and it will not reuse an observation that was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Purpose {
+    /// A view of a place: bounded, counted, ranked.
+    Orientation,
+    /// A search for something named: whole, or it is not an answer.
+    Resolution,
 }
 
 /// Asks every target once and registers what came back (§33.1, §42.1, §34).
@@ -288,6 +355,7 @@ async fn observe(
     session: &mut SpatialSessionState,
     targets: &BTreeSet<&'static str>,
     now: Timestamp,
+    purpose: Purpose,
 ) -> Observed {
     let mut observed = Observed::default();
     let mut asked = false;
@@ -297,8 +365,12 @@ async fn observe(
             continue;
         }
         answerable = true;
-        // Still inside its §33.3 lifetime: the answer is read, not asked for again (§33.1).
-        if let Some(seen) = session.recall(target, now) {
+        // Still inside its §33.3 lifetime: the answer is read, not asked for again (§33.1) —
+        // unless it stopped at the orientation bound and the caller needs the whole target, in
+        // which case reading it back would answer a search with a sample (ADR-0576).
+        if let Some(seen) = session.recall(target, now)
+            && !(purpose == Purpose::Resolution && seen.bounded)
+        {
             let seen = seen.clone();
             fold(&mut observed, target, &seen);
             continue;
@@ -309,8 +381,34 @@ async fn observe(
             places: BTreeMap::new(),
             refusal: None,
             served: false,
+            population: None,
+            bounded: false,
         };
-        match providers.snapshot(&Query::target(*target)) {
+        // §34.4: an orientation asks for a bounded view of a collection it is going to count and
+        // rank, not for every object in it. What makes the bound honest rather than merely fast is
+        // the population the provider states beside the answer, which is the count a reader is
+        // shown (§2.17, ADR-0576).
+        //
+        // A target that serves one kind of place can be read that way and still be counted, so it
+        // is bounded at `limits.orientation_objects`. A target that serves several — `socket`
+        // serves listeners and connections — gets one population for both, and splitting that
+        // figure between them would be inventing it. Such a target is read whole up to
+        // `limits.orientation_ceiling`, which no ordinary machine reaches and a pathological one
+        // does; past it the exits report no count and say why (§33.3).
+        // A resolution carries no bound at all rather than a very large one: a provider that
+        // sees a limit may answer differently for it, and "no bound" is the question being asked.
+        let bound = match purpose {
+            Purpose::Orientation if attributable(target) => {
+                Some(session.preferences().orientation_objects)
+            }
+            Purpose::Orientation => Some(session.preferences().orientation_ceiling),
+            Purpose::Resolution => None,
+        };
+        let question = match bound {
+            Some(bound) => Query::target(*target).limit(bound),
+            None => Query::target(*target),
+        };
+        match providers.snapshot(&question) {
             Err(error) => {
                 fresh.refusal = Some((
                     PermissionState::of_refusal(&error),
@@ -319,6 +417,8 @@ async fn observe(
             }
             Ok(stream) => {
                 let collected = stream.collect().await;
+                fresh.population = collected.diagnostics().population();
+                fresh.bounded = bound.is_some_and(|bound| collected.values().len() >= bound);
                 if let Some(error) = collected.errors().first() {
                     fresh.refusal = Some((
                         PermissionState::of_refusal(error),
@@ -377,6 +477,17 @@ fn fold(
             .entry(*object_type)
             .or_default()
             .extend(ids.iter().cloned());
+    }
+    if seen.bounded {
+        observed.bounded.insert(target);
+    }
+    // §34.4's population, attributed only where it is unambiguous: one target, one kind of place.
+    if let (true, Some(population)) = (seen.bounded, seen.population)
+        && let [only] = ono_spatial_core::types_of_target(target)
+        && let Ok(population) = usize::try_from(population)
+    {
+        let known = observed.population.entry(*only).or_default();
+        *known = known.saturating_add(population);
     }
 }
 

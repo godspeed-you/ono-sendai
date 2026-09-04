@@ -45,6 +45,15 @@ declared:
   - id: "crates/ono-kuang-sdk/tests/conformance.rs::should_hold_a_component_to_the_capability_broker_like_a_process"
     category: external_tool_unavailable
     prerequisite: "the `wasm32-wasip2` target of the pinned toolchain, so the example package can be built as a component (ADR-0569)"
+  - id: "crates/ono-cli/tests/spatial_orientation_bound.rs::should_count_a_bounded_target_by_what_the_provider_says_is_there"
+    category: external_tool_unavailable
+    prerequisite: "a service manager holding more units than the bound, so a bounded read leaves something out to be counted (ADR-0576)"
+  - id: "crates/ono-cli/tests/spatial_orientation_bound.rs::should_leave_what_a_user_asks_for_directly_unbounded"
+    category: external_tool_unavailable
+    prerequisite: "a service manager holding more units than the bound, so `get service` has more to answer with than an orientation reads (ADR-0576)"
+  - id: "crates/ono-cli/tests/spatial_orientation_bound.rs::should_report_no_count_for_a_bounded_target_whose_count_it_cannot_keep_true"
+    category: missing_privilege
+    prerequisite: "a socket table this user may read holding more sockets than the bound (ADR-0576)"
   - id: "crates/ono-cli/tests/agent_startup.rs::should_keep_listening_when_its_diagnostics_cannot_be_written"
     category: fixture_not_applicable
     prerequisite: "the host has a `/dev/full`, so a stream that refuses every write can be handed to the agent"

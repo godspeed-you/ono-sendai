@@ -20,6 +20,8 @@ pub struct Diagnostics {
 struct Counters {
     excluded_unknown: AtomicU64,
     skipped_null: AtomicU64,
+    /// One more than the population, so `0` distinguishes "nobody said" from "none exist".
+    population: AtomicU64,
 }
 
 impl Diagnostics {
@@ -53,5 +55,29 @@ impl Diagnostics {
     /// Records one null value skipped by an aggregate.
     pub fn record_skipped_null(&self) {
         self.inner.skipped_null.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// How many objects the source had, when it answered a bounded query and said so.
+    ///
+    /// `None` means nobody stated a population — the ordinary case, where the answer *is* the
+    /// population. `Some(n)` is the count the source would have answered with had the query
+    /// carried no bound, which is what keeps a bounded answer from lying about how much it left
+    /// out (v0.4.1 §34.4, §2.17; ADR-0576).
+    #[must_use]
+    pub fn population(&self) -> Option<u64> {
+        match self.inner.population.load(Ordering::Relaxed) {
+            0 => None,
+            recorded => Some(recorded - 1),
+        }
+    }
+
+    /// States how many objects the source had.
+    ///
+    /// A second statement wins: a snapshot that reads several tables — the socket provider reads
+    /// four — states the running total after each one, and the last is the whole.
+    pub fn record_population(&self, population: u64) {
+        self.inner
+            .population
+            .store(population.saturating_add(1), Ordering::Relaxed);
     }
 }

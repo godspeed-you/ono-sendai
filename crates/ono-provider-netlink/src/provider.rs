@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use ono_core::ErrorCode;
-use ono_pipeline::{Boundedness, PipelineConfig, StreamSink, ValueStream};
+use ono_pipeline::{Boundedness, Diagnostics, PipelineConfig, StreamSink, ValueStream};
 use ono_provider_api::{
     Action, ActionOutcome, Availability, Capability, EventStream, ObjectEvent, ObjectRef, Provider,
     Query, Risk, Selector,
@@ -257,7 +257,10 @@ impl Provider for SocketProvider {
             Boundedness::Bounded,
             move |sink| async move {
                 let (sender, mut batches) = mpsc::channel(1);
-                let reader = tokio::task::spawn_blocking(move || stream_sockets(&query, &sender));
+                let diagnostics = sink.diagnostics().clone();
+                let reader = tokio::task::spawn_blocking(move || {
+                    stream_sockets(&query, &sender, &diagnostics)
+                });
                 'reading: while let Some(batch) = batches.recv().await {
                     for item in batch {
                         let sent = match item {
@@ -641,8 +644,13 @@ fn read_neighbors() -> Result<Decoded, ErrorValue> {
 /// failures travel in the order they were met rather than ahead of every object — a family this
 /// function never reached has not failed, and one it did reach is reported before anything read
 /// after it (spec §16.5).
-fn stream_sockets(query: &Query, sender: &mpsc::Sender<Vec<Item>>) {
+fn stream_sockets(query: &Query, sender: &mpsc::Sender<Vec<Item>>, diagnostics: &Diagnostics) {
     let mut batch = Batch::new(sender);
+    // §34.4's population, when this query is one whose answer is every socket the kernel dumps.
+    // A query that filters — `get connection`, `--listening`, a selector — would need the records
+    // to count what survives, which is the work the bound exists to avoid, so it states no
+    // population and a caller that bounded it claims no count (§2.17, ADR-0576).
+    let mut population = countable(query).then_some(0_u64);
     let socket = match NetlinkSocket::open_diag() {
         Ok(socket) => socket,
         Err(error) => {
@@ -668,23 +676,39 @@ fn stream_sockets(query: &Query, sender: &mpsc::Sender<Vec<Item>>) {
     let protocol = option_text(query, "protocol");
     let protocol = protocol.as_deref();
     let mut sent = 0;
+    let mut sending = true;
     for transport in [SocketProtocol::Tcp, SocketProtocol::Udp] {
         if protocol.is_some_and(|wanted| wanted != transport.as_str()) {
             continue;
         }
         for family in [sys::AF_INET, sys::AF_INET6] {
+            // Once the answer is full and no population is being counted, there is nothing left
+            // for another dump to contribute, and asking the kernel for one is the cost
+            // `get socket | take 1` must not pay (ADR-0418).
+            if !sending && population.is_none() {
+                batch.flush();
+                return;
+            }
             let request = inet_diag_request(family, transport.number());
             match socket.dump(sys::SOCK_DIAG_BY_FAMILY, &request) {
                 Ok(bytes) => {
-                    let items = inet_sockets(&bytes, transport, owners.as_ref());
-                    if !collect(items, query, &mut batch, &mut sent) {
-                        return;
+                    if sending {
+                        let items = inet_sockets(&bytes, transport, owners.as_ref());
+                        match collect(items, query, &mut batch, &mut sent) {
+                            Reading::More => {}
+                            Reading::Bounded => sending = false,
+                            Reading::Gone => return,
+                        }
                     }
+                    population = add_population(population, &bytes);
                 }
                 Err(error) => {
                     if !batch.push(Item::Failure(error)) {
                         return;
                     }
+                    // A family that could not be dumped is a family nobody counted, so the
+                    // population stops being a figure anybody may show (§2.17).
+                    population = None;
                 }
             }
             if !batch.flush() {
@@ -696,22 +720,67 @@ fn stream_sockets(query: &Query, sender: &mpsc::Sender<Vec<Item>>) {
     // A Unix socket has no remote endpoint — its peer is an inode, and `remote` is null on every
     // record this crate builds for one — so it can never answer the `connection` target, and a
     // dump nothing in the answer can come from is not worth asking the kernel for.
-    if protocol.is_none_or(|wanted| wanted == "unix") && query.target_name() != "connection" {
+    if protocol.is_none_or(|wanted| wanted == "unix")
+        && query.target_name() != "connection"
+        && (sending || population.is_some())
+    {
         match socket.dump(sys::SOCK_DIAG_BY_FAMILY, &unix_diag_request()) {
             Ok(bytes) => {
-                let items = unix_sockets(&bytes, owners.as_ref());
-                if !collect(items, query, &mut batch, &mut sent) {
-                    return;
+                if sending {
+                    let items = unix_sockets(&bytes, owners.as_ref());
+                    match collect(items, query, &mut batch, &mut sent) {
+                        Reading::More | Reading::Bounded => {}
+                        Reading::Gone => return,
+                    }
                 }
+                population = add_population(population, &bytes);
             }
             Err(error) => {
                 if !batch.push(Item::Failure(error)) {
                     return;
                 }
+                population = None;
             }
         }
     }
+    if let Some(population) = population {
+        diagnostics.record_population(population);
+    }
     batch.flush();
+}
+
+/// Whether the population of this query is the number of sockets the kernel dumps.
+///
+/// [`keep`] is what decides whether a socket survives a query, and every condition it can apply
+/// beyond the dump itself — the `connection` target's peer, `--listening`, a table, an interface,
+/// a remote, a port, a selector — needs the decoded record. Counting those would be exactly the
+/// work a bounded query asked not to do, so a query carrying one states no population at all
+/// rather than a figure that would have to be guessed (§2.17, ADR-0576).
+fn countable(query: &Query) -> bool {
+    query.target_name() != "connection"
+        && !query.flag("listening")
+        && query.selectors().is_empty()
+        && option_text(query, "table").is_none()
+        && option_text(query, "interface").is_none()
+        && query.option_value("remote").is_none()
+        && query.option_value("port").is_none()
+}
+
+/// Adds one dump's socket count to a running population, or gives it up.
+fn add_population(population: Option<u64>, bytes: &[u8]) -> Option<u64> {
+    let running = population?;
+    let counted = crate::socket::count_diag_sockets(bytes)?;
+    Some(running.saturating_add(counted))
+}
+
+/// How far [`collect`] got through one dump.
+enum Reading {
+    /// The dump is exhausted and the answer has room for more.
+    More,
+    /// The answer is full: the query's bound is reached, and nothing further is sent.
+    Bounded,
+    /// The consumer has gone, and nothing is worth reading.
+    Gone,
 }
 
 /// Puts everything one dump decodes to into `batch`, answering whether the caller should keep
@@ -724,7 +793,7 @@ fn collect(
     query: &Query,
     batch: &mut Batch<'_>,
     sent: &mut usize,
-) -> bool {
+) -> Reading {
     for item in items {
         if let Item::Record(record) = &item {
             if !keep(record, query) {
@@ -732,15 +801,15 @@ fn collect(
             }
             if query.max().is_some_and(|max| *sent >= max) {
                 batch.flush();
-                return false;
+                return Reading::Bounded;
             }
             *sent += 1;
         }
         if !batch.push(item) {
-            return false;
+            return Reading::Gone;
         }
     }
-    true
+    Reading::More
 }
 
 /// What the socket reader hands to its consumer, and the point at which it hands it over.

@@ -41,6 +41,9 @@ run: |
   ono -c 'inspect limits limits.materialize_bytes | select key value | to json'
   ono -c 'inspect limits limits.command_capture_bytes | select key value | to json'
   ono -c 'inspect limits limits.history_bytes_total | select key value | to json'
+  # Every `limits.*` key the catalogue declares, which is what §52.2 means by one home per figure:
+  # a limit added to the catalogue is a limit `inspect limits` shows, without anybody adding it
+  # here as well. ADR-0576's two orientation bounds took the count from thirteen to fifteen.
   ono -c 'inspect limits | count | to json'
 
   echo "== and they follow the layer that set them (ADR-0010) =="
@@ -68,7 +71,7 @@ stdout-contains: [{"key":"limits.materialize_items","value":100000,"layer":"defa
 stdout-contains: [{"key":"limits.materialize_bytes","value":134217728}]
 stdout-contains: [{"key":"limits.command_capture_bytes","value":268435456}]
 stdout-contains: [{"key":"limits.history_bytes_total","value":67108864}]
-stdout-contains: [13]
+stdout-contains: [15]
 stdout-contains: [{"value":500,"layer":"environment"}]
 stdout-contains: [{"value":250,"layer":"invocation"}]
 stdout-contains: Ono-Sendai-E0201 type.mismatch `limits.materialize_items` accepts 0 to 1000000000

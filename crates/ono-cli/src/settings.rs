@@ -457,6 +457,26 @@ pub const CATALOGUE: &[SettingSpec] = &[
         range: Some(Range { min: 1, max: 60000 }),
     },
     SettingSpec {
+        key: "limits.orientation_objects",
+        ty: SettingType::Int,
+        description: "How many objects one orientation reads from a provider target before it counts the rest instead (v0.4.1 §34.4, Appendix A).",
+        default: DefaultValue::Int(128),
+        range: Some(Range {
+            min: 1,
+            max: 1000000,
+        }),
+    },
+    SettingSpec {
+        key: "limits.orientation_ceiling",
+        ty: SettingType::Int,
+        description: "How many objects one orientation reads from a provider target whose count it cannot keep true, before it stops and says so (v0.4.1 §34.4, Appendix A).",
+        default: DefaultValue::Int(16384),
+        range: Some(Range {
+            min: 1,
+            max: 100000000,
+        }),
+    },
+    SettingSpec {
         key: "limits.remote_connections",
         ty: SettingType::Int,
         description: "Concurrent authenticated connections one listening agent accepts (v0.4.1 §12.1, Appendix A). Declared and validated; enforcement is phase H3's.",

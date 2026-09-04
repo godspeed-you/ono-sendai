@@ -293,6 +293,12 @@ impl Provider for SystemdProvider {
                     None => match bus.list_units().await {
                         Ok(listings) => listings
                             .into_iter()
+                            // `ListUnits` enumerates a `not-found` stub for as long as some other
+                            // unit references a name whose file is gone, and the loop below
+                            // refuses one as a fabricated object. Dropping the stubs here rather
+                            // than there is what makes the population the count of what would
+                            // really be answered (§34.4, ADR-0576).
+                            .filter(|unit| unit.load_state.as_deref() != Some("not-found"))
                             .map(|unit| (unit.name, unit.path))
                             .collect(),
                         Err(error) => {
@@ -301,6 +307,13 @@ impl Provider for SystemdProvider {
                         }
                     },
                 };
+
+                // §34.4 and §2.17: a bounded answer states how much it left out, so an orientation
+                // that reads twenty units of six hundred still shows six hundred. `ListUnits` is
+                // one round trip and has already happened, so the figure is free; the per-unit
+                // property reads below are what the bound is for (ADR-0576).
+                sink.diagnostics()
+                    .record_population(units.len().try_into().unwrap_or(u64::MAX));
 
                 // One unit costs three D-Bus round trips — `LoadUnit`, then `GetAll` for the
                 // Unit and Service interfaces — and a machine has hundreds of units. Read
