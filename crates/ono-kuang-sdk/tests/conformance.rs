@@ -1864,11 +1864,23 @@ async fn should_run_a_program_within_the_granted_scope_and_stream_what_it_wrote(
     );
     assert_eq!(shown.last().map(String::as_str), Some("exited: 0"));
 
+    // A program outside the grant, and one whose *resolved* path cannot fall inside it whatever
+    // the host's layout is. `/usr/sbin/reboot` was the obvious candidate and the wrong one: on a
+    // merged-usr machine it canonicalises to `/usr/bin/systemctl`, which is inside the bundle
+    // when `/bin/echo` resolves to `/usr/bin/echo`, so the refusal this asserts never happened
+    // on the CI runner while it happened on a machine whose coreutils live elsewhere.
+    use std::os::unix::fs::PermissionsExt;
+
+    let elsewhere = tempfile::tempdir().expect("a directory of its own");
+    let outsider = elsewhere.path().join("reboot");
+    std::fs::write(&outsider, "#!/bin/sh\nexit 0\n").expect("the program exists");
+    std::fs::set_permissions(&outsider, std::fs::Permissions::from_mode(0o755))
+        .expect("and is executable");
     let invocation = plugin
         .invoke(
             "dev.example.echo.command.exec",
             args(&[
-                ("program", json!("/usr/sbin/reboot")),
+                ("program", json!(outsider.display().to_string())),
                 ("arguments", json!([])),
             ]),
         )
