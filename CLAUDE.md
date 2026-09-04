@@ -39,7 +39,9 @@ duplicate rules here — if a rule needs to change, change it in `AGENTS.md`.
 - **Stopping rule:** the run ends when `scripts/release-check.sh` prints `the shell is
   release-ready` — never earlier. No MVP exit (AGENTS.md §15, `docs/ACCEPTANCE.md`).
 - **Branch:** all implementation goes on `implementation`, never on `main`, so the whole run
-  stays disposable. `scripts/gate.sh` refuses to run on `main` (AGENTS.md §12.1).
+  stays disposable. Promoting it to `main` happens only when the user asks for it in that request,
+  never on your own reading of a green gate. `scripts/gate.sh` refuses to run on `main`
+  (AGENTS.md §12.1).
 - **Backlog:** the GitHub issue tracker — `gh issue list`. One problem is one issue, and the
   commit that closes it says `Closes #NN` (AGENTS.md §9, ADR-0425).
 - **State board:** `docs/STATE.md` — read first, update last, every session (AGENTS.md §9). It

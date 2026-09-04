@@ -21,8 +21,10 @@ Four rules override everything else:
 4. **Be pragmatic and stay on task.** Solve the problem in front of you, nothing else (§4).
 5. **Do not stop early.** The run ends when `scripts/release-check.sh` passes and not before
    (§15). There is no MVP exit and no proof-of-concept exit.
-6. **Never commit to `main`.** All implementation happens on the `implementation` branch, so the
-   whole run stays disposable (§12.1).
+6. **Never write to `main` unless the user says so.** All implementation happens on the
+   `implementation` branch, so the whole run stays disposable. Promoting it — a merge or a push to
+   `main` — happens only on the user's explicit instruction, and never on your own judgement that
+   the work looks ready (§12.1).
 
 If you catch yourself writing "should I…?", "which option do you prefer?", or "let me know
 how to proceed" — stop, pick the option best aligned with the spec, write an ADR, proceed.
@@ -546,9 +548,11 @@ fixture creates them), one behaviour per test, assertion messages that explain t
 
 ### 12.1 Implementation lives on a feature branch
 
-**`main` is never written to by an agent.** It holds the immutable specification, these
-instructions, the verification harness and the README — the state a run starts from, and the
-state the user can always return to.
+**`main` is written to only when the user asks for it, in that request and no other.** It holds
+the immutable specification, these instructions, the verification harness and the README — the
+state a run starts from, and the state the user can always return to. Nothing an agent decides for
+itself may change it: not a green release gate, not a finished tranche, not a checklist with every
+box ticked. Those make the work *promotable*; the user makes it promoted.
 
 **All implementation happens on the branch `implementation`.** It is created from `main` and is
 **disposable by design**: the entire run can be thrown away and restarted from a clean `main`
@@ -561,10 +565,15 @@ git rev-parse --abbrev-ref HEAD                                        # confirm
 
 Rules:
 
-- Confirm the branch **before your first edit**, every session (§17). A commit on `main` is a
-  policy breach even when the content is good.
-- Never merge, rebase or fast-forward `implementation` into `main`. Promoting the work is the
-  user's decision and the user's action, taken when the release gate passes (§15).
+- Confirm the branch **before your first edit**, every session (§17). An *implementation* commit
+  on `main` is a policy breach even when the content is good: what an instruction can unlock is
+  the promotion of finished work, never the writing of new work outside the disposable branch.
+- Do not merge, rebase, fast-forward or push `implementation` into `main` on your own. Promoting
+  the work is the user's decision, taken when the release gate passes (§15); the *action* is the
+  user's too unless they instruct an agent to carry it out, and then it is theirs by instruction
+  rather than by inference. "Release it", "promote it" or "merge to main" is such an instruction;
+  a green gate, a passing `release-check.sh` or a question about how promotion works is not.
+  Report that the work is ready and stop there.
 - Never delete or recreate `implementation` yourself. Discarding a run is the user's call.
 - `scripts/gate.sh` refuses to run on `main`. That guard is not to be removed or worked around;
   the user sets `ONO_ALLOW_MAIN=1` when they work on the harness itself.

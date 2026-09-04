@@ -9,7 +9,8 @@ the session records, the phase checklists and the history. The stopping rule liv
 `docs/ACCEPTANCE.md`: the run ends when `scripts/release-check.sh` passes, not when this file
 looks tidy.
 
-Working branch: **`implementation`** — never commit to `main` (AGENTS.md section 12.1)
+Working branch: **`implementation`** — never write to `main` unless the user asks for it in
+that request (AGENTS.md section 12.1)
 
 **Commit every increment, and tag every completed phase.** A phase is done when its box in
 `docs/ACCEPTANCE.md` section 4.1 is ticked; the commit that ticks it gets an annotated tag
@@ -23,9 +24,10 @@ git switch --detach phase-a   # the tree exactly as that phase left it
 
 Tags so far: `phase-a` … `phase-j` (one per completed phase; H, I and J tagged at the release commit).
 
-**Push after every commit.** AGENTS.md §12.1 keeps `main` untouched and §12.2 asks that
-`implementation` be pushed freely so work is not lost; the branch and its phase tags live on
-`origin`. Never push `main`, never open a pull request unless asked.
+**Push after every commit.** AGENTS.md §12.1 leaves `main` alone until the user asks for it, and
+§12.2 asks that `implementation` be pushed freely so work is not lost; the branch and its phase
+tags live on `origin`. Push `main` or open a pull request only when the user asks for it in that
+request.
 
 ```bash
 git push origin implementation && git push origin --tags
@@ -38,8 +40,9 @@ ticked by a named automated proof, and the 2026-08-29 reconciliation traced ever
 test names and every acceptance case they cite to something that exists and runs in the gate. The
 containerised suite stands at **96 cases** in `docker/acceptance/cases/` and the workspace at
 ~2 600 outcome tests across **30 crates**. What remains in the issue tracker is post-release
-deepening — every item deliberate, none blocking the deliverable. Promoting `implementation` to `main` is the
-user's decision and the user's action (AGENTS.md §12.1).
+deepening — every item deliberate, none blocking the deliverable. Promoting `implementation` to
+`main` is the user's decision; an agent carries it out only when told to, in that request
+(AGENTS.md §12.1).
 
 Phases A–D are complete and tagged. B/C/D landed as: native commands wired into the evaluator
 (ADR-0028), partial failure semantics (ADR-0029), the §33.5 interop serialisation (ADR-0030),
@@ -276,8 +279,8 @@ is work anybody can do at a keyboard: **#107** (signature over the checksum mani
 §40.2 denies the acceptance container a network. The code is complete on both sides —
 `scripts/sign-release.sh` refuses without an identity, `scripts/verify-release.sh` is
 identity-constrained and fails closed — and the first `v*` tag is the run that proves them.
-Pushing that tag is the user's action, as promoting `implementation` to `main` is (AGENTS.md
-§12.1). Their two boxes in `docs/ACCEPTANCE.md` say so in their own text.
+Pushing that tag and promoting `implementation` to `main` are both the user's decision; an agent
+does either only when asked to in that request (AGENTS.md §12.1). Their two boxes in `docs/ACCEPTANCE.md` say so in their own text.
 
 No class-c issue remains: **#3** closed with its sixth increment, below.
 
