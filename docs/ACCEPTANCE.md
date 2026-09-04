@@ -1164,7 +1164,7 @@ Four conventions this subsection relies on:
       ends at this heading, so neither harvester can silently read the other's boxes). This box
       closes last: it is the mechanical statement that no other box here is ticked by nothing
       (#29, §3; ADR-0575).
-- [ ] **P0 · The four failing proofs of §57 H0 exist and are green.** §57 requires the failure
+- [x] **P0 · The four failing proofs of §57 H0 exist and are green.** §57 requires the failure
       before the fix, and §0.5 names the four defects the tranche is built around: the
       unauthenticated TLS client that reaches the protocol handshake (§0.5.1), the plugin that
       execs although a mandatory confinement control failed (§0.5.3), the `each` that emits nothing
@@ -1243,7 +1243,7 @@ client today and accepts clients that present no certificate (§0.5.1); the prot
 `Identity` is self-reported metadata (§65.1). Every box here is P0 because a boundary that claims
 authentication without performing it is exactly §3.1's release blocker.
 
-- [ ] **P0 · Transport identity is symmetric and transport-neutral.** `HostKey` becomes a
+- [x] **P0 · Transport identity is symmetric and transport-neutral.** `HostKey` becomes a
       `PeerIdentity` that names either end of a link, the runtime user of a session stays a
       separate field from the transport credential (§7.3), and the SSH-carried stdio agent keeps
       its existing external authentication (§4.3) —
@@ -1253,7 +1253,7 @@ authentication without performing it is exactly §3.1's release blocker.
       `::should_distinguish_authenticated_authorized_pinned_and_self_reported_on_a_link`, and
       `crates/ono-remote/tests/agentless.rs::should_report_what_the_far_side_said_it_is` still
       green over the ssh path (#32, §7.2, §56.1).
-- [ ] **P0 · A client has a persistent identity of its own.** `~/.config/ono/link_identity.pem`
+- [x] **P0 · A client has a persistent identity of its own.** `~/.config/ono/link_identity.pem`
       is created on first use with `0600`, is reused across invocations so the fingerprint an
       operator authorizes stays the same, and an existing `host_key.pem` migrates without a manual
       step (§8.2) — `crates/ono-cli/tests/peer_identity.rs::should_generate_one_identity_and_keep_it_across_calls`,
@@ -1262,7 +1262,7 @@ authentication without performing it is exactly §3.1's release blocker.
       `::should_generate_a_fresh_identity_when_the_legacy_file_does_not_parse`, and
       `crates/ono-remote/tests/peer_identity.rs::should_use_an_identity_file_only_its_owner_can_reach`
       (#33, §8.1, §8.4).
-- [ ] **P0 · A readable private key is refused, and the diagnostic prints no key material.** A
+- [x] **P0 · A readable private key is refused, and the diagnostic prints no key material.** A
       `link_identity.pem` that is group- or world-readable stops the operation and names the path
       and the required mode —
       `crates/ono-cli/tests/peer_identity.rs::should_refuse_a_group_or_world_readable_identity_and_establish_no_link`,
@@ -1272,7 +1272,7 @@ authentication without performing it is exactly §3.1's release blocker.
       `::should_refuse_an_identity_file_that_anyone_else_can_read`,
       `::should_refuse_an_identity_file_that_anyone_else_can_write`, and the §59.6 half of case
       `181` (#34, §8.3).
-- [ ] **P0 · The listener requires an authenticated client certificate.** No protocol byte from an
+- [x] **P0 · The listener requires an authenticated client certificate.** No protocol byte from an
       unauthenticated TCP client reaches the agent, and `peer_key()` is `Some` for every accepted
       network client — `crates/ono-remote/tests/client_authentication.rs::should_refuse_a_tls_client_that_presents_no_certificate`,
       which drives a real anonymous peer to the point where it would read the provider inventory
@@ -1281,7 +1281,7 @@ authentication without performing it is exactly §3.1's release blocker.
       `::should_refuse_a_tls_client_that_cannot_prove_it_holds_the_key_it_presents`, and
       `::should_report_the_key_the_accepted_client_proved_it_holds` (#35, the work package written
       out in §58.1; §2.1, §2.2, §7, §13.1).
-- [ ] **P0 · The client verifies the server the same way the server verifies the client.** Both
+- [x] **P0 · The client verifies the server the same way the server verifies the client.** Both
       ends prove possession of a persistent key, and a client that cannot verify the server's
       identity refuses the link rather than continuing —
       `crates/ono-remote/tests/downgrade_resistance.rs::should_refuse_a_server_that_does_not_ask_for_a_client_certificate`,
@@ -1289,7 +1289,7 @@ authentication without performing it is exactly §3.1's release blocker.
       `crates/ono-remote/tests/trust.rs::should_refuse_an_unpinned_peer_however_privileged_it_says_it_is`,
       `crates/ono-remote/tests/tls.rs::should_keep_one_identity_across_restarts`, case `180` (#36,
       §7.1, §7.3).
-- [ ] **P0 · Downgrade is impossible and never automatic.** ALPN is `ono/2`, the negotiated
+- [x] **P0 · Downgrade is impossible and never automatic.** ALPN is `ono/2`, the negotiated
       protocol version is bound to the authenticated handshake, a wrong ALPN is refused, and no
       code path falls back to the legacy unauthenticated direct protocol on failure —
       `crates/ono-remote/tests/client_authentication.rs::should_refuse_a_tls_client_that_asks_for_another_application_protocol`,
@@ -1299,7 +1299,7 @@ authentication without performing it is exactly §3.1's release blocker.
       `crates/ono-remote/tests/tls.rs::should_carry_the_link_protocol_over_the_authenticated_transport`,
       which is where the negotiated version is bound to the authenticated handshake — the link
       protocol runs over that transport and over no other (#38, §13.2, §13.3, §13.4).
-- [ ] **P0 · No unauthenticated network mode is reachable from the CLI.** No flag, config key or
+- [x] **P0 · No unauthenticated network mode is reachable from the CLI.** No flag, config key or
       environment variable turns the canonical agent into an unauthenticated listener, and the
       attempt is refused with a stable error rather than ignored —
       `crates/ono-cli/tests/listening_agent.rs::should_have_no_flag_that_turns_client_authentication_off_for_a_listening_agent`,
@@ -1308,13 +1308,13 @@ authentication without performing it is exactly §3.1's release blocker.
       `xtask/tests/scan.rs::should_find_no_authentication_disabling_flag_in_this_repository`, which
       holds the rule over the whole tree rather than over the flags anyone thought to list
       (#39, §7.4).
-- [ ] **P1 · The fingerprint an operator has to compare is printable at both ends.**
+- [x] **P1 · The fingerprint an operator has to compare is printable at both ends.**
       `ono --print-peer-key` prints the client fingerprint in the §8.5 display form, and
       `ono --agent --print-host-key` keeps working for the agent —
       `crates/ono-cli/tests/peer_identity.rs::should_print_the_same_fingerprint_however_it_is_asked_for`,
       `::should_print_the_identity_a_machine_already_had`,
       `::should_point_new_users_at_the_canonical_spelling_in_the_help`, case `181` (#37, §8.5).
-- [ ] **P0 · Host-key pinning is live on the production transport.** ADR-0037 §4 left ssh links on
+- [x] **P0 · Host-key pinning is live on the production transport.** ADR-0037 §4 left ssh links on
       `TrustPolicy::Unauthenticated`, so the complete trust store of
       `crates/ono-remote/tests/trust.rs` was never consulted in production and no case asserted the
       E0603 refusal. The authenticated TCP transport this phase builds is what its exit test needs
@@ -1492,20 +1492,20 @@ on a network cannot be exhausted by a peer that simply keeps connecting.
 ignored, and §65.5 names the documentation failure that travels with it: calling the native tier a
 sandbox when it provides no filesystem or network isolation.
 
-- [ ] **P0 · Mandatory and best-effort controls are one table, not scattered constants.** Appendix
+- [x] **P0 · Mandatory and best-effort controls are one table, not scattered constants.** Appendix
       D's eleven rows exist in `docs/spec/hardening/kuang_confinement_controls.yaml` with their tier
       and their failure behaviour, the supervisor reads that table, and an unknown control ID fails
       the gate — `crates/ono-kuang-supervisor/tests/confinement.rs::should_classify_every_control_the_confinement_table_declares`,
       `::should_treat_a_control_the_table_calls_mandatory_as_mandatory`,
       `xtask/tests/contracts.rs::should_reject_an_unknown_control_id_in_a_kuang_tier_definition`
       (#58, §16.1, §16.4, §52.3).
-- [ ] **P0 · Every security-relevant syscall return value is checked.** No confinement call
+- [x] **P0 · Every security-relevant syscall return value is checked.** No confinement call
       discards its result, and the check is asserted mechanically rather than by review —
       `crates/ono-kuang-supervisor/tests/confinement.rs::should_report_the_failing_control_when_a_confinement_syscall_returns_an_error`,
       `::should_check_the_result_of_every_control_the_table_marks_mandatory`, and
       `xtask/tests/scan.rs::should_report_an_unchecked_confinement_syscall_result` over the
       supervisor's process-setup code (#59, §16.2, §0.5.3).
-- [ ] **P0 · A pre-exec failure prevents the exec.** With an injected failure of
+- [x] **P0 · A pre-exec failure prevents the exec.** With an injected failure of
       `PR_SET_NO_NEW_PRIVS` or of a mandatory `setrlimit`, the spawn fails, the caller receives
       `plugin.no_new_privs_failed` / `plugin.resource_limit_failed` / `plugin.confinement_failed`
       naming the control, and a marker the plugin would create on startup stays absent —
@@ -1513,23 +1513,23 @@ sandbox when it provides no filesystem or network isolation.
       `::should_leave_the_plugins_startup_marker_absent_after_a_failed_confinement_setup`,
       `::should_name_the_control_that_could_not_be_installed_in_the_structured_error`, case `189`
       (#60, §16.3, §59.7, §59.8, §65.4).
-- [ ] **P1 · Every spawn carries a confinement report.** The report states, per control, whether it
+- [x] **P1 · Every spawn carries a confinement report.** The report states, per control, whether it
       was applied, skipped as best-effort or refused, and it is available to the operator without
       `RUST_LOG=debug` — `crates/ono-kuang-supervisor/tests/confinement.rs::should_report_the_state_of_every_control_after_a_successful_spawn`,
       `::should_mark_a_best_effort_control_that_was_not_available_as_skipped_rather_than_applied`,
       case `189` (#61, §16.5).
-- [ ] **P1 · The four plugin failure classes are distinguishable.** Launch failure, protocol
+- [x] **P1 · The four plugin failure classes are distinguishable.** Launch failure, protocol
       quarantine, resource-limit termination and crash are separate outcomes with separate codes,
       and a crash of one plugin leaves the shell and the other plugins running —
       `crates/ono-kuang-sdk/tests/failure_classes.rs::should_distinguish_a_launch_failure_from_a_quarantine_a_resource_kill_and_a_crash`,
       `::should_keep_the_shell_and_the_other_plugins_running_when_one_plugin_crashes`, case `189`
       (#62, §18).
-- [ ] **P0 · The documentation states the native tier honestly.** README, Wiki, `help` and the
+- [x] **P0 · The documentation states the native tier honestly.** README, Wiki, `help` and the
       generated reference use the §19.1 terms, say that the native tier provides no filesystem and
       no network isolation, and never call it a sandbox — `xtask/tests/terminology.rs::should_reject_a_document_that_calls_the_native_tier_a_sandbox`,
       `::should_find_the_native_isolation_disclaimer_in_every_document_that_describes_the_kuang_tier`
       running over the repository on every gate run (#63, §15.1, §15.2, §51.2, §0.5.4, §65.5).
-- [ ] **P2 · The execution tier is a name, not a boolean.** The `sandboxed: bool` field is replaced
+- [x] **P2 · The execution tier is a name, not a boolean.** The `sandboxed: bool` field is replaced
       by a named tier that says which controls are in force, and no UI infers filesystem or network
       isolation from the presence of the other controls —
       `crates/ono-kuang-supervisor/tests/confinement.rs::should_report_a_named_execution_tier_rather_than_a_sandboxed_boolean`,
@@ -1584,7 +1584,7 @@ bytes behind them are unbounded.
       `::should_accumulate_nested_captures_against_the_one_per_command_ceiling`,
       `::should_refuse_a_capture_that_would_exceed_the_command_ceiling` (#70, §23.1, §23.2, §23.4,
       Appendix A, ADR-0457).
-- [ ] **P1 · Cancellation stops a capture growing.** Cancelling a command whose capture is filling
+- [x] **P1 · Cancellation stops a capture growing.** Cancelling a command whose capture is filling
       releases it, deterministically: the operation unwinds, the source stops producing, and the
       next capture has its whole allowance —
       `crates/ono-cli/tests/resource_limits.rs::should_stop_capture_growth_within_the_cancellation_budget`,
@@ -1713,7 +1713,7 @@ foreground `Vec` with an unbounded background queue is not a streaming fix and i
 nothing about a real host, and §65.9 names progress-free interactive computation as the failure
 mode this phase removes.
 
-- [ ] **P1 · Profile S, M and L fixtures exist and are reproducible.** The process, graph and
+- [x] **P1 · Profile S, M and L fixtures exist and are reproducible.** The process, graph and
       socket cardinalities of Appendix F.1 and F.2 are built by the harness rather than borrowed
       from the developer's machine, the payload profiles of F.3 exist for the byte budgets, and the
       same fixture is reconstructible from the registry —
@@ -1721,7 +1721,7 @@ mode this phase removes.
       `::should_rebuild_the_same_profile_from_the_same_declaration`, with the declarations in
       `docs/spec/hardening/performance_profiles.yaml` and the fixture under
       `docker/acceptance/fixtures/perf/` (#82, §32.1, §32.2).
-- [ ] **P1 · Six metrics per benchmark, against a machine-readable baseline.** Time to first value,
+- [x] **P1 · Six metrics per benchmark, against a machine-readable baseline.** Time to first value,
       time to completion, sampled RSS, values per second, estimated bytes and cancellation latency
       are recorded for every benchmark, and a result is compared against the baseline for its named
       reference environment rather than against a number in a test —
@@ -1729,7 +1729,7 @@ mode this phase removes.
       `::should_compare_a_benchmark_result_against_the_baseline_for_its_reference_environment`,
       `::should_fail_when_a_benchmark_reports_only_a_total_runtime` (#83, §32.3, §32.4,
       Appendix F.4).
-- [ ] **P2 · The benchmarks are invocable and the environment is named.** `cargo xtask perf` runs
+- [x] **P2 · The benchmarks are invocable and the environment is named.** `cargo xtask perf` runs
       them, writes the §32.3 records, and states which reference environment produced a figure;
       warm and cold measurements are distinguished, and the statistical rule of §37.4 decides a
       pass — `xtask/tests/perf.rs::should_run_the_declared_benchmarks_and_write_their_records`,
@@ -1745,7 +1745,7 @@ mode this phase removes.
       `xtask/tests/perf.rs::should_measure_every_time_to_first_result_target_of_the_reference_targets_table`,
       cases `195` and `197`, the watchdog case being the one that fails on silence (#85, §33.1–§33.3,
       §61.1, §61.3).
-- [ ] **P1 · `map --live` produces a first frame and can be cancelled.** The reproduced hang —
+- [x] **P1 · `map --live` produces a first frame and can be cancelled.** The reproduced hang —
       `map --live --json | take 3 | to json` returning nothing for 30 s at 0 % CPU — is gone: the
       initial projection is bounded, updates are incremental, backpressure holds and Ctrl-C releases
       the query task promptly —
@@ -1755,27 +1755,27 @@ mode this phase removes.
       `crates/ono-cli/tests/spatial_relationships.rs::should_show_the_connection_edge_appear_and_vanish_when_the_connection_opens_and_closes`,
       case `196` (#22,
       §35.1–§35.5, §61.2, §61.5).
-- [ ] **P1 · A full-screen map stays responsive while a projection is in flight.** Focus movement
+- [x] **P1 · A full-screen map stays responsive while a projection is in flight.** Focus movement
       and Ctrl-C are answered at a real PTY while COMPUTE is being projected, inside the 16 ms frame
       budget §4.7.5 already holds for focus —
       `crates/ono-cli/tests/spatial_interactive.rs::should_answer_focus_movement_while_a_projection_is_still_running`,
       `::should_close_the_full_screen_map_promptly_while_a_projection_is_in_flight`, case `196`
       (#20, §35.4, §61.5).
-- [ ] **P1 · A selector miss costs about what a hit costs.** A miss stops at a bounded candidate
+- [x] **P1 · A selector miss costs about what a hit costs.** A miss stops at a bounded candidate
       set instead of consulting the whole index and projecting all six domains, holding Profile M
       p95 under 250 ms and Profile L p95 under 1 s —
       `crates/ono-spatial-index/tests/index.rs::should_answer_a_selector_miss_from_a_bounded_candidate_set`,
       `crates/ono-spatial-query/tests/resolution.rs::should_not_make_a_selector_hit_pay_for_the_completeness_a_miss_needs`,
       case `195` (#8, §36.1; the design choice between a persistent index and a bounded last step is
       recorded in an ADR before the code, per `docs/STATE.md`).
-- [ ] **P1 · Completion stops at its hard budget.** A completion request that triggers expensive
+- [x] **P1 · Completion stops at its hard budget.** A completion request that triggers expensive
       discovery returns a partial set marked incomplete at 50 ms and stops discovery at 150 ms,
       measured directly rather than through a proxy —
       `crates/ono-cli/tests/completion.rs::should_read_its_budgets_from_the_limits_catalogue`,
       `::should_stop_discovery_at_the_hard_budget_and_answer_what_it_has`,
       `xtask/tests/perf.rs::should_measure_the_completion_budget_directly_rather_than_through_a_proxy`,
       case `198` (#21, #86 in part, §36.2, §61.4, Appendix A).
-- [ ] **P2 · Cost is estimated, and an expensive relation is requestable.** Every canonical query
+- [x] **P2 · Cost is estimated, and an expensive relation is requestable.** Every canonical query
       carries a machine-readable cost class, `follow owner` and its kind either pay for the
       expensive relation when asked or refuse with the cost they estimated, and an advertised
       expensive relation is genuinely obtainable —
@@ -1784,7 +1784,7 @@ mode this phase removes.
       `::should_refuse_with_the_estimated_cost_when_the_estimate_exceeds_the_interactive_budget`,
       `crates/ono-cli/tests/spatial_relationships.rs::should_follow_the_owner_relation_when_it_is_requested_explicitly`
       (#86, #25, §34.1–§34.3).
-- [ ] **P2 · A local question builds no global graph.** Asking for one place's neighbourhood
+- [x] **P2 · A local question builds no global graph.** Asking for one place's neighbourhood
       touches a bounded part of the index, and the work it does is asserted as an observable cost
       rather than by inspecting the call path —
       `crates/ono-spatial-query/tests/cost.rs::should_keep_the_work_of_a_neighborhood_question_within_its_declared_cost_class`,
@@ -1829,7 +1829,7 @@ a pass. ADR-0428 already made every skip announce itself; this phase makes an un
       `::should_leave_a_helper_alone_when_it_calls_its_own_files_helper` and
       `::should_leave_two_crates_helpers_alone_when_they_share_no_home` (ADR-0515) (#90,
       §39.1–§39.4).
-- [ ] **P1 · The fourteen acceptance families exist and run.** Every box of §4.8.13 is ticked, the
+- [x] **P1 · The fourteen acceptance families exist and run.** Every box of §4.8.13 is ticked, the
       cases execute the real `ono` binary (§40.1), remote cases use an isolated container network
       rather than the public internet (§40.2), and every case has a finite timeout that counts as a
       failure when it fires (§40.4) —
@@ -1856,7 +1856,7 @@ a pass. ADR-0428 already made every skip announce itself; this phase makes an un
       than silently dropped — `fuzz/tests/corpus.rs::should_reload_the_persisted_corpus_for_every_target`,
       `::should_record_an_input_that_exceeds_its_timeout_as_a_hang` (ADR-0521) (#93, §41.4,
       §41.5).
-- [ ] **P2 · Miri and the sanitizers run on the unsafe boundary.** The targeted jobs exist, cover
+- [x] **P2 · Miri and the sanitizers run on the unsafe boundary.** The targeted jobs exist, cover
       the `unsafe` code §42.1 names, and are green for the release commit —
       `xtask/tests/supply_chain.rs::should_declare_a_miri_job_covering_every_unsafe_boundary_module`,
       `::should_declare_an_address_and_undefined_behaviour_sanitizer_job_for_the_release_commit`,
@@ -2197,18 +2197,18 @@ non-interactive and deterministic with no terminal attached (#91).
       `187-corrupt-authorization-store`: one malformed line stops the agent
       deterministically, an empty store refuses to listen, and neither is treated as zero
       restrictions (§59.5, #40, #55).
-- [ ] **KUANG mandatory confinement setup failure** — `189-kuang-confinement-fail-closed`: with
+- [x] **KUANG mandatory confinement setup failure** — `189-kuang-confinement-fail-closed`: with
       `PR_SET_NO_NEW_PRIVS` and a mandatory `setrlimit` made to fail through the injectable platform
       layer, the spawn fails, the plugin's startup marker stays absent, and the confinement report
       names the control (§59.7, §59.8, #60, #61, #62).
 - [x] **`each` streams an unbounded source** — `193-each-streams-an-unbounded-source`: a source
       that emits `1`, waits and is marked unbounded lets `source | each { $it } | take 1` answer `1`
       and complete before the source closes (§60.1, #75, #76).
-- [ ] **Materialization item and byte limits refuse** — `190-materialization-limits`: 100 001 small
+- [x] **Materialization item and byte limits refuse** — `190-materialization-limits`: 100 001 small
       values hit the item limit, and a handful of large values hit the 128 MiB byte limit while the
       item count stays far below its own, both with `resource.materialization_limit` semantics
       (§60.4, §60.5, #67, #73).
-- [ ] **Result-history truncation is visible** — `191-result-history-truncation`: a pipeline that
+- [x] **Result-history truncation is visible** — `191-result-history-truncation`: a pipeline that
       exceeds the history limits emits its complete result to the user while the retained copy is
       truncated and says so (§60.6, §67.6, #72).
 - [x] **Profile M spatial first result** — `195-profile-m-navigation`: canonical `look`,
@@ -2251,7 +2251,7 @@ exclusion ADR dated after it is refused (ADR-0575).
       exclusion is readable from the checklist rather than from the tracker —
       `xtask/tests/hardening_evidence.rs::should_find_a_dated_adr_for_every_box_the_checklist_leaves_open`,
       `::should_refuse_an_exclusion_adr_dated_after_the_release_candidate_freeze` (§3.4, §66.9).
-- [ ] **No exclusion waives a §66 criterion.** An ADR may remove a P2 or P3 item from the tranche's
+- [x] **No exclusion waives a §66 criterion.** An ADR may remove a P2 or P3 item from the tranche's
       scope, and it may not remove a bullet of §66.1–§66.8: every criterion of §66 has at least one
       ticked box in §4.8.1–§4.8.13 naming its proof —
       `xtask/tests/hardening_evidence.rs::should_find_a_box_for_every_bullet_of_the_release_definition`,
