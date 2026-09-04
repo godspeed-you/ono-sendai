@@ -36,6 +36,12 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # The jobs below install nightly, and `rust-toolchain.toml` pins 1.94: a toolchain file
+  # outranks the installed default, so every cargo invocation in the checkout resolved to stable
+  # and the nightly options were refused — the first scheduled run of each workflow died that way
+  # (2026-09-04). `RUSTUP_TOOLCHAIN` outranks the file and reaches the child processes cargo
+  # spawns, which is where the build that failed actually ran.
+  RUSTUP_TOOLCHAIN: nightly
 
 jobs:
   miri:
