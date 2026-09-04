@@ -1,6 +1,6 @@
 # ADR-0522: The unsafe boundary is small enough to verify, and the job reads it from the tree
 
-- Status: accepted
+- Status: accepted; the sanitizer matrix is superseded by ADR-0574
 - Date: 2026-09-02
 - Spec refs: v0.4.1 §42.1 (unsafe boundary focus), §42.2 (Miri), §42.3 (sanitizers), §42.4
   (failure handling), §66.5 (green for the release commit), §43.3, §44.3
@@ -37,6 +37,11 @@ and it has to: Miri implements neither `fork` nor `execve` nor `ioctl`.
 syscall wrappers Miri cannot execute. AddressSanitizer and UndefinedBehaviorSanitizer, in a
 matrix, over the four crates that hold `unsafe`, with the standard library rebuilt under the
 sanitizer so the instrumentation reaches across it.
+
+> **2026-09-04:** `rustc` does not accept `-Zsanitizer=undefined` — UndefinedBehaviorSanitizer
+> instruments C and C++ semantics — and the first scheduled run of this workflow was refused for
+> asking. The matrix is now two jobs: AddressSanitizer, and the standard library's own
+> preconditions under `-Zub-checks`. ADR-0574 has the reasoning.
 
 **The crate list is a gate assertion, not a workflow comment.**
 `should_declare_an_address_and_undefined_behaviour_sanitizer_job_for_the_release_commit` walks

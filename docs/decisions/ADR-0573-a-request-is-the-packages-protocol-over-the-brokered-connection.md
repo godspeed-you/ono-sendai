@@ -1,4 +1,4 @@
-# ADR-0571: A request is the package's protocol over the brokered connection
+# ADR-0573: A request is the package's protocol over the brokered connection
 
 - Status: accepted
 - Date: 2026-09-03

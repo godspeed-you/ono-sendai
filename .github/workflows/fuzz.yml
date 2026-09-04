@@ -96,7 +96,12 @@ jobs:
           # `-timeout` is §41.5: a single input that takes longer than ten seconds is reported as
           # a hang and written where it can be reproduced, rather than being absorbed into a long
           # job nobody reads. `-rss_limit_mb` is the same rule for memory.
-          cargo fuzz run --fuzz-dir fuzz/coverage-guided '${{ matrix.target }}' \
+          # The target is named rather than left to `cargo fuzz`, which defaults to the triple
+          # *it* was built for: `install-action` fetches a statically linked musl build, and a
+          # sanitizer cannot link against a static libc — "sanitizer is incompatible with
+          # statically linked libc" is where the first run got to (2026-09-04).
+          cargo fuzz run --target x86_64-unknown-linux-gnu \
+            --fuzz-dir fuzz/coverage-guided '${{ matrix.target }}' \
             fuzz/coverage-guided/corpus/'${{ matrix.target }}' \
             fuzz/corpus/'${{ matrix.target }}' \
             -- -max_total_time="$seconds" -timeout=10 -rss_limit_mb=2048

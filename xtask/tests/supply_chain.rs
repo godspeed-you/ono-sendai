@@ -1058,12 +1058,20 @@ fn should_declare_an_address_and_undefined_behaviour_sanitizer_job_for_the_relea
     // what a schedule on the default branch delivers.
     let verification = workflow("verification.yml");
     assert!(
-        verification.contains("sanitizer: [address, undefined]"),
-        "§42.3 names both sanitizers"
+        verification.contains("-Zsanitizer=address"),
+        "§42.3 names AddressSanitizer, and the tests are built with it rather than beside it"
+    );
+    // §42.3 asks for both "where Rust/toolchain support permits", and `rustc` has never accepted
+    // `-Zsanitizer=undefined`: UndefinedBehaviorSanitizer instruments C and C++ semantics. What
+    // Rust offers for the same question is the library's own preconditions, compiled in
+    // (ADR-0574).
+    assert!(
+        verification.contains("-Zub-checks=yes"),
+        "§42.3's undefined-behaviour half runs the checks the toolchain does have (ADR-0574)"
     );
     assert!(
-        verification.contains("-Zsanitizer=${{ matrix.sanitizer }}"),
-        "§42.3: the tests are built with the sanitizer rather than merely beside it"
+        verification.contains("-Z build-std"),
+        "both jobs rebuild the standard library, so the instrumentation reaches across it"
     );
 
     // Every crate that holds an `unsafe` block is one the sanitizer job runs. The list is read

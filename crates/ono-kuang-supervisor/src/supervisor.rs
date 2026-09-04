@@ -2023,7 +2023,7 @@ impl Actor {
             method::NETWORK_CLOSE => self.host_network_close(seq, params).await,
             method::NETWORK_LISTEN => self.host_network_listen(seq, params).await,
             method::NETWORK_REQUEST => {
-                // Not the host's to serve (ADR-0571): a request is a package's own protocol over
+                // Not the host's to serve (ADR-0573): a request is a package's own protocol over
                 // the brokered connection, so the trust decision stays where §31.21 puts it — in
                 // the operator's scope for `network.connect` — and the shell carries no client
                 // for a protocol it does not speak.
@@ -2032,7 +2032,7 @@ impl Actor {
                     WireError::from_core(
                         ono_core::ErrorCode::ProviderUnavailable,
                         "this host serves no `network.request`: a request is the package's own \
-                         protocol over `network.connect` (ADR-0571)",
+                         protocol over `network.connect` (ADR-0573)",
                     ),
                 )
                 .await;

@@ -336,10 +336,10 @@ issue that ordered the work did not know.
   peer writing its answer in two calls while the package reads one chunk — a test defect, fixed in
   `032fa8d`, and taken off the staging area. The example plugin's connection reads also waited five
   milliseconds, which is a coin toss under gate load; they wait two seconds now. With it, every call
-  `protocol.v1.yaml` declares is served or answered with ADR-0571's honest refusal, and the
+  `protocol.v1.yaml` declares is served or answered with ADR-0573's honest refusal, and the
   manifest no longer refuses a view contribution. Closed with `gh issue close 3`.
 - **#3, fifth increment (2026-09-03): `network.listen`, and `network.request` decided.**
-  ADR-0571, decided with the user: a request is the package's own protocol over the brokered
+  ADR-0573, decided with the user: a request is the package's own protocol over the brokered
   connection, so the host carries no HTTP client and answers `network.request` with
   `provider.unavailable` naming `network.connect`. A listener is checked against `ports`,
   audited, bound on the loopback address, and read as a stream whose values are

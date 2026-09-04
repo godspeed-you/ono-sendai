@@ -1,4 +1,4 @@
-# Issue #3 (c), ADR-0571: `network.listen`. A package granted `network.listen` for a port binds
+# Issue #3 (c), ADR-0573: `network.listen`. A package granted `network.listen` for a port binds
 # it through the host, is handed each accepted connection as a handle, reads what the peer said
 # and answers it; the peer is the case itself over bash's `/dev/tcp`. `network.request` is not
 # the host's to serve and says where the door is.

@@ -60,7 +60,7 @@ hands them to the command in order. Nothing in the contract had to be added.
   a command palette and an object picker as filtered lists with a cursor, and a status line.
   The layout is the host's; a package asks for a component, never for a position.
 - With this, every call `protocol.v1.yaml` declares is either served or answered with the
-  honest refusal of ADR-0571, and issue #3 closes.
+  honest refusal of ADR-0573, and issue #3 closes.
 
 ## Alternatives considered
 
