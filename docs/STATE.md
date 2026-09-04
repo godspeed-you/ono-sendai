@@ -283,6 +283,35 @@ One entry per phase, newest first. The reasoning is kept because each entry reco
 issue that ordered the work did not know.
 
 
+- **The two scheduled workflows had never run, and each died on its first attempt
+  (2026-09-04).** `fuzz.yml` and `verification.yml` are scheduled on the default branch, and the
+  default branch only carried them from the merge of 2026-09-03: their first runs were their
+  first runs ever. Four causes, all in the workflows.
+
+  **A toolchain file outranks an installed default.** Both workflows install nightly, and
+  `rust-toolchain.toml` pins 1.94: every cargo invocation in the checkout resolved to stable, so
+  libFuzzer's `-Z sanitizer` and `cargo miri` were refused in under thirty seconds. The env
+  variable `RUSTUP_TOOLCHAIN` outranks the file and reaches the child processes cargo spawns,
+  which is where the builds that failed actually ran.
+
+  **`cargo fuzz` builds for the triple it was itself built for.** `install-action` fetches a
+  statically linked musl binary, so the campaign built for musl, and a sanitizer cannot link
+  against a static libc. The workflow names `x86_64-unknown-linux-gnu`.
+
+  **libFuzzer refuses a corpus directory that is not there.** The growing corpus is restored from
+  a cache, and a cache that has never been written creates nothing. The campaign makes the
+  directory it writes into; the committed seeds beside it stay read-only input.
+
+  **Rust has no UndefinedBehaviorSanitizer.** `rustc` has never accepted `-Zsanitizer=undefined` —
+  UBSan instruments C and C++ semantics — and §42.3 asks for both sanitizers *"where
+  Rust/toolchain support permits"*. ADR-0574: the second job runs the standard library's own
+  preconditions under `-Zub-checks` with `-Z build-std`, over the same four crates that hold every
+  `unsafe` block. ADR-0522 carries the note.
+
+  Both are green now: seven fuzz targets at one minute each, and Miri, AddressSanitizer and the
+  undefined-behaviour job. Nothing either tool reported was a finding in the product — the fifth
+  cause would have been one, and there was no fifth. Found on the way: two decisions had both
+  taken the number 0571, and the later one — the brokered connection of #3 — is now ADR-0573.
 - **GitHub Actions was red for five runs, and none of the four causes was the product
   (2026-09-04).** The tracker had been failing since the wasm increment of 2026-09-03 while every
   local gate was green, which is the gap this entry exists to close: four environment
