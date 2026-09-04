@@ -319,6 +319,19 @@ issue that ordered the work did not know.
   undefined-behaviour job. Nothing either tool reported was a finding in the product — the fifth
   cause would have been one, and there was no fifth. Found on the way: two decisions had both
   taken the number 0571, and the later one — the brokered connection of #3 — is now ADR-0573.
+- **The first real tag published nothing, and that was the harness working (2026-09-04).**
+  ADR-0579. The `v0.4.1` release run built both architectures, compared both rebuilds byte for
+  byte, wrote the checksum manifest and the provenance, **signed the manifest with keyless Sigstore
+  and verified the signature** — and then died drafting the release with `fatal: not a git
+  repository`. `gh` reads which repository it acts on from the git remote of the directory it runs
+  in, and `publish-release.sh` publishes from the artifact directory, which the workflow keeps
+  beside the checkout rather than inside it. The repository is now named from `GITHUB_REPOSITORY`,
+  or from the `origin` of the checkout the script belongs to, or the script refuses.
+
+  Nothing reached a reader: §49.4's order put the failure before anything existed, so there was no
+  draft, no release and no half-populated asset list to clean up. This is the class of defect only
+  a `v*` tag can find — the gate cannot get past `sign-release.sh`, which refuses without an OIDC
+  token — and it is what §4.8.11 and §4.8.12 meant by saying the first tag is what proves them.
 - **The checklist that decides what is done was not being checked (2026-09-04).** ADR-0575,
   ADR-0577. `docs/ACCEPTANCE.md` §4.8.1's first box says `xtask/tests/hardening_evidence.rs` holds
   §4.8 the way `spatial_evidence.rs` holds §4.7, and names three tests it must carry; §4.8.14 names

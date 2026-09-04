@@ -207,8 +207,25 @@ fn should_bind_the_build_input_manifest_to_the_release_it_describes() {
     // Without a run around it the manifest says so rather than inventing one (spec §35.3).
     let (_scratch, _path, local) = emit(&[]);
     assert!(
-        local["run"]["id"].is_null() && local["source"]["tag"].is_null(),
-        "a manifest generated outside a tagged release run claims to be one:\n{local:#}"
+        local["run"]["id"].is_null(),
+        "a manifest generated outside a run claims to have one:\n{local:#}"
+    );
+    // The tag is the commit's, whatever it is. This read `tag.is_null()` until the first release
+    // put a `v*` tag on the commit the gate runs from, and the assertion failed on a manifest
+    // that was telling the truth — the test had encoded "no tag exists here" as though it were
+    // "no tag is claimed" (AGENTS.md §11, ADR-0579).
+    let described = Command::new("git")
+        .args(["describe", "--tags", "--exact-match"])
+        .current_dir(this_repository())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
+    assert_eq!(
+        local["source"]["tag"].as_str(),
+        described.as_deref(),
+        "a manifest generated outside a run must report the tag of the commit it was generated \
+         from — the one there is, or null — and never one from anywhere else:\n{local:#}"
     );
 
     // And the release workflow is what emits it, rather than a step somebody runs by hand.
@@ -809,4 +826,157 @@ fn should_verify_every_artifact_digest_against_the_checksum_manifest_and_the_pro
         "the publishing job does not generate provenance, then verify, then publish, so it can \
          attach assets nothing checked (spec §49.1, §62.5):\n{publish}"
     );
+}
+
+/// A stand-in for `gh` on `PATH`, recording the repository each call knew about.
+///
+/// The gate has no GitHub token and no release to write to. What this owns is the one property
+/// the first real tag proved missing: that `scripts/publish-release.sh` knows *which* repository
+/// it is publishing to when it runs from the artifact directory, which in the release workflow is
+/// beside the checkout rather than inside it. `gh` otherwise reads that from the git remote of the
+/// directory it runs in, finds none, and dies after every verification has already passed
+/// (ADR-0579).
+fn gh_stub(scratch: &Scratch) -> PathBuf {
+    let bin = scratch.path().join("bin");
+    std::fs::create_dir_all(&bin).expect("a scratch bin directory");
+    let stub = bin.join("gh");
+    std::fs::write(
+        &stub,
+        "#!/usr/bin/env bash\n\
+         printf '%s | GH_REPO=%s | cwd=%s\\n' \"$*\" \"${GH_REPO:-}\" \"$PWD\" >> \"$ONO_GH_LOG\"\n\
+         # `gh` itself refuses without a repository, and so does the stand-in: a test that let it\n\
+         # through would pass on exactly the tree the release failed on.\n\
+         if [ -z \"${GH_REPO:-}\" ] && ! git rev-parse --git-dir >/dev/null 2>&1; then\n\
+         \x20 echo 'failed to run git: fatal: not a git repository' >&2; exit 1\n\
+         fi\n\
+         case \"$2\" in\n\
+         \x20 view) [ -f \"$ONO_GH_LOG.created\" ] || exit 1 ;;\n\
+         \x20 create) : > \"$ONO_GH_LOG.created\" ;;\n\
+         \x20 download) exit 0 ;;\n\
+         esac\n\
+         exit 0\n",
+    )
+    .expect("the gh stand-in is written");
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755))
+        .expect("the stand-in is executable");
+    bin
+}
+
+/// An attested release directory with a signature bundle over its manifest, and both stand-ins on
+/// `PATH` — everything `scripts/publish-release.sh` verifies before it drafts anything.
+fn publishable(scratch: &Scratch, name: &str) -> (PathBuf, String) {
+    let directory = attested_release(scratch, name);
+    let manifest = std::fs::read(directory.join("SHA256SUMS")).expect("the manifest");
+    std::fs::write(
+        directory.join("SHA256SUMS.sigstore.json"),
+        format!("{}\n", xtask::reproducibility::digest(&manifest)),
+    )
+    .expect("the signature bundle");
+    let _ = cosign_stub(scratch);
+    let bin = gh_stub(scratch);
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    (directory, path)
+}
+
+#[test]
+fn should_name_the_repository_it_publishes_to_when_it_runs_from_outside_a_checkout() {
+    // §49.4's order held on the first real tag — verify, then draft — and the drafting step died
+    // with "not a git repository" because `dist/` sits beside the checkout in the release
+    // workflow. Everything before it was green, which is why no test had caught it: the failure
+    // is in the environment the script runs in, not in what it does.
+    let scratch = scratch();
+    let (directory, path) = publishable(&scratch, "outside");
+    let log = scratch.path().join("gh.log");
+    let _ = std::fs::write(&log, "");
+
+    // `current_dir` is the scratch directory, which is not a git repository — exactly what the
+    // workflow gives the script, and what a maintainer running it from `/tmp` would give it too.
+    let output = Command::new("bash")
+        .arg(this_repository().join("scripts/publish-release.sh"))
+        .args([
+            "--tag",
+            "v9.9.9",
+            "--dir",
+            directory.to_str().expect("a UTF-8 path"),
+        ])
+        .current_dir(scratch.path())
+        .env("PATH", &path)
+        .env("ONO_GH_LOG", &log)
+        .env("ONO_COSIGN_LOG", scratch.path().join("cosign.log"))
+        .env("GITHUB_REPOSITORY", "godspeed-you/ono-sendai")
+        .env_remove("GH_REPO")
+        .output()
+        .unwrap_or_else(|error| panic!("bash must be runnable in the gate: {error}"));
+    let calls = std::fs::read_to_string(&log).unwrap_or_default();
+    let mut report = String::from_utf8_lossy(&output.stdout).into_owned();
+    report.push_str(&String::from_utf8_lossy(&output.stderr));
+
+    // What this test owns is the environment, not the whole publication: the stand-in has no
+    // asset storage, so the run stops at the inventory check with its own diagnostic. What it may
+    // never stop at again is the drafting step, and never for want of a repository.
+    assert!(
+        !report.contains("not a git repository"),
+        "publishing died the way the first real tag died:\n{report}"
+    );
+    assert!(
+        calls.contains("release create"),
+        "the release was never drafted, so nothing reached the step that failed on the first \
+         tag:\n{report}\ncalls:\n{calls}"
+    );
+    for call in calls.lines() {
+        assert!(
+            call.contains("GH_REPO=godspeed-you/ono-sendai"),
+            "a `gh` call ran without knowing which repository it was writing to: {call}"
+        );
+    }
+}
+
+#[test]
+fn should_take_the_repository_from_its_own_checkout_when_the_environment_names_none() {
+    // A maintainer running the script by hand has no `GITHUB_REPOSITORY`. The script belongs to a
+    // checkout, and that checkout's `origin` is the repository it publishes to — inferring it from
+    // wherever the caller happens to stand is what went wrong.
+    let scratch = scratch();
+    let (directory, path) = publishable(&scratch, "by-hand");
+    let log = scratch.path().join("gh.log");
+    let _ = std::fs::write(&log, "");
+
+    let output = Command::new("bash")
+        .arg(this_repository().join("scripts/publish-release.sh"))
+        .args([
+            "--tag",
+            "v9.9.9",
+            "--dir",
+            directory.to_str().expect("a UTF-8 path"),
+        ])
+        .current_dir(scratch.path())
+        .env("PATH", &path)
+        .env("ONO_GH_LOG", &log)
+        .env("ONO_COSIGN_LOG", scratch.path().join("cosign.log"))
+        .env_remove("GITHUB_REPOSITORY")
+        .env_remove("GH_REPO")
+        .output()
+        .unwrap_or_else(|error| panic!("bash must be runnable in the gate: {error}"));
+    let calls = std::fs::read_to_string(&log).unwrap_or_default();
+    let mut report = String::from_utf8_lossy(&output.stdout).into_owned();
+    report.push_str(&String::from_utf8_lossy(&output.stderr));
+
+    assert!(
+        !report.contains("not a git repository"),
+        "publishing by hand died the way the first real tag died:\n{report}"
+    );
+    assert!(
+        calls.contains("release create"),
+        "nothing was drafted:\n{report}\ncalls:\n{calls}"
+    );
+    for call in calls.lines() {
+        assert!(
+            call.contains("GH_REPO=godspeed-you/ono-sendai"),
+            "a `gh` call ran without the repository this checkout's `origin` names: {call}"
+        );
+    }
 }

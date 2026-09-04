@@ -37,6 +37,29 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 127
 fi
 
+# `gh` reads which repository to act on from the git remote of the directory it runs in, and the
+# directory this script publishes from is the artifact directory — which in the release workflow
+# sits beside the checkout rather than inside it (`actions/checkout` with `path: repository`). The
+# first real tag found that out: every verification passed and `gh release create` then died with
+# "not a git repository". So the repository is named rather than inferred — from the environment
+# where Actions states it, and from the checkout this script belongs to otherwise, which is what a
+# maintainer running it from anywhere gets (ADR-0579).
+if [[ -z "${GH_REPO:-}" ]]; then
+  if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
+    export GH_REPO="$GITHUB_REPOSITORY"
+  elif origin="$(git -C "$repo" remote get-url origin 2>/dev/null)"; then
+    GH_REPO="$(printf '%s' "$origin" | sed -E 's#^(git@github\.com:|ssh://git@github\.com/|https://github\.com/)##; s#\.git$##')"
+    export GH_REPO
+  fi
+fi
+if [[ -z "${GH_REPO:-}" ]]; then
+  echo "publish-release: no repository to publish to. Actions states one in GITHUB_REPOSITORY," >&2
+  echo "publish-release: and a checkout states one in its origin remote; this environment has" >&2
+  echo "publish-release: neither, and guessing which repository to write a release to is not a" >&2
+  echo "publish-release: guess this script may make." >&2
+  exit 2
+fi
+
 cd "$dir"
 dir="$PWD"
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
