@@ -2323,62 +2323,6 @@ is owed"* and I integrated each of them on a green local gate. **`scripts/gate.s
 container**, and AGENTS.md §10 says a capability without a passing acceptance case is not
 delivered. Every phase from here runs the containerised suite before its commit is pushed.
 
-**A non-interactive completion surface (2026-09-02).** ADR-0252 named it and #21 could not
-deliver it: both routes — a flag in `crates/ono-cli/src/invocation.rs`, or a command registered in
-`crates/ono-cli/src/native.rs` — are new public surface. #21's budget is now measured directly by
-`xtask` re-running itself, so this is no longer blocking a proof; it is what would let the
-container measure a first completion end to end. **Exit test:** case `060` measures the first
-completion without a terminal.
-
-**§34.4's "visible in `explain`" is unmet (2026-09-02).** An unavoidable global build MUST be
-visible in `explain`. The estimate exists in `ono_spatial_query::cost` after H7, and `explain`
-lives in `ono-command`, which H7 did not own. **Exit test:** `explain` over a query with a global
-acquisition names it and its cost class.
-
-**§36.2's incomplete marker needs a return type that can carry it (2026-09-02).**
-`ono_command::ValueCompleter::complete` and `ono_command::complete` return a bare
-`Vec<Candidate>`, so a completion truncated at the soft budget cannot say it was truncated. §36.2
-makes the marker a MAY, which is why H7 did not force it. **Exit test:** a truncated completion is
-distinguishable from a complete one.
-
-**`observe` is sequential across provider targets (2026-09-02).** Fetching concurrently and
-absorbing sequentially would bring the selector miss from 943 ms to roughly its slowest provider.
-Like the orientation item above, it changes the observation contract rather than one call site.
-**Exit test:** a miss across N providers costs about the slowest, not the sum.
-
-**`Interest::wants` scans the relation table once per provider per observation (2026-09-02).**
-Thirty-odd rows, once per `look` — negligible today, indexable if the table grows. ADR-0495.
-**Exit test:** none needed until the table does grow; recorded so the next reader knows it was seen.
-
-**Case 152's §34 budget sits one millisecond from its limit (2026-09-02).**
-`docker/acceptance/cases/152-pathological-sockets.case` measures `get socket | take 1` against a
-50 ms budget as the median of 20 runs. In a full 125-case run on a machine at load 6.8 it read
-**51 ms** and `get connection | take 1` read **56 ms**, and both were reported OVER BUDGET. Run
-alone at load 6.6 it passes; run beside case 151, which forks ten thousand processes, it passes;
-and it passed on the GitHub runner. The baseline row on the ordinary host in the same failing run
-was **48 ms** — two milliseconds of headroom on a figure the median is supposed to protect.
-
-So this is not a regression and it is not the leak that was first suspected: case 151's children
-block on a pipe and exit with their parent, and 151 followed by 152 is green. It is a budget with
-no margin, measured on a machine the case does not own. It belongs beside the `ono_testkit` entry
-above, and to **H8**. **Exit test:** the case states what it does when the machine cannot meet the
-budget, rather than reading a number two milliseconds from the edge and calling it a defect.
-
-**An acceptance case must build the population it needs, and two did not (2026-09-02).** The
-GitHub pipeline was red for six pushes before anyone looked, and two of the four failing cases had
-the same defect: `docker/acceptance/cases/190` set `limits.materialize_items = 2` and
-`191` ran `get process | take 20`, both against the host's process table. The container is an
-unprivileged user with **two or three** processes, so `count` answered `[2]` where `[20]` was
-asserted, and `"consumed":3` was a coincidence rather than a fact. Both now create their own files
-and read them with `get file <dir>/*`, which is the same number on every host. AGENTS.md §11
-already says a test may not rely on the developer machine's processes unless the fixture creates
-them; these two were written against a host with 900.
-
-The orchestration lesson is separate and is mine: four agents in a row reported *"`scripts/acceptance.sh`
-is owed"* and I integrated each of them on a green local gate. **`scripts/gate.sh` does not run the
-container**, and AGENTS.md §10 says a capability without a passing acceptance case is not
-delivered. Every phase from here runs the containerised suite before its commit is pushed.
-
 **`ono_testkit`'s fixed wall-clock budgets fail under parallel load, and the failure reads like a
 product defect (2026-09-02).** Two instances on one day, and both were first reported as hangs:
 
@@ -2412,51 +2356,6 @@ delivered and the rows are enforced by `ono-remote`. User-visible through `get c
 `apply_environment`; `config.ono` is not read, because `config::load` needs a `Session` an agent
 does not have. ADR-0504. **Exit test:** a ceiling set in `config.ono` changes what `--listen`
 enforces.
-
-**A function cannot be invoked between two pipeline stages (2026-09-02).** `get process | mine |
-take 1` resolves `mine` as an external program; `call_function` is reached only for
-`list.stages[0]`. Giving a function an input stream is a language feature rather than a streaming
-repair, so §65.12 kept it out of H6 (ADR-0481). **Exit test:** a call in a non-head position binds
-its input stream, and `explain` names it.
-
-**A function body containing `each { … }` still collects (2026-09-02).** `native::stream_segment`
-refuses a block stage, because the block bridge identifies a block by its *position* in the stage
-list the driver holds and a body's stages are in a different list. The fix is to make
-`BlockRequest` carry a block **site** rather than an index. ADR-0481. **Exit test:** a function
-whose body is `each { … }` streams like one whose body is `where`.
-
-**A backgrounded `each { … }` is still unsupported (2026-09-02).** `run_background` has no session
-to ask, so it fails as it did before the rewrite. ADR-0480. **Exit test:** `each { … } &` runs.
-
-**`run_native_segment` now assembles, drives and drains, and duplicates its binding and assembly
-with `stream_segment` (2026-09-02).** The seam is obvious — bind / assemble / drive / write-result
-— and §65.12 forbids cutting it in the same work package as the semantic change that created it.
-**This is work for H9 (#96)**, not a loose end. ADR-0480, ADR-0481.
-
-**`set client-key --allow` takes a comma-separated word rather than a repeated option
-(2026-09-02).** §9.7 writes `--allow <capability>...`, and `ono_command`'s binder keeps one value
-per option while a bare comma ends a word, so the spelling that works is
-`--allow "process.signal,service.manage"`. Closing it means a repeated-option form in
-`crates/ono-command/src/contract.rs` (ADR-0468 §Alternatives). **Exit test:** `--allow a --allow b`
-grants both.
-
-**The trust store's writer is weaker than the authorization store's (2026-09-02).**
-`TrustStore::persist` in `crates/ono-protocol/src/trust.rs` writes a temporary, fsyncs and renames
-— with no explicit mode, no directory sync, and it *truncates* a leftover temporary rather than
-refusing it. `ono_protocol::write_store`, written for #41, is §9.8's full sequence sitting right
-beside it: `create_new` + `0600` + fsync + rename + directory sync. Two files holding key material,
-two different levels of care. ADR-0467 §Consequences. **Exit test:** both writers survive the same
-interrupted-write proof.
-
-**AGENTS.md §12.1's sub-branch convention cannot be used as written (2026-09-02).** It says
-*"Sub-branches are allowed for parallel agents (`implementation/<crate>`)"*, and git refuses to
-create one: a ref named `implementation` and a directory `refs/heads/implementation/` cannot both
-exist, so `git worktree add -b implementation/h7-spatial-performance` fails with *cannot lock ref
-… 'refs/heads/implementation' exists*. The convention is only usable if the trunk branch is
-renamed, which is the user's call and would touch §12.1, the gate's `main` guard and every ADR
-naming the branch. The parallel worktrees of 2026-09-02 use `implementation-<phase>` instead.
-**Exit test:** the convention as documented can be executed, or the document names the form that
-can.
 
 **A function cannot be invoked between two pipeline stages (2026-09-02).** `get process | mine |
 take 1` resolves `mine` as an external program; `call_function` is reached only for
