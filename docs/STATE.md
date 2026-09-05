@@ -33,8 +33,12 @@ request.
 git push origin implementation && git push origin --tags
 ```
 
-**`release-check: the shell is release-ready` — printed 2026-08-26 by `scripts/release-check.sh`
-at commit 21b37d9, and again on 2026-08-29 by agent `S11c` at the end of the v0.4 tranche.** All
+**`release-check: the shell is release-ready` — printed 2026-09-05 at commit 57f1542, with
+`docs/ACCEPTANCE.md` §4.8 at 118 of 118 and `v0.4.1` signed and published.** Every stage: gate
+green, acceptance 146 of 146, `package-check` green, two builds of the commit byte-for-byte
+identical, the checksum manifest covering every artifact beside it, no unticked box in the
+checklist, `state-check: ok`. Before that it was printed on 2026-08-26 at commit 21b37d9, and
+again on 2026-08-29 by agent `S11c` at the end of the v0.4 tranche. All
 ten phases of spec §37 are complete, proven and tagged; all 143 boxes in docs/ACCEPTANCE.md §4 are
 ticked by a named automated proof, and the 2026-08-29 reconciliation traced every one of the 168
 test names and every acceptance case they cite to something that exists and runs in the gate. The
@@ -318,6 +322,12 @@ issue that ordered the work did not know.
   undefined-behaviour job. Nothing either tool reported was a finding in the product — the fifth
   cause would have been one, and there was no fifth. Found on the way: two decisions had both
   taken the number 0571, and the later one — the brokered connection of #3 — is now ADR-0573.
+- **`57f1542` carries more than its message says (2026-09-05).** `git add -A` swept the two
+  §4.8 ticks, this board's entry for them and the release note's move into the past tense into the
+  commit about release pages. That is two kinds of change in one commit, which §4 forbids, and it
+  buries the session's most important fact — §4.8 reaching 118 of 118 — under a heading about
+  something else. It is recorded here rather than rewritten: the commit is pushed, and §12.2 does
+  not bend for tidiness. What the ticks assert is unaffected; where to read about them is.
 - **The release page said nothing, and the note that said everything was in the repository
   (2026-09-05).** ADR-0580. `v0.4.1` published nine verified assets under a page carrying one line:
   the compare link `--generate-notes` produces. `docs/releases/v0.4.1.md` — held against the
