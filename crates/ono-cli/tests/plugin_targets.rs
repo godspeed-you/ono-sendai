@@ -32,6 +32,10 @@ const ECHO: &str = "dev.example.echo";
 /// with the schema it declared, provenance the host stamps, and a route into the spatial model.
 const TARGETS: &str = r#"
 targets:
+  - name: echo-refusal
+    schema: dev.example.echo.item/1
+    summary: A target that refuses without emitting anything.
+    identity_doc: It never answers, so nothing identifies an answer.
   - name: echo-item
     schema: dev.example.echo.item/1
     summary: Items the example package provides.
@@ -188,6 +192,31 @@ fn should_carry_a_targets_options_into_the_provider_query() {
         items.as_sequence().expect("a sequence").len(),
         1,
         "`--count 1` must reach the provider handler, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_report_a_refusing_target_rather_than_an_empty_success() {
+    // A provider handler can fail *without emitting anything* — no cluster named, no credential,
+    // no route — and the host learns of it from the invocation result rather than from a stream
+    // event. Reading only the stream, that refusal is indistinguishable from "there are none",
+    // which is the exact confusion §21.4 exists to prevent and the one this whole provider model
+    // is built to avoid. Zero records and a failure is not zero records.
+    let home = plugin_home();
+    let run = ono_with_plugins(
+        &home,
+        &format!("load plugin {ECHO}; get echo-refusal | to json"),
+    );
+    assert_ne!(
+        run.status().code(),
+        0,
+        "a refused query must fail, got {:?}",
+        run.output()
+    );
+    assert!(
+        run.stderr().contains("refuses"),
+        "the refusal's own message must reach the user, got {:?}",
         run.output()
     );
 }

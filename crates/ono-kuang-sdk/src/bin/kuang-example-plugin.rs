@@ -129,6 +129,12 @@ fn honest() -> Plugin {
     Plugin::new(PACKAGE, VERSION)
         .contribute_schema(item_schema_contribution())
         .contribute_target(TargetContribution {
+            name: "echo-refusal".to_owned(),
+            schema: ITEM_SCHEMA.to_owned(),
+            summary: "A target that refuses without emitting anything.".to_owned(),
+            identity_doc: "It never answers, so nothing identifies an answer.".to_owned(),
+        })
+        .contribute_target(TargetContribution {
             name: "echo-item".to_owned(),
             schema: ITEM_SCHEMA.to_owned(),
             summary: "Items the example package provides.".to_owned(),
@@ -967,6 +973,19 @@ fn honest() -> Plugin {
                 }
             }
             Outcome::Completed
+        })
+        // A target that refuses without emitting anything: the shape a real provider takes when it
+        // is asked for something it cannot reach — no cluster named, no credential, no route. The
+        // host learns of it from the invocation result rather than from a stream event, which is
+        // the case a reader of the stream alone cannot see.
+        .provider("echo-refusal", |_ctx| {
+            Outcome::Failed(ono_kuang_sdk::protocol::WireError {
+                code: "Ono-Sendai-E0401".to_owned(),
+                name: "provider.unavailable".to_owned(),
+                message: "this target refuses, and emits nothing while refusing".to_owned(),
+                help: None,
+                metadata: Box::default(),
+            })
         })
         .provider("echo-tick", |ctx| {
             let mut seq = 1;

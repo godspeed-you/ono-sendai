@@ -929,6 +929,38 @@ pub fn loaded_package(session: &Session, namespace: &str) -> Option<String> {
         .find(|id| id == namespace || id.rsplit('.').next() == Some(namespace))
 }
 
+/// The values an invocation delivered, or the failure it ended with.
+///
+/// A handler can fail *without emitting anything* — no cluster reachable, no credential, no route
+/// — and the host learns of that from the invocation's result rather than from a stream event.
+/// Reading only the stream, such a refusal is indistinguishable from "there are none", which is
+/// the confusion spec §35.3 and the provider truth model exist to prevent. So the result is read,
+/// and a failed invocation is a failure even when the stream was empty.
+fn delivered(
+    events: Vec<ono_kuang_supervisor::StreamEvent>,
+    result: &ono_kuang_protocol::InvokeResult,
+) -> Eval<Vec<Value>> {
+    let mut values = Vec::new();
+    for event in events {
+        match event {
+            ono_kuang_supervisor::StreamEvent::Value(value) => values.push(value),
+            ono_kuang_supervisor::StreamEvent::Failed(error) => {
+                return Err(Flow::Failed(crate::kuang_host::wire_error_value(&error)));
+            }
+        }
+    }
+    if result.status == ono_kuang_protocol::InvokeStatus::Failed {
+        let error = result.error.clone().unwrap_or_else(|| {
+            ono_kuang_protocol::WireError::from_core(
+                ErrorCode::ProviderUnavailable,
+                "the package reported the invocation failed and named no reason",
+            )
+        });
+        return Err(Flow::Failed(crate::kuang_host::wire_error_value(&error)));
+    }
+    Ok(values)
+}
+
 /// Runs a contributed command: `<package>:<command> --name value …` (spec §31.22, ADR-0011).
 ///
 /// # Errors
@@ -992,18 +1024,8 @@ pub fn invoke(
             Ok::<_, ErrorValue>(invocation.collect().await)
         })
     };
-    let (events, _result) = outcome.map_err(Flow::Failed)?;
-
-    let mut values = Vec::new();
-    for event in events {
-        match event {
-            ono_kuang_supervisor::StreamEvent::Value(value) => values.push(value),
-            ono_kuang_supervisor::StreamEvent::Failed(error) => {
-                return Err(Flow::Failed(crate::kuang_host::wire_error_value(&error)));
-            }
-        }
-    }
-    Ok(values)
+    let (events, result) = outcome.map_err(Flow::Failed)?;
+    delivered(events, &result)
 }
 
 /// The full contributed id for a short command name, such as `emit`.
@@ -1200,16 +1222,6 @@ pub fn query(
             Ok::<_, ErrorValue>(invocation.collect().await)
         })
     };
-    let (events, _result) = outcome.map_err(Flow::Failed)?;
-
-    let mut values = Vec::new();
-    for event in events {
-        match event {
-            ono_kuang_supervisor::StreamEvent::Value(value) => values.push(value),
-            ono_kuang_supervisor::StreamEvent::Failed(error) => {
-                return Err(Flow::Failed(crate::kuang_host::wire_error_value(&error)));
-            }
-        }
-    }
-    Ok(values)
+    let (events, result) = outcome.map_err(Flow::Failed)?;
+    delivered(events, &result)
 }
