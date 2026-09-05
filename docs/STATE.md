@@ -3506,6 +3506,28 @@ records. It was removed from this board rather than carried as an open box.
 
 ## Done
 
+**A loaded KUANG/11 package is a provider in the registry (2026-09-05, ADR-0583).** ADR-0582 made
+a contributed target typeable and reached `provider.query`; it went no further, so `ProviderRegistry`
+still held nothing for a contributed noun and everything that asks the registry rather than the
+command path could not see one. `crates/ono-cli/src/plugin_provider.rs` now mounts one
+`PluginProvider` per contributed target — the shape `ono_remote::RemoteProvider` has, and for the
+same reason: `Provider::resolve` is handed a selector and no target. `Session::providers()` mounts
+every loaded package on its way to the registry, which is the earliest the mount can honestly
+happen: a load negotiates capabilities, re-verifies signatures and writes audit entries, all of
+which needs `&mut Session`, and `Provider::snapshot(&self, …)` has none. So the lifecycle answer
+is that registration *follows* the load — a package the session has never loaded claims no target,
+and `get <target>` still loads it through §31.68's placeholder. Cancellation is delivered rather
+than inferred (§31.14): the producing task cancels the plugin's stream, which matters because a
+package emits under credit and a dropped invocation would leave it blocked in its handler for
+good. Seven tests in `crates/ono-cli/tests/plugin_provider.rs`; the example package gained
+`echo-tick`, an endless target, because a finite one proves nothing about cancelling.
+`LoadedPlugin::schemas()` is new — an accessor beside `commands()` and `targets()`, so a provider
+can say what it produces. Still open, and named in the ADR: the spatial planner works over the
+closed `SpatialType::ALL` vocabulary, so `enter`, `near` and `find` do not reach a contributed
+target yet; `subscribe` and `act` are refused honestly, because the protocol has `provider.query`
+and nothing else; and `get` still takes ADR-0582's collecting route rather than the streaming
+provider one.
+
 **A one-shot command no longer pays for a shell it does not use (2026-09-03, ADR-0571).**
 `ono -c 'echo ready'` took 26,8 ms first / 30,1 ms p95 where `bash -c` takes 4 ms on the same
 machine, and `ono --version` 0,9 ms — so the binary was not the cost, the first pipeline was.

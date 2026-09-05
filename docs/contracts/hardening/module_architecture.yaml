@@ -140,6 +140,7 @@ composition_root:
     - main.rs
     - meta.rs
     - piped.rs
+    - plugin_provider.rs
     - plugin_registry.rs
     - plugins.rs
     - providers.rs

@@ -24,6 +24,7 @@ pub mod limits;
 pub mod live;
 pub mod meta;
 pub mod piped;
+pub mod plugin_provider;
 pub mod plugin_registry;
 pub mod plugins;
 pub mod providers;

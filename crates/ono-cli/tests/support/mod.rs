@@ -136,6 +136,44 @@ pub fn ono_at_home(home: &Scratch, script: &str) -> ono_testkit::Run {
         .run()
 }
 
+/// The manifest of the SDK's example provider package, as a plugin home holds it on disk.
+///
+/// Two suites lay this package out — one for the read path of ADR-0582, one for the provider
+/// registration of ADR-0583 — and both need the same bytes: the fixture on disk and the
+/// `Manifest` a direct load parses must agree, or the two suites are testing two packages.
+pub fn echo_package_manifest(id: &str) -> String {
+    format!(
+        r#"
+format: kuang-package/1
+package:
+  id: {id}
+  name: echo
+  version: 0.1.0
+  description: Emits what it is asked to emit.
+  publisher: dev.example
+  license: MIT
+compatibility:
+  kuang_api: ">=11.1 <12"
+  ono_language: ">=0.2"
+  platforms: [linux-amd64, linux-arm64]
+runtime:
+  kind: native-process
+  entry: runtime/echo
+  memory_max: 64MiB
+  cpu_budget: interactive
+  startup: lazy
+roles: [provider]
+capabilities:
+  optional:
+    - clock.read
+network:
+  outbound: none
+contributions:
+  targets: [contributions/targets.yaml]
+"#
+    )
+}
+
 pub fn ono_with_plugins(home: &ono_testkit::Scratch, script: &str) -> ono_testkit::Run {
     let root = home.path();
     Shell::new()

@@ -134,6 +134,15 @@ fn honest() -> Plugin {
             summary: "Items the example package provides.".to_owned(),
             identity_doc: "Two observations are the same item when their `seq` matches.".to_owned(),
         })
+        // The provider-side counterpart of `count-forever`: a *target* whose answer never ends,
+        // so that the cancellation of spec §31.14 has something to be observed on. A finite
+        // target proves nothing about cancelling, because it stops on its own.
+        .contribute_target(TargetContribution {
+            name: "echo-tick".to_owned(),
+            schema: ITEM_SCHEMA.to_owned(),
+            summary: "Items emitted until the query is cancelled.".to_owned(),
+            identity_doc: "Two observations are the same tick when their `seq` matches.".to_owned(),
+        })
         .contribute_command(command(
             "emit",
             "Emit counted integers.",
@@ -953,6 +962,15 @@ fn honest() -> Plugin {
                 }
             }
             Outcome::Completed
+        })
+        .provider("echo-tick", |ctx| {
+            let mut seq = 1;
+            loop {
+                if ctx.emit(&item_record(seq, "tick")).is_err() {
+                    return Outcome::Cancelled;
+                }
+                seq += 1;
+            }
         })
 }
 

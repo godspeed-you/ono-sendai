@@ -310,9 +310,11 @@ impl Supervisor {
         let mut targets = Vec::new();
         let package_id = manifest.package.id.clone();
         let provider = format!("plugin:{package_id}");
+        let mut contributed_schemas = Vec::new();
         for schema in &hello.contributions.schemas {
             ono_kuang_protocol::validate_contributed_id(&package_id, "schema", &schema.id)?;
             let built = schema.to_schema()?;
+            contributed_schemas.push(Arc::new(built.clone()));
             schemas.register(built).map_err(|error| {
                 KuangError::new(
                     KuangErrorCode::PackageInvalid,
@@ -424,6 +426,7 @@ impl Supervisor {
             disabled_features: init.disabled_features,
             commands,
             targets,
+            schemas: contributed_schemas,
             audit,
             to_actor: msg_tx,
         })
@@ -769,6 +772,7 @@ pub struct LoadedPlugin {
     disabled_features: Vec<String>,
     commands: Vec<RegisteredCommand>,
     targets: Vec<RegisteredTarget>,
+    schemas: Vec<Arc<ono_value::Schema>>,
     views: Vec<ono_kuang_protocol::ViewContribution>,
     audit: AuditTrail,
     to_actor: mpsc::Sender<ActorMsg>,
@@ -865,6 +869,16 @@ impl LoadedPlugin {
     #[must_use]
     pub fn targets(&self) -> &[RegisteredTarget] {
         &self.targets
+    }
+
+    /// The schemas the package contributed, in declaration order (spec §31.23).
+    ///
+    /// The host validated and registered them at the handshake; a target names one of them, and
+    /// so does every record the package emits. A shell that mounts the package as a provider has
+    /// to be able to say what it produces before it has produced anything (ADR-0583).
+    #[must_use]
+    pub fn schemas(&self) -> &[Arc<ono_value::Schema>] {
+        &self.schemas
     }
 
     /// A snapshot of the audit trail (spec §31.37).

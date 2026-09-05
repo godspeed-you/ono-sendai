@@ -196,6 +196,10 @@ struct ProviderState {
     /// The adapters that shaped the statement being run, with the argv each one planned —
     /// what history records about it (spec v0.3 §1.62).
     adaptations: Vec<(String, String)>,
+    /// The contributed targets already mounted in `providers`, so a package reaches the registry
+    /// once and a reload re-points the entry it already has rather than adding a second
+    /// (ADR-0583).
+    plugin_providers: Vec<std::sync::Arc<crate::plugin_provider::PluginProvider>>,
 }
 
 /// How the session behaves and how it looks.
@@ -655,6 +659,7 @@ impl Session {
                 providers: None,
                 adapters: None,
                 adaptations: Vec::new(),
+                plugin_providers: Vec::new(),
             },
             presentation: PresentationState {
                 settings: crate::settings::Settings::new(),
@@ -1351,10 +1356,61 @@ impl Session {
             }
             self.provider.providers = Some(registry);
         }
+        self.mount_loaded_packages();
         self.provider
             .providers
             .as_ref()
             .unwrap_or_else(|| unreachable!("just constructed"))
+    }
+
+    /// Puts every loaded package that contributes a target into the provider registry
+    /// (spec §31.23, ADR-0583).
+    ///
+    /// It runs here, on the way to the registry, rather than at the moment a package loads,
+    /// because the registry is built on first use and a package may well be loaded before
+    /// anything has needed it. The order §31.68 fixes is the reason this is the earliest it can
+    /// happen at all: a contributed target is a *placeholder* until its package runs, and until
+    /// then there is no instance to query. Registration therefore follows the load, and a
+    /// package the session has never loaded claims no target.
+    ///
+    /// Registration order is kept: the built-in providers were registered first, so a package
+    /// that names a target the shell already answers extends it rather than displacing it, which
+    /// is what §31.23 asks for.
+    fn mount_loaded_packages(&mut self) {
+        let loaded: Vec<std::sync::Arc<ono_kuang_supervisor::LoadedPlugin>> = self
+            .plugin_ids()
+            .into_iter()
+            .filter_map(|id| self.plugin(&id))
+            .filter(|plugin| !plugin.targets().is_empty())
+            .collect();
+        for plugin in loaded {
+            // A reload replaces the instance behind an id (spec §31.72), and the registry entry
+            // is the same noun either way: every entry already mounted for the package follows
+            // it, and one the new instance no longer contributes reports itself unavailable
+            // rather than answering out of a stopped instance.
+            for provider in &self.provider.plugin_providers {
+                if provider.package_id() == plugin.package_id() {
+                    provider.adopt(std::sync::Arc::clone(&plugin));
+                }
+            }
+            for registered in plugin.targets() {
+                let target = registered.contribution.name.as_str();
+                if self.provider.plugin_providers.iter().any(|provider| {
+                    provider.package_id() == plugin.package_id() && provider.target() == target
+                }) {
+                    continue;
+                }
+                let Some(registry) = self.provider.providers.as_mut() else {
+                    continue;
+                };
+                let provider = std::sync::Arc::new(
+                    crate::plugin_provider::PluginProvider::for_target(&plugin, target),
+                );
+                registry.register(std::sync::Arc::clone(&provider)
+                    as std::sync::Arc<dyn ono_provider_api::Provider>);
+                self.provider.plugin_providers.push(provider);
+            }
+        }
     }
 
     /// Hands the `env` provider what the session holds now, so `get env` answers for this

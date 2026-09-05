@@ -20,42 +20,9 @@
 use std::path::Path;
 
 mod support;
-use support::{json, ono_with_plugins};
+use support::{echo_package_manifest, json, ono_with_plugins};
 
 const ECHO: &str = "dev.example.echo";
-
-fn manifest(id: &str) -> String {
-    format!(
-        r#"
-format: kuang-package/1
-package:
-  id: {id}
-  name: echo
-  version: 0.1.0
-  description: Emits what it is asked to emit.
-  publisher: dev.example
-  license: MIT
-compatibility:
-  kuang_api: ">=11.1 <12"
-  ono_language: ">=0.2"
-  platforms: [linux-amd64, linux-arm64]
-runtime:
-  kind: native-process
-  entry: runtime/echo
-  memory_max: 64MiB
-  cpu_budget: interactive
-  startup: lazy
-roles: [provider]
-capabilities:
-  optional:
-    - clock.read
-network:
-  outbound: none
-contributions:
-  targets: [contributions/targets.yaml]
-"#
-    )
-}
 
 /// The package's declaration of the target it answers for, readable before any of its code runs
 /// (spec §31.64, §31.68).
@@ -74,7 +41,7 @@ targets:
 fn lay_out_package(root: &Path, id: &str) {
     let package = root.join(id);
     std::fs::create_dir_all(package.join("runtime")).expect("the runtime directory");
-    std::fs::write(package.join("manifest.yaml"), manifest(id)).expect("the manifest");
+    std::fs::write(package.join("manifest.yaml"), echo_package_manifest(id)).expect("the manifest");
     std::fs::create_dir_all(package.join("contributions")).expect("the contributions directory");
     std::fs::write(package.join("contributions/targets.yaml"), TARGETS).expect("the document");
     let binary = ono_testkit::ono_binary()

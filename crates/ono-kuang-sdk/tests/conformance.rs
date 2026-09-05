@@ -160,10 +160,13 @@ async fn should_surface_contract_shaped_contribution_tables() {
     assert_eq!(emit.provider, "plugin:dev.example.echo");
     assert_eq!(emit.contribution.output, "stream<int>");
     assert!(!emit.contribution.examples.is_empty());
-    let targets = plugin.targets();
-    assert_eq!(targets.len(), 1);
-    assert_eq!(targets[0].contribution.name, "echo-item");
-    assert_eq!(targets[0].contribution.schema, "dev.example.echo.item/1");
+    let item = plugin
+        .targets()
+        .iter()
+        .find(|target| target.contribution.name == "echo-item")
+        .expect("the echo-item target is contributed");
+    assert_eq!(item.contribution.schema, "dev.example.echo.item/1");
+    assert_eq!(item.provider, "plugin:dev.example.echo");
     plugin
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
         .await;
