@@ -58,13 +58,13 @@ pub fn adopt(id: &str, plugin: &Arc<LoadedPlugin>, shapes: &[String]) {
     }
     let mut contributed = false;
     for shape in shapes {
-        let Some((from, to)) = shape.split_once("->") else {
+        let Some((from, to)) = ono_spatial_core::relation::parse_shape(shape) else {
             continue;
         };
-        let (Some(source), Some(target)) = (type_of(from.trim()), type_of(to.trim())) else {
+        let (Some(source), Some(target)) = (type_of(from), type_of(to)) else {
             continue;
         };
-        let relation = relation_id(id, source, target);
+        let relation = ono_spatial_core::relation::contributed_id(id, from, to);
         let leak = |text: String| -> &'static str { Box::leak(text.into_boxed_str()) };
         ono_spatial_core::relation::contribute(
             RelationSpec {
@@ -158,10 +158,14 @@ async fn resolve(
     record: &RecordValue,
     now: Timestamp,
 ) -> Option<(RelationshipEdge, SpatialId, SpatialId)> {
-    let source_type = type_of(&text(record, "source_type")?)?;
-    let target_type = type_of(&text(record, "target_type")?)?;
-    let relation =
-        ono_spatial_core::relation::spec(&relation_id(package, source_type, target_type))?;
+    let (source_name, target_name) = (text(record, "source_type")?, text(record, "target_type")?);
+    let source_type = type_of(&source_name)?;
+    let target_type = type_of(&target_name)?;
+    let relation = ono_spatial_core::relation::spec(&ono_spatial_core::relation::contributed_id(
+        package,
+        &source_name,
+        &target_name,
+    ))?;
     let source = place_of(
         providers,
         session,
@@ -234,28 +238,90 @@ async fn place_of(
         .find_map(|record| session.projection_of(record).ok())
 }
 
-/// The §3.3 kind a contributor named, however it spelled the case.
+/// The kind of place a contributor named, in either of the two spellings a shape may use.
 ///
 /// v0.2 §31.7 writes a contribution shape as `process->process` and §3.3's own vocabulary spells
 /// the type `Process`; a package that declares one and answers with the other means the same
-/// thing both times.
+/// thing both times. A schema id names a kind of place the package contributed itself (§36.1),
+/// which is resolvable here because [`adopt`] runs after the handshake that registered it.
 fn type_of(name: &str) -> Option<SpatialType> {
+    let name = name.trim();
     SpatialType::ALL
         .iter()
         .copied()
-        .find(|kind| kind.as_str().eq_ignore_ascii_case(name.trim()))
+        .find(|kind| kind.as_str().eq_ignore_ascii_case(name))
+        .or_else(|| {
+            ono_spatial_core::types::contributed_for_schema(name).map(|entry| entry.object_type)
+        })
 }
 
-/// The id a package's relation between two kinds of place is registered under.
+/// Whether any relation a package contributed touches this kind of place.
 ///
-/// §31.5 reserves `<publisher>.<package>` to its owner, so a contributed relation lives inside
-/// the package's own namespace and can never collide with a core relation or another package's.
-fn relation_id(package: &str, source: SpatialType, target: SpatialType) -> String {
-    format!(
-        "{package}.{}_to_{}",
-        source.as_str().to_ascii_lowercase(),
-        target.as_str().to_ascii_lowercase()
-    )
+/// What it guards is a *cost*: merging asks every contributing package for its edges, which is an
+/// invocation per package. A place no contributed relation could reach never pays for one, so an
+/// ordinary `look` at a process is exactly as expensive as it was before any package was loaded
+/// (§32.1).
+#[must_use]
+pub fn relates(object_type: SpatialType) -> bool {
+    ono_spatial_core::relation::contributed_relations()
+        .iter()
+        .any(|entry| object_type.is_a(entry.spec.source) || object_type.is_a(entry.spec.target))
+}
+
+/// Refuses a package whose relation shapes name a kind of place nobody contributes (§31.7, §36.1).
+///
+/// This is the whole of the ordering problem ADR-0584 left open, settled in the one place where
+/// both halves are readable without running anything: the shapes come from the manifest, and
+/// `package_schemas` are the schema ids the package's own `contributions.targets` documents
+/// declare — which §31.68 already reads from disk to build registry placeholders. So a shape
+/// naming a kind of place that will never exist is `package.invalid` at load, the way every other
+/// registration check in `docs/contracts/kuang/contributions.v1.yaml` is, rather than a relation
+/// that quietly never appears and a `follow` that says the word means nothing.
+///
+/// # Errors
+///
+/// `package.invalid` naming the shape and the endpoint that could not be resolved.
+pub fn check_shapes(
+    package: &str,
+    shapes: &[String],
+    package_schemas: &[String],
+) -> Result<(), ono_value::ErrorValue> {
+    use ono_spatial_core::relation::{parse_shape, shape_endpoint_is_known};
+    for shape in shapes {
+        let Some((from, to)) = parse_shape(shape) else {
+            return Err(ono_value::ErrorValue::new(
+                ono_core::ErrorCode::KuangPackageInvalid,
+                format!(
+                    "`{package}` declares the relation shape `{shape}`, which is not a \
+                     `<from>-><to>` pair (spec §31.7)"
+                ),
+            )
+            .with_help(
+                "a shape names the two kinds of place the relation runs between, as \
+                 `process->process`",
+            ));
+        };
+        for endpoint in [from, to] {
+            if shape_endpoint_is_known(endpoint, package_schemas) {
+                continue;
+            }
+            return Err(ono_value::ErrorValue::new(
+                ono_core::ErrorCode::KuangPackageInvalid,
+                format!(
+                    "`{package}` declares the relation shape `{shape}`, and `{endpoint}` names no \
+                     kind of place: it is not one of the types spec v0.4 §3.3 declares, and no \
+                     target this package declares answers with a schema of that id"
+                ),
+            )
+            .with_help(
+                "an endpoint is a declared type of `docs/contracts/spatial/spatial.yaml` — \
+                 `Process`, `Service`, `File` — or the id of a schema one of this package's \
+                 `contributions.targets` declares, such as `dev.example.echo.place/1` \
+                 (spec v0.4 §3.3, §36.1)",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// A record's string field, where it has one.

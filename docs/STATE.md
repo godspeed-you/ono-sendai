@@ -3506,6 +3506,37 @@ records. It was removed from this board rather than carried as an open box.
 
 ## Done
 
+**A contributed relation runs between contributed kinds of place (2026-09-06, ADR-0585).**
+ADR-0584 closed on the sentence this increment opens: `near` found nothing and `follow` had
+nothing to follow, because a relation shape is written `<from>-><to>` in the declared vocabulary of
+§3.3 and a package could not name its own kind of place in one. That shut the whole relationship
+half of the spatial model for every external-system provider, not for Kubernetes in particular — a
+package answers for pods and nodes, and *what is this pod on* was the one question the shell had no
+words for. An endpoint may now be the id of a schema one of this package's own
+`contributions.targets` declares, and the ordering ADR-0584 named is settled by splitting the two
+questions: the **refusal** is at manifest-read time against those on-disk declarations, before the
+runtime is spawned, so a wrong shape is `package.invalid` naming the shape and the endpoint; the
+**adoption** is after the handshake that registers the types, which is what `session.providers()`
+already does. `relation::exits_from`, `resolve_label` and `labels` now read the contributed
+relations beside the declared table, so a contributed relation is a relation everywhere a user
+types one — `relations()` and the drift check are untouched and still compare two closed lists,
+with what a gate cannot check written into `relations.yaml` as `contributed_relations` and into
+`contributions.v1.yaml` as `relation.manifest_shape`, the shape ADR-0584 chose for
+`contributed_types`. `relations::observe` merges the contributed edges where the exits are read,
+and only where a contributed relation touches the kind of place being looked at, so a `look` at a
+process costs what it always did. The edge keeps everything it always had to carry and the tests
+now prove it where a user meets it: `provider`, `provenance.provider` and `evidence.origin` all
+name the package, the contributor's own word travels in `provider_relation`, and `exact` is never
+passed on. Five tests in `crates/ono-cli/tests/spatial_contributed_relations.rs` and two in
+`crates/ono-kuang-testhost/tests/spatial_package.rs`; the example package gained the schema
+`dev.example.echo.zone/1` and the target `echo-zone`, because a shape between two contributed kinds
+proves nothing when the package contributes only one. Still open, and named in the ADR: a shape
+cannot name *another* package's schema, because the other package may not be installed and the
+refusal would move back to traversal time; a contributed relation has no short word of its own, so
+`follow <package>.<from>_to_<to>` is what a user types until §31.26's `name` can be declared; and
+the cost is `normal` with no way to say otherwise, which is the same gap ADR-0584 recorded for a
+contributed target's boundedness.
+
 **A contributed target is a kind of place (2026-09-05, ADR-0584).** ADR-0583 named the wall it
 stopped at: the spatial planner worked over `SpatialType::ALL`, so `enter`, `near` and `find`
 never asked for a noun a package contributed however well the registry answered for it. It was
@@ -3530,7 +3561,7 @@ whose schema has `uid` as identity and `name` beside it, with two resources shar
 Still open, and named in the ADR: `up` has nowhere to go and says so, because §36.4's
 plugin-defined space is a declaration a package cannot make; `near` and `follow` reach nothing,
 because a relation shape is written in the declared vocabulary and a package cannot name a
-contributed type in one; the scope of a contributed place is still the local host, which is true
+contributed type in one — **closed 2026-09-06 by ADR-0585**; the scope of a contributed place is still the local host, which is true
 of nowhere for a resource in a cluster (external-system-provider §9); and the search bound is
 silent where ADR-0576's orientation states that it was bounded.
 

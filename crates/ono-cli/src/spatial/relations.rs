@@ -384,6 +384,32 @@ pub async fn observe(
     let Some(record) = refresh(providers, session, id, now).await else {
         return Ok(());
     };
+    // §36.1: a package may contribute the relationship provider as well as the kind of place, and
+    // a place of a contributed kind has no v0.2 relationship provider at all — `Node::of` gives
+    // it no node, so everything below this would return before asking anyone. The contributed
+    // edges are asked for here, once, and only where a contributed relation could reach this kind
+    // of place (§35.5's filter has already run: a package without `relation.write` contributed
+    // no relation, so there is nothing here to leave out).
+    let mut contributed_exits: BTreeSet<&'static str> = BTreeSet::new();
+    if let Some(kind) = session
+        .index()
+        .get(id)
+        .map(|entry| entry.object().object_type())
+        && crate::spatial::contributions::relates(kind)
+    {
+        for (edge, _, _) in crate::spatial::contributions::merge(providers, session, now).await {
+            let (index, _) = session.absorb_with();
+            index.record_edge(edge);
+        }
+        // The packages *were* asked, so these exits have been answered — with whatever they
+        // answered, an empty group included. Leaving them out would let the sweep at the end of
+        // this function call them `unsupported`, which is §35.2's word for an exit nothing in
+        // this build can fill, and would be a false statement about a relation that was just read
+        // (§42.4).
+        for entry in relation::contributed_relations() {
+            contributed_exits.extend(entry.spec.groups_from(kind));
+        }
+    }
     let Some(node) = Node::of(&record) else {
         return Ok(());
     };
@@ -419,7 +445,7 @@ pub async fn observe(
         crate::spatial::storage::observe_children(providers, session, id, &path, now).await;
     }
 
-    let mut answered: BTreeSet<&'static str> = BTreeSet::new();
+    let mut answered: BTreeSet<&'static str> = contributed_exits;
     // The relations a provider serves that §32.1 kept this view from spending its budget on.
     let mut declined: BTreeSet<&'static str> = BTreeSet::new();
     let providers = Arc::new(providers.clone());

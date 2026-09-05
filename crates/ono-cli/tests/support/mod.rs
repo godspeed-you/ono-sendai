@@ -142,6 +142,27 @@ pub fn ono_at_home(home: &Scratch, script: &str) -> ono_testkit::Run {
 /// registration of ADR-0583 — and both need the same bytes: the fixture on disk and the
 /// `Manifest` a direct load parses must agree, or the two suites are testing two packages.
 pub fn echo_package_manifest(id: &str) -> String {
+    echo_package_manifest_with(id, &[])
+}
+
+/// The same manifest, declaring the v0.2 §31.7 relation shapes `shapes` names.
+///
+/// A shape is what a package says about the graph before any of its code runs, so it belongs to
+/// the manifest and not to the handshake — and a suite that is about relations declares its own
+/// shapes for the same reason a suite that is about targets declares its own targets.
+pub fn echo_package_manifest_with(id: &str, shapes: &[&str]) -> String {
+    let relations = if shapes.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n  relations: [{}]",
+            shapes
+                .iter()
+                .map(|shape| format!("\"{shape}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
     format!(
         r#"
 format: kuang-package/1
@@ -166,10 +187,11 @@ roles: [provider]
 capabilities:
   optional:
     - clock.read
+    - relation.write
 network:
   outbound: none
 contributions:
-  targets: [contributions/targets.yaml]
+  targets: [contributions/targets.yaml]{relations}
 "#
     )
 }
@@ -432,9 +454,18 @@ pub fn list_at(document: &Value, path: &str, what: &str) -> Vec<Value> {
 /// the same package; `targets` is the one thing that differs between them, because a suite
 /// declares the targets it is about (v0.4.1 §39.1).
 pub fn lay_out_echo_package(root: &Path, id: &str, targets: &str) {
+    lay_out_echo_package_with(root, id, targets, &[]);
+}
+
+/// The same package, declaring `shapes` as its `contributions.relations`.
+pub fn lay_out_echo_package_with(root: &Path, id: &str, targets: &str, shapes: &[&str]) {
     let package = root.join(id);
     std::fs::create_dir_all(package.join("runtime")).expect("the runtime directory");
-    std::fs::write(package.join("manifest.yaml"), echo_package_manifest(id)).expect("the manifest");
+    std::fs::write(
+        package.join("manifest.yaml"),
+        echo_package_manifest_with(id, shapes),
+    )
+    .expect("the manifest");
     std::fs::create_dir_all(package.join("contributions")).expect("the contributions directory");
     std::fs::write(package.join("contributions/targets.yaml"), targets).expect("the document");
     let binary = ono_testkit::ono_binary()
@@ -447,9 +478,28 @@ pub fn lay_out_echo_package(root: &Path, id: &str, targets: &str) {
 
 /// A scratch plugin home holding the example package, declaring `targets`.
 pub fn echo_plugin_home(id: &str, targets: &str) -> Scratch {
+    echo_plugin_home_with(id, targets, &[])
+}
+
+/// A scratch plugin home holding the example package, declaring `targets` and the relation
+/// shapes `shapes` names.
+pub fn echo_plugin_home_with(id: &str, targets: &str, shapes: &[&str]) -> Scratch {
     let scratch = ono_testkit::scratch();
-    lay_out_echo_package(&scratch.path().join("plugins"), id, targets);
+    lay_out_echo_package_with(&scratch.path().join("plugins"), id, targets, shapes);
     scratch
+}
+
+/// The rows of the last `to json` document on stdout (§33.5).
+///
+/// [`rows`] reads a stdout that holds nothing else; this one reads the stdout of a script whose
+/// earlier statements printed prose — `load plugin …; get … | to json` — which is what every suite
+/// that drives a KUANG/11 package has. Two of them had written it identically before it moved here
+/// (v0.4.1 §39.1).
+pub fn last_json_rows(run: &ono_testkit::Run) -> Vec<Value> {
+    last_json_document(run)
+        .as_sequence()
+        .unwrap_or_else(|| panic!("a sequence of records, got {:?}", run.output()))
+        .clone()
 }
 
 /// The last `to json` document on stdout, for a script whose earlier statements print prose.

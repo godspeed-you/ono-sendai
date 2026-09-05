@@ -24,7 +24,7 @@
 )]
 
 mod support;
-use support::{echo_plugin_home, last_json_document, ono_with_plugins};
+use support::{echo_plugin_home, last_json_rows as rows, ono_with_plugins};
 
 const ECHO: &str = "dev.example.echo";
 const PLACE_SCHEMA: &str = "dev.example.echo.place/1";
@@ -42,14 +42,6 @@ targets:
     summary: Resources the example package answers for.
     identity_doc: Two observations are the same resource when their `uid` matches.
 "#;
-
-fn rows(run: &ono_testkit::Run) -> Vec<serde_yaml_ng::Value> {
-    let document = last_json_document(run);
-    document
-        .as_sequence()
-        .unwrap_or_else(|| panic!("a sequence of records, got {:?}", run.output()))
-        .clone()
-}
 
 #[test]
 fn should_find_the_objects_of_a_contributed_target_as_places() {

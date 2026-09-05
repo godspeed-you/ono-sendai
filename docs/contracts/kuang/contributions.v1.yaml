@@ -192,6 +192,26 @@ evidence:
 # ---------------------------------------------------------------------------------------------
 relation:
   edge_schema: ono.graph-edge/1
+  # Where the declaration lives on disk, so the shapes a package would contribute are known before
+  # any of its code runs — the same manifest-before-code rule §31.68 applies to commands and
+  # targets (ADR-0585). `contributions.relations` is v0.2 §31.7's list of `<from>-><to>` shapes,
+  # one relation per shape, and each end names a kind of place: a type of
+  # `docs/contracts/spatial/spatial.yaml`, or the id of a schema one of this package's own
+  # `contributions.targets` declares. The second is what lets a package relate the kinds of place
+  # it contributes itself, and it is checkable at load because both halves are on disk.
+  #
+  # An endpoint that is neither is `package.invalid` when the package is loaded, naming the shape
+  # and the endpoint — not a relation that silently never appears and a `follow` that says the
+  # word means nothing. `docs/contracts/spatial/relations.yaml` → `contributed_relations` carries
+  # the rest of the rule: the id, the labels, the confidence, the cost and the origin.
+  manifest_shape:
+    manifest_field: contributions.relations
+    document: "[\"<from>-><to>\", …]"
+    read_without_running: true
+    endpoint: "a declared spatial type, in any case, or a schema id one of `contributions.targets` declares"
+    registered_as: "`<package.id>.<from>_to_<to>`, a schema id contributing its local name"
+    refused_at: "load, as `package.invalid` (spec §31.22's registration checks, §31.7)"
+    capability: "relation.write, never granted by default (v0.4 §35.5)"
   declaration:
     fields:
       name: {type: string, required: true, doc: "The relation name, e.g. `opens`, `emits`, `reaches` (spec §31.26's example chain)."}

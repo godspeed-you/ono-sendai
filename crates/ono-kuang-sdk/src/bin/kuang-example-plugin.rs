@@ -30,6 +30,7 @@ const PACKAGE: &str = "dev.example.echo";
 const VERSION: &str = "0.1.0";
 const ITEM_SCHEMA: &str = "dev.example.echo.item/1";
 const PLACE_SCHEMA: &str = "dev.example.echo.place/1";
+const ZONE_SCHEMA: &str = "dev.example.echo.zone/1";
 
 fn main() {
     match std::env::args().nth(1).as_deref() {
@@ -100,6 +101,36 @@ fn place_schema_contribution() -> SchemaContribution {
     }
 }
 
+/// A second kind of place, so the package has two of its own to relate (v0.4 §3.3, §36.1).
+///
+/// A relation shape names the kinds of place it runs between, and a package that contributed only
+/// one kind could only ever declare a shape from that kind to itself — which proves nothing about
+/// a shape whose two ends are different contributed things. `echo-zone` is the far end:
+/// identity-bearing like `echo-place`, answered by exactly one target, and named by a schema id
+/// the package's own manifest can point at.
+fn zone_schema_contribution() -> SchemaContribution {
+    SchemaContribution {
+        id: ZONE_SCHEMA.to_owned(),
+        name: "EchoZone".to_owned(),
+        summary: "One zone the example package's resources sit in.".to_owned(),
+        identity: vec!["uid".to_owned()],
+        fields: vec![
+            SchemaFieldContribution {
+                name: "uid".to_owned(),
+                field_type: "string".to_owned(),
+                required: true,
+                nullable: false,
+            },
+            SchemaFieldContribution {
+                name: "name".to_owned(),
+                field_type: "string".to_owned(),
+                required: true,
+                nullable: false,
+            },
+        ],
+    }
+}
+
 fn command(
     id_suffix: &str,
     summary: &str,
@@ -153,17 +184,37 @@ fn place_record(uid: &str, name: &str, state: &str) -> Value {
     Value::Record(std::sync::Arc::new(record))
 }
 
+fn zone_record(uid: &str, name: &str) -> Value {
+    let schema = zone_schema_contribution()
+        .to_schema()
+        .expect("the fixture schema is valid");
+    let schema_id = schema.id().clone();
+    let record = RecordValue::builder(
+        std::sync::Arc::new(schema),
+        Provenance::local("plugin-self", schema_id),
+    )
+    .set("uid", Value::String(uid.into()))
+    .and_then(|builder| builder.set("name", Value::String(name.into())))
+    .expect("the fixture fields exist")
+    .build();
+    Value::Record(std::sync::Arc::new(record))
+}
+
 /// One `ono.spatial-relation/1` edge: the package's own process, and the shell that started it.
-fn relation_record(source: &str, target: &str) -> Value {
+fn relation_record(
+    word: &str,
+    (source_type, source): (&str, &str),
+    (target_type, target): (&str, &str),
+) -> Value {
     let schema = ono_value::builtin_schemas()
         .get(&ono_value::SchemaId::new("ono.spatial-relation", 1))
         .expect("the spatial relation schema is built in");
     let schema_id = schema.id().clone();
     let record = RecordValue::builder(schema, Provenance::local("plugin-self", schema_id))
-        .set("relation", Value::String("runs-under".into()))
-        .and_then(|builder| builder.set("source_type", Value::String("process".into())))
+        .set("relation", Value::String(word.into()))
+        .and_then(|builder| builder.set("source_type", Value::String(source_type.into())))
         .and_then(|builder| builder.set("source_key", Value::String(source.into())))
-        .and_then(|builder| builder.set("target_type", Value::String("process".into())))
+        .and_then(|builder| builder.set("target_type", Value::String(target_type.into())))
         .and_then(|builder| builder.set("target_key", Value::String(target.into())))
         .and_then(|builder| builder.set("confidence", Value::String("strong".into())))
         .expect("the fixture fields exist")
@@ -182,6 +233,7 @@ fn honest() -> Plugin {
     Plugin::new(PACKAGE, VERSION)
         .contribute_schema(item_schema_contribution())
         .contribute_schema(place_schema_contribution())
+        .contribute_schema(zone_schema_contribution())
         // A target whose objects are places: each carries an identity the package owns and a
         // name a person reads, and the two are deliberately not the same field.
         .contribute_target(TargetContribution {
@@ -190,6 +242,15 @@ fn honest() -> Plugin {
             summary: "Resources the example package answers for.".to_owned(),
             identity_doc: "Two observations are the same resource when their `uid` matches, \
                            whatever the resource is called."
+                .to_owned(),
+        })
+        // The far end of the package's own relation shape. One schema, one target, so a place of
+        // this kind can be re-read through the target it came from (ADR-0584).
+        .contribute_target(TargetContribution {
+            name: "echo-zone".to_owned(),
+            schema: ZONE_SCHEMA.to_owned(),
+            summary: "Zones the example package's resources sit in.".to_owned(),
+            identity_doc: "Two observations are the same zone when their `uid` matches."
                 .to_owned(),
         })
         .contribute_target(TargetContribution {
@@ -420,20 +481,40 @@ fn honest() -> Plugin {
             Outcome::Completed
         })
         .command(&format!("{PACKAGE}.command.relations"), |ctx| {
-            // The fixture asserts the one relation its manifest declares — `process->process` —
-            // between the two processes it can honestly name: itself and the shell that started
-            // it. Both are real, so the host can resolve both through the process provider; a
-            // package that made them up would contribute nothing, which is the point of §36.2.
+            // Two edges, and the manifest decides which of them becomes a relation: an assertion
+            // whose shape the package never declared resolves to no relation and contributes
+            // nothing, which is why the fixture can assert both and be read by suites that
+            // declare either shape.
+            //
+            // The first is between the two processes the package can honestly name — itself and
+            // the shell that started it. Both are real, so the host can resolve both through the
+            // process provider; a package that made them up would contribute nothing, which is
+            // the point of §36.2.
             let me = std::process::id();
             #[cfg(unix)]
             let parent = std::os::unix::process::parent_id();
             #[cfg(not(unix))]
             let parent = 0u32;
-            match ctx.emit(&relation_record(&me.to_string(), &parent.to_string())) {
-                Ok(()) => Outcome::Completed,
-                Err(ono_kuang_sdk::EmitError::Refused(error)) => Outcome::Failed(*error),
-                Err(_) => Outcome::Cancelled,
+            let edges = [
+                relation_record(
+                    "runs-under",
+                    ("process", &me.to_string()),
+                    ("process", &parent.to_string()),
+                ),
+                // The second runs between two kinds of place the package contributed itself,
+                // named by their schema ids — the resource `ledger` and the zone it sits in.
+                relation_record("sits-in", (PLACE_SCHEMA, "u-3"), (ZONE_SCHEMA, "z-1")),
+            ];
+            for edge in &edges {
+                match ctx.emit(edge) {
+                    Ok(()) => {}
+                    Err(ono_kuang_sdk::EmitError::Refused(error)) => {
+                        return Outcome::Failed(*error);
+                    }
+                    Err(_) => return Outcome::Cancelled,
+                }
             }
+            Outcome::Completed
         })
         .command(&format!("{PACKAGE}.command.emit"), |ctx| {
             let count = int_argument(ctx, "count", 3);
@@ -1051,6 +1132,14 @@ fn honest() -> Plugin {
                 ("u-3", "ledger", "degraded"),
             ] {
                 if ctx.emit(&place_record(uid, name, state)).is_err() {
+                    return Outcome::Cancelled;
+                }
+            }
+            Outcome::Completed
+        })
+        .provider("echo-zone", |ctx| {
+            for (uid, name) in [("z-1", "west"), ("z-2", "east")] {
+                if ctx.emit(&zone_record(uid, name)).is_err() {
                     return Outcome::Cancelled;
                 }
             }

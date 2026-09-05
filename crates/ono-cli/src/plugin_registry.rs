@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 
 use ono_command::{CommandContract, CommandRegistry, ContributedCommand, Origin};
 use ono_core::ErrorCode;
-use ono_kuang_protocol::{CommandDocument, Manifest, TargetDocument};
+use ono_kuang_protocol::{CommandDocument, Manifest, TargetContribution, TargetDocument};
 use ono_value::ErrorValue;
 
 use crate::kuang_host::{Installed, packages_under};
@@ -170,6 +170,46 @@ fn target_declarations(
     origin: &Origin,
 ) -> (Vec<CommandContract>, Vec<ErrorValue>) {
     let mut commands = Vec::new();
+    let (targets, mut problems) = declared_targets(package);
+    for target in targets {
+        let declared = ContributedCommand {
+            id: target_command_id(&package.manifest.package.id, &target.name),
+            verb: "get".to_owned(),
+            target: target.name.clone(),
+            summary: target.summary.clone(),
+            input: None,
+            output: format!("stream<{}>", target.schema),
+            capabilities: Vec::new(),
+            argument_mode: "expression".to_owned(),
+            examples: vec![format!("get {}", target.name)],
+            origin: origin.clone(),
+        };
+        match declared.into_contract() {
+            Ok(contract) => commands.push(contract),
+            Err(error) => problems.push(error),
+        }
+    }
+    (commands, problems)
+}
+
+/// The schema ids the targets a package declares on disk answer with (spec §31.23, §31.68).
+///
+/// Read without starting anything, which is what makes it usable *before* the package runs: a
+/// relation shape naming one of these names a kind of place the package will contribute, and the
+/// two halves of that statement are then both on disk at the moment the shell reads either
+/// (ADR-0585).
+pub(crate) fn declared_target_schemas(package: &Installed) -> Vec<String> {
+    let (targets, _) = declared_targets(package);
+    let mut schemas: Vec<String> = targets.into_iter().map(|target| target.schema).collect();
+    schemas.sort();
+    schemas.dedup();
+    schemas
+}
+
+/// The target declarations of one package's `contributions.targets` documents, and what did not
+/// read.
+fn declared_targets(package: &Installed) -> (Vec<TargetContribution>, Vec<ErrorValue>) {
+    let mut targets = Vec::new();
     let mut problems = Vec::new();
     let paths = package
         .manifest
@@ -195,39 +235,18 @@ fn target_declarations(
                 continue;
             }
         };
-        let document = match TargetDocument::parse(&text) {
-            Ok(document) => document,
-            Err(error) => {
-                problems.push(
-                    ErrorValue::new(
-                        ErrorCode::KuangPackageInvalid,
-                        format!("{}: {}", file.display(), error.message()),
-                    )
-                    .with_help(error.help().unwrap_or_default()),
-                );
-                continue;
-            }
-        };
-        for target in document.targets {
-            let declared = ContributedCommand {
-                id: target_command_id(&package.manifest.package.id, &target.name),
-                verb: "get".to_owned(),
-                target: target.name.clone(),
-                summary: target.summary.clone(),
-                input: None,
-                output: format!("stream<{}>", target.schema),
-                capabilities: Vec::new(),
-                argument_mode: "expression".to_owned(),
-                examples: vec![format!("get {}", target.name)],
-                origin: origin.clone(),
-            };
-            match declared.into_contract() {
-                Ok(contract) => commands.push(contract),
-                Err(error) => problems.push(error),
-            }
+        match TargetDocument::parse(&text) {
+            Ok(document) => targets.extend(document.targets),
+            Err(error) => problems.push(
+                ErrorValue::new(
+                    ErrorCode::KuangPackageInvalid,
+                    format!("{}: {}", file.display(), error.message()),
+                )
+                .with_help(error.help().unwrap_or_default()),
+            ),
         }
     }
-    (commands, problems)
+    (targets, problems)
 }
 
 /// The `contributions.commands` paths of a manifest.

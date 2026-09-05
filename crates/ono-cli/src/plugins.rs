@@ -288,6 +288,16 @@ pub fn load_plugin_with(
         .as_ref()
         .and_then(|contributions| contributions.relations.clone())
         .unwrap_or_default();
+    // Both halves of a shape are on disk here — the shape in the manifest, the schema ids in the
+    // `contributions.targets` documents §31.68 reads without running anything — so a shape naming
+    // a kind of place nobody contributes is refused before the runtime is spawned, rather than
+    // being discovered when somebody types `follow` (ADR-0585).
+    crate::spatial::contributions::check_shapes(
+        id,
+        &shapes,
+        &crate::plugin_registry::declared_target_schemas(&package),
+    )
+    .map_err(Flow::Failed)?;
     let mut config = LoadConfig::new(entry, package.manifest);
     config.policy = policy;
     // The instance runs in its own directory under the state root, not in the user's (spec
@@ -346,6 +356,13 @@ pub fn load_plugin_with(
                 .shutdown(ono_kuang_protocol::ShutdownReason::Upgrade),
         );
     }
+    // Mounting the package puts its targets into the provider registry and registers the kinds
+    // of place they answer with (ADR-0583, ADR-0584) — and a shape naming one of those kinds can
+    // only be resolved once they exist. This is the ordering ADR-0584 named, settled by doing the
+    // two things in the order they depend on: the handshake has happened, the types are
+    // registered, and only then are the shapes read from the manifest adopted against them. The
+    // shapes were *checked* before any of it, against the declarations on disk.
+    let _ = session.providers();
     // §35.5: the capability filter runs before the merge, and this is before. A package denied
     // `relation.write` contributes no relation at all, so no map has one of its edges to drop.
     crate::spatial::contributions::forget(id);

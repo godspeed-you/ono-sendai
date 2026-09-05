@@ -331,3 +331,63 @@ relations:
     doc: >-
       A link this session holds to another host (§3.5, §19.1). Crossing it is always explicit:
       `jump` never opens a connection because a name resembles a known place (§35.4).
+
+# §36.1, §31.7, §31.26, ADR-0585. What a relation a KUANG/11 package contributed is, and what the
+# host keeps for itself. Nothing here is a relation of this build, so `relations:` above stays the
+# closed list `ono_spatial_core::relations()` is compared against in both directions and the drift
+# check answers exactly the question it answered before. This block is the part of the boundary no
+# gate can check, because the names belong to packages nobody has installed —
+# `crates/ono-cli/tests/spatial_contributed_relations.rs` is what holds the implementation to it.
+contributed_relations:
+  declared_by: >-
+    `contributions.relations` in the package manifest, as v0.2 §31.7's `<from>-><to>` shapes. One
+    shape is one relation. The declaration is on disk, beside the `contributions.targets`
+    documents §31.68 reads without running anything.
+  endpoints: >-
+    Each end is either a declared type of `object_types` in `spatial.yaml`, in any case
+    (`process`, `Process`), or the **id of a schema one of this package's own
+    `contributions.targets` declares** (`dev.example.echo.place/1`). The second spelling is what
+    lets a package relate the kinds of place it contributes itself. It is a schema id rather than
+    the contributed type's display name because a display name may collide — with a declared type
+    or with another package's schema — and because a schema id is readable from disk, which is
+    what makes the endpoint checkable before the package runs.
+  ordering: >-
+    A shape is read from the manifest at load and a contributed *type* is registered from the
+    handshake, so the two are known at different moments. The refusal is settled at the earlier
+    one: the endpoint is checked against the schema ids on disk, before the runtime is spawned. A
+    shape naming a kind of place nobody contributes is `package.invalid` at load, naming the shape
+    and the endpoint, and the package does not load. Adoption — turning the shape into a relation
+    — happens after the handshake, against the types it registered.
+  id: >-
+    `<package.id>.<from>_to_<to>`, where a declared endpoint contributes its own name lower-cased
+    and a schema id contributes its local name — `dev.example.echo.place/1` gives `place`. §31.5
+    reserves the package's namespace to its owner, so a contributed relation can never collide
+    with a core relation or another package's. Two schemas of one package sharing a local name
+    would collide with each other; the first shape adopted keeps the id.
+  labels: >-
+    The id is the `canonical_label` and the `canonical_group`; `<id>.inverse` is the other end.
+    `contributions.v1.yaml`'s relation declaration carries a `name`, a `summary` and a direction
+    the shape does not, so the host does not invent a friendlier word than the one it was given.
+  direction: >-
+    `outbound`. A shape is written from one end to the other and says nothing else about how the
+    edge is drawn.
+  confidence: >-
+    `exact_or_provider_declared`. The contributor states a value of `confidence` above per edge,
+    and `exact` is never passed on: the host did not observe the edge, so it travels as `strong`
+    at most (§22.2, §36.2 — a contributed relationship must not "appear exact without
+    provenance").
+  cost_class: >-
+    `normal`. Asking a package for its edges is one invocation, and it is made only for a place a
+    contributed relation could actually reach — so a `look` at a process costs what it always did.
+  origin: >-
+    Every contributed edge carries the package as its `provider`, the package in its provenance,
+    and the package under `origin` in the evidence `inspect relation` and `near` show (§11.4,
+    §31.25, §31.64). That is what makes a contributed edge distinguishable from one the host
+    derived, and §53's "cannot create untraceable truth" is the rule it serves.
+  capability: >-
+    `relation.write`, never granted by default (§35.5). A package without the grant contributes no
+    relation at all, so the filter §35.5 puts before the merge has nothing left to remove.
+  ends_are_the_host's: >-
+    A contributor names both ends by the key their own provider names them by, and the host
+    resolves each through that provider before the edge exists. A package asserts an edge; it
+    never creates a place (§2.16, §36.2).

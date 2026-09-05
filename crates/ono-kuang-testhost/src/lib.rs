@@ -313,22 +313,36 @@ pub fn check_spatial_package(directory: &std::path::Path) -> SpatialPackageRepor
         return report;
     }
     let package = manifest.package.id.clone();
+    // The schema ids the package's own `contributions.targets` documents declare (§31.68). A
+    // shape endpoint may name one of them, and reading them here is what lets this check answer
+    // for a relation between two kinds of place the package contributes — without running it,
+    // which is the whole point of asking before loading (ADR-0585).
+    let schemas = declared_schemas(directory, &manifest);
     for shape in &shapes {
-        let Some((from, to)) = shape.split_once("->") else {
+        let Some((from, to)) = ono_spatial_core::relation::parse_shape(shape) else {
             report.problems.push(format!(
                 "`{shape}` is not a `<from>-><to>` shape (spec §31.7)"
             ));
             continue;
         };
-        match (spatial_kind(from), spatial_kind(to)) {
-            (Some(source), Some(target)) => report.relations.push(format!(
-                "{package}.{}_to_{}",
-                source.to_ascii_lowercase(),
-                target.to_ascii_lowercase()
-            )),
-            _ => report.problems.push(format!(
-                "`{shape}` names a kind of place v0.4 section 3.3 does not define"
-            )),
+        let unknown: Vec<&str> = [from, to]
+            .into_iter()
+            .filter(|endpoint| {
+                !ono_spatial_core::relation::shape_endpoint_is_known(endpoint, &schemas)
+            })
+            .collect();
+        if unknown.is_empty() {
+            report
+                .relations
+                .push(ono_spatial_core::relation::contributed_id(
+                    &package, from, to,
+                ));
+        } else {
+            report.problems.push(format!(
+                "`{shape}` names a kind of place nothing defines: {} is neither a type of v0.4 \
+                 section 3.3 nor the id of a schema this package declares a target for",
+                unknown.join(", ")
+            ));
         }
     }
     let requested = manifest
@@ -346,12 +360,23 @@ pub fn check_spatial_package(directory: &std::path::Path) -> SpatialPackageRepor
     report
 }
 
-/// The §3.3 kind a shape names, however it spelled the case.
-fn spatial_kind(name: &str) -> Option<&'static str> {
-    ono_spatial_core::SpatialType::ALL
+/// The schema ids the targets a package declares on disk answer with (spec §31.23, §31.68).
+fn declared_schemas(directory: &std::path::Path, manifest: &Manifest) -> Vec<String> {
+    let paths = manifest
+        .contributions
+        .as_ref()
+        .and_then(|contributions| contributions.targets.clone())
+        .unwrap_or_default();
+    let mut schemas: Vec<String> = paths
         .iter()
-        .find(|kind| kind.as_str().eq_ignore_ascii_case(name.trim()))
-        .map(|kind| kind.as_str())
+        .filter_map(|path| std::fs::read_to_string(directory.join(path)).ok())
+        .filter_map(|text| ono_kuang_protocol::TargetDocument::parse(&text).ok())
+        .flat_map(|document| document.targets)
+        .map(|target| target.schema)
+        .collect();
+    schemas.sort();
+    schemas.dedup();
+    schemas
 }
 
 /// A view host that takes every view and records every tree (spec §31.73): what a

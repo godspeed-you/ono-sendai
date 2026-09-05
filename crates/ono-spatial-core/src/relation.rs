@@ -798,6 +798,70 @@ pub fn spec(id: &str) -> Option<&'static RelationSpec> {
         .or_else(|| contributed(id).map(|entry| entry.spec))
 }
 
+// --- contribution shapes (spec v0.2 §31.7, v0.4 §3.3, §36.1) -----------------------------------
+
+/// The two ends of a `<from>-><to>` contribution shape, or `None` for anything that is not one.
+///
+/// v0.2 §31.7 gives a package's `contributions.relations` this spelling and nothing else, so a
+/// manifest entry that is not a pair is a declaration nobody can act on rather than one to be
+/// quietly dropped.
+#[must_use]
+pub fn parse_shape(shape: &str) -> Option<(&str, &str)> {
+    let (from, to) = shape.split_once("->")?;
+    let (from, to) = (from.trim(), to.trim());
+    (!from.is_empty() && !to.is_empty()).then_some((from, to))
+}
+
+/// Whether a shape endpoint names a kind of place, reading only what is on disk (§3.3, §36.1).
+///
+/// Two spellings name one thing here. A **declared** type of §3.3, in whatever case the shape
+/// spelled it — `process`, `Process` — is the vocabulary a shape has always been written in. The
+/// id of a **schema the contributing package declares a target for** is the second, and it is
+/// what lets a package relate the kinds of place it contributes itself.
+///
+/// The second spelling is a schema id rather than the type's display name for two reasons. It is
+/// unambiguous — §31.5 namespaces it to the package, while a display name may collide with a
+/// declared type or with another package's schema, and [`crate::types::contribute`] renames a
+/// contributed type when it does. And it is *readable before the package runs*: §31.68 already
+/// reads the `contributions.targets` documents from disk, so the schema ids a shape may name are
+/// known at the same moment the shape itself is, and a wrong declaration is refused at load
+/// rather than when somebody types `follow` (ADR-0585).
+#[must_use]
+pub fn shape_endpoint_is_known(name: &str, package_schemas: &[String]) -> bool {
+    let name = name.trim();
+    SpatialType::ALL
+        .iter()
+        .any(|kind| kind.as_str().eq_ignore_ascii_case(name))
+        || package_schemas.iter().any(|schema| schema == name)
+}
+
+/// The word a shape endpoint contributes to a contributed relation's id.
+///
+/// A declared type gives its own name, lower-cased — `Process` is `process`, as it always was. A
+/// schema id gives its local name: `dev.example.echo.place/1` is `place`, because the publisher
+/// and package prefix is already the namespace the relation id sits in (§31.5) and repeating it
+/// inside the id would give `dev.example.echo.dev.example.echo.place_to_…`.
+#[must_use]
+pub fn endpoint_word(name: &str) -> String {
+    let name = name.trim();
+    let without_version = name.split_once('/').map_or(name, |(id, _)| id);
+    without_version
+        .rsplit('.')
+        .next()
+        .unwrap_or(without_version)
+        .to_ascii_lowercase()
+}
+
+/// The id the host registers a package's `<from>-><to>` shape under (§31.5).
+///
+/// It is derived from the shape's own text, so the id the manifest implies and the id the loaded
+/// package's edges resolve against are one string computed one way — and a tool that reads only
+/// the package directory can name the relations it would contribute.
+#[must_use]
+pub fn contributed_id(package: &str, from: &str, to: &str) -> String {
+    format!("{package}.{}_to_{}", endpoint_word(from), endpoint_word(to))
+}
+
 /// One relation a KUANG/11 package contributed, and who contributed it (§36.1, §31.64).
 #[derive(Debug, Clone, Copy)]
 pub struct Contributed {
@@ -870,11 +934,22 @@ pub fn contributed_relations() -> Vec<Contributed> {
 pub fn exits_from(
     from: SpatialType,
 ) -> impl Iterator<Item = (&'static str, &'static RelationSpec)> {
-    RELATIONS.iter().flat_map(move |relation| {
-        relation
-            .groups_from(from)
-            .map(move |label| (label, relation))
-    })
+    // The declared table first, then what packages contributed this session (§36.1). A place of a
+    // contributed kind has no declared relation at all, so without the second half its exits are
+    // empty however many edges a package asserted — which is `near` finding nothing and `follow`
+    // having nothing to follow (ADR-0584).
+    let contributed: Vec<&'static RelationSpec> = contributed_relations()
+        .into_iter()
+        .map(|entry| entry.spec)
+        .collect();
+    RELATIONS
+        .iter()
+        .chain(contributed)
+        .flat_map(move |relation| {
+            relation
+                .groups_from(from)
+                .map(move |label| (label, relation))
+        })
 }
 
 /// The relation `label` names for a user standing on an object of `from`.
@@ -885,8 +960,13 @@ pub fn exits_from(
 /// no neighbour is `spatial.not_found`, because the name *was* understood.
 #[must_use]
 pub fn resolve_label(from: SpatialType, label: &str) -> Vec<&'static RelationSpec> {
+    let contributed: Vec<&'static RelationSpec> = contributed_relations()
+        .into_iter()
+        .map(|entry| entry.spec)
+        .collect();
     RELATIONS
         .iter()
+        .chain(contributed)
         .filter(|relation| relation.words_from(from).any(|declared| declared == label))
         .collect()
 }
@@ -894,8 +974,13 @@ pub fn resolve_label(from: SpatialType, label: &str) -> Vec<&'static RelationSpe
 /// Every label any relation accepts, for completion and for `help spatial` (§41.3).
 #[must_use]
 pub fn labels() -> Vec<&'static str> {
+    let contributed: Vec<&'static RelationSpec> = contributed_relations()
+        .into_iter()
+        .map(|entry| entry.spec)
+        .collect();
     let mut labels: Vec<&'static str> = RELATIONS
         .iter()
+        .chain(contributed)
         .flat_map(|relation| {
             [
                 relation.canonical_label,
