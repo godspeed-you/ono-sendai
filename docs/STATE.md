@@ -2183,16 +2183,6 @@ the provider samples — and no assertion changed.
 
 ## Found, not yet filed
 
-- **Three relative links in `docs/MIGRATION.md` do not resolve (2026-09-05).** Found by a
-  repository-wide markdown link check during the ADR-0581 documentation migration, and
-  pre-existing: all three are in `HEAD` unchanged. `](SECURITY.md)` resolves against `docs/`, so
-  it points at `docs/SECURITY.md`, which does not exist — the file is at the repository root.
-  `](docs/reference/remote-trust.md)` and `](docs/reference/release-verification.md)` are written
-  repository-root-relative and resolve to `docs/docs/reference/...`. They render correctly in
-  some viewers and not in others, which is why they survived. None of the three names a path the
-  migration moved, so fixing them here would have been an unrelated change (§4). Reproduce by
-  resolving each `](...)` in the file against the file's own directory.
-
 - **A failing streamed adapter child reports exit 0 under load (2026-09-03).** Gate run after
   the #3 views increment: `adapters.rs::should_report_a_failing_streamed_child_after_its_records`
   — a `journalctl` shim of `echo '<entry>'; exit 3` — came back with status **0** and the

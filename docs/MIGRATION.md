@@ -142,8 +142,8 @@ but intent and coverage are preserved.
 
 ## What to read next
 
-- [`SECURITY.md`](SECURITY.md) — the trust boundaries and how to report a vulnerability.
-- [`docs/reference/remote-trust.md`](docs/reference/remote-trust.md) — the six things a remote
+- [`SECURITY.md`](../SECURITY.md) — the trust boundaries and how to report a vulnerability.
+- [`docs/reference/remote-trust.md`](reference/remote-trust.md) — the six things a remote
   link keeps apart, including why authenticating is not being authorized.
-- [`docs/reference/release-verification.md`](docs/reference/release-verification.md) — checking
+- [`docs/reference/release-verification.md`](reference/release-verification.md) — checking
   the release you are about to install.
