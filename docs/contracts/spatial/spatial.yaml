@@ -51,6 +51,15 @@ identity_tiers:
 # and every object type a space declares or a relation connects. `spaces.yaml`'s `object_type`
 # and `member_type` and `relations.yaml`'s `source` and `target` may name nothing else, which is
 # what lets §41.3 generate one SDK enum for all four documents.
+#
+# §36.1 lets a KUANG/11 package contribute "object schemas that implement SpatialObject", and
+# such a type arrives at runtime, from a package this session loaded — it can be in no document
+# the gate checks, because the gate runs before any package does. It is therefore deliberately
+# *not* listed here, and `SpatialType::Contributed` is deliberately not in `SpatialType::ALL`:
+# the drift check compares this list against `ALL` and both remain closed, so a declared type
+# this file does not name is still undocumented surface and a name this file carries that
+# nothing implements is still a space nothing can serve. What a contributed type may do is
+# bounded by `contributed_types` below rather than by being enumerated (ADR-0584).
 object_types:
   aggregates: [System, Compute, Network, Storage, Containers, Identity, Devices]
   objects:
@@ -79,6 +88,39 @@ object_types:
     - Group
     - Session
     - Host
+
+# §36.1, ADR-0584. What a kind of place a package contributed is, and what the host keeps for
+# itself. This block is prose about a boundary rather than a vocabulary, because the names on the
+# far side of it belong to packages nobody has installed yet; `crates/ono-cli/tests/spatial_contributed_targets.rs`
+# is what holds the implementation to it.
+contributed_types:
+  named_by: >-
+    The display name of the schema the package declared for the target — `EchoPlace`, `Pod`. Where
+    that name is already taken, by one of `object_types` above or by another package's schema, the
+    schema id is the name instead: two kinds of place answering to one `--type` word would be a
+    question with two answers (§27.2).
+  identity: >-
+    Composed from the fields the contributed schema calls its `identity`, exactly as a core
+    schema's is (§3.1). The display name is never part of it, so two resources of one name are two
+    places and a renamed resource is one place (external-system-provider §11.1, §11.2).
+  identity_tier: >-
+    Always `lifetime`. §10.1 lets a tier be weakened and never strengthened, and the strongest
+    thing a host can prove about a resource it did not observe is that the identity lasts as long
+    as the resource does. A stronger claim is the package's to make in its `identity_doc`.
+  cost_class: >-
+    Always `expensive` (§32.1). Enumerating an external system may be a network round trip per
+    object and `docs/contracts/kuang/contributions.v1.yaml` gives a target contribution no way to
+    say otherwise, so a search reaches a contributed target only when it was asked to — by
+    `--type`, exactly as `dir` and `file` are reached (§33.3).
+  hierarchy: >-
+    None. A contributed target declares no aggregate space, so a place of that kind sits in no
+    collection and `up` refuses with `spatial.no_parent` naming that reason. §36.4's
+    plugin-defined space is the declaration that would give it a parent, and it is not yet
+    implemented.
+  relations: >-
+    None. A package contributes relationship edges through `contributions.relations`, whose shapes
+    name the declared types of `object_types` above, so `near` and `follow` reach a contributed
+    place only once a package can name a contributed type in a relation shape.
 
 # §3.2. A scope is the execution and discovery boundary an object belongs to. Scopes nest, and
 # crossing a boundary is observable in the trail and the prompt (§2.18).

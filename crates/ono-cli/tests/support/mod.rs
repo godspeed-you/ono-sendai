@@ -424,3 +424,40 @@ pub fn list_at(document: &Value, path: &str, what: &str) -> Vec<Value> {
         .unwrap_or_else(|| panic!("{what} — `{path}` must be a list, got {document:?}"))
         .clone()
 }
+
+/// Lays the SDK's example package out in a scratch plugin home, with the target document the
+/// calling suite wants it to declare.
+///
+/// The manifest is [`echo_package_manifest`], so every suite that lays the package out lays out
+/// the same package; `targets` is the one thing that differs between them, because a suite
+/// declares the targets it is about (v0.4.1 §39.1).
+pub fn lay_out_echo_package(root: &Path, id: &str, targets: &str) {
+    let package = root.join(id);
+    std::fs::create_dir_all(package.join("runtime")).expect("the runtime directory");
+    std::fs::write(package.join("manifest.yaml"), echo_package_manifest(id)).expect("the manifest");
+    std::fs::create_dir_all(package.join("contributions")).expect("the contributions directory");
+    std::fs::write(package.join("contributions/targets.yaml"), targets).expect("the document");
+    let binary = ono_testkit::ono_binary()
+        .parent()
+        .expect("the target directory")
+        .join("kuang-example-plugin");
+    std::fs::copy(&binary, package.join("runtime/echo"))
+        .expect("the example plugin binary is built");
+}
+
+/// A scratch plugin home holding the example package, declaring `targets`.
+pub fn echo_plugin_home(id: &str, targets: &str) -> Scratch {
+    let scratch = ono_testkit::scratch();
+    lay_out_echo_package(&scratch.path().join("plugins"), id, targets);
+    scratch
+}
+
+/// The last `to json` document on stdout, for a script whose earlier statements print prose.
+pub fn last_json_document(run: &ono_testkit::Run) -> serde_yaml_ng::Value {
+    let line = run
+        .stdout()
+        .lines()
+        .rfind(|line| line.starts_with('['))
+        .unwrap_or_else(|| panic!("a `to json` document on stdout, got {:?}", run.output()));
+    json(line)
+}

@@ -190,6 +190,30 @@ pub fn go_up(
     // chain — the same answer the place view already declares under `canonical_parent`,
     // because asking twice is how a hierarchy stops being one.
     let Some(there) = ono_spatial_query::resolve::parent_of(session.index(), &here) else {
+        // A place of a kind a package contributed is not the top of anything — it is a place §7
+        // gives no domain, because §36.4's plugin-defined aggregate space, which is what would
+        // give it one, is a declaration a package cannot yet make (ADR-0584). Telling a user
+        // they have reached the top of the host would be a statement about the host that is not
+        // true (§2.17).
+        let contributed = matches!(
+            session
+                .index()
+                .get(&here)
+                .map(|entry| entry.object().object_type()),
+            Some(ono_spatial_core::SpatialType::Contributed(_))
+        );
+        if contributed {
+            return Err(ErrorValue::new(
+                ErrorCode::SpatialNoParent,
+                "no canonical domain holds this kind of place, so `up` has nowhere to go from \
+                 here",
+            )
+            .with_help(
+                "a package that contributes a kind of place does not yet declare the aggregate \
+                 space that would hold it (spec v0.4 §36.4); `back` returns through navigation \
+                 history instead (§6.6, §40)",
+            ));
+        }
         return Err(ErrorValue::new(
             ErrorCode::SpatialNoParent,
             "this place is the top of the canonical hierarchy of this host",

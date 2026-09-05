@@ -90,7 +90,14 @@ pub fn spatial_type_of(record: &RecordValue) -> Option<SpatialType> {
         "ono.session/1" => T::Session,
         "ono.host/1" => T::Host,
         "ono.cgroup/1" => T::Cgroup,
-        _ => return None,
+        // A schema a KUANG/11 package contributed for a target it answers for (§36.1). The
+        // declared table above is consulted first, so a package can extend the geography and
+        // never redefine it; the record still decides nothing the record does not say, because
+        // what it says here is its own schema.
+        other => {
+            return ono_spatial_core::types::contributed_for_schema(other)
+                .map(|contributed| contributed.object_type);
+        }
     })
 }
 
@@ -185,6 +192,14 @@ fn reference_field(object_type: SpatialType) -> Option<&'static str> {
         T::BlockDevice | T::Device | T::Directory | T::File | T::Cgroup => "path",
         T::User => "uid",
         T::Group => "gid",
+        // The package said which field makes two observations the same object, and that is the
+        // field another record has to name one by (§31.23, external-system-provider §11.2).
+        T::Contributed(_) => {
+            return ono_spatial_core::types::contributed_types()
+                .into_iter()
+                .find(|entry| entry.object_type == object_type)
+                .map(|entry| entry.reference_field());
+        }
         _ => return None,
     })
 }

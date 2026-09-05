@@ -246,15 +246,19 @@ pub fn target_of(object_type: SpatialType) -> Option<(&'static str, &'static str
         T::Group => ("group", "gid"),
         T::Session => ("session", "id"),
         T::Host => ("host", "name"),
+        // A kind of place a package contributed: the target it answers under, and the field its
+        // schema declares as identity (§36.1, §31.23). `None` where several of the package's
+        // targets answer with that one schema — they are several ways of asking one question,
+        // and re-reading a live place through the wrong one would report it gone (ADR-0584).
+        T::Contributed(_) => return ono_spatial_core::types::canonical_target_of(object_type),
         _ => return None,
     })
 }
 
 /// The kinds of place a v0.2 provider target serves — the inverse of [`target_of`].
 pub(crate) fn types_of_target(target: &str) -> Vec<SpatialType> {
-    SpatialType::ALL
-        .iter()
-        .copied()
+    ono_spatial_core::types::known()
+        .into_iter()
         .filter(|object_type| target_of(*object_type).is_some_and(|(name, _)| name == target))
         .collect()
 }

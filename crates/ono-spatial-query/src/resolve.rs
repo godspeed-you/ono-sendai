@@ -489,9 +489,8 @@ fn canonical_identifier(index: &SpatialIndex, selector: &str, now: Timestamp) ->
     // this way whenever the bare key would be ambiguous, and the trail and the map print it.
     if let Some((kind, key)) = selector.split_once('/')
         && !key.is_empty()
-        && let Some(wanted) = SpatialType::ALL
-            .iter()
-            .copied()
+        && let Some(wanted) = ono_spatial_core::types::known()
+            .into_iter()
             .find(|known| known.as_str().eq_ignore_ascii_case(kind))
     {
         let found: Vec<Candidate> = index

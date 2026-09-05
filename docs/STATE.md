@@ -3506,6 +3506,34 @@ records. It was removed from this board rather than carried as an open box.
 
 ## Done
 
+**A contributed target is a kind of place (2026-09-05, ADR-0584).** ADR-0583 named the wall it
+stopped at: the spatial planner worked over `SpatialType::ALL`, so `enter`, `near` and `find`
+never asked for a noun a package contributed however well the registry answered for it. It was
+three closed lists — the type enum, `spatial_type_of`'s schema table in `ono-spatial-index`, and
+`SPATIAL_TARGETS` in `ono-spatial-query::discovery` — and the first of them is load-bearing:
+`spec-check` compares it against `object_types` in `docs/contracts/spatial/spatial.yaml` in both
+directions, and a vocabulary a package can add a name to is one no gate can check. So `ALL` stays
+closed and is now documented as the *declared* list; a contributed kind of place lives beside it
+in a runtime registry, the shape `ono_spatial_core::relation` already had for contributed
+relations, and `types::known()` is the union the commands that read a word the user typed consult.
+The drift check is untouched and compares the same two closed lists. The kind of place is the
+*schema* rather than the target, because a record carries its schema and never the target it was
+asked for; its identity is composed from the fields the schema calls `identity`, so a
+`metadata.uid`-shaped identity works through the mechanism a uid already went through; and the
+tier is `lifetime`, because §10.1 lets a host claim no more than it can prove about a resource it
+did not observe. A contributed target is `expensive` (§32.1) so an untyped `find place` does not
+fan out to every loaded package, and a search reads at most 1024 objects from one, with
+`PluginProvider::snapshot` now honouring `Query::max` — without it a package contributing an
+endless target hangs `find place` outright. Seven tests in
+`crates/ono-cli/tests/spatial_contributed_targets.rs`; the example package gained `echo-place`,
+whose schema has `uid` as identity and `name` beside it, with two resources sharing one name.
+Still open, and named in the ADR: `up` has nowhere to go and says so, because §36.4's
+plugin-defined space is a declaration a package cannot make; `near` and `follow` reach nothing,
+because a relation shape is written in the declared vocabulary and a package cannot name a
+contributed type in one; the scope of a contributed place is still the local host, which is true
+of nowhere for a resource in a cluster (external-system-provider §9); and the search bound is
+silent where ADR-0576's orientation states that it was bounded.
+
 **A loaded KUANG/11 package is a provider in the registry (2026-09-05, ADR-0583).** ADR-0582 made
 a contributed target typeable and reached `provider.query`; it went no further, so `ProviderRegistry`
 still held nothing for a contributed noun and everything that asks the registry rather than the

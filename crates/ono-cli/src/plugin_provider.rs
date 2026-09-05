@@ -146,6 +146,13 @@ impl Provider for PluginProvider {
         }
         let plugin = self.plugin();
         let target = self.target();
+        // Spec §12.4 and §12.6 of the external-system-provider architecture let a provider stream
+        // an enumeration and declare that it is expensive; `docs/contracts/kuang/contributions.v1.yaml`
+        // gives a target contribution neither field, so nothing a package declares says whether
+        // its answer ends. A caller that asks for a bounded view therefore gets one here rather
+        // than reading until the package decides to stop, and the invocation is cancelled — spec
+        // §31.14: cancellation is delivered, not inferred (ADR-0583, ADR-0584).
+        let wanted = query.max();
         Ok(ValueStream::spawn(
             PipelineConfig::new(),
             Boundedness::Bounded,
@@ -157,7 +164,11 @@ impl Provider for PluginProvider {
                         return;
                     }
                 };
+                let mut delivered_count = 0usize;
                 loop {
+                    if wanted.is_some_and(|wanted| delivered_count >= wanted) {
+                        break;
+                    }
                     // Biased, so a cancelled pipeline stops the package rather than racing it
                     // for one more value. Spec §31.14 requires the cancel to be *delivered*:
                     // a package waiting for demand it will never be granted is a package that
@@ -169,7 +180,10 @@ impl Provider for PluginProvider {
                         event = invocation.next() => event,
                     };
                     let delivered = match event {
-                        Some(StreamEvent::Value(value)) => sink.send(value).await,
+                        Some(StreamEvent::Value(value)) => {
+                            delivered_count += 1;
+                            sink.send(value).await
+                        }
                         Some(StreamEvent::Failed(error)) => {
                             sink.fail(crate::kuang_host::wire_error_value(&error)).await
                         }

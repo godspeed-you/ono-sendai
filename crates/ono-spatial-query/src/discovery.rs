@@ -54,11 +54,48 @@ const SPATIAL_TARGETS: &[(&str, CostClass)] = &[
 /// and a strategy needs to know what each candidate costs before it can bound anything.
 #[must_use]
 pub fn acquisition_of_target(target: &str) -> Option<ono_spatial_core::AcquisitionCost> {
-    SPATIAL_TARGETS
-        .iter()
+    planned_targets()
+        .into_iter()
         .find(|(known, _)| *known == target)
         .map(|(_, cost)| cost.acquisition())
 }
+
+/// Every provider target a search may plan for: the declared ones above, then the ones the
+/// packages this session loaded contribute (§36.1, ADR-0584).
+///
+/// A contributed target is [`CostClass::Expensive`], and the reason is the same one `dir` and
+/// `file` are: enumerating it may be a network round trip per object, and a package has no way to
+/// say otherwise — `docs/contracts/kuang/contributions.v1.yaml` gives a target contribution a
+/// name, a schema, a summary and an identity note, and no cost. The external-system-provider
+/// specification §12.6 asks a provider to declare when discovery is expensive and §2.4 forbids a
+/// "hidden background inventory service", so the honest default is the one that makes a search
+/// reach a package only when it was asked to.
+#[must_use]
+pub fn planned_targets() -> Vec<(&'static str, CostClass)> {
+    let mut targets: Vec<(&'static str, CostClass)> = SPATIAL_TARGETS.to_vec();
+    for contributed in ono_spatial_core::types::contributed_types() {
+        if !targets
+            .iter()
+            .any(|(known, _)| *known == contributed.target)
+        {
+            targets.push((contributed.target, CostClass::Expensive));
+        }
+    }
+    targets
+}
+
+/// How many objects a place search reads from one contributed target (§34, §36.1, ADR-0584).
+///
+/// A declared target's end is known to the build: `get process` enumerates `/proc` and stops. A
+/// contributed one's is known to nobody — `docs/contracts/kuang/contributions.v1.yaml` gives a
+/// target contribution a name, a schema, a summary and an identity note, and no way to say
+/// whether the answer ends or how much it costs. §34 gives a search a budget, so the search asks
+/// for a bounded view and stops there rather than reading a stream that may never end.
+///
+/// It is far above the [`crate::find::DEFAULT_RESULT_BUDGET`] places a search answers with, so a
+/// package whose target holds fewer objects than this never notices it, and the ranking still
+/// chooses among more candidates than it can show.
+pub const CONTRIBUTED_SEARCH_OBJECTS: usize = 1024;
 
 /// Why a target was left out of a search.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,7 +200,8 @@ pub fn targets_for(
     declares: &impl Fn(&str, &str) -> bool,
 ) -> TargetPlan {
     let mut plan = TargetPlan::default();
-    for (target, cost) in SPATIAL_TARGETS {
+    for (target, cost) in planned_targets() {
+        let (target, cost) = (target, &cost);
         if !serves(target) {
             plan.skipped.push((target, Skipped::NoProvider));
             continue;

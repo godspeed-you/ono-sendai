@@ -29,6 +29,7 @@ use serde_json::json;
 const PACKAGE: &str = "dev.example.echo";
 const VERSION: &str = "0.1.0";
 const ITEM_SCHEMA: &str = "dev.example.echo.item/1";
+const PLACE_SCHEMA: &str = "dev.example.echo.place/1";
 
 fn main() {
     match std::env::args().nth(1).as_deref() {
@@ -56,6 +57,41 @@ fn item_schema_contribution() -> SchemaContribution {
             },
             SchemaFieldContribution {
                 name: "label".to_owned(),
+                field_type: "string".to_owned(),
+                required: true,
+                nullable: false,
+            },
+        ],
+    }
+}
+
+/// A resource-shaped contribution: identity that is not the name, and a name that is not
+/// identity (spec v0.4 §3.1, §10.1; external-system-provider §11.1, §11.2).
+///
+/// `uid` is the `metadata.uid` of the external world — the thing two observations are compared
+/// by — and `name` is what a person calls the resource. They are separate fields because they
+/// are separate facts: two resources may carry one name, and one resource may be renamed.
+fn place_schema_contribution() -> SchemaContribution {
+    SchemaContribution {
+        id: PLACE_SCHEMA.to_owned(),
+        name: "EchoPlace".to_owned(),
+        summary: "One resource the example package answers for.".to_owned(),
+        identity: vec!["uid".to_owned()],
+        fields: vec![
+            SchemaFieldContribution {
+                name: "uid".to_owned(),
+                field_type: "string".to_owned(),
+                required: true,
+                nullable: false,
+            },
+            SchemaFieldContribution {
+                name: "name".to_owned(),
+                field_type: "string".to_owned(),
+                required: true,
+                nullable: false,
+            },
+            SchemaFieldContribution {
+                name: "state".to_owned(),
                 field_type: "string".to_owned(),
                 required: true,
                 nullable: false,
@@ -100,6 +136,23 @@ fn item_record(seq: i64, label: &str) -> Value {
     Value::Record(std::sync::Arc::new(record))
 }
 
+fn place_record(uid: &str, name: &str, state: &str) -> Value {
+    let schema = place_schema_contribution()
+        .to_schema()
+        .expect("the fixture schema is valid");
+    let schema_id = schema.id().clone();
+    let record = RecordValue::builder(
+        std::sync::Arc::new(schema),
+        Provenance::local("plugin-self", schema_id),
+    )
+    .set("uid", Value::String(uid.into()))
+    .and_then(|builder| builder.set("name", Value::String(name.into())))
+    .and_then(|builder| builder.set("state", Value::String(state.into())))
+    .expect("the fixture fields exist")
+    .build();
+    Value::Record(std::sync::Arc::new(record))
+}
+
 /// One `ono.spatial-relation/1` edge: the package's own process, and the shell that started it.
 fn relation_record(source: &str, target: &str) -> Value {
     let schema = ono_value::builtin_schemas()
@@ -128,6 +181,17 @@ fn int_argument(ctx: &Ctx<'_>, name: &str, default: i64) -> i64 {
 fn honest() -> Plugin {
     Plugin::new(PACKAGE, VERSION)
         .contribute_schema(item_schema_contribution())
+        .contribute_schema(place_schema_contribution())
+        // A target whose objects are places: each carries an identity the package owns and a
+        // name a person reads, and the two are deliberately not the same field.
+        .contribute_target(TargetContribution {
+            name: "echo-place".to_owned(),
+            schema: PLACE_SCHEMA.to_owned(),
+            summary: "Resources the example package answers for.".to_owned(),
+            identity_doc: "Two observations are the same resource when their `uid` matches, \
+                           whatever the resource is called."
+                .to_owned(),
+        })
         .contribute_target(TargetContribution {
             name: "echo-refusal".to_owned(),
             schema: ITEM_SCHEMA.to_owned(),
@@ -978,6 +1042,20 @@ fn honest() -> Plugin {
         // is asked for something it cannot reach — no cluster named, no credential, no route. The
         // host learns of it from the invocation result rather than from a stream event, which is
         // the case a reader of the stream alone cannot see.
+        // Two of the three resources share a name and differ in identity, which is the case a
+        // shell that bound places to names could not tell apart at all.
+        .provider("echo-place", |ctx| {
+            for (uid, name, state) in [
+                ("u-1", "checkout", "ready"),
+                ("u-2", "checkout", "ready"),
+                ("u-3", "ledger", "degraded"),
+            ] {
+                if ctx.emit(&place_record(uid, name, state)).is_err() {
+                    return Outcome::Cancelled;
+                }
+            }
+            Outcome::Completed
+        })
         .provider("echo-refusal", |_ctx| {
             Outcome::Failed(ono_kuang_sdk::protocol::WireError {
                 code: "Ono-Sendai-E0401".to_owned(),

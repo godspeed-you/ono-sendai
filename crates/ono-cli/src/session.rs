@@ -1395,6 +1395,7 @@ impl Session {
             }
             for registered in plugin.targets() {
                 let target = registered.contribution.name.as_str();
+                contribute_spatial_type(&plugin, registered);
                 if self.provider.plugin_providers.iter().any(|provider| {
                     provider.package_id() == plugin.package_id() && provider.target() == target
                 }) {
@@ -1706,4 +1707,39 @@ pub fn probe_version(executable: &std::path::Path, argv: &[String]) -> Option<St
 fn redaction_policy() -> &'static ono_history::Policy {
     static POLICY: std::sync::OnceLock<ono_history::Policy> = std::sync::OnceLock::new();
     POLICY.get_or_init(ono_history::Policy::default)
+}
+
+/// Records the kind of *place* a contributed target answers with (spec v0.4 §36.1, ADR-0584).
+///
+/// It happens beside the provider registration, and for the same reason: until a package has run
+/// its handshake there is no schema to place anything by. §36.1 lets a package contribute "object
+/// schemas that implement `SpatialObject`", and the schema is where every part of the answer is —
+/// the display name the type is called by, and the `identity` fields that make two observations
+/// of one resource one place rather than two (§3.1, §31.23).
+///
+/// A target whose schema the package did not register, or whose schema declares no identity, is
+/// left alone: §3.1 composes a place's identity from what makes the object that object, and a
+/// schema that declares none has not said what that is. Such a target stays a `get` and no more.
+fn contribute_spatial_type(
+    plugin: &ono_kuang_supervisor::LoadedPlugin,
+    registered: &ono_kuang_supervisor::RegisteredTarget,
+) {
+    let Some(schema) = plugin
+        .schemas()
+        .iter()
+        .find(|schema| schema.id().to_string() == registered.contribution.schema)
+    else {
+        return;
+    };
+    let identity: Vec<&str> = schema.identity().iter().map(AsRef::as_ref).collect();
+    if identity.is_empty() {
+        return;
+    }
+    ono_spatial_core::types::contribute(
+        &schema.id().to_string(),
+        schema.name(),
+        &registered.contribution.name,
+        &identity,
+        plugin.package_id(),
+    );
 }

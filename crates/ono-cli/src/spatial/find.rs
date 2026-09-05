@@ -240,7 +240,11 @@ pub fn spatial_type(value: &Value) -> Result<SpatialType, ErrorValue> {
     // The registry spells the types `Process`, `Listener`, `BlockDevice`; a user types
     // `--type process`. Case is not information here, and `near --type <type>` will read the
     // same word (§6.2).
-    SpatialType::ALL
+    // The declared types of §3.3 and the kinds of place the packages this session loaded
+    // contributed (§36.1, ADR-0584). Both are typeable, and the refusal lists both: a type the
+    // shell answers for and does not name is one nobody can discover.
+    let known = ono_spatial_core::types::known();
+    known
         .iter()
         .copied()
         .find(|kind| kind.as_str().eq_ignore_ascii_case(&text))
@@ -251,7 +255,7 @@ pub fn spatial_type(value: &Value) -> Result<SpatialType, ErrorValue> {
             )
             .with_help(format!(
                 "the types are {}",
-                SpatialType::ALL
+                known
                     .iter()
                     .map(|kind| kind.as_str())
                     .collect::<Vec<_>>()
@@ -399,7 +403,14 @@ async fn observe(
     now: Timestamp,
 ) -> Result<Vec<RecordValue>, ErrorValue> {
     let _ = now;
-    let Ok(stream) = providers.snapshot(&Query::target(target).for_verb("find")) else {
+    let mut query = Query::target(target).for_verb("find");
+    // Nothing a package declares says whether its target's answer ends (§36.1, ADR-0584), so a
+    // search asks it for a bounded view. A declared target is asked as it always was: its end is
+    // known to the build, and `find place` is a question about all of them.
+    if ono_spatial_core::types::contributed_target(target).is_some() {
+        query = query.limit(ono_spatial_query::discovery::CONTRIBUTED_SEARCH_OBJECTS);
+    }
+    let Ok(stream) = providers.snapshot(&query) else {
         return Ok(Vec::new());
     };
     let collected = stream.collect().await;

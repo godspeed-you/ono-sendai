@@ -797,13 +797,31 @@ fn kind_chain(object_type: SpatialType) -> String {
 /// the map builds its `object_ref` from the very same function a place view does.
 pub fn reference_record(reference: &ono_provider_api::ObjectRef) -> Value {
     let id = reference.id();
-    let Some(schema) = builtin_schemas().get(id.schema()) else {
-        return Value::Null;
+    let schema_id = id.schema().to_string();
+    // A core schema names its identity fields in the built-in registry; a schema a KUANG/11
+    // package contributed names them in the contribution the session recorded when the package
+    // was mounted (§36.1, ADR-0584). Either way the reference is the same thing — the schema the
+    // object is served under and the values of the fields that schema calls its identity — and a
+    // place whose reference was null could not be revalidated by an action (§33.2, §35.4).
+    let fields: Vec<String> = match builtin_schemas().get(id.schema()) {
+        Some(schema) => schema
+            .identity()
+            .iter()
+            .map(|field| field.as_ref().to_owned())
+            .collect(),
+        None => match ono_spatial_core::types::contributed_for_schema(&schema_id) {
+            Some(contributed) => contributed
+                .identity
+                .iter()
+                .map(|field| (*field).to_owned())
+                .collect(),
+            None => return Value::Null,
+        },
     };
     let mut map = ono_value::MapValue::new();
-    map.insert("schema".into(), Value::string(&id.schema().to_string()));
-    for (field, value) in schema.identity().iter().zip(id.values()) {
-        map.insert(field.as_ref().into(), value.clone());
+    map.insert("schema".into(), Value::string(&schema_id));
+    for (field, value) in fields.iter().zip(id.values()) {
+        map.insert(field.as_str().into(), value.clone());
     }
     Value::Map(std::sync::Arc::new(map))
 }

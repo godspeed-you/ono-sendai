@@ -986,9 +986,8 @@ pub(crate) fn type_hint(selector: &str) -> Option<SpatialType> {
     if key.is_empty() {
         return None;
     }
-    SpatialType::ALL
-        .iter()
-        .copied()
+    ono_spatial_core::types::known()
+        .into_iter()
         .find(|known| known.as_str().eq_ignore_ascii_case(kind))
 }
 
