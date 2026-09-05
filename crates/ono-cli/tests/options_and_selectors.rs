@@ -2,7 +2,7 @@
 //! resolve — the two silent failure classes of `docs/STATE.md` ("Provider options are silently
 //! ignored") and the wiki's *What is not built yet*.
 //!
-//! Contracts: `docs/spec/commands/process.yaml` (`get process --user/--tree`), `file.yaml`
+//! Contracts: `docs/contracts/commands/process.yaml` (`get process --user/--tree`), `file.yaml`
 //! (`find file --name/--depth/--kind/--follow-symlinks`), `storage.yaml` (`get filesystem
 //! --mounted`), `network.yaml` (`trace socket --port`, `trace connection --remote`, `get socket`),
 //! `data.yaml` (`to --human`), `identity.yaml` (`get user <uid>`, `get group <gid>`). Schemas:

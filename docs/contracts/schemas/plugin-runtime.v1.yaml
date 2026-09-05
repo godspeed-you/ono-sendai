@@ -1,0 +1,138 @@
+# PluginRuntime. Source: spec §31.63 (capability negotiation at load — the `PLUGIN CONTRACT`
+# display is this record), §31.10 (isolation tiers), §31.15 (limits), §31.62 (version
+# dimensions). Output of `load plugin` (`docs/contracts/commands/kuang.yaml` → `ono.plugin.load`),
+# and delivered to the plugin itself by `lifecycle.init` (`protocol.v1.yaml`).
+#
+# It is the negotiated contract, so both sides hold the same record: the operator sees what was
+# granted and what was denied, and the plugin receives the same answer and must adapt to it
+# rather than re-prompting (spec §31.63).
+id: ono.plugin-runtime/1
+name: PluginRuntime
+summary: The contract negotiated when a package was loaded — what it may do, and within which limits.
+identity: [instance]
+fields:
+  instance:
+    type: string
+    required: true
+    doc: >-
+      The runtime instance's id. Identity is the instance rather than the package, because an
+      upgrade and a restart both produce a new instance while the package id stays the same.
+  plugin:
+    type: ref<ono.plugin/1>
+    required: true
+    doc: The installed package version this instance runs.
+  host_api:
+    type: string
+    required: true
+    doc: The negotiated host API version, e.g. `kuang-host/11.1` — one version, not the range the package asked for (spec §31.63).
+  value_protocol:
+    type: string
+    required: true
+    doc: The negotiated value protocol, e.g. `ono-value/1` (spec §31.62).
+  isolation:
+    type: enum
+    required: true
+    values: [core-built-in, trusted-native, isolated-component, remote-service]
+    doc: >-
+      The tier the package's manifest declares, in spec §31.10's own vocabulary. It says what
+      kind of thing the artifact is; `execution_tier` says what was actually installed around it,
+      and the two are different questions (v0.4.1 §17.2).
+  execution_tier:
+    type: enum
+    required: true
+    values: [native-confined, native-isolated, wasm, remote-service, declarative, core-built-in]
+    doc: >-
+      The named execution tier this instance ran in (v0.4.1 §17.2). A name rather than a boolean,
+      because `sandboxed: true` cannot distinguish a process under resource ceilings and
+      no-new-privileges from one behind a kernel filesystem allowlist, and v0.4.1 §17.3 forbids
+      calling either "sandboxed" without saying which boundary is meant. `native-confined` is
+      what this build runs native packages in: capability mediation and process confinement, and
+      no kernel isolation of the filesystem or the network. `wasm` is the component tier this
+      build runs `wasm-component` packages in: no descriptors, no filesystem, no network and no
+      environment by construction, memory capped by the runtime, no CPU ceiling (ADR-0569).
+      `native-isolated` is a name the model can express and this build does not offer.
+  execution_boundary:
+    type: string
+    required: true
+    doc: >-
+      One sentence saying what the tier is and what it is not, from
+      `docs/contracts/hardening/kuang_confinement_controls.yaml` (v0.4.1 §15.2, §19.2). Generated from
+      the tier rather than written beside it, so the record and the documentation cannot drift.
+  confinement:
+    type: list<record>
+    required: true
+    doc: >-
+      The confinement report of v0.4.1 §16.5, one row per control the tier claimed:
+      `{control, required, attempted, result, platform_detail}`. `result` is `applied`, `failed`,
+      `skipped` or `not_attempted`, and a successful spawn implies every `required` row reads
+      `applied` — a load for which that did not hold produced no instance at all (§2.3). The
+      control ids are the ones
+      `docs/contracts/hardening/kuang_confinement_controls.yaml` declares.
+  granted:
+    type: list<record>
+    required: true
+    doc: >-
+      Every granted capability as `{capability, class, scope, enforcement}`. `enforcement` is
+      `broker` or `advisory` per `capabilities.v1.yaml`, so an advisory scope is visible as one
+      in the contract and not only in the prompt.
+  denied:
+    type: list<record>
+    required: true
+    doc: >-
+      Every requested capability that was not granted, as `{capability, class, reason}`. Empty
+      when everything was granted. A denied `required` capability means the load failed and no
+      instance exists, so entries here are always `optional` or `runtime-requested`.
+  disabled_features:
+    type: list<string>
+    required: true
+    doc: >-
+      The features the package switched off because of a denial — spec §31.63's
+      `model.infer denied -> feature disabled: explain-flow`. Empty when nothing was disabled.
+      The package supplies this in its `lifecycle.init` answer; it is the plugin's own account
+      of what it gave up.
+  limits:
+    type: record
+    required: true
+    doc: >-
+      The effective quotas of spec §31.15: memory, persistent state, event queue depth, call
+      deadline, concurrent host calls, output rate. Each is the smaller of the package's
+      declaration and host policy.
+  overflow:
+    type: enum
+    required: true
+    values: [block-upstream, drop-oldest, drop-newest, coalesce, fail-stream]
+    doc: >-
+      The effective default overflow policy for this instance's streams. The manifest may
+      declare a preference; host policy decides (spec §31.15).
+  sandbox:
+    type: record
+    required: true
+    doc: >-
+      What the host actually confined this instance with before its first instruction ran
+      (spec §31.10, §31.15): `memory_max` and the observed `memory_peak`, the `cpu_class` and the
+      `nice` it became, the `open_files` and `file_size` ceilings, the private
+      `working_directory` it was given, the `environment` names it received — and nothing else —
+      and how far the `filesystem` and `network` scopes reach. The last two are `kernel` when the
+      kernel refuses what the scope does not allow and `broker` when the host can only refuse a
+      call the package makes *to the host*; spec §31.16 forbids presenting the second as if it
+      were the first.
+  network:
+    type: record
+    required: true
+    doc: "The effective outbound policy and the destinations in scope. `{outbound: none}` when the package declared none."
+  degraded:
+    type: bool
+    required: true
+    doc: Whether the instance is running with denied optional capabilities (spec §31.8).
+  started_at:
+    type: timestamp
+    required: true
+    doc: When the instance was created.
+  development_mode:
+    type: bool
+    required: true
+    doc: >-
+      Whether the instance was loaded with `--dev` (spec §31.71). Development mode relaxes
+      integrity, never authority, and it must remain visually marked for the whole session.
+default_view:
+  columns: [plugin, host_api, execution_tier, degraded, started_at]

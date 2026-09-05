@@ -688,7 +688,7 @@ async fn should_declare_the_target_schema_and_capabilities_the_service_commands_
             .iter()
             .find(|capability| capability.id() == "service.manage")
             .is_some_and(ono_provider_api::Capability::needs_elevation),
-        "docs/spec/capabilities.yaml gives service.manage elevation `required`"
+        "docs/contracts/capabilities.yaml gives service.manage elevation `required`"
     );
 }
 

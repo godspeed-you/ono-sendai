@@ -1,4 +1,4 @@
-//! The public command contract, as `docs/spec/commands/` declares it (spec §27, ADR-0012).
+//! The public command contract, as `docs/contracts/commands/` declares it (spec §27, ADR-0012).
 //!
 //! Nothing here is invented: every field of [`CommandContract`] is a field of a registry entry,
 //! and the enums are the closed vocabularies those files use. Loading is what turns the YAML into
@@ -45,7 +45,7 @@ impl fmt::Display for Stability {
 /// Where a registry entry came from (spec §31.64, ADR-0281).
 ///
 /// Every registry entry records its origin, and the host sets it — a package cannot declare
-/// itself core. `docs/spec/kuang/contributions.v1.yaml` names three values; `remote-provider`
+/// itself core. `docs/contracts/kuang/contributions.v1.yaml` names three values; `remote-provider`
 /// arrives with the remote registry projection of spec §31.40 and is not constructed yet, so it
 /// is not spelled here as an arm nothing can build.
 ///
@@ -145,7 +145,7 @@ impl fmt::Display for Privilege {
     }
 }
 
-/// Whether a provider capability needs privilege (`docs/spec/capabilities.yaml`).
+/// Whether a provider capability needs privilege (`docs/contracts/capabilities.yaml`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Elevation {
     /// Available to an ordinary user.
@@ -636,7 +636,7 @@ impl ParameterSpec {
     }
 }
 
-/// One command of the registry: everything `docs/spec/commands/` declares about it.
+/// One command of the registry: everything `docs/contracts/commands/` declares about it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommandContract {
     id: String,
@@ -665,7 +665,7 @@ pub struct CommandContract {
 
 /// Where a pipeline operation sits in the streaming classification matrix of v0.4.1 Appendix E.
 ///
-/// The matrix is `docs/spec/hardening/streaming_classification.yaml`, and Appendix E's closing
+/// The matrix is `docs/contracts/hardening/streaming_classification.yaml`, and Appendix E's closing
 /// sentence is what makes it a contract rather than a note: *"If a command cannot be placed in
 /// this matrix, its execution semantics are underspecified and MUST be resolved before release."*
 /// `cargo xtask spec-check` refuses a stream-consuming command that names no class.
@@ -985,7 +985,7 @@ pub(crate) struct RawCommand {
 /// An example, as YAML reads it.
 ///
 /// Most are plain scalars. One is not: `get process | select pid name {mem_mb: memory / 1MiB}` is
-/// unquoted in `docs/spec/commands/data.yaml`, and YAML reads a plain scalar containing `: ` as a
+/// unquoted in `docs/contracts/commands/data.yaml`, and YAML reads a plain scalar containing `: ` as a
 /// mapping rather than as text. Rejoining the mapping with `": "` restores the line the file
 /// actually contains, so the example survives verbatim without the registry being edited from
 /// here. Quoting the scalar in the contract file would remove the need for this arm.
@@ -1061,7 +1061,7 @@ fn contract_error(id: &str, detail: impl AsRef<str>) -> ErrorValue {
     ErrorValue::new(
         ErrorCode::ProviderSchemaViolation,
         format!(
-            "`{id}` in docs/spec/commands/ is not a valid contract: {}",
+            "`{id}` in docs/contracts/commands/ is not a valid contract: {}",
             detail.as_ref()
         ),
     )
@@ -1118,7 +1118,7 @@ impl RawCommand {
                     &id,
                     format!(
                         "unknown execution class `{name}`; v0.4.1 Appendix E has eight, and \
-                         docs/spec/hardening/streaming_classification.yaml lists them"
+                         docs/contracts/hardening/streaming_classification.yaml lists them"
                     ),
                 )
             })?),
@@ -1145,7 +1145,7 @@ impl RawCommand {
             execution,
             phase,
             examples: self.examples.iter().map(RawExample::text).collect(),
-            // A contract file under `docs/spec/commands/` is the core's own declaration. A
+            // A contract file under `docs/contracts/commands/` is the core's own declaration. A
             // package's contribution is re-attributed by the host at registration, never by the
             // document it was read from (spec §31.64).
             origin: Origin::Core,
@@ -1155,7 +1155,7 @@ impl RawCommand {
 }
 
 /// What a KUANG/11 package declares about one command it contributes (spec §31.22,
-/// `docs/spec/kuang/contributions.v1.yaml`).
+/// `docs/contracts/kuang/contributions.v1.yaml`).
 ///
 /// The declaration crosses two boundaries with the same fields: the handshake, where the host
 /// receives it from a running instance, and the package's own `contributions.commands`
@@ -1195,7 +1195,7 @@ impl ContributedCommand {
     /// `package.invalid` when a declared word is not one the registry's vocabulary carries — an
     /// unknown argument mode, or an id outside the package's own namespace. The refusal names
     /// the command, because a package that declares nonsense must be told which line is wrong
-    /// (`docs/spec/kuang/contributions.v1.yaml` → `registration_checks`).
+    /// (`docs/contracts/kuang/contributions.v1.yaml` → `registration_checks`).
     pub fn into_contract(self) -> Result<CommandContract, ErrorValue> {
         let Origin::Plugin { package, .. } = &self.origin else {
             return Err(contributed_error(
@@ -1257,13 +1257,13 @@ impl ContributedCommand {
             // materialization line it cannot substantiate.
             execution: None,
             output,
-            // `provider_capability` names an entry of `docs/spec/capabilities.yaml`, which is the
+            // `provider_capability` names an entry of `docs/contracts/capabilities.yaml`, which is the
             // core's provider vocabulary. A package's authority is its KUANG/11 capabilities,
             // which are a different register and are carried separately.
             provider_capability: None,
             required_capabilities: self.capabilities,
             // A contribution declares no selectors or options: the wire contribution of
-            // `docs/spec/kuang/protocol.v1.yaml` has no field for them, and the arguments a
+            // `docs/contracts/kuang/protocol.v1.yaml` has no field for them, and the arguments a
             // contributed command receives are the words the user typed (spec §31.22). The
             // registry does not invent parameters nobody declared.
             selectors: Vec::new(),
@@ -1327,7 +1327,7 @@ fn parameters(id: &str, raw: Vec<RawParameter>) -> Result<Vec<ParameterSpec>, Er
         .collect()
 }
 
-/// One verb of `docs/spec/verbs.yaml` (spec §7.1).
+/// One verb of `docs/contracts/verbs.yaml` (spec §7.1).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct VerbSpec {
     id: String,
@@ -1359,7 +1359,7 @@ impl VerbSpec {
     }
 
     /// The targets spec §7.1 names as typical. Not a closed list and not a constraint: the
-    /// commands that exist are in `docs/spec/commands/`.
+    /// commands that exist are in `docs/contracts/commands/`.
     #[must_use]
     pub fn typical_targets(&self) -> &[String] {
         &self.typical_targets
@@ -1378,7 +1378,7 @@ impl VerbSpec {
     }
 }
 
-/// One target of `docs/spec/targets.yaml` (spec §8).
+/// One target of `docs/contracts/targets.yaml` (spec §8).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct TargetSpec {
     id: String,
@@ -1427,7 +1427,7 @@ impl TargetSpec {
     }
 }
 
-/// One provider capability of `docs/spec/capabilities.yaml` (spec §27.1).
+/// One provider capability of `docs/contracts/capabilities.yaml` (spec §27.1).
 ///
 /// These are what a command needs from a provider. They are *not* the KUANG/11 capabilities of
 /// spec §31.16, which are a security boundary; conflating the two is how someone eventually
@@ -1489,7 +1489,7 @@ impl RawCapability {
             other => {
                 return Err(contract_error(
                     &self.id,
-                    format!("unknown risk `{other}` in docs/spec/capabilities.yaml"),
+                    format!("unknown risk `{other}` in docs/contracts/capabilities.yaml"),
                 ));
             }
         };
@@ -1500,7 +1500,7 @@ impl RawCapability {
             other => {
                 return Err(contract_error(
                     &self.id,
-                    format!("unknown elevation `{other}` in docs/spec/capabilities.yaml"),
+                    format!("unknown elevation `{other}` in docs/contracts/capabilities.yaml"),
                 ));
             }
         };

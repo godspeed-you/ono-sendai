@@ -55,7 +55,7 @@ use crate::trust::Fingerprint;
 
 /// One capability id an operator granted a client, and nothing that stands for several.
 ///
-/// The grammar is the one `docs/spec/capabilities.yaml` uses for its provider capabilities:
+/// The grammar is the one `docs/contracts/capabilities.yaml` uses for its provider capabilities:
 /// lowercase segments of letters, digits and dashes, separated by dots, at least two of them.
 /// `*`, `process.*`, `**`, `mutate`, `process.` and the empty string are all outside it, so a
 /// wildcard grant cannot be constructed, stored, parsed or compared — §9.5's "wildcards MUST NOT
@@ -106,7 +106,7 @@ impl FromStr for ActionGrant {
         )
         .with_retryable(false)
         .with_help(
-            "an action grant names one exact capability from docs/spec/capabilities.yaml, such \
+            "an action grant names one exact capability from docs/contracts/capabilities.yaml, such \
              as `process.signal` (v0.4.1 section 9.5). A pattern, a risk class or `*` is not a \
              grant: a capability added in a later version would then be authorized by something \
              written before it existed.",

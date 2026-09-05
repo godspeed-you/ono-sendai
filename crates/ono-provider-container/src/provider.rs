@@ -360,7 +360,7 @@ impl Provider for ContainerProvider {
         vec![
             Capability::new("container.list", Risk::Read),
             Capability::new("image.list", Risk::Read),
-            // `docs/spec/capabilities.yaml` gives `container.manage` elevation `conditional`:
+            // `docs/contracts/capabilities.yaml` gives `container.manage` elevation `conditional`:
             // the socket's permissions decide, and the engine's 403 is the structured form of
             // that decision (ADR-0113 §3).
             Capability::new("container.manage", Risk::Mutate),

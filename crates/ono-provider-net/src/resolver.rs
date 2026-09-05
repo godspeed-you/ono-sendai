@@ -22,7 +22,7 @@ pub enum RecordType {
 }
 
 impl RecordType {
-    /// The spelling `docs/spec/schemas/dns-record.v1.yaml` uses.
+    /// The spelling `docs/contracts/schemas/dns-record.v1.yaml` uses.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {

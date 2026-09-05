@@ -3,7 +3,7 @@
 //! `get link | to json`, `detach link`, `add/set/rename/remove link`, `watch link`, `trace link`,
 //! the `--agentless` mode of `link host`, and the honesty of mutations across a link.
 //!
-//! Contract: `docs/spec/commands/remote.yaml`, schemas `ono.link/1`, `ono.graph/1`,
+//! Contract: `docs/contracts/commands/remote.yaml`, schemas `ono.link/1`, `ono.graph/1`,
 //! `ono.action-result/1`, `ono.context/1`, and the deferred `ono.host/1`, `ono.probe-result/1`,
 //! `ono.link-event/1`. Narrative: spec §9.1 (the remote table), §14.4 (the link frame decides
 //! where provider calls run), §16.5 (no collapsed failures), §21.2 (the handshake), §21.3

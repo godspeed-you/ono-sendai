@@ -198,7 +198,7 @@ fn should_cover_every_unit_area_the_test_strategy_requires() {
 fn should_find_every_test_the_spatial_enumeration_review_names() {
     // ADR-0137: the security review of §52.2 is closed by an ADR whose threat table names a
     // passing test per §35 boundary, and by this test asserting that those tests are real.
-    let review = read("docs/decisions/ADR-0203-the-spatial-enumeration-review.md");
+    let review = read("docs/adr/ADR-0203-the-spatial-enumeration-review.md");
     let rows: String = review
         .lines()
         .filter(|line| line.starts_with("| T"))
@@ -300,7 +300,7 @@ fn should_find_every_test_the_threat_model_names() {
     // a test rather than an intention — the debt ADR-0015's own Consequences recorded. The rows
     // are read the same way ADR-0203's are, because they are one table: T16–T22 are numbered on
     // from T15.
-    let review = read("docs/decisions/ADR-0245-the-threat-model-with-the-tests-that-hold-it.md");
+    let review = read("docs/adr/ADR-0245-the-threat-model-with-the-tests-that-hold-it.md");
     let rows: Vec<&str> = review
         .lines()
         .filter(|line| line.starts_with("| T"))

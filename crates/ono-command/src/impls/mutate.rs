@@ -497,7 +497,7 @@ async fn collect_content(mut input: ValueStream, spelling: &str) -> Result<Value
 
 /// Whether a verb creates the object it names rather than acting on one that exists.
 ///
-/// `docs/spec/verbs.yaml`: `add` is "Create a membership or association", `mount` is "Attach a
+/// `docs/contracts/verbs.yaml`: `add` is "Create a membership or association", `mount` is "Attach a
 /// filesystem or resource" — both name something that is not there yet (ADR-0098 §1,
 /// ADR-0102 §1).
 fn creates(verb: &str) -> bool {

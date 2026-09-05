@@ -154,7 +154,7 @@ impl Request {
             .unwrap_or_else(|| vec![PathBuf::from(".")]);
         let listing = query.target_name() != "file";
         // `find file /var/log` binds its path to the selector named `root`, and find *is* the
-        // walk (docs/spec/commands/file.yaml: "discover files by walking a root"); only
+        // walk (docs/contracts/commands/file.yaml: "discover files by walking a root"); only
         // `get file`, whose selector is `path`, means the one entry. The contract declares no
         // `--recursive` — the verb carries the intent, and the selector name carries the verb.
         let recursive = named_root || query.flag("recursive");
@@ -181,7 +181,7 @@ impl Request {
             list_contents: listing,
             recursive,
             follow_symlinks: query.flag("follow-symlinks"),
-            // `docs/spec/commands/file.yaml` gives `--all` to `get dir` only, so a `file` walk
+            // `docs/contracts/commands/file.yaml` gives `--all` to `get dir` only, so a `file` walk
             // reports every entry it reaches and a `dir` listing hides dot entries by default.
             include_hidden: !listing || query.flag("all"),
             // The root's direct entries are depth 1: `--depth 1` lists them and descends no
@@ -287,7 +287,7 @@ impl Describer {
             "group",
             group_ref(&self.group_schema, stat.st_gid, group_name.as_deref()),
         )?
-        // Four octal digits, as `docs/spec/schemas/file.v1.yaml` fixes the representation: the
+        // Four octal digits, as `docs/contracts/schemas/file.v1.yaml` fixes the representation: the
         // grammar has no octal literal, so `where mode == "0644"` is the comparison a user can
         // actually write.
         .set(

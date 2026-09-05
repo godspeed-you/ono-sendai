@@ -65,8 +65,9 @@ fn baseline_of(records: &[String]) -> String {
 fn should_record_all_six_required_metrics_for_every_benchmark() {
     // The checked-in baseline is the one that has to hold, not a fixture: a record that stopped
     // carrying one of §32.3's six is a record nobody can read the regression out of.
-    let text = std::fs::read_to_string(baseline_path())
-        .expect("docs/spec/hardening/performance_baseline.json is the baseline of v0.4.1 §32.4");
+    let text = std::fs::read_to_string(baseline_path()).expect(
+        "docs/contracts/hardening/performance_baseline.json is the baseline of v0.4.1 §32.4",
+    );
     let baseline = Baseline::parse(&text).unwrap_or_else(|problems| {
         panic!("the checked-in baseline must parse: {problems:#?}");
     });
@@ -193,7 +194,7 @@ fn should_compare_a_benchmark_result_against_the_baseline_for_its_reference_envi
 fn baseline_path() -> std::path::PathBuf {
     let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.pop();
-    path.push("docs/spec/hardening/performance_baseline.json");
+    path.push("docs/contracts/hardening/performance_baseline.json");
     path
 }
 
@@ -246,8 +247,9 @@ fn should_name_the_reference_environment_on_every_recorded_figure() {
     // §37.2: the release documentation names CPU, cores, RAM, kernel, image, toolchain and
     // release build flags. The registry is where those live, and a figure that did not name one
     // of them is a figure about an unknown machine (§32.4).
-    let declared = xtask::perf::reference_environment(&repository_root())
-        .expect("docs/spec/hardening/performance_environment.yaml names the environment of §37.2");
+    let declared = xtask::perf::reference_environment(&repository_root()).expect(
+        "docs/contracts/hardening/performance_environment.yaml names the environment of §37.2",
+    );
     for field in [
         "cpu_model",
         "cpu_cores",
@@ -490,8 +492,8 @@ fn should_report_a_frozen_baseline_naming_a_benchmark_nobody_measured() {
     let scratch = ono_testkit::scratch();
     let root = repository_root();
     for file in [
-        "docs/spec/hardening/performance_baseline.json",
-        "docs/spec/hardening/performance_environment.yaml",
+        "docs/contracts/hardening/performance_baseline.json",
+        "docs/contracts/hardening/performance_environment.yaml",
     ] {
         scratch.write(
             file,
@@ -527,8 +529,8 @@ fn should_report_a_frozen_baseline_that_leaves_a_measured_benchmark_out() {
     let scratch = ono_testkit::scratch();
     let root = repository_root();
     for file in [
-        "docs/spec/hardening/performance_baseline.json",
-        "docs/spec/hardening/performance_environment.yaml",
+        "docs/contracts/hardening/performance_baseline.json",
+        "docs/contracts/hardening/performance_environment.yaml",
     ] {
         scratch.write(
             file,
@@ -561,8 +563,8 @@ fn should_report_a_frozen_baseline_that_leaves_an_absent_artifact_hash_unexplain
     let scratch = ono_testkit::scratch();
     let root = repository_root();
     for file in [
-        "docs/spec/hardening/performance_baseline.json",
-        "docs/spec/hardening/performance_environment.yaml",
+        "docs/contracts/hardening/performance_baseline.json",
+        "docs/contracts/hardening/performance_environment.yaml",
     ] {
         scratch.write(
             file,

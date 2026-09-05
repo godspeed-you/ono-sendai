@@ -47,15 +47,15 @@ fn shell(dir: &Scratch) -> Shell {
     shell
 }
 
-/// Every key `docs/spec/hardening/limits.yaml` declares, read from the registry itself.
+/// Every key `docs/contracts/hardening/limits.yaml` declares, read from the registry itself.
 ///
 /// A test that listed them would be the second copy §52.2 forbids; this reads the contract.
 fn registry() -> Vec<Value> {
     let text = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/spec/hardening/limits.yaml"),
+            .join("../../docs/contracts/hardening/limits.yaml"),
     )
-    .expect("docs/spec/hardening/limits.yaml is the registry of v0.4.1 §52.1");
+    .expect("docs/contracts/hardening/limits.yaml is the registry of v0.4.1 §52.1");
     let document: Value = serde_yaml_ng::from_str(&text).expect("the registry is YAML");
     document["limits"]
         .as_sequence()
@@ -429,7 +429,7 @@ fn should_answer_the_same_figures_inspect_limits_shows_from_the_contract_registr
             Some(shown),
             entry["default"].as_u64(),
             "`{key}` defaults to {shown} in the shell and to {:?} in \
-             docs/spec/hardening/limits.yaml; Appendix A fixes one number",
+             docs/contracts/hardening/limits.yaml; Appendix A fixes one number",
             entry["default"]
         );
         assert_eq!(
@@ -450,7 +450,7 @@ fn should_answer_the_same_figures_inspect_limits_shows_from_the_contract_registr
             declared
                 .iter()
                 .any(|entry| entry["key"].as_str() == Some(key)),
-            "the shell enforces `{key}` and docs/spec/hardening/limits.yaml does not declare it; \
+            "the shell enforces `{key}` and docs/contracts/hardening/limits.yaml does not declare it; \
              §52.2 wants one home per number"
         );
     }

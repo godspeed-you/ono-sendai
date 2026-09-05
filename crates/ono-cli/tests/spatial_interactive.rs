@@ -2,7 +2,7 @@
 //! terminal: the startup horizon, `look`'s rendering, the prompt as a place indicator, the
 //! ambiguity picker, the full-screen map, and the promise that the shell survives all of it.
 //!
-//! Narrative: `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — §5 (entry
+//! Narrative: `docs/specs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — §5 (entry
 //! experience and the spatial horizon), §8.3 (expansion is a view action, `enter` is
 //! navigation), §9.4 (completion as spatial discovery), §21 (prompt and HUD semantics), §23
 //! (map rendering, full-screen half), §24 (`look` rendering rules), §27 (spatial resolution and

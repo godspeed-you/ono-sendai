@@ -95,7 +95,7 @@ fn main() -> ExitCode {
             if let Some(address) = &agent_options.listen {
                 // v0.4.1 §9.5, §56.4: provider capabilities stay the canonical authorization
                 // unit, so the agent learns which capability an action needs from the same
-                // `provider_capability` field `docs/spec/commands/` already declares. A peer
+                // `provider_capability` field `docs/contracts/commands/` already declares. A peer
                 // never says which capability it needs; this side resolves it (§65.2).
                 let config = with_action_capabilities(config);
                 return runtime.block_on(serve_authenticated(address, &identity, config));

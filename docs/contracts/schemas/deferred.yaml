@@ -1,0 +1,29 @@
+# Schemas a command already advertises and a later phase will write.
+#
+# The registries describe the whole product, not the part that exists today (ADR-0012), so a
+# stable command may name an output schema before the phase that delivers it has run. That is a
+# promise, and `cargo xtask spec-check` refuses to let a promise go unwritten: every schema id a
+# non-planned command references must either exist under `docs/contracts/schemas/` or appear here with
+# the spec §37 phase that will write it.
+#
+# The check is symmetric. An entry naming a schema that now exists is reported as stale, so this
+# list cannot quietly rot into a permanent exemption.
+
+version: 1
+
+deferred:
+  - id: ono.measure/1
+    phase: "B"
+    required_by: [ono.data.measure]
+  - id: ono.execution-plan/1
+    phase: "D"
+    required_by: [ono.meta.explain]
+  - id: ono.help-page/1
+    phase: "D"
+    required_by: [ono.meta.help]
+  - id: ono.inspection/1
+    phase: "D"
+    required_by: [ono.meta.inspect]
+  - id: ono.type-info/1
+    phase: "D"
+    required_by: [ono.meta.type]

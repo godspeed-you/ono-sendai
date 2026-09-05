@@ -8,7 +8,7 @@
 //! So everything a plugin will be handed later is defined here and used by the core providers
 //! now: [`Query`] and [`Selector`] rather than an AST, [`ObjectId`] rather than a row number,
 //! [`ObjectEvent`] in the envelope of spec §31.14, [`Capability`] in the vocabulary of
-//! `docs/spec/capabilities.yaml`, and [`ActionOutcome`] rather than an exit code. A KUANG/11
+//! `docs/contracts/capabilities.yaml`, and [`ActionOutcome`] rather than an exit code. A KUANG/11
 //! provider is a [`Provider`], not a special case of one.
 //!
 //! The three primitives of spec §31.14 are [`Provider::snapshot`] (state now),
@@ -62,7 +62,7 @@ pub trait Provider: Send + Sync + std::fmt::Debug {
     /// `None` — the default — for a provider whose targets no second provider claims. Where two
     /// providers claim one target and its schema identifies by `provider`, each of them must
     /// answer, and with a different token; `cargo xtask spec-check` holds that over the
-    /// declarations in `docs/spec/providers/`.
+    /// declarations in `docs/contracts/providers/`.
     fn identity_token(&self) -> Option<&str> {
         None
     }

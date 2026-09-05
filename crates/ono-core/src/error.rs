@@ -101,7 +101,7 @@ macro_rules! error_codes {
         /// A stable, machine-readable error identity from spec §43.
         ///
         /// The rendered form is `Ono-Sendai-ENNNN`; the selector is the dotted `family.detail`
-        /// name that `docs/spec/errors.yaml`, `try`/`catch` and predicates over error values
+        /// name that `docs/contracts/errors.yaml`, `try`/`catch` and predicates over error values
         /// match on.
         ///
         /// ```
@@ -280,7 +280,7 @@ error_codes! {
     RemoteHandshakeTimeout => "Ono-Sendai-E1502", "remote.handshake_timeout", Timeout,
         "The peer did not complete TLS and Ono negotiation within the time a handshake is given.";
 
-    // --- KUANG/11, spec §31.79: the K11 family of docs/spec/kuang/errors.v1.yaml, folded into
+    // --- KUANG/11, spec §31.79: the K11 family of docs/contracts/kuang/errors.v1.yaml, folded into
     // the global model (ADR-0108). Numbering follows §31.79's families.
     KuangPackageInvalid => "Ono-Sendai-K11001", "package.invalid", Parse,
         "The package manifest is not a valid `kuang-package/1` document.";

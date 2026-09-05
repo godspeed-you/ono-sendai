@@ -1,6 +1,6 @@
 //! The repositories a package manager reads its index from, and the refresh that acts on one
-//! (issue #17, ADR-0562, ADR-0565). Contract: `docs/spec/commands/package.yaml`,
-//! `docs/spec/schemas/package-source.v1.yaml`, `docs/spec/providers/linux-packages.yaml`.
+//! (issue #17, ADR-0562, ADR-0565). Contract: `docs/contracts/commands/package.yaml`,
+//! `docs/contracts/schemas/package-source.v1.yaml`, `docs/contracts/providers/linux-packages.yaml`.
 //!
 //! Every test runs the real `ono` binary against fake managers on an otherwise empty `PATH`:
 //! the assumption pinned here is that the shell reads apt's sources through

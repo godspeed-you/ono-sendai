@@ -2,7 +2,7 @@
 //! script sees it: `look`, `near`, `enter`, `follow`, `jump`, `back`, `up`, `home`, `trail`,
 //! `find place` and the bounded answer of `map --json`.
 //!
-//! Narrative: `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — §5 (the spatial
+//! Narrative: `docs/specs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — §5 (the spatial
 //! horizon), §6 (the spatial command language: §6.1 `look`, §6.2 `near`, §6.3 `enter`, §6.4
 //! `follow`, §6.5 `jump`, §6.6 `back`/`up`/`home`, §6.7 `trail`, §6.8 `find place`, §6.9 `map`),
 //! §7 (the canonical domains and their required children), §20 (the navigation trail), §27

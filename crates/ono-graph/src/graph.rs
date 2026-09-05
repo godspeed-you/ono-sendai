@@ -207,7 +207,7 @@ pub enum Direction {
 }
 
 impl Direction {
-    /// The name `docs/spec/schemas/graph-edge.v1.yaml` gives the direction.
+    /// The name `docs/contracts/schemas/graph-edge.v1.yaml` gives the direction.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -367,7 +367,7 @@ impl Edge {
     }
 }
 
-/// The name `docs/spec/schemas/graph-edge.v1.yaml` gives a confidence.
+/// The name `docs/contracts/schemas/graph-edge.v1.yaml` gives a confidence.
 #[must_use]
 pub const fn confidence_name(confidence: Confidence) -> &'static str {
     match confidence {
@@ -606,7 +606,7 @@ impl Graph {
     /// # Errors
     ///
     /// Returns `provider.schema_violation` if the graph contracts are not loadable, which means
-    /// the build embedded a malformed `docs/spec/schemas/` file.
+    /// the build embedded a malformed `docs/contracts/schemas/` file.
     pub fn to_value(&self) -> Result<Value, ErrorValue> {
         let nodes: Vec<Value> = self
             .nodes

@@ -16,7 +16,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use ono_adapter::{AdapterPack, Negotiation, OutputDemand, Registry, Version};
 use ono_testkit::{Scratch, scratch};
 
-const UTIL_LINUX: &str = include_str!("../../../docs/spec/adapters/first-party/util-linux.yaml");
+const UTIL_LINUX: &str =
+    include_str!("../../../docs/contracts/adapters/first-party/util-linux.yaml");
 
 /// A registry over the bundled packs whose version probe answers with `version` and counts.
 fn registry(version: &'static str) -> (Registry, Arc<AtomicUsize>) {

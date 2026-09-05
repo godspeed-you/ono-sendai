@@ -4,7 +4,7 @@
 //! v0.4.1 §65.12). That rule is what makes the result trustworthy and also what leaves it
 //! undefended — a decomposition proved by an *unchanged* suite has, by construction, no test of
 //! its own. §66.6 asks for navigability, which is a property of the layout, so this module reads
-//! `docs/spec/hardening/module_architecture.yaml` and holds the tree to it.
+//! `docs/contracts/hardening/module_architecture.yaml` and holds the tree to it.
 //!
 //! Every rule here runs in both directions. A responsibility the specification names must have a
 //! module, **and** a module must be a responsibility somebody named: the second half is what stops
@@ -25,7 +25,7 @@ use serde_yaml_ng::Value as Yaml;
 use crate::scan::Problem;
 
 /// Where the declaration lives, relative to the repository root.
-const REGISTRY: &str = "docs/spec/hardening/module_architecture.yaml";
+const REGISTRY: &str = "docs/contracts/hardening/module_architecture.yaml";
 
 /// Reports every disagreement between the declared architecture and the tree.
 #[must_use]

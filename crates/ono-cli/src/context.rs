@@ -75,7 +75,7 @@ fn enters_a_path(stage: &Stage) -> bool {
         .is_some_and(crate::spatial::storage::looks_like_a_path)
 }
 
-/// Whether the stage's first word names a target `docs/spec/commands/` declares for `enter`.
+/// Whether the stage's first word names a target `docs/contracts/commands/` declares for `enter`.
 fn enters_a_declared_target(stage: &Stage) -> bool {
     let Some(word) = stage
         .arguments

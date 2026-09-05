@@ -2,7 +2,7 @@
 //!
 //! The manifest is read and judged before any package byte executes — spec §31.89 rule 1,
 //! "Manifest before code". Every section that carries authority is closed: an unknown key in it
-//! invalidates the manifest rather than being ignored (`docs/spec/kuang/manifest.v1.yaml`,
+//! invalidates the manifest rather than being ignored (`docs/contracts/kuang/manifest.v1.yaml`,
 //! ADR-0022 §10). Every identity rule of spec §31.5 is checked here, and a manifest that fails
 //! one is `package.invalid`, never merely warned about.
 

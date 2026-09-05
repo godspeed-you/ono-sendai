@@ -2,7 +2,7 @@
 //!
 //! The shape of each contract — its fields, types, nullability, units, identity and default view
 //! — is stated by the generated suite of spec §35.3
-//! (`crates/ono-cli/tests/provider_conformance.rs`, from `docs/spec/schemas/*.v1.yaml`). What is
+//! (`crates/ono-cli/tests/provider_conformance.rs`, from `docs/contracts/schemas/*.v1.yaml`). What is
 //! left here is what a declaration cannot express: the meaning of a field, and that every record
 //! a provider emits against a fixed `/proc` tree satisfies the contract it claims.
 

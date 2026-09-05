@@ -332,7 +332,7 @@ pub const CATALOGUE: &[SettingSpec] = &[
         default: DefaultValue::Bool(false),
         range: None,
     },
-    // §26.3: "Thresholds MUST be inspectable and configurable." `docs/spec/spatial/landmarks.yaml`
+    // §26.3: "Thresholds MUST be inspectable and configurable." `docs/contracts/spatial/landmarks.yaml`
     // names the setting behind each threshold; these are those settings, and `spec-check` holds
     // the two defaults together (ADR-0128).
     SettingSpec {
@@ -373,7 +373,7 @@ pub const CATALOGUE: &[SettingSpec] = &[
     // --- the hardening limits of v0.4.1 §55.1 and Appendix A (ADR-0456) ----------------------
     // Every one of these is declared with a range, because §55.2 makes the check mandatory here
     // and its binding sentence is that a security-sensitive agent limit must never silently
-    // become unlimited because a value failed to parse. `docs/spec/hardening/limits.yaml` holds
+    // become unlimited because a value failed to parse. `docs/contracts/hardening/limits.yaml` holds
     // the same thirteen rows, and `resource_limits.rs` compares the two in both directions.
     SettingSpec {
         key: "limits.materialize_items",

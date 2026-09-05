@@ -3,7 +3,7 @@
 //! Spec §15.2 lists what a help page contains at minimum — synopsis, description, selectors,
 //! options, input type, output type, privileges and capabilities, examples, related commands,
 //! provider source, stability — and says it *derives from metadata*. So no page here is written
-//! by hand: everything is read out of `docs/spec/`, which is also why a command cannot be added
+//! by hand: everything is read out of `docs/contracts/`, which is also why a command cannot be added
 //! without its help being complete (spec §50).
 
 use std::fmt::Write as _;
@@ -804,7 +804,7 @@ fn builtin_topic(registry: &CommandRegistry, topic: &str) -> Option<TopicHelp> {
         },
         // v0.4 §38.1: the overview a user reaches for before they know a verb to ask about. The
         // eleven lines are the ones that section lists, in its order; each verb's full page is
-        // `help <verb>`, generated from `docs/spec/commands/spatial.yaml` like every other.
+        // `help <verb>`, generated from `docs/contracts/commands/spatial.yaml` like every other.
         "spatial" => TopicHelp {
             name: "spatial".to_owned(),
             summary: "Moving through the system as a space (spec v0.4 §6, §38.1).".to_owned(),

@@ -5,7 +5,7 @@
 //! not a string: it is one of the fourteen §3.7 fixes, or a reason a KUANG/11 package contributed
 //! and identified itself as the source of (§26.5).
 //!
-//! What the thresholds are, and which setting changes each, is `docs/spec/spatial/landmarks.yaml`;
+//! What the thresholds are, and which setting changes each, is `docs/contracts/spatial/landmarks.yaml`;
 //! evaluating them is the landmark engine's job, not this crate's.
 
 use std::fmt;
@@ -66,7 +66,7 @@ impl LandmarkReason {
         LandmarkReason::UserPinned,
     ];
 
-    /// The name §3.7 and `docs/spec/spatial/landmarks.yaml` spell.
+    /// The name §3.7 and `docs/contracts/spatial/landmarks.yaml` spell.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {

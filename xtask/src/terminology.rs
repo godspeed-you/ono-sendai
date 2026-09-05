@@ -5,7 +5,7 @@
 //! could overstate implementation", with the goal stated plainly: *"The goal is not to ban these
 //! words. The goal is to ensure they refer to a defined contract."*
 //!
-//! The contract they refer to is `docs/spec/hardening/terminology.yaml`, which holds §19.1's eight
+//! The contract they refer to is `docs/contracts/hardening/terminology.yaml`, which holds §19.1's eight
 //! definitions once. `docs/reference/terminology.md` is rendered from that file (§19.2) and this
 //! module reads the same rows, so the definition a reader is shown and the rule a document is held
 //! to cannot drift apart.
@@ -42,10 +42,10 @@ use crate::scan::Problem;
 
 /// The registry, compiled in so a phrase list and the document it judges cannot be handed
 /// different copies of the contract.
-const REGISTRY: &str = include_str!("../../docs/spec/hardening/terminology.yaml");
+const REGISTRY: &str = include_str!("../../docs/contracts/hardening/terminology.yaml");
 
 /// The six remote trust concepts of §51.3, compiled in for the same reason.
-const REMOTE_TRUST: &str = include_str!("../../docs/spec/hardening/remote_trust.yaml");
+const REMOTE_TRUST: &str = include_str!("../../docs/contracts/hardening/remote_trust.yaml");
 
 /// One of §19.1's canonical terms.
 #[derive(Debug, Clone, Deserialize)]
@@ -136,7 +136,7 @@ const REMOTE_CONCEPTS: [&str; 6] = [
 pub fn check_remote_trust(location: &str, text: &str) -> Vec<Problem> {
     let Some(concepts) = remote_trust() else {
         return vec![Problem::new(
-            "docs/spec/hardening/remote_trust.yaml",
+            "docs/contracts/hardening/remote_trust.yaml",
             "does not parse, so v0.4.1 §51.3's six concepts cannot be checked".to_owned(),
         )];
     };
@@ -144,7 +144,7 @@ pub fn check_remote_trust(location: &str, text: &str) -> Vec<Problem> {
     for id in REMOTE_CONCEPTS {
         if !concepts.iter().any(|concept| concept.concept == id) {
             problems.push(Problem::new(
-                "docs/spec/hardening/remote_trust.yaml",
+                "docs/contracts/hardening/remote_trust.yaml",
                 format!("does not declare `{id}`, which v0.4.1 §51.3 lists"),
             ));
         }
@@ -228,7 +228,7 @@ fn check_registry() -> Vec<Problem> {
         .filter(|canonical| !terms().iter().any(|term| term.term == **canonical))
         .map(|canonical| {
             Problem::new(
-                "docs/spec/hardening/terminology.yaml",
+                "docs/contracts/hardening/terminology.yaml",
                 format!(
                     "does not define `{canonical}`, which v0.4.1 §19.1 fixes. A terminology gate                      missing a term is a gate that agrees with everything said about it."
                 ),
@@ -487,7 +487,7 @@ pub fn check_security_text(text: &str) -> Vec<Problem> {
 /// false wherever it is written; omitting a disclaimer is only a gap in a document a user reads.
 #[must_use]
 pub fn check_decisions(root: &Path) -> Vec<Problem> {
-    let directory = root.join("docs").join("decisions");
+    let directory = root.join("docs").join("adr");
     let Ok(entries) = std::fs::read_dir(&directory) else {
         return Vec::new();
     };
@@ -522,7 +522,7 @@ pub fn check_decision(name: &str, text: &str) -> Vec<Problem> {
         return Vec::new();
     }
     let claimed = without_mentions(text);
-    let location = format!("docs/decisions/{name}.md");
+    let location = format!("docs/adr/{name}.md");
     let mut problems = Vec::new();
     for term in terms() {
         for phrase in &term.overstates {

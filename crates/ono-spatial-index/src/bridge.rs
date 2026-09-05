@@ -677,7 +677,7 @@ impl Reader<'_> {
         confidence: Confidence,
         attributes: Vec<(&'static str, Value)>,
     ) {
-        // A `RelationSpec` exists only for a relation `docs/spec/spatial/relations.yaml`
+        // A `RelationSpec` exists only for a relation `docs/contracts/spatial/relations.yaml`
         // declares, so a relation nobody wrote down cannot become an edge (§2.5).
         if let Some(spec) = relation::spec(relation) {
             self.out.facts.push(Fact {

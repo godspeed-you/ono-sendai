@@ -306,7 +306,7 @@ fn named_adrs(text: &str) -> Vec<String> {
 
 /// The `- Date:` an ADR carries, or `None` when no ADR of that id exists.
 fn adr_date(id: &str) -> Option<String> {
-    let entry = std::fs::read_dir(repo().join("docs/decisions"))
+    let entry = std::fs::read_dir(repo().join("docs/adr"))
         .expect("the decisions directory is readable")
         .flatten()
         .find(|entry| {
@@ -533,7 +533,7 @@ const RELEASE_CRITERIA: [(&str, &str); 46] = [
 
 /// The bullets of §66.1–§66.8, read from the specification rather than from the table above.
 fn release_definition() -> Vec<String> {
-    let spec = read("docs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md");
+    let spec = read("docs/specs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md");
     let start = spec
         .find("# 66. Release Definition")
         .expect("the specification carries §66");

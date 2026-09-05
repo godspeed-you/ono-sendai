@@ -1,5 +1,5 @@
 //! Outcome tests for the data transforms the contract declares:
-//! `tail`, `join` and `diff` (`docs/spec/commands/data.yaml`, spec §53 Appendix B, §11.1), and
+//! `tail`, `join` and `diff` (`docs/contracts/commands/data.yaml`, spec §53 Appendix B, §11.1), and
 //! for the one rendering rule the wiki lists as differing from the contract: a narrow terminal
 //! switches to stacked records instead of keeping a table it has to mutilate (spec §13.2, §13.3).
 //!

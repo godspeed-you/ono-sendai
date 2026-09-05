@@ -2,7 +2,7 @@
 //!
 //! A plugin author declares who the package is, registers handlers for the commands and targets
 //! it contributes, and calls [`Plugin::run`]. The SDK then speaks the protocol of
-//! `docs/spec/kuang/protocol.v1.yaml` over stdin/stdout: it sends the hello, answers
+//! `docs/contracts/kuang/protocol.v1.yaml` over stdin/stdout: it sends the hello, answers
 //! `lifecycle.init` with the features the negotiated contract forces off, dispatches
 //! invocations, and enforces the plugin's side of the pull-based flow control — [`Ctx::emit`]
 //! waits for credit rather than outrunning the host, because emitting beyond credit is a

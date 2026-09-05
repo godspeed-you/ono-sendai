@@ -44,7 +44,7 @@ impl Namespace {
     }
 }
 
-/// The statement keywords of `docs/spec/language.yaml`, step 1 of the order (ADR-0011).
+/// The statement keywords of `docs/contracts/language.yaml`, step 1 of the order (ADR-0011).
 ///
 /// The parser owns them — `if` at the head of a statement is a control form before it is
 /// anything else — and `resolve command` reports them as such rather than looking further.
@@ -67,7 +67,7 @@ pub const BUILTINS: &[&str] = &[
 /// `set` and `remove` are builtins only for the state that lives in the shell: `set env`,
 /// `set config` and `remove env` (ADR-0010, ADR-0020 §9). `set file`, `remove file`, `set
 /// service` and every other target are native commands the registry answers for
-/// (`docs/spec/commands/`), so they resolve like `stop process` does — a bound implementation, or
+/// (`docs/contracts/commands/`), so they resolve like `stop process` does — a bound implementation, or
 /// the honest E0101 — and they may stand in a pipeline (ADR-0068).
 #[must_use]
 pub fn builtin_for(name: &str, first_argument: Option<&str>) -> Option<&'static str> {

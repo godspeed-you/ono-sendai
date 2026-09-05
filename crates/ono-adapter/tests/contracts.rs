@@ -12,7 +12,8 @@ use ono_adapter::{AdapterPack, validate};
 mod support;
 use support::fixtures_root;
 
-const UTIL_LINUX: &str = include_str!("../../../docs/spec/adapters/first-party/util-linux.yaml");
+const UTIL_LINUX: &str =
+    include_str!("../../../docs/contracts/adapters/first-party/util-linux.yaml");
 
 #[test]
 fn should_load_every_first_party_pack() {
@@ -41,7 +42,7 @@ fn should_validate_every_first_party_pack_against_the_schemas_and_fixtures() {
         let problems = validate(pack, ono_value::builtin_schemas(), &fixtures_root());
         assert!(
             problems.is_empty(),
-            "{} must satisfy docs/spec/adapters/schema.yaml, got {problems:#?}",
+            "{} must satisfy docs/contracts/adapters/schema.yaml, got {problems:#?}",
             pack.id()
         );
     }
@@ -192,7 +193,7 @@ fn should_bundle_the_iproute2_pack_with_its_ip_and_ss_adapters() {
 
 #[test]
 fn should_reject_a_template_that_names_no_placeholder() {
-    let iproute2 = include_str!("../../../docs/spec/adapters/first-party/iproute2.yaml");
+    let iproute2 = include_str!("../../../docs/contracts/adapters/first-party/iproute2.yaml");
     let yaml = iproute2.replacen(
         "address: {from: \"\", template: \"{local}/{prefixlen}\"}",
         "address: {from: \"\", template: \"plain\"}",

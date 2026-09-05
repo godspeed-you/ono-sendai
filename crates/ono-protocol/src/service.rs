@@ -705,7 +705,7 @@ where
             }
             Message::StartAdapt(request) => {
                 // Adapting runs a program of the caller's choosing on this host. No entry in
-                // `docs/spec/capabilities.yaml` names it, so no grant can name it either, and a
+                // `docs/contracts/capabilities.yaml` names it, so no grant can name it either, and a
                 // policy-governed connection is refused: §9.4's observe-only default does not
                 // include running things, and Appendix C denies what it cannot name.
                 let refusal = match &authorization {

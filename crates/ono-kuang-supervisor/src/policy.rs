@@ -4,7 +4,7 @@
 //! default deny". A plugin request produces a prompt under `ask` — and this supervisor is a
 //! library with no prompt to offer, so `ask` resolves to `deny`, exactly as a non-interactive
 //! session must: a prompt nobody can answer is a denial that pretends otherwise
-//! (`docs/spec/kuang/capabilities.v1.yaml` → `grant.decisions`).
+//! (`docs/contracts/kuang/capabilities.v1.yaml` → `grant.decisions`).
 
 use globset::{Glob, GlobSetBuilder};
 use ono_kuang_protocol::{Capability, KuangError, KuangErrorCode};
@@ -307,7 +307,7 @@ fn name_matches(pattern: &str, value: &str) -> bool {
 }
 
 /// The structured denial for an evaluation that did not allow the call, carrying the metadata
-/// `docs/spec/kuang/errors.v1.yaml` promises: the attempted value and the granted scope.
+/// `docs/contracts/kuang/errors.v1.yaml` promises: the attempted value and the granted scope.
 #[must_use]
 pub fn denial_error(capability: Capability, evaluation: &Evaluation) -> KuangError {
     match evaluation {

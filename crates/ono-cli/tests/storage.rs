@@ -2,7 +2,7 @@
 //! `get device`, `mount filesystem`, `unmount filesystem`, `set`/`add`/`remove`/`start`/`stop
 //! mount`, `watch mount`, `trace mount` and `enter mount`.
 //!
-//! Contract: `docs/spec/commands/storage.yaml`, schemas `ono.mount/1`, `ono.action-result/1`,
+//! Contract: `docs/contracts/commands/storage.yaml`, schemas `ono.mount/1`, `ono.action-result/1`,
 //! `ono.graph/1`, `ono.context/1`, and the deferred `ono.device/1`. Narrative: spec §9.1 (the
 //! storage table), §8.1 (`device` is a system target), §14.1/§14.3 (object context, implicit
 //! selector; ADR-0023), §16.5 (a failure is a `failed` row, never a collapsed boolean; ADR-0006

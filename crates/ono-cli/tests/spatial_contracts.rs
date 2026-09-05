@@ -3,7 +3,7 @@
 //! inherits — KUANG/11 packages and the v0.3 external command adapters — plus the session state,
 //! the configuration keys and the performance budgets that bound all of it.
 //!
-//! Narrative: `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — §40 (every
+//! Narrative: `docs/specs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — §40 (every
 //! spatial refusal is a structured error with a name from the taxonomy), §41 (the registry that
 //! keeps renderer, provider, parser and documentation from drifting into different definitions
 //! of the world), §42 (provider conformance for spatial objects), §36 (KUANG/11 may extend the
@@ -195,12 +195,12 @@ fn wait_until_named(pid: u32, name: &str) {
 // --- reading the contracts --------------------------------------------------------------------
 
 fn spec_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/contracts")
 }
 
 /// One of the §41 registry documents, at either spelling this repository's conventions allow:
-/// `docs/spec/spatial/<name>` (the layout `providers/`, `commands/`, `schemas/` and `kuang/`
-/// already use) or the flat `docs/spec/<name>` §41 writes literally.
+/// `docs/contracts/spatial/<name>` (the layout `providers/`, `commands/`, `schemas/` and `kuang/`
+/// already use) or the flat `docs/contracts/<name>` §41 writes literally.
 fn registry_path(name: &str) -> PathBuf {
     let nested = spec_dir().join("spatial").join(name);
     if nested.exists() {
@@ -209,8 +209,8 @@ fn registry_path(name: &str) -> PathBuf {
     let flat = spec_dir().join(name);
     assert!(
         flat.exists(),
-        "§41: the registry is missing — neither `docs/spec/spatial/{name}` nor \
-         `docs/spec/{name}` exists. v0.4 §41 requires machine-readable contracts sufficient to \
+        "§41: the registry is missing — neither `docs/contracts/spatial/{name}` nor \
+         `docs/contracts/{name}` exists. v0.4 §41 requires machine-readable contracts sufficient to \
          generate help, completion, tests and SDK bindings; without them the renderer, the \
          providers, the parser and the documentation drift into different definitions of the \
          world (§41 Intent)."
@@ -236,11 +236,11 @@ fn entries(document: &Value, key: &str) -> Vec<Value> {
         .unwrap_or_else(|| panic!("§41: `{key}` is a list of declarations, got {document:?}"))
 }
 
-/// Every provider declaration under `docs/spec/providers/`.
+/// Every provider declaration under `docs/contracts/providers/`.
 fn provider_declarations() -> Vec<Value> {
     let dir = spec_dir().join("providers");
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .unwrap_or_else(|error| panic!("docs/spec/providers/ must exist: {error}"))
+        .unwrap_or_else(|error| panic!("docs/contracts/providers/ must exist: {error}"))
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| {
@@ -266,7 +266,7 @@ fn provider_declarations() -> Vec<Value> {
 
 #[test]
 fn should_register_the_whole_spatial_error_family_in_the_error_taxonomy() {
-    // §40 names fourteen required codes. `docs/spec/errors.yaml` is the closed, additive
+    // §40 names fourteen required codes. `docs/contracts/errors.yaml` is the closed, additive
     // taxonomy of spec v0.2 §43 (ADR-0006): E00xx parse … E08xx stream, E09xx adapter (v0.3),
     // K11xxx KUANG/11. No family covers spatial refusals today, so v0.4 needs a new one — the
     // next free block is E10xx — and every one of the fourteen names must land in it with a
@@ -292,7 +292,7 @@ fn should_register_the_whole_spatial_error_family_in_the_error_taxonomy() {
             .unwrap_or_else(|| {
                 panic!(
                     "§40: `{required}` is one of the fourteen required spatial error codes and \
-                     docs/spec/errors.yaml does not define it. The taxonomy is closed and \
+                     docs/contracts/errors.yaml does not define it. The taxonomy is closed and \
                      additive (ADR-0006), so v0.4 adds a new family — E10xx, the next free \
                      block after the E09xx adapter family — rather than reusing a code."
                 )
@@ -430,7 +430,7 @@ fn should_refuse_to_go_back_or_up_from_the_root_with_a_named_spatial_error() {
 fn should_ship_the_machine_readable_spatial_registry() {
     // §41: "v0.4 requires machine-readable contracts sufficient to generate help, completion,
     // tests and SDK bindings", and names five documents. Reading chosen: `spatial-errors.yaml`
-    // may be satisfied by the spatial family inside `docs/spec/errors.yaml` — the taxonomy is
+    // may be satisfied by the spatial family inside `docs/contracts/errors.yaml` — the taxonomy is
     // one closed registry (ADR-0006) and splitting it would create exactly the drift §41 exists
     // to prevent — so it is checked by the error-family test above and by its own file only if
     // one is shipped. The other four have no home today and must exist.
@@ -605,7 +605,7 @@ fn should_serve_exactly_the_canonical_spaces_the_registry_declares() {
 
     assert_eq!(
         declared, served,
-        "§41: docs/spec spaces registry and the root map must agree exactly — a served space no \
+        "§41: docs/contracts spaces registry and the root map must agree exactly — a served space no \
          file declares is undocumented surface, a declared space nothing serves is a promise \
          nobody keeps"
     );
@@ -674,7 +674,7 @@ fn should_declare_the_spatial_claims_on_every_provider_that_feeds_the_spatial_in
     // §42: "A provider that exposes objects to spatial navigation MUST pass additional
     // conformance tests beyond ordinary schema validity", and lists eight required claims. The
     // claims are contract, so they live beside the provider's other declarations in
-    // `docs/spec/providers/*.yaml`, which `providers.rs` already compares against the built
+    // `docs/contracts/providers/*.yaml`, which `providers.rs` already compares against the built
     // registry. A provider that serves none of the spatial object types declares no `spatial`
     // block and is not checked here.
     let spatial_types: BTreeSet<&str> = [
@@ -753,7 +753,7 @@ fn should_declare_the_spatial_claims_on_every_provider_that_feeds_the_spatial_in
     assert!(
         checked > 0,
         "§42: at least one shipped provider serves a spatial object type; the declarations \
-         under docs/spec/providers/ named none"
+         under docs/contracts/providers/ named none"
     );
 }
 

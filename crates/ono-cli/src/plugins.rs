@@ -829,7 +829,7 @@ fn grant_capability(
                 ErrorCode::ResolveTargetNotFound,
                 format!("`{capability}` is not a capability the broker knows"),
             )
-            .with_help("`get capability` lists `kuang_capabilities` of docs/spec/capabilities.yaml (spec §31.16)"),
+            .with_help("`get capability` lists `kuang_capabilities` of docs/contracts/capabilities.yaml (spec §31.16)"),
         ));
     };
     session.publish_host();

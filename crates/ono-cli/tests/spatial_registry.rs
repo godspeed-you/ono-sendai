@@ -1,6 +1,6 @@
 //! The half of the spatial registry drift check that only `ono-cli` can make: the settings.
 //!
-//! Spec v0.4 §41.3 makes `docs/spec/spatial/` the source of help, completion, tests and SDK
+//! Spec v0.4 §41.3 makes `docs/contracts/spatial/` the source of help, completion, tests and SDK
 //! bindings, and §26.3 requires the landmark thresholds to be "inspectable and configurable" —
 //! which means the registry's `settings` block and the typed catalogue of ADR-0094 are two
 //! spellings of one thing. `cargo run -p xtask -- spec-check` holds the rest of the registry
@@ -22,7 +22,7 @@ use serde_yaml_ng::Value as Yaml;
 
 fn registry() -> Yaml {
     let path: PathBuf =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec/spatial/spatial.yaml");
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/contracts/spatial/spatial.yaml");
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{} must be readable: {error}", path.display()));
     serde_yaml_ng::from_str(&text).expect("the spatial registry is valid YAML")
@@ -76,7 +76,7 @@ fn should_declare_exactly_the_spatial_settings_the_shell_implements() {
     let implemented: BTreeSet<String> = implemented().keys().cloned().collect();
     assert_eq!(
         declared, implemented,
-        "docs/spec/spatial/spatial.yaml and `ono_cli::settings::CATALOGUE` must agree exactly"
+        "docs/contracts/spatial/spatial.yaml and `ono_cli::settings::CATALOGUE` must agree exactly"
     );
 }
 
@@ -106,7 +106,8 @@ fn should_give_every_spatial_setting_the_type_and_default_the_registry_declares(
 fn should_configure_every_landmark_threshold_the_landmark_registry_names() {
     // §26.3: "Thresholds MUST be inspectable and configurable." A threshold whose setting does
     // not exist is inspectable and not configurable, which is half of a requirement.
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec/spatial/landmarks.yaml");
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/contracts/spatial/landmarks.yaml");
     let text = std::fs::read_to_string(&path).expect("the landmark registry is readable");
     let landmarks: Yaml = serde_yaml_ng::from_str(&text).expect("valid YAML");
     let implemented = implemented();

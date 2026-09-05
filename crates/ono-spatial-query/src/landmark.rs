@@ -9,10 +9,10 @@
 //! Three rules bound it, and they are the difference between a landmark engine and decoration:
 //!
 //! - **A landmark is driven by real state (§2.11, §2.16).** Every reason below reads a field a
-//!   schema in `docs/spec/schemas/` declares, and the evidence it carries is that field's value in
+//!   schema in `docs/contracts/schemas/` declares, and the evidence it carries is that field's value in
 //!   the user's own terms. Nothing here reads the system itself.
 //! - **A reason that cannot be evidenced is not a landmark.** A null field is unknown, and unknown
-//!   is not a promotion (§2.17). `docs/spec/spatial/landmarks.yaml` says it outright: "A landmark
+//!   is not a promotion (§2.17). `docs/contracts/spatial/landmarks.yaml` says it outright: "A landmark
 //!   whose evidence is unavailable is not a landmark; it is an unknown."
 //! - **Conservative by default (§26.3).** "Ono MUST avoid pretending that a local heuristic is an
 //!   incident", so the thresholds start high and `privileged` never promotes an object on its own
@@ -27,7 +27,7 @@ use jiff::{Span, Timestamp};
 use ono_spatial_core::{Landmark, LandmarkReason, SpatialObject, SpatialScope, SpatialType};
 use ono_value::{RecordValue, Value};
 
-/// The thresholds of §26.3, as `docs/spec/spatial/landmarks.yaml` declares them and the
+/// The thresholds of §26.3, as `docs/contracts/spatial/landmarks.yaml` declares them and the
 /// `spatial.landmarks.*` settings spell them.
 ///
 /// The defaults are the registry's defaults; a session that reads the user's configuration

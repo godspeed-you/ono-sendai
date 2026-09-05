@@ -17,7 +17,7 @@ use ono_value::{Value, builtin_schemas};
 fn fixture(adapter: &str, name: &str) -> Vec<u8> {
     std::fs::read(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/spec/adapters/fixtures/util-linux")
+            .join("../../docs/contracts/adapters/fixtures/util-linux")
             .join(adapter)
             .join(format!("{name}.out")),
     )
@@ -249,7 +249,7 @@ fn ip_adapter(id: &str) -> &'static Adapter {
 fn should_derive_records_from_children_with_templates_literals_and_inference() {
     let bytes = std::fs::read(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/spec/adapters/fixtures/iproute2/ip-address/two-interfaces.out"),
+            .join("../../docs/contracts/adapters/fixtures/iproute2/ip-address/two-interfaces.out"),
     )
     .unwrap();
     let addresses = records(
@@ -285,7 +285,7 @@ fn should_derive_records_from_children_with_templates_literals_and_inference() {
 
     let neigh = std::fs::read(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/spec/adapters/fixtures/iproute2/ip-neigh/mixed.out"),
+            .join("../../docs/contracts/adapters/fixtures/iproute2/ip-neigh/mixed.out"),
     )
     .unwrap();
     let neighbours = records(
@@ -357,7 +357,7 @@ fn ps_adapter() -> &'static Adapter {
 fn should_split_whitespace_columns_with_a_greedy_last_field_and_derive_process_fields() {
     let bytes = std::fs::read(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/spec/adapters/fixtures/procps/ps/three-processes.out"),
+            .join("../../docs/contracts/adapters/fixtures/procps/ps/three-processes.out"),
     )
     .unwrap();
     let rows = records(
@@ -407,7 +407,7 @@ fn should_split_whitespace_columns_with_a_greedy_last_field_and_derive_process_f
 fn should_stream_a_lines_decoder_record_by_record() {
     let bytes = std::fs::read(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/spec/adapters/fixtures/procps/ps/three-processes.out"),
+            .join("../../docs/contracts/adapters/fixtures/procps/ps/three-processes.out"),
     )
     .unwrap();
     let mut decoding =
@@ -440,7 +440,7 @@ fn should_decode_ss_endpoints_into_nested_endpoint_records() {
         .unwrap();
     let bytes = std::fs::read(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/spec/adapters/fixtures/iproute2/ss-tcp/listening.out"),
+            .join("../../docs/contracts/adapters/fixtures/iproute2/ss-tcp/listening.out"),
     )
     .unwrap();
     let rows =

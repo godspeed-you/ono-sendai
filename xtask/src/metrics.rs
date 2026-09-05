@@ -37,15 +37,15 @@ pub struct Metrics {
     pub workspace_members: usize,
     /// Test functions declared in the workspace's Rust sources.
     pub tests: usize,
-    /// How many of them can announce a skip, per `docs/spec/hardening/expected_test_skips.yaml`.
+    /// How many of them can announce a skip, per `docs/contracts/hardening/expected_test_skips.yaml`.
     pub tests_that_can_skip: usize,
     /// How many skips the canonical CI environment expects. §38.2 prefers this small.
     pub expected_ci_skips: usize,
     /// Cases under `docker/acceptance/cases/`.
     pub acceptance_cases: usize,
-    /// Records under `docs/decisions/`.
+    /// Records under `docs/adr/`.
     pub adrs: usize,
-    /// Command contract files under `docs/spec/commands/`.
+    /// Command contract files under `docs/contracts/commands/`.
     pub command_contract_files: usize,
     /// Commands those files declare.
     pub commands: usize,
@@ -97,9 +97,9 @@ pub fn measure(root: &Path) -> Metrics {
             &root.join("docker").join("acceptance").join("cases"),
             "case",
         ),
-        adrs: named_files(&root.join("docs").join("decisions"), "ADR-", "md"),
+        adrs: named_files(&root.join("docs").join("adr"), "ADR-", "md"),
         command_contract_files: files_with_extension(
-            &root.join("docs").join("spec").join("commands"),
+            &root.join("docs").join("contracts").join("commands"),
             "yaml",
         ),
         commands: declared_commands(root),
@@ -226,7 +226,7 @@ fn named_files(path: &Path, prefix: &str, extension: &str) -> usize {
 
 /// How many commands the contract registry declares.
 fn declared_commands(root: &Path) -> usize {
-    let directory = root.join("docs").join("spec").join("commands");
+    let directory = root.join("docs").join("contracts").join("commands");
     let Ok(entries) = std::fs::read_dir(&directory) else {
         return 0;
     };

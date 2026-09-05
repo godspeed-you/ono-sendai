@@ -14,7 +14,7 @@
 //!
 //! So the four connection ceilings of §12.1–§12.3 are fields of the same [`Limits`] the frame
 //! decoder already reads, and every setter **clamps** into the range
-//! `docs/spec/hardening/limits.yaml` declares. There is no constructor, no default and no builder
+//! `docs/contracts/hardening/limits.yaml` declares. There is no constructor, no default and no builder
 //! call that answers an unlimited value, which is the guarantee that needs no reviewer
 //! (ADR-0501, following ADR-0453).
 
@@ -48,7 +48,7 @@ pub const DEFAULT_CREDIT: u32 = 32;
 
 /// Concurrent connections one listening agent holds (v0.4.1 §12.1, Appendix A).
 ///
-/// `limits.remote_connections` in `docs/spec/hardening/limits.yaml`, which is where the number
+/// `limits.remote_connections` in `docs/contracts/hardening/limits.yaml`, which is where the number
 /// is declared for the configuration layer; this is the same number for the code that enforces
 /// it, and `crates/ono-remote/tests/limits.rs` fails if the two ever differ.
 pub const MAX_CONNECTIONS: u32 = 32;

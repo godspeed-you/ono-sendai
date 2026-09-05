@@ -593,7 +593,7 @@ fn traced_relations(script: &str) -> Vec<String> {
 #[test]
 fn should_restrict_a_trace_to_the_relations_a_list_names() {
     // Spec §22.3 declares `--relations` as "the relation names to restrict the trace to", and
-    // `docs/spec/commands/process.yaml` types it `list<string>`. A list is how the language
+    // `docs/contracts/commands/process.yaml` types it `list<string>`. A list is how the language
     // spells a list, so writing one must restrict the walk — an option that is read and dropped
     // makes the contract and the answer disagree.
     let unrestricted = traced_relations("trace process 1 --depth 2 | to json");

@@ -3,7 +3,7 @@
 //! `get log`, `get journal`, `tail journal` (spec §8.1 targets `log` and `journal`, §7.1 `tail`
 //! over `journal`, §33.2 and §41.4 `get log --service`).
 //!
-//! Contracts: `docs/spec/commands/service.yaml`; schemas `ono.action-result/1` (spec §11.5,
+//! Contracts: `docs/contracts/commands/service.yaml`; schemas `ono.action-result/1` (spec §11.5,
 //! §16.5, ADR-0006) and `ono.journal-event/1` (spec v0.3 §1.37, ADR-0059 — the records the
 //! adapted `journalctl` already emits, which `get journal` hands back without the user spelling
 //! `journalctl`). Typing before execution: spec §11.3.
@@ -98,7 +98,7 @@ fn provider_unavailable(run: &ono_testkit::Run) -> bool {
 fn records_or_unavailable(run: &ono_testkit::Run, what: &str) -> Option<Vec<serde_yaml_ng::Value>> {
     assert!(
         !run.stderr().contains("Ono-Sendai-E0101") && !run.stderr().contains("Ono-Sendai-E0102"),
-        "{what}: the command is part of the contract (docs/spec/commands/service.yaml) and must \
+        "{what}: the command is part of the contract (docs/contracts/commands/service.yaml) and must \
          answer with records, or with Ono-Sendai-E0401 provider.unavailable where the backing \
          system is absent — never with an unimplemented answer; got {:?}",
         run.output()
@@ -616,7 +616,7 @@ fn should_trace_a_service_to_the_processes_it_owns() {
 #[test]
 fn should_relate_a_service_to_the_units_it_requires() {
     // v0.4 §13 lists dependencies among a service place's groups, and
-    // `docs/spec/spatial/relations.yaml` declares `service.depends_on`. Until ADR-0239 nothing
+    // `docs/contracts/spatial/relations.yaml` declares `service.depends_on`. Until ADR-0239 nothing
     // claimed it: `ListUnits` carries no dependency information and the per-unit properties that
     // do were read and thrown away. `systemd-journald.service` requires its own sockets on every
     // systemd system, so the trace must relate it to at least one other unit.

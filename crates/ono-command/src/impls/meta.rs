@@ -315,7 +315,7 @@ fn not_a_pipeline(subject: &str) -> ErrorValue {
     .with_help("quote a whole pipeline, as in `explain \"get process | to json\"`")
 }
 
-/// The schema of `ono.command/1` (`docs/spec/schemas/command.v1.yaml`).
+/// The schema of `ono.command/1` (`docs/contracts/schemas/command.v1.yaml`).
 ///
 /// One schema serves the registry's own objects and the answer of `resolve command`, which the
 /// shell builds from the same contract (ADR-0093).
@@ -335,8 +335,8 @@ fn command_record(contract: &CommandContract) -> Value {
         Ok(schema) => schema,
         Err(error) => return error.into_value(),
     };
-    let provenance =
-        Provenance::local("ono.registry", schema.id().clone()).from_source("docs/spec/commands/");
+    let provenance = Provenance::local("ono.registry", schema.id().clone())
+        .from_source("docs/contracts/commands/");
     let built = RecordValue::builder(schema, provenance)
         .set("id", Value::string(contract.id()))
         .and_then(|record| record.set("kind", Value::string("native")))

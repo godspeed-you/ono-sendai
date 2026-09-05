@@ -21,15 +21,15 @@
 //! rather than a pass, and the tolerance is a parameter rather than a constant: percentage for a
 //! shared runner, absolute for release qualification.
 //!
-//! The baseline lives at `docs/spec/hardening/performance_baseline.json`; the profiles its records
-//! name are `docs/spec/hardening/performance_profiles.yaml` (ADR-0488). Decisions: ADR-0489.
+//! The baseline lives at `docs/contracts/hardening/performance_baseline.json`; the profiles its records
+//! name are `docs/contracts/hardening/performance_profiles.yaml` (ADR-0488). Decisions: ADR-0489.
 
 use serde_json::Value as Json;
 
 use crate::scan::Problem;
 
 /// Where the baseline lives, relative to the repository root.
-pub const BASELINE: &str = "docs/spec/hardening/performance_baseline.json";
+pub const BASELINE: &str = "docs/contracts/hardening/performance_baseline.json";
 
 /// The six metrics of v0.4.1 §32.3, in the order the specification lists them.
 ///
@@ -564,7 +564,7 @@ fn required_number(row: &Json, field: &str, label: &str, problems: &mut Vec<Prob
 // ------------------------------------------------------------------------------------------
 
 /// Where the reference environment is declared, relative to the repository root.
-pub const ENVIRONMENT: &str = "docs/spec/hardening/performance_environment.yaml";
+pub const ENVIRONMENT: &str = "docs/contracts/hardening/performance_environment.yaml";
 
 /// The iteration floor of v0.4.1 §37.4.
 ///
@@ -805,7 +805,7 @@ pub const BENCHMARKS: &[Benchmark] = &[
     },
     // Profile L on the axis this repository can build: a hundred thousand listening sockets, in
     // NETWORK where they are. The process axis at Profile L is the container's
-    // (`docs/spec/hardening/performance_profiles.yaml`, ADR-0488).
+    // (`docs/contracts/hardening/performance_profiles.yaml`, ADR-0488).
     Benchmark {
         id: "spatial.map_first_frame",
         profile: "L",
@@ -1503,7 +1503,7 @@ pub fn check_registries(root: &std::path::Path) -> Vec<Problem> {
                 BASELINE,
                 format!(
                     "is tied to the environment `{}`, and \
-                     `docs/spec/hardening/performance_environment.yaml` names `{}` (§32.4)",
+                     `docs/contracts/hardening/performance_environment.yaml` names `{}` (§32.4)",
                     baseline.environment, environment.id
                 ),
             ));
@@ -1514,7 +1514,7 @@ pub fn check_registries(root: &std::path::Path) -> Vec<Problem> {
                     BASELINE,
                     format!(
                         "records `{}` at profile `{}`, which \
-                         `docs/spec/hardening/performance_profiles.yaml` does not declare \
+                         `docs/contracts/hardening/performance_profiles.yaml` does not declare \
                          (Appendix F)",
                         record.benchmark, record.profile
                     ),
@@ -1527,7 +1527,7 @@ pub fn check_registries(root: &std::path::Path) -> Vec<Problem> {
         for benchmark in BENCHMARKS {
             if !profiles.contains(benchmark.profile) {
                 problems.push(Problem::new(
-                    "docs/spec/hardening/performance_profiles.yaml",
+                    "docs/contracts/hardening/performance_profiles.yaml",
                     format!(
                         "declares no profile `{}`, which the benchmark `{}` is measured at \
                          (v0.4.1 §32.2, Appendix F)",
@@ -1540,10 +1540,10 @@ pub fn check_registries(root: &std::path::Path) -> Vec<Problem> {
     problems
 }
 
-/// Every topology profile `docs/spec/hardening/performance_profiles.yaml` declares.
+/// Every topology profile `docs/contracts/hardening/performance_profiles.yaml` declares.
 fn declared_profiles(root: &std::path::Path) -> std::collections::BTreeSet<String> {
     let Ok(text) =
-        std::fs::read_to_string(root.join("docs/spec/hardening/performance_profiles.yaml"))
+        std::fs::read_to_string(root.join("docs/contracts/hardening/performance_profiles.yaml"))
     else {
         return std::collections::BTreeSet::new();
     };

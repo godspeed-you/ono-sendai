@@ -1,8 +1,8 @@
 //! Outcome tests for the meta family: `resolve command`, `get config` and `set config`, and
 //! the settings behind them.
 //!
-//! Contracts: `docs/spec/commands/meta.yaml` (`ono.command.resolve`, `ono.config.get`,
-//! `ono.config.set`), `docs/spec/schemas/config-setting.v1.yaml`, spec §6.5 (resolution order),
+//! Contracts: `docs/contracts/commands/meta.yaml` (`ono.command.resolve`, `ono.config.get`,
+//! `ono.config.set`), `docs/contracts/schemas/config-setting.v1.yaml`, spec §6.5 (resolution order),
 //! §13.3 (truncation is visible), §15.4 (discovery suggestions), §30 (configuration with
 //! provenance), ADR-0010 (the five layers, `ONO_*` mapping, a bad setting never stops the shell)
 //! and ADR-0011 (resolution order and namespaces).

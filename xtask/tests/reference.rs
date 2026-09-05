@@ -22,27 +22,27 @@ use support::repo;
 fn registries() -> Scratch {
     let repo = scratch();
     repo.write(
-        "docs/spec/verbs.yaml",
+        "docs/contracts/verbs.yaml",
         "version: 1\nverbs:\n  - id: ono.verb.get\n    verb: get\n    semantics: obtain current objects\n    typical_targets: [process, file]\n    pipeline_role: producer\n    mutating: false\n    stability: stable\n",
     );
     repo.write(
-        "docs/spec/targets.yaml",
+        "docs/contracts/targets.yaml",
         "version: 1\ntargets:\n  - id: ono.target.process\n    name: process\n    category: system\n    summary: A running process.\n    schema: ono.process/1\n    phase: C\n",
     );
     repo.write(
-        "docs/spec/errors.yaml",
+        "docs/contracts/errors.yaml",
         "version: 1\nerrors:\n  - code: Ono-Sendai-E0001\n    name: parse.syntax\n    kind: parse\n    summary: Not valid syntax.\n    help: Read the span.\n",
     );
     repo.write(
-        "docs/spec/capabilities.yaml",
+        "docs/contracts/capabilities.yaml",
         "version: 1\nprovider_capabilities:\n  - id: process.list\n    summary: Enumerate processes.\n    risk: read\n    elevation: none\nkuang_capabilities: []\n",
     );
     repo.write(
-        "docs/spec/schemas/process.v1.yaml",
+        "docs/contracts/schemas/process.v1.yaml",
         "id: ono.process/1\nname: Process\nsummary: A running process.\nidentity: [pid]\nfields:\n  pid:\n    type: int\n    required: true\n    doc: The process id.\n  cpu:\n    type: float\n    unit: percent\n    nullable: true\n    doc: Recent CPU share.\ndefault_view:\n  columns: [pid, cpu]\n",
     );
     repo.write(
-        "docs/spec/commands/process.yaml",
+        "docs/contracts/commands/process.yaml",
         "version: 1\nfamily: process\ncommands:\n  - id: ono.process.get\n    verb: get\n    target: process\n    summary: Enumerate processes.\n    stability: stable\n    argument_mode: words\n    input: \"null\"\n    output: stream<ono.process/1>\n    provider_capability: process.list\n    selectors:\n      - name: pid\n        type: int\n        doc: Select one process.\n    options:\n      - name: tree\n        type: bool\n        doc: Render as a tree.\n    privilege: none\n    streaming: true\n    phase: C\n    examples: [\"get process\", \"get process | where cpu > 20\"]\n",
     );
     repo
@@ -201,9 +201,9 @@ fn should_find_this_repositorys_committed_reference_docs_up_to_date_when_checked
 fn adapter_registries() -> Scratch {
     let repo = registries();
     let pack = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../docs/spec/adapters/first-party/util-linux.yaml");
+        .join("../docs/contracts/adapters/first-party/util-linux.yaml");
     repo.write(
-        "docs/spec/adapters/first-party/util-linux.yaml",
+        "docs/contracts/adapters/first-party/util-linux.yaml",
         std::fs::read_to_string(pack).expect("the util-linux pack is part of the repository"),
     );
     repo
@@ -291,9 +291,9 @@ fn generated_pages() -> Vec<String> {
 fn should_report_a_box_that_claims_a_generation_nobody_wrote() {
     // The two claims this rule was written for: §4.1 D said "docs and provider conformance tests
     // are generated from them" and §4.7.4 said the spatial conformance suite is "generated from
-    // `docs/spec/providers/*.yaml`". Only `docs/reference/` is generated; both suites are
+    // `docs/contracts/providers/*.yaml`". Only `docs/reference/` is generated; both suites are
     // hand-written and checked against the registries instead.
-    let claim = "- [x] **D — Consistency.** Registries exist under `docs/spec/`; docs and \
+    let claim = "- [x] **D — Consistency.** Registries exist under `docs/contracts/`; docs and \
                  provider conformance tests are generated from them.\n";
     let problems = xtask::reference::check_generation_claims(claim, &generated_pages());
     assert_eq!(problems.len(), 1, "got {problems:?}");
@@ -332,11 +332,11 @@ fn should_find_every_generation_claim_of_this_repositorys_checklist_true() {
 #[test]
 fn should_render_the_stream_ordering_contract_from_the_registry() {
     // v0.4.1 §27.4: "the stream module documentation MUST state this rule". It is stated in one
-    // place — `docs/spec/hardening/streaming_classification.yaml` — and the page a user reads is
+    // place — `docs/contracts/hardening/streaming_classification.yaml` — and the page a user reads is
     // rendered from it, so the two cannot drift into two different contracts (ADR-0483).
     let repo = registries();
     repo.write(
-        "docs/spec/hardening/streaming_classification.yaml",
+        "docs/contracts/hardening/streaming_classification.yaml",
         "version: 1\n\
          classes:\n  \
            - id: item_transform\n    \
@@ -396,8 +396,10 @@ fn should_render_this_repositorys_ordering_contract_as_the_stream_module_states_
             .join(" ")
     };
     let registry = flatten(
-        &std::fs::read_to_string(root.join("docs/spec/hardening/streaming_classification.yaml"))
-            .expect("the streaming classification is committed"),
+        &std::fs::read_to_string(
+            root.join("docs/contracts/hardening/streaming_classification.yaml"),
+        )
+        .expect("the streaming classification is committed"),
     );
     let module = flatten(
         &std::fs::read_to_string(root.join("crates/ono-pipeline/src/stream.rs"))
@@ -539,7 +541,7 @@ fn should_render_a_boundary_page_that_matches_the_inventory() {
         .find(|page| page.path == "docs/reference/security-boundaries.md")
         .expect("the security boundary page is generated");
     let inventory =
-        std::fs::read_to_string(repo().join("docs/spec/hardening/security_boundaries.yaml"))
+        std::fs::read_to_string(repo().join("docs/contracts/hardening/security_boundaries.yaml"))
             .expect("the inventory");
     let document: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&inventory).expect("the inventory is YAML");

@@ -1,0 +1,1033 @@
+# KUANG/11 host/plugin protocol.
+#
+# Source: spec §31.11 (supervisor architecture), §31.12 (host API domains), §31.13 (object API),
+# §31.14 (snapshot/subscribe/watch and the ObjectEvent envelope), §31.15 (backpressure, quotas
+# and overflow), §31.20 (secret handles), §31.21 (network brokering), §31.27–§31.28 (view
+# protocol), §31.33 (structured logs), §31.61 (interface sketch), §31.62 (independent version
+# dimensions), §31.63 (negotiation at load), §31.67 (performance targets). Decisions: ADR-0022.
+#
+# The vocabulary is Ono's own, not a parallel one. `ObjectId`, `ObjectRef`, `ObjectEvent`,
+# `Query`, `Selector`, `Capability`, `Risk` and `ActionOutcome` are the types
+# `crates/ono-provider-api` already defines for core providers, and spec §31's preamble requires
+# exactly that: command metadata, value schemas, object identity, provider capabilities,
+# rendering and execution plans "SHOULD already be shaped so that KUANG/11 can consume them
+# without special cases". A plugin is a provider that happens to be isolated.
+#
+# Nothing here is implemented. These are the contracts spec §37 Phase I is built against.
+
+version: 1
+host_api: kuang-host/11.1
+
+# ---------------------------------------------------------------------------------------------
+# Version dimensions — spec §31.62. They move independently: a new view widget must not require
+# a new value protocol, and a schema addition must not break package parsing.
+# ---------------------------------------------------------------------------------------------
+version_dimensions:
+  - {id: package_format, value: kuang-package/1, doc: "The manifest and archive format. See `manifest.v1.yaml`."}
+  - {id: host_api, value: kuang-host/11.1, doc: "This file. The `11` is KUANG/11's major and does not move; the minor is negotiated at load (spec §31.63)."}
+  - {id: value_protocol, value: ono-value/1, doc: "How a `Value` crosses the boundary. Fixed by `crates/ono-value`, not by KUANG/11."}
+  - {id: schema_language, value: ono-schema/1, doc: "How a schema document is written. Same language core schemas use (spec §27.3, ADR-0012)."}
+  - {id: view_protocol, value: ono-view/1, doc: "The view tree and its events. See `contributions.v1.yaml`."}
+  - {id: remote_extension, value: ono-remote-ext/1, doc: "How a remote component is projected onto a link (spec §31.39)."}
+  - {id: model_broker, value: ono-model/1, doc: "The model broker surface. See `assistants.v1.yaml`."}
+
+# ---------------------------------------------------------------------------------------------
+# Transport invariants. Spec §31.13 lists what the object API "MUST preserve"; these are that
+# list, plus what §31.61 asks for in representation.
+# ---------------------------------------------------------------------------------------------
+invariants:
+  - id: no-rendered-text
+    rule: >-
+      A plugin never receives rendered output. Spec §31.13: "A plugin MUST NOT need to scrape the
+      table Ono happened to render." Every value crosses as a typed value.
+  - id: schema-identity
+    rule: A value carries its schema id; the schema itself is fetched once per stream and cached, not repeated per record.
+  - id: typed-units
+    rule: A numeric field keeps its unit. A `bytesize` does not arrive as an `int` with the unit in the documentation.
+  - id: null-vs-absent
+    rule: >-
+      The four outcomes of a field access — known, unknown, absent, failed — survive the boundary
+      distinctly (spec §10.5, ADR-0016 §2). A plugin cannot receive `0` where the host had "not
+      readable".
+  - id: object-identity
+    rule: Every object carries its `ObjectId`, so a plugin can correlate observations without inventing keys.
+  - id: provenance
+    rule: >-
+      Provenance travels with the value where policy permits, and a plugin's own emissions are
+      stamped with its package id by the host. A plugin cannot set its own provenance
+      (spec §31.80: "plugin forges provenance/evidence").
+  - id: cancellation
+    rule: >-
+      Every call and every stream is cancellable from either side, and cancellation is
+      observable: it arrives as a terminal `stream.cancelled`, not as a stream that simply stops.
+  - id: partial-errors
+    rule: >-
+      A stream can carry an error for one element and continue (spec §16.5). A per-element
+      failure never collapses into a whole-stream failure unless the policy is `fail-stream`.
+  - id: binary-representation
+    rule: >-
+      Values cross in the `ono-value/1` binary encoding with schemas referenced by id, not as
+      generic JSON blobs (spec §31.61). A generic textual encoding is available only to the test
+      host, and never on a live boundary.
+  - id: bounded-frames
+    rule: >-
+      Every frame declares its length; frame size, nesting depth and total message size are
+      bounded, and the decoder is fuzzed (ADR-0015 T7, spec §35.6). A protocol bomb is a
+      `runtime.protocol_violation`, not an allocation.
+  - id: pull-not-push
+    rule: >-
+      Values move only when the consumer has asked for them, in both directions (see
+      `backpressure`). The host never pushes unsolicited values at a plugin, and a plugin cannot
+      emit faster than the host takes. This is what makes bounded queues a structural property
+      rather than a policy that has to be remembered.
+
+# ---------------------------------------------------------------------------------------------
+# Domains — spec §31.12. Each versions independently "where practical" (§31.12), so each carries
+# its own `since` within the host API version. `capability` names the capability a call in the
+# domain costs; `null` means the domain itself is free and individual calls say what they cost.
+# ---------------------------------------------------------------------------------------------
+domains:
+  - {id: objects,      since: "11.1", capability: object.read,      doc: "Query, resolve identity, inspect fields (spec §31.13)."}
+  - {id: streams,      since: "11.1", capability: null,             doc: "Subscribe, produce, cancel, backpressure. The capability is the one the subscribed target costs."}
+  - {id: schemas,      since: "11.1", capability: schema.read,      doc: "Discover schemas; contributed schemas are registered at load, not at runtime."}
+  - {id: commands,     since: "11.1", capability: null,             doc: "Invoke allowed commands and receive typed values. The invoked command's own capabilities apply."}
+  - {id: relations,    since: "11.1", capability: relation.read,    doc: "Query and contribute graph edges (spec §31.26)."}
+  - {id: views,        since: "11.1", capability: ui.view,          doc: "Create controlled terminal views (spec §31.27). The host owns the terminal."}
+  - {id: context,      since: "11.1", capability: context.read,     doc: "Read bounded shell context."}
+  - {id: history,      since: "11.1", capability: null,             doc: "Read and write history according to explicit scope."}
+  - {id: filesystem,   since: "11.1", capability: null,             doc: "Capability-scoped file operations. The host performs the I/O."}
+  - {id: network,      since: "11.1", capability: null,             doc: "Capability-scoped socket and HTTP operations, brokered (spec §31.21)."}
+  - {id: process,      since: "11.1", capability: null,             doc: "Inspect, signal and exec according to capability."}
+  - {id: secrets,      since: "11.1", capability: secret.use,       doc: "Request opaque secret handles. There is no enumeration call, by design (spec §31.20)."}
+  - {id: models,       since: "11.1", capability: model.infer,      doc: "Operator-approved inference through the broker (spec §31.43)."}
+  - {id: state,        since: "11.1", capability: null,             doc: "Plugin-private bounded persistence (spec §31.31)."}
+  - {id: audit,        since: "11.1", capability: null,             doc: "Emit structured security, audit and log records (spec §31.33, §31.37). Never free-form writes to Ono's stderr."}
+  - {id: clock,        since: "11.1", capability: clock.read,       doc: "Monotonic and wall time."}
+  # Two domains spec §31.12's proposed list omits and §31.61's interface sketch names (ADR-0022).
+  - {id: capabilities, since: "11.1", capability: null,             doc: "Check a grant and make a runtime request (spec §31.61's `interface capabilities`). Asking is always permitted; the answer is the policy's."}
+  - {id: output,       since: "11.1", capability: null,             doc: "Emit values, findings and annotations from an invocation (spec §31.61's `interface output`)."}
+
+# ---------------------------------------------------------------------------------------------
+# Handles. Opaque to the plugin, minted and revoked by the host. A handle is authority in
+# miniature, so it is scoped to the invocation that created it and dies with it.
+# ---------------------------------------------------------------------------------------------
+handles:
+  - {id: stream, doc: "A value or event stream in either direction. Closed by `streams.cancel`, by the producer completing, or by the invocation ending."}
+  - {id: view, doc: "A mounted view (spec §31.28). Dies when the view closes; the host restores the terminal whatever the plugin does."}
+  - {id: secret, doc: "An opaque reference to a secret's material (spec §31.20). The bytes never cross the boundary; the host injects them into the operation."}
+  - {id: connection, doc: "A brokered outbound connection or listener (spec §31.21)."}
+  - {id: exec, doc: "A running external program started under `process.exec`, with brokered stdio."}
+  - {id: invocation, doc: "One command, view session, analysis run or assistant turn. Every other handle belongs to exactly one of these."}
+
+# ---------------------------------------------------------------------------------------------
+# Calls the plugin makes into the host.
+#
+# `direction: plugin->host` throughout. Each is request/response; a call that yields many values
+# returns a stream handle rather than a list, so nothing is materialised to be counted
+# (spec §31.67: "streaming should avoid full materialization").
+#
+# `errors` lists the codes of `errors.v1.yaml` a call can answer with, beyond the ones every call
+# shares: `capability.denied`, `capability.scope_violation`, `capability.lease_expired`,
+# `runtime.timeout`, `runtime.protocol_violation`.
+# ---------------------------------------------------------------------------------------------
+host_calls:
+
+  # --- objects, spec §31.13 -------------------------------------------------------------------
+  - id: objects.get
+    domain: objects
+    direction: plugin->host
+    capability: object.read
+    params:
+      id: {type: record, required: true, doc: "An `ObjectId`: a schema id plus its identity field values (spec §27.3)."}
+    returns: {type: value, doc: "The object's record, or an error value when it no longer exists."}
+    errors: [runtime.schema_violation]
+    doc: Spec §31.13's `get(id) -> Result<Value>`.
+
+  - id: objects.query
+    domain: objects
+    direction: plugin->host
+    capability: object.read
+    params:
+      query: {type: record, required: true, doc: "A `Query`: a target name, selectors, provider options and an optional limit — the same type a core command builds."}
+    returns: {type: handle<stream>, doc: "A finite stream of records."}
+    errors: [runtime.schema_violation, runtime.backpressure_failure]
+    doc: Spec §31.13's `query(q) -> Result<ValueStream>`.
+
+  - id: objects.resolve
+    domain: objects
+    direction: plugin->host
+    capability: object.read
+    params:
+      selector: {type: record, required: true, doc: "A `Selector`: a field equality, a text containment, or one identity."}
+    returns: {type: list<record>, doc: "The matching `ObjectRef`s — identity plus a display label plus provenance, not the full records."}
+    errors: []
+    doc: >-
+      Spec §31.13's `resolve(selector) -> Result<Vec<ObjectRef>>`. Returns references rather than
+      objects so that resolution is cheap and a plugin fetches only what it will read.
+
+  - id: objects.snapshot
+    domain: objects
+    direction: plugin->host
+    capability: object.read
+    params:
+      query: {type: record, required: true, doc: "The query to sample."}
+    returns: {type: handle<stream>, doc: "A bounded stream of `ObjectEvent`s, every one of kind `snapshot`, terminated when the sample is complete."}
+    errors: [runtime.backpressure_failure]
+    doc: >-
+      Spec §31.14's `snapshot(query)`: state now. It answers in the event envelope rather than in
+      bare records so that a consumer can use one code path for a snapshot and for the stream
+      that follows it.
+
+  - id: objects.subscribe
+    domain: objects
+    direction: plugin->host
+    capability: object.read
+    params:
+      query: {type: record, required: true, doc: "The query to watch."}
+      overflow: {type: string, nullable: true, doc: "Requested overflow policy. Host policy has final authority (spec §31.15); the effective policy is in the response."}
+    returns: {type: handle<stream>, doc: "An unbounded stream of `ObjectEvent`s of kind `added`, `changed` and `removed`. No `snapshot` events: a subscription is changes over time, not state now."}
+    errors: [runtime.backpressure_failure]
+    doc: >-
+      Spec §31.14's `subscribe(query)`. The subscribed target's own capability applies in
+      addition to `object.read` — subscribing to processes costs `process.read`, and the
+      subscription's `observe` risk is what makes it different from a query (ADR-0012 §11).
+
+  - id: objects.watch
+    domain: objects
+    direction: plugin->host
+    capability: object.read
+    params:
+      query: {type: record, required: true, doc: "The query to watch."}
+      policy: {type: record, required: true, doc: "`{interval: duration?, overflow: string?, coalesce_window: duration?}`. The runtime manages resampling."}
+    returns: {type: handle<stream>, doc: "A stream that begins with `snapshot` events and continues with changes."}
+    errors: [runtime.backpressure_failure]
+    doc: >-
+      Spec §31.14's `watch(query, policy)`: runtime-managed snapshots plus changes. It is the
+      composition of the other two and exists so a plugin does not have to get the join between
+      them right; the boundary between the initial state and the changes is the last `snapshot`
+      event.
+
+  # --- streams, spec §31.14 and §31.15 --------------------------------------------------------
+  - id: streams.next
+    domain: streams
+    direction: plugin->host
+    capability: null
+    params:
+      handle: {type: handle<stream>, required: true, doc: "The stream to read."}
+      max: {type: int, required: true, doc: "How many values the plugin is ready for. This is the credit; the host sends no more than this."}
+      deadline: {type: duration, nullable: true, doc: "How long to wait for the first value. Null uses the invocation's deadline."}
+    returns: {type: record, doc: "`{values: list<value>, complete: bool, error: ono.error/1?}`. `complete` with no error is a normal end."}
+    errors: [stream.cancelled, runtime.timeout]
+    doc: >-
+      The pull side of `pull-not-push`. A plugin that stops calling `next` stops the producer,
+      which is what makes `block-upstream` possible at all.
+
+  - id: streams.open_output
+    domain: streams
+    direction: plugin->host
+    capability: null
+    params:
+      schema: {type: string, required: true, doc: "The schema id every value on the stream will carry. Declared once, validated on every value."}
+    returns: {type: handle<stream>, doc: "A stream the plugin produces into."}
+    errors: []
+    doc: Spec §31.12's "produce". Contributed values are validated against the declared schema (§31.34's schema-violation class).
+
+  - id: streams.emit
+    domain: streams
+    direction: plugin->host
+    capability: null
+    params:
+      handle: {type: handle<stream>, required: true, doc: "An output stream."}
+      values: {type: list<value>, required: true, doc: "At most the credit the host last granted; more is `runtime.protocol_violation`."}
+    returns: {type: record, doc: "`{credit: int}` — how many more values the host will now accept."}
+    errors: [runtime.schema_violation, stream.cancelled]
+    doc: The plugin's side of backpressure. Emitting beyond credit is a protocol violation, not a queue.
+
+  - id: streams.close
+    domain: streams
+    direction: plugin->host
+    capability: null
+    params:
+      handle: {type: handle<stream>, required: true, doc: "An output stream."}
+      error: {type: ono.error/1, nullable: true, doc: "The terminal error, when the producer failed. Null is a normal completion."}
+    returns: {type: "null"}
+    errors: []
+    doc: Closing with an error is how a plugin reports a partial result honestly rather than truncating silently.
+
+  - id: streams.cancel
+    domain: streams
+    direction: plugin->host
+    capability: null
+    params:
+      handle: {type: handle<stream>, required: true, doc: "Any stream in either direction."}
+    returns: {type: "null"}
+    errors: []
+    doc: >-
+      Cancellation propagates to the producer, whether that is a core provider, another package
+      or the plugin itself. Values already delivered stay valid (spec §18.5).
+
+  # --- schemas, spec §31.23 -------------------------------------------------------------------
+  - id: schemas.get
+    domain: schemas
+    direction: plugin->host
+    capability: schema.read
+    params:
+      id: {type: string, required: true, doc: "A schema id, e.g. `ono.process/1`."}
+    returns: {type: record, doc: "The schema: fields, types, units, nullability, identity and default view."}
+    errors: []
+    doc: Spec §31.13's `schema(id) -> Result<Schema>`.
+
+  - id: schemas.list
+    domain: schemas
+    direction: plugin->host
+    capability: schema.read
+    params:
+      prefix: {type: string, nullable: true, doc: "Restrict to ids under a namespace. Null lists every registered schema."}
+    returns: {type: handle<stream>, doc: "A stream of schema records, each with its origin (core, package, remote provider — spec §31.64)."}
+    errors: []
+    doc: Discovery, so a package can compose with schemas it did not ship without a build-time dependency.
+
+  # --- commands, spec §31.12 and §31.29 -------------------------------------------------------
+  - id: commands.get
+    domain: commands
+    direction: plugin->host
+    capability: null
+    params:
+      id: {type: string, nullable: true, doc: "A command id, e.g. `ono.service.get`. Null with `verb`/`target` set resolves those instead."}
+      verb: {type: string, nullable: true, doc: "The verb, when resolving by verb and target."}
+      target: {type: string, nullable: true, doc: "The target, when resolving by verb and target."}
+    returns: {type: record, doc: "The command contract: input, output schema, selectors, options, capabilities, risk and origin."}
+    errors: []
+    doc: >-
+      A plugin reads command metadata from the same registry `help` and completion read
+      (spec §27), which is what lets a contributed command be documented by the same machinery.
+
+  - id: commands.invoke
+    domain: commands
+    direction: plugin->host
+    capability: null
+    params:
+      id: {type: string, required: true, doc: "The command id to run."}
+      arguments: {type: record, required: true, doc: "Selectors and options by name, already typed. There is no command *line* here: a plugin never composes shell text (spec §31.41)."}
+      input: {type: handle<stream>, nullable: true, doc: "A stream to feed the command's input. Null for a command taking no input."}
+    returns: {type: handle<stream>, doc: "The command's output stream, in its declared output schema."}
+    errors: [assistant.tool_invalid]
+    doc: >-
+      The invoked command's own capabilities are checked against *the plugin's* grants, not
+      against the operator's. A package cannot reach a capability it was denied by invoking a
+      command that has it.
+
+  # --- relations, spec §31.26 -----------------------------------------------------------------
+  - id: relations.query
+    domain: relations
+    direction: plugin->host
+    capability: relation.read
+    params:
+      from: {type: record, nullable: true, doc: "An `ObjectId` to start from. Null with `to` set searches inbound edges."}
+      to: {type: record, nullable: true, doc: "An `ObjectId` to end at."}
+      relations: {type: list<string>, nullable: true, doc: "Relation names to restrict to. Null means all."}
+      depth: {type: int, nullable: true, doc: "Maximum traversal depth. Null means one hop; unbounded traversal is not offered."}
+    returns: {type: handle<stream>, doc: "A stream of `ono.graph-edge/1`."}
+    errors: []
+    doc: Reads edges from every source, core and contributed alike; `provider` says which.
+
+  - id: relations.contribute
+    domain: relations
+    direction: plugin->host
+    capability: relation.write
+    params:
+      edges: {type: list<ono.graph-edge/1>, required: true, doc: "The edges to add. `provider` is set by the host to the contributing package and cannot be supplied."}
+    returns: {type: int, doc: "How many edges were accepted."}
+    errors: [runtime.schema_violation]
+    doc: >-
+      A package may add edges without owning either endpoint schema (spec §31.26). An edge whose
+      `confidence` is not `exact` is displayed as inferred, and spec §31.26 makes that mandatory
+      rather than polite: "Inferred relations MUST identify themselves as inferred."
+
+  # --- views, spec §31.27 and §31.28 ----------------------------------------------------------
+  - id: views.open
+    domain: views
+    direction: plugin->host
+    capability: ui.view
+    params:
+      view: {type: string, required: true, doc: "A contributed view id."}
+      input: {type: handle<stream>, nullable: true, doc: "The stream the view renders."}
+    returns: {type: handle<view>, doc: "The mounted view."}
+    errors: [view.protocol_error]
+    doc: >-
+      Opening a view does not confer terminal ownership. If stdout is redirected the host mounts
+      nothing and the command falls back to its declared non-interactive output (spec §31.28).
+
+  - id: views.submit
+    domain: views
+    direction: plugin->host
+    capability: ui.view
+    params:
+      view: {type: handle<view>, required: true, doc: "The view to update."}
+      tree: {type: record, required: true, doc: "A view tree of the components in `contributions.v1.yaml` → `view_components`. Not text, and never escape sequences."}
+    returns: {type: "null"}
+    errors: [view.protocol_error]
+    doc: >-
+      An invalid layout is `view.protocol_error` and the view is torn down with the terminal
+      restored. Spec §31.27: a buggy plugin "should not be able to leave the terminal in raw mode
+      permanently."
+
+  - id: views.close
+    domain: views
+    direction: plugin->host
+    capability: ui.view
+    params:
+      view: {type: handle<view>, required: true, doc: "The view to close."}
+    returns: {type: "null"}
+    errors: []
+    doc: Idempotent. The host also closes the view when its invocation ends, however it ends.
+
+  # --- context, spec §31.12 -------------------------------------------------------------------
+  - id: context.get
+    domain: context
+    direction: plugin->host
+    capability: context.read
+    params: {}
+    returns: {type: record, doc: "`{cwd: path, object: value?, link: string?, host: string, interactive: bool, redirected: bool}` — the context stack, and nothing beyond it."}
+    errors: []
+    doc: >-
+      Bounded by construction. It carries no environment variables, no history and no secrets:
+      spec §31.20 forbids a package gaining bulk access to those merely by running inside a shell.
+
+  # --- history, spec §31.12 and §31.19 --------------------------------------------------------
+  - id: history.query
+    domain: history
+    direction: plugin->host
+    capability: history.read
+    params:
+      window: {type: string, nullable: true, doc: "No wider than the granted scope. Null means the granted window."}
+      filter: {type: record, nullable: true, doc: "A predicate over history entries."}
+    returns: {type: handle<stream>, doc: "A stream of history entries, secret-bearing values already redacted (spec §17.5, ADR-0015 T8)."}
+    errors: []
+    doc: Redaction happens before delivery, not at the plugin's discretion.
+
+  - id: history.append
+    domain: history
+    direction: plugin->host
+    capability: history.write
+    params:
+      entry: {type: record, required: true, doc: "The entry to add. Attribution to the package is set by the host and cannot be supplied."}
+    returns: {type: "null"}
+    errors: []
+    doc: A package cannot write an entry attributed to the operator or to another package.
+
+  # --- filesystem, spec §31.16 ----------------------------------------------------------------
+  - id: filesystem.read
+    domain: filesystem
+    direction: plugin->host
+    capability: filesystem.read
+    params:
+      path: {type: path, required: true, doc: "Must resolve inside the granted `paths` scope."}
+      offset: {type: int, nullable: true, doc: "Byte offset. Null starts at the beginning."}
+      length: {type: int, nullable: true, doc: "Bytes to read. Null reads to the host's per-call ceiling, never to the end of an arbitrary file."}
+    returns: {type: bytes, doc: "The bytes read. Never interpreted, never sanitised — sanitisation is a render-boundary concern (ADR-0015 rule 1)."}
+    errors: [io.not_found, io.permission_denied]
+    doc: The host performs the I/O; the plugin never holds a descriptor to a path outside its scope.
+
+  - id: filesystem.metadata
+    domain: filesystem
+    direction: plugin->host
+    capability: filesystem.read
+    params:
+      path: {type: path, required: true, doc: "Must resolve inside the granted `paths` scope."}
+    returns: {type: ono.file/1, doc: "The file record, the same schema `get file` produces."}
+    errors: [io.not_found, io.permission_denied]
+    doc: Metadata is the same object a core command yields, so a plugin's view of a file is the operator's view of it.
+
+  - id: filesystem.list
+    domain: filesystem
+    direction: plugin->host
+    capability: filesystem.read
+    params:
+      path: {type: path, required: true, doc: "A directory inside the granted scope."}
+      recursive: {type: bool, nullable: true, doc: "Whether to descend. Descent never leaves the scope root, and symlinks out of it are not followed (ADR-0015 T14)."}
+    returns: {type: handle<stream>, doc: "A stream of `ono.file/1`."}
+    errors: [io.not_found, io.permission_denied]
+    doc: null
+
+  - id: filesystem.write
+    domain: filesystem
+    direction: plugin->host
+    capability: filesystem.write
+    params:
+      path: {type: path, required: true, doc: "Must resolve inside the granted `paths` scope."}
+      content: {type: bytes, required: true, doc: "The bytes to write."}
+      mode: {type: enum, required: true, values: [create, truncate, append], doc: "How to open the destination. There is no implicit overwrite."}
+    returns: {type: ono.action-result/1, doc: "One structured result, as every mutation answers (spec §11.5)."}
+    errors: [io.permission_denied, io.already_exists]
+    doc: null
+
+  - id: filesystem.remove
+    domain: filesystem
+    direction: plugin->host
+    capability: filesystem.write
+    params:
+      path: {type: path, required: true, doc: "Must resolve inside the granted `paths` scope."}
+      recursive: {type: bool, nullable: true, doc: "Whether to remove a directory tree. Null is false."}
+    returns: {type: ono.action-result/1, doc: "The outcome for the path."}
+    errors: [io.not_found, io.permission_denied]
+    doc: >-
+      `filesystem.write` is `destructive` risk (`docs/contracts/capabilities.yaml`), so a grant that
+      permits writing permits deleting. A package that only needs to write should say so in its
+      `paths` scope, because the capability itself cannot distinguish them.
+
+  - id: filesystem.watch
+    domain: filesystem
+    direction: plugin->host
+    capability: filesystem.watch
+    params:
+      path: {type: path, required: true, doc: "A path inside the granted `paths` scope."}
+      recursive: {type: bool, nullable: true, doc: "Whether to watch a whole subtree."}
+      overflow: {type: string, nullable: true, doc: "Requested overflow policy; host policy decides."}
+    returns: {type: handle<stream>, doc: "A stream of `ObjectEvent`s over `ono.file/1`."}
+    errors: [runtime.backpressure_failure]
+    doc: Events for paths outside the scope are never generated, not filtered after the fact.
+
+  # --- network, spec §31.21 -------------------------------------------------------------------
+  - id: network.connect
+    domain: network
+    direction: plugin->host
+    capability: network.connect
+    params:
+      host: {type: string, required: true, doc: "Must match the granted `hosts` scope, and so must the address it resolves to."}
+      port: {type: port, required: true, doc: "Must be in the granted `ports` scope."}
+      protocol: {type: enum, required: true, values: [tcp, udp, tls], doc: "`tls` means the host performs the handshake and applies the operator's trust store."}
+    returns: {type: handle<connection>, doc: "A brokered connection. The plugin never receives a socket descriptor."}
+    errors: [io.permission_denied, remote.unreachable]
+    doc: Spec §31.21's `network.connect(host, port, protocol)`. Every destination is audited.
+
+  - id: network.request
+    domain: network
+    direction: plugin->host
+    capability: network.connect
+    params:
+      request: {type: record, required: true, doc: "`{method, url, headers, body}`. The URL's host and port are checked against the scope."}
+      credential: {type: handle<secret>, nullable: true, doc: "A secret handle the host injects into the request. The plugin never sees the material (spec §31.20)."}
+    returns: {type: record, doc: "`{status, headers, body}`, with the body bounded by the host's per-call ceiling."}
+    errors: [io.permission_denied, remote.unreachable, runtime.timeout]
+    doc: Spec §31.21's `http.request(request, credential_handle?)`.
+
+  - id: network.listen
+    domain: network
+    direction: plugin->host
+    capability: network.listen
+    params:
+      port: {type: port, required: true, doc: "Must be in the granted `ports` scope."}
+      protocol: {type: enum, required: true, values: [tcp, udp], doc: "The transport."}
+    returns: {type: handle<connection>, doc: "A listener. Accepted connections arrive as a stream of connection handles."}
+    errors: [io.permission_denied, io.already_exists]
+    doc: null
+
+  - id: network.close
+    domain: network
+    direction: plugin->host
+    capability: null
+    params:
+      connection: {type: handle<connection>, required: true, doc: "The connection or listener to close."}
+    returns: {type: "null"}
+    errors: []
+    doc: Idempotent. Every connection also closes when its invocation ends.
+
+  # --- process, spec §31.12 -------------------------------------------------------------------
+  - id: process.signal
+    domain: process
+    direction: plugin->host
+    capability: process.signal
+    params:
+      object: {type: record, required: true, doc: "The process's `ObjectId` — `(pid, started)`, not a bare pid."}
+      signal: {type: string, required: true, doc: "Must be in the granted `signals` scope."}
+    returns: {type: ono.action-result/1, doc: "One structured result per target (spec §11.5, §16.5)."}
+    errors: [io.permission_denied, io.not_found]
+    doc: >-
+      The host re-reads the process's identity immediately before delivering the signal and
+      refuses on a mismatch, so a recycled pid cannot inherit a grant (ADR-0015 T12, T13).
+
+  - id: process.exec
+    domain: process
+    direction: plugin->host
+    capability: process.exec
+    params:
+      program: {type: path, required: true, doc: "Resolved before exec and matched against the granted `programs` scope (ADR-0015 T11)."}
+      arguments: {type: list<string>, required: true, doc: "The argument vector, passed as given. No shell is involved."}
+      stdin: {type: handle<stream>, nullable: true, doc: "Bytes to feed the program. Null closes stdin."}
+      environment: {type: record, nullable: true, doc: "Additional environment entries. The package's process does not inherit Ono's environment (spec §31.20)."}
+    returns: {type: handle<exec>, doc: "The running program, with brokered stdout, stderr and exit status."}
+    errors: [io.not_found, io.permission_denied, external.exit_nonzero]
+    doc: >-
+      For external adapters (spec §31.57, §31.58). The declared parser and schema still apply:
+      structuring a tool's machine-readable output is an adapter, and scraping its human output
+      is a labelled, fixture-covered fallback, never the default (spec §50, §31.58).
+
+  # --- secrets, spec §31.20 -------------------------------------------------------------------
+  - id: secrets.request
+    domain: secrets
+    direction: plugin->host
+    capability: secret.use
+    params:
+      name: {type: string, required: true, doc: "The secret's name. Must be in the granted `secrets` scope."}
+      purpose: {type: string, required: true, doc: "Shown to the operator in the consent prompt, sanitised and attributed to the package."}
+    returns: {type: handle<secret>, doc: "An opaque handle, e.g. spec §31.20's `secret#A72`. The material never crosses."}
+    errors: [io.not_found]
+    doc: >-
+      There is deliberately no `secrets.list`. Spec §31.12: "request opaque secret handles, never
+      enumerate." A package learns nothing about the secrets it did not name.
+
+  - id: secrets.release
+    domain: secrets
+    direction: plugin->host
+    capability: null
+    params:
+      secret: {type: handle<secret>, required: true, doc: "The handle to invalidate."}
+    returns: {type: "null"}
+    errors: []
+    doc: Handles also expire with their invocation; releasing early is good hygiene, not a requirement.
+
+  # --- models, spec §31.43 --------------------------------------------------------------------
+  - id: models.list
+    domain: models
+    direction: plugin->host
+    capability: model.infer
+    params: {}
+    returns: {type: list<ono.model-provider/1>, doc: "The providers this package may use, already filtered by its `providers` scope."}
+    errors: [model.provider_unavailable]
+    doc: A package sees the providers it may use, not the operator's whole configuration.
+
+  - id: models.infer
+    domain: models
+    direction: plugin->host
+    capability: model.infer
+    params:
+      request: {type: record, required: true, doc: "A model request; shape in `assistants.v1.yaml` → `model_request`."}
+    returns: {type: handle<stream>, doc: "A stream of response parts: text, structured output and tool intents."}
+    errors: [model.provider_unavailable, model.policy_denied, assistant.context_denied, runtime.timeout]
+    doc: >-
+      A tool intent in the response is an *intent*. It is returned to the plugin as data and
+      reaches nothing else until the host's planner and capability broker have validated it
+      (spec §31.41, §31.46, §31.52). See `assistants.v1.yaml` → `authority_invariants`.
+
+  # --- state, spec §31.31 ---------------------------------------------------------------------
+  - id: state.get
+    domain: state
+    direction: plugin->host
+    capability: null
+    params:
+      key: {type: string, required: true, doc: "A key in the package's own store."}
+      class: {type: enum, required: true, values: [invocation, view, session, persistent, shared-cache], doc: "Which store. `persistent` requires `state.persist`."}
+    returns: {type: bytes, doc: "The value, or absent when the key is unset. Absent is not an empty value (spec §10.5)."}
+    errors: []
+    doc: Keyed by package id. No package can name another's store, so there is nothing to scope.
+
+  - id: state.set
+    domain: state
+    direction: plugin->host
+    capability: null
+    params:
+      key: {type: string, required: true, doc: "A key in the package's own store."}
+      class: {type: enum, required: true, values: [invocation, view, session, persistent, shared-cache], doc: "Which store."}
+      value: {type: bytes, required: true, doc: "The value to store."}
+    returns: {type: "null"}
+    errors: [state.quota_exceeded]
+    doc: Exceeding the effective quota fails the write; it never evicts the package's other keys.
+
+  - id: state.delete
+    domain: state
+    direction: plugin->host
+    capability: null
+    params:
+      key: {type: string, required: true, doc: "The key to remove."}
+      class: {type: enum, required: true, values: [invocation, view, session, persistent, shared-cache], doc: "Which store."}
+    returns: {type: bool, doc: "Whether a value was removed."}
+    errors: []
+    doc: null
+
+  - id: state.usage
+    domain: state
+    direction: plugin->host
+    capability: null
+    params: {}
+    returns: {type: record, doc: "`{used: bytesize, quota: bytesize, keys: int}` per class, so a package can stay inside its budget deliberately."}
+    errors: []
+    doc: null
+
+  # --- audit and logs, spec §31.33 and §31.37 -------------------------------------------------
+  - id: audit.event
+    domain: audit
+    direction: plugin->host
+    capability: null
+    params:
+      event: {type: record, required: true, doc: "A security-relevant event the package wants recorded. Attribution and timestamp are the host's."}
+    returns: {type: "null"}
+    errors: []
+    doc: >-
+      A package can add to the audit trail but cannot write the host's own records, and cannot
+      suppress one. The `PluginAction` records of §31.37 are emitted by the broker, not by the
+      package they are about.
+
+  - id: audit.log
+    domain: audit
+    direction: plugin->host
+    capability: null
+    params:
+      record: {type: record, required: true, doc: "`{level, message, fields}`. Structured, per spec §31.33: \"Plugin logs MUST be structured records, not uncontrolled writes to Ono stderr.\""}
+    returns: {type: "null"}
+    errors: []
+    doc: >-
+      Rate-limited by the host's output rate limit (spec §31.15). Reachable through
+      `get log --plugin <id>`.
+
+  # --- clock ----------------------------------------------------------------------------------
+  - id: clock.now
+    domain: clock
+    direction: plugin->host
+    capability: clock.read
+    params: {}
+    returns: {type: timestamp, doc: "Wall-clock time."}
+    errors: []
+    doc: Under the test host this is virtual time, which is what makes plugin tests deterministic (spec §31.73).
+
+  - id: clock.monotonic
+    domain: clock
+    direction: plugin->host
+    capability: clock.read
+    params: {}
+    returns: {type: duration, doc: "Time since an unspecified fixed origin. Comparable only with itself."}
+    errors: []
+    doc: null
+
+  # --- capabilities, spec §31.61 --------------------------------------------------------------
+  - id: capabilities.check
+    domain: capabilities
+    direction: plugin->host
+    capability: null
+    params:
+      request: {type: record, required: true, doc: "`{capability: string, scope: record?}`."}
+    returns: {type: enum, values: [granted, denied, ask, unknown], doc: "The grant state. `ask` means a request would prompt; it is not a grant."}
+    errors: []
+    doc: >-
+      Spec §31.61's `capabilities.check`. Asking is always permitted and never prompts, so a
+      package can adapt to a denied optional capability instead of failing at the call
+      (spec §31.63).
+
+  - id: capabilities.request
+    domain: capabilities
+    direction: plugin->host
+    capability: null
+    params:
+      request: {type: record, required: true, doc: "`{capability, scope?, purpose, action_context}`. `action_context` names the explicit user action the request answers."}
+    returns: {type: record, doc: "A lease, or a denial carrying the reason."}
+    errors: [capability.denied, capability.scope_violation]
+    doc: >-
+      Spec §31.61's `capabilities.request-once`, for `runtime_requested` declarations only
+      (spec §31.17). A request with no user action behind it is denied without prompting, and a
+      package that re-requests a denied optional capability is a conformance failure
+      (spec §31.63, §31.74).
+
+  # --- output, spec §31.61 --------------------------------------------------------------------
+  - id: output.emit
+    domain: output
+    direction: plugin->host
+    capability: null
+    params:
+      value: {type: value, required: true, doc: "One value of the invocation's declared output schema."}
+    returns: {type: record, doc: "`{credit: int}`, the same backpressure answer `streams.emit` gives."}
+    errors: [runtime.schema_violation]
+    doc: The invocation's implicit output stream, so a simple analysis does not have to open one.
+
+  - id: output.finding
+    domain: output
+    direction: plugin->host
+    capability: null
+    params:
+      finding: {type: ono.finding/1, required: true, doc: "A finding. `source` is set by the host to the emitting package."}
+    returns: {type: "null"}
+    errors: [runtime.schema_violation]
+    doc: >-
+      Spec §31.61's `output.finding`. A finding with an `evidence` list whose references do not
+      resolve is rejected: spec §31.25 requires evidence to stay inspectable, and an unresolvable
+      citation is prose wearing a citation's clothes.
+
+  - id: output.annotate
+    domain: output
+    direction: plugin->host
+    capability: null
+    params:
+      object: {type: record, required: true, doc: "The `ObjectId` being annotated."}
+      key: {type: string, required: true, doc: "A namespaced annotation key declared in the manifest, e.g. `dev.example.risk.score`."}
+      value: {type: value, required: true, doc: "The annotation's value."}
+    returns: {type: "null"}
+    errors: [runtime.schema_violation]
+    doc: >-
+      Spec §31.23: the core value stays what it was and the package contributes additional
+      knowledge beside it. An annotation never replaces a declared field and never changes the
+      record's schema id.
+
+# ---------------------------------------------------------------------------------------------
+# Calls the host makes into the plugin. `direction: host->plugin`. A plugin that does not
+# implement one for a role it declared fails conformance (spec §31.74), not at the moment of use.
+# ---------------------------------------------------------------------------------------------
+plugin_calls:
+
+  - id: lifecycle.init
+    direction: host->plugin
+    params:
+      contract: {type: ono.plugin-runtime/1, required: true, doc: "The negotiated contract of spec §31.63: host API version, granted and denied capabilities, and the effective limits."}
+    returns: {type: record, doc: "`{ready: bool, disabled_features: list<string>, error: ono.error/1?}`."}
+    doc: >-
+      The plugin adapts to denied optional capabilities here, once. Spec §31.63: it "MUST adapt
+      to denied optional capabilities rather than repeatedly prompting."
+
+  - id: lifecycle.shutdown
+    direction: host->plugin
+    params:
+      reason: {type: enum, required: true, values: [unload, upgrade, revocation, policy, idle, host-exit], doc: "Why. `revocation` means a capability it holds was withdrawn."}
+      deadline: {type: duration, required: true, doc: "How long the plugin has to drain. After it, the instance is terminated."}
+    returns: {type: "null"}
+    doc: A mutating invocation in flight is never interrupted by an upgrade (spec §31.72); it is drained or the upgrade waits.
+
+  - id: command.invoke
+    direction: host->plugin
+    params:
+      command: {type: string, required: true, doc: "A command id the package contributed."}
+      arguments: {type: record, required: true, doc: "Selectors and options, already bound and typed by the host's command layer (ADR-0021)."}
+      input: {type: handle<stream>, nullable: true, doc: "The pipeline's input stream. Null when the command takes none."}
+      output: {type: handle<stream>, required: true, doc: "Where the plugin emits its results."}
+      invocation: {type: handle<invocation>, required: true, doc: "The invocation every handle the plugin opens will belong to."}
+    returns: {type: record, doc: "`{status: enum[completed, failed, cancelled], error: ono.error/1?}`."}
+    doc: >-
+      A contributed command is an ordinary node in Ono's execution graph, which is what makes
+      `explain` able to show it (spec §31.29).
+
+  - id: analysis.run
+    direction: host->plugin
+    params:
+      analysis: {type: string, required: true, doc: "A contributed analysis id."}
+      input: {type: handle<stream>, required: true, doc: "The typed objects to analyse."}
+      output: {type: handle<stream>, required: true, doc: "Where findings and derived objects go."}
+      invocation: {type: handle<invocation>, required: true, doc: "The owning invocation."}
+    returns: {type: record, doc: "`{status, error?}`."}
+    doc: Spec §31.29's `Stream<Process> -> Analysis<Process> -> Stream<Finding>`, as a call.
+
+  - id: provider.query
+    direction: host->plugin
+    params:
+      target: {type: string, required: true, doc: "A contributed target name (spec §31.23)."}
+      options: {type: record, nullable: true, doc: "Provider options by name, already typed."}
+      output: {type: handle<stream>, required: true, doc: "Where the plugin answers, in the target's declared schema."}
+      invocation: {type: handle<invocation>, required: true, doc: "The owning invocation."}
+    returns: {type: record, doc: "`{status, error?}`."}
+    doc: >-
+      A query against a contributed target, forwarded to the providing package and answered as a
+      value stream. Added by ADR-0040: `contributions.v1.yaml` registers targets into the
+      provider registry (spec §31.23, §31.64), but no host->plugin call carried the query — the
+      provider conformance case of spec §31.74 forced the gap closed. Every answered record is
+      validated against the target's declared schema and provenance-stamped by the host.
+
+  - id: view.mount
+    direction: host->plugin
+    params:
+      view: {type: handle<view>, required: true, doc: "The view being mounted."}
+      size: {type: record, required: true, doc: "`{rows: int, columns: int}`."}
+      input: {type: handle<stream>, nullable: true, doc: "The stream to render."}
+    returns: {type: "null"}
+    doc: Spec §31.28's `created -> mounted`. The plugin submits a tree; the host draws it.
+
+  - id: view.event
+    direction: host->plugin
+    params:
+      view: {type: handle<view>, required: true, doc: "The view the event is for."}
+      event: {type: record, required: true, doc: "`{kind: enum[key, resize, focus, blur, cancel, close], key?: string, size?: record}`."}
+    returns: {type: "null"}
+    doc: >-
+      Spec §31.28: "Views MUST receive resize/focus/cancellation events." A view that ignores
+      `cancel` is closed anyway.
+
+  - id: view.unmount
+    direction: host->plugin
+    params:
+      view: {type: handle<view>, required: true, doc: "The view being torn down."}
+    returns: {type: "null"}
+    doc: The host restores the terminal whether or not the plugin answers.
+
+  - id: stream.demand
+    direction: host->plugin
+    params:
+      handle: {type: handle<stream>, required: true, doc: "One of the plugin's output streams."}
+      credit: {type: int, required: true, doc: "How many more values the host will accept. Cumulative, never a rate."}
+    returns: {type: "null"}
+    doc: The host's side of `pull-not-push`, so a plugin cannot outrun its consumer.
+
+  - id: stream.cancel
+    direction: host->plugin
+    params:
+      handle: {type: handle<stream>, required: true, doc: "The stream being cancelled."}
+      reason: {type: enum, required: true, values: [consumer-gone, deadline, policy, revocation, operator], doc: "Why."}
+    returns: {type: "null"}
+    doc: Cancellation is delivered, not inferred from a stalled stream.
+
+  - id: capability.changed
+    direction: host->plugin
+    params:
+      granted: {type: list<string>, required: true, doc: "Capabilities now held."}
+      revoked: {type: list<string>, required: true, doc: "Capabilities just withdrawn."}
+    returns: {type: "null"}
+    doc: >-
+      A policy change reaches a loaded plugin so it can stop offering what it can no longer do.
+      Revoking a `required` capability unloads the package instead (see `capabilities.v1.yaml`).
+
+  - id: migration.run
+    direction: host->plugin
+    params:
+      from: {type: int, required: true, doc: "The state version on disk."}
+      to: {type: int, required: true, doc: "The state version the new package expects."}
+      checkpoint: {type: string, required: true, doc: "The recoverable checkpoint the host took first (spec §31.32)."}
+    returns: {type: record, doc: "`{status: enum[migrated, failed], error?}`."}
+    doc: >-
+      Runs in an isolated instance with no capabilities beyond its own state, under bounded
+      resources. Failure leaves the previous state usable; that is the point of the checkpoint
+      (spec §31.32).
+
+  - id: health.probe
+    direction: host->plugin
+    params: {}
+    returns: {type: record, doc: "`{state: enum[ready, busy, degraded], detail: string?}`."}
+    doc: Used at load for the health check of spec §31.35's upgrade plan, and periodically thereafter.
+
+  - id: assistant.turn
+    direction: host->plugin
+    params:
+      turn: {type: record, required: true, doc: "The operator's request plus the context the broker assembled. Shape in `assistants.v1.yaml`."}
+      output: {type: handle<stream>, required: true, doc: "Where the answer, citations, findings and proposed actions go."}
+    returns: {type: record, doc: "`{status, error?}`."}
+    doc: See `assistants.v1.yaml`. The plugin proposes; it never executes.
+
+# ---------------------------------------------------------------------------------------------
+# The event envelope — spec §31.14, field-for-field. This is `ObjectEvent` in
+# `crates/ono-provider-api/src/object.rs`, not a KUANG/11-specific copy of it.
+# ---------------------------------------------------------------------------------------------
+object_event:
+  schema_of_record: crates/ono-provider-api ObjectEvent
+  fields:
+    kind:
+      type: enum
+      required: true
+      values: [added, changed, removed, snapshot]
+      doc: What happened. `snapshot` is part of the initial state and precedes any change.
+    object_id:
+      type: record
+      required: true
+      doc: The object's identity — schema id plus identity field values. Present on every event, including `removed`.
+    schema:
+      type: string
+      required: true
+      doc: The schema id of the value, so a consumer can decode without a prior fetch.
+    at:
+      type: timestamp
+      required: true
+      doc: When the provider observed it, not when the plugin received it.
+    sequence:
+      type: int
+      nullable: true
+      doc: >-
+        The event's position within its provider's stream, where the provider numbers them. Null
+        where it does not — and null is not zero (spec §10.5).
+    value:
+      type: value
+      nullable: true
+      doc: >-
+        The object's record. Carried on `removed` too, holding the last value seen, so a
+        consumer can report *what* disappeared rather than only that something did. Null only
+        where the provider genuinely has no value to give.
+    changed_fields:
+      type: list<string>
+      nullable: true
+      doc: The fields that moved, on a `changed` event. Null where the provider cannot say which, which is different from none having changed.
+    provenance:
+      type: record
+      required: true
+      doc: Where the observation came from. Set by the host; a plugin cannot forge it.
+  ordering:
+    rules:
+      - "Ordering is guaranteed per object and per provider: two events about one object arrive in the order the provider observed them."
+      - >-
+        No total order is implied across unrelated providers, because none exists. Spec §31.14:
+        the runtime "MUST NOT imply total ordering across unrelated providers unless such
+        ordering actually exists."
+      - "In a `watch` stream, every `snapshot` event precedes every change event for the same object."
+      - "A consumer needing a cross-provider order must derive it from `at`, and must treat equal timestamps as unordered rather than as the arrival order."
+
+# ---------------------------------------------------------------------------------------------
+# Backpressure, quotas and overflow — spec §31.15.
+#
+# "A plugin that subscribes to every socket event can otherwise stall or exhaust the shell."
+# ---------------------------------------------------------------------------------------------
+backpressure:
+
+  # Every one of these MUST be enforced (spec §31.15). Declared values come from the manifest and
+  # are capped by host policy; the effective value appears in the negotiated contract (§31.63).
+  quotas:
+    - {id: event_queue_depth, type: int, doc: "Bounded event queue per stream. Reaching it triggers the overflow policy, never unbounded growth."}
+    - {id: memory_max, type: bytesize, doc: "Per-plugin memory ceiling. Exceeding it is `runtime.memory_limit` and the instance is isolated, not the shell."}
+    - {id: call_deadline, type: duration, doc: "Cancellation deadline for one host call. Exceeding it is `runtime.timeout`."}
+    - {id: cpu_budget, type: record, doc: "CPU, fuel or instruction budget appropriate to the runtime tier. Exceeding it is `runtime.trap` for a component, a kill for a native host."}
+    - {id: max_concurrent_calls, type: int, doc: "Maximum in-flight host calls. A further call waits; it does not queue without bound."}
+    - {id: provider_rate_limit, type: record, doc: "Rate limit for expensive providers, per plugin. Prevents one package making a provider unusable for everyone."}
+    - {id: output_rate_limit, type: record, doc: "Rate limit for UI and log output (spec §31.33), so a package cannot flood the terminal or the log."}
+    - {id: state_quota, type: bytesize, doc: "Persistent-state ceiling. Exceeding it is `state.quota_exceeded` on the write, never a silent eviction."}
+
+  # spec §31.15, the five policies, in the order that section gives them.
+  overflow_policies:
+    - id: block-upstream
+      doc: >-
+        The producer waits. Permitted only where the provider safely supports it — a kernel
+        event source that would drop events itself is not made safe by asking the plugin to
+        wait, so the host refuses this policy for such a source rather than pretending.
+      requires: provider supports being paused without losing events
+      loses_data: false
+    - id: drop-oldest
+      doc: For replaceable telemetry, where the newest observation supersedes the older ones.
+      requires: null
+      loses_data: true
+    - id: drop-newest
+      doc: >-
+        Rarely useful; explicit only. Spec §31.15 says so, and it is offered rather than removed
+        because a fixed-size sample of the first N events is occasionally exactly what an
+        analysis wants.
+      requires: explicit declaration; never a default and never inferred
+      loses_data: true
+    - id: coalesce
+      doc: >-
+        Combine repeated updates by object identity, keeping the latest value and the union of
+        `changed_fields`. Requires the stream's schema to declare an identity; a stream of
+        identity-less records cannot be coalesced and the host refuses the policy.
+      requires: the stream's schema declares an identity
+      loses_data: true
+    - id: fail-stream
+      doc: >-
+        Terminate the stream with `runtime.backpressure_failure`. Required for
+        correctness-sensitive analyses, where a silently incomplete answer is worse than no
+        answer.
+      requires: null
+      loses_data: false
+
+  rules:
+    - >-
+      The manifest MAY declare a preferred policy; host policy has final authority (spec §31.15).
+      The effective policy is in the negotiated contract and in `inspect plugin`, so the plugin
+      and the operator both know which one is running.
+    - >-
+      Data loss is always visible. A stream running a lossy policy reports its dropped and
+      coalesced counts, and `inspect plugin` shows them — spec §31.33's
+      `warn event coalescing dropped=421 policy=coalesce` is the shape of that report.
+    - >-
+      A consumer that never asks for values is a stalled consumer, not a fast producer. The host
+      applies the invocation's deadline to the stall and cancels, rather than letting a bounded
+      queue become a permanently full one.
+    - >-
+      Quotas are per plugin instance, not per package: two loaded versions during an upgrade
+      hold two budgets, which is what keeps the drain of the old instance from starving the new
+      one (spec §31.35).

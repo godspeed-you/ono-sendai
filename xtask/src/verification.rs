@@ -4,7 +4,7 @@
 //! verify checksums and signatures before package installation. Verification instructions SHOULD
 //! fit in a short copyable sequence and MUST not require a proprietary service."*
 //!
-//! `docs/spec/hardening/release_verification.yaml` is that sequence, written once.
+//! `docs/contracts/hardening/release_verification.yaml` is that sequence, written once.
 //! `docs/reference/release-verification.md` is rendered from it, the README and the Wiki's Install
 //! page carry the same commands, and this module is what compares them — because a release that
 //! publishes evidence and no instructions has published nothing anyone will check.
@@ -19,7 +19,7 @@ use serde::Deserialize;
 use crate::scan::Problem;
 
 /// The sequence, compiled in, so the documents and the rule are handed the same copy.
-const REGISTRY: &str = include_str!("../../docs/spec/hardening/release_verification.yaml");
+const REGISTRY: &str = include_str!("../../docs/contracts/hardening/release_verification.yaml");
 
 /// One file §47.1 requires every release to publish.
 #[derive(Debug, Clone, Deserialize)]
@@ -93,7 +93,7 @@ const PROPRIETARY: &[&str] = &[
 /// Reports a sequence that would not fit in a document, or would need a service §47.5 forbids.
 #[must_use]
 pub fn check_sequence() -> Vec<Problem> {
-    let location = "docs/spec/hardening/release_verification.yaml";
+    let location = "docs/contracts/hardening/release_verification.yaml";
     let Some(sequence) = sequence() else {
         return vec![Problem::new(
             location,
@@ -236,7 +236,7 @@ pub fn check_document(location: &str, text: &str) -> Vec<Problem> {
             problems.push(Problem::new(
                 location.to_owned(),
                 format!(
-                    "does not print the `{}` step as `docs/spec/hardening/release_verification.yaml` \
+                    "does not print the `{}` step as `docs/contracts/hardening/release_verification.yaml` \
                      writes it. v0.4.1 §47.5 puts the sequence in the installation documentation, \
                      and a second copy that drifted is worse than none: a reader would run the \
                      wrong command and believe the right thing.",

@@ -72,13 +72,13 @@ Each phase's success criterion from spec section 37, each proven by a named acce
       `mount`/`filesystem`, `interface`/`route`/`neighbor`, `socket`/`connection` and
       `service` are answered from the kernel and systemd, not from parsed text.
       Proven by `042-inspection-without-text-parsing` (a typed field selected from each), with
-      `crates/ono-cli/tests/provider_conformance.rs` — generated from `docs/spec/providers/*.yaml`
+      `crates/ono-cli/tests/provider_conformance.rs` — generated from `docs/contracts/providers/*.yaml`
       — pinning what each provider advertises.
 - [x] **D — Consistency and discoverability.** Command, verb and schema registries exist under
-      `docs/spec/`; `help`, completion, `type`, `inspect` and `explain` are driven by them;
+      `docs/contracts/`; `help`, completion, `type`, `inspect` and `explain` are driven by them;
       `docs/reference/` is generated from them, and so is the provider conformance suite of spec
       §35.3: `crates/ono-cli/tests/provider_conformance.rs` is generated from
-      `docs/spec/providers/*.yaml` and `docs/spec/schemas/*.v1.yaml` by `cargo xtask
+      `docs/contracts/providers/*.yaml` and `docs/contracts/schemas/*.v1.yaml` by `cargo xtask
       conformance`, so nothing a provider advertises — a target, a schema, a capability, an
       identity strategy — can go unexercised, and `spec-check` fails when the committed suite is
       not what the registries produce (ADR-0331).
@@ -166,7 +166,7 @@ For **every** advertised command, in the container:
       the KUANG broker's four denial paths are each a conformance case (§31.74).
 - [x] No provider parses unstable human-readable text except where declared an adapter fallback
       — no provider crate spawns an external tool at all: every answer comes from procfs,
-      netlink, statvfs, NSS or D-Bus, and `docs/spec/providers/*.yaml` pins the surface.
+      netlink, statvfs, NSS or D-Bus, and `docs/contracts/providers/*.yaml` pins the surface.
 - [x] Unknown data is `null`, never fabricated and never silently zero — the provider
       conformance suites assert it per field (`ono-provider-linux/tests/schemas.rs`, the
       unreadable-cmdline and hidden-fd cases), and `ono-value` property tests pin the
@@ -294,7 +294,7 @@ huge stdout and an endless stream) build the rest (ADR-0333):
 
 ### 4.6 The v0.3 tranche — External Command Adaptation Layer
 
-`docs/ono_sendai_shell_spec_v0.3_external_command_adapters.md` layers the adapter layer on the
+`docs/specs/ono_sendai_shell_spec_v0.3_external_command_adapters.md` layers the adapter layer on the
 released v0.2 shell (ADR-0026, ADR-0027). This subsection is its definition of done: the six
 areas of its Integration Checklist (v0.3 §2.1–§2.6), the work packages of §1.67 and the release
 bar of §1.68, in boxes a script can check. Every box is ticked only by a named automated proof
@@ -394,16 +394,16 @@ release line again.
 #### 4.6.2 Contracts, errors and KUANG/11 (v0.3 §2.2, §2.3, ADAPT-008 … ADAPT-010)
 
 - [x] **`adapter.*` error family.** The eleven codes of v0.3 §1.65 exist in
-      `docs/spec/errors.yaml` as the E09xx block mapped onto the spec §43 kinds (ADR-0053), and
+      `docs/contracts/errors.yaml` as the E09xx block mapped onto the spec §43 kinds (ADR-0053), and
       each emitted error carries adapter id/version, executable identity/version, the original
       invocation, whether raw fallback is safe, and a recovery under fixed metadata keys —
       `ono-core/tests/error_taxonomy.rs`, `ono-adapter/tests/decode.rs`
       (`should_fail_structurally_on_truncated_output_and_keep_the_bytes` asserts the payload),
       `ono-cli/tests/adapters.rs` (a rendered E0903 naming `raw lsblk -p`), case `074`.
-- [x] **ADAPT-009 — declarative manifest schema.** `docs/spec/adapters/schema.yaml` is versioned
+- [x] **ADAPT-009 — declarative manifest schema.** `docs/contracts/adapters/schema.yaml` is versioned
       (`ono-adapter-pack/1`) and machine-validated by `ono_adapter::validate`, the code the shell
       loads a pack with; every first-party contract lives under
-      `docs/spec/adapters/first-party/*.yaml` in the shape of v0.3 §1.44 (util-linux first);
+      `docs/contracts/adapters/first-party/*.yaml` in the shape of v0.3 §1.44 (util-linux first);
       `spec-check` fails on an unknown schema id, a builtin decoder the binary lacks, a missing or
       empty fixture directory, an executable outside the declared `process.exec` set, a
       first-party id outside `org.ono.compat.*`, a tier C adapter without a builtin decoder, a
@@ -424,8 +424,8 @@ release line again.
       type) — `ono-adapter/tests/conformance.rs` (including a deliberately wrong sidecar that
       must be reported), `xtask/src/contracts.rs`.
 - [x] **ADAPT-008 — capability mapping.** `process.exec` with `executables` and
-      `argv_policy: declared-invocations-only` exists in `docs/spec/capabilities.yaml` and
-      `docs/spec/kuang/capabilities.v1.yaml`, `roles: [adapter]` and `contributions.adapters`
+      `argv_policy: declared-invocations-only` exists in `docs/contracts/capabilities.yaml` and
+      `docs/contracts/kuang/capabilities.v1.yaml`, `roles: [adapter]` and `contributions.adapters`
       are part of the manifest contract, packs load under the default-deny broker as disabled
       until `--grant process.exec`, and no adapter can spawn outside its declared set
       (v0.3 §1.22, §1.26, §2.3, ADR-0065) — `ono-kuang-protocol/tests/manifest_validation.rs`,
@@ -457,21 +457,21 @@ unsupported-flag case that falls back safely, and `explain` showing the plan (v0
 
 - [x] **COMPAT-LSBLK / FINDMNT / LSNS** — util-linux JSON: `lsblk` → `ono.block-device/1`,
       `findmnt` → `ono.mount/1`, `lsns` → `ono.namespace/1` (v0.3 §1.35) —
-      `docs/spec/adapters/first-party/util-linux.yaml` with fixtures, `ono-cli/tests/adapters.rs`
+      `docs/contracts/adapters/first-party/util-linux.yaml` with fixtures, `ono-cli/tests/adapters.rs`
       (the real tools, structured and raw, the undeclared flag), cases `073` (the plan), `074`
       (structured, provenance, raw byte-identical to bash, `--poll` refused) and `075` (the
       typed table at a PTY, `raw` keeps findmnt's own, a redirection keeps bytes).
 - [x] **COMPAT-IP-001…003 + neigh** — `ip address` → `ono.interface-address/1` (one record
       per address), `ip link` → `ono.interface/1`, `ip route` / `ip -6 route` → `ono.route/1`
       with the family pinned by the invocation, `ip neigh` → `ono.neighbor/1`, all via `-j`
-      (v0.3 §1.33, ADR-0058) — `docs/spec/adapters/first-party/iproute2.yaml` with fixtures,
+      (v0.3 §1.33, ADR-0058) — `docs/contracts/adapters/first-party/iproute2.yaml` with fixtures,
       `ono-adapter/tests/{decode,negotiation}.rs`, `ono-cli/tests/adapters.rs`
       (`should_adapt_the_ip_family_into_canonical_network_records`, `-s` refused), case `076`
       (structured, provenance naming `ip -j address show`, raw byte-identical to bash, bytes
       downstream untouched, `explain`).
 - [x] **COMPAT-JOURNAL-001** — `journalctl` via `--output=json` streaming into
       `ono.journal-event/1` records with cursor and boot id preserved, `-f` as a live view at
-      the terminal (v0.3 §1.37) — `docs/spec/adapters/first-party/systemd.yaml` with fixtures,
+      the terminal (v0.3 §1.37) — `docs/contracts/adapters/first-party/systemd.yaml` with fixtures,
       `ono-cli/tests/adapters.rs` (typed events, priorities, the follow), case `077` (fixture
       replay through a shim: the container has no journald, §1.48 "where applicable").
 - [x] **COMPAT-SYSTEMD-001** — `systemctl list-units --output=json` and `systemctl show`'s
@@ -483,23 +483,23 @@ unsupported-flag case that falls back safely, and `explain` showing the plan (v0
       `ps` keeps its own selection semantics and `-o`/`-L`/`-T` run raw (v0.3 §1.34, §1.71,
       ADR-0060: whitespace columns with a greedy `args`, `program-name` and
       `started-from-elapsed` inferred and said so, streaming per line) —
-      `docs/spec/adapters/first-party/procps.yaml` with fixtures, `ono-adapter/tests/decode.rs`,
+      `docs/contracts/adapters/first-party/procps.yaml` with fixtures, `ono-adapter/tests/decode.rs`,
       `ono-cli/tests/adapters.rs` (`should_make_ps_compose_while_keeping_its_selection_and_its_bytes`),
       case `078`.
 - [x] **COMPAT-STAT / DF / FIND-001** — `stat --printf`, `df --output --block-size=1`,
       `find … -printf … \0` into `ono.file/1` and `ono.filesystem/1`, NUL-terminated records
       with the path last so hostile names survive, `find` streaming, human units and actions
-      run raw (v0.3 §1.38, §1.39, ADR-0061) — `docs/spec/adapters/first-party/{coreutils,findutils}.yaml`
+      run raw (v0.3 §1.38, §1.39, ADR-0061) — `docs/contracts/adapters/first-party/{coreutils,findutils}.yaml`
       with fixtures (a tab and a newline in a name), `ono-adapter/tests/negotiation.rs`,
       `ono-cli/tests/adapters.rs`, case `079`.
 - [x] **COMPAT-GIT-001/002** — `git status --porcelain=v2 -z` → `ono.git-status-entry/1`
       through the `git-status-v2` builtin decoder, `git log` with an explicit NUL/RS format →
       `ono.commit/1`; human formats stay git (v0.3 §1.42, ADR-0062) —
-      `docs/spec/adapters/first-party/git.yaml` with fixtures for every porcelain entry kind,
+      `docs/contracts/adapters/first-party/git.yaml` with fixtures for every porcelain entry kind,
       `ono-cli/tests/adapters.rs` (`should_adapt_git_status_and_log_in_a_repository`), case `080`.
 - [x] **COMPAT-LSOF** — `lsof -F pcuftn` → `ono.open-file/1` through the `lsof-fields-v1`
       builtin decoder, with the visibility limits stated (v0.3 §1.40, ADR-0062) —
-      `docs/spec/adapters/first-party/lsof.yaml` with fixtures, `ono-cli/tests/adapters.rs`,
+      `docs/contracts/adapters/first-party/lsof.yaml` with fixtures, `ono-cli/tests/adapters.rs`,
       case `080`.
 - [x] **COMPAT-SS-001/002** — combined-flag matching (`-tunap`) and the `ss-text-v6` decoder,
       pinned to iproute2 5–6 and marked `version-constrained` in provenance, into `ono.socket/1`
@@ -586,7 +586,7 @@ unsupported-flag case that falls back safely, and `explain` showing the plan (v0
 
 ### 4.7 The v0.4 tranche — Spatial Systems Interface
 
-`docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` layers a navigable projection of
+`docs/specs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` layers a navigable projection of
 the system onto the released v0.3 shell (ADR-0124 … ADR-0131). This subsection is its definition
 of done: the release criteria of v0.4 §52 — §52.1 functional, §52.2 quality, §52.3 the product
 experience — together with the ten acceptance scenarios of §44, the twenty invariants of §2 and
@@ -766,7 +766,7 @@ v0.4 §52.2 states nine bullets; the second ("unit/property/integration/PTY test
 sentence covering the four test layers of §43.1–§43.4, and is expanded here into one box per
 layer so that each layer's own checklist is checkable.
 
-- [x] **All spatial registries validate.** `docs/spec/spatial/{spatial,spaces,relations,landmarks}.yaml`
+- [x] **All spatial registries validate.** `docs/contracts/spatial/{spatial,spaces,relations,landmarks}.yaml`
       (ADR-0126, ADR-0128) exist, are complete in the shape of §41.1/§41.2, and cannot drift
       from the shell: every declared space is served and every served space is declared, the
       same for relations, and the settings block equals the typed catalogue —
@@ -871,7 +871,7 @@ layer so that each layer's own checklist is checkable.
 - [x] **Provider conformance proves identity and permission semantics** (§42). Every provider
       that feeds the spatial index declares the §42 spatial claims and passes the four §42
       conformance tests — identity stability (§42.1), reuse safety (§42.2), relation integrity
-      (§42.3), permission state (§42.4) — declared in `docs/spec/providers/*.yaml` and held
+      (§42.3), permission state (§42.4) — declared in `docs/contracts/providers/*.yaml` and held
       against the tree by `spec-check` the way the v0.2 provider claims are:
       `spatial_contracts.rs::should_declare_the_spatial_claims_on_every_provider_that_feeds_the_spatial_index`,
       `::should_resolve_repeated_observations_of_one_object_to_the_same_spatial_id`,
@@ -1105,7 +1105,7 @@ documents it is named in the box before it may be ticked.
 
 ### 4.8 The v0.4.1 tranche — Hardening, Trust & Release Integrity
 
-`docs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md` is a maintenance layer
+`docs/specs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md` is a maintenance layer
 over the released v0.4 substrate: boundaries that enforce what they claim, resources that stay
 bounded in bytes as well as in counts, streams that stream, performance measured as a curve
 instead of at one small point, tests that report execution truth, and a release whose published
@@ -1180,7 +1180,7 @@ Four conventions this subsection relies on:
 - [x] **P2 · The frozen baseline exists and is readable by the gate.** `docs/baselines/v0.4.1.json`
       is the tranche snapshot, written by `cargo xtask baseline --write` and validated by
       `spec-check` on every gate run — the repository counts of §50 as history, every benchmark
-      `docs/spec/hardening/performance_baseline.json` holds with all six §32.3 metrics resolved,
+      `docs/contracts/hardening/performance_baseline.json` holds with all six §32.3 metrics resolved,
       Appendix H's workflow inputs captured from `cargo xtask build-manifest`, and the release
       artifact hashes recorded as **null with a reason**, because no `v*` tag has been published
       and §2.6 keeps an unknown unknown —
@@ -1199,7 +1199,7 @@ Four conventions this subsection relies on:
 - [x] **P2 · The hardening policy data lives in machine-readable registries.** The seven contract
       domains of §52.1 — `security_boundaries`, `remote_limits`, `materialization_limits`,
       `kuang_confinement_controls`, `performance_profiles`, `expected_test_skips`, `release_inputs`
-      — each have a home `docs/spec/hardening/registries.yaml` names, and runtime defaults,
+      — each have a home `docs/contracts/hardening/registries.yaml` names, and runtime defaults,
       generated reference and tests read the same source (§52.2), so `max_connections = 32` is
       typed once —
       `xtask/tests/contracts.rs::should_hold_every_hardening_limit_against_the_value_the_shell_uses`,
@@ -1222,7 +1222,7 @@ Four conventions this subsection relies on:
       for.
 - [x] **P2 · The security boundary inventory is generated and owned.** The twelve boundaries of
       §6.1 — from `remote.tcp.transport` to `release.publish` — are declared in
-      `docs/spec/hardening/security_boundaries.yaml` with their input trust, their required
+      `docs/contracts/hardening/security_boundaries.yaml` with their input trust, their required
       enforcement and the one crate that owns each (§6.2), and `docs/reference/security-boundaries.md`
       is produced by `cargo xtask docs` rather than maintained by hand —
       `xtask/tests/reference.rs::should_render_a_boundary_page_that_matches_the_inventory` and
@@ -1349,7 +1349,7 @@ is got wrong — self-reported authorization, and authorization that exists only
       ADR-0467).
 - [x] **P0 · The operator manages client keys through the command registry.**
       `get client-key`, `add client-key`, `set client-key` and `remove client-key` answer as
-      objects, are declared in `docs/spec/commands/`, and carry help and completion —
+      objects, are declared in `docs/contracts/commands/`, and carry help and completion —
       `crates/ono-cli/tests/client_keys.rs::should_list_every_authorized_client_as_an_object_when_get_client_key_runs`,
       `::should_add_a_client_key_and_show_it_in_the_next_listing`,
       `::should_change_exactly_the_grants_named_when_set_client_key_runs`,
@@ -1394,7 +1394,7 @@ is got wrong — self-reported authorization, and authorization that exists only
       `::should_refuse_it_on_every_dispatch_path_the_server_exposes` — which drives query,
       subscribe, adapt and act and asserts that no provider code ran — and case `184` (#46, §10.2,
       §20; ADR-0472). The cross-check of the §6.1 boundary inventory now exists as well:
-      `docs/spec/hardening/security_boundaries.yaml` declares every path §10.2 governs with the
+      `docs/contracts/hardening/security_boundaries.yaml` declares every path §10.2 governs with the
       guard it must call, and
       `xtask/tests/contracts.rs::should_find_the_authorization_check_on_every_declared_dispatch_path`
       reads both directions — a declared path that never asks, and a method the served trait
@@ -1404,7 +1404,7 @@ is got wrong — self-reported authorization, and authorization that exists only
       set is proved and not only the four paths that existed when H2 ran.
 - [x] **P0 · Refusals are stable, structured and non-interactive.**
       `remote.unauthenticated`, `remote.unauthorized` and `remote.capability_denied` are declared
-      in `docs/spec/errors.yaml`, carry the deciding boundary in structured details, and never
+      in `docs/contracts/errors.yaml`, carry the deciding boundary in structured details, and never
       prompt — `crates/ono-protocol/tests/authorization.rs::should_declare_the_three_remote_refusal_codes_with_their_details`,
       `::should_answer_the_same_stable_code_for_the_same_refusal_every_time`,
       `::should_refuse_without_prompting_when_no_terminal_is_attached` (§59.9),
@@ -1436,7 +1436,7 @@ is got wrong — self-reported authorization, and authorization that exists only
 on a network cannot be exhausted by a peer that simply keeps connecting.
 
 - [x] **P1 · One `Limits` contract, and no unlimited limit in production.** Every ceiling of
-      Appendix A is a field of one typed contract, `docs/spec/hardening/remote_limits.yaml`
+      Appendix A is a field of one typed contract, `docs/contracts/hardening/remote_limits.yaml`
       describes what each one refuses and names the `limits.*` key that holds its number, no
       production path constructs an unlimited value, and the same numbers reach the startup
       summary, `inspect limits` and the tests —
@@ -1493,7 +1493,7 @@ ignored, and §65.5 names the documentation failure that travels with it: callin
 sandbox when it provides no filesystem or network isolation.
 
 - [x] **P0 · Mandatory and best-effort controls are one table, not scattered constants.** Appendix
-      D's eleven rows exist in `docs/spec/hardening/kuang_confinement_controls.yaml` with their tier
+      D's eleven rows exist in `docs/contracts/hardening/kuang_confinement_controls.yaml` with their tier
       and their failure behaviour, the supervisor reads that table, and an unknown control ID fails
       the gate — `crates/ono-kuang-supervisor/tests/confinement.rs::should_classify_every_control_the_confinement_table_declares`,
       `::should_treat_a_control_the_table_calls_mandatory_as_mandatory`,
@@ -1534,7 +1534,7 @@ sandbox when it provides no filesystem or network isolation.
       isolation from the presence of the other controls —
       `crates/ono-kuang-supervisor/tests/confinement.rs::should_report_a_named_execution_tier_rather_than_a_sandboxed_boolean`,
       `crates/ono-cli/tests/plugins.rs::should_show_the_execution_tier_and_its_controls_when_a_plugin_is_inspected`,
-      and `cargo run -p xtask -- spec-check` for the `docs/spec/kuang/` contract change (#64,
+      and `cargo run -p xtask -- spec-check` for the `docs/contracts/kuang/` contract change (#64,
       §17.2, §17.3).
 
 #### 4.8.6 Resource correctness (H5 — §66.2, §21–§24, Appendix A)
@@ -1606,7 +1606,7 @@ bytes behind them are unbounded.
       `crates/ono-cli/tests/resource_limits.rs::should_leave_the_pipeline_output_complete_when_history_could_not_keep_it_all`,
       case `191` (#72, §24, §60.6, §67.6, Appendix A, ADR-0458).
 - [x] **P1 · The refusals are stable error codes.** `resource.item_limit`, `resource.byte_limit`
-      and `resource.materialization_limit` are declared in `docs/spec/errors.yaml` with the details
+      and `resource.materialization_limit` are declared in `docs/contracts/errors.yaml` with the details
       §53.3 requires — the limit, the observed figure and the stage that enforced it — so automation
       reads a code instead of a message (§53.2) —
       `crates/ono-value/tests/errors.rs::should_declare_the_three_resource_refusal_codes_with_their_details`,
@@ -1672,7 +1672,7 @@ foreground `Vec` with an unbounded background queue is not a streaming fix and i
       `::should_report_a_capture_whose_class_is_not_one_the_specification_defines`,
       `::should_accept_an_evaluator_capture_the_inventory_classifies`,
       `::should_report_this_repository_as_classifying_every_evaluator_capture`, with the inventory
-      in `docs/spec/hardening/streaming.yaml` (#78, §26.1, §65.7, ADR-0479).
+      in `docs/contracts/hardening/streaming.yaml` (#78, §26.1, §65.7, ADR-0479).
 - [x] **P1 · A function is a pipeline stage.** A function whose body is one native pipeline
       forwards values as it produces them, its scope lives exactly as long as its invocation, and
       the call does not turn the pipeline into a two-phase collection. A body that cannot be
@@ -1701,7 +1701,7 @@ foreground `Vec` with an unbounded background queue is not a streaming fix and i
       `crates/ono-pipeline/tests/ordering.rs::should_deliver_every_event_of_one_channel_in_the_order_it_was_produced`,
       `::should_hold_the_documented_guarantee_between_values_diagnostics_and_status`,
       `::should_produce_a_total_order_when_the_caller_asks_for_one`, with the contract in
-      `docs/spec/hardening/streaming_classification.yaml`, rendered to
+      `docs/contracts/hardening/streaming_classification.yaml`, rendered to
       `docs/reference/streaming.md` and held by
       `xtask/tests/reference.rs::should_render_the_stream_ordering_contract_from_the_registry`
       and `::should_render_this_repositorys_ordering_contract_as_the_stream_module_states_it`
@@ -1719,7 +1719,7 @@ mode this phase removes.
       same fixture is reconstructible from the registry —
       `crates/ono-spatial-query/tests/profiles.rs::should_build_every_declared_profile_at_the_cardinality_the_registry_states`,
       `::should_rebuild_the_same_profile_from_the_same_declaration`, with the declarations in
-      `docs/spec/hardening/performance_profiles.yaml` and the fixture under
+      `docs/contracts/hardening/performance_profiles.yaml` and the fixture under
       `docker/acceptance/fixtures/perf/` (#82, §32.1, §32.2).
 - [x] **P1 · Six metrics per benchmark, against a machine-readable baseline.** Time to first value,
       time to completion, sampled RSS, values per second, estimated bytes and cancellation latency
@@ -1806,7 +1806,7 @@ a pass. ADR-0428 already made every skip announce itself; this phase makes an un
       `::should_report_this_repository_as_announcing_every_skip_it_takes`, which held the
       forty-one silent returns the rule found (#88, §38.1, §38.4).
 - [x] **P2 · An unexpected skip fails the gate.** The expected skip set is checked in as
-      `docs/spec/hardening/expected_test_skips.yaml`, the verifier compares observed skip IDs and
+      `docs/contracts/hardening/expected_test_skips.yaml`, the verifier compares observed skip IDs and
       categories against it, and a skip nobody declared turns the run red —
       `xtask/tests/scan.rs::should_fail_on_a_skip_the_expectation_does_not_declare`,
       `::should_fail_when_a_declared_skip_no_longer_happens`,
@@ -2077,7 +2077,7 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       `xtask/tests/contracts.rs::should_find_a_deciding_boundary_on_every_declared_hardening_error`,
       case `200` (#119, §54.1, §54.2).
 - [x] **P2 · The security terminology contract holds across every document.** The §19.1 terms are
-      defined once in `docs/spec/hardening/terminology.yaml`, rendered into
+      defined once in `docs/contracts/hardening/terminology.yaml`, rendered into
       `docs/reference/terminology.md` rather than paraphrased (§19.2), and every surface a gate run
       can reach is held to them: README, PHILOSOPHY, CONTRIBUTING, SECURITY, every page `help`
       renders, every generated reference page and the accepted decision records —
@@ -2093,7 +2093,7 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
 - [x] **P2 · Verification instructions exist and work.** The install documentation shows a short
       copyable sequence that verifies `SHA256SUMS` and its signature before installation, needs no
       proprietary service, and is executed rather than merely printed. Written, checked and half
-      executed: `docs/spec/hardening/release_verification.yaml` holds the five steps once, the
+      executed: `docs/contracts/hardening/release_verification.yaml` holds the five steps once, the
       README, the Wiki's Install page and `docs/reference/release-verification.md` are compared
       against it, and the checksum step is run against a release fixture and against a tampered one
       — `xtask/tests/release_verification.rs::should_execute_the_documented_verification_sequence_against_a_release_fixture`,
@@ -2141,7 +2141,7 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       `xtask/tests/terminology.rs::should_find_all_six_remote_trust_concepts_described_separately`,
       `::should_report_a_remote_page_that_leaves_one_of_the_six_to_be_inferred` (#113, §51.3;
       ADR-0538). The `boundary` each concept carries is now joined to §6.1's inventory in
-      `docs/spec/hardening/security_boundaries.yaml`, so a concept cannot name a boundary the
+      `docs/contracts/hardening/security_boundaries.yaml`, so a concept cannot name a boundary the
       inventory does not declare —
       `xtask/tests/contracts.rs::should_report_this_repositorys_own_registries_as_consistent_when_checked`
       over `check_hardening_contracts` (#118, ADR-0546).
@@ -2154,7 +2154,7 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       `::should_find_a_reporting_channel_and_a_response_expectation_in_the_security_document`
       (#114, §51.4, §5.1, §5.3; ADR-0541). `SECURITY.md`'s boundary table is still transcribed by
       hand from §6.1 and is now checkable against the generated one:
-      `docs/spec/hardening/security_boundaries.yaml` exists and `docs/reference/security-boundaries.md`
+      `docs/contracts/hardening/security_boundaries.yaml` exists and `docs/reference/security-boundaries.md`
       is rendered from it (#118, ADR-0546). Holding `SECURITY.md`'s copy to the inventory is a
       documentation check of its own and is not part of #118's increment, so the transcription is
       still a transcription.

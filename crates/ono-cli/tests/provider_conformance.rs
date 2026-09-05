@@ -1,5 +1,5 @@
-//! The provider conformance suite of spec §35.3, generated from `docs/spec/providers/*.yaml`
-//! and `docs/spec/schemas/*.v1.yaml` by `cargo xtask conformance`.
+//! The provider conformance suite of spec §35.3, generated from `docs/contracts/providers/*.yaml`
+//! and `docs/contracts/schemas/*.v1.yaml` by `cargo xtask conformance`.
 //!
 //! Do not edit by hand: your changes will be overwritten and the gate will fail. What a provider
 //! advertises is declared in the registry; this file is that declaration turned into questions

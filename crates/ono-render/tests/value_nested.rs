@@ -27,7 +27,7 @@ fn renderer() -> Renderer {
     Renderer::in_zone(TimeZone::UTC)
 }
 
-/// `ono.endpoint/1` as `docs/spec/schemas/endpoint.v1.yaml` declares it: a structural sub-record
+/// `ono.endpoint/1` as `docs/contracts/schemas/endpoint.v1.yaml` declares it: a structural sub-record
 /// with no identity of its own, and a default view of the two fields a reader reads.
 fn endpoint_schema() -> Arc<Schema> {
     Arc::new(
@@ -60,7 +60,7 @@ fn endpoint() -> Value {
     .into_value()
 }
 
-/// `ono.user/1` as `docs/spec/schemas/user.v1.yaml` declares it, cut to the fields these tests
+/// `ono.user/1` as `docs/contracts/schemas/user.v1.yaml` declares it, cut to the fields these tests
 /// read: the uid is the identity and the name is what a person calls the account.
 fn user_schema() -> Arc<Schema> {
     Arc::new(
@@ -89,7 +89,7 @@ fn user(name: Option<&str>) -> Value {
 }
 
 /// A socket-shaped record: `local` is a nested `ono.endpoint/1`, exactly as
-/// `docs/spec/schemas/socket.v1.yaml` declares it.
+/// `docs/contracts/schemas/socket.v1.yaml` declares it.
 fn socket() -> Value {
     let schema = Arc::new(
         Schema::builder(SchemaId::new("ono.socket", 1), "Socket")
@@ -118,7 +118,7 @@ fn socket() -> Value {
 }
 
 /// A process-shaped record: `cpu` is a `float` carrying `unit: percent` and `user` is a
-/// `ref<ono.user/1>`, both as `docs/spec/schemas/process.v1.yaml` declares them.
+/// `ref<ono.user/1>`, both as `docs/contracts/schemas/process.v1.yaml` declares them.
 fn process(user_field: Value) -> Value {
     let schema = Arc::new(
         Schema::builder(SchemaId::new("ono.process", 1), "Process")
@@ -261,7 +261,7 @@ fn should_leave_a_float_without_a_declared_unit_at_its_own_precision() {
 
 #[test]
 fn should_leave_a_byte_counted_field_as_the_number_a_reader_expects() {
-    // `mtu` is an `int` carrying `unit: bytes` (docs/spec/schemas/interface.v1.yaml), and an MTU
+    // `mtu` is an `int` carrying `unit: bytes` (docs/contracts/schemas/interface.v1.yaml), and an MTU
     // is read as a number of bytes, not as `64.00 KiB`. Only `percent` has no other spelling.
     let schema = Arc::new(
         Schema::builder(SchemaId::new("ono.interface", 1), "Interface")

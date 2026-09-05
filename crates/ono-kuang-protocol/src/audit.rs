@@ -1,4 +1,4 @@
-//! The audit record of spec §31.37, in the shape of `docs/spec/schemas/plugin-audit-event.v1.yaml`.
+//! The audit record of spec §31.37, in the shape of `docs/contracts/schemas/plugin-audit-event.v1.yaml`.
 //!
 //! Every capability-sensitive action a package takes — or is refused — is one record. Denials
 //! are recorded as loudly as successes: a package probing for capabilities it does not hold is

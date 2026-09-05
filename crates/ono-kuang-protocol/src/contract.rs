@@ -3,7 +3,7 @@
 //! Loading produces one record both sides hold: the operator sees what was granted and denied,
 //! and the plugin receives the same answer through `lifecycle.init` and MUST adapt to it rather
 //! than re-prompting. The object schema this mirrors is
-//! `docs/spec/schemas/plugin-runtime.v1.yaml`.
+//! `docs/contracts/schemas/plugin-runtime.v1.yaml`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as Json};

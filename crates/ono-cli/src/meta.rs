@@ -4,7 +4,7 @@
 //! None of these has a provider and none can be answered by the registry alone: resolution runs
 //! through functions, aliases and `PATH`, which only the session sees (ADR-0011), and the
 //! configuration layers are the session's (ADR-0010). The contracts are still the registry's —
-//! `ono.command.resolve`, `ono.config.get`, `ono.config.set` in `docs/spec/commands/meta.yaml`
+//! `ono.command.resolve`, `ono.config.get`, `ono.config.set` in `docs/contracts/commands/meta.yaml`
 //! supply help, completion and typing — and this module supplies the values, which then seed the
 //! rest of the pipeline exactly as a producer's stream would (ADR-0093).
 

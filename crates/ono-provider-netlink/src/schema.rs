@@ -1,6 +1,6 @@
 //! The object contracts these providers answer against.
 //!
-//! Each schema is `docs/spec/schemas/<name>.v1.yaml` transcribed field for field, in the order
+//! Each schema is `docs/contracts/schemas/<name>.v1.yaml` transcribed field for field, in the order
 //! the contract lists the fields, with the contract's own documentation on each one. The
 //! registry is the public API surface (AGENTS.md §6): the shape is decided there and implemented
 //! here, never the other way round.

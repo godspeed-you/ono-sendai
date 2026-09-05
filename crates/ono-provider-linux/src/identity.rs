@@ -232,7 +232,7 @@ impl Provider for IdentityProvider {
         vec![
             Capability::new("user.list", Risk::Read),
             Capability::new("group.list", Risk::Read),
-            // `docs/spec/capabilities.yaml` gives both elevation `required`: only root may
+            // `docs/contracts/capabilities.yaml` gives both elevation `required`: only root may
             // change the account database, and the provider says so before trying (ADR-0101).
             Capability::new("user.manage", Risk::Mutate).needing_elevation(),
             Capability::new("group.manage", Risk::Mutate).needing_elevation(),

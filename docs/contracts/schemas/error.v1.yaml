@@ -1,0 +1,62 @@
+# Error. Source: spec §16.1 field-for-field, with the code taxonomy of §43 and the kind set of
+# ADR-0006. Spec §25 makes Error a variant of Value, so this schema describes a value that can
+# flow through a pipeline, be filtered on, and be matched by `try`/`catch`.
+# An error is not an addressable system object, so it has no identity.
+id: ono.error/1
+name: Error
+summary: A structured error, carrying a stable code rather than a message to grep.
+identity: []
+fields:
+  code:
+    type: string
+    required: true
+    doc: The stable code, rendered as spec §43 writes it, e.g. `Ono-Sendai-E0301`.
+  name:
+    type: string
+    required: true
+    doc: >-
+      The dotted selector, e.g. `io.not_found`. This is what predicates and `catch` match on
+      (ADR-0006); it is stable even when the human message improves.
+  kind:
+    type: enum
+    required: true
+    values:
+      [resolution, permission, io, parse, type, provider, external, conflict, timeout,
+       cancelled, safety, stream]
+    doc: The broad category scripts branch on. See `docs/contracts/errors.yaml` and ADR-0006.
+  message:
+    type: string
+    required: true
+    doc: The human message. Terse by default, rich on demand (spec §16.2).
+  target:
+    type: value
+    nullable: true
+    doc: A reference to the object the error is about; null for errors that are about no object.
+  source:
+    type: ono.error/1
+    nullable: true
+    doc: The underlying cause, so a chain is inspectable rather than flattened into one string.
+  help:
+    type: string
+    nullable: true
+    doc: What the user should do about it; null when nothing useful can be said.
+  retryable:
+    type: bool
+    nullable: true
+    doc: >-
+      Whether retrying the same operation could succeed. Null when unknown — which is different
+      from `false`, and spec §10.5 requires the difference to survive.
+  span:
+    type: record
+    nullable: true
+    doc: >-
+      The byte range of the source text the error refers to, for parse errors (§16.3). Null for
+      errors that do not come from text.
+  metadata:
+    type: record
+    required: true
+    doc: >-
+      Error-specific structured detail — the exit status of an external process, the signal
+      name, the candidate list of an ambiguous name. An empty record when there is none.
+default_view:
+  columns: [code, name, message, target]

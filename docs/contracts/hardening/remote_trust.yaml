@@ -1,0 +1,134 @@
+# The six things a remote link keeps apart (v0.4.1 §51.3), as data.
+#
+# §51.3 lists them and says only that the documentation "MUST distinguish" them. The reason is
+# §7.3 and §4.3: the transport identity and the runtime identity are different fields, one of them
+# is a cryptographic credential and the other is a self-report, and a reader who cannot tell which
+# is which will trust the wrong one. §65.1 and §65.2 are the two ways that goes wrong, and both
+# have their own heading in the specification.
+#
+# So each concept below states what it establishes and — the field that does the work — what it
+# does *not*. `docs/reference/remote-trust.md` is rendered from this file, and the documentation
+# gate requires every concept to appear in the remote documentation with its own answer to both
+# questions, so a page cannot describe five of them and let the sixth be inferred.
+#
+# Fields
+#
+#   concept      the id, used by the gate and by the generated page's anchors.
+#   name         the heading a reader sees.
+#   establishes  what a reader may conclude when this is in place.
+#   does_not     what a reader may not conclude — the conflation this concept is listed against.
+#   distinguisher
+#                the shortest phrase that proves a page made the distinction, and what the gate
+#                looks for. `does_not` carries it verbatim, so the generated page satisfies the
+#                rule by construction and a hand-written page satisfies it by saying the same
+#                thing in the same words. Short on purpose: a rule that demanded a whole paragraph
+#                word for word would be a rule against editing prose.
+#   boundary     the §6.1 boundary it belongs to, as
+#                `docs/contracts/hardening/security_boundaries.yaml` declares it, or `null` where the
+#                concept is metadata rather than a boundary. `cargo xtask spec-check` resolves
+#                the name there (ADR-0546).
+#   commands     the commands that operate it, resolved against the command registry by the gate.
+#   spec         the sections that fix it.
+#
+# Decisions: ADR-0538.
+
+version: 1
+
+concepts:
+  - concept: ssh_transport
+    distinguisher: '"peer key visible to ono: no"'
+    name: SSH-carried stdio transport
+    boundary: remote.ssh.transport
+    spec: "v0.4.1 §4.3, §51.3"
+    commands: ["link host"]
+    establishes: >-
+      OpenSSH authenticated the far host, against your own `known_hosts`, before Ono saw a single
+      byte. The channel is `ono --agent` on the far side reading a pipe OpenSSH already trusts, so
+      the network peer is authenticated by something outside Ono and Ono says so rather than
+      claiming it.
+    does_not: >-
+      Ono never sees the key OpenSSH accepted, so this link has no `transport_fingerprint` and
+      `authenticated` is false on it. §4.3 requires the trust source to be described accurately —
+      "peer key visible to ono: no" — and forbids borrowing OpenSSH's verification as Ono's own.
+      There is no client authorization on this path either: the far side's policy is the SSH
+      account's.
+
+  - concept: tls_transport
+    distinguisher: "still refused until it is authorized"
+    name: Direct mutual-TLS transport
+    boundary: remote.tcp.transport
+    spec: "v0.4.1 §7.1, §13.1, §13.3, §51.3"
+    commands: ["link host"]
+    establishes: >-
+      Both ends proved possession of a persistent key over TLS 1.3, before Ono's own `Hello`
+      (§13.1). This is the only transport where Ono itself did the authenticating, and it is the
+      only one where `authenticated` is true and `transport_fingerprint` names a key.
+    does_not: >-
+      Encryption is not authentication and authentication is not permission. §65.1 names "TLS
+      means authenticated" a failure mode, and §9.1 names the other half: holding a private key
+      proves who you are, never that the operator wants you here. A mutually authenticated client
+      is still refused until it is authorized. There is no flag that turns client authentication
+      off (§7.4).
+
+  - concept: host_pinning
+    distinguisher: "says nothing about whether this client may connect"
+    name: Server host pinning
+    boundary: remote.tcp.transport
+    spec: "v0.4.1 §51.3; spec §21.5"
+    commands: ["add host-key", "get host-key", "set host-key", "remove host-key"]
+    establishes: >-
+      The key the far side proved it holds matches a trust decision somebody recorded for that
+      host. A different machine answering for the same name is refused with
+      `remote.host_key_changed`, because a changed key is indistinguishable from an interception.
+    does_not: >-
+      A pin is about the *server*. It says nothing about whether this client may connect, which is
+      the server's own decision, and nothing about what this client may then do. Re-trusting after
+      a real key change is a separate deliberate command rather than a prompt (§2.9).
+
+  - concept: client_authorization
+    distinguisher: "It is not authentication and does not replace it"
+    name: Client authorization
+    boundary: remote.tcp.authorization
+    spec: "v0.4.1 §9, §10, §51.3"
+    commands: ["add client-key", "get client-key", "set client-key", "remove client-key"]
+    establishes: >-
+      The operator of the agent host recorded that this authenticated fingerprint may connect, and
+      what it may do: observation by default (§9.4), and exactly the action capability ids that
+      were granted by name (§9.5). This is the only thing on the list that grants authority.
+    does_not: >-
+      It is not authentication and does not replace it — §2.2 puts authentication first, and an
+      unauthenticated peer has no identity to authorize. It is also not the capability
+      negotiation: §10.2 refuses at dispatch as well, so a client that constructs a request the
+      offer omitted gains nothing (§65.3).
+
+  - concept: runtime_identity
+    distinguisher: "It grants nothing"
+    name: Runtime user and UID metadata
+    boundary: null
+    spec: "v0.4.1 §7.3, §51.3"
+    commands: ["get link"]
+    establishes: >-
+      What the far side says it is running as: `runtime_user`, `runtime_uid`, `runtime_elevated`.
+      Useful context when reading results — a value observed as root is a different observation
+      from one observed as a service account.
+    does_not: >-
+      It grants nothing. §7.3 keeps it in separate fields from the transport identity for this
+      reason, and §2.1 forbids a self-report from satisfying the word authenticated: the far side
+      is the one telling you, and §65.2 names authorization decided by a client's self-reported
+      identity a forbidden failure mode.
+
+  - concept: capability_negotiation
+    distinguisher: "The offer is a view of the policy"
+    name: Capability negotiation
+    boundary: provider.query
+    spec: "v0.4.1 §10.1, §10.2, §51.3"
+    commands: ["link host", "get link"]
+    establishes: >-
+      Which targets and capabilities the far side offered this connection. The offer is already
+      filtered by the client's authorization (§10.1), so an unauthorized client is not told what
+      it is missing.
+    does_not: >-
+      The offer is a view of the policy, never the policy itself. §10.2 requires the same check at
+      dispatch, and §65.3 names negotiation-only authorization a forbidden failure mode. A target
+      appearing in an offer is also not a promise the provider will answer: a denied door renders
+      as a locked door.

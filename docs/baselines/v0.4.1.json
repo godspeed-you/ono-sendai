@@ -1,7 +1,7 @@
 {
   "schema": "ono.baseline.v1",
   "tranche": "v0.4.1",
-  "note": "The v0.4.1 tranche as it stands, captured by `cargo xtask baseline --write`. §57's phase H0 asked for a snapshot of the state before the hardening work; this is the state after it, because H0's last issue was worked after H1-H12 and measuring today's tree cannot produce yesterday's figures (§2.6, ADR-0548). It restates nothing: the performance figures live in `docs/spec/hardening/performance_baseline.json` and the build inputs are captured from `cargo xtask build-manifest`, so the file is a binding rather than a copy (§52.2).",
+  "note": "The v0.4.1 tranche as it stands, captured by `cargo xtask baseline --write`. §57's phase H0 asked for a snapshot of the state before the hardening work; this is the state after it, because H0's last issue was worked after H1-H12 and measuring today's tree cannot produce yesterday's figures (§2.6, ADR-0548). It restates nothing: the performance figures live in `docs/contracts/hardening/performance_baseline.json` and the build inputs are captured from `cargo xtask build-manifest`, so the file is a binding rather than a copy (§52.2).",
   "captured": {
     "commit": "3ffb4d7664fc17522412ddb16174d131093d67dc",
     "state": "the v0.4.1 tranche complete"
@@ -23,7 +23,7 @@
     }
   },
   "performance": {
-    "source": "docs/spec/hardening/performance_baseline.json",
+    "source": "docs/contracts/hardening/performance_baseline.json",
     "written_by": "cargo xtask perf --write-baseline",
     "checked_by": "xtask/src/perf.rs::check_registries",
     "environment": "ryzen-3900x-ubuntu-2604",

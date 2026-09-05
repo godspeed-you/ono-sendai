@@ -290,7 +290,7 @@ impl SessionProvider {
     }
 }
 
-/// `ono.session/1`, as `docs/spec/schemas/session.v1.yaml` declares it.
+/// `ono.session/1`, as `docs/contracts/schemas/session.v1.yaml` declares it.
 fn session_schema() -> Result<Arc<Schema>, ErrorValue> {
     static SCHEMA: OnceLock<Option<Arc<Schema>>> = OnceLock::new();
     SCHEMA
@@ -313,7 +313,7 @@ fn missing_contract(id: &str) -> ErrorValue {
         ErrorCode::ProviderSchemaViolation,
         format!("{SESSION_PROVIDER_ID} advertises {id} but no contract defines it"),
     )
-    .with_help("`docs/spec/schemas/` is where the contract lives; `cargo xtask spec-check` reports a file that stopped loading")
+    .with_help("`docs/contracts/schemas/` is where the contract lives; `cargo xtask spec-check` reports a file that stopped loading")
 }
 
 /// Whether a session belongs to the user `--user` names, by name or by uid.

@@ -33,7 +33,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 step "test"
 # The run's output is kept, because v0.4.1 §38.3 needs an observation: the static half of the
-# rule refuses a skip `docs/spec/hardening/expected_test_skips.yaml` does not declare, and only a
+# rule refuses a skip `docs/contracts/hardening/expected_test_skips.yaml` does not declare, and only a
 # run can say which of the declared ones actually happened. `ono_testkit::skipped` writes its
 # marker to the real standard error rather than through the captured macros, so a passing test's
 # skip reaches this file (ADR-0513, ADR-0514).

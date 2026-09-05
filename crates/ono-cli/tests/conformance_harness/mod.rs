@@ -1,7 +1,7 @@
 //! What the generated conformance suite of spec §35.3 actually asks the providers.
 //!
-//! `crates/ono-cli/tests/provider_conformance.rs` is generated from `docs/spec/providers/*.yaml`
-//! and `docs/spec/schemas/*.v1.yaml`; it carries the declarations and nothing else. The questions
+//! `crates/ono-cli/tests/provider_conformance.rs` is generated from `docs/contracts/providers/*.yaml`
+//! and `docs/contracts/schemas/*.v1.yaml`; it carries the declarations and nothing else. The questions
 //! live here, written once and asked of every provider: what it advertises, the shape of every
 //! record it emits, whether its identity identifies, and whether a target it serves answers the
 //! way the declaration says it does.
@@ -32,7 +32,7 @@ const DEADLINE: Duration = Duration::from_secs(20);
 /// How many values an unbounded stream is read for before the case is satisfied.
 const UNBOUNDED_SAMPLE: usize = 4;
 
-/// One capability, as `docs/spec/capabilities.yaml` defines it.
+/// One capability, as `docs/contracts/capabilities.yaml` defines it.
 pub struct CapabilityClaim {
     /// The capability id.
     pub id: &'static str,
@@ -57,7 +57,7 @@ pub struct Surface {
     pub identity_token: Option<&'static str>,
 }
 
-/// One field, as `docs/spec/schemas/*.v1.yaml` fixes it.
+/// One field, as `docs/contracts/schemas/*.v1.yaml` fixes it.
 pub struct FieldContract {
     /// The field name.
     pub name: &'static str,
@@ -154,7 +154,7 @@ fn entry<'a>(registry: &'a ProviderRegistry, id: &str, targets: &[&str]) -> &'a 
         .find(|provider| provider.id() == id && provider.targets() == targets)
         .unwrap_or_else(|| {
             panic!(
-                "docs/spec/providers/ declares `{id}` serving {targets:?}, and no such provider \
+                "docs/contracts/providers/ declares `{id}` serving {targets:?}, and no such provider \
                  is registered"
             )
         })
@@ -186,7 +186,7 @@ pub async fn assert_registry(declared: &[(&str, &[&str])]) {
     expected.sort();
     assert_eq!(
         advertised, expected,
-        "docs/spec/providers/*.yaml and the built registry must name the same providers: one the \
+        "docs/contracts/providers/*.yaml and the built registry must name the same providers: one the \
          code registers and no file declares is undocumented surface, one a file declares and \
          nothing registers is a promise nobody keeps (spec §35.3)"
     );
@@ -227,7 +227,7 @@ pub async fn assert_surface(surface: &Surface) {
     assert_eq!(
         advertised, declared,
         "`{}` must advertise the capabilities its declaration promises, at the risk and \
-         elevation docs/spec/capabilities.yaml fixes",
+         elevation docs/contracts/capabilities.yaml fixes",
         surface.provider
     );
 

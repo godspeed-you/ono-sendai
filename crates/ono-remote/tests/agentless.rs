@@ -29,7 +29,7 @@ use ono_remote::{AgentlessLink, FarSide, LocalFarSide, SshFarSide};
 use ono_value::{ErrorValue, Link, Value};
 
 /// What `ps -e -o pid=,…` writes on a machine with three processes: the fixture the procps
-/// adapter's own conformance suite reads (`docs/spec/adapters/fixtures/procps/ps`).
+/// adapter's own conformance suite reads (`docs/contracts/adapters/fixtures/procps/ps`).
 const PS_OUTPUT: &[u8] = b"      1       0 root     Ss    0.7 17264  27284    1  584656 /usr/lib/systemd/systemd --switched-root --system\n      2       0 root     S     0.0     0      0    1  584656 [kthreadd]\n   2120    2098 william  Ss    0.0  6880  10248    2  584576 /usr/bin/dbus-daemon --session\n";
 
 /// What `df --block-size=1 --output=source,fstype,size,used,avail,target` writes.

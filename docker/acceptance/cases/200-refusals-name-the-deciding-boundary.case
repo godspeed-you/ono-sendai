@@ -11,7 +11,7 @@
 # `--verbose`, no diagnostic flag. Every sentence asserted below is on the stream an ordinary
 # invocation writes to.
 #
-# `docs/spec/hardening/refusals.yaml` is the census these four are rows of, and
+# `docs/contracts/hardening/refusals.yaml` is the census these four are rows of, and
 # `cargo xtask spec-check` holds the tree to it — a hardening error nobody says a boundary for
 # fails the gate. Decisions: ADR-0537.
 case: every hardening refusal names the boundary that decided it, with nothing switched on

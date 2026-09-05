@@ -80,7 +80,7 @@ fn usage() {
     eprintln!();
     eprintln!("tasks:");
     eprintln!("  gate           format, lint, test, contract check, docs (AGENTS.md section 10)");
-    eprintln!("  spec-check     contract drift between docs/spec and the implementation");
+    eprintln!("  spec-check     contract drift between docs/contracts and the implementation");
     eprintln!("  state-check    the claims docs/ACCEPTANCE.md makes about docs/STATE.md");
     eprintln!(
         "  skip-check     a test log's SKIPPED markers against the declared expectation \
@@ -114,7 +114,7 @@ README block"
     eprintln!("  baseline       the frozen v0.4.1 baseline of spec section 57 phase H0 [--write]");
     eprintln!("  docs           regenerate docs/reference/ from the contracts (spec section 36.2)");
     eprintln!(
-        "  conformance    regenerate the provider conformance suite from docs/spec (spec section 35.3)"
+        "  conformance    regenerate the provider conformance suite from docs/contracts (spec section 35.3)"
     );
     eprintln!("  acceptance     build the container and run the acceptance suite");
     eprintln!("  release-check  the full release gate of docs/ACCEPTANCE.md");
@@ -614,7 +614,7 @@ fn spec_check() -> ExitCode {
 
     if root.join("spec").is_dir() {
         problems.push(
-            "a top-level `spec/` directory exists; agent-readable contracts belong in `docs/spec/` (AGENTS.md section 2)".to_owned(),
+            "a top-level `spec/` directory exists; agent-readable contracts belong in `docs/contracts/` (AGENTS.md section 2)".to_owned(),
         );
     }
 
@@ -674,7 +674,7 @@ fn spec_check() -> ExitCode {
     problems.extend(check_command_bindings());
     problems.extend(check_generation_claims(&root));
 
-    if root.join("docs").join("spec").is_dir() {
+    if root.join("docs").join("contracts").is_dir() {
         problems.extend(
             contracts::check_contracts(&root)
                 .into_iter()
@@ -684,7 +684,7 @@ fn spec_check() -> ExitCode {
                 .map(|problem| format!("{} — {}", problem.location, problem.detail)),
         );
     } else {
-        println!("spec-check: docs/spec/ does not exist yet (expected before phase D)");
+        println!("spec-check: docs/contracts/ does not exist yet (expected before phase D)");
     }
 
     if problems.is_empty() {
@@ -728,7 +728,7 @@ fn state_check() -> ExitCode {
 /// §38.3 makes the gate bidirectional: *"A test that becomes skipped when it was expected to run
 /// MUST fail the CI gate or an explicit skip-verification step."* This is that step. It reads a
 /// test run's output and compares the `SKIPPED` markers in it against
-/// `docs/spec/hardening/expected_test_skips.yaml`, in both directions — an undeclared skip fails,
+/// `docs/contracts/hardening/expected_test_skips.yaml`, in both directions — an undeclared skip fails,
 /// and a declared skip that did not happen fails too.
 ///
 /// It is a separate task rather than part of `spec-check` because it needs an observation: the
@@ -918,10 +918,10 @@ fn check_command_bindings() -> Vec<String> {
 /// resolved in ADRs, never by editing the source of truth. A written rule is easy to forget
 /// halfway through a long run, so the rule is checked rather than trusted.
 fn check_spec_is_untouched(root: &Path) -> Vec<String> {
-    let checksum = root.join("docs").join("spec.sha256");
+    let checksum = root.join("docs").join("specs").join("spec.sha256");
     if !checksum.is_file() {
         return vec![
-            "docs/spec.sha256 is missing; the specification can no longer be proven untouched"
+            "docs/specs/spec.sha256 is missing; the specification can no longer be proven untouched"
                 .to_owned(),
         ];
     }
@@ -937,9 +937,9 @@ fn check_spec_is_untouched(root: &Path) -> Vec<String> {
         Ok(status) if status.success() => Vec::new(),
         Ok(_) => vec![
             "the narrative specification has been modified. It is IMMUTABLE (AGENTS.md \
-             section 5.1): restore it with `git checkout -- docs/ono_sendai_*spec_v*.md` and \
+             section 5.1): restore it with `git checkout -- docs/specs/ono_sendai_*spec_v*.md` and \
              record the decision in an ADR instead. If the user replaced the specification \
-             deliberately, they update docs/spec.sha256"
+             deliberately, they update docs/specs/spec.sha256"
                 .to_owned(),
         ],
         Err(error) => vec![format!(

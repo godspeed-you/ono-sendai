@@ -36,7 +36,7 @@ tokio = { workspace = true, features = ["io-std", "net"] }
 
 [dev-dependencies]
 jiff.workspace = true
-# The suites read `docs/spec/hardening/limits.yaml` directly, so the ceilings this crate enforces
+# The suites read `docs/contracts/hardening/limits.yaml` directly, so the ceilings this crate enforces
 # are compared against the registry that declares them rather than against a second copy (§52.2).
 serde_yaml_ng.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

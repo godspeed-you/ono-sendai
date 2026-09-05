@@ -1,0 +1,283 @@
+# KUANG/11 error taxonomy.
+#
+# Source: spec §31.79, which gives twenty-seven stable categories and says they "should integrate
+# with the global structured Error model". Integration is what this file does: every entry here
+# is an ordinary `ono.error/1`, carrying one of the twelve kinds of ADR-0006 and rendered in the
+# same shape as every code in `docs/contracts/errors.yaml`. There is no second error model for
+# extensions.
+#
+# ADR-0022 carries a `Spec deviation` for the *rendered* code: spec §31.79 writes `ONO-K11001`
+# while spec §43 and `docs/contracts/errors.yaml` write `Ono-Sendai-E0001`. Two spellings in one error
+# registry would be a defect a user meets, so the K-family is rendered `Ono-Sendai-K11001` and
+# the dotted `name` is kept exactly as §31.79 gives it. The `name` is what `catch` and `where`
+# match on (ADR-0006), so nothing scriptable changed.
+#
+# The taxonomy is closed and additive (ADR-0006): a code is never renumbered, never removed and
+# never re-pointed at a different meaning. New codes take the next free number in their family.
+# Numbering follows §31.79's own families: 001 package, 101 load, 201 runtime, 301 capability,
+# 401 state, 501 view, 601 model and assistant, 701 remote.
+#
+# Nothing here is implemented. These are the contracts spec §37 Phase I is built against.
+
+version: 1
+kinds_from: ../errors.yaml
+
+errors:
+
+  # --- package: validity, integrity and trust, spec §31.7, §31.36 -----------------------------
+  - code: Ono-Sendai-K11001
+    name: package.invalid
+    kind: parse
+    summary: The package manifest is not a valid `kuang-package/1` document.
+    help: >-
+      `verify plugin <reference>` reports which rule failed. A missing mandatory field, an
+      unknown field in a closed section, an id outside the publisher namespace and an unknown
+      capability id all fail closed (spec §31.7).
+  - code: Ono-Sendai-K11002
+    name: package.incompatible
+    kind: conflict
+    summary: The package requires a host, platform or API version this system does not provide.
+    help: >-
+      The unmet range is in the error metadata. `compatibility.kuang_api`, `ono_language` and
+      `platforms` are each checked separately, so exactly one of them is the answer.
+  - code: Ono-Sendai-K11003
+    name: package.integrity_failed
+    kind: safety
+    summary: The package's bytes do not match the hash the reference named.
+    help: >-
+      Do not install it because it is inconvenient not to. A hash mismatch is indistinguishable
+      from a substituted artifact. Re-resolve from the source and compare, or obtain the package
+      another way.
+  - code: Ono-Sendai-K11004
+    name: package.signature_invalid
+    kind: safety
+    summary: The package carries a signature and it does not verify.
+    help: >-
+      An *absent* signature is not this error — an unsigned package installs in a visibly
+      untrusted, capability-limited mode (spec §31.36). A signature that fails to verify is a
+      different claim, and it is refused.
+  - code: Ono-Sendai-K11005
+    name: publisher.untrusted
+    kind: safety
+    summary: The signing key or publisher is not one this system trusts.
+    help: >-
+      Trust the publisher deliberately, out of band, and record it — or install the package
+      unsigned and accept the untrusted, capability-limited mode it then runs in. Trusting a key
+      because it happened to sign the thing you already wanted is not verification.
+
+  # --- load: negotiation and dependencies, spec §31.30, §31.63 --------------------------------
+  - code: Ono-Sendai-K11101
+    name: load.capability_denied
+    kind: permission
+    summary: A capability the package declares as required was not granted.
+    help: >-
+      `inspect plugin <id>` lists every requested capability with its class and its grant state.
+      Grant it with `grant capability`, or leave the package unloaded — a required capability is
+      one the package said it could not run without.
+  - code: Ono-Sendai-K11102
+    name: load.dependency_missing
+    kind: resolution
+    summary: A declared package or schema dependency could not be resolved.
+    help: The unresolved id and version range are in the error metadata. Install the dependency, or use a package version whose range this system can satisfy.
+  - code: Ono-Sendai-K11103
+    name: load.dependency_cycle
+    kind: conflict
+    summary: The package's dependencies form a cycle.
+    help: >-
+      The cycle is listed in the error metadata. Spec §31.30 requires cycles to be detected
+      before load, so nothing has run; the packages involved must be fixed by their publishers.
+  - code: Ono-Sendai-K11104
+    name: load.runtime_unavailable
+    kind: provider
+    summary: The isolation tier the package declares is not available on this host.
+    help: >-
+      The package's `runtime.kind` names a tier this build or this policy does not offer. A
+      native out-of-process package on a host that permits only isolated components is the
+      common case, and it is a policy answer rather than a missing file.
+
+  # --- runtime: the instance misbehaved, spec §31.15, §31.34 ----------------------------------
+  - code: Ono-Sendai-K11201
+    name: runtime.trap
+    kind: external
+    summary: The plugin instance trapped or crashed.
+    help: >-
+      The shell is unaffected: failure degrades the plugin, not Ono (spec §31.34). Streams the
+      instance produced were cancelled with this error. `inspect plugin` shows the restart count.
+  - code: Ono-Sendai-K11202
+    name: runtime.timeout
+    kind: timeout
+    summary: A host call or invocation exceeded its deadline.
+    help: >-
+      The deadline and the call are in the error metadata. An assistant turn or a slow provider
+      is the usual cause; a raised deadline is a policy change, not a retry.
+  - code: Ono-Sendai-K11203
+    name: runtime.memory_limit
+    kind: external
+    summary: The plugin instance exceeded its memory ceiling and was terminated.
+    help: >-
+      The declared and effective ceilings are in the error metadata; the effective one is the
+      smaller of the package's declaration and host policy. A package that needs more must say
+      so in its manifest and be granted it.
+  - code: Ono-Sendai-K11204
+    name: runtime.protocol_violation
+    kind: provider
+    summary: The plugin sent a message that is not valid under the negotiated host API.
+    help: >-
+      A malformed frame, an emission beyond granted credit, or a handle that is not the
+      plugin's. This is a defect in the package, not in your pipeline; the instance is not
+      restarted automatically.
+  - code: Ono-Sendai-K11205
+    name: runtime.schema_violation
+    kind: provider
+    summary: The plugin emitted a value outside the schema its contribution advertises.
+    help: >-
+      Report it to the package's publisher with the output of `inspect` on the offending value.
+      Ono validates contributed output rather than trusting it, which is why you are seeing this
+      instead of a wrong answer.
+  - code: Ono-Sendai-K11206
+    name: runtime.backpressure_failure
+    kind: stream
+    summary: A stream could not keep up and its policy was to fail rather than lose data.
+    help: >-
+      The stream's overflow policy was `fail-stream`, which correctness-sensitive analyses
+      require (spec §31.15). A lossy policy would have answered, incompletely and quietly. Slow
+      the source, bound it with `take`, or choose a policy that says which values it discards.
+
+  # --- capability: the security boundary, spec §31.16–§31.19, §31.49 --------------------------
+  - code: Ono-Sendai-K11301
+    name: capability.denied
+    kind: permission
+    summary: The plugin asked for something it has not been granted.
+    help: >-
+      `get capability --plugin <id>` shows what it holds. Deny by default is the design
+      (spec §31.19); a package that works only when granted everything it asks for should be
+      asked why.
+  - code: Ono-Sendai-K11302
+    name: capability.scope_violation
+    kind: permission
+    summary: The plugin holds the capability but the call fell outside its granted scope.
+    help: >-
+      The attempted value and the granted scope are both in the error metadata, and the attempt
+      is in the audit trail. Widen the scope deliberately with `grant capability --scope`, or
+      leave it as it is.
+  - code: Ono-Sendai-K11303
+    name: capability.lease_expired
+    kind: permission
+    summary: The lease backing this call has expired, been used up, or its condition no longer holds.
+    help: >-
+      A lease is checked at every use, not at grant time (spec §31.49). Issue a new lease if the
+      delegation is still wanted; a lease is never extended in place, so the audit trail shows
+      two decisions rather than one.
+
+  # --- state: bounded persistence, spec §31.31, §31.32 ---------------------------------------
+  - code: Ono-Sendai-K11401
+    name: state.quota_exceeded
+    kind: safety
+    summary: The plugin's persistent state would exceed its quota.
+    help: >-
+      The write failed; nothing was evicted, because evicting the package's other keys to make
+      room would corrupt state to satisfy a limit. Raise the quota deliberately or let the
+      package prune its own store.
+  - code: Ono-Sendai-K11402
+    name: state.migration_failed
+    kind: external
+    summary: A plugin state migration did not complete.
+    help: >-
+      The previous state is intact: a migration must fail without destroying it (spec §31.32).
+      The package stays on its previous version, and rollback is available where the migration
+      was reversible or a checkpoint exists.
+
+  # --- view: host-owned terminal, spec §31.27, §31.28 ----------------------------------------
+  - code: Ono-Sendai-K11501
+    name: view.protocol_error
+    kind: provider
+    summary: The plugin submitted a view tree the host cannot lay out.
+    help: >-
+      The view was torn down and the terminal restored. A buggy view cannot leave the terminal
+      in raw mode (spec §31.27); if output was redirected, the command's declared
+      non-interactive fallback ran instead.
+
+  # --- model and assistant, spec §31.43–§31.52 -----------------------------------------------
+  - code: Ono-Sendai-K11601
+    name: model.provider_unavailable
+    kind: provider
+    summary: No configured model provider satisfies the request.
+    help: >-
+      `get model` lists what is configured and what each one's data policy allows. An assistant
+      degrades gracefully when no model is available (spec §31.87); its non-model contributions
+      keep working.
+  - code: Ono-Sendai-K11602
+    name: model.policy_denied
+    kind: safety
+    summary: The request carries a data class this provider is not allowed to receive.
+    help: >-
+      The denied class and the provider's policy are in the error metadata. The request was
+      refused rather than trimmed, so that the boundary stays visible; choose a provider whose
+      policy permits the class, or narrow what the turn is asking about.
+  - code: Ono-Sendai-K11603
+    name: assistant.tool_invalid
+    kind: type
+    summary: A tool intent named an unexposed tool, or arguments that do not fit its descriptor.
+    help: >-
+      Ono validates a model's tool call exactly as it validates a human command plan
+      (spec §31.46). Nothing ran. The attempt is audited, because a model asking for tools it
+      was not given is worth seeing.
+  - code: Ono-Sendai-K11604
+    name: assistant.context_denied
+    kind: permission
+    summary: The assistant requested a context source it has not been granted.
+    help: >-
+      The turn's context summary lists what was included and what was not (spec §31.45). Grant
+      the source deliberately, or accept the narrower answer — an assistant that sees less is
+      not an assistant that is wrong.
+
+  # --- remote: separate scopes, spec §31.39, §31.40 ------------------------------------------
+  - code: Ono-Sendai-K11701
+    name: remote.extension_unavailable
+    kind: provider
+    summary: The remote agent cannot run the requested extension component.
+    help: >-
+      The remote host has no compatible agent, no matching component, or policy forbids it. Ono
+      does not copy plugin code to a host merely because a link exists (spec §31.39).
+  - code: Ono-Sendai-K11702
+    name: remote.policy_denied
+    kind: safety
+    summary: The remote host's policy denies the capability, whatever the local grant says.
+    help: >-
+      Effective authority is the intersection of local and remote policy (spec §31.40). A local
+      grant never becomes a remote grant on its own; change the policy on the host that owns the
+      objects.
+
+  # --- plugin: confinement could not be installed, v0.4.1 §16.3, §18.1 -------------------------
+  #
+  # A family §31.79 does not have, added by v0.4.1 §16.3, which names all three codes verbatim.
+  # It is a family of its own rather than three more `load.*` codes because §18.1 makes it a
+  # *launch* failure with a consequence the load family does not carry: the instance never
+  # started, so it MUST NOT be quarantined, and there is nothing to inspect afterwards. 801 is
+  # the next free block after §31.79's `701 remote` (ADR-0444).
+  - code: Ono-Sendai-K11801
+    name: plugin.confinement_failed
+    kind: safety
+    summary: A mandatory confinement control could not be installed, so the plugin was not started.
+    help: >-
+      The metadata names the control and carries the operating system's own reason. v0.4.1 §2.3
+      is why nothing ran: a safety control Ono says it applies before an operation must prevent
+      that operation when it cannot be applied. The package is not quarantined — it never
+      started, so there is nothing to hold (§18.1).
+  - code: Ono-Sendai-K11802
+    name: plugin.resource_limit_failed
+    kind: safety
+    summary: A mandatory resource limit could not be installed, so the plugin was not started.
+    help: >-
+      The metadata names which limit and the value that was refused. A `setrlimit` refusal is
+      usually a hard ceiling below the requested soft one, which is a configuration question
+      about the shell's own limits rather than about the package (§59.8).
+  - code: Ono-Sendai-K11803
+    name: plugin.no_new_privs_failed
+    kind: safety
+    summary: "`PR_SET_NO_NEW_PRIVS` could not be installed, so the plugin was not started."
+    help: >-
+      Without it a setuid or file-capability binary the package execs could gain authority the
+      package was never granted, which is the one thing process confinement is for. On a kernel
+      that does not implement the option there is no confined way to run a native package
+      (§59.7).

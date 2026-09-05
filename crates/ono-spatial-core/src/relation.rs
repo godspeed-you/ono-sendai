@@ -3,7 +3,7 @@
 //! A relationship edge describes a real connection between two objects, which §2.6 and §11 keep
 //! strictly apart from the hierarchical grouping of [`crate::space`]: hierarchy orients, the
 //! graph describes what is actually connected. Every relation `follow` accepts is declared here
-//! and in `docs/spec/spatial/relations.yaml`, and `spec-check` holds the two together.
+//! and in `docs/contracts/spatial/relations.yaml`, and `spec-check` holds the two together.
 
 use crate::SpatialType;
 use std::fmt;
@@ -202,7 +202,7 @@ impl fmt::Display for Direction {
 /// permission the shell will not ask for from a hop across a link, because it treats the three
 /// differently; a caller reading a refusal or a cost estimate needs to know how expensive the
 /// acquisition is and whether it leaves this shell. Every internal class maps onto exactly one of
-/// these, and `docs/spec/hardening/cost_classes.yaml` declares both the four names and the
+/// these, and `docs/contracts/hardening/cost_classes.yaml` declares both the four names and the
 /// mapping. Decisions: ADR-0494.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AcquisitionCost {
@@ -496,7 +496,7 @@ impl RelationSpec {
     }
 }
 
-/// Every declared relation, in the order `docs/spec/spatial/relations.yaml` declares them.
+/// Every declared relation, in the order `docs/contracts/spatial/relations.yaml` declares them.
 pub const RELATIONS: &[RelationSpec] = &[
     RelationSpec {
         id: "process.parent_of",
@@ -826,7 +826,7 @@ fn contributions() -> &'static std::sync::RwLock<Vec<Contributed>> {
 /// Contributing the same id twice keeps the first: a package is loaded once per session, and a
 /// second claim on a name is a conflict rather than a replacement (§31.5).
 ///
-/// The declared vocabulary of `docs/spec/spatial/relations.yaml` is deliberately unchanged by
+/// The declared vocabulary of `docs/contracts/spatial/relations.yaml` is deliberately unchanged by
 /// this — [`relations`] still answers the relations this build ships, which is what `spec-check`
 /// compares the registry against. A contributed relation is found by [`spec`] and listed by
 /// [`contributed_relations`].

@@ -16,27 +16,27 @@ use xtask::contracts::check_contracts;
 fn consistent() -> Scratch {
     let repo = scratch();
     repo.write(
-        "docs/spec/verbs.yaml",
+        "docs/contracts/verbs.yaml",
         "version: 1\nverbs:\n  - id: ono.verb.get\n    verb: get\n    semantics: obtain state\n    pipeline_role: producer\n    mutating: false\n    stability: stable\n",
     );
     repo.write(
-        "docs/spec/targets.yaml",
+        "docs/contracts/targets.yaml",
         "version: 1\ntargets:\n  - id: ono.target.process\n    name: process\n    category: system\n    summary: A process.\n    schema: ono.process/1\n    phase: C\n",
     );
     repo.write(
-        "docs/spec/capabilities.yaml",
+        "docs/contracts/capabilities.yaml",
         "version: 1\nprovider_capabilities:\n  - id: process.list\n    summary: Enumerate processes.\n    risk: read\n    elevation: none\nkuang_capabilities:\n  - id: object.read\n    summary: Read objects.\n    risk: read\n    elevation: none\n",
     );
     repo.write(
-        "docs/spec/schemas/process.v1.yaml",
+        "docs/contracts/schemas/process.v1.yaml",
         "id: ono.process/1\nname: Process\nsummary: A process.\nidentity: [pid]\nfields:\n  pid:\n    type: int\n    required: true\n    doc: The process id.\ndefault_view:\n  columns: [pid]\n",
     );
     repo.write(
-        "docs/spec/commands/process.yaml",
+        "docs/contracts/commands/process.yaml",
         "version: 1\nfamily: process\ncommands:\n  - id: ono.process.get\n    verb: get\n    target: process\n    summary: Enumerate processes.\n    stability: stable\n    argument_mode: words\n    input: \"null\"\n    output: stream<ono.process/1>\n    provider_capability: process.list\n    privilege: none\n    streaming: true\n    phase: C\n    examples: [\"get process\"]\n",
     );
     repo.write(
-        "docs/spec/language.yaml",
+        "docs/contracts/language.yaml",
         "version: 1\nargument_modes:\n  - name: words\n    default: true\n  - name: expression\n    heads: [where, select]\n    option_values:\n      - head: find\n        option: where\n",
     );
     repo
@@ -58,7 +58,7 @@ fn should_accept_registries_that_agree_with_each_other_when_checked() {
 fn should_reject_a_command_naming_a_verb_no_registry_defines() {
     let repo = consistent();
     repo.write(
-        "docs/spec/commands/process.yaml",
+        "docs/contracts/commands/process.yaml",
         "version: 1\nfamily: process\ncommands:\n  - id: ono.process.frobnicate\n    verb: frobnicate\n    target: process\n    summary: x\n    stability: stable\n    argument_mode: words\n    output: stream<ono.process/1>\n    provider_capability: process.list\n    privilege: none\n    phase: C\n    examples: [\"frobnicate process\"]\n",
     );
     let found = problems(&repo);
@@ -74,7 +74,7 @@ fn should_reject_a_command_naming_a_verb_no_registry_defines() {
 fn should_reject_a_command_naming_a_target_no_registry_defines() {
     let repo = consistent();
     repo.write(
-        "docs/spec/commands/process.yaml",
+        "docs/contracts/commands/process.yaml",
         "version: 1\nfamily: process\ncommands:\n  - id: ono.process.get\n    verb: get\n    target: widget\n    summary: x\n    stability: stable\n    argument_mode: words\n    output: stream<ono.process/1>\n    provider_capability: process.list\n    privilege: none\n    phase: C\n    examples: [\"get widget\"]\n",
     );
     assert!(problems(&repo).iter().any(|p| p.contains("widget")));
@@ -84,7 +84,7 @@ fn should_reject_a_command_naming_a_target_no_registry_defines() {
 fn should_reject_a_command_naming_a_capability_no_registry_defines() {
     let repo = consistent();
     repo.write(
-        "docs/spec/commands/process.yaml",
+        "docs/contracts/commands/process.yaml",
         "version: 1\nfamily: process\ncommands:\n  - id: ono.process.get\n    verb: get\n    target: process\n    summary: x\n    stability: stable\n    argument_mode: words\n    output: stream<ono.process/1>\n    provider_capability: process.telepathy\n    privilege: none\n    phase: C\n    examples: [\"get process\"]\n",
     );
     assert!(
@@ -99,7 +99,7 @@ fn should_reject_a_stable_command_whose_output_schema_does_not_exist() {
     // Spec §36.5: metadata that promises a schema nobody wrote is exactly the drift this catches.
     let repo = consistent();
     repo.write(
-        "docs/spec/commands/process.yaml",
+        "docs/contracts/commands/process.yaml",
         "version: 1\nfamily: process\ncommands:\n  - id: ono.process.get\n    verb: get\n    target: process\n    summary: x\n    stability: stable\n    argument_mode: words\n    output: stream<ono.ghost/1>\n    provider_capability: process.list\n    privilege: none\n    phase: C\n    examples: [\"get process\"]\n",
     );
     assert!(problems(&repo).iter().any(|p| p.contains("ono.ghost/1")));
@@ -112,7 +112,7 @@ fn should_allow_a_planned_command_to_reference_a_schema_its_phase_has_not_writte
     // drift — otherwise the registry could only ever describe the past.
     let repo = consistent();
     repo.write(
-        "docs/spec/commands/process.yaml",
+        "docs/contracts/commands/process.yaml",
         "version: 1\nfamily: process\ncommands:\n  - id: ono.process.get\n    verb: get\n    target: process\n    summary: x\n    stability: planned\n    argument_mode: words\n    output: stream<ono.ghost/1>\n    provider_capability: process.list\n    privilege: none\n    phase: planned\n    examples: [\"get process\"]\n",
     );
     assert_eq!(problems(&repo), Vec::<String>::new());
@@ -124,7 +124,7 @@ fn should_reject_an_argument_mode_that_disagrees_with_the_grammar() {
     // completion and help describe a language the parser does not implement.
     let repo = consistent();
     repo.write(
-        "docs/spec/commands/data.yaml",
+        "docs/contracts/commands/data.yaml",
         "version: 1\nfamily: data\ncommands:\n  - id: ono.data.where\n    verb: where\n    target: value\n    summary: Filter.\n    stability: stable\n    argument_mode: words\n    output: stream<ono.process/1>\n    provider_capability: process.list\n    privilege: none\n    phase: B\n    examples: [\"where cpu > 20\"]\n",
     );
     let found = problems(&repo);
@@ -138,7 +138,7 @@ fn should_reject_an_argument_mode_that_disagrees_with_the_grammar() {
 
 #[test]
 fn should_reject_an_argument_mode_that_disagrees_with_the_grammar_this_repository_declares() {
-    // A check whose input is empty cannot fail. `docs/spec/language.yaml` writes `argument_modes`
+    // A check whose input is empty cannot fail. `docs/contracts/language.yaml` writes `argument_modes`
     // as a sequence of modes, each naming its own `heads`; a reader that expects one mapping with
     // an `expression_heads` key finds nothing there and waves every command through. So the
     // fixture carries this repository's own `language.yaml` verbatim, and the disagreement it
@@ -146,12 +146,13 @@ fn should_reject_an_argument_mode_that_disagrees_with_the_grammar_this_repositor
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root");
-    let language = std::fs::read_to_string(root.join("docs").join("spec").join("language.yaml"))
-        .expect("this repository declares its argument modes");
+    let language =
+        std::fs::read_to_string(root.join("docs").join("contracts").join("language.yaml"))
+            .expect("this repository declares its argument modes");
     let repo = consistent();
-    repo.write("docs/spec/language.yaml", &language);
+    repo.write("docs/contracts/language.yaml", &language);
     repo.write(
-        "docs/spec/commands/data.yaml",
+        "docs/contracts/commands/data.yaml",
         "version: 1\nfamily: data\ncommands:\n  - id: ono.data.where\n    verb: where\n    target: value\n    summary: Filter.\n    stability: stable\n    argument_mode: words\n    output: stream<ono.process/1>\n    provider_capability: process.list\n    privilege: none\n    phase: B\n    examples: [\"where cpu > 20\"]\n",
     );
     let found = problems(&repo);
@@ -167,7 +168,7 @@ fn should_reject_an_argument_mode_that_disagrees_with_the_grammar_this_repositor
 fn should_reject_two_commands_claiming_the_same_stable_identity() {
     let repo = consistent();
     repo.write(
-        "docs/spec/commands/other.yaml",
+        "docs/contracts/commands/other.yaml",
         "version: 1\nfamily: other\ncommands:\n  - id: ono.process.get\n    verb: get\n    target: process\n    summary: A second claim.\n    stability: stable\n    argument_mode: words\n    output: stream<ono.process/1>\n    provider_capability: process.list\n    privilege: none\n    phase: C\n    examples: [\"get process\"]\n",
     );
     assert!(
@@ -181,7 +182,7 @@ fn should_reject_two_commands_claiming_the_same_stable_identity() {
 fn should_reject_a_schema_whose_identity_names_a_field_it_does_not_have() {
     let repo = consistent();
     repo.write(
-        "docs/spec/schemas/process.v1.yaml",
+        "docs/contracts/schemas/process.v1.yaml",
         "id: ono.process/1\nname: Process\nsummary: x\nidentity: [pid, started]\nfields:\n  pid:\n    type: int\n    required: true\n    doc: The pid.\ndefault_view:\n  columns: [pid]\n",
     );
     assert!(problems(&repo).iter().any(|p| p.contains("started")));
@@ -193,7 +194,7 @@ fn should_reject_a_schema_field_without_documentation() {
     // from here. An undocumented field is a help page with a blank in it.
     let repo = consistent();
     repo.write(
-        "docs/spec/schemas/process.v1.yaml",
+        "docs/contracts/schemas/process.v1.yaml",
         "id: ono.process/1\nname: Process\nsummary: x\nidentity: [pid]\nfields:\n  pid:\n    type: int\n    required: true\ndefault_view:\n  columns: [pid]\n",
     );
     assert!(problems(&repo).iter().any(|p| p.contains("doc")));
@@ -203,7 +204,7 @@ fn should_reject_a_schema_field_without_documentation() {
 fn should_reject_a_schema_file_whose_declared_id_does_not_match_its_name() {
     let repo = consistent();
     repo.write(
-        "docs/spec/schemas/process.v1.yaml",
+        "docs/contracts/schemas/process.v1.yaml",
         "id: ono.mismatch/2\nname: Process\nsummary: x\nidentity: [pid]\nfields:\n  pid:\n    type: int\n    required: true\n    doc: The pid.\ndefault_view:\n  columns: [pid]\n",
     );
     assert!(problems(&repo).iter().any(|p| p.contains("ono.mismatch/2")));
@@ -214,7 +215,7 @@ fn should_reject_a_command_that_advertises_no_example() {
     // Spec §50: "examples in docs are executable". A command with none cannot meet that bar.
     let repo = consistent();
     repo.write(
-        "docs/spec/commands/process.yaml",
+        "docs/contracts/commands/process.yaml",
         "version: 1\nfamily: process\ncommands:\n  - id: ono.process.get\n    verb: get\n    target: process\n    summary: x\n    stability: stable\n    argument_mode: words\n    output: stream<ono.process/1>\n    provider_capability: process.list\n    privilege: none\n    phase: C\n    examples: []\n",
     );
     assert!(problems(&repo).iter().any(|p| p.contains("example")));
@@ -224,7 +225,7 @@ fn should_reject_a_command_that_advertises_no_example() {
 fn should_report_a_file_that_is_not_valid_yaml_rather_than_ignoring_it() {
     let repo = consistent();
     repo.write(
-        "docs/spec/commands/broken.yaml",
+        "docs/contracts/commands/broken.yaml",
         "commands: [ this is not\n",
     );
     assert!(problems(&repo).iter().any(|p| p.contains("broken.yaml")));
@@ -233,7 +234,7 @@ fn should_report_a_file_that_is_not_valid_yaml_rather_than_ignoring_it() {
 #[test]
 fn should_match_the_error_registry_against_the_implementation_when_both_exist() {
     // Spec §36.5's first drift case, in the one place it can be checked exactly today: the error
-    // taxonomy exists in both `docs/spec/errors.yaml` and `crates/ono-core/src/error.rs`.
+    // taxonomy exists in both `docs/contracts/errors.yaml` and `crates/ono-core/src/error.rs`.
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root");
@@ -272,7 +273,7 @@ fn should_report_a_documented_example_that_no_longer_parses() {
     // executable. An example nobody runs is documentation that has quietly become fiction.
     let repo = consistent();
     repo.write(
-        "docs/spec/commands/process.yaml",
+        "docs/contracts/commands/process.yaml",
         "version: 1\nfamily: process\ncommands:\n  - id: ono.process.get\n    verb: get\n    target: process\n    summary: x\n    stability: stable\n    argument_mode: words\n    output: stream<ono.process/1>\n    provider_capability: process.list\n    privilege: none\n    phase: C\n    examples: [\"get process | where )\"]\n",
     );
     let found = xtask::contracts::check_examples(repo.path());
@@ -313,7 +314,7 @@ fn should_reject_an_adapter_pack_the_binary_does_not_bundle_or_that_names_an_unk
     // bundle promises something nobody keeps (ADR-0055).
     let repo = consistent();
     repo.write(
-        "docs/spec/adapters/first-party/example.yaml",
+        "docs/contracts/adapters/first-party/example.yaml",
         "format: ono-adapter-pack/1\npackage:\n  id: org.ono.compat.example\n  name: Example\n  version: 0.1.0\n  publisher: org.ono\n  tier: first-party\nroles: [adapter]\ncapabilities:\n  process.exec:\n    executables: [example]\n    argv_policy: declared-invocations-only\nadapters:\n  - id: example\n    summary: An example.\n    executable:\n      names: [example]\n      versions: any\n    tier: A\n    output_demand: [structured]\n    fallback: raw\n    schema: ono.nonesuch/1\n    decoder:\n      kind: json\n    fields: {}\n    invocations:\n      - id: list\n        summary: example\n        match:\n          words: [[]]\n          flags:\n            allow: []\n            allow_with_value: []\n          positionals: forbid\n        plan:\n          argv: [example]\n          append_user_flags: false\n          env: {}\n          stdin: \"null\"\n    limits: []\n    fixtures: example\n",
     );
     let found = problems(&repo);
@@ -334,18 +335,18 @@ fn should_reject_an_adapter_pack_the_binary_does_not_bundle_or_that_names_an_unk
 /// The four registry documents of spec v0.4 §41, internally consistent.
 fn spatial(repo: &Scratch) {
     repo.write(
-        "docs/spec/spatial/spatial.yaml",
+        "docs/contracts/spatial/spatial.yaml",
         "version: 1\nobject_types:\n  aggregates: [System, Compute]\n  objects: [Process, Socket]\n\
          \nconfidence: [exact, inferred]\ndirections: [outbound, bidirectional]\n\
          cost_classes:\n  - name: cheap\n    doc: Local.\nsettings:\n  - key: spatial.landmarks.high_cpu\n    type: int\n    default: 80\n    doc: The threshold.\n",
     );
     repo.write(
-        "docs/spec/spatial/spaces.yaml",
+        "docs/contracts/spatial/spaces.yaml",
         "version: 1\nspaces:\n  - id: system\n    label: SYSTEM\n    parent: null\n    object_type: System\n    schema: ono.process/1\n    enterable: true\n    commands: [look]\n    summary_fields: [hostname]\n\
          \n  - id: compute\n    label: COMPUTE\n    parent: system\n    object_type: Compute\n    enterable: true\n    commands: [look]\n    summary_fields: [process_count]\n",
     );
     repo.write(
-        "docs/spec/spatial/relations.yaml",
+        "docs/contracts/spatial/relations.yaml",
         "version: 1\nrelations:\n  - id: process.owns_socket\n    source: Process\n    target: Socket\n    direction: outbound\n    canonical_label: socket\n    inverse_label: owner\n    canonical_group: sockets\n    inverse_group: process\n    confidence: exact\n    cost_class: cheap\n",
     );
     let reasons = [
@@ -370,7 +371,7 @@ fn spatial(repo: &Scratch) {
             "  - reason: {reason}\n    domain: compute\n    evidence: Observed.\n    threshold: null\n    severity: notice\n"
         ));
     }
-    repo.write("docs/spec/spatial/landmarks.yaml", &document);
+    repo.write("docs/contracts/spatial/landmarks.yaml", &document);
 }
 
 /// The registry-internal problems of a fixture repository.
@@ -396,7 +397,7 @@ fn should_accept_a_spatial_registry_whose_four_documents_agree() {
 fn should_match_the_spatial_registry_against_the_implementation_that_serves_it() {
     // Spec v0.4 §41's Intent: without machine contracts the renderer, the providers, the parser
     // and the documentation drift into different definitions of the world. This is the half of
-    // the check that holds `docs/spec/spatial/` against `ono-spatial-core` in both directions.
+    // the check that holds `docs/contracts/spatial/` against `ono-spatial-core` in both directions.
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root");
@@ -419,7 +420,7 @@ fn should_reject_a_space_whose_canonical_parent_is_not_a_declared_space() {
     let repo = consistent();
     spatial(&repo);
     repo.write(
-        "docs/spec/spatial/spaces.yaml",
+        "docs/contracts/spatial/spaces.yaml",
         "version: 1\nspaces:\n  - id: system\n    label: SYSTEM\n    parent: null\n    object_type: System\n    enterable: true\n    commands: [look]\n    summary_fields: [hostname]\n\
          \n  - id: compute\n    label: COMPUTE\n    parent: nowhere\n    object_type: Compute\n    enterable: true\n    commands: [look]\n    summary_fields: [process_count]\n",
     );
@@ -439,7 +440,7 @@ fn should_reject_a_space_or_relation_naming_a_type_the_vocabulary_does_not_hold(
     let repo = consistent();
     spatial(&repo);
     repo.write(
-        "docs/spec/spatial/relations.yaml",
+        "docs/contracts/spatial/relations.yaml",
         "version: 1\nrelations:\n  - id: process.owns_socket\n    source: Process\n    target: Unicorn\n    direction: outbound\n    canonical_label: socket\n    inverse_label: owner\n    canonical_group: sockets\n    inverse_group: process\n    confidence: exact\n    cost_class: cheap\n",
     );
     assert!(
@@ -458,7 +459,7 @@ fn should_reject_a_relation_whose_confidence_is_outside_the_specified_vocabulary
     let repo = consistent();
     spatial(&repo);
     repo.write(
-        "docs/spec/spatial/relations.yaml",
+        "docs/contracts/spatial/relations.yaml",
         "version: 1\nrelations:\n  - id: process.owns_socket\n    source: Process\n    target: Socket\n    direction: outbound\n    canonical_label: socket\n    inverse_label: owner\n    confidence: probably\n    cost_class: cheap\n",
     );
     assert!(
@@ -477,7 +478,7 @@ fn should_reject_a_landmark_registry_missing_one_of_the_fourteen_required_reason
     let repo = consistent();
     spatial(&repo);
     repo.write(
-        "docs/spec/spatial/landmarks.yaml",
+        "docs/contracts/spatial/landmarks.yaml",
         "version: 1\nlandmarks:\n  - reason: high_cpu\n    domain: compute\n    evidence: Observed.\n    threshold: null\n    severity: notice\n",
     );
     assert!(
@@ -496,7 +497,7 @@ fn should_reject_a_landmark_threshold_that_disagrees_with_the_setting_that_confi
     let repo = consistent();
     spatial(&repo);
     repo.write(
-        "docs/spec/spatial/landmarks.yaml",
+        "docs/contracts/spatial/landmarks.yaml",
         "version: 1\nlandmarks:\n  - reason: high_cpu\n    domain: compute\n    evidence: The CPU share.\n    threshold:\n      metric: cpu_percent\n      comparison: at_or_above\n      default: 55\n      setting: spatial.landmarks.high_cpu\n    severity: notice\n",
     );
     assert!(
@@ -519,7 +520,7 @@ fn should_reject_a_command_that_declares_no_verb() {
     // registry silent about which verb a command is.
     let repo = consistent();
     repo.write(
-        "docs/spec/commands/process.yaml",
+        "docs/contracts/commands/process.yaml",
         "version: 1\nfamily: process\ncommands:\n  - id: ono.process.get\n    target: process\n    summary: x\n    stability: stable\n    argument_mode: words\n    output: stream<ono.process/1>\n    provider_capability: process.list\n    privilege: none\n    phase: C\n    examples: [\"get process\"]\n",
     );
     let found = problems(&repo);
@@ -537,7 +538,7 @@ fn should_reject_a_command_that_declares_no_target() {
     // means nothing at all, and the difference has to be visible.
     let repo = consistent();
     repo.write(
-        "docs/spec/commands/process.yaml",
+        "docs/contracts/commands/process.yaml",
         "version: 1\nfamily: process\ncommands:\n  - id: ono.process.get\n    verb: get\n    summary: x\n    stability: stable\n    argument_mode: words\n    output: stream<ono.process/1>\n    provider_capability: process.list\n    privilege: none\n    phase: C\n    examples: [\"get process\"]\n",
     );
     let found = problems(&repo);
@@ -553,7 +554,7 @@ fn should_reject_a_command_that_declares_no_target() {
 fn should_accept_a_command_whose_target_is_explicitly_null() {
     let repo = consistent();
     repo.write(
-        "docs/spec/commands/data.yaml",
+        "docs/contracts/commands/data.yaml",
         "version: 1\nfamily: data\ncommands:\n  - id: ono.data.get\n    verb: get\n    target: null\n    summary: x\n    stability: stable\n    argument_mode: words\n    output: stream<ono.process/1>\n    privilege: none\n    phase: B\n    examples: [\"get\"]\n",
     );
     let found = problems(&repo);
@@ -570,7 +571,7 @@ fn should_reject_a_command_that_declares_no_argument_mode() {
     // registry says nothing and completion and help have to guess.
     let repo = consistent();
     repo.write(
-        "docs/spec/commands/process.yaml",
+        "docs/contracts/commands/process.yaml",
         "version: 1\nfamily: process\ncommands:\n  - id: ono.process.get\n    verb: get\n    target: process\n    summary: x\n    stability: stable\n    output: stream<ono.process/1>\n    provider_capability: process.list\n    privilege: none\n    phase: C\n    examples: [\"get process\"]\n",
     );
     let found = problems(&repo);
@@ -587,7 +588,7 @@ fn should_reject_a_command_that_declares_no_argument_mode() {
 /// The fixture registry's `get process`, with `options` spliced in.
 fn with_options(repo: &Scratch, options: &str) {
     repo.write(
-        "docs/spec/commands/process.yaml",
+        "docs/contracts/commands/process.yaml",
         format!(
             "version: 1\nfamily: process\ncommands:\n  - id: ono.process.get\n    verb: get\n    \
              target: process\n    summary: Enumerate processes.\n    stability: stable\n    \
@@ -665,8 +666,8 @@ fn should_not_accept_an_option_named_only_by_a_test() {
 
 #[test]
 fn should_match_the_kuang_contracts_against_the_runtime_that_serves_them() {
-    // Spec §36.5's drift rule, for the seven `docs/spec/kuang/` contracts. Every other registry
-    // under `docs/spec/` is held against its implementation; these reached `spec-check` only
+    // Spec §36.5's drift rule, for the seven `docs/contracts/kuang/` contracts. Every other registry
+    // under `docs/contracts/` is held against its implementation; these reached `spec-check` only
     // through the generic sweep, which proves they are non-empty valid YAML and nothing else.
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -689,13 +690,13 @@ fn should_report_a_kuang_manifest_field_the_runtime_does_not_implement() {
     // package parser would refuse is drift, and drift is what a contract check exists to find.
     let repo = consistent();
     copy_kuang_contracts(&repo);
-    let path = repo.path().join("docs/spec/kuang/manifest.v1.yaml");
+    let path = repo.path().join("docs/contracts/kuang/manifest.v1.yaml");
     let text = std::fs::read_to_string(&path).expect("the manifest contract");
     let text = text.replace(
         "      homepage:\n        type: string",
         "      hoempage:\n        type: string",
     );
-    repo.write("docs/spec/kuang/manifest.v1.yaml", &text);
+    repo.write("docs/contracts/kuang/manifest.v1.yaml", &text);
     let found = xtask::contracts::check_kuang_contracts(repo.path());
     assert!(
         found
@@ -709,10 +710,12 @@ fn should_report_a_kuang_manifest_field_the_runtime_does_not_implement() {
 fn should_report_a_kuang_capability_the_runtime_does_not_know() {
     let repo = consistent();
     copy_kuang_contracts(&repo);
-    let path = repo.path().join("docs/spec/kuang/capabilities.v1.yaml");
+    let path = repo
+        .path()
+        .join("docs/contracts/kuang/capabilities.v1.yaml");
     let text = std::fs::read_to_string(&path).expect("the capability contract");
     let text = text.replace("  - id: object.read", "  - id: object.reed");
-    repo.write("docs/spec/kuang/capabilities.v1.yaml", &text);
+    repo.write("docs/contracts/kuang/capabilities.v1.yaml", &text);
     let found = xtask::contracts::check_kuang_contracts(repo.path());
     assert!(
         found
@@ -728,14 +731,14 @@ fn copy_kuang_contracts(repo: &Scratch) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root")
-        .join("docs/spec/kuang");
+        .join("docs/contracts/kuang");
     for entry in std::fs::read_dir(&root).expect("the kuang contracts") {
         let path = entry.expect("a directory entry").path();
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
         let text = std::fs::read_to_string(&path).expect("a contract");
-        repo.write(format!("docs/spec/kuang/{name}"), &text);
+        repo.write(format!("docs/contracts/kuang/{name}"), &text);
     }
 }
 
@@ -744,14 +747,14 @@ fn copy_hardening_contracts(repo: &Scratch) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root")
-        .join("docs/spec/hardening");
+        .join("docs/contracts/hardening");
     for entry in std::fs::read_dir(&root).expect("the hardening contracts") {
         let path = entry.expect("a directory entry").path();
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
         let text = std::fs::read_to_string(&path).expect("a contract");
-        repo.write(format!("docs/spec/hardening/{name}"), &text);
+        repo.write(format!("docs/contracts/hardening/{name}"), &text);
     }
 }
 
@@ -784,13 +787,16 @@ fn should_reject_an_unknown_control_id_in_a_kuang_tier_definition() {
     copy_hardening_contracts(&repo);
     let path = repo
         .path()
-        .join("docs/spec/hardening/kuang_confinement_controls.yaml");
+        .join("docs/contracts/hardening/kuang_confinement_controls.yaml");
     let text = std::fs::read_to_string(&path).expect("the control table");
     let text = text.replace(
         "      - {control: no_new_privs, requirement: mandatory, failure: spawn_fails}",
         "      - {control: no_new_privleges, requirement: mandatory, failure: spawn_fails}",
     );
-    repo.write("docs/spec/hardening/kuang_confinement_controls.yaml", &text);
+    repo.write(
+        "docs/contracts/hardening/kuang_confinement_controls.yaml",
+        &text,
+    );
     let found = xtask::contracts::check_hardening_contracts(repo.path());
     assert!(
         found
@@ -808,13 +814,16 @@ fn should_reject_a_tier_row_whose_requirement_disagrees_with_the_supervisor() {
     copy_hardening_contracts(&repo);
     let path = repo
         .path()
-        .join("docs/spec/hardening/kuang_confinement_controls.yaml");
+        .join("docs/contracts/hardening/kuang_confinement_controls.yaml");
     let text = std::fs::read_to_string(&path).expect("the control table");
     let text = text.replace(
         "      - {control: no_new_privs, requirement: mandatory, failure: spawn_fails}",
         "      - {control: no_new_privs, requirement: best_effort, failure: recorded}",
     );
-    repo.write("docs/spec/hardening/kuang_confinement_controls.yaml", &text);
+    repo.write(
+        "docs/contracts/hardening/kuang_confinement_controls.yaml",
+        &text,
+    );
     let found = xtask::contracts::check_hardening_contracts(repo.path());
     assert!(
         found
@@ -837,10 +846,10 @@ fn repository() -> &'static Path {
 fn should_place_every_pipeline_operation_in_the_streaming_classification_matrix() {
     // Appendix E: "If a command cannot be placed in this matrix, its execution semantics are
     // underspecified and MUST be resolved before release." The matrix is
-    // `docs/spec/hardening/streaming_classification.yaml`; this asserts that it really covers
+    // `docs/contracts/hardening/streaming_classification.yaml`; this asserts that it really covers
     // every command that consumes a stream, and that each one's contract says the same thing.
     let document = std::fs::read_to_string(
-        repository().join("docs/spec/hardening/streaming_classification.yaml"),
+        repository().join("docs/contracts/hardening/streaming_classification.yaml"),
     )
     .expect("v0.4.1 Appendix E's matrix is a machine-readable contract");
     let matrix: serde_yaml_ng::Value =
@@ -889,11 +898,11 @@ fn should_place_every_pipeline_operation_in_the_streaming_classification_matrix(
 fn should_reject_a_stream_consuming_command_the_matrix_does_not_place() {
     let repo = consistent();
     repo.write(
-        "docs/spec/hardening/streaming_classification.yaml",
+        "docs/contracts/hardening/streaming_classification.yaml",
         "version: 1\nclasses: []\noperations: []\n",
     );
     repo.write(
-        "docs/spec/commands/data.yaml",
+        "docs/contracts/commands/data.yaml",
         "version: 1\nfamily: data\ncommands:\n  - id: ono.data.invent\n    verb: invent\n    target: null\n    summary: Invent.\n    stability: stable\n    argument_mode: words\n    input: \"stream<any>\"\n    output: \"stream<any>\"\n    provider_capability: null\n    privilege: none\n    streaming: false\n    phase: B\n    examples: [\"invent\"]\n",
     );
     let problems = xtask::contracts::check_hardening_contracts(repo.path());
@@ -910,7 +919,7 @@ fn should_reject_a_stream_consuming_command_the_matrix_does_not_place() {
 fn should_reject_a_limit_whose_default_lies_outside_its_own_range() {
     let repo = consistent();
     repo.write(
-        "docs/spec/hardening/limits.yaml",
+        "docs/contracts/hardening/limits.yaml",
         "version: 1\nlimits:\n  - key: limits.materialize_items\n    type: int\n    default: 5\n    min: 10\n    max: 20\n    unit: values\n    enforced_by: ono-pipeline\n",
     );
     let problems = xtask::contracts::check_hardening_contracts(repo.path());
@@ -947,11 +956,11 @@ fn should_report_a_hardening_error_that_no_refusal_row_covers() {
     // inside one of the declared blocks with nothing said about it is the gap this exists for.
     let repo = consistent();
     repo.write(
-        "docs/spec/hardening/refusals.yaml",
+        "docs/contracts/hardening/refusals.yaml",
         "version: 1\ncovers:\n  prefixes: [Ono-Sendai-E11]\n  codes: []\nrefusals: []\n",
     );
     repo.write(
-        "docs/spec/errors.yaml",
+        "docs/contracts/errors.yaml",
         "version: 1\nerrors:\n  - code: Ono-Sendai-E1101\n    name: resource.item_limit\n    kind: resource\n    summary: A ceiling was reached.\n    help: Narrow the input.\n",
     );
     let problems = xtask::contracts::check_refusals(repo.path());
@@ -970,11 +979,11 @@ fn should_report_a_refusal_that_claims_a_field_nobody_attaches() {
     // row naming a metadata key the owning crate never sets is a contract with nothing behind it.
     let repo = consistent();
     repo.write(
-        "docs/spec/hardening/refusals.yaml",
+        "docs/contracts/hardening/refusals.yaml",
         "version: 1\ncovers:\n  prefixes: []\n  codes: []\nrefusals:\n  - error: resource.item_limit\n    boundary: pipeline.materialization\n    decided_by: ono-value\n    explains: [invented_key]\n    says: budget after\n",
     );
     repo.write(
-        "docs/spec/errors.yaml",
+        "docs/contracts/errors.yaml",
         "version: 1\nerrors:\n  - code: Ono-Sendai-E1101\n    name: resource.item_limit\n    kind: resource\n    summary: A ceiling was reached.\n    help: Narrow the input.\n",
     );
     repo.write(
@@ -1062,9 +1071,10 @@ fn should_name_an_owning_crate_and_a_security_test_for_every_declared_boundary()
     // inventory". §6.2 gives each boundary "one owning crate/module responsible for enforcing the
     // primary guarantee", and §20 accepts a control "only when there is an automated negative test
     // proving the forbidden behavior is refused". The inventory is where all three meet.
-    let inventory =
-        std::fs::read_to_string(repository().join("docs/spec/hardening/security_boundaries.yaml"))
-            .expect("v0.4.1 §6.1's boundary inventory is a machine-readable contract");
+    let inventory = std::fs::read_to_string(
+        repository().join("docs/contracts/hardening/security_boundaries.yaml"),
+    )
+    .expect("v0.4.1 §6.1's boundary inventory is a machine-readable contract");
     for (id, trust, enforcement) in REQUIRED_BOUNDARIES {
         assert!(
             inventory.contains(id),
@@ -1098,15 +1108,19 @@ fn should_report_a_boundary_the_specification_requires_and_the_inventory_omits()
     // §6.1's twelve are the floor, so a missing one is a gate failure rather than a shorter file.
     let repo = consistent();
     copy_hardening_contracts(&repo);
-    let text =
-        std::fs::read_to_string(repository().join("docs/spec/hardening/security_boundaries.yaml"))
-            .expect("the inventory");
+    let text = std::fs::read_to_string(
+        repository().join("docs/contracts/hardening/security_boundaries.yaml"),
+    )
+    .expect("the inventory");
     let truncated = text
         .split_once("  - id: release.publish")
         .expect("the inventory declares `release.publish`")
         .0
         .to_owned();
-    repo.write("docs/spec/hardening/security_boundaries.yaml", &truncated);
+    repo.write(
+        "docs/contracts/hardening/security_boundaries.yaml",
+        &truncated,
+    );
     let problems = xtask::contracts::check_security_boundaries(repo.path());
     assert!(
         problems
@@ -1123,14 +1137,15 @@ fn should_report_a_boundary_whose_named_security_test_does_not_exist() {
     // claiming that acceptance without it.
     let repo = consistent();
     copy_hardening_contracts(&repo);
-    let text =
-        std::fs::read_to_string(repository().join("docs/spec/hardening/security_boundaries.yaml"))
-            .expect("the inventory");
+    let text = std::fs::read_to_string(
+        repository().join("docs/contracts/hardening/security_boundaries.yaml"),
+    )
+    .expect("the inventory");
     let text = text.replace(
         "crates/ono-protocol/tests/framing.rs::should_refuse_a_frame_claiming_more_than_the_limit_before_allocating",
         "crates/ono-protocol/tests/framing.rs::should_refuse_a_frame_nobody_ever_wrote_a_test_for",
     );
-    repo.write("docs/spec/hardening/security_boundaries.yaml", &text);
+    repo.write("docs/contracts/hardening/security_boundaries.yaml", &text);
     let problems = xtask::contracts::check_security_boundaries(repo.path());
     assert!(
         problems.iter().any(|problem| problem
@@ -1168,7 +1183,7 @@ fn should_report_a_dispatch_path_that_reaches_a_provider_without_asking_the_auth
     let repo = consistent();
     copy_hardening_contracts(&repo);
     repo.write(
-        "docs/spec/hardening/security_boundaries.yaml",
+        "docs/contracts/hardening/security_boundaries.yaml",
         "version: 1\nboundaries:\n  - id: provider.query\n    input_trust: authorized request\n    required_enforcement: provider capability contract\n    owner: ono-protocol\n    module: crates/ono-protocol/src/service.rs\n    spec: \"v0.4.1 §6.1\"\n    doc: A query.\n    negative_tests: []\n    dispatch_paths:\n      - method: query\n        path: crates/ono-protocol/src/service.rs\n        entry: \"async fn query\"\n        guard: require_observe\n",
     );
     repo.write(
@@ -1191,7 +1206,7 @@ fn should_report_a_dispatch_path_the_inventory_does_not_declare() {
     let repo = consistent();
     copy_hardening_contracts(&repo);
     repo.write(
-        "docs/spec/hardening/security_boundaries.yaml",
+        "docs/contracts/hardening/security_boundaries.yaml",
         "version: 1\nboundaries:\n  - id: provider.query\n    input_trust: authorized request\n    required_enforcement: provider capability contract\n    owner: ono-protocol\n    module: crates/ono-protocol/src/service.rs\n    spec: \"v0.4.1 §6.1\"\n    doc: A query.\n    negative_tests: []\n    dispatch_paths:\n      - method: query\n        path: crates/ono-protocol/src/service.rs\n        entry: \"async fn query\"\n        guard: require_observe\n",
     );
     repo.write(
@@ -1213,13 +1228,13 @@ fn should_report_a_refusal_whose_boundary_is_not_in_the_inventory() {
     // inventory existed the check could only verify the shape of the name; now it is a join.
     let repo = consistent();
     copy_hardening_contracts(&repo);
-    let text = std::fs::read_to_string(repository().join("docs/spec/hardening/refusals.yaml"))
+    let text = std::fs::read_to_string(repository().join("docs/contracts/hardening/refusals.yaml"))
         .expect("the refusal census");
     let text = text.replace(
         "boundary: pipeline.materialization",
         "boundary: pipeline.invented",
     );
-    repo.write("docs/spec/hardening/refusals.yaml", &text);
+    repo.write("docs/contracts/hardening/refusals.yaml", &text);
     let problems = xtask::contracts::check_hardening_contracts(repo.path());
     assert!(
         problems
@@ -1249,8 +1264,9 @@ fn should_validate_every_machine_readable_hardening_contract_in_the_gate() {
     // seven domains; fifteen registries arrived as the phases needed them, and until now each was
     // validated by whichever crate happened to consume it — which leaves a registry nobody
     // consumes validated by nobody.
-    let index = std::fs::read_to_string(repository().join("docs/spec/hardening/registries.yaml"))
-        .expect("the registry index is itself a machine-readable contract");
+    let index =
+        std::fs::read_to_string(repository().join("docs/contracts/hardening/registries.yaml"))
+            .expect("the registry index is itself a machine-readable contract");
     for domain in REQUIRED_DOMAINS {
         assert!(
             index.contains(domain),
@@ -1279,7 +1295,7 @@ fn should_report_a_hardening_registry_no_gate_check_validates() {
     let repo = consistent();
     copy_hardening_contracts(&repo);
     repo.write(
-        "docs/spec/hardening/invented_ceilings.yaml",
+        "docs/contracts/hardening/invented_ceilings.yaml",
         "version: 1\nceilings: []\n",
     );
     let problems = xtask::contracts::check_registry_inventory(repo.path());
@@ -1297,13 +1313,14 @@ fn should_report_a_registry_index_naming_a_gate_check_that_does_not_exist() {
     // wrote reads exactly like a row naming one that runs.
     let repo = consistent();
     copy_hardening_contracts(&repo);
-    let text = std::fs::read_to_string(repository().join("docs/spec/hardening/registries.yaml"))
-        .expect("the registry index");
+    let text =
+        std::fs::read_to_string(repository().join("docs/contracts/hardening/registries.yaml"))
+            .expect("the registry index");
     let text = text.replace(
         "xtask/src/contracts.rs::check_refusals",
         "xtask/src/contracts.rs::check_refusals_nobody_wrote",
     );
-    repo.write("docs/spec/hardening/registries.yaml", &text);
+    repo.write("docs/contracts/hardening/registries.yaml", &text);
     let problems = xtask::contracts::check_registry_inventory(repo.path());
     assert!(
         problems
@@ -1335,13 +1352,14 @@ fn should_hold_every_hardening_limit_against_the_value_the_shell_uses() {
 fn should_report_a_remote_ceiling_whose_limit_key_names_nothing() {
     let repo = consistent();
     copy_hardening_contracts(&repo);
-    let text = std::fs::read_to_string(repository().join("docs/spec/hardening/remote_limits.yaml"))
-        .expect("the ceilings");
+    let text =
+        std::fs::read_to_string(repository().join("docs/contracts/hardening/remote_limits.yaml"))
+            .expect("the ceilings");
     let text = text.replace(
         "limit_key: limits.remote_connections\n",
         "limit_key: limits.remote_connexions\n",
     );
-    repo.write("docs/spec/hardening/remote_limits.yaml", &text);
+    repo.write("docs/contracts/hardening/remote_limits.yaml", &text);
     let problems = xtask::contracts::check_remote_limits(repo.path());
     assert!(
         problems
@@ -1357,13 +1375,14 @@ fn should_report_a_remote_ceiling_that_types_its_number_instead_of_pointing_at_i
     // states a value has stopped being a pointer.
     let repo = consistent();
     copy_hardening_contracts(&repo);
-    let text = std::fs::read_to_string(repository().join("docs/spec/hardening/remote_limits.yaml"))
-        .expect("the ceilings");
+    let text =
+        std::fs::read_to_string(repository().join("docs/contracts/hardening/remote_limits.yaml"))
+            .expect("the ceilings");
     let text = text.replace(
         "    field: max_connections\n",
         "    field: max_connections\n    default: 32\n",
     );
-    repo.write("docs/spec/hardening/remote_limits.yaml", &text);
+    repo.write("docs/contracts/hardening/remote_limits.yaml", &text);
     let problems = xtask::contracts::check_remote_limits(repo.path());
     assert!(
         problems
@@ -1397,7 +1416,7 @@ fn should_reject_an_unknown_capability_id_in_an_authorization_fixture() {
 #[test]
 fn should_find_every_capability_this_repositorys_authorization_fixtures_grant() {
     // The repository's own side of the same check: every capability id a fixture stores is one
-    // `docs/spec/capabilities.yaml` declares, or one the index records as deliberately invalid
+    // `docs/contracts/capabilities.yaml` declares, or one the index records as deliberately invalid
     // with the test whose subject is the refusal.
     let problems = xtask::contracts::check_authorization_fixtures(repository());
     assert!(
@@ -1418,10 +1437,11 @@ fn should_report_a_deliberately_invalid_fixture_id_the_registry_actually_declare
     // the list.
     let repo = consistent();
     copy_hardening_contracts(&repo);
-    let text = std::fs::read_to_string(repository().join("docs/spec/hardening/registries.yaml"))
-        .expect("the registry index");
+    let text =
+        std::fs::read_to_string(repository().join("docs/contracts/hardening/registries.yaml"))
+            .expect("the registry index");
     let text = text.replace("    - id: \"process.*\"", "    - id: \"process.list\"");
-    repo.write("docs/spec/hardening/registries.yaml", &text);
+    repo.write("docs/contracts/hardening/registries.yaml", &text);
     let problems = xtask::contracts::check_authorization_fixtures(repo.path());
     assert!(
         problems
@@ -1439,11 +1459,11 @@ fn should_reject_two_providers_of_one_target_that_do_not_say_which_of_them_a_rec
     // one would act on a record the other made.
     let repo = scratch();
     repo.write(
-        "docs/spec/schemas/package.v1.yaml",
+        "docs/contracts/schemas/package.v1.yaml",
         "id: ono.package/1\nname: Package\nsummary: A package.\nidentity: [provider, name]\nfields:\n  provider:\n    type: string\n    required: true\n    doc: The database that answered.\n  name:\n    type: string\n    required: true\n    doc: The package name.\n",
     );
     repo.write(
-        "docs/spec/providers/packages.yaml",
+        "docs/contracts/providers/packages.yaml",
         "providers:\n  - id: linux.packages\n    targets: [package]\n    schemas: [ono.package/1]\n  - id: linux.packages.rpm\n    targets: [package]\n    schemas: [ono.package/1]\n",
     );
 
@@ -1465,11 +1485,11 @@ fn should_reject_two_providers_of_one_target_that_do_not_say_which_of_them_a_rec
 fn should_reject_two_providers_of_one_target_that_claim_the_same_identity_token() {
     let repo = scratch();
     repo.write(
-        "docs/spec/schemas/package.v1.yaml",
+        "docs/contracts/schemas/package.v1.yaml",
         "id: ono.package/1\nname: Package\nsummary: A package.\nidentity: [provider, name]\nfields:\n  provider:\n    type: string\n    required: true\n    doc: The database that answered.\n  name:\n    type: string\n    required: true\n    doc: The package name.\n",
     );
     repo.write(
-        "docs/spec/providers/packages.yaml",
+        "docs/contracts/providers/packages.yaml",
         "providers:\n  - id: linux.packages\n    targets: [package]\n    identity_token: dpkg\n    schemas: [ono.package/1]\n  - id: linux.packages.rpm\n    targets: [package]\n    identity_token: dpkg\n    schemas: [ono.package/1]\n",
     );
 
@@ -1488,11 +1508,11 @@ fn should_accept_one_provider_of_a_target_that_declares_no_identity_token() {
     // the field is a note on the record rather than a choice between answerers.
     let repo = scratch();
     repo.write(
-        "docs/spec/schemas/service.v1.yaml",
+        "docs/contracts/schemas/service.v1.yaml",
         "id: ono.service/1\nname: Service\nsummary: A service.\nidentity: [provider, name]\nfields:\n  provider:\n    type: string\n    required: true\n    doc: The manager that answered.\n  name:\n    type: string\n    required: true\n    doc: The unit name.\n",
     );
     repo.write(
-        "docs/spec/providers/systemd.yaml",
+        "docs/contracts/providers/systemd.yaml",
         "providers:\n  - id: systemd\n    targets: [service]\n    schemas: [ono.service/1]\n",
     );
 

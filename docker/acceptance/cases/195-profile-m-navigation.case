@@ -1,7 +1,7 @@
 # v0.4.1 §61.1: "Canonical `look`, `near` and selector operations MUST satisfy the Profile M p95
 # targets on the reference environment." The container is not the reference environment — §32.4
 # is explicit that "release qualification MUST run on a named reference environment with stable
-# absolute targets", and `docs/spec/hardening/performance_environment.yaml` names it — so what
+# absolute targets", and `docs/contracts/hardening/performance_environment.yaml` names it — so what
 # this case can prove is the part that does not depend on the machine:
 #
 #   * every canonical navigation operation answers at Profile M, and
@@ -9,7 +9,7 @@
 #   * nothing is anywhere near §33.3's thirty-second floor.
 #
 # The absolute p95 targets of §33.2 are measured by `cargo xtask perf` and recorded in
-# `docs/spec/hardening/performance_baseline.json`, which is where a release reads them from
+# `docs/contracts/hardening/performance_baseline.json`, which is where a release reads them from
 # (ADR-0490, ADR-0491).
 #
 # §36.1's rule — "A selector miss MUST not be substantially more expensive than a hit solely

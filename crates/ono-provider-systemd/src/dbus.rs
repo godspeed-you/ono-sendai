@@ -378,7 +378,7 @@ pub(crate) fn text(properties: &HashMap<String, OwnedValue>, key: &str) -> Optio
 /// `Requires`, `Requisite`, `BindsTo` and `Wants` are the requirement dependencies of
 /// `systemd.unit(5)`. `After` and `Before` are not among them: ordering says when, not whether,
 /// and calling an ordering a dependency would claim something the service manager does not
-/// (`docs/spec/spatial/relations.yaml`: "a provider must not claim a dependency it cannot
+/// (`docs/contracts/spatial/relations.yaml`: "a provider must not claim a dependency it cannot
 /// justify").
 fn dependencies(properties: &HashMap<String, OwnedValue>) -> Vec<String> {
     let mut units: Vec<String> = ["Requires", "Requisite", "BindsTo", "Wants"]

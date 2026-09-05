@@ -25,7 +25,7 @@ use support::report;
 
 /// The declaration this repository ships, so a fixture can start from something real.
 fn registry() -> String {
-    std::fs::read_to_string(repository().join("docs/spec/hardening/module_architecture.yaml"))
+    std::fs::read_to_string(repository().join("docs/contracts/hardening/module_architecture.yaml"))
         .expect("the architecture registry")
 }
 
@@ -39,7 +39,10 @@ fn repository() -> &'static Path {
 /// A throwaway repository carrying a registry and whichever files the test needs.
 fn fixture(files: &[(&str, &str)]) -> Scratch {
     let repo = scratch();
-    repo.write("docs/spec/hardening/module_architecture.yaml", registry());
+    repo.write(
+        "docs/contracts/hardening/module_architecture.yaml",
+        registry(),
+    );
     for (path, contents) in files {
         repo.write(path, contents);
     }

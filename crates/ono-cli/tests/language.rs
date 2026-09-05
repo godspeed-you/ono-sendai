@@ -1,9 +1,9 @@
 //! Outcome tests for the language features the shell declares: pipeline
 //! capture by `let` (spec §19.2), nested-pipeline values and `$( … )` interpolation (ADR-0009,
-//! `docs/spec/grammar.ebnf` `paren_value`, `interpolation`), callable functions (spec §19.3,
+//! `docs/contracts/grammar.ebnf` `paren_value`, `interpolation`), callable functions (spec §19.3,
 //! §6.5 step 2, ADR-0011), aliases (spec §6.5, §30 `aliases`, ADR-0011 step 3), `now()` and the
-//! timestamp literal (spec §6.3, `docs/spec/language.yaml` `builtin_functions`), prefix assignment
-//! (spec §54), blocks under `each` (spec §19.4, `docs/spec/commands/data.yaml` `ono.data.each`),
+//! timestamp literal (spec §6.3, `docs/contracts/language.yaml` `builtin_functions`), prefix assignment
+//! (spec §54), blocks under `each` (spec §19.4, `docs/contracts/commands/data.yaml` `ono.data.each`),
 //! string arithmetic (spec §6.3), keyless `sort` (`ono.data.sort`) and `kill %N` on the job table
 //! (spec §18.1, §18.4).
 //!

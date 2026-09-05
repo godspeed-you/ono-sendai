@@ -1,7 +1,7 @@
 //! Outcome tests for the package family on rpm-based systems: Red Hat's `dnf`/`yum` and SUSE's
 //! `zypper`, over the one package database both families share.
 //!
-//! Contract: `docs/spec/commands/package.yaml`, `docs/spec/providers/linux-packages.yaml`,
+//! Contract: `docs/contracts/commands/package.yaml`, `docs/contracts/providers/linux-packages.yaml`,
 //! schema `ono.package/1`. Narrative: spec §9.1 (the Package table), §16.5 (partial failure),
 //! §17.2 (elevation is explicit and visible), §31.58 and AGENTS.md §6 (a provider asks a tool
 //! for an explicit machine-readable mode and never parses its human listing), §35.3 (unknown is

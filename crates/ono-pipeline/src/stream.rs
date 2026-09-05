@@ -22,7 +22,7 @@
 //! [`StreamSink::send_in_sequence`], which places all of them on the value channel in the order
 //! it chose (§27.3).
 //!
-//! The same rule is data in `docs/spec/hardening/streaming_classification.yaml`, and
+//! The same rule is data in `docs/contracts/hardening/streaming_classification.yaml`, and
 //! `docs/reference/streaming.md` is rendered from it, so the page a user reads and the paragraph
 //! above do not drift apart (ADR-0483).
 

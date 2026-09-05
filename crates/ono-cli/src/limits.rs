@@ -7,7 +7,7 @@
 //!
 //! So this module holds no numbers. Every figure comes from [`crate::settings::CATALOGUE`], which
 //! is the shell's declaration of what a limit is and what it defaults to, and
-//! `docs/spec/hardening/limits.yaml` is the machine-readable copy the gate compares against it.
+//! `docs/contracts/hardening/limits.yaml` is the machine-readable copy the gate compares against it.
 //! What lives here are the typed readings the components need — a
 //! [`ono_pipeline::MaterializationLimits`] for the pipeline, a
 //! [`HistoryLimits`] for the retained results — and the rows `inspect limits` shows.
@@ -124,14 +124,14 @@ impl Default for HistoryLimits {
 /// a second table of the same numbers: the key, the effective value and its byte magnitude, the
 /// declared type, the configuration layer that set it, the permitted range and the one-line
 /// description. Every one of them comes from [`CATALOGUE`], which `spec-check` compares against
-/// `docs/spec/hardening/limits.yaml` in both directions, so a user reading this and a test reading
+/// `docs/contracts/hardening/limits.yaml` in both directions, so a user reading this and a test reading
 /// the registry are reading one thing.
 ///
 /// The registry's `unit` and `enforced_by` are deliberately **not** here:
 /// [`SettingSpec`](crate::settings::SettingSpec) has neither field. `unit` is a rendering hint the
 /// declared type already implies for a byte size, and `enforced_by` names a crate, which is a fact
 /// about the product rather than about this session's configuration. §54.3 asks what the shell
-/// will enforce; who enforces it is `docs/spec/hardening/limits.yaml` and, for a boundary,
+/// will enforce; who enforces it is `docs/contracts/hardening/limits.yaml` and, for a boundary,
 /// `security_boundaries.yaml` (ADR-0547).
 #[must_use]
 pub fn rows(settings: &Settings) -> Vec<Value> {

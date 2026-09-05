@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 pub fn fixtures_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/spec/adapters/fixtures")
+        .join("../../docs/contracts/adapters/fixtures")
         .canonicalize()
         .expect("the fixtures directory exists")
 }

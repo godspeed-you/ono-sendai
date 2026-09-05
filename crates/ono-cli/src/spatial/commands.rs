@@ -3,7 +3,7 @@
 //!
 //! Each one is thin on purpose. It reads its arguments, borrows the session's place and index
 //! (§46), lets `ono-spatial-query` decide what to show, turns the answer into records of the
-//! contracts `docs/spec/schemas/` declares, and stops. Ranking, bounding, selector resolution and
+//! contracts `docs/contracts/schemas/` declares, and stops. Ranking, bounding, selector resolution and
 //! identity are the library crates' (§45.2, §45.3); rendering is `ono-spatial-render`'s (§45.4).
 
 use std::sync::Arc;

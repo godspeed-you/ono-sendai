@@ -40,7 +40,7 @@ impl ScopeKind {
         ScopeKind::Plugin,
     ];
 
-    /// The name `docs/spec/spatial/spatial.yaml` spells.
+    /// The name `docs/contracts/spatial/spatial.yaml` spells.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {

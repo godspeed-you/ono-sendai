@@ -875,7 +875,7 @@ async fn should_link_a_process_to_the_user_it_runs_as() {
 #[tokio::test]
 async fn should_link_a_service_to_the_units_it_requires() {
     // v0.4 §13 lists dependencies among a service place's groups, and
-    // `docs/spec/spatial/relations.yaml` declares `service.depends_on` with the rule that "a
+    // `docs/contracts/spatial/relations.yaml` declares `service.depends_on` with the rule that "a
     // provider must not claim a dependency it cannot justify". The service manager states them
     // and the record carries them, so the edge is exact and composed rather than guessed
     // (ADR-0239).

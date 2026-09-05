@@ -1,4 +1,4 @@
-//! Contract drift between `docs/spec/` and the implementation (spec §36.5).
+//! Contract drift between `docs/contracts/` and the implementation (spec §36.5).
 //!
 //! The registries are the public contract (spec §27), and a contract nobody checks is a
 //! description of what someone once intended. This module is the check: every command's verb,
@@ -16,13 +16,13 @@ use serde_yaml_ng::Value as Yaml;
 
 pub use crate::scan::Problem;
 
-/// Checks every registry under `root/docs/spec` against every other.
+/// Checks every registry under `root/docs/contracts` against every other.
 ///
 /// Returns an empty vector when the contracts agree. Missing registries are not an error: they
 /// arrive with the phase that needs them (AGENTS.md §14).
 #[must_use]
 pub fn check_contracts(root: &Path) -> Vec<Problem> {
-    let spec = root.join("docs").join("spec");
+    let spec = root.join("docs").join("contracts");
     if !spec.is_dir() {
         return Vec::new();
     }
@@ -243,14 +243,14 @@ fn check_expression_options(
     problems
 }
 
-/// Checks every first-party adapter pack under `docs/spec/adapters/first-party/`.
+/// Checks every first-party adapter pack under `docs/contracts/adapters/first-party/`.
 ///
 /// Spec v0.3 §1.44 wants the pack format machine-validated; `ono_adapter::validate` is the
 /// validator the shell itself uses, so what passes here is what loads. A pack file that the
 /// binary does not bundle is a contract nobody keeps, and is reported as such.
 #[must_use]
 pub fn check_adapter_packs(root: &Path) -> Vec<Problem> {
-    let adapters = root.join("docs").join("spec").join("adapters");
+    let adapters = root.join("docs").join("contracts").join("adapters");
     let first_party = adapters.join("first-party");
     if !first_party.is_dir() {
         return Vec::new();
@@ -300,14 +300,14 @@ pub fn check_adapter_packs(root: &Path) -> Vec<Problem> {
     problems
 }
 
-/// Checks `docs/spec/errors.yaml` against the taxonomy in `ono-core`.
+/// Checks `docs/contracts/errors.yaml` against the taxonomy in `ono-core`.
 ///
 /// This is the one part of spec §36.5 that can be checked exactly today, because the taxonomy
 /// exists in both places. The registry is read as data and the implementation is read through
 /// `ono_core::ErrorCode`, so neither can drift without the gate noticing.
 #[must_use]
 pub fn check_error_registry(root: &Path) -> Vec<Problem> {
-    let path = root.join("docs").join("spec").join("errors.yaml");
+    let path = root.join("docs").join("contracts").join("errors.yaml");
     let Ok(text) = std::fs::read_to_string(&path) else {
         return Vec::new();
     };
@@ -385,7 +385,7 @@ pub fn check_error_registry(root: &Path) -> Vec<Problem> {
     problems
 }
 
-/// Every schema id declared under `docs/spec/schemas/`, checked for internal consistency.
+/// Every schema id declared under `docs/contracts/schemas/`, checked for internal consistency.
 fn collect_schemas(
     root: &Path,
     spec: &Path,
@@ -671,7 +671,7 @@ fn check_commands(
                                 detail: format!(
                                     "`{id}` advertises `{referenced}` as its `{field}`, and no \
                                      schema declares it. Write the schema, or list it in \
-                                     `docs/spec/schemas/deferred.yaml` with the phase that will \
+                                     `docs/contracts/schemas/deferred.yaml` with the phase that will \
                                      (ADR-0012)"
                                 ),
                             });
@@ -860,7 +860,7 @@ fn relative(root: &Path, path: &Path) -> String {
 /// catch it — before anyone has typed it.
 #[must_use]
 pub fn check_examples(root: &Path) -> Vec<Problem> {
-    let directory = root.join("docs").join("spec").join("commands");
+    let directory = root.join("docs").join("contracts").join("commands");
     let mut problems = Vec::new();
 
     for path in yaml_files(&directory) {
@@ -893,7 +893,7 @@ pub fn check_examples(root: &Path) -> Vec<Problem> {
     problems
 }
 
-/// Checks the spatial registry of spec v0.4 §41 — `docs/spec/spatial/`.
+/// Checks the spatial registry of spec v0.4 §41 — `docs/contracts/spatial/`.
 ///
 /// §41.3 makes these four documents the source of `help spatial`, completion, map legends, SDK
 /// enums and conformance tests, and §41's Intent says why: without machine contracts, the
@@ -906,7 +906,7 @@ pub fn check_examples(root: &Path) -> Vec<Problem> {
 /// (AGENTS.md §14).
 #[must_use]
 pub fn check_spatial_registry(root: &Path) -> Vec<Problem> {
-    let directory = root.join("docs").join("spec").join("spatial");
+    let directory = root.join("docs").join("contracts").join("spatial");
     if !directory.is_dir() {
         return Vec::new();
     }
@@ -993,11 +993,11 @@ pub fn check_spatial_registry(root: &Path) -> Vec<Problem> {
 /// The registry-internal checks of [`check_spatial_registry`] say the four documents agree with
 /// each other; this one says they agree with `ono-spatial-core`, which is the half that keeps a
 /// contract from becoming a description of what someone once intended. It is the same rule
-/// `crates/ono-cli/tests/provider_conformance.rs` applies to `docs/spec/providers/`: drift in either
+/// `crates/ono-cli/tests/provider_conformance.rs` applies to `docs/contracts/providers/`: drift in either
 /// direction is a failure (ADR-0126, ADR-0128).
 #[must_use]
 pub fn check_spatial_implementation(root: &Path) -> Vec<Problem> {
-    let directory = root.join("docs").join("spec").join("spatial");
+    let directory = root.join("docs").join("contracts").join("spatial");
     if !directory.is_dir() {
         return Vec::new();
     }
@@ -1026,9 +1026,9 @@ pub fn check_spatial_implementation(root: &Path) -> Vec<Problem> {
     problems
 }
 
-/// Every schema id declared under `docs/spec/schemas/`.
+/// Every schema id declared under `docs/contracts/schemas/`.
 fn schema_ids(root: &Path) -> BTreeSet<String> {
-    yaml_files(&root.join("docs").join("spec").join("schemas"))
+    yaml_files(&root.join("docs").join("contracts").join("schemas"))
         .into_iter()
         .filter_map(|path| {
             let text = std::fs::read_to_string(path).ok()?;
@@ -1367,7 +1367,7 @@ fn check_spaces(
                 location: location.to_owned(),
                 detail: format!(
                     "`{id}` is built from `{schema}` and no schema with that id is declared \
-                     under docs/spec/schemas/"
+                     under docs/contracts/schemas/"
                 ),
             });
         }
@@ -1560,7 +1560,7 @@ fn check_landmarks(
 
 /// Checks the closed vocabularies of `spatial.yaml` against the types that implement them.
 ///
-/// This is the drift check that `docs/spec/providers/` gets from
+/// This is the drift check that `docs/contracts/providers/` gets from
 /// `crates/ono-cli/tests/provider_conformance.rs`, in the direction the spatial registry needs
 /// it: a name the registry knows and the implementation does not is a space, relation or
 /// landmark nothing can serve, and a name the implementation knows and the registry does not is
@@ -1644,7 +1644,7 @@ fn check_vocabularies(location: &str, subsystem: &Yaml) -> Vec<Problem> {
     }
 
     // The geography and the relation vocabulary themselves, not only the names they are built
-    // from: this is what makes `docs/spec/spatial/spaces.yaml` and the table in
+    // from: this is what makes `docs/contracts/spatial/spaces.yaml` and the table in
     // `ono_spatial_core::space` one thing rather than two that happen to agree today.
     problems.extend(drift(
         location,
@@ -1723,7 +1723,7 @@ fn vocabulary(document: &Yaml, key: &str) -> BTreeSet<String> {
 /// - every landmark metric is a field of a schema the provider declares (§26, §42).
 #[must_use]
 pub fn check_provider_claims(root: &Path) -> Vec<Problem> {
-    let providers = root.join("docs").join("spec").join("providers");
+    let providers = root.join("docs").join("contracts").join("providers");
     if !providers.is_dir() {
         return Vec::new();
     }
@@ -1731,7 +1731,7 @@ pub fn check_provider_claims(root: &Path) -> Vec<Problem> {
 
     let subsystem = std::fs::read_to_string(
         root.join("docs")
-            .join("spec")
+            .join("contracts")
             .join("spatial")
             .join("spatial.yaml"),
     )
@@ -1825,7 +1825,7 @@ pub fn check_provider_claims(root: &Path) -> Vec<Problem> {
 /// choice between answerers, and `ono.service/1` is that case.
 #[must_use]
 pub fn check_identity_tokens(root: &Path) -> Vec<Problem> {
-    let providers = root.join("docs").join("spec").join("providers");
+    let providers = root.join("docs").join("contracts").join("providers");
     if !providers.is_dir() {
         return Vec::new();
     }
@@ -1895,7 +1895,7 @@ pub fn check_identity_tokens(root: &Path) -> Vec<Problem> {
 
 /// The ids of the schemas whose identity begins with, or contains, a `provider` field.
 fn schema_identity_by_provider(root: &Path) -> BTreeSet<String> {
-    let schemas = root.join("docs").join("spec").join("schemas");
+    let schemas = root.join("docs").join("contracts").join("schemas");
     let mut identified = BTreeSet::new();
     for path in yaml_files(&schemas) {
         let Ok(text) = std::fs::read_to_string(&path) else {
@@ -2059,7 +2059,7 @@ fn check_relation_claim(
                 location: location.to_owned(),
                 detail: format!(
                     "`{id}` claims the relation `{name}`, which \
-                     docs/spec/spatial/relations.yaml does not declare"
+                     docs/contracts/spatial/relations.yaml does not declare"
                 ),
             });
             continue;
@@ -2101,7 +2101,7 @@ fn check_state_claims(
             location: location.to_owned(),
             detail: format!(
                 "`{id}` claims the freshness strategy `{declared}`, which \
-                 docs/spec/spatial/spatial.yaml does not declare"
+                 docs/contracts/spatial/spatial.yaml does not declare"
             ),
         });
     }
@@ -2185,9 +2185,9 @@ fn check_metric_claim(
     problems
 }
 
-/// The field names of every schema under `docs/spec/schemas/`, by schema id.
+/// The field names of every schema under `docs/contracts/schemas/`, by schema id.
 fn schema_fields(root: &Path) -> BTreeMap<String, BTreeSet<String>> {
-    yaml_files(&root.join("docs").join("spec").join("schemas"))
+    yaml_files(&root.join("docs").join("contracts").join("schemas"))
         .into_iter()
         .filter_map(|path| {
             let text = std::fs::read_to_string(path).ok()?;
@@ -2227,11 +2227,11 @@ network:
 /// A name no manifest section declares, used to make the parser list the ones it accepts.
 const PROBE_KEY: &str = "zz-probe-key";
 
-/// Holds `docs/spec/kuang/` against `crates/ono-kuang-*` (spec §36.5).
+/// Holds `docs/contracts/kuang/` against `crates/ono-kuang-*` (spec §36.5).
 ///
 /// The seven KUANG/11 contracts are the public surface of the extension runtime, and until this
 /// existed they reached `spec-check` only through the generic sweep — which proves they are
-/// non-empty valid YAML and nothing else. Every other registry under `docs/spec/` is held against
+/// non-empty valid YAML and nothing else. Every other registry under `docs/contracts/` is held against
 /// the code that serves it; this is that check for the last one.
 ///
 /// Four of the seven can be compared exactly today: the capability families, the error taxonomy,
@@ -2240,7 +2240,7 @@ const PROBE_KEY: &str = "zz-probe-key";
 /// checking them is later work rather than a check that would pass by not looking.
 #[must_use]
 pub fn check_kuang_contracts(root: &Path) -> Vec<Problem> {
-    let directory = root.join("docs").join("spec").join("kuang");
+    let directory = root.join("docs").join("contracts").join("kuang");
     if !directory.is_dir() {
         return Vec::new();
     }
@@ -2561,7 +2561,7 @@ fn manifest_section_fields(section: &str) -> Option<BTreeSet<String>> {
     (!fields.is_empty()).then_some(fields)
 }
 
-/// Holds `docs/spec/hardening/` against the runtime that serves it (v0.4.1 §52.2, §52.3).
+/// Holds `docs/contracts/hardening/` against the runtime that serves it (v0.4.1 §52.2, §52.3).
 ///
 /// §52.1 asks for the hardening policy data as machine-readable registries rather than prose-only
 /// constants, and §52.2 for one source of truth behind the runtime defaults, the generated
@@ -2573,7 +2573,7 @@ fn manifest_section_fields(section: &str) -> Option<BTreeSet<String>> {
 /// (AGENTS.md §14).
 #[must_use]
 pub fn check_hardening_contracts(root: &Path) -> Vec<Problem> {
-    let directory = root.join("docs").join("spec").join("hardening");
+    let directory = root.join("docs").join("contracts").join("hardening");
     if !directory.is_dir() {
         return Vec::new();
     }
@@ -2632,7 +2632,7 @@ fn check_remote_trust_boundaries(root: &Path, location: &str, document: &Yaml) -
                 location: location.to_owned(),
                 detail: format!(
                     "`{id}` belongs to the boundary `{boundary}`, which \
-                     `docs/spec/hardening/security_boundaries.yaml` does not declare (v0.4.1 §6.1)"
+                     `docs/contracts/hardening/security_boundaries.yaml` does not declare (v0.4.1 §6.1)"
                 ),
             });
         }
@@ -2809,7 +2809,7 @@ fn check_streaming_classification(root: &Path, location: &str, document: &Yaml) 
 
     // Every command that consumes a stream is a pipeline operation, and Appendix E requires every
     // one of them to be placeable. The contracts are the list, so the list cannot go stale.
-    let commands = root.join("docs").join("spec").join("commands");
+    let commands = root.join("docs").join("contracts").join("commands");
     let Ok(entries) = std::fs::read_dir(&commands) else {
         return problems;
     };
@@ -3045,7 +3045,7 @@ fn check_confinement_controls(location: &str, document: &Yaml) -> Vec<Problem> {
 
 // --- v0.4.1 §54.1: a refusal says which boundary decided ----------------------------------------
 
-/// Holds `docs/spec/hardening/refusals.yaml` against the errors registries and the crates.
+/// Holds `docs/contracts/hardening/refusals.yaml` against the errors registries and the crates.
 ///
 /// §54.1 asks that "a refusal should tell the user which boundary made the decision", and §54.2
 /// says where: *"Important refusal explanations MUST appear in normal structured errors. Users
@@ -3069,7 +3069,7 @@ fn check_confinement_controls(location: &str, document: &Yaml) -> Vec<Problem> {
 pub fn check_refusals(root: &Path) -> Vec<Problem> {
     let path = root
         .join("docs")
-        .join("spec")
+        .join("contracts")
         .join("hardening")
         .join("refusals.yaml");
     let Ok(text) = std::fs::read_to_string(&path) else {
@@ -3104,8 +3104,8 @@ pub fn check_refusals(root: &Path) -> Vec<Problem> {
             covered.insert(name.clone());
             if !declared.contains_key(name) {
                 problems.push(problem(format!(
-                    "names `{name}`, which neither `docs/spec/errors.yaml` nor \
-                     `docs/spec/kuang/errors.v1.yaml` declares"
+                    "names `{name}`, which neither `docs/contracts/errors.yaml` nor \
+                     `docs/contracts/kuang/errors.v1.yaml` declares"
                 )));
             }
         }
@@ -3120,7 +3120,7 @@ pub fn check_refusals(root: &Path) -> Vec<Problem> {
         if !boundaries.is_empty() && !boundaries.contains(&boundary) {
             problems.push(problem(format!(
                 "{subject} names the boundary `{boundary}`, which \
-                 `docs/spec/hardening/security_boundaries.yaml` does not declare (v0.4.1 §6.1)"
+                 `docs/contracts/hardening/security_boundaries.yaml` does not declare (v0.4.1 §6.1)"
             )));
         }
 
@@ -3177,7 +3177,7 @@ fn is_covered(document: &Yaml, code: &str) -> bool {
 
 /// Every error the two registries declare, as `name -> code`.
 fn declared_error_names(root: &Path) -> BTreeMap<String, String> {
-    let spec = root.join("docs").join("spec");
+    let spec = root.join("docs").join("contracts");
     let mut declared = BTreeMap::new();
     for path in [
         spec.join("errors.yaml"),
@@ -3286,11 +3286,11 @@ const REQUIRED_BOUNDARIES: [(&str, &str, &str); 12] = [
     ),
 ];
 
-/// Reads `docs/spec/hardening/security_boundaries.yaml`, or `None` before it exists.
+/// Reads `docs/contracts/hardening/security_boundaries.yaml`, or `None` before it exists.
 fn boundary_inventory(root: &Path) -> Option<(String, Yaml)> {
     let path = root
         .join("docs")
-        .join("spec")
+        .join("contracts")
         .join("hardening")
         .join("security_boundaries.yaml");
     let text = std::fs::read_to_string(&path).ok()?;
@@ -3609,7 +3609,7 @@ const REQUIRED_DOMAINS: [&str; 7] = [
     "release_inputs",
 ];
 
-/// Holds `docs/spec/hardening/registries.yaml` against the directory it indexes.
+/// Holds `docs/contracts/hardening/registries.yaml` against the directory it indexes.
 ///
 /// §52.3: *"`scripts/gate.sh` MUST validate every machine-readable contract for schema
 /// correctness and cross-reference integrity."* The word doing the work is **every**. §52.1 named
@@ -3621,11 +3621,11 @@ const REQUIRED_DOMAINS: [&str; 7] = [
 /// nobody claimed, and a row whose `validated_by` names no function is a claim nobody honoured.
 #[must_use]
 pub fn check_registry_inventory(root: &Path) -> Vec<Problem> {
-    let directory = root.join("docs").join("spec").join("hardening");
+    let directory = root.join("docs").join("contracts").join("hardening");
     if !directory.is_dir() {
         return Vec::new();
     }
-    let location = "docs/spec/hardening/registries.yaml".to_owned();
+    let location = "docs/contracts/hardening/registries.yaml".to_owned();
     let problem = |detail: String| Problem {
         location: location.clone(),
         detail,
@@ -3653,7 +3653,7 @@ pub fn check_registry_inventory(root: &Path) -> Vec<Problem> {
         indexed.insert(file.clone());
         if !directory.join(&file).is_file() {
             problems.push(problem(format!(
-                "names `{file}`, and `docs/spec/hardening/{file}` does not exist"
+                "names `{file}`, and `docs/contracts/hardening/{file}` does not exist"
             )));
         }
         for field in ["doc", "spec"] {
@@ -3756,7 +3756,7 @@ pub fn check_registry_inventory(root: &Path) -> Vec<Problem> {
     problems
 }
 
-/// Resolves `docs/spec/hardening/remote_limits.yaml` against everything it points at.
+/// Resolves `docs/contracts/hardening/remote_limits.yaml` against everything it points at.
 ///
 /// The registry holds no numbers deliberately — §52.2's *"a number such as `max_connections = 32`
 /// MUST not be independently typed into five files"* — so each row is a set of pointers: at the
@@ -3765,7 +3765,7 @@ pub fn check_registry_inventory(root: &Path) -> Vec<Problem> {
 /// A pointer nothing follows is worse than a copy, because it reads as a cross-reference.
 #[must_use]
 pub fn check_remote_limits(root: &Path) -> Vec<Problem> {
-    let directory = root.join("docs").join("spec").join("hardening");
+    let directory = root.join("docs").join("contracts").join("hardening");
     let Ok(text) = std::fs::read_to_string(directory.join("remote_limits.yaml")) else {
         // A missing registry is not an error before the phase that writes it (AGENTS.md §14).
         return Vec::new();
@@ -3773,7 +3773,7 @@ pub fn check_remote_limits(root: &Path) -> Vec<Problem> {
     let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
         return Vec::new();
     };
-    let location = "docs/spec/hardening/remote_limits.yaml".to_owned();
+    let location = "docs/contracts/hardening/remote_limits.yaml".to_owned();
     let problem = |detail: String| Problem {
         location: location.clone(),
         detail,
@@ -3811,7 +3811,7 @@ pub fn check_remote_limits(root: &Path) -> Vec<Problem> {
                     problems.push(problem(format!(
                         "`{id}` states `{field}` as a number. This registry holds no figures: \
                          v0.4.1 §52.2 puts every one of them in \
-                         `docs/spec/hardening/limits.yaml`, once, and this file points at the key"
+                         `docs/contracts/hardening/limits.yaml`, once, and this file points at the key"
                     )));
                 }
             }
@@ -3825,7 +3825,7 @@ pub fn check_remote_limits(root: &Path) -> Vec<Problem> {
                 if !keys.is_empty() && !keys.contains(&key) {
                     problems.push(problem(format!(
                         "`{id}` points at `{key}`, which \
-                         `docs/spec/hardening/limits.yaml` does not declare (v0.4.1 §52.2, §52.3)"
+                         `docs/contracts/hardening/limits.yaml` does not declare (v0.4.1 §52.2, §52.3)"
                     )));
                 }
             }
@@ -3850,7 +3850,7 @@ pub fn check_remote_limits(root: &Path) -> Vec<Problem> {
             && !errors.contains_key(&refusal)
         {
             problems.push(problem(format!(
-                "`{id}` refuses with `{refusal}`, which `docs/spec/errors.yaml` does not \
+                "`{id}` refuses with `{refusal}`, which `docs/contracts/errors.yaml` does not \
                  declare (v0.4.1 §53.1)"
             )));
         }
@@ -3894,17 +3894,20 @@ pub fn check_remote_limits(root: &Path) -> Vec<Problem> {
 /// authorization fixture is written, in a test, in a doc comment and in an acceptance case alike.
 #[must_use]
 pub fn check_authorization_fixtures(root: &Path) -> Vec<Problem> {
-    let capabilities: BTreeSet<String> =
-        std::fs::read_to_string(root.join("docs").join("spec").join("capabilities.yaml"))
-            .ok()
-            .and_then(|text| serde_yaml_ng::from_str::<Yaml>(&text).ok())
-            .map(|document| {
-                sequence(&document, "provider_capabilities")
-                    .into_iter()
-                    .filter_map(|row| string_at(row, "id"))
-                    .collect()
-            })
-            .unwrap_or_default();
+    let capabilities: BTreeSet<String> = std::fs::read_to_string(
+        root.join("docs")
+            .join("contracts")
+            .join("capabilities.yaml"),
+    )
+    .ok()
+    .and_then(|text| serde_yaml_ng::from_str::<Yaml>(&text).ok())
+    .map(|document| {
+        sequence(&document, "provider_capabilities")
+            .into_iter()
+            .filter_map(|row| string_at(row, "id"))
+            .collect()
+    })
+    .unwrap_or_default();
     if capabilities.is_empty() {
         return Vec::new();
     }
@@ -3930,10 +3933,10 @@ pub fn check_authorization_fixtures(root: &Path) -> Vec<Problem> {
                     location: location.clone(),
                     detail: format!(
                         "an authorization fixture grants `{id}`, which \
-                         `docs/spec/capabilities.yaml` does not declare. v0.4.1 §52.3: an unknown \
+                         `docs/contracts/capabilities.yaml` does not declare. v0.4.1 §52.3: an unknown \
                          capability id in an authorization fixture fails the gate. If the \
                          fixture's subject *is* the refusal, say so in \
-                         `docs/spec/hardening/registries.yaml`"
+                         `docs/contracts/hardening/registries.yaml`"
                     ),
                 });
             }
@@ -3951,10 +3954,10 @@ fn deliberately_invalid_ids(
     capabilities: &BTreeSet<String>,
     problems: &mut Vec<Problem>,
 ) -> BTreeSet<String> {
-    let location = "docs/spec/hardening/registries.yaml";
+    let location = "docs/contracts/hardening/registries.yaml";
     let Ok(text) = std::fs::read_to_string(
         root.join("docs")
-            .join("spec")
+            .join("contracts")
             .join("hardening")
             .join("registries.yaml"),
     ) else {
@@ -3981,7 +3984,7 @@ fn deliberately_invalid_ids(
                 location: location.to_owned(),
                 detail: format!(
                     "exempts `{id}` from the authorization fixture check, and \
-                     `docs/spec/capabilities.yaml` declares it. An exemption is for an id the \
+                     `docs/contracts/capabilities.yaml` declares it. An exemption is for an id the \
                      product does not have; one that resolves would let a typo through"
                 ),
             });

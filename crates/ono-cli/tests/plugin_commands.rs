@@ -3,7 +3,7 @@
 //! `unload`/`set`/`verify plugin` (spec §31.8, §31.9, §31.36, §31.81, `lifecycle.v1.yaml`), the
 //! capability commands (spec §31.16–§31.19), the audit trail (spec §31.37), hot reload
 //! (spec §31.72), and the assistant, model, finding and audit streams (spec §31.41–§31.52) —
-//! `docs/spec/commands/kuang.yaml` throughout.
+//! `docs/contracts/commands/kuang.yaml` throughout.
 //!
 //! Everything runs the real binary against a scratch plugin home holding the SDK's example
 //! package `dev.example.echo` (the fixture of `plugins.rs`), offline and unprivileged. What
@@ -924,7 +924,7 @@ fn should_list_capability_definitions() {
     let text = text(&last_json(&run));
     assert!(
         text.contains("clock.read") && text.contains("process.exec"),
-        "kuang.yaml: `get capability` shows capability definitions (docs/spec/capabilities.yaml → kuang_capabilities), got {text}"
+        "kuang.yaml: `get capability` shows capability definitions (docs/contracts/capabilities.yaml → kuang_capabilities), got {text}"
     );
 }
 

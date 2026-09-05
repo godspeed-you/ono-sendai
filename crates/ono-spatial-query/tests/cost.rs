@@ -8,7 +8,7 @@
 //!
 //! §34.2 fixes the vocabulary — `cheap`, `moderate`, `expensive`, `external` — and one property
 //! of it: **"The class MUST be machine-readable."** A class that exists only as a Rust variant is
-//! not machine-readable, so it is declared in `docs/spec/hardening/cost_classes.yaml` and
+//! not machine-readable, so it is declared in `docs/contracts/hardening/cost_classes.yaml` and
 //! compared against the implementation in both directions.
 //!
 //! §34.4 is the rule the estimate exists to serve: *"A local neighborhood query SHOULD NOT
@@ -56,7 +56,7 @@ fn should_assign_a_declared_cost_class_to_every_canonical_query() {
             .into_iter()
             .map(str::to_owned)
             .collect::<BTreeSet<String>>(),
-        "docs/spec/hardening/cost_classes.yaml declares the classes of v0.4.1 §34.2"
+        "docs/contracts/hardening/cost_classes.yaml declares the classes of v0.4.1 §34.2"
     );
 
     // 3. Every internal cost class maps onto one of them, so nothing the planner reasons about
@@ -163,10 +163,10 @@ fn should_pay_for_an_expensive_relation_when_it_is_explicitly_requested() {
     );
 }
 
-/// The class ids `docs/spec/hardening/cost_classes.yaml` declares.
+/// The class ids `docs/contracts/hardening/cost_classes.yaml` declares.
 fn declared_classes() -> BTreeSet<String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/spec/hardening/cost_classes.yaml");
+        .join("../../docs/contracts/hardening/cost_classes.yaml");
     let text = std::fs::read_to_string(&path).unwrap_or_else(|error| {
         panic!(
             "v0.4.1 §34.2 requires the cost class to be machine-readable, and {} is where it is \

@@ -1,5 +1,5 @@
 //! Stable identity, lifetime, tombstones and permission honesty for the v0.4 Spatial Systems
-//! Interface — the part of `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` that
+//! Interface — the part of `docs/specs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` that
 //! decides whether a *place* can be trusted to be the same place tomorrow.
 //!
 //! Sections covered: §3.1 (`SpatialObject`: `spatial_id` opaque, display name is not identity),

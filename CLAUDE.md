@@ -11,14 +11,14 @@ duplicate rules here — if a rule needs to change, change it in `AGENTS.md`.
 ## The short version (full rules in AGENTS.md)
 
 - **Project:** Ono-Sendai (binary: `ono`), an object-pipeline shell in Rust. Narrative spec:
-  `docs/ono_sendai_shell_spec_v0.2.md` (normative MUST/SHOULD/MAY), plus the enhancement specs
+  `docs/specs/ono_sendai_shell_spec_v0.2.md` (normative MUST/SHOULD/MAY), plus the enhancement specs
   layered on it that AGENTS.md §5.2 enumerates — all equally immutable. Machine-readable contracts
-  live in `docs/spec/`.
+  live in `docs/contracts/`.
 - **Naming:** the product is **Ono-Sendai**, the short name and binary is **`ono`**, crates are
   `ono-*`. **KUANG/11** is a different thing — the extension runtime of spec §31, not an old
   name for the shell. `kuang` belongs only in KUANG/11 context (AGENTS.md §3).
 - **Everything an agent reads lives under `docs/`** — no top-level `spec/`. Read every
-  `spec/...` path in the narrative spec as `docs/spec/...` (AGENTS.md §2).
+  `spec/...` path in the narrative spec as `docs/contracts/...` (AGENTS.md §2).
 - **Method:** strict TDD. `RED → GREEN → REFACTOR → GATE → RECORD → LOOP` (AGENTS.md §7).
   No production code without a failing test first.
 - **Pragmatism:** solve the problem in front of you. Fixes, features, refactors and
@@ -27,9 +27,9 @@ duplicate rules here — if a rule needs to change, change it in `AGENTS.md`.
   unchanged*; a test that breaks on restructuring without behaviour change is itself the defect
   (AGENTS.md §11).
 - **Autonomy:** every decision not fixed by the spec is yours. Decide, write an ADR in
-  `docs/decisions/`, continue. Do not ask the user; do not idle (AGENTS.md §8).
+  `docs/adr/`, continue. Do not ask the user; do not idle (AGENTS.md §8).
 - **The spec is immutable.** Never edit, reformat, rename or regenerate
-  `docs/ono_sendai_shell_spec_v0.2.md` or any enhancement beside it — not even a typo.
+  `docs/specs/ono_sendai_shell_spec_v0.2.md` or any enhancement beside it — not even a typo.
   Ambiguous, inconsistent or wrong? ADR with a `Spec deviation` heading, then implement your
   decision. `spec-check` verifies every one of their checksums on every gate run (AGENTS.md
   §5.1, §5.2).
@@ -76,7 +76,7 @@ AGENTS.md rules plus its exclusive file scope.
 
 **Parallel tool calls.** Batch independent reads/greps/test runs into a single message.
 
-**Long spec file.** `docs/ono_sendai_shell_spec_v0.2.md` is ~5800 lines. Do not read it whole; use
+**Long spec file.** `docs/specs/ono_sendai_shell_spec_v0.2.md` is ~5800 lines. Do not read it whole; use
 `grep -n '^#'` for the section index, then `sed -n 'A,Bp'` for the sections you need, and cite
 sections as `§N` in ADRs, tests and commit messages.
 

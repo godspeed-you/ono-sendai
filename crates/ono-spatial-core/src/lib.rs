@@ -20,7 +20,7 @@
 //!   [`BootIdentity`] says when it does not know which boot it names.
 //!
 //! The canonical geography and the relation vocabulary are the same ones
-//! `docs/spec/spatial/spaces.yaml` and `relations.yaml` declare; `cargo run -p xtask --
+//! `docs/contracts/spatial/spaces.yaml` and `relations.yaml` declare; `cargo run -p xtask --
 //! spec-check` fails when the registry and this crate disagree in either direction.
 
 pub mod edge;

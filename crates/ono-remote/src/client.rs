@@ -335,7 +335,7 @@ impl Provider for RemoteProvider {
 /// still answer [`Provider::targets`], which returns borrowed names.
 ///
 /// The table leaks one copy of each *distinct* name for the life of the process. Target names
-/// come from a small, closed vocabulary (`docs/spec/targets.yaml`, plus what plugins add), so
+/// come from a small, closed vocabulary (`docs/contracts/targets.yaml`, plus what plugins add), so
 /// the leak is bounded by the vocabulary, not by how often links are opened.
 pub(crate) fn intern_target(name: &str) -> &'static str {
     static NAMES: OnceLock<Mutex<Vec<&'static str>>> = OnceLock::new();

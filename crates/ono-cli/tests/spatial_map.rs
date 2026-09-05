@@ -1,7 +1,7 @@
 //! Outcome tests for the v0.4 map: the `SpatialMap` data contract, its text rendering, semantic
 //! zoom, clustering, landmarks and the `look` rendering rules — none of which this build has.
 //!
-//! Narrative: `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` §22 (map data
+//! Narrative: `docs/specs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` §22 (map data
 //! contract), §23 (map rendering), §24 (`look` rendering rules), §8 (semantic zoom, clustering,
 //! expansion), §26 and §3.7 (landmark engine and landmark reasons), §34.2 (view budgets),
 //! §39 (accessibility and terminal capability), §29.1/§29.4 (`map --json` is a bounded graph

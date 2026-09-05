@@ -1,0 +1,81 @@
+# Finding. Source: spec §31.24's `Finding` record, field-for-field, with the evidence obligation
+# of §31.25 and the severity display of §31.24's example. Output of `get finding`
+# (`docs/contracts/commands/kuang.yaml` → `ono.finding.get`) and of `output.finding`
+# (`docs/contracts/kuang/protocol.v1.yaml`).
+#
+# Spec §31.24's purpose for a shared result model: "so findings from unrelated plugins can
+# compose". That is why this is a core `ono.*` schema and not a per-package one — a package
+# emits `ono.finding/1` and its output can be filtered, sorted and joined against another
+# package's without either knowing the other exists.
+id: ono.finding/1
+name: Finding
+summary: One conclusion an analysis or an assistant reached, with the evidence that produced it.
+identity: [id]
+fields:
+  id:
+    type: uuid
+    required: true
+    doc: The finding's own identity, so it can be cited, revisited and compared across runs.
+  source:
+    type: string
+    required: true
+    doc: >-
+      The package that emitted it. Set by the host, never by the package — spec §31.80 lists
+      forging provenance among the threats, and a finding is exactly where it would pay off.
+  subject:
+    type: value
+    nullable: true
+    doc: >-
+      A reference to the object the finding is about. Null for a finding about the system rather
+      than about one object; `inspect` resolves it back to the full record.
+  severity:
+    type: enum
+    required: true
+    values: [info, low, medium, high, critical]
+    doc: >-
+      Spec §31.24's closed set. A package cannot add a level, which is what lets findings from
+      unrelated packages be sorted against each other honestly.
+  confidence:
+    type: float
+    nullable: true
+    doc: >-
+      How sure the analysis is, from 0 to 1. Null means the package did not claim a confidence —
+      which is different from claiming zero, and spec §10.5 requires the difference to survive.
+  title:
+    type: string
+    required: true
+    doc: One line, what was found. Package-authored, sanitised before display (ADR-0015 T1).
+  summary:
+    type: string
+    required: true
+    doc: A short explanation. Package-authored, sanitised.
+  evidence:
+    type: list<ono.evidence/1>
+    required: true
+    doc: >-
+      The observations behind the conclusion. Spec §31.25 requires evidence references rather
+      than only prose, and `output.finding` rejects a finding whose references do not resolve —
+      an empty list is accepted only for a finding that asserts nothing beyond an observation
+      already carried by `subject`.
+  recommendations:
+    type: list<ono.recommendation/1>
+    required: true
+    doc: What to do about it. Empty when the honest answer is that the finding is worth knowing and nothing follows from it yet.
+  created_at:
+    type: timestamp
+    required: true
+    doc: When the finding was made.
+  expires_at:
+    type: timestamp
+    nullable: true
+    doc: >-
+      When it should no longer be believed, for a finding about a moving quantity. Null for one
+      that does not expire. An expired finding is shown as expired rather than quietly kept.
+  tags:
+    type: map
+    required: true
+    doc: >-
+      Package-specific string labels, as spec §31.24's `tags: Map<String,String>`. An empty map
+      when there are none — never absent, so a consumer can index on it unconditionally.
+default_view:
+  columns: [severity, subject, title, confidence, source]

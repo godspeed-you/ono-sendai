@@ -249,7 +249,7 @@ fn should_name_the_case_that_carries_the_number_when_a_reference_was_renamed_awa
             "run\n",
         ),
         (
-            "docs/decisions/ADR-0236-peers.md",
+            "docs/adr/ADR-0236-peers.md",
             "Encoded by case `122-privileged-network-and-mount`.\n",
         ),
     ]);
@@ -298,7 +298,7 @@ fn should_ignore_a_token_the_decision_records_name_as_not_being_a_case() {
             "run\n",
         ),
         (
-            "docs/decisions/ADR-0401-a-named-acceptance-case-must-exist.md",
+            "docs/adr/ADR-0401-a-named-acceptance-case-must-exist.md",
             "A `200-column` terminal and a `512-byte` frame are shaped exactly like case names.\n",
         ),
     ]);
@@ -312,7 +312,7 @@ fn should_ignore_a_token_the_decision_records_name_as_not_being_a_case() {
             "run\n",
         ),
         (
-            "docs/decisions/ADR-0401-a-named-acceptance-case-must-exist.md",
+            "docs/adr/ADR-0401-a-named-acceptance-case-must-exist.md",
             "Encoded by case `200-refusals-say-which`.\n",
         ),
     ]);
@@ -334,7 +334,7 @@ fn should_ignore_the_board_and_the_narrative_specifications_when_scanning_case_r
             "The seven names these boxes carried — `040-process-provider` — never existed.\n",
         ),
         (
-            "docs/ono_sendai_shell_spec_v0.2.md",
+            "docs/specs/ono_sendai_shell_spec_v0.2.md",
             "See `001-imaginary-case`.\n",
         ),
     ]);
@@ -350,7 +350,7 @@ fn should_ignore_a_narrative_specification_whose_name_omits_the_shell_infix() {
         ("docker/acceptance/cases/000-binary-runs.case", "run\n"),
         ("docker/acceptance/cases/040-object-pipeline.case", "run\n"),
         (
-            "docs/ono_sendai_spec_v0.5_temporal_causal_systems_interface.md",
+            "docs/specs/ono_sendai_spec_v0.5_temporal_causal_systems_interface.md",
             "See `001-imaginary-case`.\n",
         ),
     ]);
@@ -781,7 +781,7 @@ fn should_report_an_evaluator_capture_the_streaming_inventory_does_not_classify(
             "fn run_each_block() {\n    let items: Vec<Value> = upstream();\n}\n",
         ),
         (
-            "docs/spec/hardening/streaming.yaml",
+            "docs/contracts/hardening/streaming.yaml",
             &inventory(&[(
                 "crates/ono-cli/src/eval.rs",
                 "run_for",
@@ -806,7 +806,7 @@ fn should_report_an_inventory_entry_whose_capture_is_no_longer_in_the_evaluator(
     let repo = fixture(&[
         ("crates/ono-cli/src/eval.rs", "fn run_for() {}\n"),
         (
-            "docs/spec/hardening/streaming.yaml",
+            "docs/contracts/hardening/streaming.yaml",
             &inventory(&[(
                 "crates/ono-cli/src/eval.rs",
                 "run_for",
@@ -834,7 +834,7 @@ fn should_report_an_implementation_convenience_capture_that_no_decision_record_j
             "fn run_for() {\n    let items: Vec<Value> = subject();\n}\n",
         ),
         (
-            "docs/spec/hardening/streaming.yaml",
+            "docs/contracts/hardening/streaming.yaml",
             &inventory(&[(
                 "crates/ono-cli/src/eval.rs",
                 "run_for",
@@ -860,7 +860,7 @@ fn should_accept_an_evaluator_capture_the_inventory_classifies() {
             "fn run_for() {\n    let items: Vec<Value> = subject();\n}\n",
         ),
         (
-            "docs/spec/hardening/streaming.yaml",
+            "docs/contracts/hardening/streaming.yaml",
             &inventory(&[(
                 "crates/ono-cli/src/eval.rs",
                 "run_for",
@@ -885,7 +885,7 @@ fn should_report_a_capture_whose_class_is_not_one_the_specification_defines() {
             "fn run_for() {\n    let items: Vec<Value> = subject();\n}\n",
         ),
         (
-            "docs/spec/hardening/streaming.yaml",
+            "docs/contracts/hardening/streaming.yaml",
             &inventory(&[("crates/ono-cli/src/eval.rs", "run_for", "it_is_fine", None)]),
         ),
     ]);
@@ -1175,7 +1175,7 @@ fn should_report_this_repositorys_observed_skips_as_exactly_the_declared_set() {
     assert_eq!(
         check_expected_skips(root),
         Vec::new(),
-        "docs/spec/hardening/expected_test_skips.yaml declares exactly the skips this tree takes"
+        "docs/contracts/hardening/expected_test_skips.yaml declares exactly the skips this tree takes"
     );
 }
 

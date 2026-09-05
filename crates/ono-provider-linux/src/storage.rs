@@ -615,7 +615,7 @@ impl Provider for StorageProvider {
         vec![
             Capability::new("mount.list", Risk::Read),
             Capability::new("filesystem.list", Risk::Read),
-            // `docs/spec/capabilities.yaml` gives `mount.manage` elevation `required`: mount(2)
+            // `docs/contracts/capabilities.yaml` gives `mount.manage` elevation `required`: mount(2)
             // and umount2(2) need CAP_SYS_ADMIN.
             Capability::new("mount.manage", Risk::Mutate).needing_elevation(),
         ]

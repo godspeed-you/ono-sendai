@@ -1,0 +1,87 @@
+# PluginAuditEvent. Source: spec §31.37's `PluginAction` record, field-for-field, plus the
+# identity and error fields a queryable stream needs. Output of `get audit`
+# (`docs/contracts/commands/kuang.yaml` → `ono.audit.get`).
+#
+# Spec §31.37 shows the trail being queried like anything else —
+# `get audit | where plugin == "ops-assist" and capability contains "mutate"` — which only works
+# because the record is typed data rather than a log line. Denials are recorded as loudly as
+# successes: a package probing for capabilities it does not hold is exactly what the trail is for.
+id: ono.plugin-audit-event/1
+name: PluginAuditEvent
+summary: One capability-sensitive action a KUANG/11 package took, or was refused.
+identity: [id]
+fields:
+  id:
+    type: uuid
+    required: true
+    doc: The record's own identity, so an event can be cited from a finding or an assistant answer.
+  plugin:
+    type: ref<ono.plugin/1>
+    required: true
+    doc: The package that acted. Set by the host; a package cannot attribute an action to another.
+  invocation:
+    type: string
+    required: true
+    doc: >-
+      The invocation the action belonged to — the command, view, stream, analysis or assistant
+      turn. It is what lets a trail be read as a story rather than as isolated calls.
+  capability:
+    type: string
+    required: true
+    doc: The capability id the action was taken under, from `kuang_capabilities` in `docs/contracts/capabilities.yaml`.
+  scope:
+    type: value
+    nullable: true
+    doc: >-
+      The scope in force, as spec §31.37 types it (`scope: Value`). Null when the capability
+      declares no scope — which is different from an empty scope, and the difference matters
+      when reading a trail back.
+  enforcement:
+    type: enum
+    required: true
+    values: [broker, advisory]
+    doc: >-
+      Whether the scope was checked or merely recorded (`capabilities.v1.yaml`). An advisory
+      scope in an audit record must never read as though it had been enforced (spec §31.16).
+  action:
+    type: string
+    required: true
+    doc: What was attempted — a command id such as `ono.service.restart`, or a host call id such as `filesystem.read`.
+  target:
+    type: value
+    nullable: true
+    doc: A reference to the object acted on. Null for an action about no object, e.g. a model request.
+  at:
+    type: timestamp
+    required: true
+    doc: When it happened, by the host's clock. Not the plugin's — a package cannot backdate its own trail.
+  result:
+    type: enum
+    required: true
+    values: [success, denied, failed]
+    doc: >-
+      Spec §31.37's three outcomes. `denied` means policy refused it; `failed` means it was
+      permitted and did not work. Conflating them would hide exactly the pattern this record
+      exists to reveal.
+  user_confirmation:
+    type: string
+    nullable: true
+    doc: >-
+      The id of the confirmation that authorised the action, where one was required. Null where
+      none was — which is itself the interesting answer for a mutating action.
+  lease:
+    type: string
+    nullable: true
+    doc: The capability lease the action was taken under (spec §31.49). Null for a standing grant.
+  link:
+    type: string
+    nullable: true
+    doc: >-
+      The link the action crossed, for a remote action (spec §31.40). Null for a local one.
+      Local and remote are separate scopes and the trail keeps them separate.
+  error:
+    type: ono.error/1
+    nullable: true
+    doc: The structured error, for `denied` and `failed`. Null for `success`.
+default_view:
+  columns: [at, plugin, capability, action, target, result]

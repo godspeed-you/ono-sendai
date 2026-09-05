@@ -5,7 +5,7 @@
 //! as orientation anchors rather than as a claim about the ontology underneath. A user learns
 //! six stable directions and then meets the graph.
 //!
-//! This table is the same geography `docs/spec/spatial/spaces.yaml` declares, and
+//! This table is the same geography `docs/contracts/spatial/spaces.yaml` declares, and
 //! `cargo run -p xtask -- spec-check` fails when the two disagree in either direction.
 
 use std::collections::BTreeMap;
@@ -272,7 +272,7 @@ pub const ROOT: &str = "system";
 /// The schema every place the spatial commands emit satisfies (ADR-0140).
 const PLACE_SCHEMA: &str = "ono.spatial-place/1";
 
-/// The canonical geography, in the order `docs/spec/spatial/spaces.yaml` declares it.
+/// The canonical geography, in the order `docs/contracts/spatial/spaces.yaml` declares it.
 /// The root space every session starts at (§7.1, §46.1).
 pub const SYSTEM: CanonicalSpace = CanonicalSpace {
     id: "system",
@@ -288,7 +288,7 @@ pub const SYSTEM: CanonicalSpace = CanonicalSpace {
     status: SpaceStatus::Stable,
 };
 
-/// The canonical geography, in the order `docs/spec/spatial/spaces.yaml` declares it.
+/// The canonical geography, in the order `docs/contracts/spatial/spaces.yaml` declares it.
 pub const SPACES: &[CanonicalSpace] = &[
     SYSTEM,
     CanonicalSpace {

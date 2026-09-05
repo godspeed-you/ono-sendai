@@ -38,7 +38,7 @@ impl IdentityTier {
         IdentityTier::Observation,
     ];
 
-    /// The name `docs/spec/spatial/spatial.yaml` and the provider claims of §42 spell.
+    /// The name `docs/contracts/spatial/spatial.yaml` and the provider claims of §42 spell.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {

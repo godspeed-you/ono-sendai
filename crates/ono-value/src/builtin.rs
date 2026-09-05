@@ -1,8 +1,8 @@
 //! The canonical object schemas of spec §28, loaded from the contracts that define them.
 //!
 //! Spec §27 makes the machine-readable registries the public contract, and AGENTS.md §5 places
-//! `docs/spec/` above the implementation in the authority order. These schemas are therefore
-//! **parsed from `docs/spec/schemas/*.v1.yaml`**, embedded at compile time, rather than restated
+//! `docs/contracts/` above the implementation in the authority order. These schemas are therefore
+//! **parsed from `docs/contracts/schemas/*.v1.yaml`**, embedded at compile time, rather than restated
 //! in Rust beside them.
 //!
 //! Restating them was the first thing tried, and it drifted within a single phase: the file
@@ -276,7 +276,7 @@ fn parse_schema(contract: &str) -> Result<Schema, ErrorValue> {
     builder.build()
 }
 
-/// Reads the type vocabulary of spec §10.2 as `docs/spec/schemas/` spells it.
+/// Reads the type vocabulary of spec §10.2 as `docs/contracts/schemas/` spells it.
 fn parse_type(declared: &str, definition: &Yaml) -> Result<FieldType, ErrorValue> {
     // `enum` carries its members beside it, because a closed set is not a type on its own.
     if declared == "enum" {
@@ -406,7 +406,7 @@ mod embedded_documents {
         serde_json::to_string(value).expect("a schema document serializes as JSON")
     }
 
-    /// What the binary carries is what `docs/spec/schemas/` says, value for value (ADR-0571).
+    /// What the binary carries is what `docs/contracts/schemas/` says, value for value (ADR-0571).
     ///
     /// A subset, not an equality: the directory also holds `deferred.yaml`, the register of
     /// schemas a later phase will write, and whether every schema there is embedded is
@@ -414,9 +414,9 @@ mod embedded_documents {
     #[test]
     fn should_embed_every_schema_contract_as_the_spec_states_it() {
         let directory =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec/schemas");
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/contracts/schemas");
         let mut on_disk: Vec<String> = std::fs::read_dir(&directory)
-            .expect("docs/spec/schemas/ exists")
+            .expect("docs/contracts/schemas/ exists")
             .flatten()
             .map(|entry| entry.path())
             .filter(|path| {

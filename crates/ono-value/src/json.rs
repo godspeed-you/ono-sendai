@@ -215,7 +215,7 @@ fn decimal_to_json_data(value: Decimal) -> Json {
 /// The `code` is the stable identifier of the spec §43 taxonomy, so a script can branch on it;
 /// the `message` is what a person reads. Everything else an [`ErrorValue`] carries — help, cause,
 /// metadata — is Ono's own diagnostic apparatus and belongs to `inspect`, not to interop.
-/// An error as the fields `ono.error/1` declares (`docs/spec/schemas/error.v1.yaml`): the
+/// An error as the fields `ono.error/1` declares (`docs/contracts/schemas/error.v1.yaml`): the
 /// stable code in `code`, the dotted selector in `name`, the kind, and the rest flat — so a
 /// reader that knows nothing about Ono still finds `code` and `name` where the schema says.
 fn error_to_json_data(error: &ErrorValue) -> Json {

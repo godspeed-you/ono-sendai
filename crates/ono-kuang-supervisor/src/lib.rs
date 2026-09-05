@@ -7,7 +7,7 @@
 //! every host call the instance makes:
 //!
 //! - a call without a granted capability is refused with the structured denial of
-//!   `docs/spec/kuang/errors.v1.yaml`, and the denial is **audited** as loudly as a success
+//!   `docs/contracts/kuang/errors.v1.yaml`, and the denial is **audited** as loudly as a success
 //!   (spec §31.37);
 //! - a call outside a granted scope is `capability.scope_violation`, carrying the attempted
 //!   value and the granted scope in its metadata;

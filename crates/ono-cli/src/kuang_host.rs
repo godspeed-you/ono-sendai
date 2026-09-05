@@ -248,7 +248,7 @@ impl Host {
                     )
                     .with_help(
                         "the file declares `providers`, one entry per model provider, as \
-                         `docs/spec/kuang/model-broker.v1.yaml` describes",
+                         `docs/contracts/kuang/model-broker.v1.yaml` describes",
                     ),
                 );
             }

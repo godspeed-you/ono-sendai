@@ -1,6 +1,6 @@
 //! What a provider must be allowed to do, and how much it matters.
 //!
-//! These are the *provider* capabilities of `docs/spec/capabilities.yaml` — what a command needs
+//! These are the *provider* capabilities of `docs/contracts/capabilities.yaml` — what a command needs
 //! from a provider for it to work at all. They are not the KUANG/11 capabilities of spec §31.16,
 //! which are a security boundary granted to an extension. Conflating the two is how someone
 //! eventually grants a plugin `process.list` believing it is `process.read` (ADR-0012).
@@ -24,7 +24,7 @@ pub enum Risk {
 }
 
 impl Risk {
-    /// The name `docs/spec/capabilities.yaml` uses.
+    /// The name `docs/contracts/capabilities.yaml` uses.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -74,7 +74,7 @@ impl Capability {
         self
     }
 
-    /// The capability's id, as `docs/spec/capabilities.yaml` spells it.
+    /// The capability's id, as `docs/contracts/capabilities.yaml` spells it.
     #[must_use]
     pub fn id(&self) -> &str {
         &self.id

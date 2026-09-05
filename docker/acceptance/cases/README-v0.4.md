@@ -1,7 +1,7 @@
 # v0.4 acceptance scenarios (in the suite since S11)
 
 The files named `09x-spatial-*.case` in this directory are the ten acceptance scenarios of
-`docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` §44, written as containerised
+`docs/specs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` §44, written as containerised
 end-to-end cases. **They are green and the referee runs them**: every one was renamed from
 `*.case.v04` to `*.case` when the behaviour it proves was delivered, which is what
 `docs/ACCEPTANCE.md` §2 asks for ("a capability without a passing acceptance case is not

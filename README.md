@@ -322,13 +322,30 @@ Inside the shell itself: `help`, `help <command>`, `type <pipeline>`, `inspect` 
 | | |
 |---|---|
 | [`docs/reference/`](docs/reference/README.md) | generated reference: every command, verb, target, schema, error, capability |
-| [`docs/ono_sendai_shell_spec_v0.2.md`](docs/ono_sendai_shell_spec_v0.2.md) | the immutable base specification, plus the `docs/ono_sendai_*spec_v*.md` enhancements layered on it |
-| [`docs/spec/`](docs/spec/) | machine-readable contracts: commands, schemas, verbs, errors, providers |
-| [`docs/decisions/`](docs/decisions/) | architecture decision records, including every deliberate spec deviation |
+| [`docs/specs/ono_sendai_shell_spec_v0.2.md`](docs/specs/ono_sendai_shell_spec_v0.2.md) | the immutable base specification, plus the `docs/specs/ono_sendai_*spec_v*.md` enhancements layered on it |
+| [`docs/contracts/`](docs/contracts/) | machine-readable contracts: commands, schemas, verbs, errors, providers |
+| [`docs/architecture/`](docs/architecture/) | cross-cutting architecture specifications tied to no numbered release |
+| [`docs/strategy/`](docs/strategy/) | where the project is going, and why — direction rather than contract |
+| [`docs/adr/`](docs/adr/) | architecture decision records, including every deliberate spec deviation |
 | [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) | what "finished" means, in boxes a script can check |
 | [`docs/MIGRATION.md`](docs/MIGRATION.md) | what changes for someone upgrading, version by version |
 | [`docs/STATE.md`](docs/STATE.md) | the work board: the release verdict, and the backlog |
 | [`HISTORY.md`](HISTORY.md) | how the shell was built, phase by phase |
+
+**Project direction.** Where the shell is headed beyond the numbered releases, and the boundary
+the extensions that take it there have to fit:
+
+- [`docs/strategy/cloud-native-vision.md`](docs/strategy/cloud-native-vision.md) — why
+  cloud-native infrastructure is the first domain in which a systems interface pays for itself,
+  and what that would have to mean to be worth claiming;
+- [`docs/architecture/external-system-provider.md`](docs/architecture/external-system-provider.md)
+  — the generic KUANG/11 contract by which an external system becomes typed, navigable and
+  provenance-aware without teaching the core its domain;
+- [`docs/strategy/cncf-readiness.md`](docs/strategy/cncf-readiness.md) — the community,
+  governance and security conditions under which CNCF participation would become appropriate.
+
+These are direction, not delivery. The Kubernetes provider that would test the contract is not
+built yet, and the readiness plan is a plan: Ono-Sendai is not a CNCF project.
 
 ## Philosophy
 
@@ -361,11 +378,11 @@ canonical CI environment expects to.
 ```text
 crates=31
 workspace_members=33
-tests=3510
+tests=3511
 tests_that_can_skip=82
 expected_ci_skips=3
 acceptance_cases=146
-adrs=401
+adrs=402
 command_contract_files=13
 commands=195
 ```
@@ -382,7 +399,7 @@ detailed implementation status: [`docs/STATE.md`](docs/STATE.md) ·
 Contributions are welcome. Ono-Sendai is developed specification-first and test-first: no
 production code without a failing test, the narrative specifications immutable and checksummed,
 and anything architectural — or anything that resolves an ambiguity in a specification — recorded
-as an ADR in [`docs/decisions/`](docs/decisions/). A capability without a passing acceptance case
+as an ADR in [`docs/adr/`](docs/adr/). A capability without a passing acceptance case
 is not delivered.
 
 ```bash

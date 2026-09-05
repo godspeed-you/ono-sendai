@@ -14,7 +14,7 @@ use crate::scan::Problem;
 /// The files whose instructions an agent follows, and which must therefore name the base.
 const INSTRUCTIONS: [&str; 3] = ["AGENTS.md", "CLAUDE.md", "README.md"];
 
-/// Checks the narrative specifications found under `docs/`.
+/// Checks the narrative specifications found under `docs/specs/`.
 ///
 /// The base specification is the earliest by name; everything else is an enhancement layered on
 /// top of it (ADR-0026).
@@ -23,9 +23,9 @@ pub fn check(root: &Path) -> Vec<Problem> {
     let specs = narrative_specs(root);
     let Some((base, enhancements)) = specs.split_first() else {
         return vec![Problem {
-            location: "docs/".to_owned(),
-            detail: "no narrative specification found under docs/; the product has nothing to be \
-                     measured against"
+            location: "docs/specs/".to_owned(),
+            detail: "no narrative specification found under docs/specs/; the product has nothing \
+                     to be measured against"
                 .to_owned(),
         }];
     };
@@ -39,7 +39,7 @@ pub fn check(root: &Path) -> Vec<Problem> {
 /// The narrative specifications, ordered by version, so the base comes first.
 #[must_use]
 pub fn narrative_specs(root: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(root.join("docs")) else {
+    let Ok(entries) = std::fs::read_dir(root.join("docs").join("specs")) else {
         return Vec::new();
     };
     let mut found: Vec<String> = entries
@@ -59,7 +59,7 @@ pub fn narrative_specs(root: &Path) -> Vec<String> {
     found
 }
 
-/// Whether a file name in `docs/` is a narrative specification.
+/// Whether a file name in `docs/specs/` is a narrative specification.
 ///
 /// The user names these documents, and the shape is not stable: the v0.5 Temporal & Causal
 /// Systems Interface arrived as `ono_sendai_spec_v0.5_temporal_causal_systems_interface.md`,
@@ -86,17 +86,18 @@ fn version_of(name: &str) -> Option<(u32, u32)> {
     Some((major, minor.parse().ok()?))
 }
 
-/// Every specification must be covered by `docs/spec.sha256`, or nothing proves it untouched.
+/// Every specification must be covered by `docs/specs/spec.sha256`, or nothing proves it untouched.
 fn check_checksums(root: &Path, specs: &[String]) -> Vec<Problem> {
-    let recorded =
-        std::fs::read_to_string(root.join("docs").join("spec.sha256")).unwrap_or_default();
+    let recorded = std::fs::read_to_string(root.join("docs").join("specs").join("spec.sha256"))
+        .unwrap_or_default();
     specs
         .iter()
         .filter(|name| !recorded.contains(name.as_str()))
         .map(|name| Problem {
-            location: "docs/spec.sha256".to_owned(),
+            location: "docs/specs/spec.sha256".to_owned(),
             detail: format!(
-                "docs/{name} has no checksum entry, so no gate run would notice it being edited. \
+                "docs/specs/{name} has no checksum entry, so no gate run would notice it being \
+                 edited. \
                  Add its `sha256sum` line."
             ),
         })
@@ -120,7 +121,9 @@ fn check_instructions(root: &Path, base: &str, enhancements: &[String]) -> Vec<P
         if !text.contains(base) {
             problems.push(Problem {
                 location: file.to_owned(),
-                detail: format!("{file} does not reference the base specification `docs/{base}`"),
+                detail: format!(
+                    "{file} does not reference the base specification `docs/specs/{base}`"
+                ),
             });
         }
         if file != "AGENTS.md" {
@@ -132,7 +135,8 @@ fn check_instructions(root: &Path, base: &str, enhancements: &[String]) -> Vec<P
                     location: file.to_owned(),
                     detail: format!(
                         "{file} does not reference the enhancement specification \
-                         `docs/{enhancement}`; an enhancement the instructions do not enumerate \
+                         `docs/specs/{enhancement}`; an enhancement the instructions do not \
+                         enumerate \
                          is one no agent reads"
                     ),
                 });

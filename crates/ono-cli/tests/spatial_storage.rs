@@ -2,7 +2,7 @@
 //! mount boundaries, and the deliberate separation of the filesystem working directory from the
 //! spatial place.
 //!
-//! Specification: `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — §7.4 (the
+//! Specification: `docs/specs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — §7.4 (the
 //! STORAGE domain), §15 (storage and filesystem spaces, mount boundaries, directory and file
 //! places), §29.1 (`look --json`, `near` and `trail --json` work without a TTY), §30 (filesystem
 //! `cd` versus spatial navigation, whole section), §40 (structured spatial errors), §44.3

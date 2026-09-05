@@ -2,7 +2,7 @@
 //!
 //! The `11` is KUANG/11's major version and does not move; the minor is what negotiation
 //! resolves at load. A manifest writes a range — spec §31.5's `">=11.1 <12"` — and the host
-//! answers with the single version both sides then speak (`docs/spec/kuang/protocol.v1.yaml`).
+//! answers with the single version both sides then speak (`docs/contracts/kuang/protocol.v1.yaml`).
 
 use std::fmt;
 use std::str::FromStr;

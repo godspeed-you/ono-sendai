@@ -3,7 +3,7 @@
 //! v0.4.1 §16.4 asks for one central table in which every confinement control is declared
 //! `mandatory` or `best_effort`, and §52.1 asks for that table as a machine-readable registry
 //! rather than as constants scattered through the code. The registry is
-//! `docs/spec/hardening/kuang_confinement_controls.yaml`; this module is the same table as Rust,
+//! `docs/contracts/hardening/kuang_confinement_controls.yaml`; this module is the same table as Rust,
 //! and `cargo xtask spec-check` compares the two in both directions, so a control the runtime
 //! knows and the registry omits — or the reverse — turns the gate red (§52.3, ADR-0442).
 //!

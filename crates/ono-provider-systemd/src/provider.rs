@@ -256,7 +256,7 @@ impl Provider for SystemdProvider {
     fn capabilities(&self) -> Vec<Capability> {
         vec![
             Capability::new("service.list", Risk::Read),
-            // `docs/spec/capabilities.yaml` gives `service.manage` elevation `required`: systemd
+            // `docs/contracts/capabilities.yaml` gives `service.manage` elevation `required`: systemd
             // asks polkit before it changes a unit.
             Capability::new("service.manage", Risk::Mutate).needing_elevation(),
         ]

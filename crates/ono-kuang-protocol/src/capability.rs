@@ -1,8 +1,8 @@
 //! The KUANG/11 capability model: the twenty-nine families, their scope shapes, and the shapes
 //! of a grant, a lease and a revocation (spec §31.16–§31.19, §31.49).
 //!
-//! The authoritative family list is `kuang_capabilities` in `docs/spec/capabilities.yaml`;
-//! `docs/spec/kuang/capabilities.v1.yaml` adds the scope shapes and enforcement levels this
+//! The authoritative family list is `kuang_capabilities` in `docs/contracts/capabilities.yaml`;
+//! `docs/contracts/kuang/capabilities.v1.yaml` adds the scope shapes and enforcement levels this
 //! module encodes. The rule the `enforcement` field exists to serve, spec §31.16 verbatim:
 //! "A scope that cannot be enforced reliably MUST NOT be offered as if it were a security
 //! boundary."
@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{KuangError, KuangErrorCode};
 
-/// The risk a capability's operations carry (`docs/spec/capabilities.yaml`).
+/// The risk a capability's operations carry (`docs/contracts/capabilities.yaml`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Risk {
@@ -28,7 +28,7 @@ pub enum Risk {
     Destructive,
 }
 
-/// Whether the capability may need privilege elevation (`docs/spec/capabilities.yaml`).
+/// Whether the capability may need privilege elevation (`docs/contracts/capabilities.yaml`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Elevation {
@@ -51,7 +51,7 @@ pub enum Enforcement {
     Advisory,
 }
 
-/// The value shape of one scope key (`docs/spec/kuang/capabilities.v1.yaml` → `scope_types`).
+/// The value shape of one scope key (`docs/contracts/kuang/capabilities.v1.yaml` → `scope_types`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeKind {
     /// Absolute path patterns, `**` matching any number of components.
@@ -112,7 +112,7 @@ macro_rules! capabilities {
             /// Every family, in registry order.
             pub const ALL: &'static [Capability] = &[ $( Capability::$variant, )* ];
 
-            /// The capability id as `docs/spec/capabilities.yaml` spells it.
+            /// The capability id as `docs/contracts/capabilities.yaml` spells it.
             #[must_use]
             pub const fn id(self) -> &'static str {
                 match self { $( Capability::$variant => $id, )* }
@@ -131,7 +131,7 @@ macro_rules! capabilities {
             }
 
             /// The scope keys the family declares. Empty means the family is unscoped —
-            /// deliberately, never decoratively (`docs/spec/kuang/capabilities.v1.yaml`).
+            /// deliberately, never decoratively (`docs/contracts/kuang/capabilities.v1.yaml`).
             #[must_use]
             pub fn scope_keys(self) -> &'static [ScopeKey] {
                 match self { $( Capability::$variant => { const KEYS: &[ScopeKey] = &[$($key),*]; KEYS }, )* }
@@ -232,7 +232,7 @@ impl Capability {
     /// Resolves a family from its id, or `None` for an id the registry does not carry.
     ///
     /// An unknown capability id in a manifest is `package.invalid`, never a silently ignored
-    /// line (`docs/spec/kuang/manifest.v1.yaml`).
+    /// line (`docs/contracts/kuang/manifest.v1.yaml`).
     #[must_use]
     pub fn from_id(id: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|family| family.id() == id)
@@ -252,7 +252,7 @@ impl FromStr for Capability {
         Self::from_id(text).ok_or_else(|| {
             KuangError::new(
                 KuangErrorCode::PackageInvalid,
-                format!("`{text}` is not a capability of `docs/spec/capabilities.yaml`"),
+                format!("`{text}` is not a capability of `docs/contracts/capabilities.yaml`"),
             )
         })
     }
@@ -271,7 +271,7 @@ pub enum DeclarationClass {
     RuntimeRequested,
 }
 
-/// How long a grant lasts (spec §31.18, `docs/spec/kuang/capabilities.v1.yaml`).
+/// How long a grant lasts (spec §31.18, `docs/contracts/kuang/capabilities.v1.yaml`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum GrantDuration {

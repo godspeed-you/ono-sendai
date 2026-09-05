@@ -995,7 +995,7 @@ impl Provider for RpmPackageProvider {
         vec![
             Capability::new("package.list", Risk::Read),
             Capability::new("package.search", Risk::Read),
-            // `docs/spec/capabilities.yaml` gives `package.manage` elevation `required`: the rpm
+            // `docs/contracts/capabilities.yaml` gives `package.manage` elevation `required`: the rpm
             // database is root's, and the provider says so before it runs anything.
             Capability::new("package.manage", Risk::Mutate).needing_elevation(),
             Capability::new("package-source.list", Risk::Read),

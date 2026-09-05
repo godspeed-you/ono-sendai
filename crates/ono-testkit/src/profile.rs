@@ -70,7 +70,7 @@ impl Profile {
     /// The profile constant carrying `id`, when there is one.
     ///
     /// The registry declares the numbers and these constants carry them; this is how a row of
-    /// `docs/spec/hardening/performance_profiles.yaml` reaches the fixture that realises it.
+    /// `docs/contracts/hardening/performance_profiles.yaml` reaches the fixture that realises it.
     #[must_use]
     pub fn named(id: &str) -> Option<Self> {
         [PROFILE_S, PROFILE_M, PROFILE_L]
@@ -174,7 +174,8 @@ impl Drop for ProcessPopulation {
 // ------------------------------------------------------------------------------------------
 
 /// The registry of v0.4.1 Appendix F, embedded so a fixture cannot drift from its declaration.
-const DECLARATIONS: &str = include_str!("../../../docs/spec/hardening/performance_profiles.yaml");
+const DECLARATIONS: &str =
+    include_str!("../../../docs/contracts/hardening/performance_profiles.yaml");
 
 /// Where a fixture of a given size can honestly be created.
 ///
@@ -203,7 +204,7 @@ impl BuiltBy {
     }
 }
 
-/// One row of `docs/spec/hardening/performance_profiles.yaml`.
+/// One row of `docs/contracts/hardening/performance_profiles.yaml`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileDeclaration {
     /// `S`, `M` or `L`.
@@ -329,7 +330,7 @@ pub fn descriptors_for(profile: Profile) -> u64 {
 /// The parsed registry.
 fn registry() -> serde_yaml_ng::Value {
     serde_yaml_ng::from_str(DECLARATIONS)
-        .expect("docs/spec/hardening/performance_profiles.yaml must be valid YAML")
+        .expect("docs/contracts/hardening/performance_profiles.yaml must be valid YAML")
 }
 
 /// One profile row.

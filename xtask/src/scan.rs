@@ -565,7 +565,7 @@ fn dangling_case_detail(name: &str, existing: &[String]) -> String {
 fn is_out_of_scope_for_case_references(relative: &str) -> bool {
     relative == "docs/STATE.md"
         || relative
-            .strip_prefix("docs/")
+            .strip_prefix("docs/specs/")
             .is_some_and(crate::narrative::is_narrative_spec)
 }
 
@@ -957,7 +957,7 @@ fn without_comments_and_strings(text: &str) -> String {
 /// statements, expressions, blocks and pipelines and `eval/native/` assembles, drives and drains
 /// the value stream; `session.rs` owns the capture stack and the retained history; `report.rs`
 /// and `view.rs` are what a drained result reaches. A command implementation that materializes is
-/// placed by Appendix E instead — `docs/spec/hardening/streaming_classification.yaml` — because
+/// placed by Appendix E instead — `docs/contracts/hardening/streaming_classification.yaml` — because
 /// there the class is a property of the operation's contract rather than of the evaluator's
 /// structure.
 ///
@@ -991,7 +991,7 @@ const EVALUATOR_SOURCES: &[&str] = &[
 ];
 
 /// Where the inventory lives.
-const CAPTURE_INVENTORY: &str = "docs/spec/hardening/streaming.yaml";
+const CAPTURE_INVENTORY: &str = "docs/contracts/hardening/streaming.yaml";
 
 /// What a capture looks like in source: a collection of pipeline values, or the capture stack
 /// that holds one for the evaluator.
@@ -1483,7 +1483,7 @@ fn brace_delta(line: &str) -> (usize, usize) {
 // --- v0.4.1 §38.2 and §38.3: the declared skip set, and the two ways a run may break it --------
 
 /// The path, below the repository root, of the `expected_test_skips` registry of §52.1.
-pub const EXPECTED_TEST_SKIPS: &str = "docs/spec/hardening/expected_test_skips.yaml";
+pub const EXPECTED_TEST_SKIPS: &str = "docs/contracts/hardening/expected_test_skips.yaml";
 
 /// A test that can announce a skip, and the §38.4 category it announces.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

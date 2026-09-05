@@ -4,7 +4,7 @@
 //! MUST NOT become an undocumented second source of truth", and §31.3 says which data — `map`
 //! and `trace` share the underlying graph. So the edges of a place are the ones the v0.2
 //! relationship providers of `ono-graph` assert about the very same object, read once per place
-//! and translated into the spatial vocabulary of `docs/spec/spatial/relations.yaml`.
+//! and translated into the spatial vocabulary of `docs/contracts/spatial/relations.yaml`.
 //!
 //! Translation is all that happens here. The relation a provider names (`reads`), the provider
 //! that named it (`linux.open-files`) and the confidence it claimed travel onto the spatial edge
@@ -118,7 +118,7 @@ fn broad(provider: &str) -> Option<SpatialType> {
 
 /// How one relation word of one v0.2 relationship provider reads in the spatial vocabulary.
 struct Translation {
-    /// The declared relation of `docs/spec/spatial/relations.yaml` the edge belongs to.
+    /// The declared relation of `docs/contracts/spatial/relations.yaml` the edge belongs to.
     relation: &'static str,
     /// Whether the object being expanded is the relation's `source` (rather than its `target`).
     subject_is_source: bool,

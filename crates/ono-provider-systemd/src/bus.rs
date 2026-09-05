@@ -124,7 +124,7 @@ impl JobKind {
         }
     }
 
-    /// The operation name a command uses for this job, as `docs/spec/commands/service.yaml`
+    /// The operation name a command uses for this job, as `docs/contracts/commands/service.yaml`
     /// spells it.
     #[must_use]
     pub const fn operation(self) -> &'static str {

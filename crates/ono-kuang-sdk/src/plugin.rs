@@ -629,7 +629,7 @@ impl Ctx<'_> {
     }
 
     /// Calls a host API method with raw parameters (spec §31.12). Every call answers with the
-    /// structured denial of `docs/spec/kuang/errors.v1.yaml` when a capability is missing.
+    /// structured denial of `docs/contracts/kuang/errors.v1.yaml` when a capability is missing.
     ///
     /// # Errors
     ///

@@ -1,0 +1,377 @@
+# The canonical spatial geography of Ono-Sendai (spec v0.4 §4, §7, §41.1).
+#
+# Every place a user can stand in that is not an individual provider object is declared here:
+# the root, the six canonical domains of §53's settled root geography, and the collections each
+# domain contains. §41.1 fixes the required fields — `id`, `label`, `parent`, `object_type`,
+# `enterable`, `commands`, `summary_fields` — and §41.3 makes this file the source of `help
+# spatial`, completion, map legends and conformance tests, so it may not drift from what the
+# shell serves. `cargo run -p xtask -- spec-check` compares it against
+# `ono_spatial_core::spaces()` in both directions: a declared space nothing serves is a promise
+# nobody keeps, a served space nothing declares is undocumented surface (ADR-0126, ADR-0128).
+#
+# `kind`          root | domain | collection — the zoom level of §8.1 the place sits at (L0/L1/L2).
+# `object_type`   §41.1's field: what a user standing here is standing in. For a collection that
+#                 is the type of its members, as §41.1's own example spells it (`compute.services`
+#                 / `Service`); for the root and the domains it is the aggregate place type of
+#                 §3.3. Every name comes from `spatial.yaml`'s `object_types` vocabulary.
+# `member_type`   what a user will find here — the type of the objects the place directly
+#                 contains, or null for a place that only contains other places. For a collection
+#                 it equals `object_type`; CONTAINERS and DEVICES hold their objects without an
+#                 intervening collection, so theirs differ.
+# `schema`        the `docs/contracts/schemas/` id of the records this place is built from — its
+#                 members' schema where it has members, the host's for the root — or null where
+#                 no provider answers for them yet. Null is honest; an invented schema is not
+#                 (§2.17).
+# `enterable`     whether `enter` accepts it as a destination.
+# `commands`      the spatial commands that mean something here, spelled as the user types them
+#                 (`find place`, not `find` — ADR-0124).
+# `summary_fields` what a `look` summary of this place reports.
+
+version: 1
+
+spaces:
+  # --- the root ------------------------------------------------------------------------------
+  - id: system
+    label: SYSTEM
+    parent: null
+    kind: root
+    object_type: System
+    member_type: null
+    schema: ono.system/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [hostname, os, kernel, uptime, domains]
+    doc: >-
+      The orientation anchor `home` resolves to (§7.1). It is never a flat list of everything
+      Ono knows; its exits are the six canonical domains and the host's landmarks.
+
+  # --- the six canonical domains (§53: "Six canonical domains") -------------------------------
+  - id: compute
+    label: COMPUTE
+    parent: system
+    kind: domain
+    object_type: Compute
+    member_type: null
+    schema: null
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [process_count, service_states, job_count, container_count]
+    doc: Processes, services, shell jobs, workload aggregates and cgroups (§7.2).
+
+  - id: network
+    label: NETWORK
+    parent: system
+    kind: domain
+    object_type: Network
+    member_type: null
+    schema: null
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [interface_count, listener_count, connection_count]
+    doc: Interfaces, addresses, routes, neighbours, listeners, connections, namespaces (§7.3).
+
+  - id: storage
+    label: STORAGE
+    parent: system
+    kind: domain
+    object_type: Storage
+    member_type: null
+    schema: null
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [filesystem_count, mount_count, pressure]
+    doc: >-
+      Filesystems, mounts, block devices and the Unix path tree, which the spatial model
+      preserves rather than replaces (§7.4, §15.1).
+
+  - id: containers
+    label: CONTAINERS
+    parent: system
+    kind: domain
+    object_type: Containers
+    member_type: Container
+    schema: ono.container/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [container_count, running, runtimes]
+    doc: >-
+      Container-like scopes from whatever runtimes are installed; provider-neutral by
+      requirement (§7.5). The domain holds the container objects directly — a host with no
+      runtime still stands here and is told why it is empty (§4, §35.2).
+
+  - id: identity
+    label: IDENTITY
+    parent: system
+    kind: domain
+    object_type: Identity
+    member_type: null
+    schema: null
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [user_count, group_count, session_count]
+    doc: Users, groups, active sessions and the ownership relations between them (§7.6, §17).
+
+  - id: devices
+    label: DEVICES
+    parent: system
+    kind: domain
+    object_type: Devices
+    member_type: Device
+    schema: ono.device/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [device_count, categories]
+    doc: >-
+      Kernel-visible devices for which a provider supplies structure. §7.7's categories (block,
+      network, input, serial, pci, usb, gpu) are `MAY`, and are not declared as spaces until a
+      provider gives them meaning: devices must never be invented from `/dev` filenames.
+
+  # --- COMPUTE (§7.2) -------------------------------------------------------------------------
+  - id: compute.processes
+    label: processes
+    parent: compute
+    kind: collection
+    object_type: Process
+    member_type: Process
+    schema: ono.process/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count, running, sleeping, stopped]
+    doc: Every process visible to this user (§12).
+
+  - id: compute.services
+    label: services
+    parent: compute
+    kind: collection
+    object_type: Service
+    member_type: Service
+    schema: ono.service/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count, running, failed, inactive]
+    doc: The service manager's units, as stable places that outlive their processes (§13).
+
+  - id: compute.jobs
+    label: jobs
+    parent: compute
+    kind: collection
+    object_type: Job
+    member_type: Job
+    schema: ono.job/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count, running, stopped]
+    doc: This shell's own job table (spec v0.2 §18.4), which §7.2 makes part of COMPUTE.
+
+  - id: compute.cgroups
+    label: cgroups
+    parent: compute
+    kind: collection
+    object_type: Cgroup
+    member_type: Cgroup
+    schema: ono.cgroup/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count]
+    doc: >-
+      The cgroup tree §7.2 requires access to. No provider answers `get cgroup`: the control
+      group path is a fact `/proc/<pid>/cgroup` carries and `ono.process-detail/1` reports, and
+      the spatial bridge composes an `ono.cgroup/1` place from it (§16.3, ADR-0135). A process
+      that nobody has looked at closely yet leaves the collection empty rather than absent
+      (§4, §35.2).
+
+  - id: compute.workloads
+    label: workloads
+    parent: compute
+    kind: collection
+    object_type: Workload
+    member_type: Workload
+    schema: null
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count]
+    doc: >-
+      §7.2's spatial aggregate over processes, services and containers. It is explicitly a `MAY`
+      — Ono forms one only where reliable evidence connects the parts — so it is declared as
+      the shape a workload space has and is not served until that evidence exists.
+    status: planned
+
+  # --- NETWORK (§7.3) -------------------------------------------------------------------------
+  - id: network.interfaces
+    label: interfaces
+    parent: network
+    kind: collection
+    object_type: Interface
+    member_type: Interface
+    schema: ono.interface/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count, up, down]
+    doc: Network interfaces by kernel identity, not by name alone (§10.1, §14.2).
+
+  - id: network.addresses
+    label: addresses
+    parent: network
+    kind: collection
+    object_type: Address
+    member_type: Address
+    schema: ono.interface-address/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count, ipv4, ipv6]
+    doc: The addresses configured on the interfaces of this host (§14.1).
+
+  - id: network.routes
+    label: routes
+    parent: network
+    kind: collection
+    object_type: Route
+    member_type: Route
+    schema: ono.route/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count, default]
+    doc: The routing tables (§14.1).
+
+  - id: network.neighbors
+    label: neighbors
+    parent: network
+    kind: collection
+    object_type: Neighbor
+    member_type: Neighbor
+    schema: ono.neighbor/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count, reachable]
+    doc: The neighbour (ARP/NDP) tables (§14.1).
+
+  - id: network.listeners
+    label: listeners
+    parent: network
+    kind: collection
+    object_type: Listener
+    member_type: Listener
+    schema: ono.socket/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count, public]
+    doc: >-
+      Listening sockets as places (§14.3). A listener reachable from outside the host is a
+      `public_listener` landmark.
+
+  - id: network.connections
+    label: connections
+    parent: network
+    kind: collection
+    object_type: Connection
+    member_type: Connection
+    schema: ono.socket/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count, established]
+    doc: Established connections as places, each with two ends (§14.4).
+
+  - id: network.namespaces
+    label: namespaces
+    parent: network
+    kind: collection
+    object_type: Namespace
+    member_type: Namespace
+    schema: ono.namespace/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count]
+    doc: >-
+      Network namespaces, which are scope boundaries as well as objects: crossing one is
+      visible in the trail and the prompt (§16.2, §2.18).
+
+  # --- STORAGE (§7.4) -------------------------------------------------------------------------
+  - id: storage.filesystems
+    label: filesystems
+    parent: storage
+    kind: collection
+    object_type: Filesystem
+    member_type: Filesystem
+    schema: ono.filesystem/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count, used_share, read_only]
+    doc: Filesystems by stable identity (UUID where the provider knows one) — §10.1, §15.2.
+
+  - id: storage.mounts
+    label: mounts
+    parent: storage
+    kind: collection
+    object_type: Mount
+    member_type: Mount
+    schema: ono.mount/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count, read_only]
+    doc: Mounts, which are the boundaries the path tree crosses (§15.3).
+
+  - id: storage.devices
+    label: devices
+    parent: storage
+    kind: collection
+    object_type: BlockDevice
+    member_type: BlockDevice
+    schema: ono.block-device/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count, size]
+    doc: §7.4's "volumes/devices where known" — the block devices behind the filesystems.
+
+  - id: storage.directories
+    label: directories
+    parent: storage
+    kind: collection
+    object_type: Directory
+    member_type: Directory
+    schema: ono.file/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [cwd, roots]
+    doc: >-
+      The entry point into the Unix path tree, which the spatial model preserves rather than
+      replaces (§7.4, §15.1). `cd` and this place stay synchronised under the default
+      `spatial.follow_cwd = "storage-only"` (§30.3).
+
+  # --- IDENTITY (§7.6) ------------------------------------------------------------------------
+  - id: identity.users
+    label: users
+    parent: identity
+    kind: collection
+    object_type: User
+    member_type: User
+    schema: ono.user/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count, human, system]
+    doc: Users, through NSS, with uid as the stable identity (§10.1, §17).
+
+  - id: identity.groups
+    label: groups
+    parent: identity
+    kind: collection
+    object_type: Group
+    member_type: Group
+    schema: ono.group/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count]
+    doc: Groups, and the membership relations that connect them to users (§17).
+
+  - id: identity.sessions
+    label: sessions
+    parent: identity
+    kind: collection
+    object_type: Session
+    member_type: Session
+    schema: ono.session/1
+    enterable: true
+    commands: [look, map, near, enter, find place, pin]
+    summary_fields: [count, active]
+    doc: >-
+      Active login sessions (§7.6). An identity place never reveals secrets, credentials or
+      environment contents (§17).

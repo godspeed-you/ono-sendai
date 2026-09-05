@@ -148,9 +148,9 @@ fn should_declare_the_three_resource_refusal_codes_with_their_details() {
     // observed/estimated consumption without dumping the retained values themselves". A resource
     // error that printed what it was holding would be a second resource problem.
     let registry = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec/errors.yaml"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/contracts/errors.yaml"),
     )
-    .expect("docs/spec/errors.yaml is the single taxonomy (ADR-0125)");
+    .expect("docs/contracts/errors.yaml is the single taxonomy (ADR-0125)");
 
     for (code, name) in [
         (ErrorCode::ResourceItemLimit, "resource.item_limit"),
@@ -172,7 +172,7 @@ fn should_declare_the_three_resource_refusal_codes_with_their_details() {
         );
         assert!(
             registry.contains(&format!("name: {name}")),
-            "ADR-0125: `{name}` is implemented and `docs/spec/errors.yaml` does not declare it"
+            "ADR-0125: `{name}` is implemented and `docs/contracts/errors.yaml` does not declare it"
         );
         assert!(
             registry.contains(code.code()),

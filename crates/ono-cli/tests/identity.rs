@@ -1,5 +1,5 @@
 //! The identity family the contract declares: sessions
-//! (spec §9.1, `docs/spec/commands/identity.yaml` `ono.session.get`), account management
+//! (spec §9.1, `docs/contracts/commands/identity.yaml` `ono.session.get`), account management
 //! (`add`/`remove`/`set` on `user` and `group`, spec §52), the live streams `watch user` and
 //! `watch group` (spec §18.2, ADR-0024, ADR-0034), `trace user` (spec §22.3) and the context
 //! frames `enter user` and `enter group` (spec §14.3, ADR-0023).
@@ -73,7 +73,7 @@ fn assert_not_unimplemented(run: &ono_testkit::Run) {
 
 /// A mutation's row for an unprivileged attempt: `failed`, unchanged, with a permission or
 /// policy error (`io.permission_denied` E0302 or `safety.policy_denied` E0702) — spec §16.5,
-/// `docs/spec/schemas/action-result.v1.yaml`.
+/// `docs/contracts/schemas/action-result.v1.yaml`.
 fn assert_failed_for_lack_of_privilege(run: &ono_testkit::Run, operation: &str) {
     assert_not_unimplemented(run);
     let rows = last_json(run);

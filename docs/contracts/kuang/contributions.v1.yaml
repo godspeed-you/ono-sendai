@@ -1,0 +1,327 @@
+# What a KUANG/11 package may contribute to Ono, and the rules that keep a contribution from
+# being implicitly trusted.
+#
+# Source: spec §31.22 (command contribution), §31.23 (targets, schemas, annotations),
+# §31.24 (annotations and findings), §31.25 (evidence must remain inspectable),
+# §31.26 (relationship contribution), §31.27–§31.28 (views and their lifecycle),
+# §31.29 (analyses as pipeline stages), §31.30 (plugin-to-plugin composition),
+# §31.57–§31.58 (external adapters), §31.64 (registry integration and origin),
+# §31.65–§31.66 (conflict resolution and qualified invocation), §31.75 (static analysis),
+# §31.86 (what "native-feeling" means). Decisions: ADR-0022.
+#
+# The two jobs of spec §31, in this file's terms: a contribution must feel native (it enters the
+# same registries, is described by the same metadata, is rendered by the same renderer), and
+# feeling native must not become being trusted (its origin is recorded, its evidence resolves,
+# its output is validated, and it cannot shadow a core command).
+#
+# Nothing here is implemented. These are the contracts spec §37 Phase I is built against.
+
+version: 1
+
+# ---------------------------------------------------------------------------------------------
+# Registries a contribution enters — spec §31.64. There are no KUANG/11-private registries: a
+# contributed command is a command, and the same `get command` finds it.
+# ---------------------------------------------------------------------------------------------
+registries:
+  - {id: VerbRegistry,       contribution: verb,      doc: "Extension verbs. A new verb requires an approved extension declaration (spec §31.22); reusing an existing verb does not."}
+  - {id: TargetRegistry,     contribution: target,    doc: "Contributed targets (spec §31.23)."}
+  - {id: CommandRegistry,    contribution: command,   doc: "Contributed commands, with the same metadata schema core commands use (spec §31.22, §27)."}
+  - {id: SchemaRegistry,     contribution: schema,    doc: "Contributed object schemas (spec §31.23)."}
+  - {id: ProviderRegistry,   contribution: provider,  doc: "A package acting as a provider for a target."}
+  - {id: RelationRegistry,   contribution: relation,  doc: "Relation types the package can contribute edges for (spec §31.26)."}
+  - {id: ViewRegistry,       contribution: view,      doc: "Contributed views and lenses (spec §31.27)."}
+  - {id: AssistantRegistry,  contribution: assistant, doc: "Assistants. See `assistants.v1.yaml`."}
+  - {id: CapabilityRegistry, contribution: null,      doc: "Read-only for packages: a package requests capabilities and never defines one (spec §31.16, `docs/contracts/capabilities.yaml`)."}
+
+# spec §31.64: "Each registry entry records origin." This is what makes `inspect command` able to
+# answer "who told me this?", which is the first question about anything a package contributed.
+origin:
+  values:
+    - {id: core, doc: "Shipped with Ono. The only origin that may hold an `ono.*` id."}
+    - {id: plugin, doc: "Contributed by a package; carries the package id and version."}
+    - {id: remote-provider, doc: "Contributed across a link by a remote agent; carries the link and the remote package id."}
+  rules:
+    - "`inspect command`, `inspect schema`, `inspect view` and `explain` all expose origin (spec §31.64)."
+    - "Origin is set by the host at registration and is not a manifest field. A package cannot declare itself core."
+    - "A value's provenance names the contributing package, so a record can be traced to the code that produced it (spec §31.57)."
+
+# ---------------------------------------------------------------------------------------------
+# Validation that runs before any contribution is registered — spec §31.22, applied to every
+# contribution kind and not only to commands. A failure is `package.invalid` at install time,
+# which is the whole point of manifest-before-code.
+# ---------------------------------------------------------------------------------------------
+registration_checks:
+  - {id: verb-exists, rule: "The verb exists in the verb registry, or the package carries an approved extension declaration for it.", spec: "§31.22"}
+  - {id: target-unambiguous, rule: "The target name does not collide ambiguously with an existing one.", spec: "§31.22"}
+  - {id: schemas-exist, rule: "Every input and output schema id resolves — to a core schema, to one this package contributes, or to one a declared dependency contributes.", spec: "§31.22"}
+  - {id: capabilities-exist, rule: "Every capability reference exists in `kuang_capabilities` of `docs/contracts/capabilities.yaml`. An unknown capability is not ignored.", spec: "§31.22"}
+  - {id: help-parses, rule: "Help text and every declared example parse, and the examples run under the test host.", spec: "§31.22, §50"}
+  - {id: id-in-namespace, rule: "Every contributed id is inside the package's namespace and does not claim `ono.*`.", spec: "§31.5, §31.22"}
+  - {id: no-core-shadow, rule: "No contribution silently shadows a core command, target or schema id.", spec: "§31.65"}
+  - {id: annotation-declared, rule: "Every annotation key the package emits is declared in its manifest.", spec: "§31.23"}
+  - {id: view-has-fallback, rule: "Every view declares a deterministic non-interactive output for when stdout is redirected.", spec: "§31.28, §50"}
+  - {id: risk-metadata, rule: "Every mutating command and every assistant mutation tool declares its risk.", spec: "§31.46, §31.75"}
+
+# ---------------------------------------------------------------------------------------------
+# Command contributions — spec §31.22. The declaration is the *same* metadata schema core
+# commands use (`docs/contracts/commands/*.yaml`, ADR-0012), with three fields a core command has no
+# need for: `provider`, `origin` and the package-namespaced `id`.
+# ---------------------------------------------------------------------------------------------
+command:
+  same_schema_as: docs/contracts/commands/*.yaml
+  # Where the declaration lives on disk, so spec §31.68's registry placeholders can be built
+  # without starting the package: `contributions.commands` in the manifest names documents inside
+  # the package, each a `commands:` list of the fields below (ADR-0282). The same fields cross the
+  # handshake as `hello.contributions.commands`, so the placeholder and the loaded entry cannot
+  # disagree about what the package contributes.
+  declaration:
+    manifest_field: contributions.commands
+    document: "{commands: [<the fields below>]}"
+    read_without_running: true
+  fields:
+    id: {type: string, required: true, doc: "`<package.id>.command.<kebab-name>`, e.g. `dev.example.packet-eye.command.trace-packet`."}
+    verb: {type: string, required: true, doc: "An existing verb wherever the semantics allow it."}
+    target: {type: string, required: true, doc: "A core target or one this package contributes."}
+    summary: "{type: string, required: true, doc: \"One line. Feeds `help` and completion, exactly as a core command's does.\"}"
+    input: {type: string, required: true, doc: "The input type, e.g. `stream<ono.socket/1>?` or `null`."}
+    output: {type: string, required: true, doc: "The output type, e.g. `graph<packet-eye.flow/2>`. Validated on every emitted value."}
+    capabilities: {type: list<string>, required: true, doc: "The KUANG/11 capabilities the command needs. Checked at invocation, not only at load."}
+    provider: {type: string, required: true, doc: "`plugin:<package.id>`, set by the host at registration."}
+    argument_mode: {type: string, required: true, doc: "From ADR-0009's table. A contributed command's mode comes from its registry entry (ADR-0012 §14, ADR-0009)."}
+    selectors: {type: list<record>, nullable: true, doc: "As a core command declares them."}
+    options: {type: list<record>, nullable: true, doc: "As a core command declares them."}
+    risk: {type: string, nullable: true, doc: "From `risk_levels` in `docs/contracts/capabilities.yaml`. Required for a mutating command."}
+    examples: {type: list<string>, required: true, doc: "Each must parse and run under the test host (spec §31.22, §50)."}
+  vocabulary_rule:
+    rule: >-
+      A package SHOULD reuse `get`, `inspect`, `trace`, `watch`, `find`, `start`, `stop` and the
+      rest rather than invent `sniff`, `peek`, `hunt` or `zap`, unless the semantics genuinely
+      demand a new verb (spec §31.22).
+    why: >-
+      Spec §31.22 makes this part of the product identity: "KUANG/11 must expand Ono without
+      turning it back into the inconsistent command ecosystem Ono was designed to escape."
+    enforced_by: >-
+      A new verb needs an extension declaration that is reviewed, and static analysis flags a
+      verb that duplicates an existing one's meaning (spec §31.75). The rule is a SHOULD, so it
+      is a reviewed friction rather than a refusal.
+
+# ---------------------------------------------------------------------------------------------
+# Target and schema contributions — spec §31.23.
+# ---------------------------------------------------------------------------------------------
+target:
+  fields:
+    name: {type: string, required: true, doc: "The target word, e.g. `pod`, `flow`, `zfs-dataset`."}
+    schema: {type: string, required: true, doc: "The schema id objects of this target carry."}
+    summary: "{type: string, required: true, doc: \"One line, for `help` and completion.\"}"
+    identity_doc: {type: string, required: true, doc: "What makes two observations the same object, in prose, beside the schema's `identity` list."}
+    provider: {type: string, required: true, doc: "`plugin:<package.id>`, set by the host."}
+
+schema:
+  same_schema_as: docs/contracts/schemas/*.v1.yaml
+  doc: >-
+    Contributed schemas are written in the same language core schemas are (spec §31.23's own
+    example is field-for-field an `docs/contracts/schemas/*.v1.yaml` document), so `type`, `inspect`
+    and the renderer work on them without a special case.
+  rules:
+    - "The id is `<package.id>.<kebab-name>/<major>`, e.g. `dev.storage.zfs.dataset/1`."
+    - "Every field is exactly one of `required: true` or `nullable: true` (ADR-0012 §8). A contributed schema that leaves a field neither is invalid, for the same reason a core one would be."
+    - "Unknown data is null, never fabricated and never zero (spec §35.3). A provider that cannot answer says so."
+    - "A breaking change takes the next major and a new id; `spec-check` and the conformance suite refuse a break without a version bump (spec §36.5, §10.4)."
+    - "A package SHOULD prefer annotating a core record over forking a core schema to add fields (spec §31.23)."
+
+annotation:
+  doc: >-
+    Spec §31.23: "The core value remains a Process; the plugin contributes additional knowledge."
+    An annotation is knowledge beside a record, not a change to it.
+  fields:
+    key: {type: string, required: true, doc: "A namespaced key, e.g. `dev.example.risk.score`. Declared in the manifest and validated against that declaration on every emission."}
+    subject_schema: {type: string, required: true, doc: "The schema of the records it applies to, e.g. `ono.process/1`."}
+    type: {type: string, required: true, doc: "The annotation's value type, from the schema type vocabulary."}
+    summary: "{type: string, required: true, doc: \"What the annotation means. Shown by `inspect` next to the value.\"}"
+  rules:
+    - "An annotation never replaces a declared field and never changes the record's schema id."
+    - "An annotation is attributed to the contributing package wherever it is shown, so an operator can tell a kernel fact from a package's opinion."
+    - "An annotation carries the same evidence obligation as a finding when it asserts a conclusion rather than an observation (see `evidence`)."
+
+# ---------------------------------------------------------------------------------------------
+# Findings — spec §31.24. A standard result model, so findings from unrelated packages compose.
+# The object schema is `docs/contracts/schemas/finding.v1.yaml`.
+# ---------------------------------------------------------------------------------------------
+finding:
+  schema: ono.finding/1
+  rules:
+    - "`source` is the contributing package id and is set by the host, not by the package (spec §31.80: \"plugin forges provenance/evidence\")."
+    - "`severity` is the closed set `info | low | medium | high | critical` (spec §31.24). A package cannot add a level."
+    - "`confidence` is nullable, and null means the package did not claim one — which is different from claiming zero (spec §10.5)."
+    - "A finding MUST carry resolvable evidence to be accepted; see `evidence` below."
+    - "Findings compose: `get finding` queries across packages, and a finding about a subject is reachable from that subject."
+
+# ---------------------------------------------------------------------------------------------
+# Evidence must remain inspectable — spec §31.25. This is the rule that separates an analysis
+# from an opinion, and it applies to human-written analysers and AI assistants alike.
+# ---------------------------------------------------------------------------------------------
+evidence:
+  schema: ono.evidence/1
+  requirement:
+    rule: >-
+      Every finding, annotated conclusion and assistant claim carries evidence references, not
+      only prose (spec §31.25). An evidence reference names a typed observation the operator can
+      go and look at themselves.
+    enforced_by: >-
+      `output.finding` rejects a finding whose evidence references do not resolve
+      (`protocol.v1.yaml`). An unresolvable citation is prose wearing a citation's clothes, and
+      accepting it would make the whole evidence model decorative.
+  what_counts:
+    - {id: object, doc: "An `ObjectRef` to a typed object the operator can `inspect`."}
+    - {id: field, doc: "A field of a named object at a named time, e.g. `rss 1.2GiB -> 1.46GiB` over a window."}
+    - {id: samples, doc: "A count of observations and the window they cover, e.g. spec §31.25's `process snapshots 85 samples`."}
+    - {id: source, doc: "The source that was read, e.g. `/proc/4419/smaps`, with the number of reads."}
+    - {id: command, doc: "An Ono command the operator can run to see the same thing. It must parse and be runnable."}
+    - {id: unavailable, doc: "An observation that was attempted and could not be made, e.g. spec §31.25's `heap unavailable`. Recording the gap is evidence; omitting it is not."}
+  rules:
+    - "Evidence is data, not formatting. Spec §31.25's rendering is one view of it; the underlying references survive redirection."
+    - "A conclusion whose evidence has expired is shown as expired rather than silently kept: `ono.finding/1` carries `expires_at` for exactly this."
+    - "Spec §31.87: an Ono-native assistant's answer must be reproducible — \"the same question can be investigated manually using the cited objects\"."
+
+# ---------------------------------------------------------------------------------------------
+# Relationship contributions — spec §31.26. A package may add edges without owning either
+# endpoint schema.
+#
+# ADR-0022, `Spec deviation`: the contributed edge is `ono.graph-edge/1`, the core schema of spec
+# §22.1, not a second `Relation` record.
+# ---------------------------------------------------------------------------------------------
+relation:
+  edge_schema: ono.graph-edge/1
+  declaration:
+    fields:
+      name: {type: string, required: true, doc: "The relation name, e.g. `opens`, `emits`, `reaches` (spec §31.26's example chain)."}
+      from_schema: {type: string, required: true, doc: "The schema of the source endpoint. Need not be the package's own."}
+      to_schema: {type: string, required: true, doc: "The schema of the target endpoint."}
+      direction: {type: enum, required: true, values: [directed, undirected], doc: "As `ono.graph-edge/1` declares it."}
+      inferred: {type: bool, required: true, doc: "Whether edges of this relation are derived rather than observed. Declared once here and checked against every edge."}
+      summary: "{type: string, required: true, doc: \"What the relation means, for `help` and for the graph renderer's legend.\"}"
+  field_mapping:
+    doc: >-
+      Spec §31.26's `Relation` record and spec §22.1's `Edge` describe one concept with two
+      shapes. `ono.graph-edge/1` is the one that exists (ADR-0012 §9), and §31.26's extra fields
+      map onto it without loss:
+    map:
+      - {from: "Relation.from / to / type / direction", to: "GraphEdge.from / to / relation / direction", note: "Direct."}
+      - {from: "Relation.source", to: "GraphEdge.provider", note: "Set by the host to the contributing package."}
+      - {from: "Relation.confidence (Float?)", to: "GraphEdge.confidence (enum[exact, inferred])", note: "`1.0` or absent on a kernel-derived edge becomes `exact`; anything else becomes `inferred`. The numeric value is retained in `GraphEdge.metadata.confidence` so nothing is discarded."}
+      - {from: "Relation.evidence", to: "GraphEdge.metadata.evidence", note: "A list of `ono.evidence/1`, subject to the same resolvability rule as a finding's."}
+      - {from: "Relation.observed_at / expires_at", to: "GraphEdge.metadata.observed_at / expires_at", note: "An expired edge is shown as expired, not silently kept."}
+  rules:
+    - "Spec §22.2 and §31.26 agree on the part that matters: an inferred relation MUST identify itself as inferred, and the renderer must not imply certainty the provider does not have."
+    - "`provider` is the host's to set. A package cannot attribute an edge to a core provider or to another package."
+    - "An edge whose endpoints do not resolve is rejected, for the same reason unresolvable evidence is."
+
+# ---------------------------------------------------------------------------------------------
+# Views — spec §31.27, §31.28. A view plugin does not receive raw terminal ownership.
+# ---------------------------------------------------------------------------------------------
+view:
+  declaration:
+    fields:
+      id: {type: string, required: true, doc: "`<package.id>.view.<kebab-name>`."}
+      accepts: {type: string, required: true, doc: "The input type, e.g. `stream<packet-eye.flow/2>`."}
+      mode: {type: enum, required: true, values: [interactive, static], doc: "Whether the view takes key input."}
+      keys: {type: record, nullable: true, doc: "Key bindings to view actions, e.g. `{enter: inspect-selected, q: close}` (spec §31.27)."}
+      fallback: {type: string, required: true, doc: "The deterministic output when stdout is redirected — e.g. serialising the underlying `Graph` rather than drawing ANSI art (spec §31.28). Required, never inferred."}
+      summary: "{type: string, required: true, doc: \"One line, for `help`.\"}"
+  components:
+    doc: >-
+      A view submits a tree of these, never text and never escape sequences. Spec §31.27's
+      conceptual component list, complete.
+    values: [Text, Table, Tree, Graph, KeyValue, LogStream, Sparkline, Gauge, Tabs, Split, CommandPalette, ObjectPicker, StatusLine]
+  lifecycle:
+    states: [created, mounted, focused, background, closed]
+    doc: "Spec §31.28's `created -> mounted -> focused <-> background -> closed`."
+    rules:
+      - "Views MUST receive resize, focus and cancellation events (spec §31.28)."
+      - "Views SHOULD retain stable object references and view-private state, not copies of arbitrarily large streams (spec §31.28)."
+  host_owns:
+    - "Terminal escape sequences, and every byte written to the terminal."
+    - "Sizing, focus, accessibility and recovery."
+    - "Restoring the terminal when a view crashes, is cancelled, or submits an invalid layout — spec §31.27: a buggy plugin \"should not be able to leave the terminal in raw mode permanently\"."
+    - "Sanitisation of every value before it is painted (ADR-0015 T1, T2, T9). A package's text is data, and data does not move the cursor."
+  rules:
+    - "When stdout is redirected the view never mounts and the command produces its declared `fallback` (spec §31.28, §50). This is a determinism requirement, not a courtesy."
+    - "Spec §31.2 makes it a non-goal for extensions to \"inject arbitrary terminal escape sequences directly\"; there is no host call that would allow it."
+
+# ---------------------------------------------------------------------------------------------
+# Analyses as pipeline stages — spec §31.29. The most natural KUANG/11 program is a typed
+# transform, and it is an ordinary node in the execution graph.
+# ---------------------------------------------------------------------------------------------
+analysis:
+  declaration:
+    fields:
+      id: {type: string, required: true, doc: "`<package.id>.analysis.<kebab-name>`."}
+      input: {type: string, required: true, doc: "The input type, e.g. `stream<ono.process/1>`."}
+      output: {type: string, required: true, doc: "The output type, e.g. `stream<ono.finding/1>`."}
+      capabilities: {type: list<string>, required: true, doc: "Checked at invocation."}
+      summary: "{type: string, required: true, doc: \"One line, for `help`.\"}"
+      cancellable: {type: bool, required: true, doc: "Whether the analysis handles cancellation. Spec §31.75 flags a missing marker where one applies."}
+  rules:
+    - "A plugin analysis is a node `explain` can show, with its provider, its isolation tier, its capability grants, its brokered paths and its network use — spec §31.29's `PLAN` output is the shape of that."
+    - "Cancellation behaves as it does for a core stage (spec §31.86); a stage that ignores cancellation fails conformance."
+
+# ---------------------------------------------------------------------------------------------
+# External adapters — spec §31.57, §31.58. Structuring a tool's machine-readable output is a
+# contract; scraping its human output is a labelled, fixture-covered fallback.
+# ---------------------------------------------------------------------------------------------
+external_adapter:
+  fields:
+    external: {type: path, required: true, doc: "The program, e.g. `/usr/bin/zfs`. Resolved before exec and matched against the `process.exec` `programs` scope."}
+    command: {type: string, required: true, doc: "The Ono command this adapter serves, e.g. `get zfs-dataset`."}
+    invoke: {type: list<string>, required: true, doc: "The exact argument vector. No shell, no interpolation of user text into the vector."}
+    parser: {type: enum, required: true, values: [json, tsv, csv, protobuf, lines], doc: "The declared format. `lines` is the brittle case and is labelled as such wherever the provider appears."}
+    schema: {type: string, required: true, doc: "The schema the parsed output must satisfy. Validated on every record."}
+    stability: {type: enum, required: true, values: [tool-machine-format, tool-human-format], doc: "Spec §31.58's `stability`. `tool-human-format` requires fixtures and a version constraint."}
+    tool_versions: {type: string, nullable: true, doc: "The version range this parse is known to hold for. Required for `tool-human-format`."}
+  rules:
+    - "Adapters SHOULD use the explicit machine-readable mode where the external program provides one (spec §31.58, spec §50)."
+    - "Provenance names the path that produced the data — spec §31.57's `provider plugin:kube-space / source kubectl-json / command /usr/bin/kubectl` — so an operator can see which strategy answered."
+    - "A human-output parser is allowed only when clearly labelled brittle and covered by fixtures and version constraints (spec §31.58). It is never the default and never silent."
+
+# ---------------------------------------------------------------------------------------------
+# Composition and conflict — spec §31.30, §31.65, §31.66.
+# ---------------------------------------------------------------------------------------------
+composition:
+  rules:
+    - "Packages compose through Ono values, schemas, commands and events — never by importing another package's private ABI (spec §31.30)."
+    - "A dependency on a schema is satisfied by any package that emits it, which is what makes `packet-eye emits Flow / risk-score consumes Flow` work without either knowing the other."
+    - "Dependency cycles MUST be detected before load (spec §31.30) and are `load.dependency_cycle`."
+
+conflict:
+  rules:
+    - "Resolution prefers explicitness over install order (spec §31.65). Install order is not a decision anyone made."
+    - "Provider fan-out is valid where two packages provide the same target and share one schema: both answer, and each record's provenance says which."
+    - "Where semantics conflict, Ono requires qualification — spec §31.65's `get pg:database` / `get mysql:database` — rather than picking one."
+    - "A package MUST NOT shadow a core command silently (spec §31.65). A contribution that would is refused at registration."
+    - "`explain` must show the resolution (spec §31.65), which is the same obligation ADR-0011 places on native/external ambiguity (ADR-0015 T10)."
+  qualified_invocation:
+    doc: >-
+      Spec §31.66: a command id "MUST always provide an unambiguous programmatic reference even
+      if human syntax stays concise." The id is the stable form; the concise spellings are
+      conveniences that may be ambiguous, and are then an error rather than a guess.
+    forms:
+      - {form: "<command id>", stable: true, doc: "The fully qualified id, e.g. `dev.example.packet-eye.command.trace-packet`. Always unambiguous, and what a script pins (spec §31.69)."}
+      - {form: "plugin:<name>/<verb> <target>", stable: false, doc: "Spec §31.66's concise qualified form. Exact syntax is language-design work; the id above is the guarantee."}
+      - {form: "<verb> <package-prefix>:<target>", stable: false, doc: "Spec §31.65's `get pg:database`. Required only where the target is ambiguous."}
+
+# ---------------------------------------------------------------------------------------------
+# Static analysis of a package before publication or installation — spec §31.75. Not every issue
+# can be proven statically; the ones below can, and metadata makes them cheap to catch.
+# ---------------------------------------------------------------------------------------------
+static_analysis:
+  findings:
+    - {id: undeclared-id, severity: high, doc: "A command or target id used but not declared."}
+    - {id: unknown-capability, severity: high, doc: "A capability reference that is not in `docs/contracts/capabilities.yaml`."}
+    - {id: capability-broader-than-use, severity: medium, doc: "A capability requested but never exercised by any declared host call. The classic way a scope ends up broader than the UI suggests (spec §31.80)."}
+    - {id: schema-namespace-collision, severity: high, doc: "A schema id outside the package namespace, or colliding with a core id."}
+    - {id: missing-cancellation-marker, severity: medium, doc: "A long-running contribution with no cancellation handling declared, where the role requires it."}
+    - {id: view-without-fallback, severity: high, doc: "A view with no deterministic redirected output (spec §31.28)."}
+    - {id: mutation-tool-without-risk, severity: high, doc: "An assistant mutation tool with no risk metadata (spec §31.46)."}
+    - {id: persistent-state-without-version, severity: high, doc: "Persistent state with no version or migration declaration (spec §31.32)."}
+    - {id: network-without-destinations, severity: high, doc: "`network.outbound: brokered` with no declared destinations (spec §31.21)."}
+    - {id: unresolvable-example, severity: medium, doc: "A documented example that does not parse or does not run (spec §50)."}

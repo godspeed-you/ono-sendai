@@ -42,7 +42,7 @@ pub fn declared_executables(manifest: &Manifest) -> Vec<String> {
 
 /// Reads and checks every adapter pack a package contributes.
 ///
-/// The packs must parse, satisfy `docs/spec/adapters/schema.yaml` with the package directory
+/// The packs must parse, satisfy `docs/contracts/adapters/schema.yaml` with the package directory
 /// as their fixture root, carry the manifest's own id, claim a third-party tier, and name no
 /// executable outside the manifest's `process.exec` `executables` scope — the last is
 /// `adapter.capability_denied`, because a pack that could run more than the user was shown

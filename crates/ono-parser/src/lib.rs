@@ -1,7 +1,7 @@
 //! The Ono language front end: a mode-sensitive lexer, a syntax tree with precise spans, and a
 //! recursive-descent parser that recovers instead of failing.
 //!
-//! The grammar is the one decided in ADR-0009 and written down in `docs/spec/grammar.ebnf`; the
+//! The grammar is the one decided in ADR-0009 and written down in `docs/contracts/grammar.ebnf`; the
 //! narrative specification's §26 sketch is resolved there, not here.
 //!
 //! # The two argument modes
@@ -33,7 +33,7 @@
 //! assert_eq!(parsed.diagnostics()[0].code(), ErrorCode::ParseIncomplete);
 //! ```
 //!
-//! # Where this deviates from `docs/spec/grammar.ebnf`
+//! # Where this deviates from `docs/contracts/grammar.ebnf`
 //!
 //! - The EBNF spells a duplication redirection `FD ( ">&" | "<&" ) FD`, requiring the leading
 //!   descriptor. `<&0` and `>&2` are accepted without it, because they are the forms every

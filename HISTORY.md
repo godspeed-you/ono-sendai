@@ -10,12 +10,12 @@ duplicated here.
 
 ## The original specification
 
-The project started from one document: `docs/ono_sendai_shell_spec_v0.2.md`, a narrative
+The project started from one document: `docs/specs/ono_sendai_shell_spec_v0.2.md`, a narrative
 specification detailed enough that command metadata, object schemas, the error taxonomy, the
 grammar and the test matrices are all derivable from it. It is immutable and checksummed — where
 it turned out to be ambiguous, silent or wrong, the deviation was recorded in an ADR and the
 document was left exactly as written. The complete list of divergences is therefore one `grep`
-away, in `docs/decisions/`.
+away, in `docs/adr/`.
 
 The specification's §37 laid out ten phases, A to J, in dependency order. Each finished phase is
 tagged in git with the acceptance case that proves it:
@@ -32,7 +32,7 @@ git switch --detach phase-a   # the tree exactly as that phase left it
 | **A** | **Language and Unix shell foundation** — the parser, the execution model, quoting, jobs and signals. The point at which `ono` was already usable as a login shell, before it was interesting. |
 | **B** | **Value system and native pipelines** — the typed stream engine. Values with types, units and null-ness travelling between stages instead of characters. |
 | **C** | **Linux core providers** — process, file, user, mount, interface, socket and service, read from the system's own interfaces rather than from another tool's output. |
-| **D** | **Consistency and discoverability** — the registries in `docs/spec/` as the single source for dispatch, `help`, semantic completion, `explain` and the generated reference. The phase that made the language learnable. |
+| **D** | **Consistency and discoverability** — the registries in `docs/contracts/` as the single source for dispatch, `help`, semantic completion, `explain` and the generated reference. The phase that made the language learnable. |
 | **E** | **Contextual systems interface** — the context stack: `enter`/`leave`, `@`-reuse, and a prompt that says which context you are in. |
 | **F** | **Live system semantics** — `watch`, event streams, tables that update in place, and native stages that can be backgrounded as jobs. |
 | **G** | **Relationship graph** — `trace`, graph values, and the provenance and confidence that keep an observed edge distinguishable from a guessed one. |
@@ -43,7 +43,7 @@ git switch --detach phase-a   # the tree exactly as that phase left it
 ## v0.3 — External command adaptation
 
 The first enhancement layered on the base specification
-(`docs/ono_sendai_shell_spec_v0.3_external_command_adapters.md`).
+(`docs/specs/ono_sendai_shell_spec_v0.3_external_command_adapters.md`).
 
 `ps`, `ip`, `ss`, `lsblk`, `findmnt`, `lsns`, `stat`, `df`, `find`, `git`, `lsof`, `curl`,
 `systemctl` and `journalctl` became typed *when a typed consumer follows* — the adapter rewrites
@@ -56,7 +56,7 @@ promise.
 
 ## v0.4 — The spatial systems interface
 
-The second enhancement (`docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md`), and the
+The second enhancement (`docs/specs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md`), and the
 one that gave the machine a geography.
 
 Fourteen commands carry the model — `look`, `near`, `find place`, `enter`, `follow`, `jump`,

@@ -60,7 +60,7 @@ pub fn usage_text() -> String {
          With no script and no -c, {name} reads commands from the terminal.\n\
          \n\
          The command reference lives in docs/reference/, generated from the contracts in\n\
-         docs/spec/. `explain <command>` reports how a name resolves.",
+         docs/contracts/. `explain <command>` reports how a name resolves.",
         product = ono_core::PRODUCT_NAME,
         name = ono_core::SHORT_NAME,
     )

@@ -3,10 +3,10 @@
 //! `enter interface`, `enter socket`, and the write paths `add/remove/set route`,
 //! `set/start/stop/add/remove interface` and `stop socket`.
 //!
-//! Contract: `docs/spec/commands/network.yaml`, schemas `ono.interface/1`, `ono.route/1`,
+//! Contract: `docs/contracts/commands/network.yaml`, schemas `ono.interface/1`, `ono.route/1`,
 //! `ono.socket/1`, `ono.endpoint/1`, `ono.graph/1`, `ono.context/1`, `ono.action-result/1`,
 //! `ono.error/1`, and the deferred `ono.dns-record/1`, `ono.probe-result/1`,
-//! `ono.interface-event/1`, `ono.route-event/1` (`docs/spec/schemas/deferred.yaml`).
+//! `ono.interface-event/1`, `ono.route-event/1` (`docs/contracts/schemas/deferred.yaml`).
 //! Narrative: spec §9.1 (the network table), §14.1/§14.3 (object context and its implicit
 //! selector), §16.5 (no collapsed failures), §17.4 (scripts never wait for a prompt), §18.2
 //! (native live streams begin with a snapshot — ADR-0024, ADR-0034), §22.1/§22.3 (graphs and

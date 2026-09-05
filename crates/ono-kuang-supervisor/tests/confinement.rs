@@ -110,7 +110,7 @@ async fn should_not_exec_the_plugin_when_a_mandatory_confinement_control_fails()
 // The control table (issue #58, v0.4.1 §16.1, §16.4, §52.1, §52.3, Appendix D).
 // ------------------------------------------------------------------------------------------
 
-/// The registry `docs/spec/hardening/kuang_confinement_controls.yaml`, as the gate reads it.
+/// The registry `docs/contracts/hardening/kuang_confinement_controls.yaml`, as the gate reads it.
 ///
 /// §16.4 asks for *one* central table, and §52.2 for one source of truth behind the runtime, the
 /// generated documentation and the tests. So these tests read the table itself rather than a
@@ -118,7 +118,7 @@ async fn should_not_exec_the_plugin_when_a_mandatory_confinement_control_fails()
 /// §52.3 exists to catch, and a table nothing reads is not a source of truth.
 fn control_table() -> serde_yaml_ng::Value {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/spec/hardening/kuang_confinement_controls.yaml");
+        .join("../../docs/contracts/hardening/kuang_confinement_controls.yaml");
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{} must be readable: {error}", path.display()));
     serde_yaml_ng::from_str(&text).expect("the control table is valid YAML")
@@ -172,7 +172,7 @@ fn should_classify_every_control_the_confinement_table_declares() {
             Control::from_id(id).is_some(),
             "v0.4.1 §16.4 asks for one central table and §52.3 makes an unknown control id a gate \
              failure. `{id}` is declared in \
-             docs/spec/hardening/kuang_confinement_controls.yaml and the supervisor has never \
+             docs/contracts/hardening/kuang_confinement_controls.yaml and the supervisor has never \
              heard of it, so whatever the table says about it governs nothing."
         );
     }

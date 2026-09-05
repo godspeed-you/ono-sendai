@@ -304,7 +304,7 @@ fn should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixtur
 /// The measurements `cargo xtask perf` recorded on the reference environment (§32.4, §37.2).
 fn recorded_baseline() -> Vec<serde_yaml_ng::Value> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/spec/hardening/performance_baseline.json");
+        .join("../../docs/contracts/hardening/performance_baseline.json");
     let text = std::fs::read_to_string(&path).unwrap_or_else(|error| {
         panic!(
             "the regression baseline of v0.4.1 §32.4 is at {}: {error}",

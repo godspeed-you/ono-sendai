@@ -33,7 +33,7 @@ pub enum EnvSource {
 }
 
 impl EnvSource {
-    /// The name `docs/spec/schemas/env-var.v1.yaml` gives the source.
+    /// The name `docs/contracts/schemas/env-var.v1.yaml` gives the source.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {

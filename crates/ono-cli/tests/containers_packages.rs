@@ -2,7 +2,7 @@
 //! (`get/start/stop/restart/enter/trace/watch/remove/set container`, `get image`) and packages
 //! (`get/find/add/remove/set package`).
 //!
-//! Contracts: `docs/spec/commands/container.yaml`, `docs/spec/commands/package.yaml`, schemas
+//! Contracts: `docs/contracts/commands/container.yaml`, `docs/contracts/commands/package.yaml`, schemas
 //! `ono.action-result/1`, `ono.context/1`, `ono.graph/1`. Narrative: spec §8.3 (infrastructure
 //! targets), §9.1 (the Package and Container tables), §14.3 (object context), §16.5 (partial
 //! failure is never collapsed), §17.1 (risk visibility), §18.2 (native live streams begin with a

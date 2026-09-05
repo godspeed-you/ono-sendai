@@ -1,8 +1,8 @@
 //! Tests for schema-aware completion (spec §15.1): after `where` and `select` the shell
 //! offers the fields of the schema the pipeline carries at that point.
 //!
-//! The candidates are looked up from `docs/spec/commands/*.yaml` (the command's output schema)
-//! and `docs/spec/schemas/*.v1.yaml` (its fields); nothing here runs a provider.
+//! The candidates are looked up from `docs/contracts/commands/*.yaml` (the command's output schema)
+//! and `docs/contracts/schemas/*.v1.yaml` (its fields); nothing here runs a provider.
 
 #![allow(
     clippy::panic,
@@ -37,7 +37,7 @@ fn should_offer_the_process_fields_after_where() {
         assert!(
             offers(&names, field),
             "spec §15.1: `where` after `get process` completes the `ono.process/1` field \
-             `{field}` (docs/spec/schemas/process.v1.yaml); got {names:?}"
+             `{field}` (docs/contracts/schemas/process.v1.yaml); got {names:?}"
         );
     }
 }
@@ -73,7 +73,7 @@ fn should_offer_the_file_fields_after_where_on_a_file_listing() {
         assert!(
             offers(&names, field),
             "spec §15.1: the schema is the one the head command emits — `ono.file/1` here \
-             (docs/spec/schemas/file.v1.yaml), not Process; got {names:?}"
+             (docs/contracts/schemas/file.v1.yaml), not Process; got {names:?}"
         );
     }
     assert!(

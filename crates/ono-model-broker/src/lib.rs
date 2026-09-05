@@ -32,10 +32,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as Json};
 
 /// The wire protocol a configured provider speaks: `model_broker_protocol` in
-/// `docs/spec/kuang/assistants.v1.yaml`, defined in `docs/spec/kuang/model-broker.v1.yaml`.
+/// `docs/contracts/kuang/assistants.v1.yaml`, defined in `docs/contracts/kuang/model-broker.v1.yaml`.
 pub const PROTOCOL: &str = "ono-model/1";
 
-/// The data classes of spec §31.44, as `docs/spec/kuang/assistants.v1.yaml` lists them.
+/// The data classes of spec §31.44, as `docs/contracts/kuang/assistants.v1.yaml` lists them.
 pub const DATA_CLASSES: [&str; 8] = [
     "public",
     "system-metadata",
@@ -498,7 +498,7 @@ fn public() -> String {
     "public".to_owned()
 }
 
-/// What crosses into `models.infer`: `model_request` in `docs/spec/kuang/assistants.v1.yaml`.
+/// What crosses into `models.infer`: `model_request` in `docs/contracts/kuang/assistants.v1.yaml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ModelRequest {
     /// A provider id, or null to let the broker choose within the grant's scope.
@@ -542,7 +542,7 @@ fn duration_of(value: &Json) -> Option<Duration> {
     }
 }
 
-/// One part of a response: `model_response` in `docs/spec/kuang/assistants.v1.yaml`.
+/// One part of a response: `model_response` in `docs/contracts/kuang/assistants.v1.yaml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Part {

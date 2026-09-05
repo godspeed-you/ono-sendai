@@ -44,7 +44,7 @@ const DPKG: &str = "dpkg";
 /// The format `dpkg-query -W -f` is asked for: name, version, status — tab-separated.
 const LISTING_FORMAT: &str = "${Package}\\t${Version}\\t${Status}\\n";
 
-/// The `ono.package/1` schema, as `docs/spec/schemas/package.v1.yaml` fixes it.
+/// The `ono.package/1` schema, as `docs/contracts/schemas/package.v1.yaml` fixes it.
 ///
 /// ```
 /// let schema = ono_provider_linux::package_schema();
@@ -55,7 +55,7 @@ const LISTING_FORMAT: &str = "${Package}\\t${Version}\\t${Status}\\n";
 #[allow(
     clippy::expect_used,
     reason = "AGENTS.md section 16 admits `expect` in a provably unreachable state. `ono.package/1` is \
-              embedded from docs/spec/schemas/ at compile time and \
+              embedded from docs/contracts/schemas/ at compile time and \
               crates/ono-value/tests/builtin_schemas.rs turns red the moment it is not."
 )]
 pub fn package_schema() -> Arc<Schema> {
@@ -541,7 +541,7 @@ pub(crate) async fn installed(dpkg: &Dpkg, names: &[String]) -> Result<Vec<Liste
 }
 
 /// How a query is answered. Shared by every package provider: the selectors of
-/// `docs/spec/commands/package.yaml` mean the same thing whichever database answers them.
+/// `docs/contracts/commands/package.yaml` mean the same thing whichever database answers them.
 pub(crate) struct Plan {
     /// One package asked for by name.
     pub(crate) named: Option<String>,
@@ -866,7 +866,7 @@ impl Provider for PackageProvider {
         vec![
             Capability::new("package.list", Risk::Read),
             Capability::new("package.search", Risk::Read),
-            // `docs/spec/capabilities.yaml` gives `package.manage` elevation `required`: dpkg's
+            // `docs/contracts/capabilities.yaml` gives `package.manage` elevation `required`: dpkg's
             // database is root's, and the provider says so before it runs anything
             // (ADR-0115 §5).
             Capability::new("package.manage", Risk::Mutate).needing_elevation(),

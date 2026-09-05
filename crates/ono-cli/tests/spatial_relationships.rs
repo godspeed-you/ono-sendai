@@ -2,7 +2,7 @@
 //! `follow`, `near` and `map` traverse, the distinction between a canonical hierarchy edge and a
 //! relationship edge, and the live spatial state that makes an edge appear and vanish.
 //!
-//! Specification: `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — §2
+//! Specification: `docs/specs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — §2
 //! (invariants 3, 5, 6, 12, 16, 17), §3.5 (RelationshipEdge), §6.2/§6.4/§6.6 (`near`, `follow`,
 //! `back`/`up`), §11 (hierarchy versus graph, explainability, confidence), §12/§13/§14 (the
 //! process, service and network spaces and the edges they promise), §16.2 (namespace boundary),

@@ -145,7 +145,7 @@ pub(super) async fn interrupted() {
 #[derive(Default)]
 pub(super) struct Drained {
     /// The values and the per-item failures a pipeline produced, drained before they are
-    /// written, rendered or retained (`docs/spec/hardening/streaming.yaml`, §26.1).
+    /// written, rendered or retained (`docs/contracts/hardening/streaming.yaml`, §26.1).
     pub(super) values: Vec<Value>,
     pub(super) failures: Vec<ErrorValue>,
     /// The flow a block raised, which stops the drain where the block stopped.

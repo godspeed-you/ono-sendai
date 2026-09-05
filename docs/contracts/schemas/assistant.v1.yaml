@@ -1,0 +1,94 @@
+# Assistant. Source: spec §31.42's `Assistant` record, field-for-field, with the autonomy levels
+# of §31.48, the model policy of §31.43 and the context policy of §31.45. Output of
+# `get assistant` (`docs/contracts/commands/kuang.yaml` → `ono.assistant.get`).
+#
+# Spec §31.42: "An assistant SHOULD itself be an inspectable object." That is the whole reason
+# this schema exists rather than an assistant being a mode the shell is in. An operator can ask
+# what it may see, which model it uses, what it is permitted to do and how autonomous it is,
+# using the same commands they would use on a process.
+id: ono.assistant/1
+name: Assistant
+summary: One loaded assistant extension — what it may see, which model it uses, and how far it may act.
+identity: [id]
+fields:
+  id:
+    type: string
+    required: true
+    doc: The assistant's id, as `ask assistant <id>` names it, e.g. `ops-assist`.
+  plugin:
+    type: ref<ono.plugin/1>
+    required: true
+    doc: The package that provides it. An assistant is an extension role, not a separate subsystem (spec §31.41).
+  name:
+    type: string
+    required: true
+    doc: The display name.
+  state:
+    type: enum
+    required: true
+    values: [loaded, ready, busy, degraded]
+    doc: >-
+      Spec §31.42's state set. `loaded` means the package is up but the assistant has not
+      completed its model selection; `ready` means it can take a turn; `degraded` means it can
+      take a turn with something missing — typically no model.
+  model_policy:
+    type: record
+    required: true
+    doc: >-
+      The requirements the package declares and the resolution the broker made:
+      `{requirements, selected, allowed_providers}`. Shape in
+      `docs/contracts/kuang/assistants.v1.yaml` → `model_requirements` (spec §31.43).
+  model:
+    type: ref<ono.model-provider/1>
+    nullable: true
+    doc: >-
+      The provider currently selected. Null when none is configured or none satisfies the
+      requirements — and an assistant with a null model still loads and still says why it cannot
+      answer (spec §31.87).
+  capabilities:
+    type: list<ono.capability-grant/1>
+    required: true
+    doc: >-
+      The grants and leases the assistant holds. This is what bounds its tools: a tool it cannot
+      pay for is never exposed to the model (`assistants.v1.yaml` → `tool`).
+  context_policy:
+    type: record
+    required: true
+    doc: >-
+      Which context sources it may draw on, and which it is denied. Shape in
+      `docs/contracts/kuang/assistants.v1.yaml` → `context_broker.sources` (spec §31.45).
+  autonomy:
+    type: enum
+    required: true
+    values: [L0, L1, L2, L3, L4]
+    doc: >-
+      The effective level — the minimum of what the package declares and what policy permits
+      (spec §31.48). This is the number that governs, which is why the declared set is a
+      separate field.
+  autonomy_declared:
+    type: list<string>
+    required: true
+    doc: The levels the package says it supports. Declaring a level is not being granted it.
+  tools:
+    type: list<string>
+    required: true
+    doc: >-
+      The tool ids currently exposed to the model — the declared set intersected with the
+      grants and the effective autonomy level. Empty at `L0`, where no tool call is possible.
+  memory:
+    type: enum
+    required: true
+    values: [turn, conversation, session, persistent]
+    doc: >-
+      The conversation memory scope of spec §31.51. `persistent` requires `state.persist` and is
+      inspectable and deletable; shell history is never assistant memory.
+  conversation:
+    type: string
+    nullable: true
+    doc: The current conversation's id, when one is open. Null when there is none.
+  turns:
+    type: int
+    required: true
+    doc: How many turns this assistant has taken in this session. Zero is a real answer.
+default_view:
+  columns: [id, plugin, state, model, autonomy, tools]

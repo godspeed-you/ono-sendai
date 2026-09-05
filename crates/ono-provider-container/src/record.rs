@@ -15,7 +15,7 @@ use serde_json::Value as Json;
 
 use crate::provider::PROVIDER_ID;
 
-/// The `ono.container/1` schema, as `docs/spec/schemas/container.v1.yaml` fixes it.
+/// The `ono.container/1` schema, as `docs/contracts/schemas/container.v1.yaml` fixes it.
 ///
 /// ```
 /// let schema = ono_provider_container::container_schema();
@@ -26,7 +26,7 @@ use crate::provider::PROVIDER_ID;
 #[allow(
     clippy::expect_used,
     reason = "AGENTS.md section 16 admits `expect` in a provably unreachable state. `ono.container/1` is \
-              embedded from docs/spec/schemas/ at compile time and \
+              embedded from docs/contracts/schemas/ at compile time and \
               crates/ono-value/tests/builtin_schemas.rs turns red the moment it is not; nothing a \
               user does can reach this branch."
 )]
@@ -39,7 +39,7 @@ pub fn container_schema() -> Arc<Schema> {
     }))
 }
 
-/// The `ono.image/1` schema, as `docs/spec/schemas/image.v1.yaml` fixes it.
+/// The `ono.image/1` schema, as `docs/contracts/schemas/image.v1.yaml` fixes it.
 ///
 /// ```
 /// let schema = ono_provider_container::image_schema();

@@ -104,7 +104,7 @@ impl Default for Identity {
 /// `process.signal` that arrived as a bare name would be indistinguishable from a read, and a
 /// destructive remote action would look safe (ADR-0015).
 ///
-/// The risk is carried as its `docs/spec/capabilities.yaml` name. A name this build does not
+/// The risk is carried as its `docs/contracts/capabilities.yaml` name. A name this build does not
 /// know decodes as [`Risk::Destructive`](ono_provider_api::Risk::Destructive): a claim that
 /// cannot be understood must be over-stated, never under-stated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,13 +121,13 @@ fn default_risk() -> String {
 }
 
 impl CapabilityDescriptor {
-    /// The capability's id, as `docs/spec/capabilities.yaml` spells it.
+    /// The capability's id, as `docs/contracts/capabilities.yaml` spells it.
     #[must_use]
     pub fn id(&self) -> &str {
         &self.id
     }
 
-    /// The risk the declaring side put on it, as `docs/spec/capabilities.yaml` names it.
+    /// The risk the declaring side put on it, as `docs/contracts/capabilities.yaml` names it.
     ///
     /// A name this build does not know reads as `destructive` through
     /// [`to_capability`](Self::to_capability): a claim that cannot be understood is over-stated,

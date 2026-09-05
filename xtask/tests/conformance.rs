@@ -23,10 +23,13 @@ use support::repo;
 /// A minimal but complete set of registries: one provider, one schema, one command.
 fn registries() -> Scratch {
     let repo = scratch();
-    repo.write("docs/spec/capabilities.yaml", CAPABILITIES);
-    repo.write("docs/spec/schemas/process.v1.yaml", PROCESS_SCHEMA);
-    repo.write("docs/spec/commands/process.yaml", PROCESS_COMMANDS);
-    repo.write("docs/spec/providers/linux-procfs.yaml", PROCFS_PROVIDER);
+    repo.write("docs/contracts/capabilities.yaml", CAPABILITIES);
+    repo.write("docs/contracts/schemas/process.v1.yaml", PROCESS_SCHEMA);
+    repo.write("docs/contracts/commands/process.yaml", PROCESS_COMMANDS);
+    repo.write(
+        "docs/contracts/providers/linux-procfs.yaml",
+        PROCFS_PROVIDER,
+    );
     repo
 }
 
@@ -163,7 +166,7 @@ fn should_account_for_every_capability_a_provider_declares() {
 fn should_refuse_to_generate_when_a_target_has_no_declared_exercise() {
     let repo = registries();
     repo.write(
-        "docs/spec/providers/linux-procfs.yaml",
+        "docs/contracts/providers/linux-procfs.yaml",
         PROCFS_PROVIDER.replace("      signal: enumerable\n", ""),
     );
     let error = generate(repo.path()).expect_err("an unexercised target must stop generation");
@@ -178,7 +181,7 @@ fn should_refuse_to_generate_when_a_target_has_no_declared_exercise() {
 fn should_refuse_to_generate_when_a_capability_reaches_neither_a_snapshot_nor_a_command() {
     let repo = registries();
     repo.write(
-        "docs/spec/commands/process.yaml",
+        "docs/contracts/commands/process.yaml",
         "version: 1\nfamily: process\ncommands: []\n",
     );
     let error = generate(repo.path()).expect_err("an unaccounted capability must stop generation");
@@ -193,7 +196,7 @@ fn should_refuse_to_generate_when_a_capability_reaches_neither_a_snapshot_nor_a_
 fn should_refuse_to_generate_when_an_exercise_names_a_target_the_provider_does_not_serve() {
     let repo = registries();
     repo.write(
-        "docs/spec/providers/linux-procfs.yaml",
+        "docs/contracts/providers/linux-procfs.yaml",
         PROCFS_PROVIDER.replace(
             "      signal: enumerable\n",
             "      signal: enumerable\n      pipe: enumerable\n",
@@ -211,7 +214,7 @@ fn should_refuse_to_generate_when_an_exercise_names_a_target_the_provider_does_n
 fn should_refuse_to_generate_when_an_exercise_is_not_one_the_harness_knows() {
     let repo = registries();
     repo.write(
-        "docs/spec/providers/linux-procfs.yaml",
+        "docs/contracts/providers/linux-procfs.yaml",
         PROCFS_PROVIDER.replace("      process: enumerable\n", "      process: whenever\n"),
     );
     let error = generate(repo.path()).expect_err("an unknown exercise must stop generation");

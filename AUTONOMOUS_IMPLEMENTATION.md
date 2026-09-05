@@ -258,7 +258,7 @@ If the repository defines files such as:
 ```text
 docs/STATE.md
 docs/adr/
-docs/spec/
+docs/contracts/
 ```
 
 use them consistently.

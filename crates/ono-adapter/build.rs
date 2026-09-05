@@ -1,6 +1,6 @@
 //! Transcodes the contract documents this crate embeds from YAML to JSON at build time.
 //!
-//! The documents stay YAML in `docs/spec/`, where people read and edit them. Parsing YAML is the
+//! The documents stay YAML in `docs/contracts/`, where people read and edit them. Parsing YAML is the
 //! single largest cost of a cold start, and it was paid on every start for text that never
 //! changes between builds; the same documents as JSON deserialize in a fraction of the time. The
 //! transcoding is exact — one YAML value model in, the same value model out — and a unit test in
@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 fn main() {
     let manifest = env_path("CARGO_MANIFEST_DIR");
     let out = env_path("OUT_DIR");
-    let spec = manifest.join("../../docs/spec");
+    let spec = manifest.join("../../docs/contracts");
     transcode_directory(&spec.join("adapters/first-party"), &out.join("adapters"));
 }
 

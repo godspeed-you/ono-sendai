@@ -36,7 +36,7 @@ fn should_offer_verbs_while_the_head_is_being_typed() {
     assert!(
         candidates.iter().any(|candidate| candidate.text() == "get"
             && candidate.doc() == Some("Obtain current objects or state.")),
-        "a verb candidate carries the semantics `docs/spec/verbs.yaml` declares"
+        "a verb candidate carries the semantics `docs/contracts/verbs.yaml` declares"
     );
 }
 

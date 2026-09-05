@@ -52,16 +52,44 @@ Phases A–D are complete and tagged. B/C/D landed as: native commands wired int
 (ADR-0028), partial failure semantics (ADR-0029), the §33.5 interop serialisation (ADR-0030),
 path/string comparability (ADR-0031), the pre-flight field check (spec §11.3), shell stdin into
 a parsing head (§12.4), unquoted `explain` over a pipeline, the provider registry
-(docs/spec/providers/), and acceptance cases 040–044.
+(docs/contracts/providers/), and acceptance cases 040–044.
 
 ---
 
+## The documentation tree (2026-09-05)
+
+`docs/` now names each kind of document for what it is, and the two meanings of "spec" have been
+separated (ADR-0581):
+
+| Directory | What it holds |
+|---|---|
+| `docs/specs/` | the immutable numbered narrative release specifications, plus `spec.sha256` |
+| `docs/architecture/` | cross-cutting architecture specifications, tied to no numbered release |
+| `docs/strategy/` | product and ecosystem direction — not normative, no gate derived from it |
+| `docs/adr/` | decision records, formerly `docs/decisions/` |
+| `docs/contracts/` | the machine-readable registries, formerly `docs/spec/` |
+| `docs/reference/` | generated output, unchanged |
+
+The nine immutable specifications moved by path only: all nine hashes are byte-identical to their
+pre-move state and `docs/specs/spec.sha256` verifies at its new location. Discovery is pinned to
+`docs/specs/` by `xtask/tests/narrative.rs`, so a future move cannot leave them unguarded behind
+a green gate.
+
+Three documents arrived with the restructuring and are **direction, not delivery**:
+`docs/strategy/cloud-native-vision.md`, `docs/strategy/cncf-readiness.md` and
+`docs/architecture/external-system-provider.md`. Nothing in them is scheduled, no release
+implements them, and no acceptance case covers them. The Kubernetes provider specification they
+refer to is deliberately **not** in this repository: it is canonical in
+[ono-sendai-kubernetes](https://github.com/godspeed-you/ono-sendai-kubernetes), created
+2026-09-05, as `docs/architecture/kubernetes-provider.md`. That repository holds a specification
+and no implementation; it is licensed Apache-2.0 while core remains MIT.
+
 ## The specification set
 
-`docs/ono_sendai_shell_spec_v0.2.md` is the **base**. `docs/ono_sendai_shell_spec_v0.3_external_command_adapters.md`
+`docs/specs/ono_sendai_shell_spec_v0.2.md` is the **base**. `docs/specs/ono_sendai_shell_spec_v0.3_external_command_adapters.md`
 is an **enhancement layered on it** — the External Command Adaptation Layer — and both are
 immutable (AGENTS.md §5.2, ADR-0026). `spec-check` fails if either is missing a checksum line in
-`docs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
+`docs/specs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
 
 **Build order for the enhancements now on `implementation`, next tranche first: v0.4.1, then
 v0.5, then v0.6, then v0.7, then v0.8, then v0.9** — v0.4.1 because its own spec text (§0.1–§0.2,
@@ -72,11 +100,11 @@ tranche directly before it as its prerequisite — v0.8 stacks on v0.7, v0.9 on 
 three, unlike v0.4.1, arrival order and build order coincide.
 
 **v0.4.1 arrived on `implementation` on 2026-09-01** as
-`docs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md` — Hardening, Trust &
+`docs/specs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md` — Hardening, Trust &
 Release Integrity, a maintenance layer over the already-implemented v0.4 substrate: security
 boundaries, remote trust, KUANG/11 confinement, resource boundedness, streaming correctness,
 performance stability, test truthfulness and release provenance (spec §0.1–§0.2). It is merged,
-checksummed (`docs/spec.sha256`) and enumerated (AGENTS.md §5/§5.2), and **not implemented**.
+checksummed (`docs/specs/spec.sha256`) and enumerated (AGENTS.md §5/§5.2), and **not implemented**.
 
 The spec places itself explicitly: §0.1's layering diagram stacks it directly on v0.4 as the
 "stable implementation base for the future v0.5 and v0.6 feature tranches", and §0.2 says later
@@ -87,7 +115,7 @@ writing one from spec §0.1–§0.2 and whichever sections carry its MUST/SHOULD
 §4.7 was written from v0.4, is that tranche's first task, and it claims **§4.8** — pushing v0.5's
 future checklist to §4.9.
 
-**v0.5 arrived on `main` on 2026-08-31** as `docs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md`
+**v0.5 arrived on `main` on 2026-08-31** as `docs/specs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md`
 — the Temporal & Causal Systems Interface, 4 147 lines: time as a session coordinate, a canonical
 event model, an evidence ledger with explicit coverage and gaps, state reconstruction, `timeline`,
 `changes`, `why`, historical spatial navigation, and the rule that correlation is never presented
@@ -100,14 +128,14 @@ the two guards that were supposed to notice an unguarded specification both matc
 the widened rule; `xtask/tests/narrative.rs::should_find_an_enhancement_whose_name_omits_the_shell_infix`
 and `xtask/tests/scan.rs::should_ignore_a_narrative_specification_whose_name_omits_the_shell_infix`
 hold it. The user then renamed the file on `main` (`c4ca548`, content untouched) to carry the
-infix after all, and `docs/spec.sha256` follows the new path. The widened rule stays: it is what
+infix after all, and `docs/specs/spec.sha256` follows the new path. The widened rule stays: it is what
 made the document visible in the first place, and the next one may arrive misnamed too. **The
 v0.5 tranche has no `docs/ACCEPTANCE.md` checklist yet, and it is not the next tranche**: v0.4.1
 (above) precedes it in build order and claims §4.8, so v0.5's checklist — written from v0.5 §48
 and §56, the way §4.7 was written from v0.4 — becomes **§4.9** once its tranche starts.
 
 **v0.6 arrived on `main` the same day** (`9c49bb9`) as
-`docs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md` — Prospective Change,
+`docs/specs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md` — Prospective Change,
 Protection & Recovery, 4 473 lines. It makes a proposed mutation a first-class object, the
 `ChangePlan`, so an operator can inspect what a change would do and how recoverable it is before
 it becomes real; v0.6 §0.1 places it after v0.5 in the progression and leaves the earlier
@@ -120,18 +148,18 @@ This one the gate caught by itself, on the first `spec-check` after the merge �
 of ADR-0423 working as intended, unlike the silent arrival of v0.5 the day before.
 
 **v0.7 arrived on `main` on 2026-09-01** as
-`docs/ono_sendai_shell_spec_v0.7_presentation_consolidation_rich_tty.md` — Presentation
+`docs/specs/ono_sendai_shell_spec_v0.7_presentation_consolidation_rich_tty.md` — Presentation
 Consolidation & Rich TTY Interface, 2 616 lines. It is a consolidation release, not a new
 surface: one deterministic policy for resolving the existing v0.2 render hints, presentation
 profiles and constrained view tree into a production-quality rich terminal path, with
 `HistoryEntry`/`ResultRef` and the v0.4–v0.6 context surfaced consistently near the prompt. Its
 own §0.5 states it exists so a later Deck workspace has something solid to compose, and must
 stay valuable even if that workspace is never built. Merged into `implementation`, checksummed
-(`docs/spec.sha256`) and enumerated (AGENTS.md §5/§5.2), **not implemented**, and **behind
+(`docs/specs/spec.sha256`) and enumerated (AGENTS.md §5/§5.2), **not implemented**, and **behind
 v0.6** in build order.
 
 **v0.8 arrived on `main` the same day** as
-`docs/ono_sendai_shell_spec_v0.8_deck_workspace_composition.md` — Deck Workspace Composition &
+`docs/specs/ono_sendai_shell_spec_v0.8_deck_workspace_composition.md` — Deck Workspace Composition &
 Terminal Ownership, 2 897 lines. It adds a persistent Deck host that composes the views,
 history, context and safety state v0.2–v0.7 already define around the shell editor, plus one
 generic terminal-ownership contract shared by the Deck, existing full-screen Ono views and
@@ -140,7 +168,7 @@ explicitly against becoming a second type system, history store, context model o
 manager. Merged, checksummed and enumerated, **not implemented**, and **behind v0.7**.
 
 **v0.9 arrived on `main` the same day** as
-`docs/ono_sendai_shell_spec_v0.9_live_view_integration.md` — Live View Integration &
+`docs/specs/ono_sendai_shell_spec_v0.9_live_view_integration.md` — Live View Integration &
 Long-Running Workspace Ergonomics, 3 538 lines. Its own §0.2 explicitly rejects an earlier,
 abandoned design direction for v0.9 (`Live<T>`, `StateObservation<T>`, a new watermark/
 backpressure model) in favour of small, bounded, presentation-local bindings that keep
@@ -166,9 +194,9 @@ ADR-0027 and §4.6 before picking a task; do not re-derive them from the 2182-li
 Build order (v0.3 §1.69, one increment per line, each one RED-first):
 
 1. `ADAPT-001` OutputDemand computed backwards from the consumer, reported by `explain`
-2. `adapter.*` error family (E09xx) in `docs/spec/errors.yaml`
+2. `adapter.*` error family (E09xx) in `docs/contracts/errors.yaml`
 3. `ADAPT-003` guaranteed raw spelling
-4. `ADAPT-009` manifest schema + `docs/spec/adapters/`, `spec-check` drift rules
+4. `ADAPT-009` manifest schema + `docs/contracts/adapters/`, `spec-check` drift rules
 5. `ADAPT-002` registry, identity pinning, negotiation states, conflict resolution
 6. `ADAPT-004`/`005` plan execution through `ono-process`, streaming decoders, fuzz corpus
 7. `ADAPT-007` provenance on adapted values, `inspect --provenance`
@@ -523,7 +551,7 @@ issue that ordered the work did not know.
 - **#5 closed (2026-09-03).** `ono-model-broker` exists (ADR-0566). The crate is the catalogue
   (`<config>/kuang/models.yaml`, beside `policy.yaml`), the data-class policy of §31.44 with the
   three named policies defaulting their lists, the `ono-model/1` wire
-  (`docs/spec/kuang/model-broker.v1.yaml`: one JSON document in, one out, over a program the
+  (`docs/contracts/kuang/model-broker.v1.yaml`: one JSON document in, one out, over a program the
   operator configured — no HTTP client), and a broker trait that takes an already-chosen
   provider and an already-classified request and has no way to reach a grant. The supervisor
   answers `models.list` (the catalogue filtered by the grant's `providers` scope) and
@@ -731,7 +759,7 @@ issue that ordered the work did not know.
 
 - **H3 complete (2026-09-02), #51–#57.** One central `Limits` contract whose every setter clamps
   into the range `limits.yaml` declares, so an unlimited instance cannot be written down;
-  `docs/spec/hardening/remote_limits.yaml` created as §52.1's registry holding **no numbers** — one
+  `docs/contracts/hardening/remote_limits.yaml` created as §52.1's registry holding **no numbers** — one
   row per ceiling pointing at its `limit_key`, its refusal, its audit class and its enforcement
   stage. A `ConnectionRegistry` behind a real 32-connection ceiling, a pending-handshake semaphore
   that gates *TCP accept* (so nothing is spent on the peer and §13.1 is not violated by sending a
@@ -755,7 +783,7 @@ issue that ordered the work did not know.
   and the `where` differential stayed green throughout. `each {…} | each {…}` works at all now; it
   answered `provider.unsupported` before. Memory is measured rather than asserted: two block
   invocations for a 200-value source and two for a 2000-value one. #78's capture inventory is 21
-  classified sites in `docs/spec/hardening/streaming.yaml` with a gate that fails in four
+  classified sites in `docs/contracts/hardening/streaming.yaml` with a gate that fails in four
   directions, and it caught two real removals as the code changed under it. ADR-0479 … ADR-0483,
   cases 193 and 194, §4.8.7 written and ticked. No code in the reserved `E1301`–`E1319` range was
   needed: every refusal this tranche makes already had one.
@@ -903,7 +931,7 @@ a merge regression:
   with an 8 s budget; it fails under parallel load and passes with `--test-threads=1`.
 
 **The v0.4 tranche is running (started 2026-08-28).** The specification is
-`docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md`; its executable requirements are
+`docs/specs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md`; its executable requirements are
 the nine `crates/ono-cli/tests/spatial_*_missing.rs` suites (175 tests) and the ten
 `docker/acceptance/cases/09x-spatial-*.case.v04` scenarios (139 assertions). The build order is
 §50's own dependency-driven sequence, and a phase is done when its suites are un-ignored and
@@ -959,8 +987,8 @@ plans, ranking, zoom, clustering), `ono-spatial-render` (text and full-screen), 
 on each:
 
 1. `feat(spatial)` the fourteen §40 errors as the `spatial` family `Ono-Sendai-E1001`–`E1014`
-   (ADR-0125, ADR-0127) in `docs/spec/errors.yaml` and `ono_core::ErrorCode`.
-2. `feat(spatial)` the §41 registry: `docs/spec/spatial/{spatial,spaces,relations,landmarks}.yaml`
+   (ADR-0125, ADR-0127) in `docs/contracts/errors.yaml` and `ono_core::ErrorCode`.
+2. `feat(spatial)` the §41 registry: `docs/contracts/spatial/{spatial,spaces,relations,landmarks}.yaml`
    (ADR-0126, ADR-0128), wired into `xtask spec-check`.
 3. `feat(spatial)` `crates/ono-spatial-core` — `SpatialId` and the §10 tiers (ADR-0129), the
    `SpatialObject` projection, `SpatialScope` with boundary detection, `Place`, `HierarchicalEdge`
@@ -996,7 +1024,7 @@ enforced against `ono-spatial-core` by `cargo run -p xtask -- spec-check`
   fields plus the scope chain; a process takes boot identity, pid, start time and pid namespace
   (§10.2), reading `pid`, `started` and, where a provider supplies it, `pid_namespace`. Registering
   the same `(scope, ObjectRef)` under two ids is `spatial.identity_conflict`.
-- The §42 provider claims block (`spatial:` under each entry in `docs/spec/providers/*.yaml`) is
+- The §42 provider claims block (`spatial:` under each entry in `docs/contracts/providers/*.yaml`) is
   **not** written yet; `spatial_contracts_missing::should_declare_the_spatial_claims_on_every_provider_that_feeds_the_spatial_index`
   is S2's. Its `identity_strategy` must be one of `stable`/`lifetime`/`observation`, matching
   `ono_spatial_core::IdentityTier`, and its `cost_class` one of `ono_spatial_core::CostClass`.
@@ -1004,7 +1032,7 @@ enforced against `ono-spatial-core` by `cargo run -p xtask -- spec-check`
 **S2 — provider identity and relation bridge — is complete (2026-08-28, agent `S2`).** Six
 commits, gate green on each:
 
-1. `feat(spatial)` the §42 provider claims in `docs/spec/providers/*.yaml`, enforced by
+1. `feat(spatial)` the §42 provider claims in `docs/contracts/providers/*.yaml`, enforced by
    `xtask::contracts::check_provider_claims` (ADR-0132).
 2. `feat(providers)` `pid_namespace` on `ono.process/1` and `ono.process-detail/1`, read from
    `/proc/<pid>/ns/pid` (ADR-0134).
@@ -1055,12 +1083,12 @@ new outcome tests live in the crates: `crates/ono-spatial-index/tests/{bridge,re
 0 failed:
 
 1. `feat(parser)` a words-mode option whose value is a predicate expression (ADR-0138), declared
-   in `docs/spec/language.yaml` and held against the parser by `spec-check`.
+   in `docs/contracts/language.yaml` and held against the parser by `spec-check`.
 2. `feat(spatial)` `crates/ono-spatial-query` — §27.1 selector resolution, §27.2 ambiguity, §27.3
    fuzzy that never acts, §3.6 neighborhood ranking, §6.8 search, §34 cost-aware planning
    (ADR-0139).
 3. `feat(spatial)` `find place` — the contract (`place` target, `ono.spatial-place/1`,
-   `docs/spec/commands/spatial.yaml`) and the implementation in `ono-cli` (ADR-0140, ADR-0141),
+   `docs/contracts/commands/spatial.yaml`) and the implementation in `ono-cli` (ADR-0140, ADR-0141),
    **with the ADR-0124 rewrite of every Table 3 site in the same commit**.
 4. `feat(spatial)` pins that outlive the session — `$XDG_STATE_HOME/ono/pins.json` (§46.1).
 5. `test(acceptance)` `docker/acceptance/cases/101-spatial-find-place.case`, the S3 gate in the
@@ -1107,7 +1135,7 @@ other 40 new outcome tests live in the crates:
   declared geography rather than an observed object. If a later phase wants `find place compute`
   to answer the domain, that is a decision for it to record.
 - ~~The `argument_mode`-versus-ADR-0009 check in `xtask::contracts::check_commands` is dead
-  against this repository's own `docs/spec/language.yaml`.~~ **Repaired** by `harness` on
+  against this repository's own `docs/contracts/language.yaml`.~~ **Repaired** by `harness` on
   2026-08-28 (ADR-0159): `expression_heads()` reads the sequence of named modes the registry
   actually writes, an empty declaration is now reported instead of short-circuiting the check,
   and the fixture is written in the registry's shape so it can no longer certify a blind reader.
@@ -1126,8 +1154,8 @@ the way §4.6 was written from v0.3.
    hit it; fixed red-first in its own commit.
 2. `feat(command)` an option whose value is optional (ADR-0144), so `look --changes [duration]`
    and `near --changed [duration]` are spelled as §6.1 and §6.2 write them.
-3. `feat(spatial)` the commands themselves: contracts in `docs/spec/verbs.yaml` and
-   `docs/spec/commands/spatial.yaml`, seven new schemas, `crates/ono-spatial-render`,
+3. `feat(spatial)` the commands themselves: contracts in `docs/contracts/verbs.yaml` and
+   `docs/contracts/commands/spatial.yaml`, seven new schemas, `crates/ono-spatial-render`,
    `SpatialSessionState` in `ono-cli`, and `look`/`near`/`enter`/`home` (ADR-0142, ADR-0143,
    ADR-0145).
 4. `test(acceptance)` `docker/acceptance/cases/102-spatial-look-near.case`, the S4a gate in the
@@ -1165,7 +1193,7 @@ Green now, all previously `#[ignore]`d — 32 tests:
 
 - **`enter` is already dispatched in two places, and both move the place.**
   `crate::context::claims` sends `enter` to the v0.2 context stack only when its first word names
-  a target `docs/spec/commands/` declares for `enter` (`dir`, `process`, `service`, `user`, …);
+  a target `docs/contracts/commands/` declares for `enter` (`dir`, `process`, `service`, `user`, …);
   anything else — a domain, a collection, a pid, a quoted spatial id, or no argument at all —
   reaches `crate::spatial::commands::Enter`, the target-less `ono.place.enter`. §30.2 applies to
   both spellings, so `context::enter_record` now also calls `crate::spatial::enter_observed`
@@ -1277,7 +1305,7 @@ process answered nothing, because the only source of relationship edges was the 
 bridge, which reads a `ppid` and a `cgroup` and cannot know which files a process holds open.
 ADR-0146 makes the edges of an object place the ones the **v0.2 relationship providers** of
 `ono-graph` assert about that object — the same providers `trace` walks — translated into the
-declared relations of `docs/spec/spatial/relations.yaml`. A neighbour therefore reports the
+declared relations of `docs/contracts/spatial/relations.yaml`. A neighbour therefore reports the
 relation word and the provider id `trace` reports for the same edge (§2.16, §31.3), and the
 record-field bridge keeps only the relations no relationship provider serves (cgroup, namespace,
 container, and the listener a connection was accepted by).
@@ -1410,8 +1438,8 @@ ADR-0167.
 
 The increment turned the trail from something written into something read, and fixed the one rule
 that made §44.6 undemonstrable. Six commands are new — `back`, `up`, `jump`, `trail`, `pin`,
-`unpin` — with their contracts in `docs/spec/commands/spatial.yaml`, their verbs in
-`docs/spec/verbs.yaml` and one new schema, `ono.navigation-step/1`.
+`unpin` — with their contracts in `docs/contracts/commands/spatial.yaml`, their verbs in
+`docs/contracts/verbs.yaml` and one new schema, `ono.navigation-step/1`.
 
 **What the next phases need to know:**
 
@@ -1428,7 +1456,7 @@ that made §44.6 undemonstrable. Six commands are new — `back`, `up`, `jump`, 
   (ADR-0151, a fix). The S1 rule chain made `up` from a socket land on the same place as `back`,
   which is precisely the distinction §44.6 exists to demonstrate. `parent_rules(Listener)` and
   `parent_rules(Connection)` are now empty and fall through to the collection space;
-  `docs/spec/providers/linux-netlink.yaml` declares the same chain, because `spec-check` compares
+  `docs/contracts/providers/linux-netlink.yaml` declares the same chain, because `spec-check` compares
   them. A socket's `place_path` is therefore `local/network/listeners`.
 - **`still_a_place` in `crates/ono-cli/src/spatial/movement.rs` is the seam S7 needs** (ADR-0152).
   §20.3's four outcomes are all implemented — return, skip-with-a-notice, `spatial.destination_gone`,
@@ -1482,7 +1510,7 @@ where `back` lands.
   call because only the caller knows which directories have been observed. §15.1 makes the enclosing
   directory a file's parent, so this is a real gap and it is **S4d's**: it needs the directory
   observed, which is the same query §15.4 and §44.3 need anyway.
-- `docs/spec/schemas/file.v1.yaml` gives a file the identity `[device, inode]`, so a trail step's
+- `docs/contracts/schemas/file.v1.yaml` gives a file the identity `[device, inode]`, so a trail step's
   `from_ref`/`to_ref` for a file reads `file/0:46`. It is honest — that *is* the provider's
   reference — but it is not a spelling anyone types. Whoever gives `ono.file/1` a path-shaped alias
   fixes the trail's readability for free.
@@ -1501,8 +1529,8 @@ Delivered:
    six are documented absences, not silent branches.
 3. `crates/ono-spatial-render/src/map.rs` — the default textual map of §23.2 as a ranked tree,
    width-aware, with the ASCII fallback §39.2 requires (ADR-0166).
-4. `crates/ono-cli/src/spatial/map.rs` — the `map` command, its contract in `docs/spec/verbs.yaml`
-   and `docs/spec/commands/spatial.yaml`, and five new schemas: `ono.spatial-map/1`,
+4. `crates/ono-cli/src/spatial/map.rs` — the `map` command, its contract in `docs/contracts/verbs.yaml`
+   and `docs/contracts/commands/spatial.yaml`, and five new schemas: `ono.spatial-map/1`,
    `ono.map-node/1`, `ono.map-edge/1`, `ono.map-cluster/1`, `ono.hidden-summary/1` (ADR-0162).
 5. `spatial.map.node_budget`, `spatial.landmarks.*` and `spatial.look.change_window` are now
    *read* — `crate::spatial::configure_from` hands the session what the user configured, which is
@@ -1913,7 +1941,7 @@ Delivered:
    sit on different mounts, recording a `filesystem` `ScopeBoundary` that does not claim to have
    left the host. `enter`, `jump` and `up` all go through the one function.
 5. **§15.1 the path tree keeps its shape.** `parent_rules(Directory)` is now
-   `[path.parent, mount.backs_directory]`, with `docs/spec/providers/linux-procfs.yaml` saying
+   `[path.parent, mount.backs_directory]`, with `docs/contracts/providers/linux-procfs.yaml` saying
    the same. §15.1 is unconditional, so the parent of `/mnt/backup` is `/mnt`; the mount is
    where the path tree runs out (`/` has no directory above it), which is where §15.2's
    MOUNTS -> DIRECTORY ROOTS meets the Unix tree. Recorded as a **spec deviation** in ADR-0187.
@@ -2155,6 +2183,16 @@ the provider samples — and no assertion changed.
 
 ## Found, not yet filed
 
+- **Three relative links in `docs/MIGRATION.md` do not resolve (2026-09-05).** Found by a
+  repository-wide markdown link check during the ADR-0581 documentation migration, and
+  pre-existing: all three are in `HEAD` unchanged. `](SECURITY.md)` resolves against `docs/`, so
+  it points at `docs/SECURITY.md`, which does not exist — the file is at the repository root.
+  `](docs/reference/remote-trust.md)` and `](docs/reference/release-verification.md)` are written
+  repository-root-relative and resolve to `docs/docs/reference/...`. They render correctly in
+  some viewers and not in others, which is why they survived. None of the three names a path the
+  migration moved, so fixing them here would have been an unrelated change (§4). Reproduce by
+  resolving each `](...)` in the file against the file's own directory.
+
 - **A failing streamed adapter child reports exit 0 under load (2026-09-03).** Gate run after
   the #3 views increment: `adapters.rs::should_report_a_failing_streamed_child_after_its_records`
   — a `journalctl` shim of `echo '<entry>'; exit 3` — came back with status **0** and the
@@ -2165,7 +2203,7 @@ the provider samples — and no assertion changed.
   is the class the board's 2026-09-03 entry on load-sensitive tests warns about. Not
   investigated here: it is outside #3's scope and the user triages. Reproduce with
   `scripts/gate.sh` or `cargo test -p ono-cli` under CPU load.
-- **`docs/spec/schemas/limit.v1.yaml` is not embedded.** `ono_value::builtin_schemas()` lists
+- **`docs/contracts/schemas/limit.v1.yaml` is not embedded.** `ono_value::builtin_schemas()` lists
   ninety contracts by hand and this one is not among them, so `ono.limit/1` is a schema the
   registry cannot answer for although the document exists. Found while writing the fidelity test
   of ADR-0571, which therefore checks that every embedded document matches disk and leaves
@@ -2289,7 +2327,7 @@ own increment and its own acceptance evidence. **Exit test:** the count matches 
 
 **An option whose evaluated value does not fit its declared type is dropped rather than refused
 (2026-09-03).** With ADR-0556 in, `get command --verb ["get"]` now *reaches* the command as a
-one-element list where `docs/spec/commands/meta.yaml` declares `string`; `as_str()` fails, the
+one-element list where `docs/contracts/commands/meta.yaml` declares `string`; `as_str()` fails, the
 filter is skipped, and the reader who asked a narrower question receives the whole registry. §2.6
 again — a filter that silently did not apply is worse than a refusal. The check belongs in the
 binding layer beside the declared type rather than in each command. **Exit test:** a wrongly typed
@@ -2324,14 +2362,14 @@ same honesty for the right machine under the wrong conditions. **Exit test:** a 
 load reports that rather than a regression.
 
 **`SECURITY.md`'s boundary table is a hand transcription and nothing compares it to the inventory
-(2026-09-03).** `docs/spec/hardening/security_boundaries.yaml` exists and
+(2026-09-03).** `docs/contracts/hardening/security_boundaries.yaml` exists and
 `docs/reference/security-boundaries.md` is generated from it; `SECURITY.md`'s copy is still typed,
 so a renamed boundary leaves it silently wrong. §4.8.12's box for #114 says so. **Exit test:** a
 boundary renamed in the inventory turns the gate red where `SECURITY.md` disagrees.
 
 **One machine-readable contract lives outside the indexed directory (2026-09-03).**
 `docs/baselines/v0.4.1.json` is validated by `xtask::baseline::check` in `spec-check`, but
-`registries.yaml` indexes `docs/spec/hardening/` only, so §52.3's "every contract is indexed"
+`registries.yaml` indexes `docs/contracts/hardening/` only, so §52.3's "every contract is indexed"
 property has a deliberate exception recorded in ADR-0548's *Consequences*. **Exit test:** either
 the index reaches contracts outside that directory, or the snapshot moves into it.
 
@@ -2362,7 +2400,7 @@ Retire it in a release that may break configuration. **Exit test:** one key name
 **`ono-remote` declares its four ceilings as constants instead of reading the shared catalogue
 (2026-09-02).** `limits.remote_*` exist with `enforced_by: pending`, and §52.2 wants one source.
 This is **work for phase H3** (#54, one central `Limits` contract): if
-`docs/spec/hardening/remote_limits.yaml` is still wanted, it should reference these keys rather
+`docs/contracts/hardening/remote_limits.yaml` is still wanted, it should reference these keys rather
 than restate the numbers. **Exit test:** changing a remote ceiling in the catalogue changes what
 the listener enforces.
 
@@ -2415,10 +2453,10 @@ lists somebody else.
 
 **`Ono-Sendai-E1103 resource.materialization_limit` is declared and never constructed
 (2026-09-03).** Its only occurrences are the enum and a code/name test. Recorded as
-`raised: false` in `docs/spec/hardening/refusals.yaml` rather than quietly deleted. **Exit test:**
+`raised: false` in `docs/contracts/hardening/refusals.yaml` rather than quietly deleted. **Exit test:**
 either a path raises it, or it leaves the taxonomy.
 
-**`docs/spec/kuang/errors.v1.yaml:20` says "Nothing here is implemented" (2026-09-03).** Stale for
+**`docs/contracts/kuang/errors.v1.yaml:20` says "Nothing here is implemented" (2026-09-03).** Stale for
 the K118xx block, which H4 delivered. One line. **Exit test:** the file describes what is there.
 
 **Two worktrees share one acceptance image tag (2026-09-03).** `scripts/acceptance.sh` defaults
@@ -2456,7 +2494,7 @@ the last class rather than the size of the candidate set. Bounding the sweep is 
 `enter` that stopped early would report `not_found` about something that is there, which is the
 defect ADR-0576 had to fix in its first form. Measured by
 `cargo run -p xtask -- perf --profile M --iterations 20` on `ryzen-3900x-ubuntu-2604` and recorded
-in `docs/spec/hardening/performance_baseline.json`. **Exit test:** `spatial.selector_miss` at
+in `docs/contracts/hardening/performance_baseline.json`. **Exit test:** `spatial.selector_miss` at
 Profile M under 250 ms p95.
 
 **Four suites still exec a file they have just written (2026-09-04).** ADR-0578 took the race out
@@ -2696,7 +2734,7 @@ were still open on 2026-08-31 are issues #1–#5.
   2026-08-29, `33b6e10` + `a595c4f` + `81edc7c`, ADR-0331 (supersedes ADR-0248's decision *not* to
   build the generator; its "a box claiming a generation must name a generated path" rule stays and
   now accepts this output). `cargo xtask conformance` generates
-  `crates/ono-cli/tests/provider_conformance.rs` from `docs/spec/providers/*.yaml`,
+  `crates/ono-cli/tests/provider_conformance.rs` from `docs/contracts/providers/*.yaml`,
   `schemas/*.v1.yaml`, `capabilities.yaml` and `commands/*.yaml`; `spec-check` regenerates and
   fails on drift. **87 generated tests over 18 provider entries, 30 schemas and 35 targets**,
   where 4 providers and 2 schemas were covered before. The assertions live beside the generated
@@ -2989,7 +3027,7 @@ Nothing in this section was fixed by this agent. It writes back what fifty-nine 
 | **B-kuang-2** grants, leases and the audit trail did not survive a session | `a5be21b` (ADR-0265) | `always` grants to `<config>/kuang/policy.yaml`, the trail appended to `<state>/kuang/audit.jsonl`; `plugins_missing.rs::should_read_back_an_always_grant_in_a_later_session`, `::should_forget_a_stored_grant_when_it_is_revoked_in_a_later_session`, `::should_keep_the_audit_trail_across_sessions`, case `125-kuang-capability-policy` |
 | **B-kuang-4** the negotiated `OverflowPolicy` was never enforced | `1665e1e` (ADR-0267) | `host_emit` consults it; `fail-stream` raises K11206, which nothing raised before. `ono-kuang-sdk/tests/conformance.rs::should_end_the_stream_and_keep_the_instance_when_the_negotiated_overflow_fails_the_stream`, `::should_keep_the_oldest_values_and_drop_the_rest_when_the_overflow_drops_the_newest` |
 | **B-kuang-5** `contributions.views`/`annotations` were listed and never loaded | `c111f91` (ADR-0268) | the box's second permitted outcome: an annotation key outside the package namespace is `package.invalid` at parse time, a view contribution is `package.incompatible` naming the `view_protocol` dimension. `manifest_validation.rs::should_refuse_an_annotation_key_outside_the_packages_namespace` and two siblings. Registering a view stays a tranche inside C-4 |
-| **B-kuang-6** the seven `docs/spec/kuang/*.v1.yaml` contracts had no drift check | `122dcea` (ADR-0266) | `check_kuang_contracts` holds four of the seven against `crates/ono-kuang-*` both ways; the manifest half asks the parser rather than mirroring it. `xtask/tests/contracts.rs::should_match_the_kuang_contracts_against_the_runtime_that_serves_them` and two siblings |
+| **B-kuang-6** the seven `docs/contracts/kuang/*.v1.yaml` contracts had no drift check | `122dcea` (ADR-0266) | `check_kuang_contracts` holds four of the seven against `crates/ono-kuang-*` both ways; the manifest half asks the parser rather than mirroring it. `xtask/tests/contracts.rs::should_match_the_kuang_contracts_against_the_runtime_that_serves_them` and two siblings |
 | **B-spat-1** every read-only mount at 100 % was a "storage pressure" landmark | `13b6157` (ADR-0270) | `[run]` `enter storage; look` lists exits and no snap landmark; `ono-spatial-query/tests/landmarks.rs::should_not_promote_a_read_only_filesystem_that_is_full_as_storage_pressure`, `::should_still_promote_a_writable_filesystem_above_the_threshold`, `::should_still_promote_a_full_filesystem_that_does_not_say_whether_it_is_writable` |
 | **B-spat-2** a map of an object was a flat list with unusable rows | `c064639` (ADR-0272) | `[run]` `enter process 1; map` — every row reads `— process.parent_of`, and `containerd-shim (pid 171616)` tells four namesakes apart; `ono-spatial-render/tests/object_map.rs::should_name_the_relation_every_neighbour_of_an_object_stands_in`, `::should_tell_two_neighbours_sharing_a_display_name_apart`, case `105` s5ae |
 | **B-spat-3 / the S11c `help here` line** `help here` did not exist (v0.4 §38.2) | `13b6157` (ADR-0271) | `[run]` `enter process 1; help here` names every exit with what is behind it, the spelling that traverses it, and `permission_denied` where the provider gave one; `ono-cli/tests/spatial_help.rs` (three cases), `ono-command/tests/completion.rs` (two topic cases) |
@@ -3011,7 +3049,7 @@ Nothing in this section was fixed by this agent. It writes back what fifty-nine 
 | **B-split-E3** no `vcs` prompt segment, and the object-context segment was unasserted | `7cad7d6` (ADR-0250) | case `113-prompt-segments` |
 | **B-split-E5** the *bounded* half of §20.2's retention was untested | `e6094eb` (ADR-0249) | the seventeenth result evicts the first, and a result over the value bound is retained truncated and says so |
 | **B-split-J1 / B-split-J5** `view tree` was exercised by nothing, and `get link \| view table` was proven only in halves | `365ac0a` | `view.rs::should_open_the_tree_view_over_a_graph_and_leave_the_pick_behind` drives a real PTY; cases `111-view-tree-navigation` and `112-link-overview` |
-| **the acceptance image was grading the wrong program** — not a box, and it outranked every box (AGENTS.md §14) | `9169db9` (ADR-0251) | `COPY` preserves mtimes and the Dockerfile caches `target/`, so cargo declared crates fresh and the image was built around a previous binary while carrying the new source. Observed, not imagined. The build now stamps `crates/`, `xtask/` and `docs/spec/` before compiling; `xtask/tests/packaging.rs::should_stamp_the_workspace_before_building_when_the_image_caches_its_target_directory` |
+| **the acceptance image was grading the wrong program** — not a box, and it outranked every box (AGENTS.md §14) | `9169db9` (ADR-0251) | `COPY` preserves mtimes and the Dockerfile caches `target/`, so cargo declared crates fresh and the image was built around a previous binary while carrying the new source. Observed, not imagined. The build now stamps `crates/`, `xtask/` and `docs/contracts/` before compiling; `xtask/tests/packaging.rs::should_stamp_the_workspace_before_building_when_the_image_caches_its_target_directory` |
 | **a journal ordering test compared timestamps as text**, and a dry-run case read a record in the old key order | `d245b96`, `db27dd1` | both were tests wrong about data, not the shell wrong about behaviour (AGENTS.md §11) |
 
 ---
@@ -3184,7 +3222,7 @@ replaced each with the case that actually covers the capability.
 - [x] C8 — `service` over the systemd D-Bus API — spec §23.3, §28.3 —
       acceptance `038-services-set-and-journal.case`;
       `services_logs_missing.rs::should_trace_a_service_to_the_processes_it_owns`
-- [x] C9 — Generated provider conformance suite from `docs/spec/providers/*.yaml` — spec §35.3 —
+- [x] C9 — Generated provider conformance suite from `docs/contracts/providers/*.yaml` — spec §35.3 —
       done 2026-08-29, `33b6e10` + `a595c4f` + `81edc7c`, ADR-0331. `cargo xtask conformance`
       generates `crates/ono-cli/tests/provider_conformance.rs` from the declarations and
       `spec-check` fails on drift: **87 generated tests over 18 provider entries, 30 schemas and
@@ -3345,7 +3383,7 @@ replaced each with the case that actually covers the capability.
 
 ### Phase I — KUANG/11 extension runtime (spec §31)
 
-- [x] I1 — `docs/spec/kuang/` contracts — §31.78 — all seven exist and are consumed:
+- [x] I1 — `docs/contracts/kuang/` contracts — §31.78 — all seven exist and are consumed:
       `crates/ono-kuang-protocol/tests/manifest_validation.rs` (14 tests),
       `src/error.rs::should_expose_all_27_codes_of_spec_31_79_when_enumerated`,
       `src/capability.rs::should_carry_all_29_families_of_the_registry_when_enumerated`
@@ -3484,7 +3522,7 @@ machine, and `ono --version` 0,9 ms — so the binary was not the cost, the firs
 Measured in-process: 15 ms parsing 465 KB of embedded YAML (command families, ninety schema
 contracts, adapter packs), 7 ms connecting to systemd and logind over D-Bus, 1 ms for a tokio
 thread pool, all of it for a pipeline with nothing native in it. Three increments, one kind
-each: (1) `perf(contracts)` — the three crates that embed `docs/spec/` documents transcode them to
+each: (1) `perf(contracts)` — the three crates that embed `docs/contracts/` documents transcode them to
 JSON in a `build.rs` and read that, with a fidelity test per crate against the YAML on disk;
 26,8 → 13,8 ms. (2) `perf(cli)` — the §11.3 pre-flight check resolves the stage heads first and
 plans against the providers only when one is native; 13,8 → 4,8 ms, and an external-only
@@ -3644,8 +3682,8 @@ Proven by `crates/ono-cli/tests/session_lifetime.rs`
   on branch `implementation-containers` — files: `crates/ono-provider-container/`,
   `crates/ono-provider-linux/src/packages.rs`, `crates/ono-graph/src/kernel/container.rs`,
   `crates/ono-command/src/impls/{mod,meta}.rs`, `crates/ono-cli/src/providers.rs`,
-  `docs/spec/commands/{container,package}.yaml`, `docs/spec/schemas/{container,image,package,container-event}.v1.yaml`,
-  `docs/spec/providers/{container-engine,linux-packages}.yaml`, acceptance case
+  `docs/contracts/commands/{container,package}.yaml`, `docs/contracts/schemas/{container,image,package,container-event}.v1.yaml`,
+  `docs/contracts/providers/{container-engine,linux-packages}.yaml`, acceptance case
   `046-containers-and-packages`. ADR-0112–0115.
   Increment 1 done: `ono-provider-container` — the engine API over the runtime's Unix socket,
   `get container`/`get image`, E0401 naming the sockets tried (4 tests green, ADR-0112).
@@ -3681,8 +3719,8 @@ Proven by `crates/ono-cli/tests/session_lifetime.rs`
 - [meta | 2026-08-27] **meta family** (`crates/ono-cli/tests/meta_config_missing.rs`, plus the
   `--human` and uid/gid cases of `options_and_selectors_missing.rs`) on branch
   `implementation-meta` — files: `crates/ono-cli/src/{meta,resolve,settings,config,eval,native}.rs`,
-  `crates/ono-command/src/impls/{meta,convert}.rs`, `docs/spec/schemas/command.v1.yaml`,
-  `docs/spec/commands/identity.yaml`, acceptance case `041-config-and-resolve`. ADR-0093–0095.
+  `crates/ono-command/src/impls/{meta,convert}.rs`, `docs/contracts/schemas/command.v1.yaml`,
+  `docs/contracts/commands/identity.yaml`, acceptance case `041-config-and-resolve`. ADR-0093–0095.
   Increment 1 done: `resolve command` (6 tests green, ADR-0093). Increment 2 done: the typed
   settings catalogue, `get config` with layers/source/line/`--overridden`/`--problems`, typed
   `set config` with E0202/E0201 and its ActionResult (15 tests green, ADR-0094). Increment 3
@@ -3880,7 +3918,7 @@ Proven by `crates/ono-cli/tests/session_lifetime.rs`
 
 - [x] v0.3 step 1 — ADAPT-001 OutputDemand computed backwards from the consumer, reported
   by `explain` (ADR-0052) — cases 070, 071
-- [x] v0.3 step 2 — the `adapter.*` error family E0901–E0911 in `docs/spec/errors.yaml` and
+- [x] v0.3 step 2 — the `adapter.*` error family E0901–E0911 in `docs/contracts/errors.yaml` and
   `ono_core::ErrorCode` (ADR-0053) — `error_taxonomy.rs`; the box in ACCEPTANCE §4.6.2 stays
   open until an adapter emits one with the §1.65 payload
 - [x] v0.3 step 3 — ADAPT-003 the `raw` keyword; `adapt` spelled for §1.18 (ADR-0054) —
@@ -3960,7 +3998,7 @@ Proven by `crates/ono-cli/tests/session_lifetime.rs`
 - [x] A0 — Shared vocabulary in `ono-core`: `Span`, the complete error taxonomy of spec §43,
       the exit-status contract — ADR-0005/0006/0008 — commit 5551654 —
       tests `crates/ono-core/tests/{error_taxonomy,exit_status,span}.rs`
-- [x] A0 — The concrete grammar: ADR-0009 and `docs/spec/grammar.ebnf`, resolving the
+- [x] A0 — The concrete grammar: ADR-0009 and `docs/contracts/grammar.ebnf`, resolving the
       command/expression ambiguity of spec §26.1 with the two argument modes
 
 ---
@@ -4081,7 +4119,7 @@ Should-fix:
       naming the scope, before the first action; `--confirm` proceeds. `stop process` declares
       the option too. Pinned in `ono-command/tests/mutations.rs`. Previously: **the contract
       advertised a bulk-mutation guard nothing implements.** Four command
-      contracts (`docs/spec/commands/file.yaml` twice, `network.yaml`, `kuang.yaml`) declare a
+      contracts (`docs/contracts/commands/file.yaml` twice, `network.yaml`, `kuang.yaml`) declare a
       `confirm` option documented as "without it, a selection over the configured threshold fails
       with `safety.confirmation_required` in a script (spec §11.6, §17.4)".
       `ProviderMutation::run` in `crates/ono-command/src/impls/mutate.rs` forwards it verbatim as
@@ -4171,7 +4209,7 @@ happens — a proof that is edited to fit the fix has stopped proving anything. 
 opposite of a silenced requirement: they are the requirement, written down before the fix.
 
 - **`socket.accepts_connection` cannot be observed.** It is declared in
-  `docs/spec/spatial/relations.yaml`, claimed by no provider, and produces no edges (ADR-0135).
+  `docs/contracts/spatial/relations.yaml`, claimed by no provider, and produces no edges (ADR-0135).
   Neither `sock_diag` nor procfs relates an accepted connection to the listener it came from, and
   matching by local port would be a guess v0.4 §11.5 has no value for. Unblocked only by a kernel
   interface that supplies the link; until then the relation is declared and honestly empty rather
@@ -4238,8 +4276,8 @@ Two entries left this section on 2026-08-29:
   now: **ADR-0124** (spatial verbs take the bare name; `find place` beside `find file`, so bare
   `find` stays findutils and case `087` stays green; `look` shadows util-linux `look`),
   **ADR-0125** (the fourteen §40 conditions are the family `spatial`, `Ono-Sendai-E1001`–`E1014`,
-  in `docs/spec/errors.yaml` — one taxonomy in one file), and **ADR-0126** (the registry is
-  `docs/spec/spatial/{spatial,spaces,relations,landmarks}.yaml`).
+  in `docs/contracts/errors.yaml` — one taxonomy in one file), and **ADR-0126** (the registry is
+  `docs/contracts/spatial/{spatial,spaces,relations,landmarks}.yaml`).
 
 ---
 

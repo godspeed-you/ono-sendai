@@ -42,7 +42,7 @@ impl PermissionState {
         PermissionState::Stale,
     ];
 
-    /// The name §35.2 and `docs/spec/spatial/spatial.yaml` spell.
+    /// The name §35.2 and `docs/contracts/spatial/spatial.yaml` spell.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -115,7 +115,7 @@ impl Completeness {
         Completeness::Unknown,
     ];
 
-    /// The name `docs/spec/spatial/spatial.yaml` spells.
+    /// The name `docs/contracts/spatial/spatial.yaml` spells.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -162,7 +162,7 @@ impl Freshness {
         Freshness::Unknown,
     ];
 
-    /// The name `docs/spec/spatial/spatial.yaml` spells.
+    /// The name `docs/contracts/spatial/spatial.yaml` spells.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {

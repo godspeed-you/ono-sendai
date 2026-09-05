@@ -1,4 +1,4 @@
-//! The syntax tree of the Ono language, as fixed by ADR-0009 and `docs/spec/grammar.ebnf`.
+//! The syntax tree of the Ono language, as fixed by ADR-0009 and `docs/contracts/grammar.ebnf`.
 //!
 //! Every node carries a [`Span`] into the source it was parsed from, so the editor can map a
 //! cursor position to a node and a diagnostic to the text that caused it (spec §16.3, §24.4).
@@ -50,7 +50,7 @@ impl ArgMode {
 
     /// Every `(head, option)` pair whose option value is read as an expression (ADR-0138).
     ///
-    /// `cargo run -p xtask -- spec-check` holds this against `docs/spec/language.yaml`, so the
+    /// `cargo run -p xtask -- spec-check` holds this against `docs/contracts/language.yaml`, so the
     /// table and the documented language cannot drift apart.
     #[must_use]
     pub fn expression_options() -> &'static [(&'static str, &'static str)] {
@@ -826,7 +826,7 @@ pub struct UnaryExpr {
     pub span: Span,
 }
 
-/// The infix operators, in the precedence order of `docs/spec/grammar.ebnf`.
+/// The infix operators, in the precedence order of `docs/contracts/grammar.ebnf`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BinaryOp {
     /// `or` — logical disjunction, the loosest binding operator.

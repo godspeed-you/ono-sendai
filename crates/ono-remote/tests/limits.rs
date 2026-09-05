@@ -27,24 +27,24 @@ use std::time::Duration;
 
 use ono_protocol::Limits;
 
-/// The registry that owns every hardening number (`docs/spec/hardening/limits.yaml`).
+/// The registry that owns every hardening number (`docs/contracts/hardening/limits.yaml`).
 fn limits_registry() -> serde_yaml_ng::Value {
     let text = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/spec/hardening/limits.yaml"),
+            .join("../../docs/contracts/hardening/limits.yaml"),
     )
-    .expect("docs/spec/hardening/limits.yaml is the registry of v0.4.1 section 52.1");
+    .expect("docs/contracts/hardening/limits.yaml is the registry of v0.4.1 section 52.1");
     serde_yaml_ng::from_str(&text).expect("the registry is YAML")
 }
 
 /// The registry that says what enforces each connection ceiling
-/// (`docs/spec/hardening/remote_limits.yaml`).
+/// (`docs/contracts/hardening/remote_limits.yaml`).
 fn remote_registry() -> serde_yaml_ng::Value {
     let text = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/spec/hardening/remote_limits.yaml"),
+            .join("../../docs/contracts/hardening/remote_limits.yaml"),
     )
-    .expect("docs/spec/hardening/remote_limits.yaml is the `remote_limits` registry of §52.1");
+    .expect("docs/contracts/hardening/remote_limits.yaml is the `remote_limits` registry of §52.1");
     serde_yaml_ng::from_str(&text).expect("the registry is YAML")
 }
 
@@ -55,7 +55,7 @@ fn row(registry: &serde_yaml_ng::Value, key: &str) -> serde_yaml_ng::Value {
         .expect("the registry declares a `limits` sequence")
         .iter()
         .find(|entry| entry["key"].as_str() == Some(key))
-        .unwrap_or_else(|| panic!("`{key}` is declared in docs/spec/hardening/limits.yaml"))
+        .unwrap_or_else(|| panic!("`{key}` is declared in docs/contracts/hardening/limits.yaml"))
         .clone()
 }
 

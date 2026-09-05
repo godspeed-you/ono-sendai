@@ -102,7 +102,7 @@ impl AgentConfig {
     ///
     /// Provider capabilities stay the canonical authorization unit, so this is a restatement of
     /// the command registry rather than a second taxonomy: the CLI fills it from the same
-    /// `provider_capability` field `docs/spec/commands/` already declares.
+    /// `provider_capability` field `docs/contracts/commands/` already declares.
     #[must_use]
     pub fn with_action_capability(
         mut self,

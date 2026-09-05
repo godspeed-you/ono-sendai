@@ -272,7 +272,7 @@ impl std::error::Error for WireError {}
 
 impl WireError {
     /// A wire error carrying a code from the global taxonomy of spec §43 — the host calls that
-    /// answer with `io.not_found` and friends use exactly the codes `docs/spec/errors.yaml`
+    /// answer with `io.not_found` and friends use exactly the codes `docs/contracts/errors.yaml`
     /// already defines, because there is no second error model for extensions (spec §31.79).
     #[must_use]
     pub fn from_core(code: ono_core::ErrorCode, message: impl Into<String>) -> Self {

@@ -40,7 +40,7 @@ impl Movement {
         Movement::Home,
     ];
 
-    /// The name the trail and `docs/spec/spatial/spatial.yaml` spell.
+    /// The name the trail and `docs/contracts/spatial/spatial.yaml` spell.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {

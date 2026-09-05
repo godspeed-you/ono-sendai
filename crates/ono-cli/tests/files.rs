@@ -2,7 +2,7 @@
 //! `read`, `write`, `copy`, `move`, `remove`, `set`, `open`, `tail`, `watch`, `trace` and `enter`
 //! over `file`, plus `remove dir` and `set dir`, and glob resolution for native selectors.
 //!
-//! Contract: `docs/spec/commands/file.yaml`, schemas `ono.file/1` and `ono.action-result/1`.
+//! Contract: `docs/contracts/commands/file.yaml`, schemas `ono.file/1` and `ono.action-result/1`.
 //! Narrative: spec §9.1 (the filesystem table), §11.5/§11.6 (ActionResult, destructive fan-out),
 //! §12.1 (bytes are bytes), §14.3 (object context), §16.5 (no collapsed bulk errors), §17.3 (no
 //! ambiguous glob destruction), §17.4 (scripts never wait for a prompt), §18.2 (native live

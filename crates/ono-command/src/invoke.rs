@@ -389,7 +389,7 @@ pub type OutcomeFuture<'a> = Pin<Box<dyn Future<Output = Result<Outcome, ErrorVa
 /// A native implementation of one registry command.
 ///
 /// Spec §27.2: native code registers an implementation against a stable command id. The contract
-/// is data and lives in `docs/spec/commands/`; this is the code behind it.
+/// is data and lives in `docs/contracts/commands/`; this is the code behind it.
 pub trait CommandImpl: Send + Sync {
     /// The registry id this implements, such as `ono.process.get`.
     fn id(&self) -> &str;

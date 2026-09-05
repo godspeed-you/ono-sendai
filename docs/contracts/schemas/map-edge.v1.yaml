@@ -1,0 +1,83 @@
+# Canonical MapEdge schema. Source: v0.4 §22's `MapEdge`, together with §11.4, which requires
+# every displayed relationship to be inspectable: "relation, source, target, direction, provider,
+# provenance, confidence, observed_at". They are carried on the edge itself rather than behind a
+# second command, so `map --json` already answers `inspect relation` (ADR-0164).
+#
+# §2.6 keeps hierarchy and graph apart, so `kind` says which of the two an edge is: a containment
+# or grouping edge of §3.4 asserts no operational dependency, and a relationship edge of §3.5
+# does. §11.5 keeps an inferred edge distinguishable from an exact one.
+id: ono.map-edge/1
+name: MapEdge
+summary: One relationship or containment a map draws between two of its nodes.
+identity: [id]
+fields:
+  id:
+    type: string
+    required: true
+    doc: The edge's stable identity, so the same edge is the same edge in a later map (§11.4).
+  source:
+    type: string
+    required: true
+    doc: Where the edge starts — a node's `spatial_id`, or the id of the cluster standing for it (§8.2, §43.2).
+  target:
+    type: string
+    required: true
+    doc: Where the edge leads, read the same way.
+  source_label:
+    type: string
+    required: true
+    doc: >-
+      What a person calls the source. §11.4 makes every displayed relationship inspectable, and a
+      relationship whose two ends are opaque ids is not inspectable by a person; the ids stay
+      beside it for anything that resolves them.
+  target_label:
+    type: string
+    required: true
+    doc: What a person calls the target, for the same reason.
+  relation:
+    type: string
+    required: true
+    doc: The declared relation of `docs/contracts/spatial/relations.yaml`, or the §3.4 grouping for a hierarchy edge.
+  kind:
+    type: enum
+    required: true
+    values: [hierarchy, relationship]
+    doc: Whether the edge is canonical containment (§3.4) or a real connection (§3.5). §2.6 forbids confusing the two.
+  confidence:
+    type: enum
+    required: true
+    values: [exact, strong, inferred, user_declared, unknown]
+    doc: How confident the assertion is (§11.5). A map must show an inferred edge differently from an exact one.
+  direction:
+    type: enum
+    required: true
+    values: [outbound, inbound, bidirectional]
+    doc: Which way the edge runs (§3.5).
+  provider:
+    type: string
+    required: true
+    doc: Who observed it (§11.4). The canonical geography is asserted by the spatial layer itself.
+  evidence:
+    type: map
+    required: true
+    doc: >-
+      §11.4's "raw evidence/reference where safe": what the provider actually saw, as it reported
+      it — the descriptor and the access mode of an open file, the inode of a socket. Empty for a
+      hierarchy edge, which is containment declared by the spatial layer and has no observation
+      behind it (§2.6, §3.4, §4.1).
+  provenance:
+    type: map
+    required: true
+    doc: The full v0.2 provenance of the assertion (§11.4).
+  observed_at:
+    type: timestamp
+    nullable: true
+    doc: When it was observed; null when nothing recorded an observation time (§2.17).
+  changed:
+    type: string
+    nullable: true
+    doc: >-
+      How the edge changed inside the change window — §22's optional `changed` field; null
+      without an event source or a comparison snapshot (§24.3).
+default_view:
+  columns: [relation, source_label, target_label, confidence, provider]

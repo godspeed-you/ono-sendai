@@ -66,7 +66,7 @@ pub fn parse_stat(text: &str) -> Option<ProcStat> {
     })
 }
 
-/// The scheduling state, mapped onto the enumeration of `docs/spec/schemas/process.v1.yaml`.
+/// The scheduling state, mapped onto the enumeration of `docs/contracts/schemas/process.v1.yaml`.
 ///
 /// A letter this provider does not model becomes `unknown` rather than a guess, because spec
 /// §35.3 forbids fabricating what was not observed.

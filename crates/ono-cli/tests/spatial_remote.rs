@@ -1,7 +1,7 @@
 //! Remote systems as space (v0.4 §19): a linked host is a reachable system root, not an SSH
 //! subprocess, and every crossing of that boundary is visible.
 //!
-//! Narrative: `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — §19 (link map,
+//! Narrative: `docs/specs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — §19 (link map,
 //! `jump` across links, federated map, cross-host relationships), §6.5 (`jump` records source
 //! and destination), §6.6 (`home` returns to the root `SYSTEM` place *for the current host*),
 //! §20.1 (the `NavigationStep` schema, with its `scope_crossing`), §20.3 (dead destinations),

@@ -330,7 +330,7 @@ fn should_answer_type_with_the_adapters_schema_and_check_fields_before_running()
 #[test]
 fn should_dispatch_set_of_a_system_target_through_the_registry_rather_than_the_builtin() {
     // `set env` and `set config` change the session, so they are the shell's own. `set file` is
-    // a native command like any other (docs/spec/commands/file.yaml, `ono.file.set`): the
+    // a native command like any other (docs/contracts/commands/file.yaml, `ono.file.set`): the
     // registry's implementation answers — with an ActionResult row naming `ono.file.set`
     // whose failure is the file's absence (ADR-0068 §2, ADR-0082) — never E0102 claiming the
     // verb has no such target.

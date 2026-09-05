@@ -275,7 +275,7 @@ fn should_render_the_list_view_as_one_labelled_block_per_record() {
 
 // --- a marker where a person reads without colour (issue #12, ADR-0332, ADR-0558) -------------
 
-/// `ono.action-result/1` as `docs/spec/schemas/action-result.v1.yaml` declares the part that is
+/// `ono.action-result/1` as `docs/contracts/schemas/action-result.v1.yaml` declares the part that is
 /// read by eye: what was acted on, what was asked, and how it went.
 fn action_result_schema() -> Arc<Schema> {
     Arc::new(

@@ -34,7 +34,7 @@ use crate::spatial::session::SpatialSessionState;
 
 /// The capability a package must hold before it may contribute relationship edges.
 ///
-/// `docs/spec/capabilities.yaml` already declares it: "Contribute relationship edges to the
+/// `docs/contracts/capabilities.yaml` already declares it: "Contribute relationship edges to the
 /// graph." §35.5 makes holding it the condition for the contribution reaching a map at all.
 pub const RELATION_WRITE: &str = "relation.write";
 

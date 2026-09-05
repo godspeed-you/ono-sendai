@@ -30,7 +30,7 @@ const UNIT_SUFFIXES: [&str; 11] = [
     ".scope",
 ];
 
-/// The `ono.service/1` schema of spec §28.3, as `docs/spec/schemas/service.v1.yaml` fixes it.
+/// The `ono.service/1` schema of spec §28.3, as `docs/contracts/schemas/service.v1.yaml` fixes it.
 ///
 /// ```
 /// let schema = ono_provider_systemd::service_schema();

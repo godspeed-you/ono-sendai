@@ -39,8 +39,8 @@ real child agent, and a KUANG/11 package loaded under the broker.
 - **Never weaken a test or the harness to get green.** Not by deleting a case, not by loosening a
   match, not by removing `-D warnings`. If a case is wrong, fix the case in its own commit and say
   why.
-- **The narrative specifications are immutable** — `docs/ono_sendai_*spec_v*.md` are never edited, not
-  even for a typo. They are checksummed, and the gate fails if one changes. Where a specification
+- **The narrative specifications are immutable** — `docs/specs/ono_sendai_*spec_v*.md` are never
+  edited, not even for a typo. They are checksummed, and the gate fails if one changes. Where a specification
   is ambiguous, silent or wrong, write an ADR that records the deviation and implement your
   decision (see below).
 - **One kind of change per commit.** `feat`, `fix`, `refactor`, `perf`, `test`, `docs` are
@@ -50,7 +50,7 @@ real child agent, and a KUANG/11 package loaded under the broker.
 
 ## Changing behaviour, contracts or architecture
 
-The public contract is the machine-readable registry set under `docs/spec/` — commands, verbs,
+The public contract is the machine-readable registry set under `docs/contracts/` — commands, verbs,
 targets, schemas, errors, capabilities, providers. It is written **first**, implemented second,
 and `spec-check` fails on drift between the two. Adding or changing a user-visible command means
 touching the contract in the same change as the code, plus help text, completion metadata, an
@@ -58,7 +58,7 @@ inspectable output schema, structured errors and a doc example that runs.
 
 An **architecture decision record** is required whenever a change is architectural, cross-cutting,
 hard to reverse, resolves an ambiguity in a specification, or picks between real alternatives.
-ADRs live in `docs/decisions/ADR-NNNN-kebab-title.md`; the format, including the mandatory
+ADRs live in `docs/adr/ADR-NNNN-kebab-title.md`; the format, including the mandatory
 `## Spec deviation` heading for anything that departs from specified behaviour, is in
 [`AGENTS.md`](AGENTS.md) §8. Read a few neighbouring ADRs before writing your first one.
 
@@ -78,8 +78,11 @@ it: `scripts/demo/make.sh` (see [`scripts/demo/README.md`](scripts/demo/README.m
 | [open issues](https://github.com/godspeed-you/ono-sendai/issues) | the backlog: one problem, one issue, with the evidence that closes it |
 | [`docs/STATE.md`](docs/STATE.md) | the work board: what is in progress, what is found but not yet filed, what is deferred |
 | [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) | what "finished" means, in boxes a script can check |
-| [`docs/spec/`](docs/spec/) | the machine-readable public contract |
-| [`docs/decisions/`](docs/decisions/) | every recorded decision and deliberate spec deviation |
+| [`docs/specs/`](docs/specs/) | the immutable narrative release specifications |
+| [`docs/contracts/`](docs/contracts/) | the machine-readable public contract |
+| [`docs/architecture/`](docs/architecture/) | architecture specifications tied to no numbered release |
+| [`docs/strategy/`](docs/strategy/) | where the project is going, and why — direction, not contract |
+| [`docs/adr/`](docs/adr/) | every recorded decision and deliberate spec deviation |
 | [`docs/reference/`](docs/reference/) | generated reference — never hand-edited |
 
 If you are an AI implementation agent: your entry point is [`AGENTS.md`](AGENTS.md), and you

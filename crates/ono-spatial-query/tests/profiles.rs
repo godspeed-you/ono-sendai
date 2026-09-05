@@ -7,7 +7,7 @@
 //! > that a spatial operation is performant.
 //!
 //! A curve needs more than one point, and two runs are only comparable if they used the same
-//! points. `docs/spec/hardening/performance_profiles.yaml` is where Appendix F's numbers are
+//! points. `docs/contracts/hardening/performance_profiles.yaml` is where Appendix F's numbers are
 //! written down once; this suite is the comparison that keeps the registry and the fixtures
 //! saying the same thing, in both directions.
 //!
@@ -64,7 +64,7 @@ fn should_build_every_declared_profile_at_the_cardinality_the_registry_states() 
         let declaration = by_id.get(id).unwrap_or_else(|| {
             panic!(
                 "v0.4.1 §32.2 requires Profile {id}; \
-                 docs/spec/hardening/performance_profiles.yaml declares {:?}",
+                 docs/contracts/hardening/performance_profiles.yaml declares {:?}",
                 by_id.keys().collect::<Vec<_>>()
             )
         });

@@ -1,4 +1,4 @@
-//! The messages the supervisor and a plugin exchange (`docs/spec/kuang/protocol.v1.yaml`).
+//! The messages the supervisor and a plugin exchange (`docs/contracts/kuang/protocol.v1.yaml`).
 //!
 //! Everything on the wire is one of three envelopes: the plugin's opening [`Hello`], a
 //! [`Envelope::Request`] carrying a call id from the protocol contract, or a
@@ -15,7 +15,7 @@ use serde_json::{Map as JsonMap, Value as Json};
 
 use crate::{KuangError, KuangErrorCode, PluginContract, WireError};
 
-/// The call ids of `docs/spec/kuang/protocol.v1.yaml`, as they appear in `Request::method`.
+/// The call ids of `docs/contracts/kuang/protocol.v1.yaml`, as they appear in `Request::method`.
 pub mod method {
     /// Host → plugin: deliver the negotiated contract (spec §31.63).
     pub const LIFECYCLE_INIT: &str = "lifecycle.init";
@@ -185,7 +185,7 @@ pub struct ContributionSet {
 }
 
 /// A contributed command, in the same metadata shape core commands use
-/// (`docs/spec/kuang/contributions.v1.yaml`). `provider` and origin are the host's to set at
+/// (`docs/contracts/kuang/contributions.v1.yaml`). `provider` and origin are the host's to set at
 /// registration; they are deliberately not wire fields.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommandContribution {
@@ -234,7 +234,7 @@ impl CommandDocument {
     /// # Errors
     ///
     /// `package.invalid` when the document is not the shape
-    /// `docs/spec/kuang/contributions.v1.yaml` describes.
+    /// `docs/contracts/kuang/contributions.v1.yaml` describes.
     pub fn parse(text: &str) -> Result<Self, KuangError> {
         serde_yaml_ng::from_str(text).map_err(|error| {
             KuangError::new(
@@ -243,7 +243,7 @@ impl CommandDocument {
             )
             .with_help(
                 "the document is a `commands:` list of the contribution shape of \
-                 `docs/spec/kuang/contributions.v1.yaml`",
+                 `docs/contracts/kuang/contributions.v1.yaml`",
             )
         })
     }
@@ -262,7 +262,7 @@ pub struct TargetContribution {
     pub identity_doc: String,
 }
 
-/// A contributed schema, in the field vocabulary of `docs/spec/schemas/*.v1.yaml`
+/// A contributed schema, in the field vocabulary of `docs/contracts/schemas/*.v1.yaml`
 /// (spec §31.23: contributed schemas are written in the same language core schemas are).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SchemaContribution {

@@ -2,8 +2,8 @@
 //!
 //! The shape of each contract — its fields, types, nullability, units, identity and default view
 //! — and the set of schemas each provider advertises are stated by the generated suite of spec
-//! §35.3 (`crates/ono-cli/tests/provider_conformance.rs`, from `docs/spec/providers/*.yaml` and
-//! `docs/spec/schemas/*.v1.yaml`). What is left here is what a declaration cannot express: what a
+//! §35.3 (`crates/ono-cli/tests/provider_conformance.rs`, from `docs/contracts/providers/*.yaml` and
+//! `docs/contracts/schemas/*.v1.yaml`). What is left here is what a declaration cannot express: what a
 //! field means, and that every record decoded from a fixed netlink byte stream satisfies the
 //! contract it claims (ADR-0012).
 

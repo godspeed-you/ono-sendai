@@ -6,7 +6,7 @@
 //! frame that stands on it — and none of it can live in a provider: a provider is what a link
 //! frame *swaps* (spec §14.4), so a provider that owned the link table would be answering from
 //! the other side of the link the moment one is entered. The contracts are still the registry's
-//! (`docs/spec/commands/remote.yaml` supplies help, completion and typing), and this module
+//! (`docs/contracts/commands/remote.yaml` supplies help, completion and typing), and this module
 //! supplies the effect and the `ono.action-result/1` row every mutation answers with, which then
 //! seeds the rest of the pipeline exactly as a provider's outcome would (ADR-0104).
 

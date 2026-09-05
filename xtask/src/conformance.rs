@@ -1,9 +1,9 @@
 //! Generating the provider conformance suite from the registries (spec §35.3).
 //!
 //! "Every provider capability gets a generated conformance suite from registry metadata."
-//! `docs/spec/providers/*.yaml` says what each provider advertises — its targets, its
+//! `docs/contracts/providers/*.yaml` says what each provider advertises — its targets, its
 //! capabilities, the schemas it emits, its identity strategy and how a bare snapshot of each
-//! target behaves. `docs/spec/schemas/*.v1.yaml` fixes the shape of every record. This module
+//! target behaves. `docs/contracts/schemas/*.v1.yaml` fixes the shape of every record. This module
 //! turns the two into `crates/ono-cli/tests/provider_conformance.rs`, so that nothing a provider
 //! advertises can go unexercised: a target with no declared exercise, a capability that reaches
 //! neither a snapshot nor a command, an undeclared schema — each stops generation rather than
@@ -27,7 +27,7 @@ const SUITE: &str = "crates/ono-cli/tests/provider_conformance.rs";
 /// The exercises a declaration may ask for.
 const EXERCISES: [&str; 3] = ["enumerable", "selector_required", "unbounded"];
 
-/// One provider entry, as `docs/spec/providers/*.yaml` declares it.
+/// One provider entry, as `docs/contracts/providers/*.yaml` declares it.
 struct Declaration {
     id: String,
     doc: String,
@@ -42,7 +42,7 @@ struct Declaration {
     ident: String,
 }
 
-/// One schema, as `docs/spec/schemas/*.v1.yaml` fixes it.
+/// One schema, as `docs/contracts/schemas/*.v1.yaml` fixes it.
 struct SchemaDecl {
     identity: Vec<String>,
     identity_fallback: Vec<String>,
@@ -58,14 +58,14 @@ struct FieldDecl {
     unit: Option<String>,
 }
 
-/// Generates the conformance suite from the registries under `root/docs/spec`.
+/// Generates the conformance suite from the registries under `root/docs/contracts`.
 ///
 /// # Errors
 ///
 /// Returns a [`GenerateError`] when a registry is missing or unreadable, or when a declaration
 /// would leave something a provider advertises unexercised.
 pub fn generate(root: &Path) -> Result<Vec<Page>, GenerateError> {
-    let spec = root.join("docs").join("spec");
+    let spec = root.join("docs").join("contracts");
     let capabilities = read_capabilities(&spec)?;
     let schemas = read_schemas(&spec)?;
     let commands = read_commands(&spec)?;
@@ -86,7 +86,7 @@ pub fn generate(root: &Path) -> Result<Vec<Page>, GenerateError> {
             let Some(decl) = schemas.get(schema) else {
                 return Err(GenerateError {
                     detail: format!(
-                        "`{}` declares the schema `{schema}`, and docs/spec/schemas/ defines no \
+                        "`{}` declares the schema `{schema}`, and docs/contracts/schemas/ defines no \
                          such id",
                         declaration.id
                     ),
@@ -167,10 +167,11 @@ pub fn check_committed(root: &Path) -> Vec<Problem> {
             Ok(committed) if committed == page.contents => {}
             Ok(_) => problems.push(Problem {
                 location: page.path.clone(),
-                detail: "does not match what docs/spec/providers/ and docs/spec/schemas/ \
+                detail:
+                    "does not match what docs/contracts/providers/ and docs/contracts/schemas/ \
                          produce; run `cargo xtask conformance` (spec §35.3). If the difference \
                          is deliberate, the declaration is where it belongs, not the suite"
-                    .to_owned(),
+                        .to_owned(),
             }),
             Err(_) => problems.push(Problem {
                 location: page.path.clone(),
@@ -182,8 +183,8 @@ pub fn check_committed(root: &Path) -> Vec<Problem> {
 }
 
 const HEADER: &str = "\
-//! The provider conformance suite of spec §35.3, generated from `docs/spec/providers/*.yaml`
-//! and `docs/spec/schemas/*.v1.yaml` by `cargo xtask conformance`.
+//! The provider conformance suite of spec §35.3, generated from `docs/contracts/providers/*.yaml`
+//! and `docs/contracts/schemas/*.v1.yaml` by `cargo xtask conformance`.
 //!
 //! Do not edit by hand: your changes will be overwritten and the gate will fail. What a provider
 //! advertises is declared in the registry; this file is that declaration turned into questions
@@ -214,7 +215,7 @@ fn write_surface(
             return Err(GenerateError {
                 detail: format!(
                     "`{}` declares the capability `{capability}`, which \
-                     docs/spec/capabilities.yaml does not define",
+                     docs/contracts/capabilities.yaml does not define",
                     declaration.id
                 ),
             });
@@ -365,7 +366,7 @@ fn account(
     let Some((risk, _)) = capabilities.get(capability) else {
         return Err(GenerateError {
             detail: format!(
-                "`{}` declares the capability `{capability}`, which docs/spec/capabilities.yaml \
+                "`{}` declares the capability `{capability}`, which docs/contracts/capabilities.yaml \
                  does not define",
                 declaration.id
             ),
@@ -380,7 +381,7 @@ fn account(
         return Err(GenerateError {
             detail: format!(
                 "`{}` declares `{capability}` ({risk}), and nothing would exercise it: it reads \
-                 no target this provider serves, and no command in docs/spec/commands/ names it. \
+                 no target this provider serves, and no command in docs/contracts/commands/ names it. \
                  A capability nothing reaches is surface nobody keeps (spec §35.3)",
                 declaration.id
             ),

@@ -1,4 +1,4 @@
-//! The command registry answers exactly what `docs/spec/commands/` declares (spec §27).
+//! The command registry answers exactly what `docs/contracts/commands/` declares (spec §27).
 
 #![allow(
     clippy::panic,
@@ -20,7 +20,7 @@ mod support;
 use support::registry;
 
 fn contract_directory() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec/commands")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/contracts/commands")
 }
 
 /// The entries the contract files declare on disk, counted independently of the crate.
@@ -55,7 +55,7 @@ fn should_load_every_command_the_contract_files_declare() {
 
     assert_eq!(
         loaded, declared,
-        "the embedded registry must contain exactly the ids `docs/spec/commands/` declares"
+        "the embedded registry must contain exactly the ids `docs/contracts/commands/` declares"
     );
     assert_eq!(
         registry().len(),
@@ -68,7 +68,7 @@ fn should_load_every_command_the_contract_files_declare() {
 fn should_find_a_command_by_its_id() {
     let command = registry()
         .get("ono.process.get")
-        .expect("`ono.process.get` is declared by docs/spec/commands/process.yaml");
+        .expect("`ono.process.get` is declared by docs/contracts/commands/process.yaml");
 
     assert_eq!(command.verb(), "get");
     assert_eq!(command.target(), Some("process"));
@@ -241,21 +241,21 @@ fn should_name_every_capability_and_verb_a_command_refers_to() {
     for command in registry().commands() {
         assert!(
             registry().verb(command.verb()).is_some(),
-            "`{}` names verb `{}`, which `docs/spec/verbs.yaml` does not declare",
+            "`{}` names verb `{}`, which `docs/contracts/verbs.yaml` does not declare",
             command.id(),
             command.verb()
         );
         if let Some(target) = command.target() {
             assert!(
                 registry().target(target).is_some(),
-                "`{}` names target `{target}`, which `docs/spec/targets.yaml` does not declare",
+                "`{}` names target `{target}`, which `docs/contracts/targets.yaml` does not declare",
                 command.id()
             );
         }
         if let Some(capability) = command.provider_capability() {
             assert!(
                 registry().capability(capability).is_some(),
-                "`{}` names capability `{capability}`, which `docs/spec/capabilities.yaml` does \
+                "`{}` names capability `{capability}`, which `docs/contracts/capabilities.yaml` does \
                  not declare",
                 command.id()
             );

@@ -386,7 +386,7 @@ fn should_not_make_a_selector_hit_pay_for_the_completeness_a_miss_needs() {
 /// The measurements `cargo xtask perf` recorded on the reference environment (§32.4, §37.2).
 fn recorded_baseline() -> Vec<serde_yaml_ng::Value> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/spec/hardening/performance_baseline.json");
+        .join("../../docs/contracts/hardening/performance_baseline.json");
     let text = std::fs::read_to_string(&path).unwrap_or_else(|error| {
         panic!(
             "v0.4.1 §32.4's baseline is at {}, and §36.1's targets are measured there: {error}",

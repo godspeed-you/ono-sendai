@@ -7,7 +7,7 @@
 //!
 //! The user-facing concept stays "authorized client key" rather than a vague ACL blob (§9.7), so
 //! every answer here is an object with named fields, and the whole surface is declared in
-//! `docs/spec/commands/remote.yaml` — which is what gives it help and completion for free.
+//! `docs/contracts/commands/remote.yaml` — which is what gives it help and completion for free.
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -252,7 +252,7 @@ fn should_act_on_the_client_keys_that_arrive_through_the_pipe() {
 #[test]
 fn should_carry_help_and_completion_for_every_client_key_command() {
     // §50 of the base spec: a capability is not delivered until help is complete and completion
-    // metadata exists. The contracts in `docs/spec/commands/remote.yaml` are what supply both,
+    // metadata exists. The contracts in `docs/contracts/commands/remote.yaml` are what supply both,
     // so this is the check that the commands really are registry commands.
     let home = scratch();
     for spelling in [

@@ -130,7 +130,7 @@ fn event_schema_for(contract: &crate::CommandContract) -> Result<Arc<Schema>, Er
                 ),
             )
             .with_help(
-                "the schema arrives with its phase; `docs/spec/schemas/deferred.yaml` \
+                "the schema arrives with its phase; `docs/contracts/schemas/deferred.yaml` \
                         says which",
             )
         })

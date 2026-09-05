@@ -93,7 +93,7 @@ impl TraceOptions {
     }
 
     /// The bounds a `trace` command line asks for: the `depth` and `relations` options of
-    /// `docs/spec/commands/*.yaml`. An option that is absent or of the wrong shape leaves the
+    /// `docs/contracts/commands/*.yaml`. An option that is absent or of the wrong shape leaves the
     /// default in place rather than failing, because the command layer has already validated it.
     #[must_use]
     pub fn from_query(query: &Query) -> Self {

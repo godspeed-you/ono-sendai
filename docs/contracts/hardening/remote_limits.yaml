@@ -1,0 +1,126 @@
+# The connection ceilings of a listening Ono agent, as data: what each one bounds, what enforces
+# it, what a peer over the line is told, and what the operator sees in the audit trail.
+#
+# Source: v0.4.1 §12.1 (global connection limit), §12.2 (handshake limit and timeout), §12.3
+# (per-client connection limit), §12.4 (one centralized `Limits` contract), §12.5 (revocation),
+# §12.6 (failure isolation), §14.1 (the connection events an agent records), §52.1 (`remote_limits`
+# is one of the seven machine-readable hardening registries) and §53.1 (the stable error families).
+# Decisions: ADR-0501, ADR-0502, ADR-0503.
+#
+# **This file holds no numbers, deliberately.** §52.2 is the sentence the whole registry family
+# exists to obey:
+#
+#   "A number such as `max_connections = 32` MUST not be independently typed into five files if
+#    one contract can generate the others."
+#
+# So every figure lives in `docs/contracts/hardening/limits.yaml`, once, with its type, its default,
+# its permitted range and its configuration key; this file names that key and describes what the
+# agent does when the ceiling is reached. A reader who wants the value follows `limit_key`; a
+# reader who wants the behaviour reads `refusal`, `audit` and `doc` here. Nothing has to be kept
+# in step, because nothing is written twice.
+#
+# Authority: `ono_protocol::Limits` carries the four ceilings as fields and clamps every setter
+# into the range `limits.yaml` declares, `ono_remote::ListeningAgent` enforces them, and
+# `crates/ono-remote/tests/limits.rs` compares the three in both directions — a ceiling this file
+# names that `limits.yaml` does not declare is a failure, and so is a number appearing here.
+#
+# Fields
+#
+#   id          the stable name of the ceiling.
+#   limit_key   the `limits.*` key in `docs/contracts/hardening/limits.yaml` that holds its number.
+#   field       the accessor on `ono_protocol::Limits` that answers the effective value.
+#   enforced_by the component that applies it.
+#   stage       when in the connection's life it is applied.
+#   refusal     the stable error a refused peer receives, or `null` where the peer is dropped
+#               before a frame can be exchanged and only the audit trail records the decision.
+#   audit       the §14.1 event class the decision is recorded under.
+#   spec        the section that fixes the rule.
+
+version: 1
+
+ceilings:
+  - id: remote.connections
+    limit_key: limits.remote_connections
+    field: max_connections
+    enforced_by: ono-remote
+    stage: after the mutual TLS handshake, before the Ono hello is answered
+    refusal: remote.connection_limit
+    audit: connection.limit_denied
+    spec: "v0.4.1 §12.1, Appendix A"
+    doc: >-
+      Concurrent authenticated connections one agent holds. Applied once the peer's fingerprint is
+      known, so the refusal can be a stable error the peer receives rather than a socket that
+      closes for no stated reason (§54.1). §12.1's requirement that the ceiling include
+      connections still in handshake state is met by the separate pending-handshake semaphore the
+      same sentence sanctions, which bounds what may be in flight beside the admitted set.
+
+  - id: remote.pending_handshakes
+    limit_key: limits.remote_pending_handshakes
+    field: max_pending_handshakes
+    enforced_by: ono-remote
+    stage: at TCP accept, before any cryptography is spent on the peer
+    refusal: null
+    audit: connection.limit_denied
+    spec: "v0.4.1 §12.2, Appendix A"
+    doc: >-
+      Connections that may be mid-negotiation at once. The one ceiling applied before the peer has
+      cost the agent anything, which is what makes it a defence against handshake exhaustion: a
+      flood of peers that complete TCP and then say nothing cannot make the agent start a
+      seventeenth handshake. There is no refusal frame, because a peer that has not completed TLS
+      has no authenticated channel to be told anything over (§13.1).
+
+  - id: remote.connections_per_client
+    limit_key: limits.remote_connections_per_client
+    field: max_connections_per_client
+    enforced_by: ono-remote
+    stage: after the mutual TLS handshake, keyed on the authenticated fingerprint
+    refusal: remote.connection_limit
+    audit: connection.limit_denied
+    spec: "v0.4.1 §12.3, Appendix A"
+    doc: >-
+      Concurrent connections one authenticated fingerprint may hold, so one client cannot fill the
+      global ceiling. Keyed on the fingerprint and never on the source address: §11.3 forbids
+      network locality standing in for identity, and a per-address ceiling would be both trivially
+      sidestepped by one client with several addresses and wrongly restrictive for several clients
+      behind one.
+
+  - id: remote.handshake_timeout
+    limit_key: limits.remote_handshake_timeout_ms
+    field: handshake_timeout
+    enforced_by: ono-remote
+    stage: around TLS and Ono negotiation together, from TCP accept to the answered hello
+    refusal: remote.handshake_timeout
+    audit: connection.limit_denied
+    spec: "v0.4.1 §12.2, Appendix A"
+    doc: >-
+      How long a peer may take to complete TLS plus Ono protocol negotiation. The timeout and the
+      pending-handshake ceiling are two protections and not one: the ceiling stops a flood from
+      exhausting the accept path, and the timeout stops a single silent peer from holding a slot
+      of that ceiling for as long as it likes. Either without the other leaves the accept path
+      reachable.
+
+# What the agent does when an operator withdraws a grant (§12.5).
+revocation:
+  new_connections: refused immediately
+  established_connections: closed
+  budget_key: limits.remote_connections
+  sweep: >-
+    The listening agent re-reads the authorization store on a fixed interval and closes every live
+    connection whose fingerprint the store no longer authorizes, within the five seconds §12.5
+    names. The registry of live connections that makes this possible is the same one the global
+    and per-client ceilings are counted in, which is why §12.5 became implementable with §12.1
+    rather than before it (ADR-0505).
+  spec: "v0.4.1 §12.5"
+
+# What one failing connection may cost the others (§12.6).
+isolation:
+  rule: >-
+    One malformed, unauthorized, slow or panicking client MUST NOT terminate the listener or
+    consume unbounded tasks. Every connection is served on a task of its own, every failure on it
+    is recorded and dropped there, and the accept loop continues unless the listening socket
+    itself has become unusable.
+  fatal_accept_errors:
+    - bad file descriptor
+    - not a socket
+    - invalid argument
+  spec: "v0.4.1 §12.6"

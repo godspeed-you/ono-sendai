@@ -1,7 +1,7 @@
 //! The Ono-Sendai command registry: public command contracts as data (spec §27).
 //!
 //! Spec §27's design goal is that "public command contracts are data". This crate is what makes
-//! that true at runtime. `docs/spec/commands/` declares every command — its verb, its target, its
+//! that true at runtime. `docs/contracts/commands/` declares every command — its verb, its target, its
 //! selectors and options with their types, its input and output schemas, the provider capability
 //! it needs, its privilege, its stability and its examples — and this crate turns those files
 //! into the registry the shell consults for four things spec §15 and §42 require:
@@ -29,7 +29,7 @@
 //!
 //! let registry = CommandRegistry::embedded()?;
 //!
-//! // The contract, straight out of `docs/spec/commands/process.yaml`.
+//! // The contract, straight out of `docs/contracts/commands/process.yaml`.
 //! let command = registry.find("get", Some("process")).expect("`get process` is declared");
 //! assert_eq!(command.output().text(), "stream<ono.process/1>");
 //!

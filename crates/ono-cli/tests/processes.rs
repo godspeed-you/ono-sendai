@@ -1,7 +1,7 @@
 //! The process family the contract declares, plus the one
 //! contract behaviour every mutation owes: a failed row makes the exit status non-zero.
 //!
-//! Contracts: `docs/spec/commands/process.yaml` (`ono.process.inspect`, `ono.job.get`,
+//! Contracts: `docs/contracts/commands/process.yaml` (`ono.process.inspect`, `ono.job.get`,
 //! `ono.process.enter`, `ono.process.set`, `ono.signal.send`, `ono.process.kill`,
 //! `ono.process.stop`), schemas `ono.job/1`, `ono.action-result/1`, `ono.context/1`, and the
 //! deferred `ono.process-detail/1` whose fields spec §33.1 names.

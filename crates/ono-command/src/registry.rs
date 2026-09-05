@@ -1,4 +1,4 @@
-//! The command registry: the contract files of `docs/spec/commands/`, available at runtime.
+//! The command registry: the contract files of `docs/contracts/commands/`, available at runtime.
 //!
 //! The files are embedded at compile time. Spec §34 budgets a cold start of under 100 ms with a
 //! target of 50 ms, which a dozen YAML reads would spend before the prompt appears; and a shell
@@ -20,7 +20,7 @@ use crate::contract::{
 };
 use crate::suggest::closest;
 
-/// The command families of `docs/spec/commands/`, embedded as the JSON `build.rs` wrote.
+/// The command families of `docs/contracts/commands/`, embedded as the JSON `build.rs` wrote.
 const COMMAND_FILES: &[&str] = &[
     include_str!(concat!(env!("OUT_DIR"), "/commands/container.json")),
     include_str!(concat!(env!("OUT_DIR"), "/commands/data.json")),
@@ -123,7 +123,7 @@ impl CommandRegistry {
                 return Err(ErrorValue::new(
                     ErrorCode::ResolveAmbiguous,
                     format!(
-                        "`{}` is declared twice in docs/spec/commands/",
+                        "`{}` is declared twice in docs/contracts/commands/",
                         command.id()
                     ),
                 ));
@@ -163,7 +163,7 @@ impl CommandRegistry {
     /// The registries KUANG/11 contributes into are the shell's own (spec §31.64): a contributed
     /// command is a command, and the same `get command` finds it. Two rules keep that from
     /// meaning "and is therefore trusted", both from
-    /// `docs/spec/kuang/contributions.v1.yaml` → `registration_checks`:
+    /// `docs/contracts/kuang/contributions.v1.yaml` → `registration_checks`:
     ///
     /// - **`no-core-shadow`** — a contribution whose spelling a core command already holds is
     ///   refused. Ono's own vocabulary cannot be replaced from a package directory.
@@ -304,7 +304,7 @@ impl CommandRegistry {
         targets
     }
 
-    /// The verb registry of `docs/spec/verbs.yaml`.
+    /// The verb registry of `docs/contracts/verbs.yaml`.
     #[must_use]
     pub fn verbs(&self) -> &[VerbSpec] {
         &self.verbs
@@ -316,7 +316,7 @@ impl CommandRegistry {
         self.verbs.iter().find(|entry| entry.verb() == verb)
     }
 
-    /// The target registry of `docs/spec/targets.yaml`.
+    /// The target registry of `docs/contracts/targets.yaml`.
     #[must_use]
     pub fn targets(&self) -> &[TargetSpec] {
         &self.targets
@@ -328,7 +328,7 @@ impl CommandRegistry {
         self.targets.iter().find(|entry| entry.name() == name)
     }
 
-    /// The provider capability registry of `docs/spec/capabilities.yaml`.
+    /// The provider capability registry of `docs/contracts/capabilities.yaml`.
     #[must_use]
     pub fn capabilities(&self) -> &[CapabilitySpec] {
         &self.capabilities
@@ -461,7 +461,7 @@ mod embedded_documents {
     use super::{CAPABILITY_FILE, COMMAND_FILES, TARGET_FILE, VERB_FILE};
 
     fn spec_dir() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec")
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/contracts")
     }
 
     /// One JSON spelling per document, so two value trees compare as text: the mapping order
@@ -484,12 +484,12 @@ mod embedded_documents {
         canonical(&value)
     }
 
-    /// What the binary carries is what `docs/spec/commands/` says, value for value, and no
+    /// What the binary carries is what `docs/contracts/commands/` says, value for value, and no
     /// family on disk is left out (ADR-0571).
     #[test]
     fn should_embed_every_command_family_as_the_spec_states_it() {
         let mut families: Vec<String> = std::fs::read_dir(spec_dir().join("commands"))
-            .expect("docs/spec/commands/ exists")
+            .expect("docs/contracts/commands/ exists")
             .flatten()
             .map(|entry| entry.path())
             .filter(|path| {

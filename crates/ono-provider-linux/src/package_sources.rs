@@ -50,7 +50,7 @@ pub(crate) const APT_LISTS_DIR: &str = "/var/lib/apt/lists/";
 /// follow each other within milliseconds (ADR-0565).
 pub(crate) const APT_RUN_WINDOW: Duration = Duration::from_secs(5);
 
-/// The `ono.package-source/1` schema, as `docs/spec/schemas/package-source.v1.yaml` fixes it.
+/// The `ono.package-source/1` schema, as `docs/contracts/schemas/package-source.v1.yaml` fixes it.
 ///
 /// ```
 /// let schema = ono_provider_linux::package_source_schema();
@@ -61,7 +61,7 @@ pub(crate) const APT_RUN_WINDOW: Duration = Duration::from_secs(5);
 #[allow(
     clippy::expect_used,
     reason = "AGENTS.md section 16 admits `expect` in a provably unreachable state. \
-              `ono.package-source/1` is embedded from docs/spec/schemas/ at compile time and \
+              `ono.package-source/1` is embedded from docs/contracts/schemas/ at compile time and \
               crates/ono-value/tests/builtin_schemas.rs turns red the moment it is not."
 )]
 pub fn package_source_schema() -> Arc<Schema> {

@@ -170,7 +170,7 @@ fn should_print_the_bind_address_the_limits_and_the_authorized_client_count_when
         agent.field("maximum connections"),
         Some(&*ono_protocol::MAX_CONNECTIONS.to_string()),
         "the maximum concurrent connections is printed, and it is the figure Appendix A fixes \
-         and `docs/spec/hardening/limits.yaml` declares, got {:?}",
+         and `docs/contracts/hardening/limits.yaml` declares, got {:?}",
         agent.summary
     );
     assert!(

@@ -1,0 +1,396 @@
+# KUANG/11 model broker and assistant contract.
+#
+# Source: spec §31.12 (the `models` domain), §31.41 (assistants and the flow), §31.42 (assistant
+# object model), §31.43 (model broker), §31.44 (data classification), §31.45 (context broker),
+# §31.46 (typed tools), §31.47 (action plans), §31.48 (autonomy levels), §31.49 (delegated
+# scopes and leases), §31.50 (evidence and citations), §31.51 (conversation state), §31.52
+# (prompt injection and untrusted data), §31.82 (privacy UX), §31.87 (what an Ono-native
+# assistant is). Also AUTONOMOUS_IMPLEMENTATION.md §15. Decisions: ADR-0022.
+#
+# The whole file exists to make one sentence checkable. Spec §31.41:
+#
+#   "The model reasons; Ono observes and acts."
+#
+# and AUTONOMOUS_IMPLEMENTATION.md §15: Ono retains authority over available context, tool
+# exposure, capability checks, user confirmation, execution and auditability; no model sits in a
+# privileged execution path. `authority_invariants` below is that, written as contract rather
+# than as encouragement: each invariant names the component that enforces it and the conformance
+# test that proves it, so a violation is a failing test rather than a matter of taste.
+#
+# An assistant is an extension role like any other (spec §31.41): same objects, same capability
+# broker, same planner, same audit trail. "AI" is not a bypass around typed semantics.
+#
+# Nothing here is implemented. These are the contracts spec §37 Phase I is built against.
+
+version: 1
+model_broker_protocol: ono-model/1
+
+# ---------------------------------------------------------------------------------------------
+# The invariants. Every one is a MUST. `enforced_by` is a host component — never the assistant
+# package, and never the model — because an invariant a plugin enforces on itself is a promise,
+# not a boundary.
+# ---------------------------------------------------------------------------------------------
+authority_invariants:
+
+  - id: context-is-hosts
+    rule: >-
+      The model receives exactly the context the context broker assembled. An assistant requests
+      context sources; it never reads them itself and never receives anything it did not
+      request and was not granted.
+    spec: "§31.45, AUTONOMOUS_IMPLEMENTATION.md §15"
+    enforced_by: context broker
+    proven_by: "context-boundary tests (spec §31.74): a request for an ungranted source yields `assistant.context_denied`, and the assembled context contains nothing outside the granted set."
+
+  - id: tools-are-declared
+    rule: >-
+      A model may only request tools the host exposed for that turn. A tool intent naming
+      anything else is rejected as `assistant.tool_invalid` and never reaches a planner.
+    spec: "§31.46"
+    enforced_by: assistant tool registry
+    proven_by: "tool-call validation tests (spec §31.74)."
+
+  - id: intent-is-not-authority
+    rule: >-
+      A tool call the model requests is validated exactly as if it came from a human command
+      plan — argument types, object identities, capabilities, policy, confirmation. The model's
+      request is an input to that validation, never a substitute for it.
+    spec: "§31.46, §31.47"
+    enforced_by: execution planner and capability broker
+    proven_by: "denial of ungranted mutation (spec §31.74)."
+
+  - id: identity-is-refetched
+    rule: >-
+      Object identities in a proposed action are resolved again at execution time. Spec §31.47:
+      "The model does not get to treat its stale object reference as authority."
+    spec: "§31.47"
+    enforced_by: execution planner
+    proven_by: "an object replaced between proposal and execution is refused, not acted on (ADR-0015 T12)."
+
+  - id: mutation-is-proposed
+    rule: >-
+      By default an assistant proposes mutating operations and does not execute them. Execution
+      requires a user step or a policy that explicitly permits it at the effective autonomy
+      level.
+    spec: "§31.47, §31.48"
+    enforced_by: execution planner
+    proven_by: "action-plan tests: a proposal at L2 executes nothing until the operator chooses."
+
+  - id: no-model-in-privileged-path
+    rule: >-
+      No model output is on the path between a capability check and the operation it guards.
+      The final execution decision is outside the model, in Ono's planner and capability broker.
+    spec: "§31.52, AUTONOMOUS_IMPLEMENTATION.md §15"
+    enforced_by: capability broker
+    proven_by: "prompt-injection fixtures: untrusted text that asks for a capability changes no grant (spec §31.74)."
+
+  - id: untrusted-text-cannot-instruct
+    rule: >-
+      Untrusted text MUST NOT redefine capability grants or tool policy. Origins are labelled in
+      the model context, and a directive appearing in `UNTRUSTED_TEXT` is data.
+    spec: "§31.52"
+    enforced_by: model adapter and capability broker
+    proven_by: "prompt-injection fixtures (spec §31.74)."
+
+  - id: answers-cite-objects
+    rule: >-
+      An assistant answer's claims carry references to the typed objects that produced them, and
+      those references resolve. The same question must be investigable manually from the
+      citations alone.
+    spec: "§31.50, §31.87"
+    enforced_by: assistant output validator
+    proven_by: "evidence reference integrity (spec §31.74); an unresolvable citation fails the turn."
+
+  - id: everything-is-audited
+    rule: >-
+      Every tool call, every capability decision and every model request an assistant makes
+      emits an audit record, whether it succeeded, was denied or failed.
+    spec: "§31.37, AUTONOMOUS_IMPLEMENTATION.md §15"
+    enforced_by: capability broker and model broker
+    proven_by: "`get audit --plugin <id>` shows the denied call as well as the taken one."
+
+  - id: typos-stay-typos
+    rule: >-
+      Ono MUST NOT reinterpret arbitrary unknown shell input as an AI prompt. A command typo is a
+      command error.
+    spec: "§31.42, §31.87"
+    enforced_by: name resolution (ADR-0011)
+    proven_by: "an unresolvable command yields `resolve.command_not_found`, never an assistant turn."
+
+  - id: degrades-without-a-model
+    rule: >-
+      An assistant package degrades gracefully when no model is configured: it loads, reports
+      why it cannot answer, and its non-model contributions keep working.
+    spec: "§31.87"
+    enforced_by: model broker
+    proven_by: "`model.provider_unavailable` on the turn; the package's analyses still run."
+
+# ---------------------------------------------------------------------------------------------
+# Model broker — spec §31.43. An assistant asks for a model by requirements and policy, never by
+# vendor. This is what keeps assistant packages portable and "bring your own AI" true.
+# ---------------------------------------------------------------------------------------------
+model_broker:
+
+  model_requirements:
+    doc: What a package declares it needs. Spec §31.43's `model_requirements`, plus what selection needs to be checkable.
+    fields:
+      tools: {type: bool, required: true, doc: "Whether the assistant needs tool calling."}
+      structured_output: {type: bool, required: true, doc: "Whether it needs schema-constrained output."}
+      min_context: {type: int, required: true, doc: "Minimum context window in tokens. A provider below it is not offered."}
+      data_class: {type: list<string>, required: true, doc: "The data classes the assistant intends to send. Bounded by the `model.infer` grant's `data_class` scope, which is advisory (see `capabilities.v1.yaml`)."}
+      preferred: {type: string, nullable: true, doc: "`operator-selected`, or a provider id. Null means any provider that satisfies the rest."}
+      streaming: {type: bool, nullable: true, doc: "Whether partial responses are needed. Null means either is acceptable."}
+    rules:
+      - "A package MUST NOT hard-code a vendor (spec §31.43). Naming a provider id in `preferred` is a preference the operator can override, not a dependency."
+      - "The operator chooses or configures the provider. Selection is the host's; the package learns only which provider answered."
+
+  provider:
+    schema: ono.model-provider/1
+    doc: Spec §31.43's `get model` table, as an object. The operator's configuration, inspectable like everything else.
+
+  model_request:
+    doc: What crosses into `models.infer`. Assembled by the host from the assistant's request plus the broker's context.
+    fields:
+      provider: {type: string, nullable: true, doc: "A provider id, or null to let the broker choose within the grant's scope."}
+      context: {type: list<record>, required: true, doc: "Labelled context segments; see `context_labels`. The assistant supplies content only for `PLUGIN_KNOWLEDGE`."}
+      tools: {type: list<record>, required: true, doc: "The tool descriptors exposed for this turn. Assembled by the host from the assistant's declared tools intersected with its current grants."}
+      output_schema: {type: string, nullable: true, doc: "A schema id constraining structured output. Null for free text."}
+      deadline: {type: duration, required: true, doc: "The turn's budget. Exceeding it is `runtime.timeout`; an assistant never blocks terminal input (spec §31.67)."}
+    rules:
+      - "The host applies data classification to every segment before the request leaves the process (see `data_classes`)."
+      - "A request whose context contains a denied class is refused with `model.policy_denied`; it is not silently trimmed, because silently trimming would make the boundary invisible."
+
+  model_response:
+    doc: What comes back, as a stream of parts.
+    parts:
+      - {id: text, doc: "Prose for the operator. Sanitised before display like any other value (ADR-0015 T1)."}
+      - {id: structured, doc: "A value of the declared `output_schema`, validated before it is used."}
+      - {id: tool_intent, doc: "A request to call a tool, by id and structured arguments. Data, until the planner and broker have validated it."}
+      - {id: citation, doc: "An object reference supporting a claim. Must resolve (spec §31.50)."}
+    rules:
+      - "A response part the host cannot validate is discarded and the turn reports it. An unvalidated part is never forwarded to the operator as though it were checked."
+
+# ---------------------------------------------------------------------------------------------
+# Data classification — spec §31.44. "The classification system is a guardrail, not magical DLP."
+# It is recorded as a guardrail everywhere, and never as a guarantee.
+# ---------------------------------------------------------------------------------------------
+data_classes:
+  values:
+    - {id: public, doc: "Nothing sensitive. Documentation, schemas, command metadata."}
+    - {id: system-metadata, doc: "Process, service, socket and interface facts about the host."}
+    - {id: source-code, doc: "Repository and file content that is code."}
+    - {id: logs, doc: "Journal and log records. Frequently carries the other classes inside it, which is why `transform: redact` exists."}
+    - {id: credentials, doc: "Authentication material. Denied to remote providers by default."}
+    - {id: personal, doc: "Data about identifiable people."}
+    - {id: secret, doc: "Values from the secret store or marked secret by the value model (spec §17.5)."}
+    - {id: operator-marked-sensitive, doc: "Whatever the operator said is sensitive. Always honoured, never overridden by a package's classification."}
+  policy:
+    doc: Spec §31.44's model policy, per provider.
+    fields:
+      allow: {type: list<string>, required: true, doc: "Classes that may be sent as they are."}
+      transform: {type: record, nullable: true, doc: "Class to transformation, e.g. `{logs: redact}`. Applied by the host before the request leaves."}
+      deny: {type: list<string>, required: true, doc: "Classes that may never be sent to this provider. A request carrying one is `model.policy_denied`."}
+  rules:
+    - "Classification is applied by the host to the context it assembled. A package cannot classify its own context downward."
+    - "Ono MUST still make the selected context inspectable when practical (spec §31.44) — see `context_broker.inspection`."
+    - "Redaction metadata on values lets model and remote boundaries exclude secret-bearing fields automatically (spec §31.20); a field marked secret is never sent under any class."
+    - "The guarantee is about what Ono checked, never about what an arbitrary log line contains. Every surface that shows a data-class decision says which of the two it is."
+
+# ---------------------------------------------------------------------------------------------
+# Context broker — spec §31.45. It determines what an assistant can see, and it shows its work.
+# ---------------------------------------------------------------------------------------------
+context_broker:
+  sources:
+    - {id: prompt-context, default: true, capability: null, doc: "The operator's request itself."}
+    - {id: selected-objects, default: true, capability: object.read, doc: "Objects the operator selected or passed with `--with @last`."}
+    - {id: pipeline-result, default: true, capability: object.read, doc: "The current pipeline result."}
+    - {id: explicit-references, default: true, capability: object.read, doc: "`@`-references the operator wrote."}
+    - {id: recent-results, default: false, capability: history.read, doc: "Recent structured results, within the granted window."}
+    - {id: link-metadata, default: true, capability: context.read, doc: "Which host and link the session is on."}
+    - {id: command-documentation, default: true, capability: schema.read, doc: "Command and schema documentation."}
+    - {id: plugin-knowledge, default: true, capability: null, doc: "Knowledge the package ships. Labelled `PLUGIN_KNOWLEDGE`, never `SYSTEM_POLICY`."}
+    - {id: history, default: false, capability: history.read, doc: "Bounded history. Off unless granted, and redacted before it is assembled."}
+    - {id: attached-files, default: false, capability: filesystem.read, doc: "Files the operator explicitly attached or the assistant was granted. Labelled `UNTRUSTED_TEXT`."}
+    - {id: watch-windows, default: false, capability: object.read, doc: "Live watch windows the operator opened."}
+  strategy:
+    rule: >-
+      References and summaries first, full values fetched lazily (spec §31.45). What is not
+      needed is not sent, which is a privacy property before it is a performance one.
+  inspection:
+    rule: >-
+      Every turn produces a visible context summary listing what was included *and what was not*
+      — spec §31.45's `not included: shell history, environment, file contents, secrets`. The
+      exclusions are the part an operator cannot verify any other way, so they are stated, not
+      implied.
+    field: ono.assistant-turn/1.context
+  rules:
+    - "A source not in the granted set is refused with `assistant.context_denied`, and the refusal appears in the turn's context summary rather than only in a log."
+    - "Environment variables, the secret store and unbounded history are never context sources, whatever a package requests (spec §31.20, §31.51)."
+
+# ---------------------------------------------------------------------------------------------
+# Origin labels for model context — spec §31.52. The model adapter labels every segment, so the
+# distinction between data and instructions exists in the protocol rather than in a convention.
+# ---------------------------------------------------------------------------------------------
+context_labels:
+  values:
+    - {id: SYSTEM_POLICY, authored_by: host, instructional: true, doc: "Ono's own framing. Only the host may produce it."}
+    - {id: TOOL_SCHEMA, authored_by: host, instructional: true, doc: "The typed tool descriptors exposed this turn."}
+    - {id: OPERATOR_REQUEST, authored_by: operator, instructional: true, doc: "What the operator asked for."}
+    - {id: ONO_OBJECT_DATA, authored_by: host, instructional: false, doc: "Typed objects. Data, however imperative their field values read."}
+    - {id: UNTRUSTED_TEXT, authored_by: external, instructional: false, doc: "File, log, web and remote content. Spec §31.52: any assistant reading these will encounter attacker-controlled text."}
+    - {id: PLUGIN_KNOWLEDGE, authored_by: package, instructional: false, doc: "Knowledge the package ships. Not policy, and not the host's voice."}
+  rules:
+    - "A segment's label is set by the host from where the content came, never by the package or the model."
+    - "Only `instructional: true` segments may carry directives, and none of them is authored by a package or by external content."
+    - "The final execution decision remains outside the model in Ono's planner and capability broker (spec §31.52). Labelling reduces the blast radius; it is not the boundary."
+
+# ---------------------------------------------------------------------------------------------
+# Assistant tools — spec §31.46. "An assistant tool is not a string command. It is a typed
+# callable action."
+# ---------------------------------------------------------------------------------------------
+tool:
+  descriptor:
+    fields:
+      id: {type: string, required: true, doc: "A command id or a contributed tool id, e.g. `ono.service.get`. Resolvable in the command registry."}
+      summary: "{type: string, required: true, doc: \"What it does, for the model and for the operator reading the plan.\"}"
+      input: {type: record, required: true, doc: "Typed parameters, each `{type, optional}`. There is no free-text command line."}
+      output: {type: string, required: true, doc: "The output type, e.g. `stream<ono.service/1>`."}
+      capability: {type: string, required: true, doc: "The capability the call costs. Checked at call time against the assistant's grants."}
+      side_effect: {type: string, required: true, doc: "`none`, or what it changes, e.g. `restart-service`. Required for every tool, including read-only ones, so `none` is a stated answer."}
+      risk: {type: string, nullable: true, doc: "From `risk_levels` in `docs/contracts/capabilities.yaml`. Required whenever `side_effect` is not `none` (spec §31.75)."}
+      confirmation: {type: enum, nullable: true, values: [never, policy, always], doc: "Whether the operator confirms. `policy` defers to the capability policy. Required for a mutating tool."}
+  rules:
+    - "The model requests a tool by id and structured arguments. Ono validates the call exactly as if it came from a human command plan (spec §31.46)."
+    - "The exposed tool set for a turn is the assistant's declared tools intersected with its current grants and the effective autonomy level. A tool the assistant cannot use is not offered to the model, so the model cannot propose it and the operator does not have to refuse it."
+    - "A tool intent naming an unexposed id is `assistant.tool_invalid`. It is audited, because a model asking for tools it was not given is worth seeing."
+
+# ---------------------------------------------------------------------------------------------
+# Action plans — spec §31.47. By default an assistant proposes; it does not silently execute.
+# ---------------------------------------------------------------------------------------------
+action_plan:
+  schema: ono.assistant-action/1
+  flow:
+    - {step: 1, id: propose, actor: assistant, doc: "The assistant emits an ordered list of proposed actions, each marked mutating or not, each with its evidence."}
+    - {step: 2, id: choose, actor: operator, doc: "The operator selects — spec §31.47's `run 1-2 / run all / inspect plan`. At L0–L2 nothing happens without this step."}
+    - {step: 3, id: plan, actor: host, doc: "Ono turns the proposal into a concrete `ono.execution-plan/1`, resolving current object identities again."}
+    - {step: 4, id: check, actor: host, doc: "Capabilities are checked and confirmation requested for mutations."}
+    - {step: 5, id: execute, actor: host, doc: "Ono executes and produces typed results — one `ono.action-result/1` per target (spec §11.5, §16.5)."}
+    - {step: 6, id: continue, actor: assistant, doc: "The model may continue with the results, which arrive as `ONO_OBJECT_DATA`, not as an instruction to do more."}
+  rules:
+    - "A proposal is data. It can be inspected, saved, diffed and re-run later — and re-running it re-resolves identities, so an old plan cannot act on a new object."
+    - "A read-only proposal may be offered as a single confirmation (spec §31.53's \"Run read-only checks? [enter]\"); a mutating one is confirmed per its tool's `confirmation`."
+    - "Nothing in this flow is skippable by autonomy level except step 2, and only at L3 and L4, and only within what policy already allowed."
+
+# ---------------------------------------------------------------------------------------------
+# Autonomy — spec §31.48. Packages declare which levels they support; Ono controls policy, and
+# the effective level is the minimum of the two.
+# ---------------------------------------------------------------------------------------------
+autonomy:
+  levels:
+    - {id: L0, name: explain-only, tools: none, mutation: none, doc: "No tool calls at all. The model reasons over the context it was given."}
+    - {id: L1, name: observe, tools: read-only, mutation: none, doc: "Read tools only. Every call still costs its capability."}
+    - {id: L2, name: propose, tools: read-only, mutation: proposed-only, doc: "Read tools plus action plans. No mutation without an explicit user step (spec §31.48)."}
+    - {id: L3, name: act-confirmed, tools: all-granted, mutation: per-confirmation, doc: "Mutations allowed per explicit confirmation or policy."}
+    - {id: L4, name: delegated-scope, tools: all-granted, mutation: within-lease, doc: "Autonomous action inside a narrow pre-approved scope, and only under a capability lease (see `delegated_scope`)."}
+  rules:
+    - "There is no unrestricted 'root autonomous' level, and none may be added. Spec §31.48: the extension system must not normalise invisible unlimited delegation. An operator who wants that power runs a program outside KUANG/11, deliberately."
+    - "The effective level is `min(declared, policy)` and is shown on every turn. A package that declares L4 gets L2 under a policy that permits L2."
+    - "L4 requires an active lease. Without one it behaves as L3, which means a lease's expiry silently *reduces* authority rather than silently keeping it."
+    - "Raising the autonomy level for one turn is an operator action, is audited, and does not persist."
+
+# ---------------------------------------------------------------------------------------------
+# Delegated scopes — spec §31.49. L4 is useful only when bounded, and the lease is the bound.
+# The lease's shape is `capabilities.v1.yaml` → `grant.lease`.
+# ---------------------------------------------------------------------------------------------
+delegated_scope:
+  lease_shape: capabilities.v1.yaml#grant.lease
+  example_from_spec:
+    doc: >-
+      Spec §31.49's worked example — "assistant ops may restart service staging-api on link
+      staging-3 for 30 minutes, max 3 restarts, only if health endpoint is failing" — expressed
+      in the lease's own fields.
+    lease:
+      capability: service.mutate
+      selector: "host=staging-3 service=staging-api"
+      actions: [restart]
+      expires_at: "<30 minutes from grant>"
+      max_uses: 3
+      condition: "probe: health endpoint failing"
+  rules:
+    - "Every field is checked at every use, not at grant time. A condition that stopped holding stops the lease."
+    - "Leases are auditable and revocable (spec §31.49); each use emits a `PluginAction` record."
+    - "A lease never crosses a link on its own. Remote authority is the intersection of local and remote policy (spec §31.40)."
+
+# ---------------------------------------------------------------------------------------------
+# Evidence and citations — spec §31.50.
+# ---------------------------------------------------------------------------------------------
+citations:
+  rules:
+    - "An answer cites Ono object references directly, e.g. `[@process/4419.smaps#12]` (spec §31.50)."
+    - "In an interactive renderer citations are selectable; when output is redirected they remain stable textual ids. The reference is data either way."
+    - "A citation that does not resolve fails the turn's output validation. Spec §31.50's whole argument is that this is \"a stronger trust model than an answer whose only evidence is a model-generated paragraph\", and an unresolvable reference gives back exactly the paragraph."
+    - "Evidence records use `ono.evidence/1`, the same schema an analysis finding uses (`contributions.v1.yaml` → `evidence`). An assistant's evidence is not a weaker kind."
+
+# ---------------------------------------------------------------------------------------------
+# Conversation state — spec §31.51.
+# ---------------------------------------------------------------------------------------------
+conversation:
+  scopes:
+    - {id: turn, doc: "The current request only."}
+    - {id: conversation, doc: "The assistant conversation."}
+    - {id: session, doc: "The current Ono session."}
+    - {id: persistent, doc: "Explicit opt-in assistant memory. A declared capability and state class (`state.persist`), inspectable and deletable (spec §31.51)."}
+  rules:
+    - "A package MUST NOT silently treat shell history as permanent AI memory (spec §31.51). History is a context source with its own capability and window, and it is never copied into memory."
+    - "Persistent memory is inspectable and deletable through the same commands that inspect and delete plugin state."
+    - "Memory is not context: what an assistant remembers still passes the context broker before it reaches a model."
+
+# ---------------------------------------------------------------------------------------------
+# Privacy UX — spec §31.82. Before the first remote inference, the operator sees the data
+# boundary as a plan, not as a policy name.
+# ---------------------------------------------------------------------------------------------
+privacy_plan:
+  field: ono.assistant-turn/1.data_boundary
+  fields:
+    assistant: {type: string, required: true, doc: "Which assistant."}
+    model: {type: string, required: true, doc: "Which provider."}
+    location: {type: enum, required: true, values: [local, remote, enterprise], doc: "Where the inference happens."}
+    sending: {type: list<record>, required: true, doc: "What is being sent, counted and typed — spec §31.82's `4 Service objects, 1 Graph, 38 redacted JournalEvent records`."}
+    removed: {type: list<string>, required: true, doc: "What was excluded and why: credential fields, environment values, unrelated history."}
+    policy: {type: string, required: true, doc: "The data policy in force, e.g. `redacted-only`."}
+  rules:
+    - "Shown in full before the first remote inference of a session under a given policy (spec §31.82)."
+    - "Repeated calls under the same policy MAY be less verbose, but inspection MUST remain available — the plan is retained on the turn object whether or not it was displayed."
+    - "A local model is not exempt from producing the plan. It is exempt only from the prominence, because the boundary it crosses is smaller, not absent."
+
+# ---------------------------------------------------------------------------------------------
+# The assistant object and its commands — spec §31.42. An assistant is an inspectable object,
+# like everything else in the system (spec §31.89 rule 10).
+# ---------------------------------------------------------------------------------------------
+objects:
+  assistant: ono.assistant/1
+  turn: ono.assistant-turn/1
+  model_provider: ono.model-provider/1
+  action: ono.assistant-action/1
+commands:
+  - {id: ono.assistant.get, doc: "Enumerate loaded assistants."}
+  - {id: ono.assistant.ask, doc: "Run one turn under an explicit context and model policy. The assistant is named; it is never implicit (spec §7.1)."}
+  - {id: ono.model.get, doc: "Enumerate configured model providers and their policy characteristics."}
+entering_an_assistant:
+  rule: >-
+    Free natural language is accepted only inside an assistant context (`local://assistant/ops >`)
+    or through `ask assistant` (spec §31.42). Outside those, unknown input is a command error.
+  why: "Spec §31.42: \"command typos must remain command errors.\" See `authority_invariants` → `typos-stay-typos`."
+
+# ---------------------------------------------------------------------------------------------
+# Conformance additions for assistants — spec §31.74. These are in addition to the plugin
+# conformance suite, not instead of it.
+# ---------------------------------------------------------------------------------------------
+conformance:
+  cases:
+    - {id: tool-call-validation, doc: "Every tool intent is validated against its descriptor; a malformed one is rejected."}
+    - {id: ungranted-mutation-denied, doc: "A mutation tool the assistant does not hold the capability for is never exposed and never executed."}
+    - {id: context-boundary, doc: "The assembled context contains exactly the granted sources, and the turn reports the exclusions."}
+    - {id: prompt-injection, doc: "Fixtures whose untrusted text instructs the model to escalate: no grant changes, no ungranted tool runs, and the attempt is audited."}
+    - {id: model-timeout, doc: "A model that does not answer within the deadline cancels the turn and never blocks terminal input."}
+    - {id: evidence-integrity, doc: "Every citation in an accepted answer resolves to a real object."}
+    - {id: no-model-configured, doc: "With no provider configured the package loads, reports `model.provider_unavailable`, and its non-model contributions still work."}

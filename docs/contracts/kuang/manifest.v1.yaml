@@ -1,0 +1,598 @@
+# KUANG/11 package manifest contract.
+#
+# Source: spec §31.5 (package identity and naming), §31.6 (package layout), §31.7 (manifest
+# contract), §31.10 (isolation tiers), §31.15 (overflow preference), §31.17 (capability
+# declaration classes), §31.30 (dependencies), §31.31 (state classes), §31.39 (remote
+# components), §31.62 (independent version dimensions). Conventions: ADR-0012, ADR-0022.
+#
+# KUANG/11 is Ono's extension runtime and nothing else (AGENTS.md §3). This file describes the
+# manifest a *package* ships; it is not an Ono object schema. The objects the shell shows for a
+# package are `docs/contracts/schemas/plugin.v1.yaml` and `plugin-package.v1.yaml`.
+#
+# Nothing here is implemented. These are the contracts spec §37 Phase I is built against.
+#
+# Reading the field tables:
+#   `type`      the value model of spec §10.2 plus ADR-0012 §7's three additions.
+#   `required`  the manifest is invalid without it. Spec §31.7: "Unknown mandatory fields MUST
+#               fail closed."
+#   `nullable`  may be absent or null; absent means unknown, never a default (spec §10.5).
+# Every field is exactly one of the two (ADR-0012 §8).
+
+version: 1
+
+# The manifest's own format identifier, spec §31.7's `format:` line. It versions the *package
+# format* and nothing else; spec §31.62 requires the version dimensions to move independently.
+format: kuang-package/1
+
+# ---------------------------------------------------------------------------------------------
+# Identity and naming rules — spec §31.5, normative.
+#
+# These are checked before any package byte is executed (spec §31.7, §31.89 rule 1: "Manifest
+# before code"). A package that fails one of them is invalid, never merely warned about.
+# ---------------------------------------------------------------------------------------------
+identity_rules:
+  - id: id.immutable
+    rule: "`package.id` MUST be immutable across releases."
+    spec: "§31.5"
+    error: package.invalid
+  - id: id.reverse-dns
+    rule: >-
+      `package.id` MUST be a reverse-DNS name whose leading components are the publisher
+      namespace: `<publisher>.<package-name>`. Segments are lowercase, and each matches
+      `[a-z][a-z0-9-]*`.
+    spec: "§31.5"
+    error: package.invalid
+  - id: id.publisher-match
+    rule: "`package.id` MUST begin with `package.publisher`. A package MUST NOT claim another publisher namespace."
+    spec: "§31.5"
+    error: package.invalid
+  - id: id.ono-reserved
+    rule: >-
+      No package MAY claim the `ono.*` namespace unless it is shipped by the Ono project. This
+      covers the package id, every contributed command id, schema id, view id, relation name and
+      capability id.
+    spec: "§31.5"
+    error: package.invalid
+  - id: id.contributions-namespaced
+    rule: >-
+      Every contributed id MUST be namespaced under `package.id`. Command ids are
+      `<package.id>.command.<kebab-name>`, schema ids `<package.id>.<kebab-name>/<major>`, view
+      ids `<package.id>.view.<kebab-name>`, per spec §31.5's suggested internal ids.
+    spec: "§31.5, §31.22"
+    error: package.invalid
+  - id: name.not-unique
+    rule: >-
+      `package.name` is a display name. It MAY change between releases and need not be globally
+      unique, because `package.id` disambiguates. Nothing in the shell may resolve authority
+      from the display name.
+    spec: "§31.5"
+    error: null
+  - id: unknown-fields
+    rule: >-
+      An unknown field in a section marked `closed: true` invalidates the manifest — unknown
+      mandatory fields fail closed. An unknown field in a section marked `closed: false` is
+      retained, ignored and reported as a diagnostic.
+    spec: "§31.7"
+    error: package.invalid
+
+# ---------------------------------------------------------------------------------------------
+# Package layout — spec §31.6. The archive is inspectable without executing it, so every entry
+# here is either metadata or an artifact that only the supervisor loads (spec §31.6: "the package
+# format SHOULD avoid embedding arbitrary install scripts").
+# ---------------------------------------------------------------------------------------------
+layout:
+  archive_extension: .k11
+  entries:
+    - path: manifest.yaml
+      required: true
+      doc: The manifest described by this contract. Read and validated before anything else.
+    - path: SIGNATURE
+      required: false
+      doc: >-
+        The detached signature over the package's content hash (spec §31.36). Absent for a local
+        development package, which then loads in a visibly untrusted, capability-limited mode.
+    - path: LICENSE
+      required: true
+      doc: The package licence text. `package.license` names it; this file carries it.
+    - path: README.md
+      required: false
+      doc: Human documentation. Never a source of trust or capability.
+    - path: schemas/
+      required: false
+      doc: Contributed object schemas, one file each (spec §31.23).
+    - path: commands/
+      required: false
+      doc: Contributed command contracts, one file each (spec §31.22).
+    - path: views/
+      required: false
+      doc: Contributed view declarations, one file each (spec §31.27).
+    - path: capabilities.yaml
+      required: false
+      doc: >-
+        Per-role capability attribution. The authoritative request set is `capabilities:` in the
+        manifest; this file only records which role needs which capability, which spec §31.4
+        asks the shell to show.
+    - path: runtime/
+      required: false
+      doc: The executable artifact `runtime.entry` points at. Absent for a declarative-only package.
+    - path: assets/
+      required: false
+      doc: Terminal-safe assets only. Never executed, never rendered without sanitisation (ADR-0015 T1).
+    - path: migrations/
+      required: false
+      doc: State migration artifacts (spec §31.32). Run in isolation, with no capabilities of their own.
+    - path: tests/
+      required: false
+      doc: Conformance fixtures and cases for the test host (spec §31.73, §31.74).
+  rules:
+    - "Installation is metadata validation, artifact placement and signature/trust verification. It executes no package code (spec §31.6)."
+    - "Runtime initialisation happens on load, never on install (spec §31.6, §31.8)."
+    - "A path outside this list is retained as opaque package content and is never interpreted."
+
+# ---------------------------------------------------------------------------------------------
+# Manifest sections. `closed: true` means an unknown key here fails the manifest (spec §31.7).
+# ---------------------------------------------------------------------------------------------
+sections:
+
+  # --- package: identity, spec §31.5 and §31.7 ------------------------------------------------
+  - name: package
+    required: true
+    closed: true
+    doc: Who this is, immutably. Every other section is about what it does.
+    fields:
+      id:
+        type: string
+        required: true
+        doc: The immutable reverse-DNS package id, e.g. `dev.example.packet-eye`. See `identity_rules`.
+      name:
+        type: string
+        required: true
+        doc: The display name. Mutable, need not be unique, never load-bearing.
+      version:
+        type: string
+        required: true
+        doc: >-
+          The release version, semantic-version syntax. Ordering it defines is what `upgrade`
+          and the dependency ranges of §31.30 compare against.
+      description:
+        type: string
+        required: true
+        doc: One line, what the package is for. Shown in `find plugin` and the install plan.
+      publisher:
+        type: string
+        required: true
+        doc: The publisher namespace, e.g. `dev.example`. `package.id` must begin with it.
+      license:
+        type: string
+        required: true
+        doc: An SPDX identifier. The package also ships the licence text (see `layout`).
+      homepage:
+        type: string
+        nullable: true
+        doc: A URL for humans. Never fetched by the shell.
+
+  # --- compatibility: what this package can run against, spec §31.7 and §31.62 ---------------
+  - name: compatibility
+    required: true
+    closed: true
+    doc: >-
+      The version dimensions of spec §31.62, declared independently so that a new view widget
+      does not require a new value protocol.
+    fields:
+      kuang_api:
+        type: string
+        required: true
+        doc: >-
+          The host API range the package speaks, e.g. `">=11.1 <12"`. The `11` is KUANG/11's
+          major version and does not move; the minor is negotiated at load (spec §31.63). A
+          package whose range excludes the running host's version is `package.incompatible`.
+        spec: "§31.5, §31.7, §31.62, §31.63"
+      ono_language:
+        type: string
+        required: true
+        doc: The Ono language version range the package's contributed contracts assume, e.g. `">=0.2"`.
+      value_protocol:
+        type: string
+        nullable: true
+        doc: >-
+          The value protocol range, e.g. `"ono-value/1"`. Absent means the one the host API
+          version implies (spec §31.62).
+      schema_language:
+        type: string
+        nullable: true
+        doc: The schema language range, e.g. `"ono-schema/1"`. Absent means the host default.
+      view_protocol:
+        type: string
+        nullable: true
+        doc: Required only when the package contributes a view (spec §31.27). Absent otherwise.
+      model_broker:
+        type: string
+        nullable: true
+        doc: Required only when the package requests `model.infer` (spec §31.43). Absent otherwise.
+      remote_extension:
+        type: string
+        nullable: true
+        doc: Required only when the package declares a remote component (spec §31.39). Absent otherwise.
+      platforms:
+        type: list<string>
+        required: true
+        doc: >-
+          The platform tuples the runtime artifact supports, e.g. `[linux-amd64, linux-arm64]`.
+          A host not in the list refuses to load with `package.incompatible`, rather than
+          discovering the mismatch by trapping.
+
+  # --- runtime: how the code is isolated, spec §31.10 and §31.15 -----------------------------
+  - name: runtime
+    required: false
+    closed: true
+    doc: >-
+      Absent for a declarative-only package (schemas, external command adapters, views with no
+      code). Present means executable code exists, and the tier below decides how it is contained.
+    fields:
+      kind:
+        type: enum
+        required: true
+        values: [wasm-component, native-process, remote-service, declarative]
+        doc: >-
+          The isolation tier of spec §31.10, named by what it is rather than by `T1`/`T2`:
+          `wasm-component` is T2 and is the default tier for third-party code; `native-process`
+          is T1, out-of-process but unsandboxed at the syscall level, and carries the weaker
+          isolation label of §31.21; `remote-service` is T3, no local code at all;
+          `declarative` runs nothing. T0 (in-process) is reserved for core-shipped code and a
+          package may not declare it.
+        spec: "§31.10"
+      entry:
+        type: path
+        nullable: true
+        doc: >-
+          The artifact inside the archive, relative to its root. Required unless `kind` is
+          `declarative` or `remote-service`; null in those cases.
+      endpoint:
+        type: string
+        nullable: true
+        doc: >-
+          The protocol endpoint for `kind: remote-service`. Null otherwise. Reaching it still
+          costs `network.connect` with a host/port scope; declaring an endpoint grants nothing.
+      memory_max:
+        type: bytesize
+        required: true
+        doc: >-
+          The instance's memory ceiling (spec §31.15). Declared by the package, capped by host
+          policy: the effective limit is the smaller of the two and appears in the negotiated
+          contract of §31.63.
+      cpu_budget:
+        type: enum
+        required: true
+        values: [interactive, batch, background]
+        doc: >-
+          The scheduling class the supervisor applies. `interactive` must never block terminal
+          input (spec §31.67); `background` yields to everything else.
+      startup:
+        type: enum
+        required: true
+        values: [lazy, preload]
+        doc: >-
+          `lazy` registers metadata and loads code on first invocation (spec §31.68) and is the
+          normal choice. `preload` asks to be loaded at session start; Ono startup does not wait
+          for it (spec §31.67).
+      max_concurrent_calls:
+        type: int
+        nullable: true
+        doc: Preferred cap on in-flight host calls (spec §31.15). Null accepts the host default.
+      overflow:
+        type: enum
+        nullable: true
+        values: [block-upstream, drop-oldest, drop-newest, coalesce, fail-stream]
+        doc: >-
+          The package's *preferred* overflow policy (spec §31.15). Host policy has final
+          authority; a preference is never a guarantee. See `protocol.v1.yaml`.
+
+  # --- roles: what kind of extension this is, spec §31.4 ------------------------------------
+  - name: roles
+    required: true
+    closed: true
+    doc: >-
+      The extension roles of spec §31.4, at least one. Roles shape lifecycle and which host API
+      domains the package may reach — they never imply trust, and the union of requested
+      capabilities is displayed regardless of role (spec §31.4).
+    kind: list
+    values:
+      - id: analysis
+        doc: Derives findings from objects and snapshots. Request-scoped, read-only by default.
+        lifetime: request
+      - id: provider
+        doc: Exposes external or system resources as targets. Session or persistent lifetime.
+        lifetime: session
+      - id: adapter
+        doc: Structures the output of an external protocol or tool. Request-scoped.
+        lifetime: request
+      - id: view
+        doc: A specialised renderer or TUI lens. View-scoped, read-only UI and object access.
+        lifetime: view
+      - id: event-processor
+        doc: Consumes live streams. Job or session lifetime, with bounded state.
+        lifetime: session
+      - id: assistant
+        doc: Reasons over context and proposes tool calls. See `assistants.v1.yaml`.
+        lifetime: conversation
+      - id: automation
+        doc: Reacts to events or schedules. Session or opt-in daemon lifetime, strongly scoped.
+        lifetime: session
+      - id: remote-component
+        doc: Executes on a linked host. Link or session lifetime, remote-scoped (spec §31.39).
+        lifetime: link
+
+  # --- contributions: what enters Ono's registries, spec §31.22–§31.27 -----------------------
+  - name: contributions
+    required: false
+    closed: true
+    doc: >-
+      Paths inside the archive, resolved and validated before registration. The shape of each
+      contributed document is `contributions.v1.yaml`. Absent means the package contributes
+      nothing and exists only to be depended on.
+    fields:
+      commands:
+        type: list<path>
+        nullable: true
+        doc: Command contracts (spec §31.22).
+      schemas:
+        type: list<path>
+        nullable: true
+        doc: Object schemas (spec §31.23).
+      targets:
+        type: list<path>
+        nullable: true
+        doc: Target declarations (spec §31.23).
+      views:
+        type: list<path>
+        nullable: true
+        doc: View declarations (spec §31.27).
+      adapters:
+        type: list<path>
+        nullable: true
+        doc: >-
+          Adapter packs in the `ono-adapter-pack/1` format of `docs/contracts/adapters/schema.yaml`
+          (spec v0.3 §1.44). Each pack's `package.id` and `publisher` must be the manifest's, its
+          tier `community` or `experimental`, and every executable its adapters name must be in
+          the package's `process.exec` `executables` scope. A package whose roles include
+          `adapter` and that contributes packs needs no `runtime`: the packs are declarative
+          (spec v0.3 §1.45, ADR-0065).
+      relations:
+        type: list<string>
+        nullable: true
+        doc: >-
+          Relation shapes the package can contribute, written `from->to` as spec §31.7 writes
+          them, e.g. `process->flow`. The edges themselves are contributed at runtime under
+          `relation.write`; this line is the declaration a user sees before the code runs.
+      annotations:
+        type: list<string>
+        nullable: true
+        doc: >-
+          Namespaced annotation keys the package adds to existing records, e.g.
+          `dev.example.risk.score` (spec §31.23). Declaring them is what keeps an annotation
+          from being an undeclared schema fork.
+      tools:
+        type: list<path>
+        nullable: true
+        doc: Assistant tool descriptors (spec §31.46). See `assistants.v1.yaml`.
+
+  # --- capabilities: the security boundary, spec §31.16–§31.17 -------------------------------
+  - name: capabilities
+    required: false
+    closed: true
+    doc: >-
+      What the package asks Ono to do. Every id must exist in `kuang_capabilities` of
+      `docs/contracts/capabilities.yaml`; an unknown id is `package.invalid`, never a silently
+      ignored line. Absent means the package asks for nothing, which is a valid and welcome
+      answer. Scope shapes are in `capabilities.v1.yaml`.
+    fields:
+      required:
+        type: list<record>
+        nullable: true
+        doc: >-
+          Capabilities without which the package cannot load. A denial here is
+          `load.capability_denied` and the package stays enabled but unloaded (spec §31.17).
+      optional:
+        type: list<record>
+        nullable: true
+        doc: >-
+          Capabilities the package can do without. A denial makes the package `degraded` and it
+          MUST adapt rather than re-prompt (spec §31.17, §31.63).
+      runtime_requested:
+        type: list<record>
+        nullable: true
+        doc: >-
+          Capabilities the package may ask for later, in response to an explicit user action,
+          and only in a narrower scope than declared here. This is what lets an assistant
+          explain a failed service without gaining permission to restart it (spec §31.17).
+    entry_shape:
+      doc: >-
+        Each entry is either the bare capability id (`- process.read`) or a single-key mapping
+        from the id to its scope (`- filesystem.read: {paths: [...]}`), exactly as spec §31.7
+        and §31.16 write them. The two spellings mean the same thing except for the scope.
+      fields:
+        capability:
+          type: string
+          required: true
+          doc: The capability id, from `kuang_capabilities` in `docs/contracts/capabilities.yaml`.
+        scope:
+          type: record
+          nullable: true
+          doc: >-
+            Scope keys the capability declares in `capabilities.v1.yaml`. A key the capability
+            does not declare is `package.invalid`. Null means the package asks unscoped, which
+            policy may refuse.
+        roles:
+          type: list<string>
+          nullable: true
+          doc: >-
+            Which of the package's roles needs this capability. Spec §31.4 says Ono SHOULD show
+            it; null means "all declared roles", which is the weakest and least informative
+            answer a package can give.
+        purpose:
+          type: string
+          nullable: true
+          doc: >-
+            One line, why the package needs it. Shown verbatim in the grant prompt of §31.18,
+            which is why it is package-authored text and is sanitised before display, never
+            trusted as a claim.
+
+  # --- state: persistence is an authority problem, spec §31.31 and §31.32 --------------------
+  - name: state
+    required: false
+    closed: true
+    doc: Absent means the package keeps nothing beyond one invocation.
+    fields:
+      persistence:
+        type: enum
+        required: true
+        values: [invocation, view, session, persistent, shared-cache]
+        doc: >-
+          The state classes of spec §31.31. `persistent` additionally requires the
+          `state.persist` capability, a `quota` and a `version`; it is the only class that
+          survives a session.
+      quota:
+        type: bytesize
+        nullable: true
+        doc: >-
+          The package's requested ceiling. Required for `persistent`, null otherwise. Host
+          policy caps it; exceeding the effective quota is `state.quota_exceeded`.
+      version:
+        type: int
+        nullable: true
+        doc: >-
+          The state format version. Required for `persistent`: spec §31.75 lists persistent
+          state without a version declaration as a static-analysis finding.
+      migrations:
+        type: list<record>
+        nullable: true
+        doc: >-
+          One entry per version step, each `{from: int, to: int, entry: path, reversible: bool}`
+          (spec §31.32). A migration runs in isolation with no capabilities beyond its own state,
+          under bounded resources, and must fail without destroying the previous usable state.
+
+  # --- network: no ambient outbound access, spec §31.21 --------------------------------------
+  - name: network
+    required: true
+    closed: true
+    doc: >-
+      Required even when the answer is `none`, because spec §31.21 makes the absence of network
+      access something a package states rather than something a reader infers.
+    fields:
+      outbound:
+        type: enum
+        required: true
+        values: [none, brokered]
+        doc: >-
+          `none` means the package makes no outbound connections at all and the supervisor
+          refuses any attempt. `brokered` means every connection goes through the host under
+          `network.connect` with a host/port scope; there is no third answer, because arbitrary
+          outbound access is not on offer (spec §31.21).
+      destinations:
+        type: list<record>
+        nullable: true
+        doc: >-
+          For `brokered`, the declared destinations as `{host: string, ports: list<port>,
+          protocol: string, purpose: string}`. Null for `none`. Spec §31.75 lists network access
+          without a destination policy as a static-analysis finding.
+
+  # --- dependencies: composition through contracts, spec §31.30 ------------------------------
+  - name: dependencies
+    required: false
+    closed: true
+    doc: >-
+      Declared so the shell can resolve and order loads. Runtime interaction remains
+      protocol-mediated: a package never links another package's private ABI (spec §31.30).
+    fields:
+      packages:
+        type: list<record>
+        nullable: true
+        doc: >-
+          `{id: string, version: string}` where `version` is a range. Cycles MUST be detected
+          before load and reported as `load.dependency_cycle`; an unresolvable entry is
+          `load.dependency_missing`.
+      schemas:
+        type: list<record>
+        nullable: true
+        doc: >-
+          `{id: string, version: string}` naming a contributed schema and the major range that
+          satisfies it. Depending on a schema does not depend on the package that emits it: any
+          package emitting that schema satisfies the dependency.
+      capabilities:
+        type: list<string>
+        nullable: true
+        doc: >-
+          Capabilities the package needs *another* package to hold for a composition to work.
+          Informational: it changes what `explain` shows, never what is granted.
+      optional:
+        type: bool
+        nullable: true
+        doc: Whether an unresolved dependency degrades the package rather than blocking its load.
+
+  # --- remote: code that runs somewhere else, spec §31.39 and §31.40 -------------------------
+  - name: remote
+    required: false
+    closed: true
+    doc: >-
+      Absent means the package is local-only. Spec §31.39: "Ono MUST NOT copy arbitrary plugin
+      code to a production host merely because the user entered a remote link", so a remote
+      component is declared here or it does not exist.
+    fields:
+      components:
+        type: list<record>
+        nullable: true
+        doc: >-
+          `{name: string, entry: path, platforms: list<string>, capabilities: list<record>}`.
+          A remote component's capabilities are requested against the *remote* policy and are
+          never inherited from the local grant (spec §31.40).
+      mode:
+        type: enum
+        required: true
+        values: [local-analysis, remote-component, split]
+        doc: The three modes of spec §31.39, named as that section names them.
+      links:
+        type: list<string>
+        nullable: true
+        doc: >-
+          Link name patterns the package may be projected onto. Null means none may be assumed;
+          the operator names the link at grant time. Effective authority is the intersection of
+          local and remote policy (spec §31.40).
+
+  # --- assistant: only for the assistant role, spec §31.41–§31.51 ----------------------------
+  - name: assistant
+    required: false
+    closed: true
+    doc: >-
+      Required when `roles` contains `assistant`, forbidden otherwise. Its full shape is
+      `assistants.v1.yaml`; the manifest carries only what must be visible before code runs.
+    fields:
+      model_requirements:
+        type: record
+        required: true
+        doc: >-
+          What the package needs from a model, never which vendor supplies it (spec §31.43).
+          See `assistants.v1.yaml` → `model_requirements`.
+      autonomy:
+        type: list<string>
+        required: true
+        doc: >-
+          The autonomy levels the package supports, from `L0`–`L4` (spec §31.48). Declaring a
+          level is not being granted it: Ono controls policy and the effective level is the
+          minimum of declaration and policy.
+      context_policy:
+        type: record
+        required: true
+        doc: What the assistant asks the context broker for (spec §31.45). Shape in `assistants.v1.yaml`.
+      tools:
+        type: list<string>
+        nullable: true
+        doc: >-
+          The tool ids the assistant may call. Each must resolve to a command or a declared tool
+          descriptor, and each still costs its own capability at call time (spec §31.46).
+      memory:
+        type: enum
+        required: true
+        values: [turn, conversation, session, persistent]
+        doc: >-
+          The conversation memory scope of spec §31.51. `persistent` requires `state.persist`
+          and must be inspectable and deletable. Shell history is never assistant memory.

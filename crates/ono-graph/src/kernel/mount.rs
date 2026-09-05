@@ -146,7 +146,7 @@ impl RelationshipProvider for MountFilesystems {
 ///
 /// Two mounts in one peer group propagate to each other — a mount or unmount under one appears
 /// under the other — which is what `mountinfo(5)` states with `shared:N` and what
-/// `docs/spec/commands/storage.yaml` means by "propagation peers". The edge is exact: both
+/// `docs/contracts/commands/storage.yaml` means by "propagation peers". The edge is exact: both
 /// mounts state the same group, and nothing is inferred from paths or names.
 ///
 /// ADR-0079 left this out on the grounds that a peer group has no object to stand for it. It

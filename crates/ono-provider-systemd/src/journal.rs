@@ -4,7 +4,7 @@
 //! `libsystemd`'s `sd-journal` API, or `journalctl --output=json`, whose output is a machine
 //! format systemd documents and keeps stable. ADR-0085 takes the second: it is the documented
 //! adapter fallback spec §50 allows, it needs no C library, and the v0.3 adapter pack
-//! (`docs/spec/adapters/first-party/systemd.yaml`) already decodes exactly that stream into
+//! (`docs/contracts/adapters/first-party/systemd.yaml`) already decodes exactly that stream into
 //! `ono.journal-event/1`. This provider spawns the same invocation and runs the same decoder, so
 //! `get journal` and `journalctl` cannot disagree about what a record is.
 //!
@@ -128,7 +128,7 @@ fn schema_for(target: &str) -> Result<Arc<Schema>, ErrorValue> {
 
 /// The `journalctl` arguments a query asks for, after the fixed `--output=json` ones.
 ///
-/// Every option is a declared one of `docs/spec/commands/service.yaml`; a value of the wrong
+/// Every option is a declared one of `docs/contracts/commands/service.yaml`; a value of the wrong
 /// type is refused rather than passed through as text for `journalctl` to guess at.
 fn arguments(query: &Query) -> Result<Vec<String>, ErrorValue> {
     let mut argv = vec![
@@ -389,7 +389,7 @@ impl Provider for JournalProvider {
     }
 
     fn capabilities(&self) -> Vec<Capability> {
-        // `docs/spec/capabilities.yaml`: `log.read`, elevation conditional — what the journal
+        // `docs/contracts/capabilities.yaml`: `log.read`, elevation conditional — what the journal
         // shows depends on the reader's groups, and the journal decides, not the shell.
         vec![Capability::new("log.read", Risk::Read)]
     }

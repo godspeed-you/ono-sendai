@@ -7,13 +7,13 @@ use jiff::Timestamp;
 use ono_core::ErrorCode;
 use ono_value::{ErrorValue, Provenance, RecordValue, Schema, SchemaId, Value};
 
-/// `ono.dns-record/1` — `docs/spec/schemas/dns-record.v1.yaml`.
+/// `ono.dns-record/1` — `docs/contracts/schemas/dns-record.v1.yaml`.
 #[must_use]
 pub fn dns_record_id() -> SchemaId {
     SchemaId::new("ono.dns-record", 1)
 }
 
-/// `ono.probe-result/1` — `docs/spec/schemas/probe-result.v1.yaml`.
+/// `ono.probe-result/1` — `docs/contracts/schemas/probe-result.v1.yaml`.
 #[must_use]
 pub fn probe_result_id() -> SchemaId {
     SchemaId::new("ono.probe-result", 1)
@@ -24,14 +24,14 @@ pub fn probe_result_id() -> SchemaId {
 /// # Errors
 ///
 /// `provider.schema_violation` when the contract is missing from the registry, which means a
-/// file under `docs/spec/schemas/` stopped loading.
+/// file under `docs/contracts/schemas/` stopped loading.
 pub fn require(id: &SchemaId) -> Result<Arc<Schema>, ErrorValue> {
     ono_value::builtin_schemas().get(id).ok_or_else(|| {
         ErrorValue::new(
             ErrorCode::ProviderSchemaViolation,
             format!("the network providers advertise {id} but no contract defines it"),
         )
-        .with_help("`docs/spec/schemas/` is where the contract lives")
+        .with_help("`docs/contracts/schemas/` is where the contract lives")
     })
 }
 

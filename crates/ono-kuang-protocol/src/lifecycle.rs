@@ -1,6 +1,6 @@
 //! The package lifecycle of spec §31.8, with legal transitions enforced in the type.
 //!
-//! The point of the model, `docs/spec/kuang/lifecycle.v1.yaml` verbatim: "KUANG/11 MUST
+//! The point of the model, `docs/contracts/kuang/lifecycle.v1.yaml` verbatim: "KUANG/11 MUST
 //! distinguish package presence from code execution." A package that is installed has run
 //! nothing; only `load` instantiates a runtime, and only an invocation makes it active.
 //!
@@ -31,7 +31,7 @@ pub enum PluginState {
 }
 
 impl PluginState {
-    /// Every state, in the order `docs/spec/kuang/lifecycle.v1.yaml` declares them.
+    /// Every state, in the order `docs/contracts/kuang/lifecycle.v1.yaml` declares them.
     pub const ALL: &'static [PluginState] = &[
         PluginState::Installed,
         PluginState::Enabled,
@@ -74,7 +74,7 @@ pub struct TransitionError {
     pub event: &'static str,
 }
 
-/// The lifecycle state machine of `docs/spec/kuang/lifecycle.v1.yaml`.
+/// The lifecycle state machine of `docs/contracts/kuang/lifecycle.v1.yaml`.
 ///
 /// Every method is a transition from that contract's table; an illegal one is refused with
 /// [`TransitionError`] rather than absorbed, because a supervisor that silently repairs its own

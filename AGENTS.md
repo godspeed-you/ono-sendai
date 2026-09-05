@@ -8,7 +8,7 @@
 
 ## 1. Prime Directive
 
-Build **Ono-Sendai**, the shell specified in `docs/ono_sendai_shell_spec_v0.2.md`, to completion —
+Build **Ono-Sendai**, the shell specified in `docs/specs/ono_sendai_shell_spec_v0.2.md`, to completion —
 **test-driven, autonomously, without asking the user for input.**
 
 Four rules override everything else:
@@ -49,22 +49,29 @@ ono-sendai/
 ├── scripts/                      gate.sh, acceptance.sh, release-check.sh
 ├── docker/                       Dockerfile + acceptance/cases/ (the referee, §10)
 └── docs/
-    ├── ono_sendai_shell_spec_v0.2.md
-    │                             base narrative spec (normative)
-    ├── ono_sendai_shell_spec_v0.3_external_command_adapters.md
-    │                             enhancement spec, layered on the base (§5.2)
-    ├── ono_sendai_shell_spec_v0.4_spatial_systems_interface.md
-    │                             enhancement spec, layered on the base (§5.2)
-    ├── ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md
-    │                             enhancement spec, layered on the base (§5.2)
-    ├── ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md
-    │                             enhancement spec, layered on the base (§5.2)
-    ├── ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md
-    │                             enhancement spec, layered on the base (§5.2)
+    ├── specs/                    the immutable narrative specifications (§5.1, §5.2)
+    │   ├── ono_sendai_shell_spec_v0.2.md
+    │   │                         base narrative spec (normative)
+    │   ├── ono_sendai_shell_spec_v0.3_external_command_adapters.md
+    │   │                         enhancement spec, layered on the base (§5.2)
+    │   ├── ono_sendai_shell_spec_v0.4_spatial_systems_interface.md
+    │   │                         enhancement spec, layered on the base (§5.2)
+    │   ├── ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md
+    │   │                         enhancement spec, layered on the base (§5.2)
+    │   ├── ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md
+    │   │                         enhancement spec, layered on the base (§5.2)
+    │   ├── ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md
+    │   │                         enhancement spec, layered on the base (§5.2)
+    │   └── spec.sha256           the immutability checksums `spec-check` verifies (§5.2)
+    ├── strategy/                 durable product and ecosystem direction — not a release
+    │   ├── cloud-native-vision.md
+    │   └── cncf-readiness.md
+    ├── architecture/             cross-cutting contracts tied to no numbered release
+    │   └── external-system-provider.md
     ├── STATE.md                  progress board (§9)
     ├── ACCEPTANCE.md             definition of release-ready + stopping rule (§15)
-    ├── decisions/ADR-*.md        recorded agent decisions (§8)
-    ├── spec/                     machine-readable contracts
+    ├── adr/ADR-*.md              recorded agent decisions (§8)
+    ├── contracts/                machine-readable contracts
     │   ├── language.yaml
     │   ├── grammar.ebnf
     │   ├── verbs.yaml
@@ -79,9 +86,21 @@ ono-sendai/
 ```
 
 This deviates deliberately from the top-level `spec/` sketched in spec §24.2, §47 and §31.78:
-**the directory is `docs/spec/`.** Read every `spec/...` path in the narrative spec as
-`docs/spec/...`, including `spec/kuang/...` as `docs/spec/kuang/...`. Only build artifacts,
-source code and tooling belong at the top level.
+**the directory is `docs/contracts/`.** Read every `spec/...` path in the narrative spec as
+`docs/contracts/...`, including `spec/kuang/...` as `docs/contracts/kuang/...`. Only build
+artifacts, source code and tooling belong at the top level.
+
+Two words that used to name the same directory now name different things, and the distinction is
+load-bearing:
+
+- a **specification** is a narrative document — a numbered release specification under
+  `docs/specs/`, or an architecture specification under `docs/architecture/`;
+- a **contract** is a machine-readable file under `docs/contracts/` — the public API surface the
+  registries define and the gate compares the implementation against.
+
+`docs/strategy/` holds product and ecosystem direction. It is neither: nothing there is normative
+for an increment, and no gate is derived from it. It says why a direction is worth taking, and
+`docs/architecture/` says what the resulting contract is.
 
 ---
 
@@ -97,7 +116,7 @@ Two names coexist deliberately, and they are not interchangeable (spec §0, §31
 | Config paths, env vars, protocol ids | derived from `ono`: `~/.config/ono/`, `ONO_*` |
 | Reserved ID namespace | `ono.*` — only the Ono project may claim it (spec §31.5) |
 | Extension runtime / plugin system | **KUANG/11** — spec §31, nothing else |
-| KUANG/11 crates and contracts | `ono-kuang-supervisor`, `ono-kuang-protocol`, `ono-kuang-sdk`, `docs/spec/kuang/` |
+| KUANG/11 crates and contracts | `ono-kuang-supervisor`, `ono-kuang-protocol`, `ono-kuang-sdk`, `docs/contracts/kuang/` |
 
 > **Ono is the deck; KUANG/11 is the software that can be loaded into the deck** (spec §0).
 
@@ -106,7 +125,7 @@ Consequences for anything you write:
 - Prose about the shell itself says *Ono* (or *Ono-Sendai* where the full name reads better),
   never "KUANG" — the old project name is gone.
 - `kuang` appears **only** in KUANG/11 context: the `kuang` engine component (spec §24.1), the
-  `ono-kuang-*` crates, the `docs/spec/kuang/` contracts, the `kuang_api` manifest field.
+  `ono-kuang-*` crates, the `docs/contracts/kuang/` contracts, the `kuang_api` manifest field.
   Anywhere else it is a leftover of the old name and MUST be renamed.
 - Third-party plugin IDs, command IDs, schema IDs and capability IDs are publisher-namespaced
   (`dev.example.packet-eye.…`) and MUST NOT claim `ono.*` (spec §31.5).
@@ -153,24 +172,31 @@ Concretely:
 ## 5. Authority Order (what wins when sources disagree)
 
 ```
-0. docs/ono_sendai_shell_spec_v0.9_live_view_integration.md
-0. docs/ono_sendai_shell_spec_v0.8_deck_workspace_composition.md
-0. docs/ono_sendai_shell_spec_v0.7_presentation_consolidation_rich_tty.md
-0. docs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md
-0. docs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md
-0. docs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md
-0. docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md
-0. docs/ono_sendai_shell_spec_v0.3_external_command_adapters.md
+0. docs/specs/ono_sendai_shell_spec_v0.9_live_view_integration.md
+0. docs/specs/ono_sendai_shell_spec_v0.8_deck_workspace_composition.md
+0. docs/specs/ono_sendai_shell_spec_v0.7_presentation_consolidation_rich_tty.md
+0. docs/specs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md
+0. docs/specs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md
+0. docs/specs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md
+0. docs/specs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md
+0. docs/specs/ono_sendai_shell_spec_v0.3_external_command_adapters.md
                                    the enhancement specs share level 0 (IMMUTABLE, read-only);
                                    where two of them overlap, the later version wins — §5.2
-1. docs/ono_sendai_shell_spec_v0.2.md   base narrative spec — intent & semantics (IMMUTABLE, read-only)
-2. docs/spec/*.yaml, grammar.ebnf  machine-readable contracts (public API surface)
-3. docs/decisions/ADR-*.md         recorded agent decisions (fill gaps in 1 & 2)
+1. docs/specs/ono_sendai_shell_spec_v0.2.md
+                                   base narrative spec — intent & semantics (IMMUTABLE, read-only)
+2. docs/contracts/*.yaml, grammar.ebnf
+                                   machine-readable contracts (public API surface)
+3. docs/adr/ADR-*.md               recorded agent decisions (fill gaps in 1 & 2)
 4. docs/ACCEPTANCE.md              what "finished" means, in checkable boxes
 5. tests/ + docker/acceptance/     executable behaviour contract
 6. crates/                         implementation
 7. docs/reference/, generated code derived artifacts — never hand-edited
 ```
+
+`docs/architecture/` sits beside level 2: an architecture specification is normative for the
+extension boundary it defines, but it is tied to no numbered release and it never overrides a
+narrative specification. `docs/strategy/` is outside this order entirely — it is direction, not
+contract, and no increment is measured against it.
 
 Lower levels must never silently contradict higher ones. If implementation reality forces a
 change at level 2 or below, **change it explicitly** in the same commit and note it in the
@@ -178,8 +204,8 @@ commit body. Level 1 is the exception, and the exception is absolute:
 
 ### 5.2 The specification is a base plus enhancements
 
-`docs/ono_sendai_shell_spec_v0.2.md` is the **base**. The user may add further narrative
-specifications beside it — any `docs/ono_sendai_*spec_v<version>*.md` — and each is an
+`docs/specs/ono_sendai_shell_spec_v0.2.md` is the **base**. The user may add further narrative
+specifications beside it — any `docs/specs/ono_sendai_*spec_v<version>*.md` — and each is an
 **enhancement layered on top of the base**, not a replacement for it. The base still governs
 everything the enhancement does not speak about; where they overlap, **the later version wins**,
 and the ADR implementing that part cites both.
@@ -193,46 +219,46 @@ base is identified — the lowest version, never whatever sorts first (ADR-0423)
 Every one of them is immutable under §5.1, without exception, and `spec-check` enforces two
 things on every gate run (ADR-0026):
 
-- each narrative specification has a `sha256sum` line in `docs/spec.sha256`, so none of them can
+- each narrative specification has a `sha256sum` line in `docs/specs/spec.sha256`, so none of them can
   be edited unnoticed;
 - this file enumerates each enhancement by name, so no enhancement can sit in `docs/` unread.
 
 The enhancements present, newest first:
 
-- `docs/ono_sendai_shell_spec_v0.9_live_view_integration.md` — Live View Integration &
+- `docs/specs/ono_sendai_shell_spec_v0.9_live_view_integration.md` — Live View Integration &
   Long-Running Workspace Ergonomics: small, bounded presentation-local bindings that keep the
   v0.8 Deck's live views — streams, `watch`, spatial `--live`, the v0.5 temporal cursor — usable,
   honest and responsive over minutes or hours, without a second live-data model. Added
   2026-09-01, **not implemented**; `docs/STATE.md` records it behind v0.8.
-- `docs/ono_sendai_shell_spec_v0.8_deck_workspace_composition.md` — Deck Workspace Composition &
+- `docs/specs/ono_sendai_shell_spec_v0.8_deck_workspace_composition.md` — Deck Workspace Composition &
   Terminal Ownership: a persistent Deck host that composes the existing views, history and
   context around the shell editor, plus a generic terminal-ownership contract shared with
   full-screen views and foreground external programs. Added 2026-09-01, **not implemented**;
   `docs/STATE.md` records it behind v0.7.
-- `docs/ono_sendai_shell_spec_v0.7_presentation_consolidation_rich_tty.md` — Presentation
+- `docs/specs/ono_sendai_shell_spec_v0.7_presentation_consolidation_rich_tty.md` — Presentation
   Consolidation & Rich TTY Interface: one deterministic policy that unifies the existing v0.2
   render hints, presentation profiles and constrained view tree into a production-quality rich
   terminal path, ahead of the Deck workspace v0.8 later composes. Added 2026-09-01, **not
   implemented**; `docs/STATE.md` records it behind v0.6.
-- `docs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md` — Prospective
+- `docs/specs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md` — Prospective
   Change, Protection & Recovery: the `ChangePlan` as a first-class object, so a mutation can be
   inspected for its consequences and its recoverability before it is made real. Added 2026-08-31,
   **not implemented**; `docs/STATE.md` records it behind v0.5.
-- `docs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md` — the Temporal & Causal
+- `docs/specs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md` — the Temporal & Causal
   Systems Interface: time as a coordinate, an evidence-backed event ledger, state reconstruction,
   timelines and causal explanation. Added 2026-08-31, **not implemented**; `docs/STATE.md`
   records it as the next tranche.
-- `docs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md` — Hardening, Trust &
+- `docs/specs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md` — Hardening, Trust &
   Release Integrity: a maintenance layer over the implemented v0.4 substrate — security
   boundaries, remote trust, KUANG/11 confinement, resource boundedness, streaming correctness,
   performance stability, test truthfulness and release provenance. Added 2026-09-01, **not
   implemented**. The spec states its own place in the sequence: a prerequisite hardening pass
   that v0.5 and v0.6 implementation MUST inherit rather than re-solve, so it is listed here
   ahead of them despite arriving later; `docs/STATE.md` should schedule it before v0.5.
-- `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — the Spatial Systems
+- `docs/specs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — the Spatial Systems
   Interface. Added 2026-08-27, implemented 2026-08-28/29 (ADR-0124 … ADR-0402) and released as
   0.4.0; `docs/ACCEPTANCE.md` §4.7 holds its checklist.
-- `docs/ono_sendai_shell_spec_v0.3_external_command_adapters.md` — the External Command
+- `docs/specs/ono_sendai_shell_spec_v0.3_external_command_adapters.md` — the External Command
   Adaptation Layer. Implemented (ADR-0052 … ADR-0067).
 
 Adding an enhancement is the user's action. Reconciling the code, the contracts and the ADRs with
@@ -240,7 +266,7 @@ it is the agent's, and it is ordinary work in the loop of §7 — not a reason t
 
 ### 5.1 The initial specification is immutable
 
-**`docs/ono_sendai_shell_spec_v0.2.md` MUST NOT be edited, amended, reformatted, renamed,
+**`docs/specs/ono_sendai_shell_spec_v0.2.md` MUST NOT be edited, amended, reformatted, renamed,
 regenerated or replaced.** Not to fix a typo, not to reflow a paragraph, not to update a name,
 not to correct something you believe is wrong, not to record a decision, not "while you are in
 there". No agent may write to that file for any reason. It is the fixed reference every later
@@ -278,7 +304,7 @@ Fixed by the spec; not open for agent re-decision:
 
 - Language: **Rust**, stable toolchain, 2021 edition or newer.
 - Cargo **workspace** with `crates/*` as sketched in spec §24.2. Deviate only with an ADR.
-- Machine-readable `docs/spec/` registries are the **public contract**; commands, schemas, verbs
+- Machine-readable `docs/contracts/` registries are the **public contract**; commands, schemas, verbs
   and errors are defined there first, implemented second (spec §27, §36, §47).
 - **Structured values, not text parsing.** Never parse unstable human-readable output of
   external tools in a provider unless documented as an explicit adapter fallback (spec §50).
@@ -297,7 +323,7 @@ Work in **small, individually shippable increments**. One increment = one loop:
 
 ```
 0. SELECT     pick the next task (§9). Write it into docs/STATE.md as in-progress.
-1. CONTRACT   if the increment adds public surface: update/create the docs/spec/*.yaml entry first.
+1. CONTRACT   if the increment adds public surface: update/create the docs/contracts/*.yaml entry first.
 2. RED        write the test(s) that express the desired observable behaviour. Run them.
               They MUST fail, and fail for the right reason. A test that passes immediately is
               a broken test — fix the test, not the assertion count.
@@ -319,7 +345,7 @@ Rules for the loop:
   (`git restore` / reset to the last green commit), record what failed in `docs/STATE.md`, and
   choose a smaller increment. Never leave the tree broken.
 - Never weaken or delete a test to make the suite pass. Tests only change when the *contract*
-  changes — and then the contract (`docs/spec/`) or an ADR changes in the same commit. The
+  changes — and then the contract (`docs/contracts/`) or an ADR changes in the same commit. The
   narrative spec never changes (§5.1).
 
 ---
@@ -338,7 +364,7 @@ You are explicitly authorised to decide, without asking:
 **Record it** as an ADR whenever the decision is architectural, cross-cutting, hard to reverse,
 resolves a spec ambiguity, or picks between real alternatives. Trivial local choices need no ADR.
 
-Format — `docs/decisions/ADR-NNNN-kebab-title.md` (NNNN = zero-padded, monotonic):
+Format — `docs/adr/ADR-NNNN-kebab-title.md` (NNNN = zero-padded, monotonic):
 
 ```markdown
 # ADR-0007: Parser library choice
@@ -402,7 +428,7 @@ Task ordering rules, applied to open issues:
 1. Follow the phase sequence of spec §37 (A → J). Do not start Phase C work while Phase B
    exit criteria are unmet, unless the item is strictly independent.
 2. Within a phase, prefer the task that unblocks the most other tasks.
-3. Prefer the machine-readable contract (`docs/spec/*.yaml`) before its implementation.
+3. Prefer the machine-readable contract (`docs/contracts/*.yaml`) before its implementation.
 4. Repairing the gate or the acceptance harness (§14) outranks features whenever either
    cannot run — a broken referee makes every later claim of progress worthless.
 5. A phase is complete only when its success criterion in spec §37 is demonstrated by an
@@ -532,7 +558,7 @@ Test layers (spec §35):
 | Golden AST | `crates/ono-parser/tests/` | parse trees, diagnostics snapshots, incremental parse |
 | Property | testkit-driven | serialization round trips, unit arithmetic, null semantics |
 | Fuzz | `fuzz/` | parser, serializers, protocol, procfs/netlink decoders (spec §35.6) |
-| Conformance | generated from `docs/spec/providers/*.yaml` | every provider capability (spec §35.3) |
+| Conformance | generated from `docs/contracts/providers/*.yaml` | every provider capability (spec §35.3) |
 | Integration | `tests/` | container/VM fixtures: processes, systemd, sockets, PTY, signals (spec §35.4) |
 | Snapshot | `tests/render/` | renderer output only — **never** a data contract (spec §35.5) |
 | Plugin conformance | KUANG/11 test host (spec §31.73) | manifest/schema validation, capability denial paths, cancellation, backpressure, quotas (spec §31.74) |
@@ -600,7 +626,7 @@ When several agents work in parallel:
   include agent id, timestamp and the file paths you will touch.
 - **Never** edit files another agent has claimed. Pick a different issue.
 - Prefer decomposition along crate boundaries — one crate per agent — to avoid conflicts.
-- Shared documents (`docs/spec/*`, `docs/STATE.md`) are edited in short, single-purpose commits;
+- Shared documents (`docs/contracts/*`, `docs/STATE.md`) are edited in short, single-purpose commits;
   re-read the file immediately before editing it.
 - Integration role: after N increments, run the full gate on the merged tree and fix drift.
 - A stale claim (no commit for its files, older than the current session) may be reclaimed;
@@ -635,12 +661,12 @@ Rules for the harness itself:
   three acceptance cases are a floor and must keep passing.
 - Crates from spec §24.2 (`ono-parser`, `ono-value`, `ono-pipeline`, …) are created when a phase
   needs them, not upfront (ADR-0001).
-- `docs/spec/` registries arrive with Phase D (spec §47); `docs/spec/kuang/` with Phase I
+- `docs/contracts/` registries arrive with Phase D (spec §47); `docs/contracts/kuang/` with Phase I
   (spec §31.78). `spec-check` already fails on a top-level `spec/`, on a missing narrative spec,
   on instructions that reference a spec file that does not exist, and on empty contracts.
-- **`spec-check` verifies the specification against `docs/spec.sha256` on every gate run.** Any
+- **`spec-check` verifies the specification against `docs/specs/spec.sha256` on every gate run.** Any
   edit to the narrative spec turns the gate red (§5.1). Restore the file; do not update the
-  checksum. `docs/spec.sha256` is the user's to change, when they replace the spec on purpose.
+  checksum. `docs/specs/spec.sha256` is the user's to change, when they replace the spec on purpose.
 
 ---
 

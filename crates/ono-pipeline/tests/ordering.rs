@@ -1,7 +1,7 @@
 //! What a consumer may conclude from the order it observed things in (v0.4.1 §27).
 //!
 //! §27.4 asks two things of this file. The rule must be stated where the stream is documented —
-//! it is, in `stream.rs` and in `docs/spec/hardening/streaming_classification.yaml`, from which
+//! it is, in `stream.rs` and in `docs/contracts/hardening/streaming_classification.yaml`, from which
 //! `docs/reference/streaming.md` is rendered — and *"concurrency tests MUST prove only the
 //! guarantees actually promised"*. So the tests below assert per-channel order, which is total,
 //! and deliberately assert nothing about the order in which a value and a partial failure are

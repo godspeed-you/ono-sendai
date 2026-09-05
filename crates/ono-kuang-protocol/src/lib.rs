@@ -8,7 +8,7 @@
 //!   `kuang-package/1` document, with every identity rule of spec §31.5 enforced — reverse-DNS
 //!   ids, publisher namespacing, and the `ono.*` reservation no third party may claim.
 //! - **The messages** ([`Envelope`], [`Hello`], the typed parameter shapes): the calls of
-//!   `docs/spec/kuang/protocol.v1.yaml`, over length-declared frames ([`read_frame`]/[`write_frame`]) whose bounds
+//!   `docs/contracts/kuang/protocol.v1.yaml`, over length-declared frames ([`read_frame`]/[`write_frame`]) whose bounds
 //!   are checked before allocation.
 //! - **The lifecycle** ([`Lifecycle`], [`PluginState`]): spec §31.8's six states with legal
 //!   transitions enforced in the type.

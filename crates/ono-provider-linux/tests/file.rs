@@ -481,7 +481,7 @@ fn should_claim_the_file_and_dir_targets_with_the_registry_capability_ids() {
 #[tokio::test]
 async fn should_walk_the_whole_tree_when_the_query_names_a_search_root() {
     // `find file /var/log` binds its path to the selector named `root`, and find *is* the walk
-    // (docs/spec/commands/file.yaml: "Discover files by walking a root"). Only `get file` — the
+    // (docs/contracts/commands/file.yaml: "Discover files by walking a root"). Only `get file` — the
     // `path` selector — means the one entry.
     let scratch = tempfile::tempdir().expect("a temporary directory");
     fs::create_dir_all(scratch.path().join("a/b")).expect("the nested directories");

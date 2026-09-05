@@ -21,7 +21,7 @@ COPY fuzz ./fuzz
 # `ono-command` embed them with `include_str!`, so there is exactly one definition of a schema or
 # a command in the process (spec section 27, section 36.4). Copying them here is what makes the
 # container prove that the contracts ship with the binary rather than sitting beside it.
-COPY docs/spec ./docs/spec
+COPY docs/contracts ./docs/contracts
 # `target/` survives in a cache mount, and cargo decides what to rebuild from *mtimes*. `COPY`
 # preserves the host's mtimes, so a source file edited before the cached artifacts were written
 # looks older than them and cargo declares the crate fresh — the image then ships the previous
@@ -31,7 +31,7 @@ COPY docs/spec ./docs/spec
 # mtimes, so dependencies stay cached and only `crates/` and `xtask/` are recompiled.
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/build/target,sharing=locked \
-    find crates xtask fuzz docs/spec Cargo.toml Cargo.lock -type f -exec touch {} + && \
+    find crates xtask fuzz docs/contracts Cargo.toml Cargo.lock -type f -exec touch {} + && \
     cargo build --release --package ono-cli --package ono-kuang-sdk --package xtask --locked \
     && rustup target add wasm32-wasip2 \
     && cargo build --release --target wasm32-wasip2 --package ono-kuang-sdk --bin kuang-example-plugin --locked \

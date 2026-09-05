@@ -1,6 +1,6 @@
 //! The closed vocabulary of spatial types (spec v0.4 §3.3, §41.1).
 //!
-//! `docs/spec/spatial/spatial.yaml` declares the same names under `object_types`, and
+//! `docs/contracts/spatial/spatial.yaml` declares the same names under `object_types`, and
 //! `cargo run -p xtask -- spec-check` holds the two together: a type the registry knows and this
 //! enum does not is a space or relation nothing can serve, and a type this enum knows and the
 //! registry does not is undocumented surface.
@@ -79,7 +79,7 @@ pub enum SpatialType {
 }
 
 impl SpatialType {
-    /// Every type, in the order `docs/spec/spatial/spatial.yaml` declares them.
+    /// Every type, in the order `docs/contracts/spatial/spatial.yaml` declares them.
     pub const ALL: &'static [SpatialType] = &[
         SpatialType::System,
         SpatialType::Compute,
@@ -265,9 +265,9 @@ impl fmt::Display for SpatialType {
 
 /// The spatial types a v0.2 provider target names (§42).
 ///
-/// The provider registry of `docs/spec/providers/` speaks the target vocabulary of spec v0.2
+/// The provider registry of `docs/contracts/providers/` speaks the target vocabulary of spec v0.2
 /// §8.1 — `process`, `socket`, `dir` — and the spatial layer speaks [`SpatialType`]. This table
-/// is the join between them, and it is deliberately the *only* one: `docs/spec/providers/*.yaml`
+/// is the join between them, and it is deliberately the *only* one: `docs/contracts/providers/*.yaml`
 /// declares its §42 claims per spatial type, `spec-check` reads the claims through this
 /// function, and the provider bridge decides an observed record's type through it too, so a
 /// provider cannot claim for one type and serve another.

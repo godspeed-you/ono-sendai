@@ -10,7 +10,7 @@
 //!   boot. A percentage is the difference between two observations divided by the time between
 //!   them, so the first `get process` reports `cpu` as `null` and the second reports the share of
 //!   one logical CPU used since the first. That is what
-//!   `docs/spec/schemas/process.v1.yaml` documents the field to mean.
+//!   `docs/contracts/schemas/process.v1.yaml` documents the field to mean.
 //! - **Identity is `(pid, started)`.** A signal re-reads the start time immediately before
 //!   delivering and refuses when it changed, so a recycled pid is never signalled
 //!   (ADR-0015 T13).
@@ -841,7 +841,7 @@ fn requested_signal(action: &Action) -> Result<i32, ErrorValue> {
             ErrorCode::TypeMismatch,
             format!("a signal is a name or a number, not {}", other.type_name()),
         )),
-        // `docs/spec/commands/process.yaml`: `kill` defaults to SIGKILL, and that default is what
+        // `docs/contracts/commands/process.yaml`: `kill` defaults to SIGKILL, and that default is what
         // distinguishes it from `stop`, which asks for graceful termination.
         None if action.operation() == "kill" => Ok(9),
         None => Ok(15),

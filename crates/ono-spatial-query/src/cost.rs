@@ -26,7 +26,7 @@ use ono_value::ErrorValue;
 /// It is a ceiling on obviously explosive work rather than a latency target: a thousand
 /// candidates at moderate cost with a fan-out of four is 20 000 units and is answered, and two
 /// hundred thousand is not. §33.2's latency targets are measured on the reference environment and
-/// recorded in `docs/spec/hardening/performance_baseline.json`; this number is what stops a query
+/// recorded in `docs/contracts/hardening/performance_baseline.json`; this number is what stops a query
 /// nobody could have wanted, on any machine.
 pub const INTERACTIVE_BUDGET: u64 = 250_000;
 

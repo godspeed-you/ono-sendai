@@ -3,7 +3,7 @@
 Ono-Sendai runs commands, adapts external tools, links to remote machines and loads extensions.
 This page is the front door: where to report something, what is supported, and what the product
 does and does not claim to defend. **It is not the security model.** The model is
-`docs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md`, and the vocabulary it
+`docs/specs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md`, and the vocabulary it
 uses is generated at [`docs/reference/terminology.md`](docs/reference/terminology.md).
 
 ## Reporting a vulnerability
@@ -87,7 +87,7 @@ forbidden thing is refused (v0.4.1 §6.2, §20). The words below mean exactly wh
 | Release publish | artifacts | checksums, a signature and build provenance |
 
 A refusal at any of these says which one decided, in the ordinary error a user sees — see
-[`docs/spec/hardening/refusals.yaml`](docs/spec/hardening/refusals.yaml).
+[`docs/contracts/hardening/refusals.yaml`](docs/contracts/hardening/refusals.yaml).
 
 ## What is not protected
 

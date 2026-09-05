@@ -9,7 +9,7 @@ fn should_render_every_code_in_the_specified_form_when_displayed() {
         let rendered = code.code();
         // Spec section 43 writes the core codes as `Ono-Sendai-ENNNN`; the KUANG/11 family of
         // spec section 31.79 renders in the same shape as `Ono-Sendai-K11NNN` (ADR-0022,
-        // docs/spec/kuang/errors.v1.yaml), folded into the one taxonomy by ADR-0108.
+        // docs/contracts/kuang/errors.v1.yaml), folded into the one taxonomy by ADR-0108.
         let digits = rendered
             .strip_prefix("Ono-Sendai-E")
             .filter(|digits| digits.len() == 4)

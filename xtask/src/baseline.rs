@@ -14,7 +14,7 @@
 //! So this is the snapshot of the finished state, and it is deliberately thin. The two things
 //! H0 asked to freeze already exist as their own machine-readable files:
 //!
-//! - `docs/spec/hardening/performance_baseline.json` — §32.4's regression baseline, six metrics
+//! - `docs/contracts/hardening/performance_baseline.json` — §32.4's regression baseline, six metrics
 //!   per benchmark on a named environment (H7, ADR-0489, ADR-0490);
 //! - `dist/build-inputs.json` — Appendix H's release input manifest, written by
 //!   `cargo xtask build-manifest` (H10, ADR-0451).
@@ -88,7 +88,7 @@ pub fn capture(root: &Path) -> Result<String, String> {
                  is the state after it, because H0's last issue was worked after H1-H12 and \
                  measuring today's tree cannot produce yesterday's figures (§2.6, ADR-0548). It \
                  restates nothing: the performance figures live in \
-                 `docs/spec/hardening/performance_baseline.json` and the build inputs are \
+                 `docs/contracts/hardening/performance_baseline.json` and the build inputs are \
                  captured from `cargo xtask build-manifest`, so the file is a binding rather than \
                  a copy (§52.2).",
         "captured": {
@@ -361,7 +361,7 @@ fn check_performance(root: &Path, snapshot: &Json) -> Vec<Problem> {
                 PATH,
                 format!(
                     "was captured on `{named}`, and \
-                     `docs/spec/hardening/performance_environment.yaml` names `{}` (v0.4.1 §32.4)",
+                     `docs/contracts/hardening/performance_environment.yaml` names `{}` (v0.4.1 §32.4)",
                     environment.id
                 ),
             ));

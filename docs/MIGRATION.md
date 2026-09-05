@@ -135,7 +135,7 @@ ono_testkit::require(
 ```
 
 Every test that can announce a skip is declared in
-`docs/spec/hardening/expected_test_skips.yaml`, and the gate compares that registry against the
+`docs/contracts/hardening/expected_test_skips.yaml`, and the gate compares that registry against the
 tree in both directions: an undeclared skip fails, and a declared skip that stopped happening
 fails too. A test name may be changed when the old name encodes semantics that no longer hold,
 but intent and coverage are preserved.

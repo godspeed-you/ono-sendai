@@ -1,4 +1,4 @@
-//! The adapter pack contract of `docs/spec/adapters/schema.yaml` (spec v0.3 §1.44, ADR-0055).
+//! The adapter pack contract of `docs/contracts/adapters/schema.yaml` (spec v0.3 §1.44, ADR-0055).
 //!
 //! A pack is data: what an executable family looks like, which invocations are adapted, how
 //! the output decodes and onto which canonical schema. Parsing fails closed on unknown fields;
@@ -14,7 +14,7 @@ use serde::Deserialize;
 use crate::version::VersionRange;
 
 /// The first-party packs bundled with the shell, as data (spec v0.3 §1.66) — the JSON that
-/// `build.rs` transcodes from `docs/spec/adapters/first-party/`, because the YAML parse was a
+/// `build.rs` transcodes from `docs/contracts/adapters/first-party/`, because the YAML parse was a
 /// measurable slice of every cold start (ADR-0571).
 const FIRST_PARTY: &[&str] = &[
     include_str!(concat!(env!("OUT_DIR"), "/adapters/util-linux.json")),
@@ -550,7 +550,7 @@ impl Adapter {
         &self.limits
     }
 
-    /// The fixture directory, relative to `docs/spec/adapters/fixtures/`.
+    /// The fixture directory, relative to `docs/contracts/adapters/fixtures/`.
     #[must_use]
     pub fn fixtures(&self) -> &str {
         &self.fixtures
@@ -897,7 +897,7 @@ pub fn first_party() -> &'static [AdapterPack] {
 /// Checks a parsed pack against everything the contract requires beyond its shape.
 ///
 /// `schemas` is where `schema:` ids must be registered; `fixtures_root` is
-/// `docs/spec/adapters/fixtures/`.
+/// `docs/contracts/adapters/fixtures/`.
 #[must_use]
 pub fn validate(
     pack: &AdapterPack,
@@ -1236,7 +1236,7 @@ fn validate_adapter(
     let directory = fixtures_root.join(adapter.fixtures());
     if !directory.is_dir() {
         report(format!(
-            "fixture directory `{}` does not exist under docs/spec/adapters/fixtures/ (spec v0.3 §1.47)",
+            "fixture directory `{}` does not exist under docs/contracts/adapters/fixtures/ (spec v0.3 §1.47)",
             adapter.fixtures()
         ));
         return;
@@ -1330,14 +1330,14 @@ mod embedded_documents {
         serde_json::to_string(value).expect("a pack document serializes as JSON")
     }
 
-    /// What the binary carries is what `docs/spec/adapters/first-party/` says, value for value,
+    /// What the binary carries is what `docs/contracts/adapters/first-party/` says, value for value,
     /// and no pack on disk is left out (ADR-0571).
     #[test]
     fn should_embed_every_first_party_pack_as_the_spec_states_it() {
         let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/spec/adapters/first-party");
+            .join("../../docs/contracts/adapters/first-party");
         let mut on_disk: Vec<String> = std::fs::read_dir(&directory)
-            .expect("docs/spec/adapters/first-party/ exists")
+            .expect("docs/contracts/adapters/first-party/ exists")
             .flatten()
             .map(|entry| entry.path())
             .filter(|path| {

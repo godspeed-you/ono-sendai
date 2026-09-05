@@ -27,7 +27,7 @@ earlier. The reconstruction is lossy, unversioned, and specific to one tool's ou
 one version of one distribution.
 
 **What Ono-Sendai does.** Native commands ask the system directly — procfs, netlink, D-Bus, the
-systemd APIs — and emit typed objects against published schemas in `docs/spec/schemas/`. The
+systemd APIs — and emit typed objects against published schemas in `docs/contracts/schemas/`. The
 table you see at the terminal is a *rendering* of a value, produced last, for you.
 
 **What it refuses.** It does not parse a tool's human-readable output and call the result
@@ -85,7 +85,7 @@ its own dialect, with its own flags, its own idea of a column and its own failur
 The knowledge does not compound. Learning `ps` teaches you nothing about `ss`.
 
 **What Ono-Sendai does.** A verb means the same thing everywhere it is accepted, and the
-registries in `docs/spec/` are the contract that keeps it that way — the shell's own `help`, the
+registries in `docs/contracts/` are the contract that keeps it that way — the shell's own `help`, the
 completion metadata and the generated reference pages all come from the same source, so they
 cannot drift apart.
 
@@ -292,12 +292,12 @@ Stated plainly, so that "we could add it" has an answer:
 - It does not perform activity it is not performing.
 - It does not require you to abandon Unix to use it.
 - It does not become a graphical file manager, an IDE, or a monitoring product. Those are
-  non-goals in the specification (`docs/ono_sendai_shell_spec_v0.2.md` §38) and they stay
+  non-goals in the specification (`docs/specs/ono_sendai_shell_spec_v0.2.md` §38) and they stay
   non-goals.
 
 ---
 
 The formal, checkable version of all this is elsewhere: the behaviour Ono-Sendai guarantees is in
-the specification and the machine-readable contracts under `docs/spec/`, and every place an
-implementation decision resolved an ambiguity is an ADR in `docs/decisions/`. This document is
+the specification and the machine-readable contracts under `docs/contracts/`, and every place an
+implementation decision resolved an ambiguity is an ADR in `docs/adr/`. This document is
 the reasoning those artifacts encode.
