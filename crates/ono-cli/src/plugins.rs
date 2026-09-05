@@ -1118,6 +1118,83 @@ pub fn invoke_contributed(
             },
         )?;
     }
+    // Two kinds of contributed entry, routed differently, and the id says which (spec §31.23).
+    // A command is invoked and answers whatever it declared; a target is *queried* through the
+    // provider path, so that its records carry the schema the target declared and the provenance
+    // the host stamps rather than whatever a command chose to emit.
+    if let Some(target) = contract
+        .id()
+        .strip_prefix(package)
+        .and_then(|rest| rest.strip_prefix(crate::plugin_registry::TARGET_INFIX))
+    {
+        let target = target.to_owned();
+        return query(session, package, &target);
+    }
     let command = contract.id().rsplit('.').next().unwrap_or(contract.id());
     invoke(session, package, command, words)
+}
+
+/// Answers a contributed target by querying the package that contributes it (spec §31.23).
+///
+/// The provider half of [`invoke`]. It reaches `provider.query` rather than `command.invoke`, so
+/// the records that come back are the ones the package's provider handler emitted — validated
+/// against the contributed schema and provenance-stamped `plugin:<package.id>` by the host
+/// (spec §31.80), which is what makes a contributed target a noun rather than a command wearing
+/// a target's spelling.
+pub fn query(session: &mut Session, package: &str, target: &str) -> Eval<Vec<Value>> {
+    session.pipeline_context().ok_or_else(|| {
+        Flow::Failed(ErrorValue::new(
+            ErrorCode::IoPermissionDenied,
+            "the operating system refused to start the runtime",
+        ))
+    })?;
+    let outcome = {
+        let runtime = session.runtime_handle().ok_or_else(|| {
+            Flow::Failed(ErrorValue::new(
+                ErrorCode::IoPermissionDenied,
+                "the operating system refused to start the runtime",
+            ))
+        })?;
+        let plugin = session.plugin(package).ok_or_else(|| {
+            Flow::Failed(ErrorValue::new(
+                ErrorCode::ResolveCommandNotFound,
+                format!("`{package}` is no longer loaded"),
+            ))
+        })?;
+        if !plugin
+            .targets()
+            .iter()
+            .any(|registered| registered.contribution.name == target)
+        {
+            return Err(Flow::Failed(
+                ErrorValue::new(
+                    ErrorCode::ResolveTargetNotFound,
+                    format!("`{package}` contributes no target named `{target}`"),
+                )
+                .with_help(
+                    "the package declared it on disk but does not answer for it; the two must \
+                     agree (spec §31.23)",
+                ),
+            ));
+        }
+        runtime.block_on(async {
+            let invocation = plugin
+                .query(target, serde_json::Map::new())
+                .await
+                .map_err(|error| crate::kuang_host::wire_error_value(&error))?;
+            Ok::<_, ErrorValue>(invocation.collect().await)
+        })
+    };
+    let (events, _result) = outcome.map_err(Flow::Failed)?;
+
+    let mut values = Vec::new();
+    for event in events {
+        match event {
+            ono_kuang_supervisor::StreamEvent::Value(value) => values.push(value),
+            ono_kuang_supervisor::StreamEvent::Failed(error) => {
+                return Err(Flow::Failed(crate::kuang_host::wire_error_value(&error)));
+            }
+        }
+    }
+    Ok(values)
 }

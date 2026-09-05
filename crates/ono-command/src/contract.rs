@@ -1204,11 +1204,21 @@ impl ContributedCommand {
                  core never contributes one",
             ));
         };
-        let namespace = format!("{package}.command.");
-        if !self.id.starts_with(&namespace) {
+        // Two kinds of entry reach this constructor and the id is where they are told apart. A
+        // command a package declares is `<package.id>.command.<kebab>`; the `get` the host
+        // synthesises for a target the package answers for is `<package.id>.target.<kebab>`
+        // (spec §31.23). Both are namespaced under the package, which is the rule §31.5 actually
+        // states; the infix says how an invocation is routed, and keeping it in the id means
+        // `get command`, `help` and `explain` show the distinction rather than hiding it.
+        let command_namespace = format!("{package}.command.");
+        let target_namespace = format!("{package}.target.");
+        if !self.id.starts_with(&command_namespace) && !self.id.starts_with(&target_namespace) {
             return Err(contributed_error(
                 &self.id,
-                format!("the id is not `{namespace}<kebab-name>` (spec §31.5, §31.22)"),
+                format!(
+                    "the id is not `{command_namespace}<kebab-name>` or \
+                     `{target_namespace}<kebab-name>` (spec §31.5, §31.22, §31.23)"
+                ),
             ));
         }
         let argument_mode = match self.argument_mode.as_str() {

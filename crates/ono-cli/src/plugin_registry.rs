@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 
 use ono_command::{CommandContract, CommandRegistry, ContributedCommand, Origin};
 use ono_core::ErrorCode;
-use ono_kuang_protocol::{CommandDocument, Manifest};
+use ono_kuang_protocol::{CommandDocument, Manifest, TargetDocument};
 use ono_value::ErrorValue;
 
 use crate::kuang_host::{Installed, packages_under};
@@ -85,11 +85,27 @@ fn declared_commands(plugin_path: &[PathBuf]) -> (Vec<CommandContract>, Vec<Erro
     (commands, problems)
 }
 
+/// The infix that marks a `get` the shell must answer through the provider path.
+///
+/// A contributed command's id is `<package.id>.command.<kebab>`; a contributed target's synthetic
+/// entry is `<package.id>.target.<kebab>`. The two are routed differently — invoked versus
+/// queried — and the id is where that decision is readable, in the registry, in `explain` and in
+/// `get command`, rather than being inferred from the verb.
+pub(crate) const TARGET_INFIX: &str = ".target.";
+
+/// The command id the shell registers for a target a package contributes.
+pub(crate) fn target_command_id(package_id: &str, target: &str) -> String {
+    format!("{package_id}{TARGET_INFIX}{target}")
+}
+
 /// What one package declares, as registry entries attributed to it (spec §31.64).
 pub(crate) fn declarations(package: &Installed) -> (Vec<CommandContract>, Vec<ErrorValue>) {
     let mut commands = Vec::new();
     let mut problems = Vec::new();
     let origin = origin_of(&package.manifest);
+    let (targets, refused) = target_declarations(package, &origin);
+    commands.extend(targets);
+    problems.extend(refused);
     for path in declared_paths(&package.manifest) {
         let file = package.directory.join(&path);
         let text = match std::fs::read_to_string(&file) {
@@ -132,6 +148,77 @@ pub(crate) fn declarations(package: &Installed) -> (Vec<CommandContract>, Vec<Er
                 capabilities: contribution.capabilities,
                 argument_mode: contribution.argument_mode,
                 examples: contribution.examples,
+                origin: origin.clone(),
+            };
+            match declared.into_contract() {
+                Ok(contract) => commands.push(contract),
+                Err(error) => problems.push(error),
+            }
+        }
+    }
+    (commands, problems)
+}
+
+/// The targets one package contributes, as `get <target>` entries attributed to it.
+///
+/// A target becomes a registry placeholder exactly as a command does (spec §31.68), so that
+/// `get pod`, its help page, its completion and `explain` all answer before the package has run.
+/// The entry it becomes is a `get` whose output is a stream of the schema the target declared —
+/// which is what lets the pipeline type-check the stage without loading anything.
+fn target_declarations(
+    package: &Installed,
+    origin: &Origin,
+) -> (Vec<CommandContract>, Vec<ErrorValue>) {
+    let mut commands = Vec::new();
+    let mut problems = Vec::new();
+    let paths = package
+        .manifest
+        .contributions
+        .as_ref()
+        .and_then(|contributions| contributions.targets.clone())
+        .unwrap_or_default();
+    for path in paths {
+        let file = package.directory.join(&path);
+        let text = match std::fs::read_to_string(&file) {
+            Ok(text) => text,
+            Err(error) => {
+                problems.push(
+                    ErrorValue::new(
+                        ErrorCode::KuangPackageInvalid,
+                        format!(
+                            "`{}` declares `{path}`, which cannot be read: {error}",
+                            package.manifest.package.id
+                        ),
+                    )
+                    .with_help("a declared contribution document is part of the package"),
+                );
+                continue;
+            }
+        };
+        let document = match TargetDocument::parse(&text) {
+            Ok(document) => document,
+            Err(error) => {
+                problems.push(
+                    ErrorValue::new(
+                        ErrorCode::KuangPackageInvalid,
+                        format!("{}: {}", file.display(), error.message()),
+                    )
+                    .with_help(error.help().unwrap_or_default()),
+                );
+                continue;
+            }
+        };
+        for target in document.targets {
+            let declared = ContributedCommand {
+                id: target_command_id(&package.manifest.package.id, &target.name),
+                verb: "get".to_owned(),
+                target: target.name.clone(),
+                summary: target.summary.clone(),
+                input: None,
+                output: format!("stream<{}>", target.schema),
+                capabilities: Vec::new(),
+                argument_mode: "expression".to_owned(),
+                examples: vec![format!("get {}", target.name)],
                 origin: origin.clone(),
             };
             match declared.into_contract() {

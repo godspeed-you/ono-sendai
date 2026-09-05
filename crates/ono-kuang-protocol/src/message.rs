@@ -249,6 +249,41 @@ impl CommandDocument {
     }
 }
 
+/// The document a `contributions.targets` path names (spec §31.23, §31.68).
+///
+/// The target half of what a package declares twice over. A command document says what a package
+/// can be *asked to do*; this says what nouns it *answers for*, and the difference decides how an
+/// invocation is routed — a contributed command is invoked, a contributed target is queried
+/// through the provider path, so that its records carry the declared schema and the host's
+/// provenance rather than whatever a command chose to emit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetDocument {
+    /// The targets the document declares.
+    pub targets: Vec<TargetContribution>,
+}
+
+impl TargetDocument {
+    /// Reads a declaration document.
+    ///
+    /// # Errors
+    ///
+    /// `package.invalid` when the document is not the shape
+    /// `docs/contracts/kuang/contributions.v1.yaml` describes.
+    pub fn parse(text: &str) -> Result<Self, KuangError> {
+        serde_yaml_ng::from_str(text).map_err(|error| {
+            KuangError::new(
+                KuangErrorCode::PackageInvalid,
+                format!("a contributed target document does not read: {error}"),
+            )
+            .with_help(
+                "the document is a `targets:` list of the contribution shape of \
+                 `docs/contracts/kuang/contributions.v1.yaml`",
+            )
+        })
+    }
+}
+
 /// A contributed target (spec §31.23).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TargetContribution {
