@@ -956,7 +956,12 @@ fn honest() -> Plugin {
             }
         })
         .provider("echo-item", |ctx| {
-            for (seq, label) in [(1, "alpha"), (2, "beta"), (3, "gamma")] {
+            // `--count` is honoured so that a test can prove a contributed *target* receives the
+            // options its invocation carried. A provider that ignored them would answer the same
+            // three items whether or not the host forwarded anything, which is exactly the bug
+            // that made this argument necessary.
+            let count = int_argument(ctx, "count", 3).clamp(0, 3) as usize;
+            for (seq, label) in [(1, "alpha"), (2, "beta"), (3, "gamma")].into_iter().take(count) {
                 if ctx.emit(&item_record(seq, label)).is_err() {
                     return Outcome::Cancelled;
                 }

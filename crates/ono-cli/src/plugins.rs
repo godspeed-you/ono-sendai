@@ -954,27 +954,7 @@ pub fn invoke(
         ));
     };
 
-    // `--name value` and `--name=value` become the JSON arguments of the plugin protocol.
-    let mut arguments = serde_json::Map::new();
-    let mut pending: Option<String> = None;
-    for word in words {
-        let text = word.to_string_lossy();
-        if let Some(rest) = text.strip_prefix("--") {
-            if let Some(name) = pending.take() {
-                arguments.insert(name, serde_json::Value::Bool(true));
-            }
-            if let Some((name, value)) = rest.split_once('=') {
-                arguments.insert(name.to_owned(), json_word(value));
-            } else {
-                pending = Some(rest.to_owned());
-            }
-        } else if let Some(name) = pending.take() {
-            arguments.insert(name, json_word(&text));
-        }
-    }
-    if let Some(name) = pending.take() {
-        arguments.insert(name, serde_json::Value::Bool(true));
-    }
+    let arguments = json_arguments(words);
 
     session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
@@ -1032,6 +1012,36 @@ fn contributed_id(plugin: &LoadedPlugin, command: &str) -> Option<String> {
         let id = &registered.contribution.id;
         (id == command || id.rsplit('.').next() == Some(command)).then(|| id.clone())
     })
+}
+
+/// `--name value` and `--name=value` as the JSON arguments of the plugin protocol.
+///
+/// Shared by [`invoke`] and [`query`] because a command and a target are spelled the same way at
+/// a prompt. They were not shared at first, and the target route passed an empty map: every
+/// contributed target answered as though it had been asked with no arguments, which is not a
+/// visible failure but a permanently unfiltered one.
+fn json_arguments(words: &[std::ffi::OsString]) -> serde_json::Map<String, serde_json::Value> {
+    let mut arguments = serde_json::Map::new();
+    let mut pending: Option<String> = None;
+    for word in words {
+        let text = word.to_string_lossy();
+        if let Some(rest) = text.strip_prefix("--") {
+            if let Some(name) = pending.take() {
+                arguments.insert(name, serde_json::Value::Bool(true));
+            }
+            if let Some((name, value)) = rest.split_once('=') {
+                arguments.insert(name.to_owned(), json_word(value));
+            } else {
+                pending = Some(rest.to_owned());
+            }
+        } else if let Some(name) = pending.take() {
+            arguments.insert(name, json_word(&text));
+        }
+    }
+    if let Some(name) = pending.take() {
+        arguments.insert(name, serde_json::Value::Bool(true));
+    }
+    arguments
 }
 
 fn json_word(text: &str) -> serde_json::Value {
@@ -1128,7 +1138,7 @@ pub fn invoke_contributed(
         .and_then(|rest| rest.strip_prefix(crate::plugin_registry::TARGET_INFIX))
     {
         let target = target.to_owned();
-        return query(session, package, &target);
+        return query(session, package, &target, words);
     }
     let command = contract.id().rsplit('.').next().unwrap_or(contract.id());
     invoke(session, package, command, words)
@@ -1141,7 +1151,12 @@ pub fn invoke_contributed(
 /// against the contributed schema and provenance-stamped `plugin:<package.id>` by the host
 /// (spec §31.80), which is what makes a contributed target a noun rather than a command wearing
 /// a target's spelling.
-pub fn query(session: &mut Session, package: &str, target: &str) -> Eval<Vec<Value>> {
+pub fn query(
+    session: &mut Session,
+    package: &str,
+    target: &str,
+    words: &[std::ffi::OsString],
+) -> Eval<Vec<Value>> {
     session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,
@@ -1179,7 +1194,7 @@ pub fn query(session: &mut Session, package: &str, target: &str) -> Eval<Vec<Val
         }
         runtime.block_on(async {
             let invocation = plugin
-                .query(target, serde_json::Map::new())
+                .query(target, json_arguments(words))
                 .await
                 .map_err(|error| crate::kuang_host::wire_error_value(&error))?;
             Ok::<_, ErrorValue>(invocation.collect().await)

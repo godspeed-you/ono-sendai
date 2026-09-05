@@ -170,3 +170,24 @@ fn should_compose_a_contributed_target_with_the_pipeline() {
         run.output()
     );
 }
+
+#[test]
+fn should_carry_a_targets_options_into_the_provider_query() {
+    // A contributed target is invoked with words like any other stage, and those words are the
+    // only way a user can say *which* of something they want — a context, a namespace, a kind.
+    // The first version of this route passed an empty option map, so every target answered as if
+    // it had been asked with no arguments at all: not visibly broken, just permanently unfiltered.
+    let home = plugin_home();
+    let run = ono_with_plugins(
+        &home,
+        &format!("load plugin {ECHO}; get echo-item --count 1 | to json"),
+    );
+    run.assert_success();
+    let items = last_json(&run);
+    assert_eq!(
+        items.as_sequence().expect("a sequence").len(),
+        1,
+        "`--count 1` must reach the provider handler, got {:?}",
+        run.output()
+    );
+}
