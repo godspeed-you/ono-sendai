@@ -266,21 +266,20 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## What is left, and why
 
-*Empty.* The v0.4.1 tranche is delivered — thirteen phases — and **116 of `docs/ACCEPTANCE.md`
-§4.8's 118 boxes are ticked**, each by a named automated proof that
-`xtask/tests/hardening_evidence.rs` resolves on every gate run (ADR-0575). The workspace declares
-`0.4.1`, `docs/releases/v0.4.1.md` is written and held against the checklist by
-`xtask::scan::check_release_notes` (ADR-0577), and no test in the workspace is `#[ignore]`d.
+*Empty.* The v0.4.1 tranche is delivered and released. **All 118 boxes of `docs/ACCEPTANCE.md`
+§4.8 are ticked**, each by a named automated proof that `xtask/tests/hardening_evidence.rs`
+resolves on every gate run (ADR-0575). The workspace declares `0.4.1`, `docs/releases/v0.4.1.md`
+is written and held against the checklist by `xtask::scan::check_release_notes` (ADR-0577), and no
+test in the workspace is `#[ignore]`d.
 
-**The two boxes that remain open are the two `scripts/release-check.sh` will report, and pushing
-the tag is what closes them.** They stay open because **no release has been signed**, and neither
-is work anybody can do at a keyboard: **#107** (signature over the checksum manifest) and **#115**
-(documenting installer verification). Keyless Sigstore needs an OIDC token that exists only inside a release run, and
-§40.2 denies the acceptance container a network. The code is complete on both sides —
-`scripts/sign-release.sh` refuses without an identity, `scripts/verify-release.sh` is
-identity-constrained and fails closed — and the first `v*` tag is the run that proves them.
-Pushing that tag and promoting `implementation` to `main` are both the user's decision; an agent
-does either only when asked to in that request (AGENTS.md §12.1). Their two boxes in `docs/ACCEPTANCE.md` say so in their own text.
+**The last two closed on 2026-09-04, when the tag produced what only a tag can.** #107 (signature
+over the checksum manifest) and #115 (documenting installer verification) had waited because
+keyless Sigstore needs an OIDC token that exists only inside a release run and §40.2 denies the
+acceptance container a network. The `v0.4.1` run signed `SHA256SUMS` and `build-provenance.json`
+under the identity
+`https://github.com/godspeed-you/ono-sendai/.github/workflows/release.yml@refs/tags/v0.4.1`,
+verified them before drafting and again before publishing, and attached nine assets each
+byte-identical to what was verified. `v0.4.1` is on `main`, tagged and published. Their two boxes in `docs/ACCEPTANCE.md` say so in their own text.
 
 No class-c issue remains: **#3** closed with its sixth increment, below.
 
@@ -319,6 +318,14 @@ issue that ordered the work did not know.
   undefined-behaviour job. Nothing either tool reported was a finding in the product — the fifth
   cause would have been one, and there was no fifth. Found on the way: two decisions had both
   taken the number 0571, and the later one — the brokered connection of #3 — is now ADR-0573.
+- **The release page said nothing, and the note that said everything was in the repository
+  (2026-09-05).** ADR-0580. `v0.4.1` published nine verified assets under a page carrying one line:
+  the compare link `--generate-notes` produces. `docs/releases/v0.4.1.md` — held against the
+  checklist on every gate run since ADR-0577 — reached nobody, which is §66.8 met on one side and
+  dropped on the other. `publish-release.sh` now drafts from `docs/releases/<tag>.md` where there
+  is one, titled by the note's own heading the way `v0.4.0`'s page is, and keeps `--generate-notes`
+  as a fallback that says on standard error that it fired. `v0.4.1`'s page was corrected by hand
+  because it was already published; every release after it gets the page from the script.
 - **The first real tag published nothing, and that was the harness working (2026-09-04).**
   ADR-0579. The `v0.4.1` release run built both architectures, compared both rebuilds byte for
   byte, wrote the checksum manifest and the provenance, **signed the manifest with keyless Sigstore

@@ -2017,7 +2017,7 @@ mutable inputs.
       `::should_fail_the_release_check_when_an_artifact_is_absent_from_the_manifest`, run by
       `scripts/release-check.sh` and by the `publish` job of `.github/workflows/release.yml`
       (#106, §47.1, §47.2, ADR-0528).
-- [ ] **P2 · The manifest is signed and the signature verifies.** A verifiable signature is
+- [x] **P2 · The manifest is signed and the signature verifies.** A verifiable signature is
       published beside `SHA256SUMS`, verification succeeds against the published identity, a
       tampered manifest fails verification, and the signing model is keyless or else an ADR defines
       custody, rotation, revocation and offline verification and is named in this box —
@@ -2029,7 +2029,13 @@ mutable inputs.
       have no route to. Everything up to the signature is implemented and green: the workflow
       signs and verifies itself before publishing, the verification is identity-constrained and
       fails closed, and the two tests own the verification path against a stand-in `cosign`. The
-      first tag push produces the end-to-end proof this box waits for.
+      first tag push produces the end-to-end proof this box waits for. **It did.** The `v0.4.1`
+      run signed `SHA256SUMS` and `build-provenance.json` with a Fulcio certificate issued to
+      `https://github.com/godspeed-you/ono-sendai/.github/workflows/release.yml@refs/tags/v0.4.1`
+      by `https://token.actions.githubusercontent.com`, verified both against that identity before
+      drafting anything, and verified them again before making the release visible — the
+      identity in the published bundle is readable from the certificate without cosign, and the
+      run's own log carries the three green verifications.
 - [x] **P2 · Provenance binds seven fields to every artifact digest.** Repository, source commit,
       release tag, workflow identity, builder and toolchain version, artifact digest and build
       timestamp are bound by provenance the trusted workflow produces, and the release check
@@ -2084,7 +2090,7 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       checkout — `xtask/tests/terminology.rs::should_check_a_wiki_checkout_when_one_is_given` — and
       running it stays a manual
       step until the release workflow clones the Wiki.
-- [ ] **P2 · Verification instructions exist and work.** The install documentation shows a short
+- [x] **P2 · Verification instructions exist and work.** The install documentation shows a short
       copyable sequence that verifies `SHA256SUMS` and its signature before installation, needs no
       proprietary service, and is executed rather than merely printed. Written, checked and half
       executed: `docs/spec/hardening/release_verification.yaml` holds the five steps once, the
@@ -2099,8 +2105,11 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       keyless signing needs an OIDC token that exists only inside a run of the release workflow,
       and verifying one needs Sigstore over a network §40.2 denies the container — so no release
       has been signed and the two `cosign` steps have never been executed against one. The first
-      `v*` tag is the run that closes both boxes. The commands are `scripts/verify-release.sh`'s,
-      byte for byte, rather than a guess at them.
+      `v*` tag is the run that closes both boxes, and the `v0.4.1` run executed both of them: the
+      published `SHA256SUMS.sigstore.json` and `build-provenance.json.sigstore.json` were checked
+      by the documented sequence against the documented identity, in the run and again before
+      publication. The commands are `scripts/verify-release.sh`'s, byte for byte, rather than a
+      guess at them.
 - [x] **P2 · The migration path is written down.** §63's five migrations — existing users, existing
       direct listening-agent users, an existing host identity, existing KUANG plugins, existing test
       infrastructure — are documented in `docs/MIGRATION.md` and on the Wiki's Install page with

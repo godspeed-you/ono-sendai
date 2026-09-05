@@ -71,11 +71,28 @@ bash "$repo/scripts/verify-release.sh" --dir "$dir"
 
 # --- 2. a draft, so nothing half-populated is ever visible -----------------------------------
 
+# The release note this repository wrote for this tag, where there is one. `docs/releases/v0.4.1.md`
+# is held against the checklist on every gate run (ADR-0577), so it is the document that already
+# has to agree with what was and was not delivered — and a release whose page says less than that
+# document does is a release that made the reader look for it. Its first line is the title, the
+# way `v0.4.0`'s page carries it (ADR-0580).
+#
+# `--generate-notes` stays the fallback rather than the default: a tag with no written note gets
+# the commit range, which is worth more than an empty page.
+notes="$repo/docs/releases/$tag.md"
+draft=(--draft)
+if [[ -f "$notes" ]]; then
+  draft+=(--notes-file "$notes" --title "$(sed -n '1s/^# //p' "$notes")")
+else
+  echo "publish-release: no $notes; the page carries the generated commit range instead" >&2
+  draft+=(--generate-notes --title "$tag")
+fi
+
 step "drafting $tag"
 if gh release view "$tag" >/dev/null 2>&1; then
   echo "publish-release: $tag already exists; uploading into it"
 else
-  gh release create "$tag" --draft --generate-notes --title "$tag"
+  gh release create "$tag" "${draft[@]}"
 fi
 
 # --- 3. upload everything --------------------------------------------------------------------

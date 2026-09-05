@@ -980,3 +980,106 @@ fn should_take_the_repository_from_its_own_checkout_when_the_environment_names_n
         );
     }
 }
+
+#[test]
+fn should_draft_a_release_from_the_note_this_repository_wrote_for_the_tag() {
+    // §66.8 asks that the release notes agree with the checklist about status, and ADR-0577 holds
+    // `docs/releases/v<version>.md` to that on every gate run. The release page is where a reader
+    // outside the repository meets that document, and `v0.4.1` was first published with nothing on
+    // it but a compare link — the note existed and nothing carried it (ADR-0580).
+    let scratch = scratch();
+    let (directory, path) = publishable(&scratch, "with-a-note");
+    let log = scratch.path().join("gh.log");
+    let _ = std::fs::write(&log, "");
+    let notes = this_repository().join("docs/releases/v0.4.1.md");
+    let title = std::fs::read_to_string(&notes)
+        .expect("this repository's own release note")
+        .lines()
+        .next()
+        .expect("a heading")
+        .trim_start_matches("# ")
+        .to_owned();
+
+    let output = Command::new("bash")
+        .arg(this_repository().join("scripts/publish-release.sh"))
+        .args([
+            "--tag",
+            "v0.4.1",
+            "--dir",
+            directory.to_str().expect("a UTF-8 path"),
+        ])
+        .current_dir(scratch.path())
+        .env("PATH", &path)
+        .env("ONO_GH_LOG", &log)
+        .env("ONO_COSIGN_LOG", scratch.path().join("cosign.log"))
+        .env("GITHUB_REPOSITORY", "godspeed-you/ono-sendai")
+        .env_remove("GH_REPO")
+        .output()
+        .unwrap_or_else(|error| panic!("bash must be runnable in the gate: {error}"));
+    let calls = std::fs::read_to_string(&log).unwrap_or_default();
+    let mut report = String::from_utf8_lossy(&output.stdout).into_owned();
+    report.push_str(&String::from_utf8_lossy(&output.stderr));
+
+    let create = calls
+        .lines()
+        .find(|call| call.contains("release create"))
+        .unwrap_or_else(|| panic!("nothing was drafted:\n{report}\ncalls:\n{calls}"));
+    assert!(
+        create.contains("--notes-file") && create.contains("docs/releases/v0.4.1.md"),
+        "the draft does not carry the note this repository wrote for the tag: {create}"
+    );
+    assert!(
+        create.contains(&title),
+        "the draft is titled by the tag rather than by what the note calls the release: {create}"
+    );
+    assert!(
+        !create.contains("--generate-notes"),
+        "a written note was there and the commit range was drafted instead: {create}"
+    );
+}
+
+#[test]
+fn should_draft_the_commit_range_when_no_note_was_written_for_the_tag() {
+    // The fallback is worth more than an empty page, and it is a fallback rather than the default.
+    let scratch = scratch();
+    let (directory, path) = publishable(&scratch, "without-a-note");
+    let log = scratch.path().join("gh.log");
+    let _ = std::fs::write(&log, "");
+    assert!(
+        !this_repository().join("docs/releases/v9.9.9.md").exists(),
+        "this test needs a tag this repository wrote no note for"
+    );
+
+    let output = Command::new("bash")
+        .arg(this_repository().join("scripts/publish-release.sh"))
+        .args([
+            "--tag",
+            "v9.9.9",
+            "--dir",
+            directory.to_str().expect("a UTF-8 path"),
+        ])
+        .current_dir(scratch.path())
+        .env("PATH", &path)
+        .env("ONO_GH_LOG", &log)
+        .env("ONO_COSIGN_LOG", scratch.path().join("cosign.log"))
+        .env("GITHUB_REPOSITORY", "godspeed-you/ono-sendai")
+        .env_remove("GH_REPO")
+        .output()
+        .unwrap_or_else(|error| panic!("bash must be runnable in the gate: {error}"));
+    let calls = std::fs::read_to_string(&log).unwrap_or_default();
+    let mut report = String::from_utf8_lossy(&output.stdout).into_owned();
+    report.push_str(&String::from_utf8_lossy(&output.stderr));
+
+    let create = calls
+        .lines()
+        .find(|call| call.contains("release create"))
+        .unwrap_or_else(|| panic!("nothing was drafted:\n{report}\ncalls:\n{calls}"));
+    assert!(
+        create.contains("--generate-notes") && create.contains("--title v9.9.9"),
+        "a tag with no written note must still get the commit range and its own name: {create}"
+    );
+    assert!(
+        report.contains("the page carries the generated commit range instead"),
+        "the fallback happens silently, so nobody notices a note that was never written:\n{report}"
+    );
+}
