@@ -29,6 +29,9 @@ pub struct HostLimits {
     pub max_frame: u32,
     /// The default overflow policy. Host policy has final authority (spec §31.15).
     pub overflow: OverflowPolicy,
+    /// How many invocations one instance may have open at once. A package may ask for fewer and
+    /// never more (spec §31.15).
+    pub max_concurrent_invocations: u32,
 }
 
 impl Default for HostLimits {
@@ -40,6 +43,10 @@ impl Default for HostLimits {
             call_deadline_ms: 5_000,
             max_frame: 1024 * 1024,
             overflow: OverflowPolicy::BlockUpstream,
+            // Enough for a provider to overlap a handful of remote round trips, which is the
+            // reason concurrency exists here at all, and small enough that a package cannot
+            // turn one instance into a thread farm.
+            max_concurrent_invocations: 4,
         }
     }
 }
@@ -131,6 +138,17 @@ pub fn negotiate(
             queue_depth: limits.queue_depth,
             call_deadline_ms: limits.call_deadline_ms,
             max_frame: limits.max_frame,
+            // Absent a declaration the host default applies, exactly as `max_concurrent_calls`
+            // reads its null. A declaration narrows or asks, and host policy caps it; one is
+            // the floor, because an instance that may run nothing serves nothing.
+            max_concurrent_invocations: manifest
+                .runtime
+                .as_ref()
+                .and_then(|runtime| runtime.max_concurrent_invocations)
+                .map_or(limits.max_concurrent_invocations, |declared| {
+                    declared.min(limits.max_concurrent_invocations)
+                })
+                .max(1),
         },
         overflow: manifest
             .runtime

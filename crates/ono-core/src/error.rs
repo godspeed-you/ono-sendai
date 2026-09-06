@@ -312,6 +312,8 @@ error_codes! {
         "The plugin emitted a value outside the schema its contribution advertises.";
     KuangRuntimeBackpressureFailure => "Ono-Sendai-K11206", "runtime.backpressure_failure", Stream,
         "A stream could not keep up and its policy was to fail rather than lose data.";
+    KuangRuntimeConcurrencyLimit => "Ono-Sendai-K11207", "runtime.concurrency_limit", Safety,
+        "The plugin already has as many invocations open as its contract allows.";
     KuangCapabilityDenied => "Ono-Sendai-K11301", "capability.denied", Permission,
         "The plugin asked for something it has not been granted.";
     KuangCapabilityScopeViolation => "Ono-Sendai-K11302", "capability.scope_violation", Permission,

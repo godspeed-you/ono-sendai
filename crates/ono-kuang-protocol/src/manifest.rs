@@ -171,6 +171,8 @@ pub struct Runtime {
     pub startup: Startup,
     /// Preferred cap on in-flight host calls. `None` accepts the host default.
     pub max_concurrent_calls: Option<u32>,
+    /// Preferred cap on invocations open at once. `None` accepts the host default.
+    pub max_concurrent_invocations: Option<u32>,
     /// The package's preferred overflow policy. Host policy has final authority (spec §31.15).
     pub overflow: Option<OverflowPolicy>,
 }
@@ -565,6 +567,8 @@ struct RawRuntime {
     #[serde(default)]
     max_concurrent_calls: Option<u32>,
     #[serde(default)]
+    max_concurrent_invocations: Option<u32>,
+    #[serde(default)]
     overflow: Option<OverflowPolicy>,
 }
 
@@ -771,6 +775,7 @@ fn validate_runtime(raw: RawRuntime) -> Result<Runtime, KuangError> {
         cpu_budget: raw.cpu_budget,
         startup: raw.startup,
         max_concurrent_calls: raw.max_concurrent_calls,
+        max_concurrent_invocations: raw.max_concurrent_invocations,
         overflow: raw.overflow,
     })
 }

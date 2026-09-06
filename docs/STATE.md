@@ -2183,6 +2183,18 @@ the provider samples — and no assertion changed.
 
 ## Found, not yet filed
 
+- **The host closes every open view when any invocation ends (2026-09-06).** With concurrency in
+  the SDK (ADR-0586) an instance can have two invocations open, and
+  `ono-kuang-supervisor::supervisor.rs` → `handle_envelope`, the `Pending::Invocation` arm, calls
+  `close_all_views(false)` whatever invocation just answered. Reproduction: two invocations of a
+  command that opens a view under `RecordingViews`; the first to finish tears down the second's
+  view, and the second's `next_view_event` sees `unmount` it did not earn. `OpenView` already has
+  a struct of its own and would need the invocation handle beside its `id`, with the close
+  filtered by it — spec §31.28 says a view outlives no invocation, which is true of *its own*
+  invocation and of no other. What closes it: a conformance case with two view-opening
+  invocations open at once, asserting each view survives the other's end. Not fixed in ADR-0586's
+  increment because it is a host-side change with a test of its own (AGENTS.md §4).
+
 - **A failing streamed adapter child reports exit 0 under load (2026-09-03).** Gate run after
   the #3 views increment: `adapters.rs::should_report_a_failing_streamed_child_after_its_records`
   — a `journalctl` shim of `echo '<entry>'; exit 3` — came back with status **0** and the
@@ -3505,6 +3517,32 @@ records. It was removed from this board rather than carried as an open box.
 ---
 
 ## Done
+
+**A package answers more than one invocation at a time (2026-09-06, ADR-0586).** `Plugin::run_io`
+ran a handler on the frame-reading stack, so a second `command.invoke` or `provider.query`
+arriving while one was open fell to `pump`'s `_` arm, was answered `null`, and quarantined the
+instance with `runtime.protocol_violation` — *invalid type: null, expected struct InvokeResult*.
+Two pieces of real work found it: a Kubernetes provider's Gate J asks for two kubeconfig contexts
+queried **concurrently**, which the protocol could not carry, and a provider model built on remote
+systems was serialising the waits that are its whole cost. The reading loop now runs no package
+code: an invocation gets a worker of its own inside a `std::thread::scope`, responses are routed
+to the call that made them by `seq`, and the credit an emit answer carries and the view handle an
+open answers are applied by the reading loop in frame order so a demand cannot be lost to a stale
+absolute number. Everything an invocation owns — credit, cancellation, its view events — is keyed
+by its output handle, so cancelling one leaves the others running and neither can starve the
+other. A panicking handler fails its own invocation and no sibling (§31.34), and every transport
+mutex recovers from poisoning for the same reason. The ceiling is declared twice on purpose:
+`Plugin::concurrent_invocations(n)` is the author saying the code is safe beside itself (default
+**1**, so no existing package changes), and `runtime.max_concurrent_invocations` in the manifest,
+capped by host policy into `EffectiveLimits`, is the operator saying how much of the machine one
+instance may have. Beyond it the package answers the new `runtime.concurrency_limit`
+(`Ono-Sendai-K11207`) and stays `Loaded` — a bound an operator can see rather than a queue they
+cannot. The component tier has one WASI thread and no way to make another, so there the handler
+runs on the reading loop's stack and pumps its own frames, with a ceiling of one and the same
+visible refusal; the routing, the registry and the accounting are one implementation for both.
+Proven by six conformance cases in `crates/ono-kuang-sdk/tests/conformance.rs`, all held open by a
+credit window of one so that "at the same time" is a fact rather than a hope about scheduling.
+
 
 **A contributed relation runs between contributed kinds of place (2026-09-06, ADR-0585).**
 ADR-0584 closed on the sentence this increment opens: `near` found nothing and `follow` had

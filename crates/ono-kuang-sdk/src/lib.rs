@@ -23,6 +23,14 @@
 //!     })
 //!     .run();
 //! ```
+//!
+//! A package answers **one invocation at a time** unless it says otherwise, and a second one
+//! arriving while the first is open is refused with `runtime.concurrency_limit` — a visible
+//! refusal rather than a wedged instance. [`Plugin::concurrent_invocations`] raises that: it is
+//! a statement about the code, because each invocation then runs on a worker of its own and a
+//! handler must be safe to run beside its siblings. The effective ceiling is the smaller of that
+//! number and `max_concurrent_invocations` in the negotiated contract, which is the operator's
+//! (spec §31.15, ADR-0586).
 
 mod plugin;
 

@@ -635,6 +635,12 @@ errors:
     summary: A stream could not keep up and its policy was to fail rather than lose data.
     help: >-
       The stream's overflow policy was `fail-stream`, which correctness-sensitive analyses require (spec §31.15). A lossy policy would have answered, incompletely and quietly. Slow the source, bound it with `take`, or choose a policy that says which values it discards.
+  - code: Ono-Sendai-K11207
+    name: runtime.concurrency_limit
+    kind: safety
+    summary: The plugin already has as many invocations open as its contract allows.
+    help: >-
+      The instance is healthy and busy: `max_concurrent_invocations` in the negotiated contract is the ceiling, and it is the smaller of the package's declaration and host policy (spec §31.15). Nothing of the refused invocation ran. Wait for one of the open invocations to finish, or raise the ceiling deliberately.
   - code: Ono-Sendai-K11301
     name: capability.denied
     kind: permission

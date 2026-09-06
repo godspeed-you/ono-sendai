@@ -89,6 +89,8 @@ kuang_error_codes! {
         "The plugin emitted a value outside the schema its contribution advertises.";
     RuntimeBackpressureFailure => "Ono-Sendai-K11206", "runtime.backpressure_failure", Stream,
         "A stream could not keep up and its policy was to fail rather than lose data.";
+    RuntimeConcurrencyLimit => "Ono-Sendai-K11207", "runtime.concurrency_limit", Safety,
+        "The plugin already has as many invocations open as its contract allows.";
     CapabilityDenied => "Ono-Sendai-K11301", "capability.denied", Permission,
         "The plugin asked for something it has not been granted.";
     CapabilityScopeViolation => "Ono-Sendai-K11302", "capability.scope_violation", Permission,
@@ -331,11 +333,23 @@ mod tests {
     #[test]
     fn should_expose_all_27_codes_of_spec_31_79_when_enumerated() {
         // §31.79's families are closed: nothing here is renumbered, removed or re-pointed.
+        // Codes this build adds beyond that proposal are counted apart from it, so the
+        // specified list stays checkable as the closed thing it is.
+        let added = ["runtime.concurrency_limit"];
         let inherited = KuangErrorCode::ALL
             .iter()
             .filter(|code| !code.name().starts_with("plugin."))
+            .filter(|code| !added.contains(&code.name()))
             .count();
         assert_eq!(inherited, 27);
+        // ADR-0586: a package already at the concurrency ceiling its contract carries is a
+        // condition §31.79's proposal has no name for.
+        for name in added {
+            assert!(
+                KuangErrorCode::from_name(name).is_some(),
+                "`{name}` is raised and the taxonomy does not resolve it"
+            );
+        }
         // v0.4.1 §16.3 adds a family §31.79 does not have, and names all three of its codes
         // verbatim: a confinement control that could not be installed (ADR-0444).
         let confinement = KuangErrorCode::ALL

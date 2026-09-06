@@ -69,6 +69,10 @@ pub struct EffectiveLimits {
     pub call_deadline_ms: u64,
     /// The largest frame either side may send, in bytes. Beyond it is a protocol violation.
     pub max_frame: u32,
+    /// How many invocations the instance may have open at once. One is the floor: a package
+    /// that answers one thing at a time is unaffected, and anything above it is a resource the
+    /// operator agreed to (spec §31.15).
+    pub max_concurrent_invocations: u32,
 }
 
 /// The contract negotiated when a package is loaded (spec §31.63).

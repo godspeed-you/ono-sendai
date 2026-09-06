@@ -74,6 +74,15 @@ invariants:
       Every frame declares its length; frame size, nesting depth and total message size are
       bounded, and the decoder is fuzzed (ADR-0015 T7, spec §35.6). A protocol bomb is a
       `runtime.protocol_violation`, not an allocation.
+  - id: bounded-concurrency
+    rule: >-
+      A package MAY have more than one invocation open at once, up to
+      `max_concurrent_invocations` in the negotiated contract. Every handle, every credit window
+      and every cancellation belongs to exactly one invocation, so two open invocations neither
+      see nor starve each other; a response is routed to the call that asked for it by `seq`, and
+      answers may arrive in any order. Beyond the ceiling the plugin answers
+      `runtime.concurrency_limit` rather than queueing, because a bound the operator agreed to is
+      one they can see.
   - id: pull-not-push
     rule: >-
       Values move only when the consumer has asked for them, in both directions (see
@@ -975,6 +984,7 @@ backpressure:
     - {id: call_deadline, type: duration, doc: "Cancellation deadline for one host call. Exceeding it is `runtime.timeout`."}
     - {id: cpu_budget, type: record, doc: "CPU, fuel or instruction budget appropriate to the runtime tier. Exceeding it is `runtime.trap` for a component, a kill for a native host."}
     - {id: max_concurrent_calls, type: int, doc: "Maximum in-flight host calls. A further call waits; it does not queue without bound."}
+    - {id: max_concurrent_invocations, type: int, doc: "Maximum invocations one instance may have open at once. A further `command.invoke` or `provider.query` is answered `runtime.concurrency_limit`; it is not queued and it is not a protocol violation."}
     - {id: provider_rate_limit, type: record, doc: "Rate limit for expensive providers, per plugin. Prevents one package making a provider unusable for everyone."}
     - {id: output_rate_limit, type: record, doc: "Rate limit for UI and log output (spec §31.33), so a package cannot flood the terminal or the log."}
     - {id: state_quota, type: bytesize, doc: "Persistent-state ceiling. Exceeding it is `state.quota_exceeded` on the write, never a silent eviction."}

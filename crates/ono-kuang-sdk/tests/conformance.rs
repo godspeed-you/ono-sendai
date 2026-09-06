@@ -2170,3 +2170,298 @@ async fn should_refuse_a_view_without_the_ui_view_grant() {
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
         .await;
 }
+
+// --- concurrent invocations, spec §31.15, §31.34 -----------------------------------------------
+
+/// A credit window of one, so a handler blocks inside `emit` until its consumer pulls.
+///
+/// This is what lets a test hold two invocations open at the same point without a clock: an
+/// invocation that has emitted its first value and has no credit left is, provably, still
+/// running, and it stays there until this test grants it more.
+fn one_value_of_credit() -> HostLimits {
+    HostLimits {
+        queue_depth: 1,
+        ..HostLimits::default()
+    }
+}
+
+/// The same manifest asking for a concurrency ceiling of its own (spec §31.15).
+fn manifest_with_concurrency(ceiling: u32) -> String {
+    manifest().replace(
+        "  startup: lazy",
+        &format!("  startup: lazy\n  max_concurrent_invocations: {ceiling}"),
+    )
+}
+
+#[tokio::test]
+async fn should_complete_two_invocations_that_were_open_at_the_same_time() {
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
+        .limits(one_value_of_credit())
+        .load()
+        .await
+        .expect("loads");
+    let first = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(3))]),
+        )
+        .await
+        .expect("the first invocation starts");
+    // The first handler has spent its single credit and is waiting for more, so it is still
+    // running when the second arrives — which is the situation the old loop quarantined.
+    let second = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(5))]),
+        )
+        .await
+        .expect("the second invocation starts while the first is open");
+    let (first_out, second_out) = tokio::join!(first.collect(), second.collect());
+    assert_eq!(first_out.1.status, InvokeStatus::Completed);
+    assert_eq!(second_out.1.status, InvokeStatus::Completed);
+    assert_eq!(
+        values_of(&first_out.0),
+        (1..=3).map(Value::Int).collect::<Vec<_>>(),
+        "each invocation answers with its own values and none of the other's"
+    );
+    assert_eq!(
+        values_of(&second_out.0),
+        (1..=5).map(Value::Int).collect::<Vec<_>>(),
+    );
+    assert_eq!(plugin.state(), PluginState::Loaded);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_answer_two_concurrent_queries_of_one_target_with_their_own_options() {
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
+        .limits(one_value_of_credit())
+        .load()
+        .await
+        .expect("loads");
+    let narrow = plugin
+        .query("echo-item", args(&[("count", json!(1))]))
+        .await
+        .expect("the first query starts");
+    let wide = plugin
+        .query("echo-item", args(&[("count", json!(3))]))
+        .await
+        .expect("the second query starts while the first is open");
+    let (narrow_out, wide_out) = tokio::join!(narrow.collect(), wide.collect());
+    assert_eq!(narrow_out.1.status, InvokeStatus::Completed);
+    assert_eq!(wide_out.1.status, InvokeStatus::Completed);
+    assert_eq!(
+        narrow_out.0.len(),
+        1,
+        "two contexts queried at once do not cross over: each answers its own options"
+    );
+    assert_eq!(wide_out.0.len(), 3);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_deliver_a_host_calls_answer_to_the_handler_that_made_it() {
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
+        .limits(one_value_of_credit())
+        .load()
+        .await
+        .expect("loads");
+    let item = plugin
+        .invoke(
+            "dev.example.echo.command.relay",
+            args(&[("id", json!("dev.example.echo.item/1"))]),
+        )
+        .await
+        .expect("the first relay starts");
+    let place = plugin
+        .invoke(
+            "dev.example.echo.command.relay",
+            args(&[("id", json!("dev.example.echo.place/1"))]),
+        )
+        .await
+        .expect("the second relay starts while the first is open");
+    let (item_out, place_out) = tokio::join!(item.collect(), place.collect());
+    assert_eq!(item_out.1.status, InvokeStatus::Completed);
+    assert_eq!(place_out.1.status, InvokeStatus::Completed);
+    assert_eq!(
+        strings(&item_out.0),
+        vec![
+            "open:dev.example.echo.item/1".to_owned(),
+            "dev.example.echo.item/1".to_owned(),
+        ],
+        "the answer to a host call reaches the handler that asked, not whichever handler is next"
+    );
+    assert_eq!(
+        strings(&place_out.0),
+        vec![
+            "open:dev.example.echo.place/1".to_owned(),
+            "dev.example.echo.place/1".to_owned(),
+        ],
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_keep_the_other_invocation_running_when_one_is_cancelled() {
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
+        .limits(one_value_of_credit())
+        .load()
+        .await
+        .expect("loads");
+    let mut doomed = plugin
+        .invoke("dev.example.echo.command.count-forever", args(&[]))
+        .await
+        .expect("the first invocation starts");
+    let mut survivor = plugin
+        .invoke("dev.example.echo.command.count-forever", args(&[]))
+        .await
+        .expect("the second invocation starts");
+    assert_eq!(
+        doomed.next().await,
+        Some(StreamEvent::Value(Value::Int(1))),
+        "both are producing before either is cancelled"
+    );
+    assert_eq!(
+        survivor.next().await,
+        Some(StreamEvent::Value(Value::Int(1)))
+    );
+    doomed.cancel().await;
+    while doomed.next().await.is_some() {}
+    assert_eq!(
+        doomed.finish().await.status,
+        InvokeStatus::Cancelled,
+        "the cancelled invocation observes its own cancellation"
+    );
+    for expected in 2..=4 {
+        assert_eq!(
+            survivor.next().await,
+            Some(StreamEvent::Value(Value::Int(expected))),
+            "cancelling one invocation disturbs no other"
+        );
+    }
+    survivor.cancel().await;
+    while survivor.next().await.is_some() {}
+    assert_eq!(survivor.finish().await.status, InvokeStatus::Cancelled);
+    assert_eq!(plugin.state(), PluginState::Loaded);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_an_invocation_beyond_the_negotiated_concurrency_ceiling() {
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest_with_concurrency(2)))
+        .limits(one_value_of_credit())
+        .load()
+        .await
+        .expect("loads");
+    assert_eq!(
+        plugin.contract().limits.max_concurrent_invocations,
+        2,
+        "the effective ceiling is the smaller of the package's declaration and host policy"
+    );
+    let first = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(2))]),
+        )
+        .await
+        .expect("starts");
+    let second = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(2))]),
+        )
+        .await
+        .expect("starts");
+    let (refused_events, refused) = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(2))]),
+        )
+        .await
+        .expect("the third invocation is answered rather than dropped")
+        .collect()
+        .await;
+    assert_eq!(refused.status, InvokeStatus::Failed);
+    assert_eq!(
+        refused.error.expect("a structured refusal").name,
+        "runtime.concurrency_limit",
+        "a ceiling an operator agreed to is refused visibly, not queued silently"
+    );
+    assert!(
+        refused_events.is_empty(),
+        "nothing ran, so nothing was emitted"
+    );
+    let (first_out, second_out) = tokio::join!(first.collect(), second.collect());
+    assert_eq!(first_out.1.status, InvokeStatus::Completed);
+    assert_eq!(second_out.1.status, InvokeStatus::Completed);
+    assert_eq!(
+        plugin.state(),
+        PluginState::Loaded,
+        "reaching the ceiling is not a protocol violation"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_keep_serving_a_package_that_answers_one_invocation_at_a_time() {
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
+        .args(&["--serial"])
+        .limits(one_value_of_credit())
+        .load()
+        .await
+        .expect("a package that never opted in still loads");
+    let first = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(3))]),
+        )
+        .await
+        .expect("starts");
+    let refused = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(3))]),
+        )
+        .await
+        .expect("the second invocation is answered rather than dropped")
+        .collect()
+        .await
+        .1;
+    assert_eq!(refused.status, InvokeStatus::Failed);
+    assert_eq!(
+        refused.error.expect("a structured refusal").name,
+        "runtime.concurrency_limit",
+        "the default is one at a time, and the limit is visible rather than fatal"
+    );
+    let (events, result) = first.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed);
+    assert_eq!(
+        values_of(&events),
+        (1..=3).map(Value::Int).collect::<Vec<_>>()
+    );
+    let (later, result) = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(2))]),
+        )
+        .await
+        .expect("one after another is what it was written for")
+        .collect()
+        .await;
+    assert_eq!(result.status, InvokeStatus::Completed);
+    assert_eq!(values_of(&later), vec![Value::Int(1), Value::Int(2)]);
+    assert_eq!(plugin.state(), PluginState::Loaded);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}

@@ -95,8 +95,8 @@ fields:
     required: true
     doc: >-
       The effective quotas of spec §31.15: memory, persistent state, event queue depth, call
-      deadline, concurrent host calls, output rate. Each is the smaller of the package's
-      declaration and host policy.
+      deadline, concurrent host calls, concurrent invocations, output rate. Each is the smaller
+      of the package's declaration and host policy.
   overflow:
     type: enum
     required: true

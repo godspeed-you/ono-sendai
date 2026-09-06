@@ -279,6 +279,14 @@ sections:
         type: int
         nullable: true
         doc: Preferred cap on in-flight host calls (spec §31.15). Null accepts the host default.
+      max_concurrent_invocations:
+        type: int
+        nullable: true
+        doc: >-
+          Preferred cap on invocations the instance may have open at once (spec §31.15). Null
+          accepts the host default; host policy caps whatever is declared, and one is the floor.
+          The package's code declares its own willingness separately — this number bounds a
+          resource, it does not make handlers re-entrant.
       overflow:
         type: enum
         nullable: true

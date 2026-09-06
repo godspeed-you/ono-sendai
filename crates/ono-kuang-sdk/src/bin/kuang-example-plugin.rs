@@ -39,6 +39,9 @@ fn main() {
         Some("--misbehave=huge-frame") => misbehave(Mode::HugeFrame),
         Some("--misbehave=bad-hello") => misbehave(Mode::BadHello),
         Some("--misbehave=die") => misbehave(Mode::Die),
+        // A package written for the old model: it never says its handlers may run beside one
+        // another, so the SDK's default of one at a time applies (ADR-0586).
+        Some("--serial") => honest_at_most(1).run(),
         _ => honest().run(),
     }
 }
@@ -230,7 +233,14 @@ fn int_argument(ctx: &Ctx<'_>, name: &str, default: i64) -> i64 {
 }
 
 fn honest() -> Plugin {
+    // Four at once: every handler here is a closure over nothing, so running one beside another
+    // is safe, and the conformance suite needs a package that says so (ADR-0586).
+    honest_at_most(4)
+}
+
+fn honest_at_most(at_once: u32) -> Plugin {
     Plugin::new(PACKAGE, VERSION)
+        .concurrent_invocations(at_once)
         .contribute_schema(item_schema_contribution())
         .contribute_schema(place_schema_contribution())
         .contribute_schema(zone_schema_contribution())
@@ -313,6 +323,12 @@ fn honest() -> Plugin {
         .contribute_command(command(
             "schema",
             "Report one registered schema's field names.",
+            "stream<string>",
+            &["schema.read"],
+        ))
+        .contribute_command(command(
+            "relay",
+            "Emit a marker, then the id a host call answered with.",
             "stream<string>",
             &["schema.read"],
         ))
@@ -637,6 +653,33 @@ fn honest() -> Plugin {
                             let _ = ctx.emit(&Value::String(name.into()));
                         }
                     }
+                    Outcome::Completed
+                }
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        // A handler that blocks in a controlled way, so a test can hold two invocations open at
+        // one point and then let them go on separately. The marker waits for the consumer's
+        // credit; the host call after it is this invocation's own, and its answer names the
+        // schema this invocation asked for and no other.
+        .command(&format!("{PACKAGE}.command.relay"), |ctx| {
+            let id = ctx
+                .arguments()
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(ITEM_SCHEMA)
+                .to_owned();
+            if ctx.emit(&Value::String(format!("open:{id}").into())).is_err() {
+                return Outcome::Cancelled;
+            }
+            match ctx.host_call(method::SCHEMAS_GET, json!({"id": id})) {
+                Ok(schema) => {
+                    let answered = schema
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned();
+                    let _ = ctx.emit(&Value::String(answered.into()));
                     Outcome::Completed
                 }
                 Err(error) => Outcome::Failed(error),
