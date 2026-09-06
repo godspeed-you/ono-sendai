@@ -57,7 +57,7 @@ pub use manifest::{
     StateDeclaration, validate_contributed_id,
 };
 pub use message::{
-    AuditLogParams, CancelParams, CancelReason, CheckAnswer, CheckParams, ClockNowResult,
+    Answer, AuditLogParams, CancelParams, CancelReason, CheckAnswer, CheckParams, ClockNowResult,
     CloseParams, CommandContribution, CommandDocument, ContributionSet, DemandParams, EmitParams,
     EmitResult, Envelope, FilesystemReadParams, FilesystemReadResult, HealthState, Hello,
     InitParams, InitResult, InvokeParams, InvokeResult, InvokeStatus, NextParams, NextResult,

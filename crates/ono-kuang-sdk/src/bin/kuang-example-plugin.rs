@@ -18,8 +18,8 @@
 use std::io::Write;
 
 use ono_kuang_protocol::{
-    CommandContribution, ContributionSet, EmitParams, Envelope, FrameLimits, Hello, InitResult,
-    InvokeParams, InvokeResult, InvokeStatus, PACKAGE_FORMAT, ParameterContribution,
+    Answer, CommandContribution, ContributionSet, EmitParams, Envelope, FrameLimits, Hello,
+    InitResult, InvokeParams, InvokeResult, InvokeStatus, PACKAGE_FORMAT, ParameterContribution,
     SchemaContribution, SchemaFieldContribution, TargetContribution, ViewContribution, method,
 };
 use ono_kuang_sdk::{Ctx, Outcome, Plugin};
@@ -271,6 +271,7 @@ fn honest_at_most(at_once: u32) -> Plugin {
                            whatever the resource is called."
                 .to_owned(),
             options: Vec::new(),
+            answer: Answer::Bounded,
         })
         // The far end of the package's own relation shape. One schema, one target, so a place of
         // this kind can be re-read through the target it came from (ADR-0584).
@@ -281,6 +282,7 @@ fn honest_at_most(at_once: u32) -> Plugin {
             identity_doc: "Two observations are the same zone when their `uid` matches."
                 .to_owned(),
             options: Vec::new(),
+            answer: Answer::Bounded,
         })
         .contribute_target(TargetContribution {
             name: "echo-refusal".to_owned(),
@@ -288,6 +290,7 @@ fn honest_at_most(at_once: u32) -> Plugin {
             summary: "A target that refuses without emitting anything.".to_owned(),
             identity_doc: "It never answers, so nothing identifies an answer.".to_owned(),
             options: Vec::new(),
+            answer: Answer::Bounded,
         })
         .contribute_target(TargetContribution {
             name: "echo-item".to_owned(),
@@ -297,6 +300,7 @@ fn honest_at_most(at_once: u32) -> Plugin {
             // A target narrows its answer by the words a user types, and this is where it says
             // which words those are (spec §31.23, ADR-0587).
             options: vec![count_option()],
+            answer: Answer::Bounded,
         })
         // The refusal a package makes on a rule of its own, distinct from `echo-refusal`'s claim
         // that the system did not answer. Nothing was asked and nothing is unavailable: a
@@ -308,6 +312,7 @@ fn honest_at_most(at_once: u32) -> Plugin {
                 .to_owned(),
             identity_doc: "It never answers, so nothing identifies an answer.".to_owned(),
             options: Vec::new(),
+            answer: Answer::Bounded,
         })
         // The provider-side counterpart of `count-forever`: a *target* whose answer never ends,
         // so that the cancellation of spec §31.14 has something to be observed on. A finite
@@ -318,6 +323,10 @@ fn honest_at_most(at_once: u32) -> Plugin {
             summary: "Items emitted until the query is cancelled.".to_owned(),
             identity_doc: "Two observations are the same tick when their `seq` matches.".to_owned(),
             options: Vec::new(),
+            // The declaration ADR-0588 added, and the only target here that carries it. A host
+            // that collected this answer would never reach the prompt; declared unbounded, it
+            // becomes the live stream the shell's live view is fed by.
+            answer: Answer::Unbounded,
         })
         .contribute_command(command(
             "emit",

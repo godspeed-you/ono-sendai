@@ -38,6 +38,11 @@ targets:
     schema: dev.example.echo.item/1
     summary: Items the example package provides.
     identity_doc: Two observations are the same item when their `seq` matches.
+  - name: echo-tick
+    schema: dev.example.echo.item/1
+    summary: Items emitted until the query is cancelled.
+    identity_doc: Two observations are the same tick when their `seq` matches.
+    answer: unbounded
 "#;
 
 #[test]
@@ -286,6 +291,46 @@ fn should_name_a_packages_own_refusal_as_its_own_rather_than_a_host_policy() {
     assert!(
         run.stderr().contains("Ono-Sendai-K11901"),
         "the package's own refusal carries its own code, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_not_collect_an_answer_the_package_says_does_not_end() {
+    // ADR-0588. `echo-tick` emits until it is cancelled. Before a target could declare that, the
+    // host had one behaviour for every contributed answer — read it to the end — so a package
+    // whose answer has no end never returned to the prompt at all. Declared unbounded, it is a
+    // stream, and a stage that takes a prefix of a stream finishes.
+    //
+    // The assertion that matters is that this command *returns*. The row count is the second
+    // thing: a run that hung would never get to compare it.
+    let home = echo_plugin_home(ECHO, TARGETS);
+    let run = ono_with_plugins(
+        &home,
+        &format!("load plugin {ECHO}; get echo-tick | take 2 | to json"),
+    );
+    run.assert_success();
+    let items = last_json(&run);
+    let items = items.as_sequence().expect("a sequence of records");
+    assert_eq!(
+        items.len(),
+        2,
+        "a prefix of an endless answer is two records, and the endless part stops"
+    );
+}
+
+#[test]
+fn should_refuse_to_render_an_endless_answer_where_nobody_is_watching_it() {
+    // The other half, and it is inherited rather than new: shell specification §18.3 shows a
+    // live stream in place at a terminal, and a redirected run has nowhere to show one. The
+    // refusal belongs to the pipeline and reaches a contributed target now that one can be
+    // unbounded — which is the point of declaring it rather than writing a special case for
+    // packages.
+    let home = echo_plugin_home(ECHO, TARGETS);
+    let run = ono_with_plugins(&home, &format!("load plugin {ECHO}; get echo-tick"));
+    assert!(
+        !run.status().is_success(),
+        "an endless answer with no representation is refused, got {:?}",
         run.output()
     );
 }

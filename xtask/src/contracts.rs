@@ -2314,6 +2314,9 @@ fn check_kuang_contributions(location: &str, document: &Yaml) -> Vec<Problem> {
         summary: "A thing.".to_owned(),
         identity_doc: "Its id.".to_owned(),
         options: vec![parameter.clone()],
+        // Deliberately the non-default: `answer` is skipped when it is `bounded`, so a fixture
+        // that took the default would carry no field and this check would pass over it.
+        answer: ono_kuang_protocol::Answer::Unbounded,
     };
     // `provider` is documented and deliberately not a wire field; `origin` is not documented at
     // all, for the same reason (spec §31.64: the host sets both).

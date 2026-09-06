@@ -95,7 +95,11 @@ pub(super) fn run_native_segment(
     // else without a stage has nothing to do.
     let final_contract: Option<&'static CommandContract> =
         bound.last().map(|(contract, _)| *contract);
-    if final_contract.is_none() && !matches!(seed, Seed::Stream { .. }) {
+    // Nothing bound and nothing streaming into it: there is no segment to run. A seed that is
+    // *already* a stream is the exception in both directions — a reader thread's values, and now
+    // a package's answer that does not end (ADR-0588) — because for those the segment's work is
+    // not running a stage but deciding how the stream is shown.
+    if final_contract.is_none() && !matches!(seed, Seed::Stream { .. } | Seed::Pipe { .. }) {
         return Ok((None, ExitStatus::SUCCESS));
     }
     let stage_has_no_redirection = list.stages[*indices.last().unwrap_or(&0)]

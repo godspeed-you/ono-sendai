@@ -206,9 +206,10 @@ fn should_not_enumerate_a_contributed_target_that_nothing_asked_for() {
 
 #[test]
 fn should_finish_a_search_over_a_contributed_target_that_never_ends() {
-    // `echo-tick` answers until it is cancelled. A package declares no boundedness for a target
-    // it contributes, so the host does not take an unbounded read on trust: the search asks for
-    // as many objects as it can answer with and stops there, which is what `Query::max` is for.
+    // `echo-tick` answers until it is cancelled, and declares as much (ADR-0588). A search still
+    // has to finish, so it asks for as many objects as it can answer with and stops there, which
+    // is what `Query::limit` is for. A search that named no limit would be refused rather than
+    // hang.
     // The assertion is that the command returns at all.
     let home = echo_plugin_home(ECHO, TARGETS);
     let run = ono_with_plugins(

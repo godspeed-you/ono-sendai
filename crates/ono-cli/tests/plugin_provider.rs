@@ -252,8 +252,12 @@ async fn should_cancel_the_packages_stream_when_the_query_is_cancelled() {
     let plugin = load(&scratch, 1).await;
     let registry = registry_of(&plugin);
 
+    // A limit, because `echo-tick` declares that its answer does not end (ADR-0588) and a
+    // snapshot of such an answer is refused rather than read forever. The number is far larger
+    // than this test will ever take: what is being proven is the cancellation, and a limit the
+    // stream could reach would prove it by arriving at the end instead.
     let mut stream = registry
-        .snapshot(&Query::target("echo-tick"))
+        .snapshot(&Query::target("echo-tick").limit(1_000_000))
         .expect("the endless target is answered");
     let first = tokio::time::timeout(std::time::Duration::from_secs(10), stream.recv())
         .await
@@ -311,4 +315,52 @@ async fn probe(plugin: &Arc<LoadedPlugin>) -> HealthState {
         .await
         .expect("the loaded package answers a health probe")
         .state
+}
+
+#[tokio::test]
+async fn should_refuse_a_snapshot_of_an_answer_the_package_says_does_not_end() {
+    // ADR-0588. `snapshot` is collected by `resolve` above, so an unbounded answer read here
+    // would hang the registry rather than answer it — and hanging is the one outcome that is
+    // never an answer. The refusal names the declaration, because the caller cannot see it.
+    let scratch = ono_testkit::scratch();
+    let plugin = load(&scratch, 1).await;
+    let registry = registry_of(&plugin);
+
+    let refused = registry
+        .snapshot(&Query::target("echo-tick"))
+        .expect_err("an answer that does not end has no snapshot");
+
+    assert!(
+        refused.message().contains("does not end"),
+        "the refusal says why, got {refused:?}"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_carry_the_querys_own_narrowing_to_the_package() {
+    // The empty argument map this path used to pass was not a decision: every contributed target
+    // answered a `resolve`, an `enter` or a re-read of a place as though nothing had been asked
+    // of it. An unfiltered answer is not a visible failure, which is what made it worth fixing
+    // rather than documenting. `echo-item` honours `--count`, so the count is the proof.
+    let scratch = ono_testkit::scratch();
+    let plugin = load(&scratch, 1).await;
+    let registry = registry_of(&plugin);
+
+    let collected = registry
+        .snapshot(&Query::target("echo-item").option("count", Value::Int(1)))
+        .expect("the target is answered")
+        .collect()
+        .await;
+
+    assert_eq!(
+        collected.values().len(),
+        1,
+        "the package received `count`, so it emitted one item rather than all three"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
 }

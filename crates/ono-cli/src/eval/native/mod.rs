@@ -310,12 +310,40 @@ fn run_from(
     let mut status = ExitStatus::SUCCESS;
 
     // A seeded list with nothing after the seed shows the seed itself: `@-1` alone re-renders
-    // the retained result.
+    // the retained result, and `get <unbounded contributed target>` alone shows the stream the
+    // package is producing (ADR-0588).
     if segments.is_empty() {
-        if let Start::Values(values) = seed.take()
-            && let Some(stage) = list.stages.first()
-        {
-            write_result(session, stage, &values, false, source)?;
+        match seed.take() {
+            Start::Values(values) => {
+                if let Some(stage) = list.stages.first() {
+                    write_result(session, stage, &values, false, source)?;
+                }
+            }
+            // No stage follows, so nothing is bound and nothing runs: what the empty segment
+            // does is decide how the stream is *shown*. That decision — a live view at a
+            // terminal, a refusal where nobody is watching — belongs to one place, and this is
+            // the same call the one-stage-after case makes.
+            Start::Pipe {
+                stream,
+                failed_rows,
+            } => {
+                let (_, run_status) = run_native_segment(
+                    session,
+                    registry,
+                    list,
+                    &[],
+                    source,
+                    None,
+                    Seed::Pipe {
+                        stream,
+                        failed_rows,
+                    },
+                    true,
+                    true,
+                )?;
+                status = run_status;
+            }
+            Start::Nothing => {}
         }
         return Ok(status);
     }

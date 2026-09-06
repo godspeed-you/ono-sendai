@@ -351,6 +351,54 @@ pub struct TargetContribution {
     /// target's does (`docs/contracts/kuang/contributions.v1.yaml` → `target.options`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<ParameterContribution>,
+    /// Whether the answer ends by itself.
+    #[serde(default, skip_serializing_if = "Answer::is_default")]
+    pub answer: Answer,
+}
+
+/// Whether a contributed target's answer ends by itself (spec §31.23, ADR-0588).
+///
+/// The host has to know this before it reads the first record, and it cannot find out by reading:
+/// a package that has not sent a record yet and a package that will never stop sending them look
+/// the same from the outside. So the package says which it is, in the document the host reads
+/// before anything runs.
+///
+/// The consequence is the whole point. A bounded answer is collected and shown as a table; an
+/// unbounded one becomes a live stream, which is what the shell's live view is fed by
+/// (`ono_cli::live`, shell specification §18.2, §18.3). Without the declaration the host had one
+/// choice for both, and it chose to collect — so a package whose answer never ends never returned
+/// to the prompt.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Answer {
+    /// The answer is a finite collection: the host reads it to the end and shows it.
+    ///
+    /// The default, and deliberately so. A package that says nothing about its answer gets the
+    /// behaviour every package had before there was anywhere to say it, and a package whose
+    /// answer *does* end is the ordinary case.
+    #[default]
+    Bounded,
+    /// The answer continues until the operator ends it: a watch, a followed log, a subscription.
+    ///
+    /// The host must not collect one. It becomes an unbounded stream, cancellable by the
+    /// operator, and the invocation is cancelled when the stream is dropped (spec §31.14:
+    /// cancellation is delivered, not inferred).
+    Unbounded,
+}
+
+impl Answer {
+    /// Whether this is the default, so that a document and a handshake that say nothing carry
+    /// nothing.
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        matches!(self, Self::Bounded)
+    }
+
+    /// Whether the answer ends by itself.
+    #[must_use]
+    pub fn is_bounded(self) -> bool {
+        matches!(self, Self::Bounded)
+    }
 }
 
 /// A contributed schema, in the field vocabulary of `docs/contracts/schemas/*.v1.yaml`

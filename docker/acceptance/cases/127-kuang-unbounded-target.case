@@ -1,0 +1,68 @@
+# Phase I (spec §31.23, §31.68; shell specification §18.2, §18.3): a package says whether the
+# answer to a target ends, and the shell believes it. Before a target could declare it, a
+# contributed answer had exactly one shape — read it to the end — so a package whose answer has
+# no end never returned to the prompt at all. `echo-tick` emits until it is cancelled.
+# ADR-0588.
+case: an answer a package says does not end is a stream rather than a table that never comes
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/plugins/dev.example.echo/contributions"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - clock.read
+  network:
+    outbound: none
+  contributions:
+    targets: [contributions/targets.yaml]
+  MANIFEST
+  cat > "$home/plugins/dev.example.echo/contributions/targets.yaml" <<'CONTRIB'
+  targets:
+    - name: echo-item
+      schema: dev.example.echo.item/1
+      summary: Items the example package provides.
+      identity_doc: Two observations are the same item when their `seq` matches.
+    - name: echo-tick
+      schema: dev.example.echo.item/1
+      summary: Items emitted until the query is cancelled.
+      identity_doc: Two observations are the same tick when their `seq` matches.
+      answer: unbounded
+  CONTRIB
+
+  echo "== a bounded answer is still read to its end =="
+  ono -c 'load plugin dev.example.echo; get echo-item | count | to json'
+
+  echo "== an answer that does not end is a stream, and a prefix of it finishes =="
+  timeout 30 ono -c 'load plugin dev.example.echo; get echo-tick | take 2 | select seq | to json'
+
+  echo "== with nobody watching it, the representation has to be chosen =="
+  ono -c 'load plugin dev.example.echo; get echo-tick' 2>&1 >/dev/null | head -1
+exit: 0
+stdout-contains: 3
+stdout-contains: [{"seq":1},{"seq":2}]
+stdout-contains: a live stream needs a representation when nobody is watching it
+stdout-not-contains: panicked

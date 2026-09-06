@@ -404,8 +404,18 @@ pub(super) fn run_stage_list(
             {
                 words.remove(0);
             }
-            let values = crate::plugins::invoke_contributed(session, contract, &words)?;
-            return super::native::run_seeded(session, list, source, values);
+            return match crate::plugins::invoke_contributed(session, contract, &words)? {
+                crate::plugins::Answered::Values(values) => {
+                    super::native::run_seeded(session, list, source, values)
+                }
+                // A declared unbounded answer continues the pipeline as a stream rather than
+                // being read to an end that does not come (ADR-0588). `false` because nothing
+                // upstream of this stage ran: a contributed target is the head of its pipeline,
+                // so there is no earlier mutation to have reported a failed row.
+                crate::plugins::Answered::Live(stream) => {
+                    super::native::run_piped(session, list, source, stream, false)
+                }
+            };
         }
     }
 

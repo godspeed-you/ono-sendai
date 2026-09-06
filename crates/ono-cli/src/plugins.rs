@@ -1217,11 +1217,31 @@ pub fn contributed_by_namespace(
 ///
 /// The load's own refusal — a denied required capability, a disabled package, a runtime that
 /// will not start — or the package's refusal of the invocation.
+/// What a contributed entry answered with.
+///
+/// Two shapes because a contribution now says which it is (`ADR-0588`). Everything a package
+/// contributed used to be read to its end, which is right for a collection and wrong for a watch:
+/// an answer that does not end never reached the prompt at all. A declared unbounded answer
+/// becomes the stream the pipeline already knows how to run and the live view already knows how
+/// to show (shell specification §18.2, §18.3).
+pub enum Answered {
+    /// A finite answer, read to its end.
+    Values(Vec<Value>),
+    /// An answer that continues until the operator ends it.
+    Live(ono_pipeline::ValueStream),
+}
+
+/// Answers a contributed command or target.
+///
+/// # Errors
+///
+/// The structured error of whichever step refused: loading the package, resolving the
+/// contribution, or the invocation itself.
 pub fn invoke_contributed(
     session: &mut Session,
     contract: &CommandContract,
     words: &[std::ffi::OsString],
-) -> Eval<Vec<Value>> {
+) -> Eval<Answered> {
     let package = contract.origin().package().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::ResolveCommandNotFound,
@@ -1251,7 +1271,7 @@ pub fn invoke_contributed(
         return query(session, package, &target, words);
     }
     let command = contract.id().rsplit('.').next().unwrap_or(contract.id());
-    invoke(session, package, command, words)
+    invoke(session, package, command, words).map(Answered::Values)
 }
 
 /// Answers a contributed target by querying the package that contributes it (spec §31.23).
@@ -1266,7 +1286,7 @@ pub fn query(
     package: &str,
     target: &str,
     words: &[std::ffi::OsString],
-) -> Eval<Vec<Value>> {
+) -> Eval<Answered> {
     let arguments = declared_arguments(
         declaration(&crate::plugin_registry::target_command_id(package, target)),
         words,
@@ -1290,11 +1310,11 @@ pub fn query(
                 format!("`{package}` is no longer loaded"),
             ))
         })?;
-        if !plugin
+        let Some(registered) = plugin
             .targets()
             .iter()
-            .any(|registered| registered.contribution.name == target)
-        {
+            .find(|registered| registered.contribution.name == target)
+        else {
             return Err(Flow::Failed(
                 ErrorValue::new(
                     ErrorCode::ResolveTargetNotFound,
@@ -1305,6 +1325,22 @@ pub fn query(
                      agree (spec §31.23)",
                 ),
             ));
+        };
+        // An answer the package declared does not end is not collected. It becomes a stream with
+        // the boundedness the declaration gave it, which is what carries it to the live view of
+        // shell specification §18.3 rather than to a table that would never be drawn (ADR-0588).
+        // Collecting it was not a decision anybody took: it was the only thing the host could do
+        // before a target could say which kind of answer it has.
+        if !registered.contribution.answer.is_bounded() {
+            let target = crate::plugin_provider::intern_target(target);
+            let _guard = runtime.enter();
+            return Ok(Answered::Live(crate::plugin_provider::stream_of(
+                plugin,
+                target,
+                arguments,
+                ono_pipeline::Boundedness::Unbounded,
+                None,
+            )));
         }
         runtime.block_on(async {
             let invocation = plugin
@@ -1315,7 +1351,7 @@ pub fn query(
         })
     };
     let (events, result) = outcome.map_err(Flow::Failed)?;
-    delivered(events, &result)
+    delivered(events, &result).map(Answered::Values)
 }
 
 /// The registry entry for a contributed id, when the registry holds one.

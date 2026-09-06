@@ -17,6 +17,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use ono_core::ErrorCode;
+use ono_kuang_protocol::Answer;
 use ono_kuang_supervisor::{LoadedPlugin, StreamEvent};
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
 use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Selector};
@@ -89,6 +90,20 @@ impl PluginProvider {
         Arc::clone(&lock(&self.plugin))
     }
 
+    /// Whether the answer to this target ends by itself, as the running instance declares it.
+    ///
+    /// Read from the instance rather than remembered, because a reload replaces the instance and
+    /// a package is entitled to change its declaration between two versions of itself. A target
+    /// the instance no longer contributes answers `bounded`, which is the safe reading: the
+    /// availability check refuses the query before the boundedness matters.
+    fn answer(&self) -> ono_kuang_protocol::Answer {
+        self.plugin()
+            .targets()
+            .iter()
+            .find(|registered| registered.contribution.name == self.target())
+            .map_or(Answer::Bounded, |registered| registered.contribution.answer)
+    }
+
     /// Whether the instance answering now still contributes this target.
     fn contributes(&self) -> bool {
         self.plugin()
@@ -147,54 +162,31 @@ impl Provider for PluginProvider {
         let plugin = self.plugin();
         let target = self.target();
         // Spec §12.4 and §12.6 of the external-system-provider architecture let a provider stream
-        // an enumeration and declare that it is expensive; `docs/contracts/kuang/contributions.v1.yaml`
-        // gives a target contribution neither field, so nothing a package declares says whether
-        // its answer ends. A caller that asks for a bounded view therefore gets one here rather
-        // than reading until the package decides to stop, and the invocation is cancelled — spec
-        // §31.14: cancellation is delivered, not inferred (ADR-0583, ADR-0584).
+        // an enumeration and declare that it is expensive. A target now says whether its answer
+        // *ends* (ADR-0588), and a snapshot of an answer that does not end is not a thing this
+        // path can produce: `resolve` below collects what `snapshot` returns, so reading an
+        // unbounded target here would hang the registry rather than answer it. A query that
+        // bounds itself with `max` gets its prefix; one that does not is refused, naming the verb
+        // that does read a stream.
         let wanted = query.max();
-        Ok(ValueStream::spawn(
-            PipelineConfig::new(),
+        if !self.answer().is_bounded() && wanted.is_none() {
+            return Err(ErrorValue::new(
+                ErrorCode::ProviderUnsupported,
+                format!(
+                    "`{}` declares that its answer does not end, so there is no snapshot of it",
+                    self.target()
+                ),
+            )
+            .with_help(
+                "read it as a stream — `get <target>` shows it live at a terminal — or bound the                  query with a maximum",
+            ));
+        }
+        Ok(stream_of(
+            plugin,
+            target,
+            query_arguments(query),
             Boundedness::Bounded,
-            move |sink| async move {
-                let mut invocation = match plugin.query(target, serde_json::Map::new()).await {
-                    Ok(invocation) => invocation,
-                    Err(error) => {
-                        let _ = sink.fail(crate::kuang_host::wire_error_value(&error)).await;
-                        return;
-                    }
-                };
-                let mut delivered_count = 0usize;
-                loop {
-                    if wanted.is_some_and(|wanted| delivered_count >= wanted) {
-                        break;
-                    }
-                    // Biased, so a cancelled pipeline stops the package rather than racing it
-                    // for one more value. Spec §31.14 requires the cancel to be *delivered*:
-                    // a package waiting for demand it will never be granted is a package that
-                    // never finishes its handler, and dropping the invocation would leave it
-                    // exactly there.
-                    let event = tokio::select! {
-                        biased;
-                        () = sink.cancel_token().cancelled() => break,
-                        event = invocation.next() => event,
-                    };
-                    let delivered = match event {
-                        Some(StreamEvent::Value(value)) => {
-                            delivered_count += 1;
-                            sink.send(value).await
-                        }
-                        Some(StreamEvent::Failed(error)) => {
-                            sink.fail(crate::kuang_host::wire_error_value(&error)).await
-                        }
-                        None => return,
-                    };
-                    if delivered.is_err() {
-                        break;
-                    }
-                }
-                invocation.cancel().await;
-            },
+            wanted,
         ))
     }
 
@@ -217,6 +209,79 @@ impl Provider for PluginProvider {
             _ => Ok(refs),
         }
     }
+}
+
+/// One invocation of a contributed target, as a stream of the values it emits.
+///
+/// Shared by [`PluginProvider::snapshot`] and the shell's own `get <target>` path, because the
+/// two used to differ in ways nobody had decided: one passed the query's arguments and the other
+/// passed an empty map, and one collected the answer while the other could not. A package that
+/// answered differently depending on which door the question came through would be a package with
+/// two behaviours and one declaration.
+///
+/// `boundedness` is the *declared* one (ADR-0588). It is what the pipeline branches on, and it is
+/// how an unbounded answer reaches the live view of shell specification §18.3 instead of being
+/// read to an end that never comes.
+pub(crate) fn stream_of(
+    plugin: Arc<LoadedPlugin>,
+    target: &'static str,
+    arguments: serde_json::Map<String, serde_json::Value>,
+    boundedness: Boundedness,
+    wanted: Option<usize>,
+) -> ValueStream {
+    ValueStream::spawn(PipelineConfig::new(), boundedness, move |sink| async move {
+        let mut invocation = match plugin.query(target, arguments).await {
+            Ok(invocation) => invocation,
+            Err(error) => {
+                let _ = sink.fail(crate::kuang_host::wire_error_value(&error)).await;
+                return;
+            }
+        };
+        let mut delivered_count = 0usize;
+        loop {
+            if wanted.is_some_and(|wanted| delivered_count >= wanted) {
+                break;
+            }
+            // Biased, so a cancelled pipeline stops the package rather than racing it
+            // for one more value. Spec §31.14 requires the cancel to be *delivered*:
+            // a package waiting for demand it will never be granted is a package that
+            // never finishes its handler, and dropping the invocation would leave it
+            // exactly there.
+            let event = tokio::select! {
+                biased;
+                () = sink.cancel_token().cancelled() => break,
+                event = invocation.next() => event,
+            };
+            let delivered = match event {
+                Some(StreamEvent::Value(value)) => {
+                    delivered_count += 1;
+                    sink.send(value).await
+                }
+                Some(StreamEvent::Failed(error)) => {
+                    sink.fail(crate::kuang_host::wire_error_value(&error)).await
+                }
+                None => return,
+            };
+            if delivered.is_err() {
+                break;
+            }
+        }
+        invocation.cancel().await;
+    })
+}
+
+/// A registry query's narrowing, as the arguments a contributed target reads.
+///
+/// The empty map that used to be passed here was not a decision: it meant every contributed
+/// target answered a `resolve`, an `enter` or a re-read of a place as though it had been asked
+/// with no arguments at all — an unfiltered answer rather than a visible failure. A provider that
+/// needs to know *which* namespace, context or kind a place belongs to got none of it.
+fn query_arguments(query: &Query) -> serde_json::Map<String, serde_json::Value> {
+    let mut arguments = serde_json::Map::new();
+    for (name, value) in query.options() {
+        arguments.insert(name.clone(), ono_value::to_json(value));
+    }
+    arguments
 }
 
 /// The refusal for a target this provider does not answer for.
@@ -245,7 +310,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// later provider that names it: reloading a package a hundred times leaks nothing further, and
 /// the total is bounded by how many distinct targets the installed packages declare rather than
 /// by how often they are loaded. `ono_remote` makes the same trade for the same reason.
-fn intern_target(name: &str) -> &'static str {
+pub(crate) fn intern_target(name: &str) -> &'static str {
     static NAMES: OnceLock<Mutex<Vec<&'static str>>> = OnceLock::new();
     let names = NAMES.get_or_init(|| Mutex::new(Vec::new()));
     let mut guard = lock(names);

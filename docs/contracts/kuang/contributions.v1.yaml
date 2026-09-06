@@ -115,6 +115,7 @@ target:
     summary: "{type: string, required: true, doc: \"One line, for `help` and completion.\"}"
     identity_doc: {type: string, required: true, doc: "What makes two observations the same object, in prose, beside the schema's `identity` list."}
     options: {type: list<parameter>, nullable: true, doc: "The options a query against this target is narrowed by — a context, a namespace, a kind. Declared in the same shape a command's are, so that `get <target> --<option>` has help, completion and a default (ADR-0587)."}
+    answer: {type: "enum<bounded|unbounded>", nullable: true, doc: "Whether the answer ends by itself. Default `bounded`. `unbounded` is a watch, a followed log or a subscription: the host must not collect it, and shows it as a live stream instead (ADR-0588)."}
     provider: {type: string, required: true, doc: "`plugin:<package.id>`, set by the host."}
 
 # The shape a `selectors` or `options` entry has, in a command contribution or a target one. It is
