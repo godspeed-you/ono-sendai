@@ -522,7 +522,20 @@ fn honest_at_most(at_once: u32) -> Plugin {
             // it degrades the plugin rather than the shell. This is the package that reaches it:
             // it allocates in steps and touches every page, so the kernel really has to give it
             // the memory rather than promising it.
+            //
+            // **It paces itself, and the pace is the point.** The host samples an instance's
+            // allocated memory every 100 ms, and §31.34's resource-limit class is claimed only
+            // when the last *observed* peak is at the ceiling — an honest rule, because a host
+            // that guessed would report a package that called `abort()` as one that ran out of
+            // memory. An unpaced allocator climbs from well under the ceiling to aborted inside
+            // one sampling interval, so on a loaded machine the host truthfully reports
+            // `runtime.trap` and the fixture proves nothing about the ceiling. Pausing after
+            // each mebibyte puts several samples inside the last few, which is what makes the
+            // classification a fact about the run rather than about the machine's load.
             let mib = int_argument(ctx, "mib", 512).clamp(1, 8192) as usize;
+            let pace = std::time::Duration::from_millis(
+                int_argument(ctx, "pace-ms", 20).clamp(0, 1000) as u64,
+            );
             let mut held: Vec<Vec<u8>> = Vec::new();
             for step in 0..mib {
                 let mut block = vec![0u8; 1024 * 1024];
@@ -530,6 +543,9 @@ fn honest_at_most(at_once: u32) -> Plugin {
                     page[0] = 1;
                 }
                 held.push(block);
+                if !pace.is_zero() {
+                    std::thread::sleep(pace);
+                }
                 if step % 16 == 0 && ctx.emit(&Value::Int(step as i128)).is_err() {
                     return Outcome::Cancelled;
                 }
