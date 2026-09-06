@@ -72,11 +72,15 @@ run: |
   # refusal from an unbounded target into a clean empty table — the substitution §21.4 of the
   # provider contract exists to prevent, made by the host rather than by the provider.
   echo "== a refusal with nothing before it is a refusal, not an empty answer =="
-  timeout 30 ono -c 'load plugin dev.example.echo; get echo-tick --refuse true | to json' 2>&1
+  timeout 30 ono -c 'load plugin dev.example.echo; get echo-tick --refuse true | to json' 2>&1 \
+    && echo "MISSING: the refusal did not fail the command"
+  echo "refused with exit $?"
 exit: 0
 stdout-contains: 3
 stdout-contains: [{"seq":1},{"seq":2}]
 stdout-contains: a live stream needs a representation when nobody is watching it
 stdout-contains: this answer has no values and that is not an empty answer
+stdout-contains: refused with exit 1
+stdout-not-contains: MISSING
 stdout-not-contains: "[]"
 stdout-not-contains: panicked
