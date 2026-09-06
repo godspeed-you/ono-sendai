@@ -340,6 +340,73 @@ async fn should_deny_and_audit_a_host_call_the_command_never_declared() {
 }
 
 #[tokio::test]
+async fn should_record_a_packages_own_audit_event_without_letting_it_forge_the_attribution() {
+    // Spec §31.37 and `docs/contracts/kuang/protocol.v1.yaml` → `audit.event`: "a package can add
+    // to the audit trail but cannot write the host's own records, and cannot suppress one."
+    //
+    // The call used to push onto a vector nothing read, so a package could record all day and no
+    // operator and no test could see it — which made `audit.event` something a package could be
+    // *told* to make and never held to (ADR-0589). It now reaches the same trail the broker's own
+    // records reach, which is the only place a record is worth putting.
+    //
+    // The fixture tries to forge both things a package must not decide: it puts another package's
+    // id and a 1999 timestamp in the event it sends.
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .load()
+        .await
+        .expect("loads");
+    let (_, result) = plugin
+        .invoke("dev.example.echo.command.audit", args(&[]))
+        .await
+        .expect("no capability gates this call")
+        .collect()
+        .await;
+    assert_eq!(result.status, InvokeStatus::Completed);
+
+    let audit = plugin.audit();
+    let recorded = audit
+        .iter()
+        .find(|event| event.capability == "audit.event")
+        .expect("what the package recorded is in the trail it shares with the broker");
+
+    assert_eq!(
+        recorded.plugin, "dev.example.echo",
+        "attribution is the host's: the package named `dev.example.impostor` and was ignored"
+    );
+    assert_eq!(
+        recorded.at, VIRTUAL_NOW,
+        "the timestamp is the host clock's: the package named 1999 and was ignored"
+    );
+    assert_eq!(
+        recorded.enforcement,
+        ono_kuang_protocol::Enforcement::Advisory,
+        "no capability was checked, so nothing here may be shown as a broker decision"
+    );
+    assert_eq!(
+        recorded.action, "audit.event:credential-plugin",
+        "the package's own word for what it did, prefixed so it cannot pass for the broker's"
+    );
+    let target = recorded
+        .target
+        .as_ref()
+        .expect("what the package said travels whole");
+    assert_eq!(
+        target.get("detail").and_then(serde_json::Value::as_str),
+        Some("an exec credential plugin was invoked"),
+        "nothing the package wrote is dropped: {target}"
+    );
+    assert_eq!(
+        target.get("plugin").and_then(serde_json::Value::as_str),
+        Some("dev.example.impostor"),
+        "and nothing it wrote is believed — the forged id survives as its claim, beside the \
+         host's attribution, rather than replacing it"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
 async fn should_refuse_and_audit_a_path_outside_the_granted_scope() {
     let outside = tempfile::tempdir().expect("tempdir");
     let secret = outside.path().join("secret.txt");

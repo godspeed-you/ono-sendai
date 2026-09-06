@@ -1,0 +1,51 @@
+# Phase I (spec §31.37; `docs/contracts/kuang/protocol.v1.yaml` → `audit.event`): what a package
+# records about itself reaches `get audit`, attributed by the host and marked advisory. The
+# broker records what it *checked*; this is for the security-relevant things the broker cannot
+# see — a credential plugin invoked, a permission the fronted system refused. The call used to
+# push onto a vector nothing read, so no operator could see any of it. ADR-0589.
+case: a package's own audit record reaches the audit trail, attributed by the host
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  network:
+    outbound: none
+  MANIFEST
+
+  echo "== no capability gates it, and what the package recorded is in the trail =="
+  ono -c 'load plugin dev.example.echo; echo:audit | to json; get audit --plugin dev.example.echo | where capability == "audit.event" | select action result | to json'
+
+  echo "== attribution is the host's, and the package named somebody else =="
+  ono -c 'load plugin dev.example.echo; echo:audit | count; get audit --plugin dev.example.echo | where capability == "audit.event" | select plugin | to json'
+  ono -c 'load plugin dev.example.echo; echo:audit | count; get audit --plugin dev.example.impostor | count | to json'
+exit: 0
+stdout-contains: "audit.event:credential-plugin"
+stdout-contains: "success"
+stdout-contains: {"plugin":"dev.example.echo"}
+stdout-contains: 0
+stdout-not-contains: dev.example.impostor
+stdout-not-contains: panicked

@@ -916,6 +916,30 @@ impl Ctx<'_> {
         self.io.call_host(self.invocation, method_name, params)
     }
 
+    /// Adds one record to the host's audit trail (spec §31.37, ADR-0589).
+    ///
+    /// For the security-relevant things a package does that the broker cannot see: a credential
+    /// plugin it invoked, a permission the external system refused it, a change it made to the
+    /// system it fronts. The broker records what it *checked*; this records what the package
+    /// knows and the broker never will.
+    ///
+    /// Everything that could be a claim stays the host's. Attribution, the timestamp and the
+    /// invocation label are set by the host and cannot be overridden, and the record is marked
+    /// advisory on every surface that shows it — a package cannot write the host's own records,
+    /// backdate its trail, or suppress an entry. `event.action` names the action, when the
+    /// package gives one, and the whole record travels as the entry's target.
+    ///
+    /// **Never a secret.** The trail is shown, exported and kept; a payload put here is a
+    /// payload published.
+    ///
+    /// # Errors
+    ///
+    /// The structured error the host answered with. No capability gates this call.
+    pub fn audit_event(&mut self, event: Json) -> Result<(), WireError> {
+        self.host_call(method::AUDIT_EVENT, serde_json::json!({ "event": event }))
+            .map(|_| ())
+    }
+
     /// Opens a contributed view (spec §31.27). `mounted` is false when output is redirected,
     /// and the command emits the view's declared fallback instead (spec §31.28).
     ///

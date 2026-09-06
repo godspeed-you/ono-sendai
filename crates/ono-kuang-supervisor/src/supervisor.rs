@@ -372,7 +372,6 @@ impl Supervisor {
         let shared = Arc::new(Mutex::new(Shared {
             lifecycle,
             logs: Vec::new(),
-            plugin_events: Vec::new(),
             last_failure: None,
             peak_memory: None,
             current_memory: None,
@@ -740,8 +739,8 @@ async fn read_frames(
 #[derive(Debug)]
 struct Shared {
     lifecycle: Lifecycle,
+    /// The structured log records the instance emitted (spec §31.33).
     logs: Vec<AuditLogParams>,
-    plugin_events: Vec<Json>,
     last_failure: Option<KuangError>,
     /// The most memory the instance has been observed to have allocated, in bytes — spec
     /// §31.33's `memory/current`, and the evidence behind a resource-limit failure (§31.34).
@@ -2422,8 +2421,49 @@ impl Actor {
         Ok(())
     }
 
+    /// `audit.event`: a package adds to the audit trail (spec §31.37, ADR-0589).
+    ///
+    /// **The record goes into the same trail the broker's own records go into**, because a trail
+    /// with a second, unreadable half is not a trail. It used to be pushed onto a vector nothing
+    /// read, so a package could call this all day and no operator and no test could see it —
+    /// which made the call something a package could be *told* to make and never held to.
+    ///
+    /// Everything that could be a claim is the host's. Attribution is `self.package_id`, the
+    /// timestamp is the host clock (a package cannot backdate its own trail), and the invocation
+    /// label is the one the supervisor is tracking. What the package said travels whole, as the
+    /// record's `target`, so nothing it wrote is lost and nothing it wrote is believed to be
+    /// something else. `action` is taken from the event's own `action` field when it names one,
+    /// because that is what makes a trail readable, and it is prefixed so no package-supplied
+    /// word can be mistaken for one of the broker's.
+    ///
+    /// `Enforcement::Advisory`, and the contract's word for it is exact: "recorded, audited and
+    /// shown — and labelled advisory on every surface that shows it". No capability gates this
+    /// call and no policy decision was taken, so `Broker` would assert a check that never
+    /// happened.
     async fn host_audit_event(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
-        lock(&self.shared).plugin_events.push(params);
+        let event = params.get("event").cloned().unwrap_or(Json::Null);
+        let action = event
+            .get("action")
+            .and_then(Json::as_str)
+            .filter(|action| !action.is_empty())
+            .map_or_else(
+                || method::AUDIT_EVENT.to_owned(),
+                |action| format!("{}:{action}", method::AUDIT_EVENT),
+            );
+        let label = self.invocation_label();
+        let at = self.now();
+        self.audit.record(
+            &self.package_id,
+            &label,
+            method::AUDIT_EVENT,
+            None,
+            Enforcement::Advisory,
+            &action,
+            Some(event),
+            at,
+            AuditResult::Success,
+            None,
+        );
         self.reply_ok(seq, Json::Null).await;
         Ok(())
     }

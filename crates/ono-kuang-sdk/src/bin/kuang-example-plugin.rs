@@ -358,6 +358,15 @@ fn honest_at_most(at_once: u32) -> Plugin {
             "stream<string>",
             &["context.read"],
         ))
+        // What a package records about itself, for the security-relevant things the broker
+        // cannot see (spec §31.37, ADR-0589). No capability gates it, and a package cannot set
+        // its own attribution or timestamp — which is what makes the entry worth reading.
+        .contribute_command(command(
+            "audit",
+            "Record one event in the host's audit trail.",
+            "stream<string>",
+            &[],
+        ))
         .contribute_command(command(
             "schemas",
             "List the registered schema ids under a prefix, pulled two at a time.",
@@ -630,6 +639,26 @@ fn honest_at_most(at_once: u32) -> Plugin {
             match ctx.clock_now() {
                 Ok(now) => {
                     let _ = ctx.emit(&Value::String(now.into()));
+                    Outcome::Completed
+                }
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        .command(&format!("{PACKAGE}.command.audit"), |ctx| {
+            // A package's own claim about what it did. It arrives in the trail attributed to
+            // this package, stamped by the host clock and marked advisory; the two fields below
+            // are the package's account and travel as the entry's target.
+            let event = json!({
+                "action": "credential-plugin",
+                "detail": "an exec credential plugin was invoked",
+                // The attribution a package might try to forge. The host overwrites neither —
+                // it never reads them — so the trail's own `plugin` and `at` stay the host's.
+                "plugin": "dev.example.impostor",
+                "at": "1999-01-01T00:00:00Z",
+            });
+            match ctx.audit_event(event) {
+                Ok(()) => {
+                    let _ = ctx.emit(&Value::String("recorded".into()));
                     Outcome::Completed
                 }
                 Err(error) => Outcome::Failed(error),

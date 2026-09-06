@@ -2183,6 +2183,20 @@ the provider samples — and no assertion changed.
 
 ## Found, not yet filed
 
+- **`spatial_orientation_bound.rs` compares two independent reads of the machine's live service
+  list, and fails when the machine changes between them (2026-09-06).**
+  `should_count_a_bounded_target_by_what_the_provider_says_is_there` and
+  `should_leave_what_a_user_asks_for_directly_unbounded` each call `population("service")` — a real
+  `get service | count` against this host's service manager — and then compare it to a second read
+  taken by `look`. Observed: `left: Some(573)`, `right: Some(570)`, during a session in which a
+  `kind` cluster was being created and destroyed in another process, which registers and retires
+  systemd scopes for its containers. Both tests pass in isolation, on the same tree, seconds later.
+  AGENTS.md §11 names the rule they break: a test must be deterministic and must "never rely on the
+  developer machine's real processes unless the fixture creates them". What closes it: take one
+  reading and derive both assertions from it, or drive the pair against a fixture that owns its
+  units. The bound under test — `limits.orientation_objects` against the whole population — is a
+  real contract and worth keeping; only the way the population is obtained is wrong.
+
 - **A contributed command may declare a mutating capability and no risk (2026-09-06).**
   `docs/contracts/kuang/contributions.v1.yaml` → `registration_checks.risk-metadata` says "Every
   mutating command and every assistant mutation tool declares its risk", and ADR-0587 carries the
