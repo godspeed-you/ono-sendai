@@ -237,6 +237,25 @@ pub fn interactive_shell_in(directory: &Scratch) -> PtySession {
         .expect("a pseudo-terminal must be available")
 }
 
+/// Starts `ono` interactively on a pseudo-terminal, with `plugin_path` as its plugin path.
+///
+/// Completion is the one surface that exists only at a terminal, so a contributed command's
+/// declared option can be proven to reach it only from a pty. The plugin path is an argument
+/// rather than a fixed subdirectory because the two package fixtures lay their packages out
+/// differently, and neither layout is the point of the test.
+pub fn interactive_shell_with_plugins(directory: &Scratch, plugin_path: &Path) -> PtySession {
+    let mut executor = Executor::detached();
+    let command = Command::new(ono_testkit::ono_binary())
+        .env("TERM", "xterm")
+        .env("NO_COLOR", "1")
+        .env("HOME", directory.path().display().to_string())
+        .env("ONO_PLUGIN_PATH", plugin_path.display().to_string())
+        .current_dir(directory.path());
+    executor
+        .run_pty(&command, WindowSize::new(24, 100))
+        .expect("a pseudo-terminal must be available")
+}
+
 pub fn assert_failed_row(row: &Value, operation: &str, code: &str) {
     assert_eq!(
         text(row, "operation"),

@@ -61,12 +61,12 @@ pub use message::{
     CloseParams, CommandContribution, CommandDocument, ContributionSet, DemandParams, EmitParams,
     EmitResult, Envelope, FilesystemReadParams, FilesystemReadResult, HealthState, Hello,
     InitParams, InitResult, InvokeParams, InvokeResult, InvokeStatus, NextParams, NextResult,
-    ProbeResult, QueryParams, RequestOnceParams, SchemaContribution, SchemaFieldContribution,
-    SchemaGetParams, SchemaListParams, ShutdownParams, ShutdownReason, StateGetResult,
-    StateKeyParams, StateSetParams, StreamHandleParams, TargetContribution, TargetDocument,
-    VIEW_COMPONENTS, ViewContribution, ViewEvent, ViewEventParams, ViewHandleParams,
-    ViewMountParams, ViewOpenParams, ViewOpenResult, ViewSize, ViewSubmitParams, method,
-    parse_type_name,
+    ParameterContribution, ProbeResult, QueryParams, RequestOnceParams, SchemaContribution,
+    SchemaFieldContribution, SchemaGetParams, SchemaListParams, ShutdownParams, ShutdownReason,
+    StateGetResult, StateKeyParams, StateSetParams, StreamHandleParams, TargetContribution,
+    TargetDocument, VIEW_COMPONENTS, ViewContribution, ViewEvent, ViewEventParams,
+    ViewHandleParams, ViewMountParams, ViewOpenParams, ViewOpenResult, ViewSize, ViewSubmitParams,
+    method, parse_type_name,
 };
 pub use signature::{
     FileDigest, PackageSignature, PublicKey, SIGNATURE_ALGORITHM, SIGNATURE_FILE, SIGNATURE_FORMAT,

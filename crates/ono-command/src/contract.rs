@@ -661,6 +661,7 @@ pub struct CommandContract {
     examples: Vec<String>,
     origin: Origin,
     required_capabilities: Vec<String>,
+    declared_risk: Option<ono_provider_api::Risk>,
 }
 
 /// Where a pipeline operation sits in the streaming classification matrix of v0.4.1 Appendix E.
@@ -937,6 +938,18 @@ impl CommandContract {
         &self.required_capabilities
     }
 
+    /// The risk a KUANG/11 contribution declared about itself, `None` for a core command and for
+    /// a contribution that declared none (spec §31.22, §31.75, ADR-0587).
+    ///
+    /// It is the package's own statement, not a check the host performed. A capability says what
+    /// the host will let a package ask for; what a package does with a brokered byte connection
+    /// once it has one is a fact only the package holds, so this is where it says it and every
+    /// surface that shows it shows it as the package's claim.
+    #[must_use]
+    pub fn declared_risk(&self) -> Option<ono_provider_api::Risk> {
+        self.declared_risk
+    }
+
     /// The examples the registry documents, every one of which must parse and run (spec §50).
     #[must_use]
     pub fn examples(&self) -> &[String] {
@@ -1150,6 +1163,9 @@ impl RawCommand {
             // document it was read from (spec §31.64).
             origin: Origin::Core,
             required_capabilities: Vec::new(),
+            // A core command's risk is the risk of the provider capability it needs, which is
+            // where `docs/contracts/capabilities.yaml` puts it. Only a contribution states its own.
+            declared_risk: None,
         })
     }
 }
@@ -1181,10 +1197,53 @@ pub struct ContributedCommand {
     pub capabilities: Vec<String>,
     /// The argument mode from ADR-0009's table.
     pub argument_mode: String,
+    /// The positional arguments the contribution declares (spec §31.22).
+    pub selectors: Vec<ContributedParameter>,
+    /// The named arguments the contribution declares (spec §31.22).
+    pub options: Vec<ContributedParameter>,
+    /// The risk the contribution declares, from `risk_levels` in
+    /// `docs/contracts/capabilities.yaml`. `None` means the package said nothing, which is not
+    /// the same as saying `read` (spec §10.5).
+    pub risk: Option<String>,
     /// Documented examples.
     pub examples: Vec<String>,
     /// The package that contributed it, as the host attributes it.
     pub origin: Origin,
+}
+
+/// One argument a contribution declares, in the vocabulary a core command declares its own in
+/// (`docs/contracts/kuang/contributions.v1.yaml` → `parameter`, ADR-0587).
+///
+/// The type and the default are text here for the same reason they are text in a contract file:
+/// they are read from a document a package wrote, and turning them into a [`DeclaredType`] and a
+/// [`Value`] is the step that can fail and must say which line failed.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ContributedParameter {
+    /// The name, without the `--` an option is written with.
+    pub name: String,
+    /// The declared type, as the registry vocabulary spells it.
+    pub declared_type: String,
+    /// One line, for `help` and beside a completion candidate.
+    pub doc: String,
+    /// Whether it may be written more than once.
+    pub repeatable: bool,
+    /// Whether the option may be written without its value (ADR-0144).
+    pub optional_value: bool,
+    /// The value the host supplies when the argument is absent, as the registry writes it.
+    pub default: Option<String>,
+}
+
+impl From<ContributedParameter> for RawParameter {
+    fn from(parameter: ContributedParameter) -> Self {
+        RawParameter {
+            name: parameter.name,
+            declared_type: parameter.declared_type,
+            doc: parameter.doc,
+            repeatable: parameter.repeatable,
+            optional_value: parameter.optional_value,
+            default: parameter.default.map(RawScalar::Text),
+        }
+    }
 }
 
 impl ContributedCommand {
@@ -1237,6 +1296,38 @@ impl ContributedCommand {
                 "a contribution declares a verb, a target and a summary",
             ));
         }
+        // The registry does not invent parameters nobody declared, and it no longer discards the
+        // ones somebody did. A declaration is what `help`, completion and the default the host
+        // applies are all built from, so a type it cannot read is `package.invalid` here rather
+        // than an argument that quietly means nothing (ADR-0587).
+        let id = self.id.clone();
+        let refuse = |detail: String| contributed_error(&id, detail);
+        let selectors = parameters_with(
+            self.selectors.into_iter().map(RawParameter::from).collect(),
+            &refuse,
+        )?;
+        let options = parameters_with(
+            self.options.into_iter().map(RawParameter::from).collect(),
+            &refuse,
+        )?;
+        // The one thing about a contribution the host cannot work out for itself. A capability
+        // says what a package may *ask the host for*; for a package that carries its own protocol
+        // over a brokered byte connection, that is `network.connect` whether the command reads
+        // the far system or writes to it, and the broker cannot tell which. Risk is the package's
+        // own statement about the world, and the model's job is to make it say it and then show
+        // what it said — not to pretend the broker checked it (ADR-0587).
+        let declared_risk = match self.risk.as_deref() {
+            None => None,
+            Some(word) => Some(risk_level(word).ok_or_else(|| {
+                contributed_error(
+                    &id,
+                    format!(
+                        "`{word}` is not a risk level; `docs/contracts/capabilities.yaml` \
+                         has read, observe, mutate and destructive"
+                    ),
+                )
+            })?),
+        };
         let output = IoType { text: self.output };
         Ok(CommandContract {
             id: self.id,
@@ -1272,12 +1363,8 @@ impl ContributedCommand {
             // which are a different register and are carried separately.
             provider_capability: None,
             required_capabilities: self.capabilities,
-            // A contribution declares no selectors or options: the wire contribution of
-            // `docs/contracts/kuang/protocol.v1.yaml` has no field for them, and the arguments a
-            // contributed command receives are the words the user typed (spec §31.22). The
-            // registry does not invent parameters nobody declared.
-            selectors: Vec::new(),
-            options: Vec::new(),
+            selectors,
+            options,
             // The shell cannot know whether the code inside a package needs privilege; the
             // capabilities it asked for say what it may do, and `conditional` is the honest
             // answer to a question the host cannot decide (spec §17).
@@ -1286,7 +1373,23 @@ impl ContributedCommand {
             phase: Phase::Delivered('I'),
             examples: self.examples,
             origin: self.origin,
+            declared_risk,
         })
+    }
+}
+
+/// One word of `risk_levels` in `docs/contracts/capabilities.yaml`, or `None`.
+///
+/// Two documents name this vocabulary — the capability registry and a package's command
+/// contribution — and they read it through one function, because a closed set with two readers is
+/// a closed set that eventually disagrees with itself.
+fn risk_level(word: &str) -> Option<ono_provider_api::Risk> {
+    match word {
+        "read" => Some(ono_provider_api::Risk::Read),
+        "observe" => Some(ono_provider_api::Risk::Observe),
+        "mutate" => Some(ono_provider_api::Risk::Mutate),
+        "destructive" => Some(ono_provider_api::Risk::Destructive),
+        _ => None,
     }
 }
 
@@ -1298,29 +1401,39 @@ fn contributed_error(id: &str, detail: impl fmt::Display) -> ErrorValue {
 }
 
 fn parameters(id: &str, raw: Vec<RawParameter>) -> Result<Vec<ParameterSpec>, ErrorValue> {
+    parameters_with(raw, &|detail| contract_error(id, detail))
+}
+
+/// The shared parameter reading, over whichever refusal the caller's document deserves.
+///
+/// A core command's parameters and a contributed command's are the same declaration read from two
+/// places, so they are typed, defaulted and refused by one function. Only the wording of the
+/// refusal differs: a bad core contract is a build defect, a bad contribution is `package.invalid`
+/// and names the package's own file.
+fn parameters_with(
+    raw: Vec<RawParameter>,
+    error: &dyn Fn(String) -> ErrorValue,
+) -> Result<Vec<ParameterSpec>, ErrorValue> {
     raw.into_iter()
         .map(|parameter| {
             let declared_type: DeclaredType =
                 parameter
                     .declared_type
                     .parse()
-                    .map_err(|error: ErrorValue| {
-                        contract_error(id, format!("`{}`: {}", parameter.name, error.message()))
+                    .map_err(|failure: ErrorValue| {
+                        error(format!("`{}`: {}", parameter.name, failure.message()))
                     })?;
             let default_text = parameter.default.as_ref().map(RawScalar::text);
             let default_value = default_text
                 .as_deref()
                 .map(|text| {
-                    declared_type.coerce(text).map_err(|error| {
-                        contract_error(
-                            id,
-                            format!(
-                                "`{}` declares default `{text}`, which is not a `{}`: {}",
-                                parameter.name,
-                                declared_type.name(),
-                                error.message()
-                            ),
-                        )
+                    declared_type.coerce(text).map_err(|failure| {
+                        error(format!(
+                            "`{}` declares default `{text}`, which is not a `{}`: {}",
+                            parameter.name,
+                            declared_type.name(),
+                            failure.message()
+                        ))
                     })
                 })
                 .transpose()?;
@@ -1491,17 +1604,14 @@ pub(crate) struct RawCapability {
 
 impl RawCapability {
     pub(crate) fn into_spec(self) -> Result<CapabilitySpec, ErrorValue> {
-        let risk = match self.risk.as_str() {
-            "read" => ono_provider_api::Risk::Read,
-            "observe" => ono_provider_api::Risk::Observe,
-            "mutate" => ono_provider_api::Risk::Mutate,
-            "destructive" => ono_provider_api::Risk::Destructive,
-            other => {
-                return Err(contract_error(
-                    &self.id,
-                    format!("unknown risk `{other}` in docs/contracts/capabilities.yaml"),
-                ));
-            }
+        let Some(risk) = risk_level(&self.risk) else {
+            return Err(contract_error(
+                &self.id,
+                format!(
+                    "unknown risk `{}` in docs/contracts/capabilities.yaml",
+                    self.risk
+                ),
+            ));
         };
         let elevation = match self.elevation.as_str() {
             "none" => Elevation::None,

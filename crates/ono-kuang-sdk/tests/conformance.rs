@@ -173,6 +173,76 @@ async fn should_surface_contract_shaped_contribution_tables() {
 }
 
 #[tokio::test]
+async fn should_surface_the_arguments_a_contribution_declares() {
+    // `contributions.v1.yaml` gives a command contribution `selectors` and `options` "as a core
+    // command declares them", and gives a target contribution the options a query is narrowed
+    // by. Neither crossed the handshake, so a package could describe its own arguments only in
+    // prose — and prose is not something `help`, completion or a default can be built from
+    // (spec §31.22, §31.23, ADR-0587).
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
+        .load()
+        .await
+        .expect("the plugin loads");
+    let commands = plugin.commands();
+    let emit = commands
+        .iter()
+        .find(|command| command.contribution.id == "dev.example.echo.command.emit")
+        .expect("the emit command is contributed");
+    let count = emit
+        .contribution
+        .options
+        .iter()
+        .find(|option| option.name == "count")
+        .expect("emit declares the option it reads");
+    assert_eq!(count.declared_type, "int");
+    assert!(
+        !count.doc.is_empty(),
+        "an option without a doc line has nothing to show in help"
+    );
+    let item = plugin
+        .targets()
+        .iter()
+        .find(|target| target.contribution.name == "echo-item")
+        .expect("the echo-item target is contributed")
+        .clone();
+    assert!(
+        item.contribution
+            .options
+            .iter()
+            .any(|option| option.name == "count"),
+        "a target narrows its answer by declared options, got {:?}",
+        item.contribution.options
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_with_its_own_code_when_a_packages_precondition_is_unmet() {
+    // The refusal a package makes on a rule of its own is not host policy, not an unavailable
+    // system and not an unimplemented operation, and until now it had to be spelled as one of
+    // those three (spec §31.79, ADR-0587).
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .query("echo-precondition", JsonMap::new())
+        .await
+        .expect("the query starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Failed);
+    assert!(values_of(&events).is_empty(), "it refuses before emitting");
+    let error = result.error.expect("a refusal carries its error");
+    assert_eq!(error.code, KuangErrorCode::ContributionRefused.code());
+    assert_eq!(error.name, "contribution.refused");
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
 async fn should_stream_typed_values_for_a_contributed_command() {
     let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
         .load()

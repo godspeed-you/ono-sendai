@@ -731,3 +731,9 @@ errors:
     summary: "`PR_SET_NO_NEW_PRIVS` could not be installed, so the plugin was not started."
     help: >-
       Without it a setuid or file-capability binary the package execs could gain authority the package was never granted, which is the one thing process confinement is for. On a kernel that does not implement the option there is no confined way to run a native package (v0.4.1 §59.7).
+  - code: Ono-Sendai-K11901
+    name: contribution.refused
+    kind: safety
+    summary: The contribution declined to act under a safety rule of its own.
+    help: >-
+      This is the package's rule, not the host's policy and not the external system's answer: a precondition the package requires was not met, so it did nothing. The message is the package's own and names the precondition. `safety.policy_denied` would assert a configured host policy that does not exist, `provider.unavailable` a system that did not answer when it was never asked, and `provider.unsupported` an inability where the package is perfectly able (ADR-0587).

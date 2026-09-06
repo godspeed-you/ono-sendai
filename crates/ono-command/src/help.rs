@@ -558,7 +558,15 @@ fn command_help(
         privilege: command.privilege().as_str().to_owned(),
         capability: command.provider_capability().map(str::to_owned),
         capability_summary: capability.map(|entry| entry.summary().to_owned()),
-        risk: capability.map(|entry| entry.risk().as_str().to_owned()),
+        // A core command's risk is its provider capability's; a contribution has no provider
+        // capability and states its own instead (ADR-0587). Neither invents one.
+        risk: capability
+            .map(|entry| entry.risk().as_str().to_owned())
+            .or_else(|| {
+                command
+                    .declared_risk()
+                    .map(|risk| format!("{risk}  (declared by the contributing package)"))
+            }),
         providers: provider_ids,
         stability: command.stability().as_str().to_owned(),
         origin: command.origin().to_string(),

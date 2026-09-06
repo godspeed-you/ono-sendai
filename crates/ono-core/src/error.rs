@@ -344,6 +344,8 @@ error_codes! {
         "A mandatory resource limit could not be installed, so the plugin was not started.";
     KuangPluginNoNewPrivsFailed => "Ono-Sendai-K11803", "plugin.no_new_privs_failed", Safety,
         "`PR_SET_NO_NEW_PRIVS` could not be installed, so the plugin was not started.";
+    KuangContributionRefused => "Ono-Sendai-K11901", "contribution.refused", Safety,
+        "The contribution declined to act under a safety rule of its own.";
 }
 
 impl ErrorCode {

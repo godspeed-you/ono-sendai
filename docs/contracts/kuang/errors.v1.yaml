@@ -290,3 +290,23 @@ errors:
       package was never granted, which is the one thing process confinement is for. On a kernel
       that does not implement the option there is no confined way to run a native package
       (§59.7).
+
+  # --- contribution: the package's own refusal, spec §31.22, §31.23; §21.5 of
+  # `docs/architecture/external-system-provider.md` ------------------------------------------
+  #
+  # A block of its own because none of §31.79's families is about the contribution declining. 001
+  # through 701 are the host's account of the package — its manifest, its load, its instance, its
+  # grants, its state, its views, its models, its links — and 801 (ADR-0444) is the host's account
+  # of a launch that never happened. This is the package's own account of an operation it would
+  # not perform, and 901 is the next free block (ADR-0587).
+  - code: Ono-Sendai-K11901
+    name: contribution.refused
+    kind: safety
+    summary: The contribution declined to act under a safety rule of its own.
+    help: >-
+      This is the package's rule, not the host's policy and not the external system's answer: a
+      precondition the package requires was not met, so it did nothing. The message is the
+      package's own and names the precondition. The three codes that used to have to carry this
+      each assert something else — `safety.policy_denied` a configured host policy that does not
+      exist, `provider.unavailable` a system that did not answer when it was never asked, and
+      `provider.unsupported` an inability where the package is perfectly able.

@@ -121,6 +121,8 @@ kuang_error_codes! {
         "A mandatory resource limit could not be installed, so the plugin was not started.";
     PluginNoNewPrivsFailed => "Ono-Sendai-K11803", "plugin.no_new_privs_failed", Safety,
         "`PR_SET_NO_NEW_PRIVS` could not be installed, so the plugin was not started.";
+    ContributionRefused => "Ono-Sendai-K11901", "contribution.refused", Safety,
+        "The contribution declined to act under a safety rule of its own.";
 }
 
 impl KuangErrorCode {
@@ -335,7 +337,7 @@ mod tests {
         // §31.79's families are closed: nothing here is renumbered, removed or re-pointed.
         // Codes this build adds beyond that proposal are counted apart from it, so the
         // specified list stays checkable as the closed thing it is.
-        let added = ["runtime.concurrency_limit"];
+        let added = ["runtime.concurrency_limit", "contribution.refused"];
         let inherited = KuangErrorCode::ALL
             .iter()
             .filter(|code| !code.name().starts_with("plugin."))
@@ -343,7 +345,10 @@ mod tests {
             .count();
         assert_eq!(inherited, 27);
         // ADR-0586: a package already at the concurrency ceiling its contract carries is a
-        // condition §31.79's proposal has no name for.
+        // condition §31.79's proposal has no name for. ADR-0587 adds the second: a contribution
+        // that declines on a rule of its own, which is neither host policy nor an unavailable
+        // system nor an unimplemented operation, and had to borrow a code that claims one of the
+        // three.
         for name in added {
             assert!(
                 KuangErrorCode::from_name(name).is_some(),

@@ -188,3 +188,104 @@ fn should_report_a_refusing_target_rather_than_an_empty_success() {
         run.output()
     );
 }
+
+// --- a contributed target declares its own options (spec §31.23, ADR-0587) ---------------------
+
+/// The same package, with the target declaring the option a user actually types.
+///
+/// `get k8s-pod --context prod` was the motivating case: a target answers *about* something, and
+/// which something is the whole question. Without a declaration the word reaches the provider —
+/// ADR-0582 saw to that — but nothing tells the user it exists, nothing types it, and nothing
+/// applies a default. The declared default here is 1 while the package's own fallback is 3, so
+/// only a default the host applied can produce one record.
+const OPTION_TARGETS: &str = r#"
+targets:
+  - name: echo-precondition
+    schema: dev.example.echo.item/1
+    summary: A target that refuses because a precondition of its own is unmet.
+    identity_doc: It never answers, so nothing identifies an answer.
+  - name: echo-item
+    schema: dev.example.echo.item/1
+    summary: Items the example package provides.
+    identity_doc: Two observations are the same item when their `seq` matches.
+    options:
+      - name: count
+        type: int
+        doc: How many items to answer with.
+        default: 1
+"#;
+
+#[test]
+fn should_show_a_contributed_targets_declared_option_in_its_help_page() {
+    let home = echo_plugin_home(ECHO, OPTION_TARGETS);
+    let run = ono_with_plugins(&home, "help get echo-item");
+    run.assert_success();
+    let shown = run.stdout();
+    assert!(
+        shown.contains("--count") && shown.contains("How many items to answer with."),
+        "spec §31.23: a target's declared option is documented, got {shown:?}"
+    );
+}
+
+#[test]
+fn should_offer_a_contributed_targets_declared_option_when_completing() {
+    let home = echo_plugin_home(ECHO, OPTION_TARGETS);
+    let plugins = home.path().join("plugins");
+    let mut shell = support::interactive_shell_with_plugins(&home, &plugins);
+    let _ = support::read_until(&mut shell, "> ", std::time::Duration::from_secs(10));
+
+    shell
+        .write_all(b"get echo-item --co\t")
+        .expect("the completion request");
+    let seen = support::read_until(&mut shell, "--count", std::time::Duration::from_secs(10));
+    assert!(
+        seen.contains("--count"),
+        "spec §31.86: a target's declared option completes; saw:\n{seen}"
+    );
+
+    shell.write_all(b"\x03").expect("abandon the line");
+    shell.write_all(b"exit\n").expect("input");
+    let _ = shell.wait();
+}
+
+#[test]
+fn should_apply_a_contributed_targets_declared_default_when_the_option_is_absent() {
+    let home = echo_plugin_home(ECHO, OPTION_TARGETS);
+    let run = ono_with_plugins(
+        &home,
+        &format!("load plugin {ECHO}; get echo-item | to json"),
+    );
+    run.assert_success();
+    assert_eq!(
+        last_json(&run).as_sequence().expect("a sequence").len(),
+        1,
+        "the declared default reaches the provider query, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_name_a_packages_own_refusal_as_its_own_rather_than_a_host_policy() {
+    // §31.79 had no code for the refusal a provider makes on a rule of its own, so a package
+    // that declined because one of *its* preconditions was unmet had to borrow one that says
+    // something untrue: `safety.policy_denied` claims a configured host policy, and there is no
+    // configuration; `provider.unavailable` claims the external system did not answer, and it
+    // was never asked; `provider.unsupported` claims an inability, and the package is perfectly
+    // able. `contribution.refused` is the package speaking for itself.
+    let home = echo_plugin_home(ECHO, OPTION_TARGETS);
+    let run = ono_with_plugins(
+        &home,
+        &format!("load plugin {ECHO}; get echo-precondition | to json"),
+    );
+    assert_ne!(
+        run.status().code(),
+        0,
+        "a refused query must fail, got {:?}",
+        run.output()
+    );
+    assert!(
+        run.stderr().contains("Ono-Sendai-K11901"),
+        "the package's own refusal carries its own code, got {:?}",
+        run.output()
+    );
+}

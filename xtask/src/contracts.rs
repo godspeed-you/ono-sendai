@@ -2234,10 +2234,11 @@ const PROBE_KEY: &str = "zz-probe-key";
 /// non-empty valid YAML and nothing else. Every other registry under `docs/contracts/` is held against
 /// the code that serves it; this is that check for the last one.
 ///
-/// Four of the seven can be compared exactly today: the capability families, the error taxonomy,
-/// the lifecycle states and the manifest's closed sections. `contributions.v1.yaml`,
-/// `protocol.v1.yaml` and `assistants.v1.yaml` describe surfaces this build implements in part;
-/// checking them is later work rather than a check that would pass by not looking.
+/// Five of the seven can be compared exactly today: the capability families, the error taxonomy,
+/// the lifecycle states, the manifest's closed sections, and the field names a contribution
+/// declares (ADR-0587). `protocol.v1.yaml` and `assistants.v1.yaml` describe surfaces this build
+/// implements in part; checking them is later work rather than a check that would pass by not
+/// looking.
 #[must_use]
 pub fn check_kuang_contracts(root: &Path) -> Vec<Problem> {
     let directory = root.join("docs").join("contracts").join("kuang");
@@ -2263,7 +2264,110 @@ pub fn check_kuang_contracts(root: &Path) -> Vec<Problem> {
     if let Some((location, document)) = read("manifest.v1.yaml") {
         problems.extend(check_kuang_manifest(&location, &document));
     }
+    if let Some((location, document)) = read("contributions.v1.yaml") {
+        problems.extend(check_kuang_contributions(&location, &document));
+    }
     problems
+}
+
+/// The fields a contribution declares, against the wire shapes that carry them.
+///
+/// This check exists because its absence cost something. `contributions.v1.yaml` gave a command
+/// contribution `selectors` and `options` from the day it was written, and
+/// `CommandContribution` had neither; the contract and the code disagreed for a whole tranche
+/// while every other registry under `docs/contracts/` was held against its implementation, and a
+/// package that wrote the documented field had it silently dropped. A published field name that
+/// nothing reads is the exact drift spec §36.5 names (ADR-0587).
+///
+/// The comparison is over serde's own field names, taken from a fully populated instance, so it
+/// sees what the wire sees rather than what a struct definition looks like. `provider` is the one
+/// documented field that is deliberately absent from both shapes: the host sets it at
+/// registration and a package may not send it (spec §31.64).
+fn check_kuang_contributions(location: &str, document: &Yaml) -> Vec<Problem> {
+    use ono_kuang_protocol::{CommandContribution, ParameterContribution, TargetContribution};
+
+    let parameter = ParameterContribution {
+        name: "example".to_owned(),
+        declared_type: "int".to_owned(),
+        doc: "An example.".to_owned(),
+        repeatable: false,
+        optional_value: false,
+        default: Some(serde_json::Value::from(1)),
+    };
+    let command = CommandContribution {
+        id: "dev.example.p.command.c".to_owned(),
+        verb: "get".to_owned(),
+        target: "thing".to_owned(),
+        summary: "A thing.".to_owned(),
+        input: Some("null".to_owned()),
+        output: "stream<int>".to_owned(),
+        capabilities: vec!["clock.read".to_owned()],
+        argument_mode: "expression".to_owned(),
+        selectors: vec![parameter.clone()],
+        options: vec![parameter.clone()],
+        risk: Some("read".to_owned()),
+        examples: vec!["get thing".to_owned()],
+    };
+    let target = TargetContribution {
+        name: "thing".to_owned(),
+        schema: "dev.example.p.thing/1".to_owned(),
+        summary: "A thing.".to_owned(),
+        identity_doc: "Its id.".to_owned(),
+        options: vec![parameter.clone()],
+    };
+    // `provider` is documented and deliberately not a wire field; `origin` is not documented at
+    // all, for the same reason (spec §31.64: the host sets both).
+    let host_set = ["provider"];
+    [
+        ("command", wire_fields(&command)),
+        ("target", wire_fields(&target)),
+        ("parameter", wire_fields(&parameter)),
+    ]
+    .into_iter()
+    .flat_map(|(section, carried)| {
+        let Some(block) = document.get(section) else {
+            return vec![Problem {
+                location: location.to_owned(),
+                detail: format!("declares no `{section}` block, and the wire carries one"),
+            }];
+        };
+        let declared: BTreeSet<String> = mapping_keys(block, "fields")
+            .into_iter()
+            .filter(|field| !host_set.contains(&field.as_str()))
+            .collect();
+        let mut problems = Vec::new();
+        for field in declared.difference(&carried) {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{section}.{field}` is published as part of a contribution and no field of \
+                     the wire shape carries it, so a package that declares it is ignored"
+                ),
+            });
+        }
+        for field in carried.difference(&declared) {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "the wire shape of a {section} contribution carries `{field}` and \
+                     `{section}.fields` does not document it"
+                ),
+            });
+        }
+        problems
+    })
+    .collect()
+}
+
+/// The field names serde puts on the wire for one value.
+fn wire_fields<T: serde::Serialize>(value: &T) -> BTreeSet<String> {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|json| {
+            json.as_object()
+                .map(|fields| fields.keys().cloned().collect())
+        })
+        .unwrap_or_default()
 }
 
 /// §31.16's families, their risk, elevation and scope keys, against `Capability`.

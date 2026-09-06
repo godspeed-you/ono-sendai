@@ -12,9 +12,13 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use ono_command::{CommandContract, CommandRegistry, ContributedCommand, Origin};
+use ono_command::{
+    CommandContract, CommandRegistry, ContributedCommand, ContributedParameter, Origin,
+};
 use ono_core::ErrorCode;
-use ono_kuang_protocol::{CommandDocument, Manifest, TargetContribution, TargetDocument};
+use ono_kuang_protocol::{
+    CommandDocument, Manifest, ParameterContribution, TargetContribution, TargetDocument,
+};
 use ono_value::ErrorValue;
 
 use crate::kuang_host::{Installed, packages_under};
@@ -147,6 +151,9 @@ pub(crate) fn declarations(package: &Installed) -> (Vec<CommandContract>, Vec<Er
                 output: contribution.output,
                 capabilities: contribution.capabilities,
                 argument_mode: contribution.argument_mode,
+                selectors: parameters(contribution.selectors),
+                options: parameters(contribution.options),
+                risk: contribution.risk,
                 examples: contribution.examples,
                 origin: origin.clone(),
             };
@@ -181,6 +188,13 @@ fn target_declarations(
             output: format!("stream<{}>", target.schema),
             capabilities: Vec::new(),
             argument_mode: "expression".to_owned(),
+            // A target declares no positional arguments: the one word after the verb is the
+            // target itself, and the registry resolved the entry by it.
+            selectors: Vec::new(),
+            options: parameters(target.options.clone()),
+            // A target is read by construction: `get <target>` answers, and §21.2 of
+            // `docs/architecture/external-system-provider.md` forbids a getter from mutating.
+            risk: Some("read".to_owned()),
             examples: vec![format!("get {}", target.name)],
             origin: origin.clone(),
         };
@@ -261,4 +275,22 @@ fn declared_paths(manifest: &Manifest) -> Vec<String> {
 /// The origin the host attributes a package's contributions to (spec §31.64).
 pub(crate) fn origin_of(manifest: &Manifest) -> Origin {
     Origin::plugin(&manifest.package.id, &manifest.package.version)
+}
+
+/// The declared arguments of a contribution, as the command registry's vocabulary spells them.
+///
+/// A straight rename across a crate boundary: `ono-kuang-protocol` owns what crosses the wire and
+/// `ono-command` owns what the registry holds, and neither depends on the other.
+fn parameters(declared: Vec<ParameterContribution>) -> Vec<ContributedParameter> {
+    declared
+        .into_iter()
+        .map(|parameter| ContributedParameter {
+            default: parameter.default_text(),
+            name: parameter.name,
+            declared_type: parameter.declared_type,
+            doc: parameter.doc,
+            repeatable: parameter.repeatable,
+            optional_value: parameter.optional_value,
+        })
+        .collect()
 }

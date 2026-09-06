@@ -2183,6 +2183,30 @@ the provider samples — and no assertion changed.
 
 ## Found, not yet filed
 
+- **A contributed command may declare a mutating capability and no risk (2026-09-06).**
+  `docs/contracts/kuang/contributions.v1.yaml` → `registration_checks.risk-metadata` says "Every
+  mutating command and every assistant mutation tool declares its risk", and ADR-0587 carries the
+  declaration into the registry without making it required. Reproduction: a contribution declaring
+  `capabilities: [network.connect]` — `Capability::NetworkConnect.risk()` is `mutate` — and no
+  `risk:` line registers, and `help` shows no risk at all. `ContributedCommand::into_contract`
+  already has both the capability list and the risk in hand, so the check is a few lines; what
+  makes it a separate increment is that it *refuses* a package that installs today, and ADR-0587's
+  increment was constrained not to break one. What closes it: a test that a contribution declaring
+  a `mutate` or `destructive` capability without a risk is refused and reported, plus the risk
+  lines the two example packages would then need.
+
+- **A contributed command's declared `destructive` risk asks for no confirmation (2026-09-06).**
+  ADR-0587 makes the declaration visible; it does not act on it. §21.5 of
+  `docs/architecture/external-system-provider.md` says confirmation belongs to host safety policy
+  and that a provider returns structured risk so the host can apply consistent rules — and the
+  contributed path in `crates/ono-cli/src/eval/pipeline.rs` calls `invoke_contributed` directly,
+  bypassing the binding and confirmation the core commands go through, so
+  `CommandContract::confirmation` is decorative for a contribution whichever value it holds.
+  Reproduction: a contribution with `risk: destructive` runs without a prompt in an interactive
+  session. What closes it: routing a contributed stage through the same confirmation gate a core
+  mutating command uses, with a pty case that a `destructive` contribution refuses in a
+  non-interactive context (`safety.confirmation_required`) and prompts at a terminal.
+
 - **The host closes every open view when any invocation ends (2026-09-06).** With concurrency in
   the SDK (ADR-0586) an instance can have two invocations open, and
   `ono-kuang-supervisor::supervisor.rs` → `handle_envelope`, the `Pending::Invocation` arm, calls
@@ -3517,6 +3541,34 @@ records. It was removed from this board rather than carried as an open box.
 ---
 
 ## Done
+
+**A contribution declares its own arguments, and its own refusal (2026-09-06, ADR-0587).** Five
+findings from a real external-system provider, settled in one increment. `contributions.v1.yaml`
+had given a command contribution `selectors` and `options` since the day it was written and
+`CommandContribution` carried neither, so a package that wrote the documented field had it
+silently dropped — the Kubernetes package's `dry_run`, the argument that decides whether a cluster
+is changed, was prose in a document with no help line, no completion candidate and no default the
+host could apply. Both fields now cross the wire and the on-disk declaration, a target gains
+`options` for the same reason (`get k8s-pod --context prod` had a working word nothing advertised),
+and the declaration becomes `ParameterSpec`s on the registry entry so `help`, completion, `explain`
+and the synopsis are the code that already serves `get process --sort`. A declared type coerces the
+written word; a declared default is supplied by the host when the argument is absent, which is what
+lets a mutating contribution default to not mutating. A declaration stays additive: an undeclared
+word still reaches the package, because closing the argument set would refuse invocations that work
+today. **No thirtieth capability family** — §31.16 forbids offering a scope that cannot be enforced,
+and a broker forwarding bytes on an authorised connection cannot tell a `GET` from a `PATCH`; what
+the model does instead is make the package *say* what its command does. `CommandContribution.risk`
+existed on the wire and was thrown away; it now reaches the registry entry and `help` renders it as
+the package's own claim, with a word outside the four `risk_levels` refused as `package.invalid`.
+**`contribution.refused` (`Ono-Sendai-K11901`)** is the package speaking for itself, in a new 901
+block: `safety.policy_denied` asserted a configured policy that did not exist,
+`provider.unavailable` a system that was never asked, and `provider.unsupported` an inability the
+package does not have. A typed `provider.action` is **deferred with its reason** — four of §21.1's
+ten required fields depend on the v0.6 `ChangePlan`, which is not implemented, and shipping a
+declaration whose fields nothing reads would reproduce the defect this increment closes.
+`contributions.v1.yaml` is now drift-checked field-for-field against the wire shapes, which is the
+check whose absence let the first finding exist.
+
 
 **A package answers more than one invocation at a time (2026-09-06, ADR-0586).** `Plugin::run_io`
 ran a handler on the frame-reading stack, so a second `command.invoke` or `provider.query`

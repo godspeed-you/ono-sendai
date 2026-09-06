@@ -8,6 +8,8 @@
 
 use ono_testkit::Shell;
 
+mod support;
+
 /// A scratch plugin directory holding the example package, laid out as installed.
 fn plugin_home() -> ono_testkit::Scratch {
     let scratch = ono_testkit::scratch();
@@ -305,6 +307,11 @@ commands:
     output: stream<int>
     argument_mode: expression
     capabilities: []
+    options:
+      - name: count
+        type: int
+        doc: How many integers to emit.
+        default: 2
     examples:
       - get echo-item --count 3
 "#,
@@ -674,5 +681,144 @@ fn should_load_a_component_package_under_the_wasm_tier_and_run_its_command() {
     assert!(
         shown.contains("\"execution_tier\":\"wasm\""),
         "the tier a component runs in is named (v0.4.1 §17.2); stdout {shown:?}"
+    );
+}
+
+// --- a contributed command declares its own arguments (spec §31.22, ADR-0587) -----------------
+
+#[test]
+fn should_show_a_contributed_commands_declared_option_in_its_help_page() {
+    // `contributions.v1.yaml` has said since it was written that a contributed command declares
+    // `selectors` and `options` "as a core command declares them", and the wire shape carried
+    // neither. The consequence is not cosmetic: the argument a package most needs a user to see
+    // is the one that decides whether an external system is changed, and an undeclared argument
+    // has no help line, no type and no default. Help is where a user goes to find out.
+    let home = declaring_plugin_home();
+    let run = ono(&home, "help get echo-item");
+    run.assert_success();
+    let shown = run.stdout();
+    assert!(
+        shown.contains("--count") && shown.contains("How many integers to emit."),
+        "spec §31.22, §50: a declared option is documented like any other, got {shown:?}"
+    );
+}
+
+#[test]
+fn should_offer_a_contributed_commands_declared_option_when_completing() {
+    // Completion exists only at a terminal, and a package that cannot be completed is a package
+    // whose arguments have to be memorised from prose. §31.86: a contribution feels native or it
+    // does not, and completing `--` is most of what native feels like.
+    let home = declaring_plugin_home();
+    let plugin_path = home.path().to_path_buf();
+    let mut shell = support::interactive_shell_with_plugins(&home, &plugin_path);
+    let _ = support::read_until(&mut shell, "> ", std::time::Duration::from_secs(10));
+
+    shell
+        .write_all(b"get echo-item --co\t")
+        .expect("the completion request");
+    let seen = support::read_until(&mut shell, "--count", std::time::Duration::from_secs(10));
+    assert!(
+        seen.contains("--count"),
+        "spec §31.86: a declared option completes like a core command's; saw:\n{seen}"
+    );
+
+    shell.write_all(b"\x03").expect("abandon the line");
+    shell.write_all(b"exit\n").expect("input");
+    let _ = shell.wait();
+}
+
+#[test]
+fn should_apply_a_contributed_commands_declared_default_when_the_option_is_absent() {
+    // A default nobody applies is documentation. The Kubernetes case is the sharp one: an
+    // argument that defaults to *not* changing the cluster must arrive at the package when the
+    // user says nothing, or the package has to guess what the host already knows. The fixture
+    // declares `count: 2` while the package's own fallback is 3, so only the declared default
+    // can produce two values.
+    let home = declaring_plugin_home();
+    let run = ono(&home, "get echo-item | to json");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("[1,2]"),
+        "the declared default reaches the package, got {:?}",
+        run.output()
+    );
+}
+
+// --- a contribution states the risk only it can know (spec §31.22, §31.75, ADR-0587) ----------
+
+/// A package whose command changes something the shell cannot see it change.
+///
+/// This is the shape the capability model cannot answer for. The package carries its own protocol
+/// over a brokered byte connection, so the broker sees `network.connect` between a read and a
+/// write and cannot tell them apart; `network.connect` is classed `mutate` whichever the command
+/// does. What the command actually does to the world is a fact only the package holds, and `risk`
+/// is where it says it.
+fn risk_declaring_home(risk: &str) -> ono_testkit::Scratch {
+    let scratch = declaring_plugin_home();
+    scratch.write(
+        "dev.example.echo/contributions/commands.yaml",
+        format!(
+            r#"
+commands:
+  - id: dev.example.echo.command.emit
+    verb: get
+    target: echo-item
+    summary: Emit a counted stream of integers.
+    output: stream<int>
+    argument_mode: expression
+    capabilities: [network.connect]
+    risk: {risk}
+    options:
+      - name: count
+        type: int
+        doc: How many integers to emit.
+        default: 2
+    examples:
+      - get echo-item --count 3
+"#
+        ),
+    );
+    scratch
+}
+
+#[test]
+fn should_show_the_risk_a_contributed_command_declares_in_its_help_page() {
+    // `contributions.v1.yaml` has required a mutating command to declare its risk since it was
+    // written, and the declaration was read off the wire and thrown away: no registry entry
+    // carried it, so no help page, no `explain` and no operator ever saw it. A capability tells
+    // you what the host will let a package ask for; risk is the package's own statement of what
+    // its command does, and for a package fronting an external system it is the only statement
+    // there is.
+    let home = risk_declaring_home("destructive");
+    let run = ono(&home, "help get echo-item");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("destructive"),
+        "spec §31.22, §31.75: a declared risk is shown where safety is shown, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_refuse_a_contributed_command_whose_risk_is_not_a_risk_level() {
+    // A closed vocabulary that accepts anything is not a vocabulary. `risk_levels` in
+    // `docs/contracts/capabilities.yaml` has four names, and a package that writes a fifth is
+    // saying something the shell cannot act on — so it is refused and reported, in the way every
+    // other unreadable declaration is (spec §31.22's registration checks).
+    let home = risk_declaring_home("catastrophic");
+    let run = ono(&home, "get plugin");
+    assert!(
+        run.stderr().contains("catastrophic"),
+        "the refusal names the word it could not read, got {:?}",
+        run.stderr()
+    );
+    let listed = ono(
+        &home,
+        r#"get command | where id == "dev.example.echo.command.emit" | count"#,
+    );
+    assert!(
+        listed.stdout().contains('0'),
+        "a refused declaration does not reach the registry, got {:?}",
+        listed.output()
     );
 }

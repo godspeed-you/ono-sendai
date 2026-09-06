@@ -1003,7 +1003,7 @@ pub fn invoke(
         ));
     };
 
-    let arguments = json_arguments(words);
+    let arguments = declared_arguments(declaration(&contributed_command_id(&id, command)), words);
 
     session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
@@ -1059,6 +1059,77 @@ fn contributed_id(plugin: &LoadedPlugin, command: &str) -> Option<String> {
 /// a prompt. They were not shared at first, and the target route passed an empty map: every
 /// contributed target answered as though it had been asked with no arguments, which is not a
 /// visible failure but a permanently unfiltered one.
+/// The arguments an invocation carries, with everything the contribution declared applied.
+///
+/// Three things a declaration buys, and this is where two of them are spent (ADR-0587): a word
+/// the user typed is coerced to the type the declaration gives it, so `--count 1` arrives as an
+/// integer because it was declared one rather than because it happened to parse as one; and a
+/// declared default is supplied when the argument is absent, so a package's safe default is the
+/// shell's guarantee and not each handler's memory. The third — help and completion — is spent in
+/// the registry entry itself.
+///
+/// A word the contribution did not declare still arrives. Closing the argument set would refuse
+/// invocations that work today, and nothing about a package declaring *some* of its arguments
+/// says it accepts no others (`docs/contracts/kuang/contributions.v1.yaml` → `parameter.rules`).
+fn declared_arguments(
+    declaration: Option<&CommandContract>,
+    words: &[std::ffi::OsString],
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut arguments = json_arguments(words);
+    let Some(declaration) = declaration else {
+        return arguments;
+    };
+    // The bare words, in order, minus the ones that were an option's value. They bind to the
+    // declared selectors positionally, exactly as a core command's do (ADR-0009).
+    let mut positional: Vec<String> = Vec::new();
+    let mut expecting_value = false;
+    for word in words {
+        let text = word.to_string_lossy().into_owned();
+        if let Some(rest) = text.strip_prefix("--") {
+            expecting_value = !rest.contains('=');
+            continue;
+        }
+        if expecting_value {
+            expecting_value = false;
+            continue;
+        }
+        positional.push(text);
+    }
+    for (spec, word) in declaration.selectors().iter().zip(&positional) {
+        arguments
+            .entry(spec.name().to_owned())
+            .or_insert_with(|| json_typed(spec, word));
+    }
+    for spec in declaration.selectors().iter().chain(declaration.options()) {
+        match arguments.get(spec.name()) {
+            Some(serde_json::Value::String(text)) => {
+                let coerced = json_typed(spec, text);
+                arguments.insert(spec.name().to_owned(), coerced);
+            }
+            Some(_) => {}
+            None => {
+                if let Some(default) = spec.default_value() {
+                    arguments.insert(spec.name().to_owned(), json_of(default));
+                }
+            }
+        }
+    }
+    arguments
+}
+
+/// One written word as the type its declaration gives it, or as the text it was.
+fn json_typed(spec: &ono_command::ParameterSpec, text: &str) -> serde_json::Value {
+    spec.declared_type().coerce(text).map_or_else(
+        |_| serde_json::Value::String(text.to_owned()),
+        |value| json_of(&value),
+    )
+}
+
+/// An Ono value as the tagged JSON the protocol carries (`ono_value::to_json`).
+fn json_of(value: &Value) -> serde_json::Value {
+    ono_value::to_json(value)
+}
+
 fn json_arguments(words: &[std::ffi::OsString]) -> serde_json::Map<String, serde_json::Value> {
     let mut arguments = serde_json::Map::new();
     let mut pending: Option<String> = None;
@@ -1196,6 +1267,10 @@ pub fn query(
     target: &str,
     words: &[std::ffi::OsString],
 ) -> Eval<Vec<Value>> {
+    let arguments = declared_arguments(
+        declaration(&crate::plugin_registry::target_command_id(package, target)),
+        words,
+    );
     session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,
@@ -1233,7 +1308,7 @@ pub fn query(
         }
         runtime.block_on(async {
             let invocation = plugin
-                .query(target, json_arguments(words))
+                .query(target, arguments)
                 .await
                 .map_err(|error| crate::kuang_host::wire_error_value(&error))?;
             Ok::<_, ErrorValue>(invocation.collect().await)
@@ -1241,4 +1316,18 @@ pub fn query(
     };
     let (events, result) = outcome.map_err(Flow::Failed)?;
     delivered(events, &result)
+}
+
+/// The registry entry for a contributed id, when the registry holds one.
+///
+/// The declaration is read from the package's own documents before anything runs (spec §31.68),
+/// so it is available at the moment an invocation is being assembled — which is what lets the
+/// host type an argument and supply a default rather than forwarding whatever words arrived.
+fn declaration(id: &str) -> Option<&'static CommandContract> {
+    crate::plugin_registry::registry().ok()?.get(id)
+}
+
+/// The id a package's own command is registered under.
+fn contributed_command_id(package: &str, command: &str) -> String {
+    format!("{package}.command.{command}")
 }

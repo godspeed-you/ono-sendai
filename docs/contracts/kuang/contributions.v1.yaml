@@ -88,8 +88,8 @@ command:
     capabilities: {type: list<string>, required: true, doc: "The KUANG/11 capabilities the command needs. Checked at invocation, not only at load."}
     provider: {type: string, required: true, doc: "`plugin:<package.id>`, set by the host at registration."}
     argument_mode: {type: string, required: true, doc: "From ADR-0009's table. A contributed command's mode comes from its registry entry (ADR-0012 §14, ADR-0009)."}
-    selectors: {type: list<record>, nullable: true, doc: "As a core command declares them."}
-    options: {type: list<record>, nullable: true, doc: "As a core command declares them."}
+    selectors: {type: list<parameter>, nullable: true, doc: "As a core command declares them; see `parameter` below. Absent means the command declares no positional arguments, not that it takes none."}
+    options: {type: list<parameter>, nullable: true, doc: "As a core command declares them; see `parameter` below."}
     risk: {type: string, nullable: true, doc: "From `risk_levels` in `docs/contracts/capabilities.yaml`. Required for a mutating command."}
     examples: {type: list<string>, required: true, doc: "Each must parse and run under the test host (spec §31.22, §50)."}
   vocabulary_rule:
@@ -114,7 +114,27 @@ target:
     schema: {type: string, required: true, doc: "The schema id objects of this target carry."}
     summary: "{type: string, required: true, doc: \"One line, for `help` and completion.\"}"
     identity_doc: {type: string, required: true, doc: "What makes two observations the same object, in prose, beside the schema's `identity` list."}
+    options: {type: list<parameter>, nullable: true, doc: "The options a query against this target is narrowed by — a context, a namespace, a kind. Declared in the same shape a command's are, so that `get <target> --<option>` has help, completion and a default (ADR-0587)."}
     provider: {type: string, required: true, doc: "`plugin:<package.id>`, set by the host."}
+
+# The shape a `selectors` or `options` entry has, in a command contribution or a target one. It is
+# the vocabulary `docs/contracts/commands/*.yaml` uses for a core command's parameters (ADR-0012
+# §7), because spec §31.22's "the same metadata schema core commands use" is meant literally: a
+# contributed argument is documented, completed, typed and defaulted by the same code that does it
+# for `get process --sort`.
+parameter:
+  same_schema_as: "docs/contracts/commands/*.yaml → selectors[] / options[]"
+  fields:
+    name: {type: string, required: true, doc: "The name, without the `--` an option is written with."}
+    type: {type: string, required: true, doc: "A declared type of the registry vocabulary: `bool`, `int`, `float`, `string`, `path`, `duration`, `bytesize`, `timestamp`, `port`, `ip`, `ipnetwork`, `record`, `value`, `list<T>`, `ref<schema>`. An unknown spelling is `package.invalid` at registration."}
+    doc: {type: string, required: true, doc: "One line. Shown by `help` and beside the completion candidate."}
+    repeatable: {type: bool, nullable: true, doc: "Whether it may be written more than once. A `list<T>` always accumulates."}
+    optional_value: {type: bool, nullable: true, doc: "Whether the option may be written without its value (ADR-0144)."}
+    default: {type: scalar, nullable: true, doc: "The value the host supplies when the argument is absent. Absent means the argument does not arrive at all, which is not the same as arriving as zero or false (spec §10.5)."}
+  rules:
+    - "A declaration is optional and additive. A contribution that declares nothing keeps the behaviour it had before there was anywhere to declare: the words the user typed reach the package unchanged (spec §31.22)."
+    - "Declaring an argument does not close the argument set. The host still passes a word the contribution did not declare, because refusing it would refuse invocations that already work; what a declaration adds is help, completion, the declared type and the default."
+    - "A declared default is applied by the host when the argument is absent, so a package's safe default is the shell's guarantee rather than each handler's memory. This is what lets a mutating contribution default to not mutating."
 
 schema:
   same_schema_as: docs/contracts/schemas/*.v1.yaml

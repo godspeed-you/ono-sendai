@@ -207,12 +207,63 @@ pub struct CommandContribution {
     pub capabilities: Vec<String>,
     /// The argument mode from ADR-0009's table.
     pub argument_mode: String,
+    /// The positional arguments, as a core command declares them
+    /// (`docs/contracts/kuang/contributions.v1.yaml` → `command.selectors`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selectors: Vec<ParameterContribution>,
+    /// The named arguments, as a core command declares them
+    /// (`docs/contracts/kuang/contributions.v1.yaml` → `command.options`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<ParameterContribution>,
     /// The risk level, required for a mutating command (spec §31.75).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub risk: Option<String>,
     /// Documented examples. Each must parse and run under the test host (spec §31.22, §50).
     #[serde(default)]
     pub examples: Vec<String>,
+}
+
+/// One declared argument of a contribution, in the vocabulary `docs/contracts/commands/*.yaml`
+/// uses for a core command's `selectors` and `options` (ADR-0012 §7, ADR-0587).
+///
+/// A package that does not declare its arguments is not refused — its words still reach it, as
+/// they did before there was anywhere to declare them. What a declaration buys is everything the
+/// host can only do when it knows the argument exists: a help line, a completion candidate, a
+/// declared type, and a default the host applies when the user says nothing. For a package that
+/// changes an external system, the last of those is the difference between a safe default the
+/// shell guarantees and one every handler has to remember.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParameterContribution {
+    /// The name, without the `--` an option is written with.
+    pub name: String,
+    /// The declared type, e.g. `int`, `bool`, `string`, `duration`, `list<string>`.
+    #[serde(rename = "type")]
+    pub declared_type: String,
+    /// One line, what the argument is for. Shown by `help` and beside a completion candidate.
+    pub doc: String,
+    /// Whether it may be written more than once.
+    #[serde(default)]
+    pub repeatable: bool,
+    /// Whether the option may be written without its value (ADR-0144).
+    #[serde(default)]
+    pub optional_value: bool,
+    /// The value the host supplies when the argument is absent, written as the registry writes
+    /// it. `None` means the argument simply does not arrive, which is different from arriving
+    /// as zero or false (spec §10.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<Json>,
+}
+
+impl ParameterContribution {
+    /// The declared default as the text the registry vocabulary coerces, or `None`.
+    #[must_use]
+    pub fn default_text(&self) -> Option<String> {
+        match self.default.as_ref()? {
+            Json::String(text) => Some(text.clone()),
+            Json::Null => None,
+            other => Some(other.to_string()),
+        }
+    }
 }
 
 /// The document a `contributions.commands` path names (spec §31.22, §31.68).
@@ -295,6 +346,11 @@ pub struct TargetContribution {
     pub summary: String,
     /// What makes two observations the same object, in prose.
     pub identity_doc: String,
+    /// The options a query against this target is narrowed by — a context, a namespace, a kind.
+    /// Declared so that `get <target> --<option>` has help and completion, exactly as a core
+    /// target's does (`docs/contracts/kuang/contributions.v1.yaml` → `target.options`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<ParameterContribution>,
 }
 
 /// A contributed schema, in the field vocabulary of `docs/contracts/schemas/*.v1.yaml`

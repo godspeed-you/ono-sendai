@@ -19,8 +19,8 @@ use std::io::Write;
 
 use ono_kuang_protocol::{
     CommandContribution, ContributionSet, EmitParams, Envelope, FrameLimits, Hello, InitResult,
-    InvokeParams, InvokeResult, InvokeStatus, PACKAGE_FORMAT, SchemaContribution,
-    SchemaFieldContribution, TargetContribution, ViewContribution, method,
+    InvokeParams, InvokeResult, InvokeStatus, PACKAGE_FORMAT, ParameterContribution,
+    SchemaContribution, SchemaFieldContribution, TargetContribution, ViewContribution, method,
 };
 use ono_kuang_sdk::{Ctx, Outcome, Plugin};
 use ono_value::{Provenance, RecordValue, Value};
@@ -149,8 +149,25 @@ fn command(
         output: output.to_owned(),
         capabilities: capabilities.iter().map(|c| (*c).to_owned()).collect(),
         argument_mode: "expression".to_owned(),
+        selectors: Vec::new(),
+        // Every handler here reads `count`, so every one of them declares it: an argument a
+        // package reads and does not declare has no help line, no completion and no default
+        // (spec §31.22, ADR-0587).
+        options: vec![count_option()],
         risk: None,
         examples: vec![format!("get echo-item | {id_suffix}")],
+    }
+}
+
+/// The one argument the example package's handlers read, declared as a core command declares one.
+fn count_option() -> ParameterContribution {
+    ParameterContribution {
+        name: "count".to_owned(),
+        declared_type: "int".to_owned(),
+        doc: "How many values to answer with.".to_owned(),
+        repeatable: false,
+        optional_value: false,
+        default: None,
     }
 }
 
@@ -253,6 +270,7 @@ fn honest_at_most(at_once: u32) -> Plugin {
             identity_doc: "Two observations are the same resource when their `uid` matches, \
                            whatever the resource is called."
                 .to_owned(),
+            options: Vec::new(),
         })
         // The far end of the package's own relation shape. One schema, one target, so a place of
         // this kind can be re-read through the target it came from (ADR-0584).
@@ -262,18 +280,34 @@ fn honest_at_most(at_once: u32) -> Plugin {
             summary: "Zones the example package's resources sit in.".to_owned(),
             identity_doc: "Two observations are the same zone when their `uid` matches."
                 .to_owned(),
+            options: Vec::new(),
         })
         .contribute_target(TargetContribution {
             name: "echo-refusal".to_owned(),
             schema: ITEM_SCHEMA.to_owned(),
             summary: "A target that refuses without emitting anything.".to_owned(),
             identity_doc: "It never answers, so nothing identifies an answer.".to_owned(),
+            options: Vec::new(),
         })
         .contribute_target(TargetContribution {
             name: "echo-item".to_owned(),
             schema: ITEM_SCHEMA.to_owned(),
             summary: "Items the example package provides.".to_owned(),
             identity_doc: "Two observations are the same item when their `seq` matches.".to_owned(),
+            // A target narrows its answer by the words a user types, and this is where it says
+            // which words those are (spec §31.23, ADR-0587).
+            options: vec![count_option()],
+        })
+        // The refusal a package makes on a rule of its own, distinct from `echo-refusal`'s claim
+        // that the system did not answer. Nothing was asked and nothing is unavailable: a
+        // precondition the package requires was not met (spec §31.79, ADR-0587).
+        .contribute_target(TargetContribution {
+            name: "echo-precondition".to_owned(),
+            schema: ITEM_SCHEMA.to_owned(),
+            summary: "A target that refuses because a precondition of its own is unmet."
+                .to_owned(),
+            identity_doc: "It never answers, so nothing identifies an answer.".to_owned(),
+            options: Vec::new(),
         })
         // The provider-side counterpart of `count-forever`: a *target* whose answer never ends,
         // so that the cancellation of spec §31.14 has something to be observed on. A finite
@@ -283,6 +317,7 @@ fn honest_at_most(at_once: u32) -> Plugin {
             schema: ITEM_SCHEMA.to_owned(),
             summary: "Items emitted until the query is cancelled.".to_owned(),
             identity_doc: "Two observations are the same tick when their `seq` matches.".to_owned(),
+            options: Vec::new(),
         })
         .contribute_command(command(
             "emit",
@@ -458,6 +493,8 @@ fn honest_at_most(at_once: u32) -> Plugin {
             output: "stream<ono.spatial-relation/1>".to_owned(),
             capabilities: vec!["relation.write".to_owned()],
             argument_mode: "expression".to_owned(),
+            selectors: Vec::new(),
+            options: Vec::new(),
             risk: None,
             examples: vec!["map --relations dev.example.echo".to_owned()],
         })
@@ -1194,6 +1231,22 @@ fn honest_at_most(at_once: u32) -> Plugin {
                 name: "provider.unavailable".to_owned(),
                 message: "this target refuses, and emits nothing while refusing".to_owned(),
                 help: None,
+                metadata: Box::default(),
+            })
+        })
+        // The package's own rule, spoken as the package's own refusal. Nothing was asked of any
+        // external system, no host policy was consulted, and the operation is one this package
+        // implements perfectly well — it simply will not do it without the precondition
+        // (spec §31.79, ADR-0587).
+        .provider("echo-precondition", |_ctx| {
+            Outcome::Failed(ono_kuang_sdk::protocol::WireError {
+                code: ono_kuang_sdk::protocol::KuangErrorCode::ContributionRefused
+                    .code()
+                    .to_owned(),
+                name: "contribution.refused".to_owned(),
+                message: "this target requires a precondition the invocation did not meet"
+                    .to_owned(),
+                help: Some("state the precondition and ask again".to_owned()),
                 metadata: Box::default(),
             })
         })
