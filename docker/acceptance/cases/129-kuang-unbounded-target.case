@@ -51,6 +51,10 @@ run: |
       summary: Items emitted until the query is cancelled.
       identity_doc: Two observations are the same tick when their `seq` matches.
       answer: unbounded
+      options:
+        - name: refuse
+          type: bool
+          doc: End in a refusal instead of ticking.
   CONTRIB
 
   echo "== a bounded answer is still read to its end =="
@@ -61,8 +65,18 @@ run: |
 
   echo "== with nobody watching it, the representation has to be chosen =="
   ono -c 'load plugin dev.example.echo; get echo-tick' 2>&1 >/dev/null | head -1
+
+  # The failure this case grew for. A package that refuses *before emitting anything* answers on
+  # the invocation result and the supervisor drops the output stream with no `Failed` event on
+  # it, so the host saw an ordinary end of stream. Reading that as the whole answer turned every
+  # refusal from an unbounded target into a clean empty table — the substitution §21.4 of the
+  # provider contract exists to prevent, made by the host rather than by the provider.
+  echo "== a refusal with nothing before it is a refusal, not an empty answer =="
+  timeout 30 ono -c 'load plugin dev.example.echo; get echo-tick --refuse true | to json' 2>&1
 exit: 0
 stdout-contains: 3
 stdout-contains: [{"seq":1},{"seq":2}]
 stdout-contains: a live stream needs a representation when nobody is watching it
+stdout-contains: this answer has no values and that is not an empty answer
+stdout-not-contains: "[]"
 stdout-not-contains: panicked

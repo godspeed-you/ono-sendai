@@ -322,7 +322,18 @@ fn honest_at_most(at_once: u32) -> Plugin {
             schema: ITEM_SCHEMA.to_owned(),
             summary: "Items emitted until the query is cancelled.".to_owned(),
             identity_doc: "Two observations are the same tick when their `seq` matches.".to_owned(),
-            options: Vec::new(),
+            // `refuse` makes this target end in a refusal *before it emits anything*, which is
+            // the one state an unbounded answer has that a bounded one does not: the host has
+            // already opened a stream, and what arrives on it is nothing. A host that read the
+            // empty stream as the whole answer would turn the refusal into a clean empty table.
+            options: vec![ParameterContribution {
+                name: "refuse".to_owned(),
+                declared_type: "bool".to_owned(),
+                doc: "End in a refusal instead of ticking.".to_owned(),
+                repeatable: false,
+                optional_value: false,
+                default: None,
+            }],
             // The declaration ADR-0588 added, and the only target here that carries it. A host
             // that collected this answer would never reach the prompt; declared unbounded, it
             // becomes the live stream the shell's live view is fed by.
@@ -1305,6 +1316,20 @@ fn honest_at_most(at_once: u32) -> Plugin {
             })
         })
         .provider("echo-tick", |ctx| {
+            // A refusal with nothing emitted before it. `k8s-log` in the Kubernetes provider is
+            // the real case: a log read that produced no lines refuses with the bounds that were
+            // on the read, because "no lines" and "the container printed nothing" are different
+            // answers — and the refusal reached the invocation result and no further.
+            if ctx.arguments().get("refuse").and_then(serde_json::Value::as_bool) == Some(true) {
+                return Outcome::Failed(ono_kuang_sdk::protocol::WireError {
+                    code: "Ono-Sendai-E9002".to_owned(),
+                    name: "contribution.refused".to_owned(),
+                    message: "this answer has no values and that is not an empty answer"
+                        .to_owned(),
+                    help: Some("the refusal is the answer; an empty stream is not".to_owned()),
+                    metadata: Box::default(),
+                });
+            }
             let mut seq = 1;
             loop {
                 if ctx.emit(&item_record(seq, "tick")).is_err() {

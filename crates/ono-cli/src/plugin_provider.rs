@@ -17,7 +17,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use ono_core::ErrorCode;
-use ono_kuang_protocol::Answer;
+use ono_kuang_protocol::{Answer, InvokeStatus};
 use ono_kuang_supervisor::{LoadedPlugin, StreamEvent};
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
 use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Selector};
@@ -260,7 +260,20 @@ pub(crate) fn stream_of(
                 Some(StreamEvent::Failed(error)) => {
                     sink.fail(crate::kuang_host::wire_error_value(&error)).await
                 }
-                None => return,
+                // The stream ended. That is not the same as the invocation having *succeeded*:
+                // a handler that returns a refusal answers on the result channel and the
+                // supervisor drops the output stream without a `Failed` event, so a `None` here
+                // covers both "the package finished" and "the package refused". Returning on it
+                // turned every refusal from an unbounded target into a clean empty answer —
+                // which is the substitution §21.4 exists to prevent, made by the host rather
+                // than by the provider. So the result is read before the stream is called done.
+                None => {
+                    let result = invocation.finish().await;
+                    if let (InvokeStatus::Failed, Some(error)) = (result.status, result.error) {
+                        let _ = sink.fail(crate::kuang_host::wire_error_value(&error)).await;
+                    }
+                    return;
+                }
             };
             if delivered.is_err() {
                 break;

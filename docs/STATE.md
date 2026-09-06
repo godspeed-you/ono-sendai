@@ -2183,6 +2183,18 @@ the provider samples — and no assertion changed.
 
 ## Found, not yet filed
 
+- **A `docs/architecture/external-system-provider.md` §21.4 violation reachable by any package
+  with an unbounded target, fixed in `ADR-0590`, and worth a regression watch (2026-09-06).**
+  `plugin_provider::stream_of` returned on the end of the output stream without reading the
+  invocation result, so a handler that answered `Outcome::Failed` before emitting anything arrived
+  at the prompt as a clean empty answer. Fixed, with acceptance case
+  `129-kuang-unbounded-target`. What is *not* fixed and is worth someone's judgement: the
+  supervisor answers an invocation on two channels — the value stream and the result — and nothing
+  in the protocol contract says a consumer must read both. `snapshot` does; `stream_of` did not,
+  for four days. A second consumer will be written eventually. What would close it: either the
+  supervisor also sends `StreamEvent::Failed` before dropping the stream, so one channel carries
+  the whole answer, or the contract says in words that both must be read.
+
 - **`spatial_orientation_bound.rs` compares two independent reads of the machine's live service
   list, and fails when the machine changes between them (2026-09-06).**
   `should_count_a_bounded_target_by_what_the_provider_says_is_there` and
