@@ -220,6 +220,13 @@ pub(crate) fn declared_target_schemas(package: &Installed) -> Vec<String> {
     schemas
 }
 
+/// The names of every target the package declares on disk — the words a user can type
+/// (ADR-0598).
+pub(crate) fn declared_target_names(package: &Installed) -> Vec<String> {
+    let (targets, _) = declared_targets(package);
+    targets.into_iter().map(|target| target.name).collect()
+}
+
 /// The `(schema, parent)` pairs of every on-disk target that declares a spatial parent, for the
 /// load-time check of ADR-0597.
 pub(crate) fn declared_target_parents(package: &Installed) -> Vec<(String, String, String)> {

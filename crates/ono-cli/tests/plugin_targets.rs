@@ -46,6 +46,31 @@ targets:
 "#;
 
 #[test]
+fn should_name_a_handshake_target_the_document_does_not_declare_at_load() {
+    // ADR-0598: a target word comes from the on-disk document (spec §31.68). The example package
+    // contributes `echo-place` and `echo-zone` at the handshake, and this document declares
+    // neither, so they answer through the provider path and are not words — and `load plugin`
+    // says so, rather than accepting the asymmetry silently.
+    let home = echo_plugin_home(ECHO, TARGETS);
+    let run = ono_with_plugins(&home, &format!("load plugin {ECHO}"));
+    run.assert_success();
+    let line = run
+        .stdout()
+        .lines()
+        .find(|line| line.contains("answerable, not spellable"))
+        .unwrap_or_else(|| {
+            panic!(
+                "the load names the unspellable targets, got {:?}",
+                run.output()
+            )
+        });
+    assert!(
+        line.contains("echo-place") && line.contains("echo-zone") && !line.contains("echo-item"),
+        "the handshake-only targets are named and the declared one is not, got {line}"
+    );
+}
+
+#[test]
 fn should_answer_get_for_a_contributed_target() {
     // The whole point of a provider package: the target it contributes is a noun the user types,
     // not a command namespace they have to learn (spec §31.23, §35.1 of the Kubernetes spec).

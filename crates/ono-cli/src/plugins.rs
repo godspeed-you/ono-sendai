@@ -293,6 +293,7 @@ pub fn load_plugin_with(
     // a kind of place nobody contributes is refused before the runtime is spawned, rather than
     // being discovered when somebody types `follow` (ADR-0585).
     let declared_schemas = crate::plugin_registry::declared_target_schemas(&package);
+    let declared_names = crate::plugin_registry::declared_target_names(&package);
     crate::spatial::contributions::check_shapes(id, &shapes, &declared_schemas)
         .map_err(Flow::Failed)?;
     // A target's declared parent is settled the same way, and before the runtime is spawned: the
@@ -350,6 +351,23 @@ pub fn load_plugin_with(
                     .join(" ")
             }
         );
+        // A target the handshake contributes and the document does not declare answers through
+        // the provider path and is not a word: the registry's words come from disk (spec
+        // §31.68), so it has no `get`, no help and no completion. Said here rather than
+        // accepted silently (ADR-0598).
+        let unspellable: Vec<&str> = loaded
+            .targets()
+            .iter()
+            .map(|target| target.contribution.name.as_str())
+            .filter(|name| !declared_names.iter().any(|declared| declared == name))
+            .collect();
+        if !unspellable.is_empty() {
+            println!(
+                "  answerable, not spellable: {} (declared at handshake; not in \
+                 contributions.targets, so no `get` word)",
+                unspellable.join(" ")
+            );
+        }
     }
     session.with_kuang(|host| host.record_host_event(id, "plugin.load", "lifecycle.load", true));
     // Re-loading replaces (spec §31.72, ADR-0110 §3): the instance that was running is shut
