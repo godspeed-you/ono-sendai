@@ -81,8 +81,11 @@ Three documents arrived with the restructuring and are **direction, not delivery
 implements them, and no acceptance case covers them. The Kubernetes provider specification they
 refer to is deliberately **not** in this repository: it is canonical in
 [ono-sendai-kubernetes](https://github.com/godspeed-you/ono-sendai-kubernetes), created
-2026-09-05, as `docs/architecture/kubernetes-provider.md`. That repository holds a specification
-and no implementation; it is licensed Apache-2.0 while core remains MIT.
+2026-09-05, as `docs/architecture/kubernetes-provider.md`. That repository now holds an
+implementation as well as the specification — a KUANG/11 package exercising the external-system
+contract, passing its own fourteen acceptance gates against `kind` v1.35–v1.37 — and it is
+licensed Apache-2.0 while core remains MIT. The generic contributions it needed landed here as
+`ADR-0582 (core)` through `ADR-0599 (core)`, every one provider-neutral.
 
 ## The specification set
 

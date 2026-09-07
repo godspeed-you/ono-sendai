@@ -668,7 +668,7 @@ Before application:
 - [ ] compatibility policy is explicit;
 - [ ] breaking-change posture is clear for project maturity;
 - [ ] Kubernetes provider PoC has passed the Cloud-Native Validation Gate;
-- [ ] generic provider contracts have at least one real external-system implementation.
+- [x] generic provider contracts have at least one real external-system implementation — the Kubernetes reference provider in [ono-sendai-kubernetes](https://github.com/godspeed-you/ono-sendai-kubernetes), exercising the KUANG/11 external-system contract end to end.
 
 As of 2026-09-05, the CNCF Sandbox application lists **6+ months old with active development** as a critical application requirement. Re-check before applying.
 
@@ -1069,7 +1069,7 @@ Known current state around 2026-09-05:
 | Cloud-Native Vision | canonical | `docs/strategy/cloud-native-vision.md` |
 | Generic External System Provider spec | canonical | `docs/architecture/external-system-provider.md` |
 | Kubernetes Provider spec | canonical elsewhere | `docs/architecture/kubernetes-provider.md` in [ono-sendai-kubernetes](https://github.com/godspeed-you/ono-sendai-kubernetes); deliberately not copied into core |
-| Kubernetes provider implementation | planned/PoC path | must prove cloud-native strategy |
+| Kubernetes provider implementation | built, in [ono-sendai-kubernetes](https://github.com/godspeed-you/ono-sendai-kubernetes) | a KUANG/11 package: reads any served kind, evidence-carrying relationships, spatial navigation, bounded mutation; passes its specification's fourteen acceptance gates against `kind` v1.35–v1.37; no release |
 | `CONTRIBUTING.md` | present | review for community/CNCF maturity later |
 | `SECURITY.md` | present | review against current threat model and CNCF expectations |
 | `GOVERNANCE.md` | not yet baseline | add when community-readiness work begins |
@@ -1101,7 +1101,7 @@ No row may be marked complete merely because a future implementation is planned.
 
 ## Phase B — Kubernetes proof
 
-- [x] establish dedicated Kubernetes provider repository — [ono-sendai-kubernetes](https://github.com/godspeed-you/ono-sendai-kubernetes), 2026-09-05: specification, README, CONTRIBUTING and SECURITY in place; no implementation yet;
+- [x] establish dedicated Kubernetes provider repository — [ono-sendai-kubernetes](https://github.com/godspeed-you/ono-sendai-kubernetes), 2026-09-05: specification, README, CONTRIBUTING and SECURITY in place; the implementation followed, two crates and a live `kind` suite, and passes its specification's fourteen acceptance gates;
 - [ ] implement PoC;
 - [ ] pass Cloud-Native Validation Gate;
 - [ ] document results;

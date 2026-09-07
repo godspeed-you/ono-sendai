@@ -344,8 +344,13 @@ the extensions that take it there have to fit:
 - [`docs/strategy/cncf-readiness.md`](docs/strategy/cncf-readiness.md) — the community,
   governance and security conditions under which CNCF participation would become appropriate.
 
-These are direction, not delivery. The Kubernetes provider that would test the contract is not
-built yet, and the readiness plan is a plan: Ono-Sendai is not a CNCF project.
+These are direction, not delivery for core. The Kubernetes reference provider that exercises the
+generic contract is built, in its own repository
+([ono-sendai-kubernetes](https://github.com/godspeed-you/ono-sendai-kubernetes)): a KUANG/11
+package that reads any kind a cluster serves, walks relationships with inspectable evidence,
+navigates the spatial model, and makes bounded changes — with no Kubernetes concept in core. It
+passes all fourteen of its own specification's acceptance gates against `kind` at v1.35–v1.37. The
+readiness plan is still a plan, and Ono-Sendai is not a CNCF project.
 
 ## Philosophy
 
