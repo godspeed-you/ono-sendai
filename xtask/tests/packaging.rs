@@ -1050,13 +1050,13 @@ fn should_publish_the_same_bytes_package_validation_installed() {
     std::fs::create_dir_all(tested.join("tested-x86_64"))
         .expect("a directory of validation records");
     for (name, bytes) in [
-        ("ono_0.4.1_amd64.deb", "the amd64 package"),
-        ("ono-0.4.1-1.x86_64.rpm", "the x86_64 rpm"),
+        ("ono_0.4.2_amd64.deb", "the amd64 package"),
+        ("ono-0.4.2-1.x86_64.rpm", "the x86_64 rpm"),
     ] {
         std::fs::write(release.join(name), bytes).expect("an artifact");
     }
     let record = |directory: &Path| -> String {
-        ["ono_0.4.1_amd64.deb", "ono-0.4.1-1.x86_64.rpm"]
+        ["ono_0.4.2_amd64.deb", "ono-0.4.2-1.x86_64.rpm"]
             .iter()
             .map(|name| {
                 let bytes = std::fs::read(directory.join(name)).expect("the artifact");
@@ -1103,7 +1103,7 @@ fn should_publish_the_same_bytes_package_validation_installed() {
     // forbids exactly this, and the manifest agreeing with the new bytes is what makes it
     // invisible to every other check.
     std::fs::write(
-        release.join("ono_0.4.1_amd64.deb"),
+        release.join("ono_0.4.2_amd64.deb"),
         "the amd64 package, built again after the tests",
     )
     .expect("the rebuild");
@@ -1120,15 +1120,15 @@ fn should_publish_the_same_bytes_package_validation_installed() {
          (spec §48.4):\n{report}"
     );
     assert!(
-        report.contains("ono_0.4.1_amd64.deb"),
+        report.contains("ono_0.4.2_amd64.deb"),
         "the refusal does not name the artifact that is not the tested one:\n{report}"
     );
 
     // And an artifact nothing validated at all.
-    std::fs::write(release.join("ono_0.4.1_amd64.deb"), "the amd64 package")
+    std::fs::write(release.join("ono_0.4.2_amd64.deb"), "the amd64 package")
         .expect("the tested bytes restored");
     std::fs::write(
-        release.join("ono_0.4.1_arm64.deb"),
+        release.join("ono_0.4.2_arm64.deb"),
         "an untested arm64 package",
     )
     .expect("an untested artifact");
@@ -1140,7 +1140,7 @@ fn should_publish_the_same_bytes_package_validation_installed() {
         tested.to_str().expect("a UTF-8 path"),
     ]);
     assert!(
-        !verified && report.contains("ono_0.4.1_arm64.deb"),
+        !verified && report.contains("ono_0.4.2_arm64.deb"),
         "a package no validation ever installed was published:\n{report}"
     );
 

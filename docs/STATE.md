@@ -33,6 +33,15 @@ request.
 git push origin implementation && git push origin --tags
 ```
 
+**The workspace declares `0.4.2`.** It is a patch release on top of `v0.4.1`, gathering the
+KUANG/11 extension work that let a loaded package be an external-system provider — a contributed
+target queried as a provider, contributed places and relations, concurrent invocations, declared
+arguments, `provider.mutate` and the provider-action contract, semantic roles, `up`, the error
+taxonomy, and load-time schema validation (the generic boundaries recorded as ADR-0582 through
+ADR-0599, every one provider-neutral) — and the documentation that records the Kubernetes reference
+provider now exercises them. `docs/releases/v0.4.2.md` is its note. No new specification tranche is
+implemented and no user-facing surface changes; `docs/ACCEPTANCE.md`'s boxes stay closed.
+
 **`release-check: the shell is release-ready` — printed 2026-09-05 at commit 57f1542, with
 `docs/ACCEPTANCE.md` §4.8 at 118 of 118 and `v0.4.1` signed and published.** Every stage: gate
 green, acceptance 146 of 146, `package-check` green, two builds of the commit byte-for-byte
