@@ -1,4 +1,4 @@
-//! The KUANG/11 capability model: the twenty-nine families, their scope shapes, and the shapes
+//! The KUANG/11 capability model: the thirty families — spec §31.16's twenty-nine and ADR-0594's `provider.mutate` — their scope shapes, and the shapes
 //! of a grant, a lease and a revocation (spec §31.16–§31.19, §31.49).
 //!
 //! The authoritative family list is `kuang_capabilities` in `docs/contracts/capabilities.yaml`;
@@ -95,7 +95,8 @@ const fn broker(name: &'static str, kind: ScopeKind) -> ScopeKey {
 
 macro_rules! capabilities {
     ($( $variant:ident => $id:literal, $risk:ident, $elevation:ident, [$($key:expr),*], $doc:literal; )*) => {
-        /// One of the twenty-nine capability families of spec §31.16.
+        /// One of the thirty capability families: spec §31.16's twenty-nine, and
+        /// `provider.mutate` (ADR-0594).
         ///
         /// ```
         /// use ono_kuang_protocol::{Capability, Risk};
@@ -226,6 +227,21 @@ capabilities! {
         "Storing state that survives the session, in the package's own quota-bounded store.";
     ClockRead => "clock.read", Read, None, [],
         "Reading monotonic and wall-clock time.";
+    ProviderMutate => "provider.mutate", Mutate, None,
+        [ScopeKey {
+            name: "instances",
+            kind: ScopeKind::IdList,
+            enforcement: Enforcement::Advisory,
+        }, ScopeKey {
+            name: "resources",
+            kind: ScopeKind::IdList,
+            enforcement: Enforcement::Advisory,
+        }, ScopeKey {
+            name: "actions",
+            kind: ScopeKind::NameList,
+            enforcement: Enforcement::Advisory,
+        }],
+        "Changing state in the external system a provider package fronts (ADR-0594).";
 }
 
 impl Capability {
@@ -331,13 +347,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn should_carry_all_29_families_of_the_registry_when_enumerated() {
-        assert_eq!(Capability::ALL.len(), 29);
+    fn should_carry_all_30_families_of_the_registry_when_enumerated() {
+        // §31.16's twenty-nine, and `provider.mutate` (ADR-0594).
+        assert_eq!(Capability::ALL.len(), 30);
     }
 
     #[test]
-    fn should_mark_only_model_infer_data_class_as_advisory_when_scopes_are_listed() {
-        // ADR-0022 §3: exactly one advisory scope key exists in the whole model.
+    fn should_mark_only_the_declared_advisory_scope_keys_as_advisory_when_scopes_are_listed() {
+        // ADR-0022 §3 put exactly one advisory scope key in the model; ADR-0594 added the three
+        // of `provider.mutate`, whose wire the host does not parse. Every other key is a boundary
+        // the broker enforces, and a key that quietly became advisory would fail here.
         let advisory: Vec<(&str, &str)> = Capability::ALL
             .iter()
             .flat_map(|family| {
@@ -348,7 +367,15 @@ mod tests {
                     .map(|key| (family.id(), key.name))
             })
             .collect();
-        assert_eq!(advisory, vec![("model.infer", "data_class")]);
+        assert_eq!(
+            advisory,
+            vec![
+                ("model.infer", "data_class"),
+                ("provider.mutate", "instances"),
+                ("provider.mutate", "resources"),
+                ("provider.mutate", "actions"),
+            ]
+        );
     }
 
     #[test]

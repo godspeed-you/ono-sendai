@@ -172,6 +172,14 @@ error_codes! {
         "The provider does not implement this capability.";
     ProviderSchemaViolation => "Ono-Sendai-E0403", "provider.schema_violation", Provider,
         "A provider emitted a value outside the schema it advertises.";
+    ProviderInconclusive => "Ono-Sendai-E0404", "provider.inconclusive", Provider,
+        "The answer is empty or incomplete, and that establishes nothing about the system.";
+    ProviderAuthenticationFailed => "Ono-Sendai-E0405", "provider.authentication_failed", Permission,
+        "The external system did not accept the credential the provider presented.";
+    ProviderAuthorizationDenied => "Ono-Sendai-E0406", "provider.authorization_denied", Permission,
+        "The external system refused the operation to the identity the provider presented.";
+    ProviderRateLimited => "Ono-Sendai-E0407", "provider.rate_limited", Timeout,
+        "The external system asked the provider to slow down.";
     ExternalExitNonzero => "Ono-Sendai-E0501", "external.exit_nonzero", External,
         "An external process exited with a non-zero status.";
     ExternalSignal => "Ono-Sendai-E0502", "external.signal", External,

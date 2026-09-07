@@ -39,6 +39,8 @@ fn main() {
         Some("--misbehave=huge-frame") => misbehave(Mode::HugeFrame),
         Some("--misbehave=bad-hello") => misbehave(Mode::BadHello),
         Some("--misbehave=die") => misbehave(Mode::Die),
+        Some("--misbehave=phantom-target-schema") => misbehave(Mode::PhantomTargetSchema),
+        Some("--misbehave=phantom-command-schema") => misbehave(Mode::PhantomCommandSchema),
         // A package written for the old model: it never says its handlers may run beside one
         // another, so the SDK's default of one at a time applies (ADR-0586).
         Some("--serial") => honest_at_most(1).run(),
@@ -131,6 +133,23 @@ fn zone_schema_contribution() -> SchemaContribution {
                 nullable: false,
             },
         ],
+    }
+}
+
+/// A command contribution declaring exactly the capabilities named, and no options.
+///
+/// [`command`] forces the `count` option every ordinary echo handler reads; a capability-gating
+/// command reads none, so it declares none (spec §31.22, ADR-0587).
+fn command_declaring(
+    id_suffix: &str,
+    summary: &str,
+    output: &str,
+    capabilities: &[&str],
+) -> CommandContribution {
+    CommandContribution {
+        options: Vec::new(),
+        examples: vec![format!("{id_suffix}")],
+        ..command(id_suffix, summary, output, capabilities)
     }
 }
 
@@ -362,6 +381,14 @@ fn honest_at_most(at_once: u32) -> Plugin {
             "Tell the host's time.",
             "stream<string>",
             &["clock.read"],
+        ))
+        // A command that changes state in the external system this package fronts, declaring the
+        // capability that authorises exactly that and nothing about reaching the system (ADR-0594).
+        .contribute_command(command_declaring(
+            "mutate",
+            "Change state in the external system, under provider.mutate.",
+            "stream<int>",
+            &["provider.mutate"],
         ))
         .contribute_command(command(
             "context",
@@ -670,6 +697,14 @@ fn honest_at_most(at_once: u32) -> Plugin {
                 }
                 Err(error) => Outcome::Failed(error),
             }
+        })
+        // A command that changes state in the external system this package would front, declaring
+        // `provider.mutate` (ADR-0594). The host checks that grant before this closure runs, so a
+        // package granted only the authority to *reach* a system cannot be asked to *change* one.
+        // The body does nothing but emit — the point under test is the gate, not the effect.
+        .command(&format!("{PACKAGE}.command.mutate"), |ctx| {
+            let _ = ctx.emit(&Value::Int(1));
+            Outcome::Completed
         })
         .command(&format!("{PACKAGE}.command.audit"), |ctx| {
             // A package's own claim about what it did. It arrives in the trail attributed to
@@ -1355,6 +1390,15 @@ enum Mode {
     /// ordinary crash — is the one where the package does nothing *wrong* on the wire and simply
     /// stops being there, which is exactly what §18.4 says must not corrupt the shell.
     Die,
+    /// A hello whose target names a schema the package never contributed.
+    ///
+    /// The id is inside the package's own namespace, so a prefix check passes it; only a
+    /// registry lookup refuses it. Before ADR-0591 such a package loaded and failed at its first
+    /// record, under `runtime.schema_violation`, which is the wrong moment and the wrong code.
+    PhantomTargetSchema,
+    /// A hello whose command emits a schema the package never contributed. The same rule, read
+    /// from the command side.
+    PhantomCommandSchema,
 }
 
 /// An argument that is an object: given as one, or as a string holding JSON — the shell has
@@ -1466,8 +1510,26 @@ fn misbehave(mode: Mode) {
         version: VERSION.to_owned(),
         kuang_api: ">=11.1 <12".to_owned(),
         contributions: ContributionSet {
-            commands: vec![command("flood", "Emit beyond credit.", "stream<int>", &[])],
-            targets: Vec::new(),
+            commands: match mode {
+                Mode::PhantomCommandSchema => vec![command(
+                    "ghost",
+                    "Emit a schema nobody contributed.",
+                    &format!("stream<{PACKAGE}.ghost/1>"),
+                    &[],
+                )],
+                _ => vec![command("flood", "Emit beyond credit.", "stream<int>", &[])],
+            },
+            targets: match mode {
+                Mode::PhantomTargetSchema => vec![TargetContribution {
+                    name: "echo-phantom".to_owned(),
+                    schema: format!("{PACKAGE}.phantom/1"),
+                    summary: "A target answering with a schema nobody contributed.".to_owned(),
+                    identity_doc: "Nothing identifies what was never declared.".to_owned(),
+                    options: Vec::new(),
+                    answer: Answer::Bounded,
+                }],
+                _ => Vec::new(),
+            },
             schemas: Vec::new(),
             views: Vec::new(),
         },
@@ -1554,7 +1616,7 @@ fn misbehave(mode: Mode) {
                         let _ = writer.write_all(&(limits.max_frame + 1).to_be_bytes());
                         let _ = writer.flush();
                     }
-                    Mode::BadHello => {
+                    Mode::BadHello | Mode::PhantomTargetSchema | Mode::PhantomCommandSchema => {
                         let response = Envelope::Response {
                             seq,
                             result: serde_json::to_value(InvokeResult {

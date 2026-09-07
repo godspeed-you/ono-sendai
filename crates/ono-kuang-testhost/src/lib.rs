@@ -144,6 +144,17 @@ impl TestHost {
         self
     }
 
+    /// The operator's home directory `~` resolves against, in a path scope and in a path the
+    /// package asks for (ADR-0593).
+    ///
+    /// A test names one deliberately rather than inheriting the process's `HOME`, so that what
+    /// `~/.kube/config` reaches is a fixture the test wrote and not the developer's own file.
+    #[must_use]
+    pub fn home(mut self, home: impl Into<std::path::PathBuf>) -> Self {
+        self.policy = self.policy.with_home(home);
+        self
+    }
+
     /// Adds an operator deny, which outranks any grant (spec §31.19).
     #[must_use]
     pub fn deny(mut self, capability: Capability) -> Self {

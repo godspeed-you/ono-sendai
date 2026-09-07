@@ -156,6 +156,47 @@ errors:
     help: >-
       This is a defect in the provider, not in your pipeline. Report it with the output of
       `inspect` on the offending value.
+  # The four below are the truths of `docs/architecture/external-system-provider.md` §8.4, §18.1,
+  # §19.1 and §20.1 that the three above could not carry without lying — an external system that
+  # answered, and answered *no*, is not `unavailable`; a provider that can do the thing and was
+  # refused is not `unsupported`; an empty answer that proves nothing is not an answer (ADR-0592).
+  - code: Ono-Sendai-E0404
+    name: provider.inconclusive
+    kind: provider
+    summary: The answer is empty or incomplete, and that establishes nothing about the system.
+    help: >-
+      The provider looked and did not find, and it is telling you that not finding is not the
+      same as absence here — a retention window that may have discarded what you asked about, a
+      search that could not reach every scope, a verification that ran out of time. The message
+      says what was and was not established. Treat an empty pipeline downstream of this as
+      unknown, never as "nothing happened".
+  - code: Ono-Sendai-E0405
+    name: provider.authentication_failed
+    kind: permission
+    summary: The external system did not accept the credential the provider presented.
+    help: >-
+      The credential is absent, expired, revoked or malformed — the remote system said *who are
+      you*, not *you may not*. Renew it where it came from: a credential helper's login flow, a
+      rotated token, a client certificate that is still valid. Nothing was performed, and this is
+      never the same as `provider.authorization_denied`, which is a refusal to a known identity.
+  - code: Ono-Sendai-E0406
+    name: provider.authorization_denied
+    kind: permission
+    summary: The external system refused the operation to the identity the provider presented.
+    help: >-
+      The identity was accepted and the operation was refused to it — `403` and its relatives.
+      The operation was not performed. This is data about what you may do, never evidence that
+      the target is absent (external-system-provider §18.1); a read refused here is a coverage
+      gap, and a write refused here changed nothing.
+  - code: Ono-Sendai-E0407
+    name: provider.rate_limited
+    kind: timeout
+    summary: The external system asked the provider to slow down.
+    help: >-
+      A `429` or its equivalent, with the retry guidance the system gave in the error metadata
+      where it gave any. A bounded, idempotent read may already have been retried once within
+      its budget before this was reported; a mutation is never replayed on your behalf
+      (external-system-provider §20.2, §20.3). Narrow the query or wait.
 
   # --- external ---------------------------------------------------------------------------
   - code: Ono-Sendai-E0501

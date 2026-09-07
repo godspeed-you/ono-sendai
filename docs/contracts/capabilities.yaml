@@ -564,3 +564,14 @@ kuang_capabilities:
     summary: Read the wall clock.
     risk: read
     elevation: none
+  # The thirtieth family, added by ADR-0594 for the external-system providers of
+  # `docs/architecture/external-system-provider.md` (§18.4, §21.1, §27). A provider package
+  # carries its own protocol over a brokered byte connection, so the broker cannot tell a read
+  # from a write on the wire — and `network.connect` alone was therefore both. This is the
+  # authority to change state in the system the package fronts, checked by the host before a
+  # mutating contribution runs, separately from the authority to reach the system at all.
+  - id: provider.mutate
+    summary: Change state in the external system a provider package fronts.
+    risk: mutate
+    elevation: none
+    scopes: [instances, resources, actions]

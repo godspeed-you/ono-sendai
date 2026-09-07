@@ -12,7 +12,7 @@
 //!   are checked before allocation.
 //! - **The lifecycle** ([`Lifecycle`], [`PluginState`]): spec §31.8's six states with legal
 //!   transitions enforced in the type.
-//! - **The capability model** ([`Capability`], [`Lease`], [`Decision`]): the twenty-nine
+//! - **The capability model** ([`Capability`], [`Lease`], [`Decision`]): the thirty
 //!   families with their scope shapes and enforcement levels (spec §31.16–§31.19, §31.49).
 //! - **The negotiated contract** ([`PluginContract`]): what a load produces and
 //!   `lifecycle.init` delivers (spec §31.63).

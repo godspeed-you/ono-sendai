@@ -35,7 +35,7 @@
 )]
 
 use ono_kuang_protocol::{AuditResult, Capability, InvokeStatus, KuangErrorCode, PluginState};
-use ono_kuang_supervisor::{HostLimits, StreamEvent};
+use ono_kuang_supervisor::{HostLimits, LoadedPlugin, StreamEvent};
 use ono_kuang_testhost::{TestHost, VIRTUAL_NOW};
 use ono_value::Value;
 use serde_json::{Map as JsonMap, Value as Json, json};
@@ -470,6 +470,235 @@ async fn should_refuse_and_audit_a_path_outside_the_granted_scope() {
         .await;
 }
 
+/// A scratch operator home with a kubeconfig-shaped file to grant and a neighbour to protect.
+///
+/// The layout every `~` test below reads: `.kube/config` is the declared file, `.ssh/id_rsa` is
+/// the file nobody granted, and the two hold payloads of different lengths so a read cannot be
+/// mistaken for the other by its size.
+fn operator_home() -> tempfile::TempDir {
+    let home = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(home.path().join(".kube")).expect("fixture");
+    std::fs::create_dir_all(home.path().join(".ssh")).expect("fixture");
+    std::fs::write(home.path().join(".kube/config"), b"apiVersion: v1\n").expect("fixture");
+    std::fs::write(
+        home.path().join(".ssh/id_rsa"),
+        b"-----BEGIN PRIVATE KEY-----",
+    )
+    .expect("fixture");
+    home
+}
+
+/// The manifest's own declaration, as a grant: the paths the Kubernetes provider declares.
+fn kube_scope() -> JsonMap<String, Json> {
+    let mut scope = JsonMap::new();
+    scope.insert(
+        "paths".to_owned(),
+        json!(["~/.kube/config", "~/.kube/*.yaml"]),
+    );
+    scope
+}
+
+async fn read_through(
+    plugin: &LoadedPlugin,
+    path: &str,
+) -> (InvokeStatus, Vec<Value>, Option<String>) {
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.read-file",
+            args(&[("path", json!(path))]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    (
+        result.status,
+        values_of(&events),
+        result.error.map(|error| error.name),
+    )
+}
+
+#[tokio::test]
+async fn should_resolve_a_tilde_in_a_declared_scope_and_in_a_request_against_the_operators_home() {
+    // ADR-0593. The Kubernetes provider's manifest declares `filesystem.read` scoped to
+    // `~/.kube/config`, and a package's own `HOME` is its sandbox directory — so a `~` the
+    // package expanded itself would name a file that does not exist, and a `~` matched literally
+    // would match nothing. The host resolves both against the operator's home, and the file the
+    // operator granted is the file the package reads.
+    let home = operator_home();
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .home(home.path())
+        .grant_scoped(Capability::FilesystemRead, kube_scope())
+        .load()
+        .await
+        .expect("loads");
+
+    let (status, values, _) = read_through(&plugin, "~/.kube/config").await;
+    assert_eq!(status, InvokeStatus::Completed);
+    assert_eq!(
+        values,
+        vec![Value::Int(15)],
+        "the bytes are the operator's `.kube/config`, not a file in the package's sandbox"
+    );
+
+    // The same file by its absolute path is the same grant: `~` is a spelling, not a scope.
+    let absolute = home.path().join(".kube/config");
+    let (status, values, _) = read_through(&plugin, &absolute.to_string_lossy()).await;
+    assert_eq!(status, InvokeStatus::Completed);
+    assert_eq!(values, vec![Value::Int(15)]);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_keep_the_rest_of_the_operators_home_denied_under_a_tilde_scope() {
+    // A grant on `~/.kube/config` is a grant on that file. `~/.ssh/id_rsa` is in the same home
+    // and is not granted, and the refusal is the scope violation the broker audits.
+    let home = operator_home();
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .home(home.path())
+        .grant_scoped(Capability::FilesystemRead, kube_scope())
+        .load()
+        .await
+        .expect("loads");
+    let (status, _, error) = read_through(&plugin, "~/.ssh/id_rsa").await;
+    assert_eq!(status, InvokeStatus::Failed);
+    assert_eq!(error.as_deref(), Some("capability.scope_violation"));
+    let audited = plugin
+        .audit()
+        .iter()
+        .any(|event| event.result == AuditResult::Denied && event.capability == "filesystem.read");
+    assert!(audited, "the denied read is in the trail");
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_a_traversal_out_of_a_tilde_scope() {
+    // `~/.kube/../.ssh/id_rsa` starts under the granted directory and does not end there. The
+    // broker checks the canonical path, so the `..` is resolved before the glob sees it and the
+    // request is outside the scope.
+    let home = operator_home();
+    let mut scope = JsonMap::new();
+    scope.insert("paths".to_owned(), json!(["~/.kube/**"]));
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .home(home.path())
+        .grant_scoped(Capability::FilesystemRead, scope)
+        .load()
+        .await
+        .expect("loads");
+    let (status, _, error) = read_through(&plugin, "~/.kube/../.ssh/id_rsa").await;
+    assert_eq!(status, InvokeStatus::Failed);
+    assert_eq!(error.as_deref(), Some("capability.scope_violation"));
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn should_not_follow_a_symlink_out_of_a_tilde_scope() {
+    // A link inside the granted directory pointing at a file outside it. Canonicalisation
+    // resolves the link to where it points, and where it points is not granted (ADR-0015 T14).
+    let home = operator_home();
+    std::os::unix::fs::symlink(
+        home.path().join(".ssh/id_rsa"),
+        home.path().join(".kube/borrowed.yaml"),
+    )
+    .expect("fixture");
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .home(home.path())
+        .grant_scoped(Capability::FilesystemRead, kube_scope())
+        .load()
+        .await
+        .expect("loads");
+    let (status, _, error) = read_through(&plugin, "~/.kube/borrowed.yaml").await;
+    assert_eq!(status, InvokeStatus::Failed);
+    assert_eq!(error.as_deref(), Some("capability.scope_violation"));
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_match_nothing_for_a_tilde_scope_when_the_host_has_no_home() {
+    // A host with no home has no meaning for `~`. The scope resolves to nothing and denies,
+    // rather than matching a literal directory called `~` that nobody granted.
+    let home = operator_home();
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .home("")
+        .grant_scoped(Capability::FilesystemRead, kube_scope())
+        .load()
+        .await
+        .expect("loads");
+    let absolute = home.path().join(".kube/config");
+    let (status, _, error) = read_through(&plugin, &absolute.to_string_lossy()).await;
+    assert_eq!(status, InvokeStatus::Failed);
+    assert_eq!(error.as_deref(), Some("capability.scope_violation"));
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_a_provider_mutation_command_without_the_provider_mutate_grant() {
+    // ADR-0594. `provider.mutate` is the authority to change state in the system a provider
+    // package fronts, and it is not `network.connect`: a package granted only the authority to
+    // reach a system cannot be asked to change one. The command declares `provider.mutate` and
+    // is loaded with no grant of it, so the host refuses at the call, before the closure runs.
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .load()
+        .await
+        .expect("loads");
+    // Refused before an invocation exists at all: no output stream is opened, no frame reaches
+    // the package, and the error is the structured denial.
+    let error = plugin
+        .invoke("dev.example.echo.command.mutate", args(&[]))
+        .await
+        .expect_err("a mutation command without provider.mutate is refused, not run");
+    assert_eq!(error.name, "capability.denied");
+    assert!(
+        error.message.contains("provider.mutate"),
+        "the denial names the capability, got {error:?}"
+    );
+    let denied = plugin
+        .audit()
+        .iter()
+        .any(|event| event.result == AuditResult::Denied && event.capability == "provider.mutate");
+    assert!(denied, "the denied mutation attempt is audited");
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_run_a_provider_mutation_command_with_the_provider_mutate_grant() {
+    // The same command, granted. The host permits it and the closure runs. Granting
+    // `provider.mutate` grants no transport: reaching a system is `network.connect`'s, and a
+    // package that changes state declares and is granted both (ADR-0594).
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .grant(Capability::ProviderMutate)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke("dev.example.echo.command.mutate", args(&[]))
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed);
+    assert_eq!(values_of(&events), vec![Value::Int(1)]);
+    let allowed = plugin
+        .audit()
+        .iter()
+        .any(|event| event.result == AuditResult::Success && event.capability == "provider.mutate");
+    assert!(allowed, "the permitted mutation is audited too");
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
 // --- cancellation ------------------------------------------------------------------------------
 
 #[tokio::test]
@@ -739,6 +968,45 @@ async fn should_refuse_a_hello_that_contradicts_the_manifest() {
         .await
         .expect_err("an instance claiming another identity does not load");
     assert_eq!(error.code(), KuangErrorCode::PackageInvalid);
+}
+
+#[tokio::test]
+async fn should_refuse_to_load_a_target_whose_schema_the_package_never_contributed() {
+    // Spec §31.23 makes a contributed target's schema a promise, and ADR-0591 moves the check of
+    // that promise from the first emitted record to the handshake: a package whose target names
+    // `<package.id>.phantom/1` — inside its own namespace, contributed nowhere — is refused
+    // before it is registered, not quarantined after a user typed `get echo-phantom`.
+    let error = TestHost::new(PLUGIN, &manifest())
+        .args(&["--misbehave=phantom-target-schema"])
+        .load()
+        .await
+        .expect_err("a target naming an uncontributed schema does not load");
+    assert_eq!(error.code(), KuangErrorCode::PackageInvalid);
+    let message = error.to_string();
+    assert!(
+        message.contains("echo-phantom") && message.contains("dev.example.echo.phantom/1"),
+        "the refusal names the target and the schema it could not resolve, got: {message}"
+    );
+}
+
+#[tokio::test]
+async fn should_refuse_to_load_a_command_whose_output_schema_the_package_never_contributed() {
+    // The same promise read from the command side: `output: stream<dev.example.echo.ghost/1>`
+    // names a schema the registry will never hold, so every value the command emitted would
+    // have failed validation. The load is where that is decidable, so the load is where it is
+    // decided (ADR-0591).
+    let error = TestHost::new(PLUGIN, &manifest())
+        .args(&["--misbehave=phantom-command-schema"])
+        .load()
+        .await
+        .expect_err("a command emitting an uncontributed schema does not load");
+    assert_eq!(error.code(), KuangErrorCode::PackageInvalid);
+    let message = error.to_string();
+    assert!(
+        message.contains("dev.example.echo.command.ghost")
+            && message.contains("dev.example.echo.ghost/1"),
+        "the refusal names the command and the schema it could not resolve, got: {message}"
+    );
 }
 
 // --- output schema conformance -----------------------------------------------------------------

@@ -128,3 +128,4 @@ Two vocabularies that are not the same thing. A **provider capability** is what 
 | `plugin.invoke` | mutate | none | Invoke a contribution of another loaded package (spec §31.30). |
 | `state.persist` | mutate | none | Store extension state across sessions (spec §31.31). |
 | `clock.read` | read | none | Read the wall clock. |
+| `provider.mutate` | mutate | none | Change state in the external system a provider package fronts. |

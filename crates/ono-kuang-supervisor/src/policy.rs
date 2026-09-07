@@ -29,6 +29,26 @@ pub struct Policy {
     system_denies: Vec<Capability>,
     user_denies: Vec<Capability>,
     grants: Vec<Grant>,
+    /// The operator's home directory, which is what `~` means in a path scope and in a path a
+    /// package asks for (ADR-0593). `None` where the host has none, in which case `~` expands to
+    /// nothing and matches nothing.
+    home: Option<std::path::PathBuf>,
+}
+
+/// The operator's home directory as the host knows it: `HOME` of the shell's own process,
+/// canonicalised where it exists so that a symlinked home matches the real paths the broker
+/// checks against.
+///
+/// Never the package's: a native instance is started with `HOME` set to its sandbox working
+/// directory (`sandbox.rs`), so a package that expanded `~` itself would name a directory of its
+/// own that holds nothing the operator granted. The host owns the meaning of `~` for exactly the
+/// same reason it owns the I/O (ADR-0593).
+fn operator_home() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from)?;
+    if home.as_os_str().is_empty() {
+        return None;
+    }
+    Some(std::fs::canonicalize(&home).unwrap_or(home))
 }
 
 /// Where a denial came from, for the audit trail and the error message.
@@ -115,9 +135,42 @@ impl ScopeUse {
 
 impl Policy {
     /// An empty policy: everything denied by default.
+    ///
+    /// `~` resolves against the operator's home as the host's own environment names it.
     #[must_use]
     pub fn deny_all() -> Self {
-        Self::default()
+        Self {
+            home: operator_home(),
+            ..Self::default()
+        }
+    }
+
+    /// The same policy with `~` resolving against `home` rather than the host's environment.
+    ///
+    /// For a host whose operator home is not the process's — the test host, a shell serving a
+    /// user it did not start as. Everything granted and denied so far is kept.
+    #[must_use]
+    pub fn with_home(mut self, home: impl Into<std::path::PathBuf>) -> Self {
+        let home = home.into();
+        self.home = (!home.as_os_str().is_empty()).then_some(home);
+        self
+    }
+
+    /// The operator's home directory this policy resolves `~` against, where it has one.
+    #[must_use]
+    pub fn home(&self) -> Option<&std::path::Path> {
+        self.home.as_deref()
+    }
+
+    /// The path a package asked for, with a leading `~` resolved to the operator's home (ADR-0593).
+    ///
+    /// Only a leading `~` or `~/`: `~user` forms are left as written, because the host does not
+    /// speak for other users, and a `~` anywhere but the front is a character in a name. A host
+    /// with no home leaves the path as written, and a path that still starts with `~` matches no
+    /// absolute scope — which is a denial, and the right one.
+    #[must_use]
+    pub fn resolve_home(&self, path: &str) -> String {
+        expand_home(path, self.home.as_deref())
     }
 
     /// Adds a grant for `capability`, bounded by `scope` (or unscoped for `None`).
@@ -212,7 +265,7 @@ impl Policy {
                 });
                 continue;
             }
-            match scope_covers(grant, used) {
+            match scope_covers(grant, used, self.home.as_deref()) {
                 Ok(()) => return Evaluation::Allowed(grant.clone()),
                 Err(attempted) => {
                     nearest_violation.get_or_insert(Evaluation::ScopeViolation {
@@ -234,7 +287,11 @@ impl Policy {
 /// covers only uses whose value matches; a scope key the grant does not carry leaves that key
 /// unconstrained. "A scoped grant covers a request only if the request's scope is a subset of
 /// the grant's. Overlap is not coverage" (`capabilities.v1.yaml` → `grant.precedence`).
-fn scope_covers(grant: &Grant, used: &[ScopeUse]) -> Result<(), String> {
+fn scope_covers(
+    grant: &Grant,
+    used: &[ScopeUse],
+    home: Option<&std::path::Path>,
+) -> Result<(), String> {
     let Some(scope) = &grant.scope else {
         return Ok(());
     };
@@ -255,7 +312,7 @@ fn scope_covers(grant: &Grant, used: &[ScopeUse]) -> Result<(), String> {
             _ => return Err(use_.display()),
         };
         let covered = match use_ {
-            ScopeUse::Path { value, .. } => path_covered(&allowed_list, value),
+            ScopeUse::Path { value, .. } => path_covered(&allowed_list, value, home),
             ScopeUse::Name { value, .. } => allowed_list
                 .iter()
                 .any(|pattern| name_matches(pattern, value)),
@@ -285,10 +342,20 @@ fn port_covered(allowed: &str, port: u16) -> bool {
     allowed.parse::<u16>().is_ok_and(|exact| exact == port)
 }
 
-fn path_covered(patterns: &[String], value: &str) -> bool {
+/// Whether `value` — an already resolved, absolute path — is inside one of the `path-glob`
+/// patterns, with a pattern's leading `~` resolved against the operator's home (ADR-0593).
+///
+/// A pattern that still starts with `~` after resolution (no home) is dropped rather than matched
+/// literally: a literal `~` directory is not what anybody granting `~/.kube/config` meant, and a
+/// scope that cannot be resolved must deny rather than match something else.
+fn path_covered(patterns: &[String], value: &str, home: Option<&std::path::Path>) -> bool {
     let mut builder = GlobSetBuilder::new();
     for pattern in patterns {
-        if let Ok(glob) = Glob::new(pattern) {
+        let resolved = expand_home(pattern, home);
+        if resolved.starts_with('~') {
+            continue;
+        }
+        if let Ok(glob) = Glob::new(&resolved) {
             builder.add(glob);
         }
     }
@@ -296,6 +363,22 @@ fn path_covered(patterns: &[String], value: &str) -> bool {
         .build()
         .map(|set| set.is_match(value))
         .unwrap_or(false)
+}
+
+/// A leading `~` or `~/` replaced by `home`; everything else as written.
+fn expand_home(path: &str, home: Option<&std::path::Path>) -> String {
+    let Some(home) = home else {
+        return path.to_owned();
+    };
+    let home = home.to_string_lossy();
+    let home = home.trim_end_matches('/');
+    if path == "~" {
+        return home.to_owned();
+    }
+    match path.strip_prefix("~/") {
+        Some(rest) => format!("{home}/{rest}"),
+        None => path.to_owned(),
+    }
 }
 
 fn name_matches(pattern: &str, value: &str) -> bool {

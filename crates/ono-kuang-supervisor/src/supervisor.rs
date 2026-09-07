@@ -324,6 +324,16 @@ impl Supervisor {
         }
         for command in &hello.contributions.commands {
             validate_command_contribution(&package_id, command)?;
+            // The same rule for what a command emits and consumes: a declared type is checked
+            // against the registry at load rather than at the first value (ADR-0591).
+            if let Expected::Schema(id) = parse_expected(&command.output) {
+                resolve_schema_reference(&schemas, &id.to_string(), "command", &command.id)?;
+            }
+            if let Some(input) = &command.input
+                && let Expected::Schema(id) = parse_expected(input)
+            {
+                resolve_schema_reference(&schemas, &id.to_string(), "command", &command.id)?;
+            }
             commands.push(RegisteredCommand {
                 contribution: command.clone(),
                 provider: provider.clone(),
@@ -348,17 +358,12 @@ impl Supervisor {
             }
         }
         for target in &hello.contributions.targets {
-            if !target.schema.starts_with(&format!("{package_id}."))
-                && !target.schema.starts_with("ono.")
-            {
-                return Err(KuangError::new(
-                    KuangErrorCode::PackageInvalid,
-                    format!(
-                        "target `{}` names schema `{}`, which is neither contributed nor core",
-                        target.name, target.schema
-                    ),
-                ));
-            }
+            // The schema a target answers with must exist *now*, in the registry this instance
+            // will validate its records against — a schema this package contributed in the same
+            // handshake, or one of core's. A prefix is not a schema: a target naming
+            // `<package.id>.phantom/1` used to load and fail at its first record, at runtime,
+            // under `runtime.schema_violation` (ADR-0591).
+            resolve_schema_reference(&schemas, &target.schema, "target", &target.name)?;
             targets.push(RegisteredTarget {
                 contribution: target.clone(),
                 provider: provider.clone(),
@@ -445,6 +450,47 @@ fn protocol_violation(detail: impl std::fmt::Display) -> KuangError {
         format!("the plugin violated the negotiated protocol: {detail}"),
     )
     .with_help("this is a defect in the package, not in your pipeline; the instance is quarantined")
+}
+
+/// Settles a schema id a contribution names against the registry the instance will validate its
+/// values against (spec §31.23, §31.64; ADR-0591).
+///
+/// `what` and `name` say which contribution named it, so a refused package is told where to look.
+///
+/// # Errors
+///
+/// `package.invalid` when no registered schema — contributed in this handshake or core's own —
+/// carries the id, or when the id does not parse as one.
+fn resolve_schema_reference(
+    schemas: &ono_value::SchemaRegistry,
+    reference: &str,
+    what: &str,
+    name: &str,
+) -> Result<(), KuangError> {
+    let Ok(id) = reference.parse::<ono_value::SchemaId>() else {
+        return Err(KuangError::new(
+            KuangErrorCode::PackageInvalid,
+            format!("{what} `{name}` names `{reference}`, which is not a schema id"),
+        )
+        .with_help(
+            "a schema id is `<namespace>.<kebab-name>/<major>`, e.g. `dev.example.echo.item/1`",
+        ));
+    };
+    if schemas.get(&id).is_some() {
+        return Ok(());
+    }
+    Err(KuangError::new(
+        KuangErrorCode::PackageInvalid,
+        format!(
+            "{what} `{name}` names schema `{reference}`, which this package does not contribute \
+             and core does not define"
+        ),
+    )
+    .with_help(
+        "every schema a target answers with or a command emits is one of the package's own \
+         `contributions.schemas` or a core schema, and it is checked here rather than at the \
+         first value (spec §31.23; ADR-0591)",
+    ))
 }
 
 fn validate_command_contribution(
@@ -1803,6 +1849,31 @@ impl Actor {
                 continue;
             };
             let evaluation = self.policy.evaluate(capability, &[]);
+            if let Evaluation::Allowed(grant) = &evaluation {
+                // A host call inside the invocation audits itself. A capability that gates the
+                // invocation and names no host call — `provider.mutate`, whose act is the
+                // package's own protocol on a brokered connection (ADR-0594) — has only this
+                // moment to be recorded, so an allowed *mutating* family is audited here as
+                // loudly as a denial (spec §31.37).
+                if matches!(
+                    capability.risk(),
+                    ono_kuang_protocol::Risk::Mutate | ono_kuang_protocol::Risk::Destructive
+                ) {
+                    self.audit.record(
+                        &self.package_id,
+                        &label,
+                        capability_id,
+                        grant.scope.clone().map(Json::Object),
+                        Enforcement::Broker,
+                        "command.invoke",
+                        Some(Json::String(label.clone())),
+                        self.now(),
+                        AuditResult::Success,
+                        None,
+                    );
+                }
+                continue;
+            }
             if !matches!(evaluation, Evaluation::Allowed(_)) {
                 let error = denial_error(capability, &evaluation);
                 self.audit.record(
@@ -1901,6 +1972,62 @@ enum InvocationKind {
 enum ParamsBuilder {
     Command(String),
     Target(String),
+}
+
+/// The concrete values a `capabilities.check` names, in the shapes the family's scope keys give
+/// them, so the policy matches a checked scope exactly as it matches a call's.
+///
+/// A key the family does not declare is ignored rather than refused: the policy would ignore it
+/// too, and a check must answer what a call would meet. A list value is several uses, each of
+/// which must be covered.
+fn scope_uses_of(
+    capability: ono_kuang_protocol::Capability,
+    scope: Option<&JsonMap<String, Json>>,
+) -> Vec<ScopeUse> {
+    use ono_kuang_protocol::ScopeKind;
+    let Some(scope) = scope else {
+        return Vec::new();
+    };
+    let mut used = Vec::new();
+    for key in capability.scope_keys() {
+        let Some(value) = scope.get(key.name) else {
+            continue;
+        };
+        let values: Vec<&Json> = match value {
+            Json::Array(items) => items.iter().collect(),
+            other => vec![other],
+        };
+        for value in values {
+            let text = match value {
+                Json::String(text) => text.clone(),
+                Json::Number(number) => number.to_string(),
+                other => other.to_string(),
+            };
+            used.push(match key.kind {
+                ScopeKind::PathGlob => ScopeUse::Path {
+                    key: key.name,
+                    value: text,
+                },
+                ScopeKind::PortList => {
+                    match value.as_u64().and_then(|port| u16::try_from(port).ok()) {
+                        Some(port) => ScopeUse::Port {
+                            key: key.name,
+                            value: port,
+                        },
+                        None => ScopeUse::Name {
+                            key: key.name,
+                            value: text,
+                        },
+                    }
+                }
+                _ => ScopeUse::Name {
+                    key: key.name,
+                    value: text,
+                },
+            });
+        }
+    }
+    used
 }
 
 fn parse_expected(output: &str) -> Expected {
@@ -2309,14 +2436,42 @@ impl Actor {
         Ok(())
     }
 
+    /// `capabilities.check`: would a call under this capability, in this scope, proceed?
+    ///
+    /// Asking never prompts (`protocol.v1.yaml`). A check that names a scope is evaluated against
+    /// the grant's scope exactly as the call would be — the concrete values are matched by the
+    /// family's own scope kinds — so a package that fronts an external system over its own
+    /// protocol can ask "may I change *this* instance, *this* resource class, with *this*
+    /// action" before it composes a write the broker will never see the inside of (ADR-0594).
+    /// A denied scoped check is audited, because a package probing for authority it does not
+    /// hold is exactly what the trail is for; an unscoped check is a question about a family and
+    /// is not.
     async fn host_check(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
         let check: CheckParams = Self::parse_params(params)?;
         let answer = match ono_kuang_protocol::Capability::from_id(&check.capability) {
             None => CheckAnswer::Unknown,
             Some(capability) => {
-                if self.policy.grants_capability(capability) {
+                let used = scope_uses_of(capability, check.scope.as_ref());
+                let evaluation = self.policy.evaluate(capability, &used);
+                if matches!(evaluation, Evaluation::Allowed(_)) {
                     CheckAnswer::Granted
                 } else {
+                    if check.scope.is_some() {
+                        let error = denial_error(capability, &evaluation);
+                        let label = self.invocation_label();
+                        self.audit.record(
+                            &self.package_id,
+                            &label,
+                            capability.id(),
+                            check.scope.clone().map(Json::Object),
+                            Enforcement::Broker,
+                            "capabilities.check",
+                            None,
+                            self.now(),
+                            AuditResult::Denied,
+                            Some((&error).into()),
+                        );
+                    }
                     CheckAnswer::Denied
                 }
             }
@@ -3359,6 +3514,9 @@ impl Actor {
             .unwrap_or_default();
         // Checked against the value the operation will use: the resolved program, with no
         // re-resolution between check and use (ADR-0015 T11).
+        // `~` is the operator's home, resolved by the host (ADR-0593), before the program path is
+        // pinned against the granted `programs` scope (ADR-0015 T11).
+        let program = self.policy.resolve_home(&program);
         let resolved = std::fs::canonicalize(&program)
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_else(|_| program.clone());
@@ -3775,11 +3933,15 @@ impl Actor {
 
     async fn host_filesystem_read(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
         let read: FilesystemReadParams = Self::parse_params(params)?;
-        // Check against the value the operation will actually use: the resolved path, with no
-        // re-resolution between check and use (ADR-0015 T14).
-        let resolved = std::fs::canonicalize(&read.path)
+        // `~` is the operator's home as the host knows it, never the package's sandbox
+        // (ADR-0593); then check against the value the operation will actually use: the
+        // canonical path, with no re-resolution between check and use (ADR-0015 T14). A symlink
+        // under a granted directory that points outside it resolves outside it here, and is
+        // refused by the scope rather than followed through it.
+        let requested = self.policy.resolve_home(&read.path);
+        let resolved = std::fs::canonicalize(&requested)
             .map(|path| path.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| read.path.clone());
+            .unwrap_or(requested);
         let target = Some(Json::String(resolved.clone()));
         match self.broker_check(
             ono_kuang_protocol::Capability::FilesystemRead,

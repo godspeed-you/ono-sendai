@@ -51,7 +51,11 @@ scope_types:
     doc: >-
       Absolute path patterns, `**` matching any number of components. Matched against the
       resolved real path at call time, with no path re-resolved between check and use, and
-      symlinks not followed out of a scope root (ADR-0015 T14).
+      symlinks not followed out of a scope root (ADR-0015 T14). A pattern may start with `~/`,
+      which the host resolves to the **operator's** home directory — as the shell's own
+      environment names it, never the package's sandbox — before matching; a path a package
+      asks for may start with `~/` and is resolved the same way, so `~/.kube/config` in a
+      manifest and `~/.kube/config` in a `filesystem.read` call mean one file (ADR-0593).
   - id: host-list
     type: list<string>
     doc: >-
@@ -395,6 +399,51 @@ families:
     permits: Reading monotonic and wall-clock time.
     scopable: false
     scope: {}
+
+  # The thirtieth family (ADR-0594), for a package that fronts an external system over its own
+  # protocol on a brokered connection. The host enforces the *family* at every invocation of a
+  # contribution that declares it, before any package code runs: a package granted only
+  # `network.connect` can be asked to read, and its mutating contributions cannot be invoked at
+  # all. The three scope keys bound *which* mutations, and they are advisory for the reason the
+  # rule at the top of this file demands they be labelled so: the broker checks them on the
+  # package's own `capabilities.check` call, and the wire it would otherwise check is a protocol
+  # the host does not speak (ADR-0573).
+  - id: provider.mutate
+    risk: mutate
+    elevation: none
+    permits: >-
+      Changing state in the external system a provider package fronts — creating, updating,
+      patching or deleting a resource there. It grants no transport: a package needs
+      `network.connect` to reach the system and this to change it, and a contribution that
+      changes state declares both (external-system-provider §18.4, §21.1).
+    scopable: true
+    scope:
+      instances:
+        type: id-list
+        enforcement: advisory
+        doc: >-
+          The provider instances the package may change — `kubernetes:prod-eu`, or `*`. The
+          package checks the instance it is about to write to against this before it composes
+          the write, and the broker answers and audits the check.
+        caveat: >-
+          The host cannot see which instance a byte on the brokered connection is addressed to,
+          so this scope is enforced at the package's check and shown as advisory. The
+          family-level grant is the boundary; the scope narrows an honest package.
+      resources:
+        type: id-list
+        enforcement: advisory
+        doc: >-
+          The resource classes the package may change, in the provider's own vocabulary —
+          `apps/Deployment`, `*/ConfigMap`, or `*`.
+        caveat: The same caveat as `instances`.
+      actions:
+        type: name-list
+        enforcement: advisory
+        doc: >-
+          The action classes permitted — `apply`, `delete`, `scale`, or `*`. A destructive
+          action remains distinguishable from a reversible one by the contribution's declared
+          risk, which the host's confirmation policy reads independently of this grant.
+        caveat: The same caveat as `instances`.
 
 # ---------------------------------------------------------------------------------------------
 # Declaration classes — spec §31.17. A property of the package's declaration, not of the
