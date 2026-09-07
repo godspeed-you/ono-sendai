@@ -220,6 +220,20 @@ pub(crate) fn declared_target_schemas(package: &Installed) -> Vec<String> {
     schemas
 }
 
+/// The `(schema, parent)` pairs of every on-disk target that declares a spatial parent, for the
+/// load-time check of ADR-0597.
+pub(crate) fn declared_target_parents(package: &Installed) -> Vec<(String, String, String)> {
+    let (targets, _) = declared_targets(package);
+    targets
+        .into_iter()
+        .filter_map(|target| {
+            target
+                .parent
+                .map(|parent| (target.name, target.schema, parent))
+        })
+        .collect()
+}
+
 /// The target declarations of one package's `contributions.targets` documents, and what did not
 /// read.
 fn declared_targets(package: &Installed) -> (Vec<TargetContribution>, Vec<ErrorValue>) {

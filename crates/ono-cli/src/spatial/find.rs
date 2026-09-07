@@ -15,7 +15,7 @@ use ono_parser::Expr;
 use ono_pipeline::ValueStream;
 use ono_provider_api::{ProviderRegistry, Query};
 use ono_spatial_core::{BootIdentity, PermissionState, SpatialScope, SpatialType};
-use ono_spatial_query::discovery::{TargetPlan, root_fields, targets_for};
+use ono_spatial_query::discovery::{TargetPlan, root_fields, targets_for_role};
 use ono_spatial_query::{FindRequest, SelectorContext, resolve};
 use ono_value::{ErrorValue, RecordValue, Value};
 
@@ -55,12 +55,19 @@ impl CommandImpl for FindPlace {
                 Some(value) => Some(spatial_type(value)?),
                 None => None,
             };
+            let role = match arguments.option("role").and_then(text_of) {
+                Some(role) => Some(semantic_role(&role)?),
+                None => None,
+            };
             let mut request = FindRequest::new().all(arguments.flag("all"));
             if let Some(text) = arguments.selector("name").and_then(text_of) {
                 request = request.matching(text);
             }
             if let Some(object_type) = object_type {
                 request = request.of_type(object_type);
+            }
+            if let Some(role) = &role {
+                request = request.with_role(role.clone());
             }
             if let Some(Value::Int(limit)) = arguments.option("limit") {
                 request = request.limit(usize::try_from(*limit).unwrap_or(usize::MAX));
@@ -76,7 +83,12 @@ impl CommandImpl for FindPlace {
             let mut session = crate::spatial::spatial_session().await;
 
             let fields = root_fields(predicate.iter().flat_map(field_paths));
-            let plan = plan_for(ctx.providers(), object_type, predicate.as_ref());
+            let plan = plan_for(
+                ctx.providers(),
+                object_type,
+                role.as_deref(),
+                predicate.as_ref(),
+            );
             // v0.2 §11.3's pre-flight check, in the shape a cross-type search takes it: a field
             // *some* candidate declares narrows the search, and a field *none* of them declares
             // is a word about nothing. Answering the second with an empty stream made a typo in
@@ -264,6 +276,31 @@ pub fn spatial_type(value: &Value) -> Result<SpatialType, ErrorValue> {
         })
 }
 
+/// The semantic role a `--role` option names (external-system-provider §15.5, §25; ADR-0596).
+///
+/// # Errors
+///
+/// `spatial.unsupported` naming the roles the loaded packages declare, because a role nobody
+/// answers for is a question the shell cannot answer rather than a search that finds nothing —
+/// the same rule [`spatial_type`] applies to a type.
+pub fn semantic_role(role: &str) -> Result<String, ErrorValue> {
+    let known = ono_spatial_core::types::known_roles();
+    if known.contains(&role) {
+        return Ok(role.to_owned());
+    }
+    Err(ErrorValue::new(
+        ErrorCode::SpatialUnsupported,
+        format!("no loaded package answers for the role `{role}`"),
+    )
+    .with_help(if known.is_empty() {
+        "no loaded package declares a semantic role; a package declares them on its targets \
+         (external-system-provider contract §25, ADR-0596)"
+            .to_owned()
+    } else {
+        format!("the roles are {}", known.join(", "))
+    }))
+}
+
 fn text_of(value: &Value) -> Option<String> {
     match value {
         Value::Null => None,
@@ -277,11 +314,13 @@ fn text_of(value: &Value) -> Option<String> {
 fn plan_for(
     providers: &ProviderRegistry,
     object_type: Option<SpatialType>,
+    role: Option<&str>,
     predicate: Option<&Expr>,
 ) -> TargetPlan {
     let fields = root_fields(predicate.into_iter().flat_map(field_paths));
-    targets_for(
+    targets_for_role(
         object_type,
+        role,
         &fields,
         &|target| !providers.for_target(target).is_empty(),
         &|target, field| {

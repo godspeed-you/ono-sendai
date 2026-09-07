@@ -114,6 +114,26 @@ pub fn canonical_parent_with(
     edges: &[RelationshipEdge],
     path_parent: Option<&SpatialId>,
 ) -> Option<HierarchicalEdge> {
+    // A kind of place a package contributed: its parent is the kind the package declared, reached
+    // along the relation the package contributes for that pair — spatial containment, which is
+    // what §11.3 and §36.4 mean by a parent, and never the ownership a different relation may
+    // carry between the same two places (ADR-0597). No declared parent, no collection: a place
+    // off this host is filed under no domain of it.
+    if let SpatialType::Contributed(_) = object_type {
+        let contributed = crate::types::contributed_for_type(object_type)?;
+        let parent_schema = contributed.parent?;
+        let relation =
+            crate::relation::contributed_id(contributed.origin, contributed.schema, parent_schema);
+        let parent = edges
+            .iter()
+            .filter(|edge| edge.relation().as_str() == relation)
+            .find_map(|edge| edge.other_end(subject))?;
+        return Some(HierarchicalEdge::new(
+            parent.clone(),
+            subject.clone(),
+            HierarchyKind::Containment,
+        ));
+    }
     for rule in parent_rules(object_type) {
         let found = if rule.relation == PATH_PARENT {
             path_parent

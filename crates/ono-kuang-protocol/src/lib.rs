@@ -57,19 +57,35 @@ pub use manifest::{
     StateDeclaration, validate_contributed_id,
 };
 pub use message::{
-    Answer, AuditLogParams, CancelParams, CancelReason, CheckAnswer, CheckParams, ClockNowResult,
-    CloseParams, CommandContribution, CommandDocument, ContributionSet, DemandParams, EmitParams,
-    EmitResult, Envelope, FilesystemReadParams, FilesystemReadResult, HealthState, Hello,
-    InitParams, InitResult, InvokeParams, InvokeResult, InvokeStatus, NextParams, NextResult,
-    ParameterContribution, ProbeResult, QueryParams, RequestOnceParams, SchemaContribution,
-    SchemaFieldContribution, SchemaGetParams, SchemaListParams, ShutdownParams, ShutdownReason,
-    StateGetResult, StateKeyParams, StateSetParams, StreamHandleParams, TargetContribution,
-    TargetDocument, VIEW_COMPONENTS, ViewContribution, ViewEvent, ViewEventParams,
-    ViewHandleParams, ViewMountParams, ViewOpenParams, ViewOpenResult, ViewSize, ViewSubmitParams,
-    method, parse_type_name,
+    ActionContribution, Answer, AuditLogParams, CancelParams, CancelReason, CheckAnswer,
+    CheckParams, ClockNowResult, CloseParams, CommandContribution, CommandDocument,
+    ContributionSet, DemandParams, EmitParams, EmitResult, Envelope, FilesystemReadParams,
+    FilesystemReadResult, HealthState, Hello, Idempotency, InitParams, InitResult, InvokeParams,
+    InvokeResult, InvokeStatus, NextParams, NextResult, ParameterContribution, ProbeResult,
+    QueryParams, RequestOnceParams, SchemaContribution, SchemaFieldContribution, SchemaGetParams,
+    SchemaListParams, ShutdownParams, ShutdownReason, StateGetResult, StateKeyParams,
+    StateSetParams, StreamHandleParams, TargetContribution, TargetDocument, VIEW_COMPONENTS,
+    ViewContribution, ViewEvent, ViewEventParams, ViewHandleParams, ViewMountParams,
+    ViewOpenParams, ViewOpenResult, ViewSize, ViewSubmitParams, method, parse_type_name,
 };
 pub use signature::{
     FileDigest, PackageSignature, PublicKey, SIGNATURE_ALGORITHM, SIGNATURE_FILE, SIGNATURE_FORMAT,
     SecretKey, SignedPackage,
 };
 pub use version::{ApiVersion, HOST_API, PACKAGE_FORMAT, VALUE_PROTOCOL, VersionRange};
+
+/// Whether `word` is a semantic role word: kebab-case ASCII, starting with a letter (ADR-0596).
+///
+/// The vocabulary is open on purpose — the exact registry is reserved by the external-system
+/// provider contract §42.3 — and the spelling is closed, so that `find place --role workload`
+/// and a package's `roles: [workload]` are one word and not two.
+#[must_use]
+pub fn is_role_word(word: &str) -> bool {
+    let mut chars = word.chars();
+    chars.next().is_some_and(|first| first.is_ascii_lowercase())
+        && word
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !word.ends_with('-')
+        && !word.contains("--")
+}

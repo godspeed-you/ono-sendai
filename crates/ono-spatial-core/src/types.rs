@@ -361,6 +361,13 @@ pub struct ContributedType {
     pub identity: &'static [&'static str],
     /// The package that contributed it — §31.64: every registry entry records its origin.
     pub origin: &'static str,
+    /// The semantic roles objects of this kind carry — `workload`, `storage` — as the package
+    /// declared them (external-system-provider §25; ADR-0596). Additional semantics beside the
+    /// type, never a replacement for it.
+    pub roles: &'static [&'static str],
+    /// The schema id of the kind of place that is this kind's canonical spatial parent, where
+    /// the package declared one (spec v0.4 §11.3, §36.4; ADR-0597).
+    pub parent: Option<&'static str>,
     /// A one-element slice holding [`Self::object_type`], so [`types_of_target`] can lend it out.
     types: &'static [SpatialType],
 }
@@ -405,6 +412,8 @@ pub fn contribute(
     target: &str,
     identity: &[&str],
     origin: &str,
+    roles: &[&str],
+    parent: Option<&str>,
 ) -> SpatialType {
     let leak = |text: &str| -> &'static str { Box::leak(text.to_owned().into_boxed_str()) };
     let Ok(mut registry) = contributions().write() else {
@@ -442,9 +451,55 @@ pub fn contribute(
                 .into_boxed_slice(),
         ),
         origin: leak(origin),
+        roles: Box::leak(
+            roles
+                .iter()
+                .map(|role| leak(role))
+                .collect::<Vec<&'static str>>()
+                .into_boxed_slice(),
+        ),
+        parent: parent.map(leak),
         types: Box::leak(Box::new([object_type])),
     });
     object_type
+}
+
+/// The semantic roles a kind of place carries, from every contribution registered for it
+/// (ADR-0596). Empty for a declared type, which carries none yet.
+#[must_use]
+pub fn roles_of(object_type: SpatialType) -> Vec<&'static str> {
+    let mut roles: Vec<&'static str> = contributed_types()
+        .iter()
+        .filter(|entry| entry.object_type == object_type)
+        .flat_map(|entry| entry.roles.iter().copied())
+        .collect();
+    roles.sort_unstable();
+    roles.dedup();
+    roles
+}
+
+/// Every role some loaded package declared, so a `--role` nobody answers for can be refused with
+/// the words that would have answered (ADR-0596).
+#[must_use]
+pub fn known_roles() -> Vec<&'static str> {
+    let mut roles: Vec<&'static str> = contributed_types()
+        .iter()
+        .flat_map(|entry| entry.roles.iter().copied())
+        .collect();
+    roles.sort_unstable();
+    roles.dedup();
+    roles
+}
+
+/// The contribution behind a contributed kind of place, where there is one.
+#[must_use]
+pub fn contributed_for_type(object_type: SpatialType) -> Option<ContributedType> {
+    contributions()
+        .read()
+        .ok()?
+        .iter()
+        .find(|entry| entry.object_type == object_type)
+        .copied()
 }
 
 /// Every contributed kind of place, in the order the packages were mounted.

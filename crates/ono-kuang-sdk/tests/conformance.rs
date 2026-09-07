@@ -699,6 +699,70 @@ async fn should_run_a_provider_mutation_command_with_the_provider_mutate_grant()
         .await;
 }
 
+#[tokio::test]
+async fn should_refuse_to_load_an_action_that_mutates_without_a_declared_risk() {
+    // ADR-0595: an action that says it mutates carries a risk the host's confirmation policy can
+    // read. Saying one thing in `action` and nothing in `risk` is refused at load.
+    let error = TestHost::new(PLUGIN, &manifest())
+        .args(&["--misbehave=action-without-risk"])
+        .load()
+        .await
+        .expect_err("a mutating action without a risk does not load");
+    assert_eq!(error.code(), KuangErrorCode::PackageInvalid);
+    assert!(
+        error.to_string().contains("careless") && error.to_string().contains("risk"),
+        "the refusal names the command and the missing risk, got {error}"
+    );
+}
+
+#[tokio::test]
+async fn should_refuse_to_load_an_action_that_mutates_under_a_read_capability_only() {
+    // A mutating action must name a capability the host can refuse before the code runs. One
+    // declared under `clock.read` alone could never be gated, so it is refused at load rather
+    // than trusted at the call (ADR-0594, ADR-0595).
+    let error = TestHost::new(PLUGIN, &manifest())
+        .args(&["--misbehave=action-without-authority"])
+        .load()
+        .await
+        .expect_err("a mutating action with no mutating capability does not load");
+    assert_eq!(error.code(), KuangErrorCode::PackageInvalid);
+    assert!(
+        error.to_string().contains("unauthorised")
+            && error.to_string().contains("no capability that authorises"),
+        "the refusal names the command and the missing authority, got {error}"
+    );
+}
+
+#[tokio::test]
+async fn should_carry_a_valid_action_contract_through_the_handshake() {
+    // The example package's `mutate` command declares the whole of §21.1's contract, and the
+    // loaded package carries it for the host to read before invoking anything.
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .load()
+        .await
+        .expect("loads");
+    let registered = plugin
+        .commands()
+        .iter()
+        .find(|command| command.contribution.id == "dev.example.echo.command.mutate")
+        .expect("the mutate command is registered");
+    let action = registered
+        .contribution
+        .action
+        .as_ref()
+        .expect("the action contract travelled with the contribution");
+    assert!(action.mutates);
+    assert_eq!(
+        action.idempotency,
+        ono_kuang_protocol::Idempotency::Idempotent
+    );
+    assert_eq!(action.targets, vec!["dev.example.echo.place/1".to_owned()]);
+    assert_eq!(registered.contribution.risk.as_deref(), Some("mutate"));
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
 // --- cancellation ------------------------------------------------------------------------------
 
 #[tokio::test]

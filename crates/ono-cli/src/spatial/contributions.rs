@@ -324,6 +324,70 @@ pub fn check_shapes(
     Ok(())
 }
 
+/// Refuses a package whose target declares a spatial parent it cannot reach (ADR-0597).
+///
+/// `parents` is `(target name, target schema, parent schema)` for every on-disk target that
+/// declares one. The parent must be a schema one of the package's own targets declares, and the
+/// manifest must declare the shape `<schema>-><parent>` so that an edge can carry the containment.
+/// Both halves are on disk, so both are settled before the runtime is spawned, exactly as
+/// [`check_shapes`] settles a shape.
+///
+/// # Errors
+///
+/// `package.invalid` naming the target and what is missing.
+pub fn check_parents(
+    package: &str,
+    parents: &[(String, String, String)],
+    shapes: &[String],
+    package_schemas: &[String],
+) -> Result<(), ono_value::ErrorValue> {
+    for (target, schema, parent) in parents {
+        if parent == schema {
+            return Err(ono_value::ErrorValue::new(
+                ono_core::ErrorCode::KuangPackageInvalid,
+                format!(
+                    "`{package}` declares the target `{target}` with its own schema `{schema}` as \
+                     its parent"
+                ),
+            )
+            .with_help("a kind of place cannot contain itself (spec v0.4 §11.3; ADR-0597)"));
+        }
+        if !package_schemas.contains(parent) {
+            return Err(ono_value::ErrorValue::new(
+                ono_core::ErrorCode::KuangPackageInvalid,
+                format!(
+                    "`{package}` declares the target `{target}` with the parent `{parent}`, and no \
+                     target this package declares answers with a schema of that id"
+                ),
+            )
+            .with_help(
+                "a parent is the schema id of a kind of place this package contributes itself, so \
+                 that `up` lands on one (spec v0.4 §11.3, §36.4; ADR-0597)",
+            ));
+        }
+        let wanted = format!("{schema}->{parent}");
+        let declared = shapes.iter().any(|shape| {
+            ono_spatial_core::relation::parse_shape(shape)
+                .is_some_and(|(from, to)| from == schema && to == parent)
+        });
+        if !declared {
+            return Err(ono_value::ErrorValue::new(
+                ono_core::ErrorCode::KuangPackageInvalid,
+                format!(
+                    "`{package}` declares the target `{target}` with the parent `{parent}`, and \
+                     no relation shape `{wanted}` to carry the edge"
+                ),
+            )
+            .with_help(
+                "`up` reaches a contributed parent along a contributed relation, so the manifest \
+                 declares the shape in `contributions.relations` beside the parent \
+                 (spec v0.4 §36.1; ADR-0585, ADR-0597)",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// A record's string field, where it has one.
 fn text(record: &RecordValue, field: &str) -> Option<String> {
     record

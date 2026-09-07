@@ -18,9 +18,10 @@
 use std::io::Write;
 
 use ono_kuang_protocol::{
-    Answer, CommandContribution, ContributionSet, EmitParams, Envelope, FrameLimits, Hello,
-    InitResult, InvokeParams, InvokeResult, InvokeStatus, PACKAGE_FORMAT, ParameterContribution,
-    SchemaContribution, SchemaFieldContribution, TargetContribution, ViewContribution, method,
+    ActionContribution, Answer, CommandContribution, ContributionSet, EmitParams, Envelope,
+    FrameLimits, Hello, Idempotency, InitResult, InvokeParams, InvokeResult, InvokeStatus,
+    PACKAGE_FORMAT, ParameterContribution, SchemaContribution, SchemaFieldContribution,
+    TargetContribution, ViewContribution, method,
 };
 use ono_kuang_sdk::{Ctx, Outcome, Plugin};
 use ono_value::{Provenance, RecordValue, Value};
@@ -41,6 +42,8 @@ fn main() {
         Some("--misbehave=die") => misbehave(Mode::Die),
         Some("--misbehave=phantom-target-schema") => misbehave(Mode::PhantomTargetSchema),
         Some("--misbehave=phantom-command-schema") => misbehave(Mode::PhantomCommandSchema),
+        Some("--misbehave=action-without-risk") => misbehave(Mode::ActionWithoutRisk),
+        Some("--misbehave=action-without-authority") => misbehave(Mode::ActionWithoutAuthority),
         // A package written for the old model: it never says its handlers may run beside one
         // another, so the SDK's default of one at a time applies (ADR-0586).
         Some("--serial") => honest_at_most(1).run(),
@@ -175,6 +178,7 @@ fn command(
         options: vec![count_option()],
         risk: None,
         examples: vec![format!("get echo-item | {id_suffix}")],
+        action: None,
     }
 }
 
@@ -291,6 +295,11 @@ fn honest_at_most(at_once: u32) -> Plugin {
                 .to_owned(),
             options: Vec::new(),
             answer: Answer::Bounded,
+            // The role a resource of this kind carries, and the kind of place above it: a zone
+            // (ADR-0596, ADR-0597). `up` from a place lands on its zone along the package's own
+            // `place->zone` relation, and `find place --role workload` finds the places.
+            roles: vec!["workload".to_owned()],
+            parent: Some(ZONE_SCHEMA.to_owned()),
         })
         // The far end of the package's own relation shape. One schema, one target, so a place of
         // this kind can be re-read through the target it came from (ADR-0584).
@@ -302,6 +311,8 @@ fn honest_at_most(at_once: u32) -> Plugin {
                 .to_owned(),
             options: Vec::new(),
             answer: Answer::Bounded,
+            roles: Vec::new(),
+            parent: None,
         })
         .contribute_target(TargetContribution {
             name: "echo-refusal".to_owned(),
@@ -310,6 +321,8 @@ fn honest_at_most(at_once: u32) -> Plugin {
             identity_doc: "It never answers, so nothing identifies an answer.".to_owned(),
             options: Vec::new(),
             answer: Answer::Bounded,
+            roles: Vec::new(),
+            parent: None,
         })
         .contribute_target(TargetContribution {
             name: "echo-item".to_owned(),
@@ -320,6 +333,8 @@ fn honest_at_most(at_once: u32) -> Plugin {
             // which words those are (spec §31.23, ADR-0587).
             options: vec![count_option()],
             answer: Answer::Bounded,
+            roles: Vec::new(),
+            parent: None,
         })
         // The refusal a package makes on a rule of its own, distinct from `echo-refusal`'s claim
         // that the system did not answer. Nothing was asked and nothing is unavailable: a
@@ -332,6 +347,8 @@ fn honest_at_most(at_once: u32) -> Plugin {
             identity_doc: "It never answers, so nothing identifies an answer.".to_owned(),
             options: Vec::new(),
             answer: Answer::Bounded,
+            roles: Vec::new(),
+            parent: None,
         })
         // The provider-side counterpart of `count-forever`: a *target* whose answer never ends,
         // so that the cancellation of spec §31.14 has something to be observed on. A finite
@@ -357,6 +374,8 @@ fn honest_at_most(at_once: u32) -> Plugin {
             // that collected this answer would never reach the prompt; declared unbounded, it
             // becomes the live stream the shell's live view is fed by.
             answer: Answer::Unbounded,
+            roles: Vec::new(),
+            parent: None,
         })
         .contribute_command(command(
             "emit",
@@ -384,12 +403,25 @@ fn honest_at_most(at_once: u32) -> Plugin {
         ))
         // A command that changes state in the external system this package fronts, declaring the
         // capability that authorises exactly that and nothing about reaching the system (ADR-0594).
-        .contribute_command(command_declaring(
-            "mutate",
-            "Change state in the external system, under provider.mutate.",
-            "stream<int>",
-            &["provider.mutate"],
-        ))
+        .contribute_command(CommandContribution {
+            risk: Some("mutate".to_owned()),
+            // The action contract of the generic provider specification §21.1, declared where
+            // the host reads it before any of this code runs (ADR-0595).
+            action: Some(ActionContribution {
+                targets: vec![PLACE_SCHEMA.to_owned()],
+                mutates: true,
+                idempotency: Idempotency::Idempotent,
+                result: None,
+                verification: Some("the place is read back and its state compared".to_owned()),
+                effects: vec!["changes-state".to_owned()],
+            }),
+            ..command_declaring(
+                "mutate",
+                "Change state in the external system, under provider.mutate.",
+                "stream<int>",
+                &["provider.mutate"],
+            )
+        })
         .contribute_command(command(
             "context",
             "Report the context stack the host published.",
@@ -553,6 +585,7 @@ fn honest_at_most(at_once: u32) -> Plugin {
             options: Vec::new(),
             risk: None,
             examples: vec!["map --relations dev.example.echo".to_owned()],
+            action: None,
         })
         .optional_feature("tell-time", "clock.read")
         .command(&format!("{PACKAGE}.command.hog"), |ctx| {
@@ -1399,6 +1432,11 @@ enum Mode {
     /// A hello whose command emits a schema the package never contributed. The same rule, read
     /// from the command side.
     PhantomCommandSchema,
+    /// A hello whose command declares an action that mutates and no risk (ADR-0595).
+    ActionWithoutRisk,
+    /// A hello whose command declares an action that mutates and only a read capability, so no
+    /// grant the host checks could ever authorise the mutation (ADR-0595).
+    ActionWithoutAuthority,
 }
 
 /// An argument that is an object: given as one, or as a string holding JSON — the shell has
@@ -1517,6 +1555,31 @@ fn misbehave(mode: Mode) {
                     &format!("stream<{PACKAGE}.ghost/1>"),
                     &[],
                 )],
+                Mode::ActionWithoutRisk => vec![CommandContribution {
+                    action: Some(ActionContribution {
+                        mutates: true,
+                        ..ActionContribution::default()
+                    }),
+                    ..command(
+                        "careless",
+                        "Mutate without saying so.",
+                        "stream<int>",
+                        &["provider.mutate"],
+                    )
+                }],
+                Mode::ActionWithoutAuthority => vec![CommandContribution {
+                    risk: Some("mutate".to_owned()),
+                    action: Some(ActionContribution {
+                        mutates: true,
+                        ..ActionContribution::default()
+                    }),
+                    ..command(
+                        "unauthorised",
+                        "Mutate under a read grant.",
+                        "stream<int>",
+                        &["clock.read"],
+                    )
+                }],
                 _ => vec![command("flood", "Emit beyond credit.", "stream<int>", &[])],
             },
             targets: match mode {
@@ -1527,6 +1590,8 @@ fn misbehave(mode: Mode) {
                     identity_doc: "Nothing identifies what was never declared.".to_owned(),
                     options: Vec::new(),
                     answer: Answer::Bounded,
+                    roles: Vec::new(),
+                    parent: None,
                 }],
                 _ => Vec::new(),
             },
@@ -1616,7 +1681,11 @@ fn misbehave(mode: Mode) {
                         let _ = writer.write_all(&(limits.max_frame + 1).to_be_bytes());
                         let _ = writer.flush();
                     }
-                    Mode::BadHello | Mode::PhantomTargetSchema | Mode::PhantomCommandSchema => {
+                    Mode::BadHello
+                    | Mode::PhantomTargetSchema
+                    | Mode::PhantomCommandSchema
+                    | Mode::ActionWithoutRisk
+                    | Mode::ActionWithoutAuthority => {
                         let response = Envelope::Response {
                             seq,
                             result: serde_json::to_value(InvokeResult {

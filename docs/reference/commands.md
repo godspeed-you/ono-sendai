@@ -5238,6 +5238,7 @@ Search the spatial index for places, by name, type, predicate or anchor.
 | name | type | meaning |
 |---|---|---|
 | `--type` | `string` | Restrict to one spatial type — `process`, `service`, `listener`, `directory` (v0.4 §3.3; ADR-0124 makes the type an option rather than a second target word). |
+| `--role` | `string` | Restrict to the kinds of place that carry a semantic role a loaded package declared — `workload`, `storage` (external-system-provider §15.5, §25; ADR-0596). A role nobody declares is refused with the roles that exist, as a type nobody serves is. |
 | `--where` | `value` | A predicate over the objects being searched for, evaluated against each object as its provider described it: `--where state == "running"`, `--where local.port == 8080` (v0.4 §6.8; ADR-0138 makes its value an expression, ADR-0140 fixes what it reads). |
 | `--near` | `string` | A place selector the search is anchored to; only places under that anchor answer (v0.4 §6.8). |
 | `--limit` | `int` | How many places to answer with. The search is bounded by default, because §34 budgets it. |
@@ -5249,6 +5250,7 @@ Search the spatial index for places, by name, type, predicate or anchor.
 find place nginx
 find place --type service --where state == "active"
 find place --where local.port == 8080 | take 1
+find place --role workload
 ```
 
 ### `look`

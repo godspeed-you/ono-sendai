@@ -29,6 +29,7 @@ commands:
       - {name: name, type: string, doc: "The name or alias to look for. Without one, every place the search reaches answers (v0.4 §6.8)."}
     options:
       - {name: type, type: string, doc: "Restrict to one spatial type — `process`, `service`, `listener`, `directory` (v0.4 §3.3; ADR-0124 makes the type an option rather than a second target word)."}
+      - {name: role, type: string, doc: "Restrict to the kinds of place that carry a semantic role a loaded package declared — `workload`, `storage` (external-system-provider §15.5, §25; ADR-0596). A role nobody declares is refused with the roles that exist, as a type nobody serves is."}
       - {name: where, type: value, doc: "A predicate over the objects being searched for, evaluated against each object as its provider described it: `--where state == \"running\"`, `--where local.port == 8080` (v0.4 §6.8; ADR-0138 makes its value an expression, ADR-0140 fixes what it reads)."}
       - {name: near, type: string, doc: "A place selector the search is anchored to; only places under that anchor answer (v0.4 §6.8)."}
       - {name: limit, type: int, doc: "How many places to answer with. The search is bounded by default, because §34 budgets it."}
@@ -40,6 +41,7 @@ commands:
       - find place nginx
       - find place --type service --where state == "active"
       - find place --where local.port == 8080 | take 1
+      - find place --role workload
 
   - id: ono.place.look
     verb: look

@@ -2307,6 +2307,9 @@ fn check_kuang_contributions(location: &str, document: &Yaml) -> Vec<Problem> {
         options: vec![parameter.clone()],
         risk: Some("read".to_owned()),
         examples: vec!["get thing".to_owned()],
+        // The non-default, for the same reason `answer` below is: an absent `action` is not on
+        // the wire, and the check is about the fields that are (ADR-0595).
+        action: Some(ono_kuang_protocol::ActionContribution::default()),
     };
     let target = TargetContribution {
         name: "thing".to_owned(),
@@ -2317,6 +2320,9 @@ fn check_kuang_contributions(location: &str, document: &Yaml) -> Vec<Problem> {
         // Deliberately the non-default: `answer` is skipped when it is `bounded`, so a fixture
         // that took the default would carry no field and this check would pass over it.
         answer: ono_kuang_protocol::Answer::Unbounded,
+        // Likewise non-default (ADR-0596, ADR-0597).
+        roles: vec!["workload".to_owned()],
+        parent: Some("dev.example.p.container/1".to_owned()),
     };
     // `provider` is documented and deliberately not a wire field; `origin` is not documented at
     // all, for the same reason (spec §31.64: the host sets both).

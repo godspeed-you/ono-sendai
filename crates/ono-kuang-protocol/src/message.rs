@@ -221,6 +221,63 @@ pub struct CommandContribution {
     /// Documented examples. Each must parse and run under the test host (spec §31.22, §50).
     #[serde(default)]
     pub examples: Vec<String>,
+    /// What this command does to the system a provider fronts, in the shape the generic
+    /// provider contract asks an action to declare before the host runs any provider code
+    /// (`docs/architecture/external-system-provider.md` §21.1; ADR-0595). Absent for a
+    /// command that is not a provider action.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<ActionContribution>,
+}
+
+/// A provider action's safety and type contract (`docs/architecture/external-system-provider.md`
+/// §21.1, §21.6, §22.2; ADR-0595).
+///
+/// The generic contract asks an action to specify its identity, accepted targets, parameters,
+/// required capabilities, whether it mutates, its idempotency, its result, its verification and
+/// its prospective effects. Identity, parameters and capabilities are the command's own fields;
+/// this is the rest, declared where the host reads it before any package code runs and validated
+/// at load: an action that says it mutates must carry a risk and a mutating capability.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ActionContribution {
+    /// The schema ids of the objects this action accepts as its target, or `["*"]` for any
+    /// object the package answers for. Each must resolve at load like a target's schema.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<String>,
+    /// Whether the action changes state in the external system. `true` requires `risk` to be
+    /// `mutate` or `destructive` and at least one declared capability of that risk.
+    #[serde(default)]
+    pub mutates: bool,
+    /// What repeating the action does.
+    #[serde(default)]
+    pub idempotency: Idempotency,
+    /// The type of the result stream where it differs from `output`; validated like `output`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+    /// How the outcome is verified after the system accepted the action, in prose the package
+    /// stands behind — or `None`, which is §21.6's "explicit lack thereof" and is shown as such.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification: Option<String>,
+    /// The classes of prospective effect the action may have (§22.2): what a plan of it should
+    /// warn about — `restarts-workload`, `deletes-data`, `changes-routing`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<String>,
+}
+
+/// What repeating a provider action does (`docs/architecture/external-system-provider.md` §19.4,
+/// §20.3, §21.1).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Idempotency {
+    /// Repeating it leaves the system as the first run left it.
+    Idempotent,
+    /// Repeating it is safe only under a precondition the action carries — a resource version,
+    /// a generation, a uid.
+    ConditionallyIdempotent,
+    /// Repeating it may duplicate the effect. Never retried on the package's behalf.
+    NotIdempotent,
+    /// The package did not say, which is not the same as saying it is safe (spec §10.5).
+    #[default]
+    Unknown,
 }
 
 /// One declared argument of a contribution, in the vocabulary `docs/contracts/commands/*.yaml`
@@ -354,6 +411,20 @@ pub struct TargetContribution {
     /// Whether the answer ends by itself.
     #[serde(default, skip_serializing_if = "Answer::is_default")]
     pub answer: Answer,
+    /// The semantic roles objects of this target carry — `workload`, `storage`, `identity` — in
+    /// the small cross-provider vocabulary of `docs/architecture/external-system-provider.md`
+    /// §25 (ADR-0596). A role is additional semantics beside the native type, never a
+    /// replacement for it: the schema stays the schema, and `find place --role workload` is what
+    /// the role buys.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roles: Vec<String>,
+    /// The kind of place that is this kind's canonical spatial parent — the id of a schema one
+    /// of this package's own targets declares — so that `up` from a place of this kind lands on
+    /// one of that kind (spec v0.4 §11.3, §36.4; ADR-0597). The edge itself is contributed like
+    /// any other: the manifest declares the shape `<schema>-><parent>` and the package answers
+    /// the edge under `relation.write`. Spatial containment, never ownership.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
 /// Whether a contributed target's answer ends by itself (spec §31.23, ADR-0588).

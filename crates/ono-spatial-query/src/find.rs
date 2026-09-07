@@ -37,6 +37,7 @@ pub struct FindRequest {
     /// the one a user already sees from `get process | where …` (§28, §29.4).
     subjects: Option<std::collections::BTreeMap<SpatialId, usize>>,
     here: Option<SpatialId>,
+    role: Option<String>,
 }
 
 impl FindRequest {
@@ -58,6 +59,20 @@ impl FindRequest {
     pub fn of_type(mut self, object_type: SpatialType) -> Self {
         self.object_type = Some(object_type);
         self
+    }
+
+    /// `find place --role <role>` — only places whose kind carries the semantic role
+    /// (external-system-provider §15.5, §25; ADR-0596).
+    #[must_use]
+    pub fn with_role(mut self, role: impl Into<String>) -> Self {
+        self.role = Some(role.into());
+        self
+    }
+
+    /// The role filter.
+    #[must_use]
+    pub fn role(&self) -> Option<&str> {
+        self.role.as_deref()
     }
 
     /// `find place --near <place-selector>` — the anchor the search is measured from (§6.8).
@@ -264,6 +279,13 @@ pub fn find_places(
         }
         if let Some(wanted) = request.object_type
             && !object.object_type().is_a(wanted)
+        {
+            continue;
+        }
+        if let Some(role) = &request.role
+            && !ono_spatial_core::types::roles_of(object.object_type())
+                .iter()
+                .any(|carried| carried == role)
         {
             continue;
         }

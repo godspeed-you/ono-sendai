@@ -663,6 +663,7 @@ pub fn place_record_of(
         .set("display_name", Value::string(&name))?
         .set("object_type", Value::string(&object_type))?
         .set("spatial_type", Value::string(spatial_type.as_str()))?
+        .set("roles", roles_value(spatial_type))?
         .set("place_path", Value::string(&place_path))?
         .set("scope", Value::string(&own_scope.to_string()))?
         .set("lifetime", lifetime_record(entry))?
@@ -780,6 +781,19 @@ fn schema_declares(field: &str) -> bool {
 /// and a connection. Both readings are true of the same place, and a reader that asks "is this a
 /// socket?" and one that asks "is this a connection?" must both get an answer — so the chain is
 /// written out, most specific first: `connection socket`.
+/// The semantic roles a kind of place carries, or null where it carries none (ADR-0596).
+///
+/// Null rather than an empty list: a declared type has not been given roles, and "none declared"
+/// is not "declared to have none" (spec §10.5).
+fn roles_value(object_type: SpatialType) -> Value {
+    let roles = ono_spatial_core::types::roles_of(object_type);
+    if roles.is_empty() {
+        Value::Null
+    } else {
+        Value::list(roles.iter().map(|role| Value::string(role)))
+    }
+}
+
 fn kind_chain(object_type: SpatialType) -> String {
     let mut chain = vec![object_type.as_str().to_ascii_lowercase()];
     let mut current = object_type;

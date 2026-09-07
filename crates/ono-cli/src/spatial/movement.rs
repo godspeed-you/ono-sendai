@@ -162,10 +162,33 @@ impl CommandImpl for Up {
         Err(ono_command::must_be_awaited("up"))
     }
 
-    fn invoke_async<'a>(&'a self, _ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
+    fn invoke_async<'a>(&'a self, ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
         Box::pin(async move {
             let now = Timestamp::now();
             let mut session = spatial_session().await;
+            // A place a package contributed reaches its parent along an edge the package
+            // contributes (ADR-0597), and an edge nobody has asked for is not in the index yet.
+            // Asking is what `look` does before it draws the exits, so `up` asks the same way,
+            // once, and only for a kind of place that declared a parent to reach.
+            let here = session.current_place().clone();
+            let declared_parent = session
+                .index()
+                .get(&here)
+                .map(|entry| entry.object().object_type())
+                .and_then(ono_spatial_core::types::contributed_for_type)
+                .is_some_and(|contributed| contributed.parent.is_some());
+            if declared_parent
+                && ono_spatial_query::resolve::parent_of(session.index(), &here).is_none()
+            {
+                crate::spatial::relations::observe(
+                    ctx.providers(),
+                    &mut session,
+                    &here,
+                    &crate::spatial::relations::Interest::here(),
+                    now,
+                )
+                .await?;
+            }
             go_up(&mut session, now)?;
             Ok(Outcome::Values(ValueStream::from_values(Vec::new())))
         })
@@ -195,24 +218,46 @@ pub fn go_up(
         // give it one, is a declaration a package cannot yet make (ADR-0584). Telling a user
         // they have reached the top of the host would be a statement about the host that is not
         // true (§2.17).
-        let contributed = matches!(
-            session
-                .index()
-                .get(&here)
-                .map(|entry| entry.object().object_type()),
-            Some(ono_spatial_core::SpatialType::Contributed(_))
-        );
-        if contributed {
-            return Err(ErrorValue::new(
-                ErrorCode::SpatialNoParent,
-                "no canonical domain holds this kind of place, so `up` has nowhere to go from \
-                 here",
-            )
-            .with_help(
-                "a package that contributes a kind of place does not yet declare the aggregate \
-                 space that would hold it (spec v0.4 §36.4); `back` returns through navigation \
-                 history instead (§6.6, §40)",
-            ));
+        let contributed = session
+            .index()
+            .get(&here)
+            .map(|entry| entry.object().object_type())
+            .filter(|kind| matches!(kind, ono_spatial_core::SpatialType::Contributed(_)))
+            .map(|kind| (kind, ono_spatial_core::types::contributed_for_type(kind)));
+        if let Some((kind, contributed)) = contributed {
+            // Three honest answers, none of them "the top of this host" (§2.17): the package
+            // declared a parent and contributed no edge to one; the package declared a parent
+            // for nothing above this kind, which is the top of what it contributes; or the
+            // package declared no parent at all (ADR-0597).
+            return Err(match contributed.and_then(|entry| entry.parent) {
+                Some(parent) => ErrorValue::new(
+                    ErrorCode::SpatialNoParent,
+                    format!(
+                        "no canonical domain holds this kind of place, and `{}` declares `{parent}` \
+                         as its parent but contributed no edge from here to one",
+                        contributed.map_or("the package", |entry| entry.origin)
+                    ),
+                )
+                .with_help(
+                    "the edge is a contributed relation, and a package contributes relations only \
+                     under `relation.write` — load it with `--grant relation.write`, or the \
+                     object may genuinely sit in no parent the package could name (spec v0.4 \
+                     §11.3, §36.1; ADR-0597); `back` returns through navigation history instead",
+                ),
+                None => ErrorValue::new(
+                    ErrorCode::SpatialNoParent,
+                    format!(
+                        "no canonical domain holds this kind of place: `{}` is the top of what \
+                         its package contributes, so `up` has nowhere to go from here",
+                        kind.as_str()
+                    ),
+                )
+                .with_help(
+                    "a package declares the kind of place above each kind it contributes (spec \
+                     v0.4 §11.3, §36.4; ADR-0597), and this kind declares none; `back` returns \
+                     through navigation history instead (§6.6, §40)",
+                ),
+            });
         }
         return Err(ErrorValue::new(
             ErrorCode::SpatialNoParent,

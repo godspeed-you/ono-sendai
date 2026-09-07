@@ -108,6 +108,9 @@ pub enum Skipped {
     TooExpensive(CostClass),
     /// No registered provider answers for it.
     NoProvider,
+    /// Its kind of place carries no such semantic role, so nothing it serves can answer a
+    /// `--role` search (ADR-0596).
+    WrongRole(String),
 }
 
 impl Skipped {
@@ -126,6 +129,7 @@ impl Skipped {
                 cost.as_str()
             ),
             Skipped::NoProvider => "no provider answers for it".to_owned(),
+            Skipped::WrongRole(role) => format!("its kind of place carries no role `{role}`"),
         }
     }
 }
@@ -199,6 +203,23 @@ pub fn targets_for(
     serves: &impl Fn(&str) -> bool,
     declares: &impl Fn(&str, &str) -> bool,
 ) -> TargetPlan {
+    targets_for_role(object_type, None, fields, serves, declares)
+}
+
+/// The same plan, narrowed to the targets whose kind of place carries `role` where one is named
+/// (external-system-provider §15.5, §25; ADR-0596).
+///
+/// A role names the targets as precisely as a type does, so a target asked for by role is asked
+/// even when enumerating it is expensive: `find place --role workload` is the request §12.6 wants
+/// made deliberately, and it was.
+#[must_use]
+pub fn targets_for_role(
+    object_type: Option<SpatialType>,
+    role: Option<&str>,
+    fields: &BTreeSet<String>,
+    serves: &impl Fn(&str) -> bool,
+    declares: &impl Fn(&str, &str) -> bool,
+) -> TargetPlan {
     let mut plan = TargetPlan::default();
     for (target, cost) in planned_targets() {
         let (target, cost) = (target, &cost);
@@ -214,6 +235,15 @@ pub fn targets_for(
             plan.skipped.push((target, Skipped::WrongType(wanted)));
             continue;
         }
+        if let Some(role) = role
+            && !types_of_target(target)
+                .iter()
+                .any(|served| ono_spatial_core::types::roles_of(*served).contains(&role))
+        {
+            plan.skipped
+                .push((target, Skipped::WrongRole(role.to_owned())));
+            continue;
+        }
         plan.candidates.push(target);
         if let Some(missing) = fields.iter().find(|field| !declares(target, field)) {
             plan.skipped
@@ -221,9 +251,9 @@ pub fn targets_for(
             continue;
         }
         // An expensive target is asked only when it was asked for by name: `--type file`,
-        // `--type directory`. Otherwise `find place nginx` would walk the filesystem before it
-        // looked at a single process (§33.3, §34).
-        if *cost == CostClass::Expensive && object_type.is_none() {
+        // `--type directory`, or a `--role` its kind carries. Otherwise `find place nginx`
+        // would walk the filesystem before it looked at a single process (§33.3, §34).
+        if *cost == CostClass::Expensive && object_type.is_none() && role.is_none() {
             plan.skipped.push((target, Skipped::TooExpensive(*cost)));
             continue;
         }

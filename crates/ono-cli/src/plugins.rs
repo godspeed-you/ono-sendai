@@ -292,10 +292,17 @@ pub fn load_plugin_with(
     // `contributions.targets` documents §31.68 reads without running anything — so a shape naming
     // a kind of place nobody contributes is refused before the runtime is spawned, rather than
     // being discovered when somebody types `follow` (ADR-0585).
-    crate::spatial::contributions::check_shapes(
+    let declared_schemas = crate::plugin_registry::declared_target_schemas(&package);
+    crate::spatial::contributions::check_shapes(id, &shapes, &declared_schemas)
+        .map_err(Flow::Failed)?;
+    // A target's declared parent is settled the same way, and before the runtime is spawned: the
+    // parent is a schema on disk, and the shape that will carry the edge is in the manifest
+    // beside it (ADR-0597).
+    crate::spatial::contributions::check_parents(
         id,
+        &crate::plugin_registry::declared_target_parents(&package),
         &shapes,
-        &crate::plugin_registry::declared_target_schemas(&package),
+        &declared_schemas,
     )
     .map_err(Flow::Failed)?;
     let mut config = LoadConfig::new(entry, package.manifest);

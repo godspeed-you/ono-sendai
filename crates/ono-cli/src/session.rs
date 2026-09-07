@@ -1735,11 +1735,19 @@ fn contribute_spatial_type(
     if identity.is_empty() {
         return;
     }
+    let roles: Vec<&str> = registered
+        .contribution
+        .roles
+        .iter()
+        .map(String::as_str)
+        .collect();
     ono_spatial_core::types::contribute(
         &schema.id().to_string(),
         schema.name(),
         &registered.contribution.name,
         &identity,
         plugin.package_id(),
+        &roles,
+        registered.contribution.parent.as_deref(),
     );
 }

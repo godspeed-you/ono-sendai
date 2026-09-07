@@ -322,8 +322,17 @@ impl Supervisor {
                 )
             })?;
         }
+        // The schema ids every target of this package answers with, so a target's declared
+        // spatial parent can be settled against them (ADR-0597).
+        let target_schemas: Vec<&str> = hello
+            .contributions
+            .targets
+            .iter()
+            .map(|target| target.schema.as_str())
+            .collect();
         for command in &hello.contributions.commands {
             validate_command_contribution(&package_id, command)?;
+            validate_action_contribution(&schemas, command)?;
             // The same rule for what a command emits and consumes: a declared type is checked
             // against the registry at load rather than at the first value (ADR-0591).
             if let Expected::Schema(id) = parse_expected(&command.output) {
@@ -364,6 +373,7 @@ impl Supervisor {
             // `<package.id>.phantom/1` used to load and fail at its first record, at runtime,
             // under `runtime.schema_violation` (ADR-0591).
             resolve_schema_reference(&schemas, &target.schema, "target", &target.name)?;
+            validate_target_semantics(target, &target_schemas)?;
             targets.push(RegisteredTarget {
                 contribution: target.clone(),
                 provider: provider.clone(),
@@ -491,6 +501,133 @@ fn resolve_schema_reference(
          `contributions.schemas` or a core schema, and it is checked here rather than at the \
          first value (spec §31.23; ADR-0591)",
     ))
+}
+
+/// Settles a target's semantic roles and its declared spatial parent (ADR-0596, ADR-0597).
+///
+/// A role is a kebab-case word of the small cross-provider vocabulary; a parent is the schema
+/// of another target this package contributes, and never the target's own.
+///
+/// # Errors
+///
+/// `package.invalid` naming the target and the role or parent that does not hold.
+fn validate_target_semantics(
+    target: &ono_kuang_protocol::TargetContribution,
+    package_target_schemas: &[&str],
+) -> Result<(), KuangError> {
+    for role in &target.roles {
+        if !ono_kuang_protocol::is_role_word(role) {
+            return Err(KuangError::new(
+                KuangErrorCode::PackageInvalid,
+                format!(
+                    "target `{}` declares the role `{role}`, which is not a role word",
+                    target.name
+                ),
+            )
+            .with_help(
+                "a role is a kebab-case word — `workload`, `compute-node`, `storage` — from the \
+                 small cross-provider vocabulary of the external-system-provider contract §25 \
+                 (ADR-0596)",
+            ));
+        }
+    }
+    if let Some(parent) = &target.parent {
+        if parent == &target.schema {
+            return Err(KuangError::new(
+                KuangErrorCode::PackageInvalid,
+                format!(
+                    "target `{}` declares its own schema `{parent}` as its parent",
+                    target.name
+                ),
+            )
+            .with_help("a kind of place cannot contain itself (spec v0.4 §11.3; ADR-0597)"));
+        }
+        if !package_target_schemas.contains(&parent.as_str()) {
+            return Err(KuangError::new(
+                KuangErrorCode::PackageInvalid,
+                format!(
+                    "target `{}` declares the parent `{parent}`, which no target of this package \
+                     answers with",
+                    target.name
+                ),
+            )
+            .with_help(
+                "a parent is the schema id of a kind of place this package contributes itself, \
+                 so that `up` lands on one (spec v0.4 §11.3, §36.4; ADR-0597)",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Holds a provider action's declaration to what it claims (ADR-0595).
+///
+/// An action that mutates carries a risk of `mutate` or `destructive` and at least one declared
+/// capability of that risk; every target and result it names resolves like a schema reference.
+///
+/// # Errors
+///
+/// `package.invalid` naming the command and the claim that does not hold.
+fn validate_action_contribution(
+    schemas: &ono_value::SchemaRegistry,
+    command: &CommandContribution,
+) -> Result<(), KuangError> {
+    let Some(action) = &command.action else {
+        return Ok(());
+    };
+    if action.mutates {
+        let mutating_risk = matches!(command.risk.as_deref(), Some("mutate" | "destructive"));
+        if !mutating_risk {
+            return Err(KuangError::new(
+                KuangErrorCode::PackageInvalid,
+                format!(
+                    "command `{}` declares an action that mutates and a risk of `{}`",
+                    command.id,
+                    command.risk.as_deref().unwrap_or("nothing")
+                ),
+            )
+            .with_help(
+                "a mutating action declares `risk: mutate` or `risk: destructive`, which is what \
+                 the host's confirmation policy reads (spec §31.75; provider contract §21.1, \
+                 §21.5; ADR-0595)",
+            ));
+        }
+        let authorised = command.capabilities.iter().any(|id| {
+            ono_kuang_protocol::Capability::from_id(id).is_some_and(|capability| {
+                matches!(
+                    capability.risk(),
+                    ono_kuang_protocol::Risk::Mutate | ono_kuang_protocol::Risk::Destructive
+                )
+            })
+        });
+        if !authorised {
+            return Err(KuangError::new(
+                KuangErrorCode::PackageInvalid,
+                format!(
+                    "command `{}` declares an action that mutates and no capability that \
+                     authorises a mutation",
+                    command.id
+                ),
+            )
+            .with_help(
+                "a mutating action declares a capability of risk `mutate` or `destructive` — \
+                 `provider.mutate` for a change in the system a provider fronts — so the host \
+                 can refuse it before any package code runs (ADR-0594, ADR-0595)",
+            ));
+        }
+    }
+    for target in &action.targets {
+        if target == "*" {
+            continue;
+        }
+        resolve_schema_reference(schemas, target, "command", &command.id)?;
+    }
+    if let Some(result) = &action.result
+        && let Expected::Schema(id) = parse_expected(result)
+    {
+        resolve_schema_reference(schemas, &id.to_string(), "command", &command.id)?;
+    }
+    Ok(())
 }
 
 fn validate_command_contribution(

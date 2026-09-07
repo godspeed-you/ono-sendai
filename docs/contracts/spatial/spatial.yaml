@@ -112,11 +112,25 @@ contributed_types:
     object and `docs/contracts/kuang/contributions.v1.yaml` gives a target contribution no way to
     say otherwise, so a search reaches a contributed target only when it was asked to — by
     `--type`, exactly as `dir` and `file` are reached (§33.3).
+  roles: >-
+    The semantic roles the target declared (`contributions.v1.yaml` → `target.roles`), as
+    additional semantics beside the type (external-system-provider §25; ADR-0596). `find place
+    --role <role>` asks exactly the targets whose kind carries the role — even an `expensive`
+    one, because a role names the targets as precisely as `--type` does — and every place of
+    the kind carries `roles` on its record. A role nobody declares is refused with the ones that
+    exist. A declared type carries no roles yet.
   hierarchy: >-
-    None. A contributed target declares no aggregate space, so a place of that kind sits in no
-    collection and `up` refuses with `spatial.no_parent` naming that reason. §36.4's
-    plugin-defined space is the declaration that would give it a parent, and it is not yet
-    implemented.
+    The kind of place the target declares as its `parent` (`contributions.v1.yaml` →
+    `target.parent`), where it declares one: the schema of another of the package's own targets,
+    reached along the contributed relation `<schema>-><parent>` the manifest declares beside it
+    (ADR-0597). This is §36.4's plugin-defined hierarchy expressed with the primitives §36.1
+    already gives a package — a declared kind above each kind, and an edge the package answers —
+    so `up` from a Pod lands on its namespace and from a namespace on its cluster, while a
+    ReplicaSet stays what *owns* the Pod along a different relation. A kind that declares no
+    parent is the top of what its package contributes, and `up` from it refuses with
+    `spatial.no_parent` saying so; a kind whose parent edge the package did not contribute
+    (no `relation.write`) refuses naming the grant. A contributed place is never filed under a
+    domain of this host.
   relations: >-
     None. A package contributes relationship edges through `contributions.relations`, whose shapes
     name the declared types of `object_types` above, so `near` and `follow` reach a contributed

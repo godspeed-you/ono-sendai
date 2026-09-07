@@ -48,6 +48,15 @@ fields:
     type: string
     required: true
     doc: The §3.3 type — `process`, `service`, `listener`, `directory`, `compute` — lower-cased.
+  roles:
+    type: list<string>
+    nullable: true
+    doc: >-
+      The semantic roles the kind of place carries — `workload`, `storage`, `identity` — as the
+      package that contributed the kind declared them (external-system-provider §25; ADR-0596).
+      Additional semantics beside the native type, which stays in `object_type` and
+      `canonical_ref`: a role never replaces what the object is. Null where the kind declares
+      none, which is not the same as declaring it has none.
   place_path:
     type: string
     required: true

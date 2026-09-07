@@ -92,6 +92,22 @@ command:
     options: {type: list<parameter>, nullable: true, doc: "As a core command declares them; see `parameter` below."}
     risk: {type: string, nullable: true, doc: "From `risk_levels` in `docs/contracts/capabilities.yaml`. Required for a mutating command."}
     examples: {type: list<string>, required: true, doc: "Each must parse and run under the test host (spec §31.22, §50)."}
+    action: {type: action, nullable: true, doc: "The provider-action contract of `docs/architecture/external-system-provider.md` §21.1, for a command that acts on the system a provider fronts; see `action` below. Validated at load (ADR-0595)."}
+  # The safety and type contract of a provider action, declared where the host reads it before any
+  # package code runs (external-system-provider §21.1, §21.6, §22.2; ADR-0595). Identity is the
+  # command id, parameters are its `options`, and required privileges are its `capabilities`;
+  # this block carries the rest.
+  action:
+    fields:
+      targets: {type: list<string>, nullable: true, doc: "The schema ids of the objects the action accepts as its target, or `[\"*\"]`. Each resolves at load like a target's schema (ADR-0591)."}
+      mutates: {type: bool, required: true, doc: "Whether the action changes state in the external system. `true` requires `risk: mutate` or `risk: destructive` and at least one declared capability of that risk — `provider.mutate` — so the host can refuse the action before any package code runs (ADR-0594)."}
+      idempotency: {type: "enum<idempotent|conditionally-idempotent|not-idempotent|unknown>", nullable: true, doc: "What repeating the action does. Default `unknown`, which is not `idempotent` (spec §10.5). A `not-idempotent` or `unknown` action is never retried on the package's behalf (external-system-provider §19.4, §20.3)."}
+      result: {type: string, nullable: true, doc: "The result type where it differs from `output`; validated like `output`."}
+      verification: {type: string, nullable: true, doc: "How the outcome is verified after the system accepted the action, in prose the package stands behind. Null is §21.6's explicit lack of a verification hook, shown as such — never inferred to be present."}
+      effects: {type: list<string>, nullable: true, doc: "The classes of prospective effect a plan of the action should warn about (§22.2): `restarts-workload`, `deletes-data`, `changes-routing`."}
+    rules:
+      - "A command that declares no `action` is not a provider action. A read never declares one (§21.2)."
+      - "The declaration is validated at load, not at the first invocation: an action that says it mutates without a risk or without a mutating capability is `package.invalid`."
   vocabulary_rule:
     rule: >-
       A package SHOULD reuse `get`, `inspect`, `trace`, `watch`, `find`, `start`, `stop` and the
@@ -116,6 +132,8 @@ target:
     identity_doc: {type: string, required: true, doc: "What makes two observations the same object, in prose, beside the schema's `identity` list."}
     options: {type: list<parameter>, nullable: true, doc: "The options a query against this target is narrowed by — a context, a namespace, a kind. Declared in the same shape a command's are, so that `get <target> --<option>` has help, completion and a default (ADR-0587)."}
     answer: {type: "enum<bounded|unbounded>", nullable: true, doc: "Whether the answer ends by itself. Default `bounded`. `unbounded` is a watch, a followed log or a subscription: the host must not collect it, and shows it as a live stream instead (ADR-0588)."}
+    roles: {type: list<string>, nullable: true, doc: "The semantic roles objects of this target carry — kebab-case words of the small cross-provider vocabulary of `docs/architecture/external-system-provider.md` §25: `workload`, `compute-node`, `storage`, `identity`. Additional semantics beside the schema, never a replacement for it; `find place --role <role>` reaches the target by them, and every place of the kind carries them (ADR-0596)."}
+    parent: {type: string, nullable: true, doc: "The schema id of the kind of place that is this kind's canonical spatial parent — one of this package's own targets' schemas, never this target's own — so that `up` from a place of this kind lands on one of that kind (spec v0.4 §11.3, §36.4). The manifest must declare the relation shape `<schema>-><parent>` and the package answers the edge under `relation.write`; the parent is settled at load, on disk, before the runtime runs (ADR-0597). Containment, never ownership: a Pod's namespace is its parent while its ReplicaSet owns it."}
     provider: {type: string, required: true, doc: "`plugin:<package.id>`, set by the host."}
 
 # The shape a `selectors` or `options` entry has, in a command contribution or a target one. It is
