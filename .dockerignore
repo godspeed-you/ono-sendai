@@ -1,0 +1,7 @@
+# The acceptance image is built with the repository root as its context (`scripts/acceptance.sh`,
+# `docker/Dockerfile`), and the context is copied to the daemon before the first instruction runs.
+# `target/` is tens of gigabytes of build artifacts the image rebuilds in its own cache mount, and
+# on a machine whose temporary space is quota-bound, sending it is what filled the quota and
+# killed the shell mid-session. Nothing below is an input to the build.
+target/
+.git/
