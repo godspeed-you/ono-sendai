@@ -43,20 +43,33 @@ pub struct AuditTrail {
     /// out of its own events and every instance's. Two counters that both start at one would
     /// mint two events claiming to be the same one, so the source is part of the identity.
     source: u32,
+    /// Which *run* of that source this is, mixed into every identity as well.
+    ///
+    /// A trail persisted across sessions (spec §31.33) holds events from many processes, and a
+    /// counter that restarts at one in every process would mint, in the second session, the
+    /// same ids the first already wrote — and the persistence step, which keeps an event once,
+    /// would drop the second session's events on the floor. The nonce is minted when the trail
+    /// is, from the process and the clock, so two runs of one package never share an id.
+    session: u32,
 }
 
 impl AuditTrail {
     /// An empty trail with no source of its own.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            session: session_nonce(),
+            ..Self::default()
+        }
     }
 
-    /// An empty trail whose identities are distinguishable from every other source's.
+    /// An empty trail whose identities are distinguishable from every other source's, and from
+    /// every earlier run of the same source.
     #[must_use]
     pub fn for_source(source: &str) -> Self {
         Self {
             source: fnv(source),
+            session: session_nonce(),
             ..Self::default()
         }
     }
@@ -120,9 +133,17 @@ impl AuditTrail {
                 Err(poisoned) => poisoned.into_inner(),
             };
             *counter += 1;
-            // A stable v4-shaped identity derived from the source and the sequence, so the
-            // trail is deterministic under the test host and still unique across sources.
-            format!("{:08x}-0000-4000-8000-{:012x}", self.source, *counter)
+            // A v4-shaped identity derived from the source, the run and the sequence: unique
+            // across sources, across the sessions one persisted trail gathers, and in order
+            // within one run.
+            format!(
+                "{:08x}-{:04x}-4{:03x}-8{:03x}-{:012x}",
+                self.source,
+                (self.session >> 16) & 0xffff,
+                (self.session >> 4) & 0xfff,
+                self.session & 0xfff,
+                *counter
+            )
         };
         let event = AuditEvent {
             id,
@@ -167,4 +188,55 @@ fn fnv(text: &str) -> u32 {
         hash = hash.wrapping_mul(0x0100_0193);
     }
     hash
+}
+
+/// A nonce for one run of a trail: the process and the clock, folded to the bits an id carries.
+fn session_nonce() -> u32 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_nanos())
+        .unwrap_or_default();
+    let mixed = (nanos as u64) ^ (u64::from(std::process::id()) << 32);
+    // 28 bits are what the three nonce fields hold: 16 + 12 in the two middle groups; the top
+    // 4 of the third field's 12 are folded in, so nothing of the clock is thrown away unmixed.
+    ((mixed as u32) ^ ((mixed >> 32) as u32)) & 0x0fff_ffff
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_mint_distinct_ids_for_two_runs_of_one_source() {
+        // Spec §31.33: a trail persisted across sessions keeps an event once, by id. Two runs of
+        // one package — two processes, or two loads — must therefore never mint the same id,
+        // or the second run's events vanish at the persistence step.
+        let first = AuditTrail::for_source("dev.example.echo");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let second = AuditTrail::for_source("dev.example.echo");
+        for trail in [&first, &second] {
+            trail.record(
+                "dev.example.echo",
+                "host",
+                "clock.read",
+                None,
+                Enforcement::Broker,
+                "clock.now",
+                None,
+                "2026-09-08T00:00:00Z".to_owned(),
+                AuditResult::Success,
+                None,
+            );
+        }
+        let (a, b) = (
+            first.snapshot()[0].id.clone(),
+            second.snapshot()[0].id.clone(),
+        );
+        assert_ne!(a, b, "two runs of one source share no identity");
+        assert!(
+            a.starts_with(&format!("{:08x}-", fnv("dev.example.echo"))),
+            "the source is still the first group: {a}"
+        );
+        assert_eq!(a.len(), 36, "and the identity stays v4-shaped: {a}");
+    }
 }

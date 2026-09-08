@@ -137,6 +137,8 @@ run: |
   ono -c "echo:exec --program $home/home/other" 2>&1 | head -1
 
   echo "== asked, and answered, in the trail (K11P §23.2) =="
+  # Three questions across three sessions — the helper twice above, the other program once — and
+  # every one of them survives the process that asked it (spec §31.33).
   ono -c 'get audit --plugin dev.example.echo | where action == "permission.ask" | count | to json'
   ono -c 'get audit --plugin dev.example.echo | where action == "permission.deny" | select result | to json' | head -1
 exit: 0
@@ -147,6 +149,6 @@ stdout-contains: {"state":"allowed"}
 stdout-contains: "stdout: hello"
 stdout-contains: {"permission":"login-helper","duration":"always"}
 stdout-contains: scoped=ok
-stdout-contains: [2]
+stdout-contains: [3]
 stdout-contains: {"result":"denied"}
 stdout-not-contains: panicked

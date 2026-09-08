@@ -182,6 +182,8 @@ pub struct Host {
     persisted_audit: Vec<AuditEvent>,
     /// The ids already on disk, so a flush appends what is new and nothing twice.
     written_audit: std::collections::BTreeSet<String>,
+    /// What tells this session's minted identities from every other session's (see `mint`).
+    session_nonce: u32,
     /// Which policy store the grants in memory were read from, so it is read once per session.
     policy_read: Option<PathBuf>,
     /// Whose keys this machine accepts, and the stores that exist and could not be read
@@ -737,12 +739,30 @@ impl Host {
         Some(self.instances.remove(index))
     }
 
-    /// A fresh identity for a grant or a host event, stable within the session.
+    /// A fresh identity for a grant or a host event: in order within the session, and unlike
+    /// any earlier session's.
+    ///
+    /// The trail on disk keeps an event once, by id (spec §31.33), so a counter that restarted
+    /// at one in every process minted, in the second session, the ids the first had already
+    /// written — and the second session's grants and decisions never reached the file. The
+    /// process and the clock are folded into the bytes the v4 shape leaves free.
     fn mint(&mut self) -> ono_value::Uuid {
+        if self.session_nonce == 0 {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|since| since.as_nanos())
+                .unwrap_or_default();
+            let mixed = (nanos as u64) ^ (u64::from(std::process::id()) << 32);
+            self.session_nonce = ((mixed as u32) ^ ((mixed >> 32) as u32)).max(1);
+        }
         self.minted += 1;
         let mut bytes = [0_u8; 16];
+        let nonce = self.session_nonce.to_be_bytes();
+        bytes[2..6].copy_from_slice(&nonce);
         bytes[6] = 0x40;
+        bytes[7] = nonce[3] ^ nonce[0];
         bytes[8] = 0x80;
+        bytes[9] = nonce[2] ^ nonce[1];
         bytes[10..].copy_from_slice(&self.minted.to_be_bytes()[2..]);
         ono_value::Uuid::from_bytes(bytes)
     }
