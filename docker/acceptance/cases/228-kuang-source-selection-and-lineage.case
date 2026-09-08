@@ -1,0 +1,180 @@
+# K11A §10.2–§10.4, §19, §27, §25.4 (19–23), §25.5 (28) (ADR-0606): the same release from a
+# system package and a catalog is one release; a system copy is preferred over the catalog's
+# artifact by default and never over a different canonical id; the same version with different
+# contents is a supply-chain conflict a person resolves with `--source`; an installed package
+# keeps the lineage it was acquired through until a person names another.
+case: source selection is deterministic, a conflict fails closed, and lineage is kept
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export ONO_PLUGIN_SOURCES="$home/sources"
+  export ONO_SYSTEM_CONFIG_DIR="$home/system"
+  export HOME="$home/home"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  export XDG_CACHE_HOME="$home/cache"
+  export ONO_CONFIG_DIR="$home/config/ono"
+  export ONO_PLUGIN_SYSTEM_SOURCES="$home/system-sources"
+  mkdir -p "$home/plugins" "$home/home" "$home/config/ono/kuang/catalogs" "$home/system-sources"
+  chmod 0755 "$home/system-sources"
+  # A `kuang-package/2` package in the shape of the reference provider (K11P §8.2), over the
+  # example runtime: observation recommended, relationships automatic, a login helper asked
+  # just in time, mutation explicit.
+  lay_out() {
+    mkdir -p "$1/$2/runtime" "$1/$2/contributions"
+    cp /usr/local/bin/kuang-example-plugin "$1/$2/runtime/echo"
+    cat > "$1/$2/manifest.yaml" <<MANIFEST
+  format: kuang-package/2
+  package:
+    id: $2
+    name: $3
+    version: $4
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.2 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - network.connect
+      - process.signal
+      - filesystem.read: {paths: ["$5"]}
+      - secret.use
+      - clock.read
+      - relation.write
+      - process.exec
+  network:
+    outbound: none
+  contributions:
+    commands: [contributions/commands.yaml]
+  permissions:
+    profiles:
+      minimal: {title: Minimal, permissions: [spatial-relations]}
+      recommended: {title: Recommended, permissions: [cluster-access, kubeconfig-read, credential-use, spatial-relations]}
+      operate: {title: Observe and change, permissions: [cluster-access, kubeconfig-read, credential-use, spatial-relations, cluster-mutation]}
+    requests:
+      - {id: cluster-access, kind: external-observe, title: Connect to clusters, phase: install, recommended: true, grants: [{capability: network.connect, scope: runtime-derived}]}
+      - {id: kubeconfig-read, kind: filesystem-read, title: Read cluster configuration, phase: install, recommended: true, grants: [{capability: filesystem.read, scope: {paths: ["$5"]}}]}
+      - {id: credential-use, kind: secret-use, title: Use credentials without exposing their values, phase: install, recommended: true, grants: [{capability: secret.use}]}
+      - {id: spatial-relations, kind: local-contribution, title: Add relationships to Ono, phase: automatic, recommended: true, grants: [{capability: relation.write, scope: package-contributions}]}
+      - {id: login-helper, kind: execute-helper, title: Run an external login helper when a context requires it, purpose: authenticate to the selected context, phase: jit, recommended: false, grants: [{capability: process.exec, scope: runtime-derived}]}
+      - {id: cluster-mutation, kind: host-change, title: Change resources, phase: explicit, recommended: false, grants: [{capability: process.signal}]}
+  MANIFEST
+    cat > "$1/$2/contributions/commands.yaml" <<CONTRIB
+  commands:
+    - id: $2.command.emit
+      verb: get
+      target: echo-item
+      summary: Emit a counted stream of integers.
+      output: stream<int>
+      argument_mode: expression
+      capabilities: []
+      examples:
+        - get echo-item --count 3
+    - id: $2.command.exec
+      verb: get
+      target: echo-exec
+      summary: Run a program through the host and report its output.
+      output: stream<string>
+      argument_mode: expression
+      capabilities: [process.exec]
+      examples:
+        - get echo-exec --program /bin/true
+    - id: $2.command.signal
+      verb: get
+      target: echo-signal
+      summary: Send a signal to a process through the host.
+      output: stream<string>
+      argument_mode: expression
+      capabilities: [process.signal]
+      examples:
+        - get echo-signal --pid 1 --signal TERM
+  CONTRIB
+  }
+  catalog() {
+    cat > "$home/config/ono/kuang/catalogs/$1.yaml" <<CATALOG
+  format: kuang-catalog/1
+  catalog:
+    name: $1
+    description: A test catalog.
+  entries:
+    - id: $2
+      name: $3
+      description: A package from the catalog.
+      publisher: dev.example
+      releases:
+        - version: $4
+          platforms: [linux-amd64, linux-arm64]
+          kuang_api: ">=11.1 <12"
+          artifact: "git:https://example.invalid/$3#v$4"
+  CATALOG
+  }
+  # What a `.deb` or `.rpm` wrapper leaves: `<root>/<id>/<version>/` and the sidecar naming the
+  # outer package (K11A §8.2, §10.1). Laid out by id so the contributions carry the package's
+  # own command ids, then placed under the version.
+  system_payload() {
+    lay_out "$home/build-$2" $1 echo $2 "$home/home/.kube/config"
+    mkdir -p "$home/system-sources/$1"
+    rm -rf "$home/system-sources/$1/$2"
+    mv "$home/build-$2/$1" "$home/system-sources/$1/$2"
+    printf 'format: kuang-system-origin/1\npackage: ono-plugin-echo\nmanager: apt/dpkg\n' > "$home/system-sources/$1/$2.origin.yaml"
+  }
+
+  # The catalog names a local artifact it cannot fetch: on this machine the release is either in
+  # the local source or under the system root, and that is the choice under test.
+  echo "== one release, two locations: the system copy is chosen (K11A §10.3, §19.1) =="
+  system_payload dev.example.echo 0.1.0
+  lay_out "$home/sources" dev.example.echo echo 0.1.0 "$home/home/.kube/config"
+  catalog test dev.example.echo echo 0.1.0
+  ono -c 'find plugin echo | select version source_kind | to json'
+  ono -c 'install plugin echo --confirm | count' > /dev/null
+  ono -c 'inspect plugin echo | select acquisition | to json' | grep -q '"source_kind":"system-package"' && echo "chosen=system"
+  ono -c 'remove plugin echo | count' > /dev/null 2>&1
+
+  echo "== the same version with different contents fails closed (K11A §19.2) =="
+  printf 'commands: []\n' > "$home/sources/dev.example.echo/contributions/commands.yaml"
+  ono -c 'install plugin echo --confirm' 2>&1 | head -1
+  ono -c 'get plugin | count | to json'
+  ono -c 'try { install plugin echo --confirm } catch e { $e | to json }' | grep -o '"digest"' | wc -l | sed 's/^ *2$/voices=two/'
+  ono -c 'install plugin echo --source local --confirm | select status | to json'
+  ono -c 'inspect plugin echo | select acquisition | to json' | grep -q '"source_kind":"local-path"' && echo "chosen=local"
+
+  echo "== the lineage is kept until a person changes it (K11A §18, §27) =="
+  system_payload dev.example.echo 0.1.1
+  ono -c 'install plugin echo --confirm' 2>&1 | head -1
+  ono -c 'get plugin echo | select version | to json'
+  ono -c 'install plugin echo --source system --confirm | select status | to json; get plugin echo | select version | to json'
+  ono -c 'inspect plugin echo | select acquisition | to json' | grep -q '"source_kind":"system-package"' && echo "lineage=changed-on-request"
+  ono -c 'remove plugin echo | count' > /dev/null 2>&1
+
+  echo "== a system payload under another id does not resolve the name (K11A §19.3) =="
+  lay_out "$home/build-other" dev.other.echo echo 0.1.0 "$home/home/.kube/config"
+  sed -i 's/publisher: dev.example/publisher: dev.other/' "$home/build-other/dev.other.echo/manifest.yaml"
+  mkdir -p "$home/system-sources/dev.other.echo"
+  mv "$home/build-other/dev.other.echo" "$home/system-sources/dev.other.echo/0.1.0"
+  ono -c 'install plugin echo --confirm' 2>&1 | head -1
+  ono -c 'install plugin dev.other.echo --confirm | select status | to json'
+exit: 0
+stdout-contains: {"version":"0.1.0","source_kind":"system-package"}
+stdout-contains: chosen=system
+stdout-contains: Ono-Sendai-E1605
+stdout-contains: [0]
+stdout-contains: voices=two
+stdout-contains: chosen=local
+stdout-contains: already installed
+stdout-contains: [{"version":"0.1.0"}]
+stdout-contains: [{"version":"0.1.1"}]
+stdout-contains: lineage=changed-on-request
+stdout-contains: Ono-Sendai-E1602
+stdout-contains: {"status":"success"}
+stdout-not-contains: panicked

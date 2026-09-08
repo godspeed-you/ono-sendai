@@ -556,3 +556,241 @@ pub fn sign(directory: &Path, key: &ono_kuang_protocol::SecretKey) {
     )
     .expect("the signature is written");
 }
+
+// --- the KUANG/11 reference package, for the suites that install and decide (K11P, K11A) -----
+
+/// The reference manifest of the suites that drive the permission layer: a `kuang-package/2`
+/// package with the seven-permission shape K11P §26.1 describes, under the echo runtime.
+pub fn declared_manifest(id: &str, name: &str, version: &str, kubeconfig: &str) -> String {
+    format!(
+        r#"
+format: kuang-package/2
+package:
+  id: {id}
+  name: {name}
+  version: {version}
+  description: Emits what it is asked to emit.
+  publisher: dev.example
+  license: MIT
+compatibility:
+  kuang_api: ">=11.2 <12"
+  ono_language: ">=0.2"
+  platforms: [linux-amd64, linux-arm64]
+runtime:
+  kind: native-process
+  entry: runtime/echo
+  memory_max: 64MiB
+  cpu_budget: interactive
+  startup: lazy
+roles: [provider]
+capabilities:
+  optional:
+    - network.connect
+    - process.signal
+    - filesystem.read: {{paths: ["{kubeconfig}"]}}
+    - secret.use
+    - clock.read
+    - relation.write
+    - process.exec
+network:
+  outbound: none
+contributions:
+  commands: [contributions/commands.yaml]
+permissions:
+  profiles:
+    minimal:
+      title: Minimal
+      permissions: [spatial-relations]
+    recommended:
+      title: Recommended
+      permissions: [cluster-access, kubeconfig-read, credential-use, spatial-relations]
+    operate:
+      title: Observe and change
+      permissions: [cluster-access, kubeconfig-read, credential-use, spatial-relations, cluster-mutation]
+  requests:
+    - id: cluster-access
+      kind: external-observe
+      title: Connect to clusters
+      phase: install
+      recommended: true
+      grants:
+        - capability: network.connect
+          scope: runtime-derived
+    - id: kubeconfig-read
+      kind: filesystem-read
+      title: Read cluster configuration
+      phase: install
+      recommended: true
+      grants:
+        - capability: filesystem.read
+          scope: {{paths: ["{kubeconfig}"]}}
+    - id: credential-use
+      kind: secret-use
+      title: Use credentials without exposing their values
+      phase: install
+      recommended: true
+      grants:
+        - capability: secret.use
+    - id: spatial-relations
+      kind: local-contribution
+      title: Add relationships to Ono
+      phase: automatic
+      recommended: true
+      grants:
+        - capability: relation.write
+          scope: package-contributions
+    - id: login-helper
+      kind: execute-helper
+      title: Run an external login helper when a context requires it
+      purpose: authenticate to the selected context
+      phase: jit
+      recommended: false
+      grants:
+        - capability: process.exec
+          scope: runtime-derived
+    - id: cluster-mutation
+      kind: host-change
+      title: Change resources
+      phase: explicit
+      recommended: false
+      grants:
+        - capability: process.signal
+"#
+    )
+}
+
+/// The commands the reference manifest contributes.
+pub const COMMANDS: &str = r#"commands:
+  - id: dev.example.echo.command.emit
+    verb: get
+    target: echo-item
+    summary: Emit a counted stream of integers.
+    output: stream<int>
+    argument_mode: expression
+    capabilities: []
+    examples:
+      - get echo-item --count 3
+  - id: dev.example.echo.command.exec
+    verb: get
+    target: echo-exec
+    summary: Run a program through the host and report its output.
+    output: stream<string>
+    argument_mode: expression
+    capabilities: [process.exec]
+    examples:
+      - get echo-exec --program /bin/true
+  - id: dev.example.echo.command.signal
+    verb: get
+    target: echo-signal
+    summary: Send a signal to a process through the host.
+    output: stream<string>
+    argument_mode: expression
+    capabilities: [process.signal]
+    examples:
+      - get echo-signal --pid 1 --signal TERM
+"#;
+
+/// Lays a package out under `root/<id>`: manifest, contributions, the example runtime.
+pub fn lay_out(root: &Path, id: &str, manifest: &str) -> PathBuf {
+    let package = root.join(id);
+    std::fs::create_dir_all(package.join("runtime")).expect("the runtime directory");
+    std::fs::create_dir_all(package.join("contributions")).expect("the contributions directory");
+    std::fs::write(package.join("manifest.yaml"), manifest).expect("the manifest");
+    std::fs::write(
+        package.join("contributions/commands.yaml"),
+        COMMANDS.replace("dev.example.echo", id),
+    )
+    .expect("the contributions");
+    let binary = ono_testkit::ono_binary()
+        .parent()
+        .expect("the target directory")
+        .join("kuang-example-plugin");
+    std::fs::copy(&binary, package.join("runtime/echo"))
+        .expect("the example plugin binary is built");
+    package
+}
+
+/// An operator catalog naming `entries` as `(id, name, version, artifact)`.
+pub fn catalog(
+    home: &ono_testkit::Scratch,
+    file: &str,
+    catalog_name: &str,
+    entries: &[(&str, &str, &str, &str)],
+) {
+    let mut text = format!(
+        "format: kuang-catalog/1\ncatalog:\n  name: {catalog_name}\n  description: A test catalog.\nentries:\n"
+    );
+    for (id, name, version, artifact) in entries {
+        let publisher = id
+            .rsplit_once('.')
+            .map(|(publisher, _)| publisher)
+            .unwrap_or(id);
+        text.push_str(&format!(
+            "  - id: {id}\n    name: {name}\n    description: A package from the catalog.\n    publisher: {publisher}\n    releases:\n      - version: {version}\n        platforms: [linux-amd64, linux-arm64]\n        kuang_api: \">=11.1 <12\"\n        artifact: \"{artifact}\"\n"
+        ));
+    }
+    home.write(format!("config/ono/kuang/catalogs/{file}.yaml"), text);
+}
+
+/// An operator catalog whose releases carry a digest, and that may allow plain `http://`
+/// artifacts (K11A §6): entries as `(id, name, version, artifact, digest)`.
+pub fn catalog_with_digests(
+    home: &ono_testkit::Scratch,
+    file: &str,
+    catalog_name: &str,
+    insecure_http: bool,
+    entries: &[(&str, &str, &str, &str, &str)],
+) {
+    let mut text = format!(
+        "format: kuang-catalog/1\ncatalog:\n  name: {catalog_name}\n  description: A test catalog.\n  insecure_http: {insecure_http}\nentries:\n"
+    );
+    for (id, name, version, artifact, digest) in entries {
+        let publisher = id
+            .rsplit_once('.')
+            .map(|(publisher, _)| publisher)
+            .unwrap_or(id);
+        text.push_str(&format!(
+            "  - id: {id}\n    name: {name}\n    description: A package from the catalog.\n    publisher: {publisher}\n    releases:\n      - version: {version}\n        platforms: [linux-amd64, linux-arm64]\n        kuang_api: \">=11.1 <12\"\n        artifact: \"{artifact}\"\n        digest: \"{digest}\"\n"
+        ));
+    }
+    home.write(format!("config/ono/kuang/catalogs/{file}.yaml"), text);
+}
+
+/// Where the reference manifest pins `kubeconfig-read`.
+pub fn kubeconfig_of(home: &ono_testkit::Scratch) -> String {
+    format!("{}/.kube/config", home.path().join("home").display())
+}
+
+/// Runs a script with the scratch root as the whole world: the plugin home, the local package
+/// source, the system source root, the configuration and the cache all under it.
+pub fn kuang_shell(home: &ono_testkit::Scratch, script: &str) -> ono_testkit::Run {
+    let root = home.path();
+    ono_testkit::Shell::new()
+        .args(["-c", script])
+        .env(
+            "ONO_PLUGIN_PATH",
+            root.join("plugins").display().to_string(),
+        )
+        .env(
+            "ONO_PLUGIN_SOURCES",
+            root.join("sources").display().to_string(),
+        )
+        .env(
+            "ONO_SYSTEM_CONFIG_DIR",
+            root.join("system").display().to_string(),
+        )
+        .env(
+            "ONO_PLUGIN_SYSTEM_SOURCES",
+            root.join("system-sources").display().to_string(),
+        )
+        .env("HOME", root.join("home").display().to_string())
+        .env("XDG_STATE_HOME", root.join("state").display().to_string())
+        .env("XDG_CONFIG_HOME", root.join("config").display().to_string())
+        .env("XDG_CACHE_HOME", root.join("cache").display().to_string())
+        .env(
+            "ONO_CONFIG_DIR",
+            root.join("config/ono").display().to_string(),
+        )
+        .timeout(Duration::from_secs(30))
+        .run()
+}

@@ -1930,7 +1930,7 @@ Search the configured extension sources without executing any package.
 
 | name | type | meaning |
 |---|---|---|
-| `--source` | `string` | Search one configured source (spec §31.9). |
+| `--source` | `string` | Search one kind of source — `system`, `catalog` or `local` — or one directory as `path:<dir>` (spec §31.9, K11A §10.4). Absent, the installed set, every catalog and every system source root. |
 
 **Examples**
 
@@ -1991,7 +1991,7 @@ Resolve, verify and install a package with its recommended access, so it is read
 
 | name | type | meaning |
 |---|---|---|
-| `--source` | `string` | Install from one configured source. |
+| `--source` | `string` | Which sources may answer: `system` (a payload an operating-system package placed under a system source root), `catalog` (the catalog's artifact, fetched or cached) or `local` (a local package directory or source). Absent, an installed package's own lineage, then a system package, a local copy, the network (K11A §10.3, §10.4, §14.2). |
 | `--access` | `string` | The access profile to install with: `recommended` (the default), `minimal`, or a profile the package offers such as `operate`. A profile that adds mutation is named here deliberately (K11P §9, §20.2). |
 | `--confirm` | `bool` | Accept the install plan non-interactively (spec §17.4). Confirms the selected profile's safe defaults and never an explicit or destructive permission (K11P §20.2, ADR-0602 §4). |
 
@@ -2000,6 +2000,7 @@ Resolve, verify and install a package with its recommended access, so it is read
 ```text
 install plugin kubernetes
 install plugin kubernetes --access recommended --confirm
+install plugin kubernetes --source system --confirm
 install plugin path:/srv/packages/dev.example.packet-eye --confirm
 ```
 

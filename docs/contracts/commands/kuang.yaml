@@ -43,7 +43,7 @@ commands:
     selectors:
       - {name: query, type: string, doc: "The search term."}
     options:
-      - {name: source, type: string, doc: "Search one configured source (spec §31.9)."}
+      - {name: source, type: string, doc: "Search one kind of source — `system`, `catalog` or `local` — or one directory as `path:<dir>` (spec §31.9, K11A §10.4). Absent, the installed set, every catalog and every system source root."}
     privilege: none
     streaming: true
     phase: I
@@ -84,7 +84,7 @@ commands:
     selectors:
       - {name: reference, type: string, doc: "A short name (`kubernetes`), a canonical id, `<catalog>/<name>`, an explicit path (`./dir`, `/dir`, `path:<dir>`) — the forms of `docs/contracts/kuang/catalog.v1.yaml` (K11P §4.1)."}
     options:
-      - {name: source, type: string, doc: "Install from one configured source."}
+      - {name: source, type: string, doc: "Which sources may answer: `system` (a payload an operating-system package placed under a system source root), `catalog` (the catalog's artifact, fetched or cached) or `local` (a local package directory or source). Absent, an installed package's own lineage, then a system package, a local copy, the network (K11A §10.3, §10.4, §14.2)."}
       - {name: access, type: string, doc: "The access profile to install with: `recommended` (the default), `minimal`, or a profile the package offers such as `operate`. A profile that adds mutation is named here deliberately (K11P §9, §20.2)."}
       - {name: confirm, type: bool, doc: "Accept the install plan non-interactively (spec §17.4). Confirms the selected profile's safe defaults and never an explicit or destructive permission (K11P §20.2, ADR-0602 §4)."}
     privilege: none
@@ -93,6 +93,7 @@ commands:
     examples:
       - install plugin kubernetes
       - install plugin kubernetes --access recommended --confirm
+      - install plugin kubernetes --source system --confirm
       - install plugin path:/srv/packages/dev.example.packet-eye --confirm
 
   - id: ono.plugin.remove

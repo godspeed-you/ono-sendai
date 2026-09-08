@@ -492,6 +492,31 @@ impl SessionProvider {
         }
         // Its contributions leave the registry with it (ADR-0602 §2).
         crate::plugin_registry::refresh();
+        // Ono removed its own copy and nothing else: a system-provided source is the package
+        // manager's, and stays available until that layer removes it (K11A §15.1).
+        let remaining: Vec<String> = {
+            let tables = self.lock();
+            tables
+                .kuang
+                .system_scan()
+                .candidates
+                .iter()
+                .filter(|candidate| candidate.package.manifest.package.id == id)
+                .map(|candidate| {
+                    candidate.origin.as_ref().map_or_else(
+                        || candidate.package.directory.display().to_string(),
+                        |origin| format!("package {}", origin.package),
+                    )
+                })
+                .collect()
+        };
+        if !remaining.is_empty() {
+            eprintln!(
+                "Removed {} from Ono. A system-provided source remains available from {}.",
+                package.manifest.package.name,
+                remaining.join(", ")
+            );
+        }
         Ok(ActionOutcome::succeeded(action, true))
     }
 

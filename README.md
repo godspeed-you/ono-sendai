@@ -331,6 +331,29 @@ remain the administrative surface underneath. Nothing runs during resolution, a 
 waits for a prompt (`--confirm` accepts the recommended access and nothing more), and an update
 that would widen authority asks again.
 
+**How a package reaches the machine is a separate question from what it may do.** Four steps,
+and only the first one can be delegated: *acquire* the payload, *verify and install* it into
+Ono, *grant* it permissions, *activate* it on first use. A package arrives as a catalog artifact
+fetched over HTTPS, a local directory, or a payload your distribution's package manager placed
+under `/usr/lib/ono-sendai/plugin-sources/`:
+
+```text
+$ sudo apt install ono-plugin-kubernetes      # or: sudo dnf install ono-plugin-kubernetes
+$ ono
+local://~ > install plugin kubernetes
+Source: system package (ono-plugin-kubernetes)
+…
+Install with recommended access? [Y/n/details]
+```
+
+The operating-system package manager grants Ono nothing: a payload under the system root is
+*available*, and neither installed, trusted nor permitted until you say so in that prompt. Ono
+copies the verified payload into its own store, so `apt upgrade` changes a candidate and never
+the package you are running; a system copy is preferred over a network fetch, the same version
+with different contents from two sources is refused as a conflict, and `--source
+system|catalog|local` names the source deliberately. `inspect plugin <name>` shows the origin
+and whether it is still there. `find plugin <word>` lists every source with its kind.
+
 **What the native tier is, exactly.** A native KUANG/11 plugin executes as a process of the Ono
 user. Ono limits its brokered capabilities and applies process confinement — resource ceilings,
 no-new-privileges, its own session, a sanitized environment, a private working directory, each one
@@ -426,11 +449,11 @@ canonical CI environment expects to.
 ```text
 crates=31
 workspace_members=33
-tests=3660
+tests=3688
 tests_that_can_skip=82
 expected_ci_skips=3
-acceptance_cases=155
-adrs=426
+acceptance_cases=157
+adrs=428
 command_contract_files=13
 commands=197
 ```

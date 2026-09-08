@@ -69,6 +69,16 @@ fields:
     required: true
     values: [ready, needs-permission, blocked, running]
     doc: The derived label of `ono.plugin/1.readiness`, beside the internal state it projects (K11P §17.2).
+  acquisition:
+    type: record
+    nullable: true
+    doc: >-
+      Where the installed copy came from (K11A §18, §21.4): `source_kind`, `source_identity`,
+      `system_package` and `package_manager` when a distribution package supplied it,
+      `source_path`, the `catalog` that resolved it, the `installed_digest` the copy is pinned
+      to, and `origin_available` — whether that source still holds this version, or null for a
+      network artifact this host does not probe. Null for a package placed by hand before the
+      origin was recorded.
   isolation_statement:
     type: string
     required: true

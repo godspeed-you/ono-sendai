@@ -1,5 +1,5 @@
 //! The plugin installation, resolution and permission layer at the shell boundary
-//! (`docs/kuang11/kuang11-plugin-installation-permissions-spec.md`, K11P; ADR-0600 … ADR-0605):
+//! (`docs/specs/kuang11/kuang11-plugin-installation-permissions-spec.md`, K11P; ADR-0600 … ADR-0605):
 //! a package is installed by its short name through a catalog, ready to use in the same
 //! session, with its recommended access decided in human terms and the exact capabilities
 //! underneath inspectable; mutation stays an explicit decision; a helper program is asked about
@@ -20,189 +20,21 @@
 )]
 
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde_yaml_ng::Value;
 
 mod support;
-use support::{items, key, last_json_document, sign};
+use support::{
+    COMMANDS, catalog, declared_manifest, items, key, kuang_shell as ono, kubeconfig_of,
+    last_json_document, lay_out, sign,
+};
 
 const ECHO: &str = "dev.example.echo";
 
 /// A `kuang-package/2` manifest in the shape of the reference provider (K11P §8.2), for the
 /// example runtime: cluster access, configuration reading and credential use recommended,
 /// relationships automatic, a login helper just in time, and mutation explicit.
-fn declared_manifest(id: &str, name: &str, version: &str, kubeconfig: &str) -> String {
-    format!(
-        r#"
-format: kuang-package/2
-package:
-  id: {id}
-  name: {name}
-  version: {version}
-  description: Emits what it is asked to emit.
-  publisher: dev.example
-  license: MIT
-compatibility:
-  kuang_api: ">=11.2 <12"
-  ono_language: ">=0.2"
-  platforms: [linux-amd64, linux-arm64]
-runtime:
-  kind: native-process
-  entry: runtime/echo
-  memory_max: 64MiB
-  cpu_budget: interactive
-  startup: lazy
-roles: [provider]
-capabilities:
-  optional:
-    - network.connect
-    - process.signal
-    - filesystem.read: {{paths: ["{kubeconfig}"]}}
-    - secret.use
-    - clock.read
-    - relation.write
-    - process.exec
-network:
-  outbound: none
-contributions:
-  commands: [contributions/commands.yaml]
-permissions:
-  profiles:
-    minimal:
-      title: Minimal
-      permissions: [spatial-relations]
-    recommended:
-      title: Recommended
-      permissions: [cluster-access, kubeconfig-read, credential-use, spatial-relations]
-    operate:
-      title: Observe and change
-      permissions: [cluster-access, kubeconfig-read, credential-use, spatial-relations, cluster-mutation]
-  requests:
-    - id: cluster-access
-      kind: external-observe
-      title: Connect to clusters
-      phase: install
-      recommended: true
-      grants:
-        - capability: network.connect
-          scope: runtime-derived
-    - id: kubeconfig-read
-      kind: filesystem-read
-      title: Read cluster configuration
-      phase: install
-      recommended: true
-      grants:
-        - capability: filesystem.read
-          scope: {{paths: ["{kubeconfig}"]}}
-    - id: credential-use
-      kind: secret-use
-      title: Use credentials without exposing their values
-      phase: install
-      recommended: true
-      grants:
-        - capability: secret.use
-    - id: spatial-relations
-      kind: local-contribution
-      title: Add relationships to Ono
-      phase: automatic
-      recommended: true
-      grants:
-        - capability: relation.write
-          scope: package-contributions
-    - id: login-helper
-      kind: execute-helper
-      title: Run an external login helper when a context requires it
-      purpose: authenticate to the selected context
-      phase: jit
-      recommended: false
-      grants:
-        - capability: process.exec
-          scope: runtime-derived
-    - id: cluster-mutation
-      kind: host-change
-      title: Change resources
-      phase: explicit
-      recommended: false
-      grants:
-        - capability: process.signal
-"#
-    )
-}
-
-const COMMANDS: &str = r#"commands:
-  - id: dev.example.echo.command.emit
-    verb: get
-    target: echo-item
-    summary: Emit a counted stream of integers.
-    output: stream<int>
-    argument_mode: expression
-    capabilities: []
-    examples:
-      - get echo-item --count 3
-  - id: dev.example.echo.command.exec
-    verb: get
-    target: echo-exec
-    summary: Run a program through the host and report its output.
-    output: stream<string>
-    argument_mode: expression
-    capabilities: [process.exec]
-    examples:
-      - get echo-exec --program /bin/true
-  - id: dev.example.echo.command.signal
-    verb: get
-    target: echo-signal
-    summary: Send a signal to a process through the host.
-    output: stream<string>
-    argument_mode: expression
-    capabilities: [process.signal]
-    examples:
-      - get echo-signal --pid 1 --signal TERM
-"#;
-
-/// Lays a package out under `root/<id>`: manifest, contributions, the example runtime.
-fn lay_out(root: &Path, id: &str, manifest: &str) -> PathBuf {
-    let package = root.join(id);
-    std::fs::create_dir_all(package.join("runtime")).expect("the runtime directory");
-    std::fs::create_dir_all(package.join("contributions")).expect("the contributions directory");
-    std::fs::write(package.join("manifest.yaml"), manifest).expect("the manifest");
-    std::fs::write(
-        package.join("contributions/commands.yaml"),
-        COMMANDS.replace("dev.example.echo", id),
-    )
-    .expect("the contributions");
-    let binary = ono_testkit::ono_binary()
-        .parent()
-        .expect("the target directory")
-        .join("kuang-example-plugin");
-    std::fs::copy(&binary, package.join("runtime/echo"))
-        .expect("the example plugin binary is built");
-    package
-}
-
-/// An operator catalog naming `entries` as `(id, name, version, artifact)`.
-fn catalog(
-    home: &ono_testkit::Scratch,
-    file: &str,
-    catalog_name: &str,
-    entries: &[(&str, &str, &str, &str)],
-) {
-    let mut text = format!(
-        "format: kuang-catalog/1\ncatalog:\n  name: {catalog_name}\n  description: A test catalog.\nentries:\n"
-    );
-    for (id, name, version, artifact) in entries {
-        let publisher = id
-            .rsplit_once('.')
-            .map(|(publisher, _)| publisher)
-            .unwrap_or(id);
-        text.push_str(&format!(
-            "  - id: {id}\n    name: {name}\n    description: A package from the catalog.\n    publisher: {publisher}\n    releases:\n      - version: {version}\n        platforms: [linux-amd64, linux-arm64]\n        kuang_api: \">=11.1 <12\"\n        artifact: \"{artifact}\"\n"
-        ));
-    }
-    home.write(format!("config/ono/kuang/catalogs/{file}.yaml"), text);
-}
-
 /// A scratch root with the example package in the local package source, a catalog naming it,
 /// and an empty plugin home — the state of a machine on which nothing is installed yet.
 fn root() -> ono_testkit::Scratch {
@@ -227,39 +59,6 @@ fn root() -> ono_testkit::Scratch {
         )],
     );
     scratch
-}
-
-fn kubeconfig_of(home: &ono_testkit::Scratch) -> String {
-    format!("{}/.kube/config", home.path().join("home").display())
-}
-
-/// Runs a script with the scratch root as the whole world, the local source configured.
-fn ono(home: &ono_testkit::Scratch, script: &str) -> ono_testkit::Run {
-    let root = home.path();
-    ono_testkit::Shell::new()
-        .args(["-c", script])
-        .env(
-            "ONO_PLUGIN_PATH",
-            root.join("plugins").display().to_string(),
-        )
-        .env(
-            "ONO_PLUGIN_SOURCES",
-            root.join("sources").display().to_string(),
-        )
-        .env(
-            "ONO_SYSTEM_CONFIG_DIR",
-            root.join("system").display().to_string(),
-        )
-        .env("HOME", root.join("home").display().to_string())
-        .env("XDG_STATE_HOME", root.join("state").display().to_string())
-        .env("XDG_CONFIG_HOME", root.join("config").display().to_string())
-        .env("XDG_CACHE_HOME", root.join("cache").display().to_string())
-        .env(
-            "ONO_CONFIG_DIR",
-            root.join("config/ono").display().to_string(),
-        )
-        .timeout(Duration::from_secs(30))
-        .run()
 }
 
 fn only(run: &ono_testkit::Run, value: &Value) -> Value {

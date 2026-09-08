@@ -35,13 +35,17 @@ git push origin implementation && git push origin --tags
 
 **The workspace declares `0.4.3`.** It is a patch release on top of `v0.4.2` that implements the
 KUANG/11 plugin installation, resolution and permission specification
-(`docs/kuang11/kuang11-plugin-installation-permissions-spec.md`, K11P; ADR-0600 through
+(`docs/specs/kuang11/kuang11-plugin-installation-permissions-spec.md`, K11P; ADR-0600 through
 ADR-0605): `install plugin kubernetes` as the whole ceremony, permissions a person decides in
 their own words over the unchanged capability broker, consent classes the host owns, just-in-time
 consent at the moment of use, `get permission`/`set permission`, upgrades that re-consent only for
 the delta, and the Kubernetes provider as the reference in its own repository.
-`docs/releases/v0.4.3.md` is its note and `docs/ACCEPTANCE.md` §4.9 its checklist, every box
-proven by `xtask/tests/permission_evidence.rs`. Before it, `v0.4.2` gathered the KUANG/11
+Its second part is the acquisition and system-distribution addendum (K11A; ADR-0606, ADR-0607):
+a catalog artifact fetched over HTTPS as a digest-pinned `.kuang` archive, a local directory, or a
+payload an operating-system package placed under `/usr/lib/ono-sendai/plugin-sources/` — three
+source kinds, one contract, and nothing decided by arriving. `docs/releases/v0.4.3.md` is its note
+and `docs/ACCEPTANCE.md` §4.9 and §4.10 its checklists, every box proven by
+`xtask/tests/permission_evidence.rs`. Before it, `v0.4.2` gathered the KUANG/11
 extension work that let a loaded package be an external-system provider (ADR-0582 through
 ADR-0599).
 
@@ -826,6 +830,36 @@ issue that ordered the work did not know.
   the publishing job alone, and `pull_request_target` is banned outright. The gate scan
   `xtask/src/supply_chain.rs` keeps all three true — 28 tests in `xtask/tests/supply_chain.rs`,
   ADR-0433. Three boxes of §4.8.11 are ticked.
+
+## Session record (2026-09-08) — the KUANG/11 installation, permission and acquisition layers
+
+Two specifications the user placed under `docs/specs/kuang11/`, implemented end to end on
+`implementation` with the Kubernetes provider as the reference in its own repository:
+
+- **K11P, the installation, resolution and permission layer** (ADR-0600 … ADR-0605; `docs/ACCEPTANCE.md`
+  §4.9, 32 boxes): `install plugin kubernetes` as one transaction that ends ready; permissions a
+  person decides over the unchanged broker, with host-owned consent classes a package cannot
+  lower; just-in-time consent at the broker; `get permission` / `set permission`; upgrades that
+  re-consent only for the delta; catalogs and short names; the audit trail correlated. Found and
+  fixed on the way: audit ids restarted per process, so a persisted trail dropped every session
+  after the first (`fix(kuang): an audit id is unlike any earlier session's`).
+- **K11A, the acquisition and system-distribution addendum** (ADR-0606, ADR-0607; §4.10, 40
+  boxes): three source kinds under one contract — a catalog artifact fetched over HTTPS as a
+  digest-pinned `.kuang` archive, a local directory, a payload an operating-system package placed
+  under `/usr/lib/ono-sendai/plugin-sources/` — deterministic selection, lineage kept until
+  `--source` names another, a same-version conflict that fails closed, the origin remembered and
+  inspectable. `kuang-sign pack` and `kuang-sign digest` produce what a catalog entry needs.
+- **The Kubernetes provider** moved to `kuang-package/2` 0.2.0 with the seven permissions of K11P
+  §26.1 (ADR-0070 there), reads `capabilities.check`'s `ask` as "let the host ask", installs
+  through `install plugin` in every suite, and ships `ono-plugin-kubernetes` as `.deb` and `.rpm`
+  wrappers placing the signed payload under the system root with no maintainer script
+  (ADR-0071 there; `scripts/package.sh --key …`).
+
+Proven by `crates/ono-cli/tests/{permissions,acquisition}.rs`, `crates/ono-kuang-protocol/tests/{permissions,catalog}.rs`,
+`crates/ono-kuang-sdk/tests/consent.rs`, the updated plugin and spatial suites, acceptance cases
+`220`–`228` (green in the container), the harvester `xtask/tests/permission_evidence.rs`, and in
+the Kubernetes repository its gate, the live suite on `kind` and the built wrappers. Two core tests
+are environment-bound on the 2026-09-08 machine and recorded under *Found, not yet filed*.
 
 ## Session records (2026-08-27 … 2026-08-29)
 

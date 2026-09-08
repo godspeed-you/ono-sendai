@@ -133,6 +133,114 @@ impl CatalogVerification {
     }
 }
 
+/// Where a package payload comes from (K11A §4.2). Acquisition grants no authority: every kind
+/// goes through the same verification, trust, permission and transaction rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceKind {
+    /// A catalog release whose artifact is fetched over the network.
+    CatalogNetwork,
+    /// An explicit local path, the package cache, or a local package source directory.
+    LocalPath,
+    /// A payload an operating-system package placed under a system source root (K11A §8).
+    SystemPackage,
+}
+
+impl SourceKind {
+    /// The word `ono.plugin-package/1.source_kind` and the origin record carry.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            SourceKind::CatalogNetwork => "catalog-network",
+            SourceKind::LocalPath => "local-path",
+            SourceKind::SystemPackage => "system-package",
+        }
+    }
+
+    /// The kind a word names.
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "catalog-network" => Some(SourceKind::CatalogNetwork),
+            "local-path" => Some(SourceKind::LocalPath),
+            "system-package" => Some(SourceKind::SystemPackage),
+            _ => None,
+        }
+    }
+
+    /// How `find plugin` renders it.
+    #[must_use]
+    pub const fn human(self) -> &'static str {
+        match self {
+            SourceKind::CatalogNetwork => "ono catalog",
+            SourceKind::LocalPath => "local path",
+            SourceKind::SystemPackage => "system package",
+        }
+    }
+}
+
+/// What a catalog release's `artifact` reference names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Artifact {
+    /// A `.kuang` archive at an `https://` (or, for a catalog that allows it, `http://`) URL,
+    /// fetched to staging and verified against the release digest (K11A §6.2).
+    Network(String),
+    /// An unpacked package directory on this machine, `path:<dir>`.
+    Path(PathBuf),
+    /// A reference this build locates locally by id and version only: `git:<url>#<ref>` and
+    /// any other scheme (ADR-0601 §3).
+    Reference(String),
+}
+
+/// The distribution package that placed a system-provided payload, read from the sidecar
+/// `<root>/<id>/<version>.origin.yaml` a `.deb` or `.rpm` wrapper may install beside the
+/// payload (K11A §10.1, §21.4). Data, never executed; absent, the origin is simply unknown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemOrigin {
+    /// The outer package's name, e.g. `ono-plugin-kubernetes`.
+    pub package: String,
+    /// The package manager, e.g. `apt/dpkg` or `dnf/rpm`.
+    pub manager: String,
+}
+
+/// The sidecar document format.
+pub const SYSTEM_ORIGIN_FORMAT: &str = "kuang-system-origin/1";
+
+impl SystemOrigin {
+    /// Reads a sidecar document.
+    ///
+    /// # Errors
+    ///
+    /// `package.invalid` for a document that is not one.
+    pub fn parse(text: &str) -> Result<Self, KuangError> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Raw {
+            format: String,
+            package: String,
+            manager: String,
+        }
+        let raw: Raw = serde_yaml_ng::from_str(text).map_err(|error| {
+            KuangError::new(
+                KuangErrorCode::PackageInvalid,
+                format!("not a valid {SYSTEM_ORIGIN_FORMAT} document: {error}"),
+            )
+        })?;
+        if raw.format != SYSTEM_ORIGIN_FORMAT {
+            return Err(KuangError::new(
+                KuangErrorCode::PackageInvalid,
+                format!(
+                    "format is `{}`, this host reads `{SYSTEM_ORIGIN_FORMAT}`",
+                    raw.format
+                ),
+            ));
+        }
+        Ok(Self {
+            package: crate::sanitize(&raw.package, 128),
+            manager: crate::sanitize(&raw.manager, 64),
+        })
+    }
+}
+
 /// One release a catalog offers (K11P §11.2).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CatalogRelease {
@@ -156,6 +264,18 @@ pub struct CatalogRelease {
 }
 
 impl CatalogRelease {
+    /// What the artifact reference names.
+    #[must_use]
+    pub fn artifact_kind(&self) -> Artifact {
+        if self.artifact.starts_with("https://") || self.artifact.starts_with("http://") {
+            Artifact::Network(self.artifact.clone())
+        } else if let Some(path) = self.artifact.strip_prefix("path:") {
+            Artifact::Path(PathBuf::from(path))
+        } else {
+            Artifact::Reference(self.artifact.clone())
+        }
+    }
+
     /// Whether this host can run the release, or why not (K11P §10.1, `plugin.release_not_compatible`).
     ///
     /// # Errors
@@ -240,6 +360,10 @@ pub struct Catalog {
     pub verification: CatalogVerification,
     /// What it offers.
     pub entries: Vec<CatalogEntry>,
+    /// Whether the operator let this catalog name plain `http://` artifacts (K11A §6.3). Never
+    /// the default, and never for the built-in catalog; the digest and the package signature
+    /// are still checked.
+    pub insecure_http: bool,
 }
 
 impl Catalog {
@@ -336,6 +460,29 @@ impl Catalog {
                         release.version, entry.id
                     )));
                 }
+                // A network artifact is verified against the digest the catalog vouches for
+                // before anything else is read from it (K11A §6.2), so a release without one
+                // cannot be fetched and is refused here rather than at install.
+                if release.artifact.starts_with("https://")
+                    || release.artifact.starts_with("http://")
+                {
+                    if release.digest.is_none() {
+                        return Err(invalid(format!(
+                            "release {} of `{}` names a network artifact and no digest (K11A §6.1)",
+                            release.version, entry.id
+                        )));
+                    }
+                    if release.artifact.starts_with("http://")
+                        && !(raw.catalog.insecure_http
+                            && verification == CatalogVerification::Operator)
+                    {
+                        return Err(invalid(format!(
+                            "release {} of `{}` names a plain `http://` artifact, which only an \
+                             operator catalog declaring `insecure_http: true` may (K11A §6.3)",
+                            release.version, entry.id
+                        )));
+                    }
+                }
                 releases.push(CatalogRelease {
                     version: release.version,
                     platforms: release.platforms,
@@ -364,6 +511,8 @@ impl Catalog {
             description: crate::sanitize(&raw.catalog.description, crate::PURPOSE_LIMIT),
             verification,
             entries,
+            insecure_http: raw.catalog.insecure_http
+                && verification == CatalogVerification::Operator,
         })
     }
 
@@ -422,6 +571,8 @@ struct RawCatalogInfo {
     name: String,
     #[serde(default)]
     description: String,
+    #[serde(default)]
+    insecure_http: bool,
 }
 
 #[derive(Debug, Deserialize)]

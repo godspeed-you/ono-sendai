@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-09-08
-- Spec refs: v0.2 §31.5, §31.9, §31.35, §31.36; `docs/kuang11/kuang11-plugin-installation-permissions-spec.md`
+- Spec refs: v0.2 §31.5, §31.9, §31.35, §31.36; `docs/specs/kuang11/kuang11-plugin-installation-permissions-spec.md`
   (K11P) §1.3, §4.1–§4.3, §10, §11, §25.1, §30, §34.3, §34.4; ADR-0051, ADR-0108, ADR-0109,
   ADR-0312
 - Decided by: agent (autonomous)

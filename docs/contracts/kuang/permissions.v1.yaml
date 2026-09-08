@@ -1,6 +1,6 @@
 # The KUANG/11 permission layer, as data.
 #
-# Source: `docs/kuang11/kuang11-plugin-installation-permissions-spec.md` (K11P) §4.4–§4.8
+# Source: `docs/specs/kuang11/kuang11-plugin-installation-permissions-spec.md` (K11P) §4.4–§4.8
 # (terminology), §6 (the permission model), §7 (capability classification), §8 (manifest
 # metadata), §9 (access profiles), §14 (just-in-time permissions), §21.3 (upgrade deltas),
 # §23 (persistence and audit), §29 (machine-readable contracts). Decisions: ADR-0600,

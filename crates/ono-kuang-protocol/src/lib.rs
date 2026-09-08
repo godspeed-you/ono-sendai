@@ -47,8 +47,8 @@ pub use capability::{
     ScopeKey, ScopeKind,
 };
 pub use catalog::{
-    CATALOG_FORMAT, Catalog, CatalogEntry, CatalogRelease, CatalogVerification, PluginRef,
-    compare_versions, looks_like_id,
+    Artifact, CATALOG_FORMAT, Catalog, CatalogEntry, CatalogRelease, CatalogVerification,
+    PluginRef, SYSTEM_ORIGIN_FORMAT, SourceKind, SystemOrigin, compare_versions, looks_like_id,
 };
 pub use confinement::{Control, ExecutionTier, FailureBehaviour, Requirement};
 pub use contract::{
@@ -83,7 +83,7 @@ pub use permission::{
 };
 pub use signature::{
     FileDigest, PackageSignature, PublicKey, SIGNATURE_ALGORITHM, SIGNATURE_FILE, SIGNATURE_FORMAT,
-    SecretKey, SignedPackage,
+    SecretKey, SignedPackage, content_digest,
 };
 pub use version::{
     ApiVersion, HOST_API, PACKAGE_FORMAT, PACKAGE_FORMAT_2, PACKAGE_FORMATS, VALUE_PROTOCOL,

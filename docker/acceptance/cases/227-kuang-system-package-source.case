@@ -1,0 +1,199 @@
+# K11A §8, §9, §12, §14, §15, §16.1, §25.3 (11–18), §25.5 (24–25), §25.6 (30–32), §25.7 (35)
+# (ADR-0606): a payload an operating-system package placed under the system source root is a
+# candidate and nothing more; `install plugin <name>` takes it through the ordinary verification,
+# permission and transaction steps with no catalog at all; the installed copy is Ono's, pinned to
+# its digest, and an `apt upgrade` under the root changes a candidate rather than the package;
+# removal leaves the package manager's files where they are; a root ordinary users can write to
+# is set aside and said.
+case: a system package is a source, and installing by root grants nothing
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export ONO_PLUGIN_SOURCES="$home/sources"
+  export ONO_SYSTEM_CONFIG_DIR="$home/system"
+  export HOME="$home/home"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  export XDG_CACHE_HOME="$home/cache"
+  export ONO_CONFIG_DIR="$home/config/ono"
+  export ONO_PLUGIN_SYSTEM_SOURCES="$home/system-sources"
+  mkdir -p "$home/plugins" "$home/home" "$home/config/ono/kuang/catalogs" "$home/system-sources"
+  chmod 0755 "$home/system-sources"
+  # A `kuang-package/2` package in the shape of the reference provider (K11P §8.2), over the
+  # example runtime: observation recommended, relationships automatic, a login helper asked
+  # just in time, mutation explicit.
+  lay_out() {
+    mkdir -p "$1/$2/runtime" "$1/$2/contributions"
+    cp /usr/local/bin/kuang-example-plugin "$1/$2/runtime/echo"
+    cat > "$1/$2/manifest.yaml" <<MANIFEST
+  format: kuang-package/2
+  package:
+    id: $2
+    name: $3
+    version: $4
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.2 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - network.connect
+      - process.signal
+      - filesystem.read: {paths: ["$5"]}
+      - secret.use
+      - clock.read
+      - relation.write
+      - process.exec
+  network:
+    outbound: none
+  contributions:
+    commands: [contributions/commands.yaml]
+  permissions:
+    profiles:
+      minimal: {title: Minimal, permissions: [spatial-relations]}
+      recommended: {title: Recommended, permissions: [cluster-access, kubeconfig-read, credential-use, spatial-relations]}
+      operate: {title: Observe and change, permissions: [cluster-access, kubeconfig-read, credential-use, spatial-relations, cluster-mutation]}
+    requests:
+      - {id: cluster-access, kind: external-observe, title: Connect to clusters, phase: install, recommended: true, grants: [{capability: network.connect, scope: runtime-derived}]}
+      - {id: kubeconfig-read, kind: filesystem-read, title: Read cluster configuration, phase: install, recommended: true, grants: [{capability: filesystem.read, scope: {paths: ["$5"]}}]}
+      - {id: credential-use, kind: secret-use, title: Use credentials without exposing their values, phase: install, recommended: true, grants: [{capability: secret.use}]}
+      - {id: spatial-relations, kind: local-contribution, title: Add relationships to Ono, phase: automatic, recommended: true, grants: [{capability: relation.write, scope: package-contributions}]}
+      - {id: login-helper, kind: execute-helper, title: Run an external login helper when a context requires it, purpose: authenticate to the selected context, phase: jit, recommended: false, grants: [{capability: process.exec, scope: runtime-derived}]}
+      - {id: cluster-mutation, kind: host-change, title: Change resources, phase: explicit, recommended: false, grants: [{capability: process.signal}]}
+  MANIFEST
+    cat > "$1/$2/contributions/commands.yaml" <<CONTRIB
+  commands:
+    - id: $2.command.emit
+      verb: get
+      target: echo-item
+      summary: Emit a counted stream of integers.
+      output: stream<int>
+      argument_mode: expression
+      capabilities: []
+      examples:
+        - get echo-item --count 3
+    - id: $2.command.exec
+      verb: get
+      target: echo-exec
+      summary: Run a program through the host and report its output.
+      output: stream<string>
+      argument_mode: expression
+      capabilities: [process.exec]
+      examples:
+        - get echo-exec --program /bin/true
+    - id: $2.command.signal
+      verb: get
+      target: echo-signal
+      summary: Send a signal to a process through the host.
+      output: stream<string>
+      argument_mode: expression
+      capabilities: [process.signal]
+      examples:
+        - get echo-signal --pid 1 --signal TERM
+  CONTRIB
+  }
+  catalog() {
+    cat > "$home/config/ono/kuang/catalogs/$1.yaml" <<CATALOG
+  format: kuang-catalog/1
+  catalog:
+    name: $1
+    description: A test catalog.
+  entries:
+    - id: $2
+      name: $3
+      description: A package from the catalog.
+      publisher: dev.example
+      releases:
+        - version: $4
+          platforms: [linux-amd64, linux-arm64]
+          kuang_api: ">=11.1 <12"
+          artifact: "git:https://example.invalid/$3#v$4"
+  CATALOG
+  }
+  # What a `.deb` or `.rpm` wrapper leaves: `<root>/<id>/<version>/` and the sidecar naming the
+  # outer package (K11A §8.2, §10.1). Laid out by id so the contributions carry the package's
+  # own command ids, then placed under the version.
+  system_payload() {
+    lay_out "$home/build-$2" $1 echo $2 "$home/home/.kube/config"
+    mkdir -p "$home/system-sources/$1"
+    rm -rf "$home/system-sources/$1/$2"
+    mv "$home/build-$2/$1" "$home/system-sources/$1/$2"
+    printf 'format: kuang-system-origin/1\npackage: ono-plugin-echo\nmanager: apt/dpkg\n' > "$home/system-sources/$1/$2.origin.yaml"
+  }
+
+  echo "== available from the system source: not installed, not granted (K11A §9, §12) =="
+  system_payload dev.example.echo 0.1.0
+  ono -c 'find plugin echo | select name version source_kind system_package installed | to json'
+  ono -c 'get plugin | count | to json'
+  ono -c 'get capability --plugin dev.example.echo | count | to json'
+  ono -c 'echo:emit --count 1' 2>&1 | head -1
+
+  echo "== one command, no catalog, the same permission plan as from anywhere (K11A §12, §20) =="
+  ono -c 'try { install plugin echo } catch e { $e | to json }' | grep -q '"source_kind":"system-package","system_package":"ono-plugin-echo"' && echo "source=shown"
+  ono -c 'install plugin echo --confirm | select status | to json; get plugin | select id version readiness | to json; echo:emit --count 2 | to json'
+  ono -c 'get permission echo | where id == "cluster-access" or id == "cluster-mutation" | select id state | to json'
+  ono -c 'inspect plugin echo | select acquisition | to json' | grep -q '"source_kind":"system-package"' && echo "lineage=recorded"
+  ono -c 'inspect plugin echo | select acquisition | to json' | grep -q '"origin_available":true' && echo "origin=available"
+  test -f "$home/plugins/dev.example.echo/manifest.yaml" && echo "copy=onos"
+
+  echo "== the package manager replaces the source; the installed copy is untouched (K11A §14.1, §14.4) =="
+  rm -rf "$home/system-sources/dev.example.echo"
+  system_payload dev.example.echo 0.1.1
+  ono -c 'get plugin echo | select version | to json; echo:emit --count 1 | to json'
+  ono -c 'inspect plugin echo | select acquisition | to json' | grep -q '"origin_available":false' && echo "origin=gone"
+  ono -c 'find plugin echo | where installed == false | select version source_kind | to json'
+
+  echo "== the upgrade is Ono's decision, from the same lineage (K11A §14.2) =="
+  ono -c 'install plugin echo --confirm | select status | to json; get plugin echo | select version readiness | to json'
+  ono -c 'get permission echo | where id == "cluster-mutation" | select state | to json'
+
+  echo "== removal removes Ono's copy and says what remains (K11A §15.1) =="
+  ono -c 'remove plugin echo | select status | to json' 2>&1 | grep -q "system-provided source remains available from package ono-plugin-echo" && echo "remains=said"
+  test -f "$home/system-sources/dev.example.echo/0.1.1/manifest.yaml" && echo "payload=kept"
+  ono -c 'get plugin | count | to json'
+
+  echo "== a tampered system payload is refused before it is installed (K11A §11, §25.3 item 15) =="
+  kuang-sign keygen --out "$home/signing.key" > /dev/null
+  kuang-sign sign "$home/system-sources/dev.example.echo/0.1.1" --key "$home/signing.key" > /dev/null
+  printf 'commands: []\n' > "$home/system-sources/dev.example.echo/0.1.1/contributions/commands.yaml"
+  ono -c 'install plugin echo --confirm' 2>&1 | head -1
+  ono -c 'get plugin | count | to json'
+
+  echo "== a root anyone can write to is not a system source (K11A §16.1) =="
+  chmod 0777 "$home/system-sources"
+  ono -c 'find plugin echo | to json' 2>&1 | grep -q "Ono-Sendai-E1607" && echo "root=set-aside"
+  ono -c 'install plugin echo --confirm' 2>&1 | grep -q "Ono-Sendai-E1601" && echo "nothing=offered"
+exit: 0
+stdout-contains: {"name":"echo","version":"0.1.0","source_kind":"system-package","system_package":"ono-plugin-echo","installed":false}
+stdout-contains: Ono-Sendai-E0101
+stdout-contains: source=shown
+stdout-contains: {"status":"success"}
+stdout-contains: {"id":"dev.example.echo","version":"0.1.0","readiness":"ready"}
+stdout-contains: [1,2]
+stdout-contains: {"id":"cluster-access","state":"allowed"}
+stdout-contains: {"id":"cluster-mutation","state":"denied"}
+stdout-contains: lineage=recorded
+stdout-contains: origin=available
+stdout-contains: copy=onos
+stdout-contains: [{"version":"0.1.0"}]
+stdout-contains: origin=gone
+stdout-contains: {"version":"0.1.1","source_kind":"system-package"}
+stdout-contains: {"version":"0.1.1","readiness":"ready"}
+stdout-contains: {"state":"denied"}
+stdout-contains: remains=said
+stdout-contains: payload=kept
+stdout-contains: Ono-Sendai-K11004
+stdout-contains: root=set-aside
+stdout-contains: nothing=offered
+stdout-not-contains: panicked

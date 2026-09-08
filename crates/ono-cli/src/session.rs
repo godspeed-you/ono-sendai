@@ -802,6 +802,7 @@ impl Session {
         let home = self.home();
         let sources = crate::kuang_catalog::local_sources(env, home.as_deref());
         let cache = crate::kuang_catalog::cache_dir(env, home.as_deref());
+        let system_roots = crate::kuang_acquire::system_roots(env);
         // The machine's configuration, where an administrator places catalogs beside the trust
         // store (ADR-0601 §2); `ONO_SYSTEM_CONFIG_DIR` points a test at a scratch directory.
         let system_config_dir = env("ONO_SYSTEM_CONFIG_DIR").map_or_else(
@@ -810,7 +811,7 @@ impl Session {
         );
         self.with_kuang(|host| {
             host.configure(plugin_path, state_dir, config_dir, system_trust);
-            host.configure_sources(system_config_dir, sources, cache);
+            host.configure_sources(system_config_dir, sources, cache, system_roots);
             // Spec §31.37: the trail outlives the process. Appending at the start of every
             // pipeline keeps a session that is killed from losing everything before it.
             host.persist_audit();

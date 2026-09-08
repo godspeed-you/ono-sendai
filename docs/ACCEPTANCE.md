@@ -1118,8 +1118,8 @@ every box below names the issues that deliver it; `docs/STATE.md` holds the inte
 each phase. **Nothing here is delivered yet.** Every box is open, so `scripts/release-check.sh`
 stops at the first of them — which is what a tranche that has just started looks like, and is the
 reason this subsection is written before the work rather than after it (#29). §4.9 holds the
-KUANG/11 plugin installation and permission layer; §4.10 is reserved for the v0.5 Temporal &
-Causal Systems Interface.
+KUANG/11 plugin installation and permission layer, §4.10 its acquisition and system-distribution
+addendum; §4.11 is reserved for the v0.5 Temporal & Causal Systems Interface.
 
 **A box is ticked by a named automated proof** — a test that runs un-ignored in `scripts/gate.sh`,
 or a case that runs in `scripts/acceptance.sh` — never by judgement, never by reading code, and
@@ -2274,7 +2274,7 @@ exclusion ADR dated after it is refused (ADR-0575).
 
 ### 4.9 The KUANG/11 plugin installation, resolution and permission layer (K11P)
 
-`docs/kuang11/kuang11-plugin-installation-permissions-spec.md` (K11P) is a cross-cutting
+`docs/specs/kuang11/kuang11-plugin-installation-permissions-spec.md` (K11P) is a cross-cutting
 architecture specification over the existing KUANG/11 extension runtime: the normative user-facing
 layer through which the package lifecycle, the trust model and the capability broker are exposed.
 Its rule is one sentence — *a user grants intentions; KUANG/11 grants capabilities* (§0.3) — and
@@ -2445,6 +2445,159 @@ The case numbers 220–226 belong to this layer.
       `crates/ono-cli/tests/permissions.rs::should_keep_the_decisions_when_asked_and_apply_them_to_the_same_publisher_only`,
       case `224-kuang-remove-and-reinstall`.
 
+### 4.10 The KUANG/11 plugin package acquisition and system distribution addendum (K11A)
+
+`docs/specs/kuang11/kuang11-plugin-package-acquisition-system-distribution.md` (K11A) is the
+additive addendum to §4.9's specification: how a plugin package physically reaches a host — a
+catalog artifact over the network, a local directory, or a payload an operating-system package
+placed under a system source root — without weakening anything §4.9 decided. Its rule is one
+sentence — *package acquisition may be delegated; trust, permission and activation decisions may
+not* (§0.2) — and its definition of done is the forty tests of §25, in boxes below, implemented by
+ADR-0606 and ADR-0607. The Kubernetes provider ships the reference `.deb`/`.rpm` wrapper in its
+own repository (§22).
+
+**A box is ticked by a named automated proof**, held to the tree by
+`xtask/tests/permission_evidence.rs` beside §4.9. The case numbers 227–228 belong to this layer.
+
+
+#### 4.10.1 Catalog and network (§25.1)
+
+- [x] **K11A 1 · Short-name catalog install fetches a network artifact.** —
+      `crates/ono-cli/tests/acquisition.rs::should_fetch_a_catalog_artifact_into_staging_verify_it_and_install`.
+- [x] **K11A 2 · Downloaded artifacts are staged before commit.** —
+      `crates/ono-cli/tests/acquisition.rs::should_fetch_a_catalog_artifact_into_staging_verify_it_and_install`.
+- [x] **K11A 3 · A digest mismatch fails before install.** —
+      `crates/ono-cli/tests/acquisition.rs::should_refuse_a_fetched_artifact_whose_digest_is_not_the_catalogs`.
+- [x] **K11A 4 · An invalid package signature fails under trust policy.** —
+      `crates/ono-cli/tests/acquisition.rs::should_refuse_a_fetched_artifact_whose_signature_does_not_verify`.
+- [x] **K11A 5 · A failed network acquisition leaves no installed state and no permission.** —
+      `crates/ono-cli/tests/acquisition.rs::should_leave_nothing_behind_when_the_fetch_fails`,
+      `crates/ono-cli/tests/acquisition.rs::should_refuse_a_fetched_artifact_whose_digest_is_not_the_catalogs`.
+- [x] **K11A 6 · A cached artifact bypasses neither verification nor the permission delta.** —
+      `crates/ono-cli/tests/acquisition.rs::should_verify_a_cached_copy_again_rather_than_trust_the_cache`.
+
+#### 4.10.2 Local source (§25.2)
+
+- [x] **K11A 7 · An explicit local directory installs.** —
+      `crates/ono-cli/tests/permissions.rs::should_accept_an_unsigned_local_package_by_explicit_path_unattended_with_a_warning`,
+      case `226-kuang-trust-and-a-manifest-that-lies`.
+- [x] **K11A 8 · The `path:` form keeps working.** —
+      `crates/ono-cli/tests/permissions.rs::should_refuse_an_upgrade_signed_by_an_unrelated_key`,
+      case `223-kuang-install-transaction-and-upgrade`.
+- [x] **K11A 9 · A local source does not imply publisher trust.** —
+      `crates/ono-cli/tests/plugins_signature.rs::should_answer_signature_valid_and_trust_unknown_when_no_store_names_the_key`,
+      case `226-kuang-trust-and-a-manifest-that-lies`.
+- [x] **K11A 10 · A local install uses the same permission plan as the same package from a catalog.** —
+      `crates/ono-cli/tests/acquisition.rs::should_install_from_the_system_source_with_no_catalog_and_record_the_lineage`,
+      case `227-kuang-system-package-source`.
+
+#### 4.10.3 System package source (§25.3)
+
+- [x] **K11A 11 · A payload under the configured system root is discoverable.** —
+      `crates/ono-cli/tests/acquisition.rs::should_find_a_system_provided_payload_without_installing_or_granting_anything`,
+      case `227-kuang-system-package-source`.
+- [x] **K11A 12 · Placing that payload creates no `INSTALLED` state.** —
+      `crates/ono-cli/tests/acquisition.rs::should_find_a_system_provided_payload_without_installing_or_granting_anything`,
+      case `227-kuang-system-package-source`.
+- [x] **K11A 13 · Placing it grants no permission.** —
+      `crates/ono-cli/tests/acquisition.rs::should_find_a_system_provided_payload_without_installing_or_granting_anything`,
+      case `227-kuang-system-package-source`.
+- [x] **K11A 14 · `install plugin <short-name>` selects the system-provided candidate.** —
+      `crates/ono-cli/tests/acquisition.rs::should_install_from_the_system_source_with_no_catalog_and_record_the_lineage`,
+      case `227-kuang-system-package-source`.
+- [x] **K11A 15 · The payload is verified before it becomes installed state.** —
+      case `227-kuang-system-package-source`,
+      `crates/ono-cli/tests/acquisition.rs::should_refuse_a_fetched_artifact_whose_signature_does_not_verify`.
+- [x] **K11A 16 · Ono records the system-source lineage.** —
+      `crates/ono-cli/tests/acquisition.rs::should_install_from_the_system_source_with_no_catalog_and_record_the_lineage`,
+      case `227-kuang-system-package-source`.
+- [x] **K11A 17 · The standard system root is searched without user configuration.** —
+      `crates/ono-cli/src/kuang_acquire.rs::should_search_the_standard_root_without_any_configuration`.
+- [x] **K11A 18 · A user-writable spoofed root is set aside.** —
+      `crates/ono-cli/tests/acquisition.rs::should_set_aside_a_system_root_ordinary_users_can_write_to`,
+      case `227-kuang-system-package-source`.
+
+#### 4.10.4 Source selection (§25.4)
+
+- [x] **K11A 19 · The same release and digest from system and catalog deduplicates.** —
+      `crates/ono-cli/tests/acquisition.rs::should_prefer_the_system_payload_over_a_network_fetch_for_one_release`,
+      case `228-kuang-source-selection-and-lineage`.
+- [x] **K11A 20 · The system source is preferred over the network for one canonical plugin.** —
+      `crates/ono-cli/tests/acquisition.rs::should_prefer_the_system_payload_over_a_network_fetch_for_one_release`,
+      case `228-kuang-source-selection-and-lineage`.
+- [x] **K11A 21 · The same id and version with different digests is a supply-chain conflict.** —
+      `crates/ono-cli/tests/acquisition.rs::should_refuse_one_version_offered_with_two_different_contents`,
+      case `228-kuang-source-selection-and-lineage`.
+- [x] **K11A 22 · The same short name with different canonical ids stays ambiguous.** —
+      `crates/ono-cli/tests/acquisition.rs::should_keep_two_ids_under_one_name_ambiguous_however_local_one_of_them_is`,
+      case `228-kuang-source-selection-and-lineage`.
+- [x] **K11A 23 · Explicit source selection overrides the default.** —
+      `crates/ono-cli/tests/acquisition.rs::should_take_the_source_a_person_names_over_the_default_order`,
+      case `228-kuang-source-selection-and-lineage`.
+
+#### 4.10.5 Upgrade (§25.5)
+
+- [x] **K11A 24 · Updating the `.deb`/`.rpm` source does not mutate the installed payload.** —
+      `crates/ono-cli/tests/acquisition.rs::should_keep_the_installed_copy_when_the_package_manager_replaces_the_source`,
+      case `227-kuang-system-package-source`.
+- [x] **K11A 25 · An Ono-driven upgrade can consume the newer system-provided candidate.** —
+      `crates/ono-cli/tests/acquisition.rs::should_upgrade_from_the_system_lineage_only_when_asked_and_only_with_consent`,
+      case `227-kuang-system-package-source`.
+- [x] **K11A 26 · Permission escalation in the new package still requires consent.** —
+      `crates/ono-cli/tests/acquisition.rs::should_upgrade_from_the_system_lineage_only_when_asked_and_only_with_consent`.
+- [x] **K11A 27 · `provider.mutate` is not obtained through a package-manager upgrade.** —
+      `crates/ono-cli/tests/acquisition.rs::should_upgrade_from_the_system_lineage_only_when_asked_and_only_with_consent`,
+      case `227-kuang-system-package-source`.
+- [x] **K11A 28 · A publisher-lineage change is handled by the existing trust policy.** —
+      `crates/ono-cli/tests/permissions.rs::should_refuse_an_upgrade_signed_by_an_unrelated_key`,
+      case `223-kuang-install-transaction-and-upgrade`.
+- [x] **K11A 29 · A failed upgrade retains the previous installed state.** —
+      `crates/ono-cli/tests/permissions.rs::should_leave_nothing_behind_when_the_plugin_home_cannot_be_written`,
+      `crates/ono-cli/tests/permissions.rs::should_leave_nothing_behind_when_the_decisions_cannot_be_written`,
+      case `223-kuang-install-transaction-and-upgrade`.
+
+#### 4.10.6 Removal (§25.6)
+
+- [x] **K11A 30 · `remove plugin` does not invoke the OS package manager.** —
+      `crates/ono-cli/tests/acquisition.rs::should_remove_onos_copy_and_leave_the_system_source_where_the_package_manager_put_it`,
+      case `227-kuang-system-package-source`.
+- [x] **K11A 31 · Removing the OS package source mutates no stored decision through a script.** —
+      `crates/ono-cli/tests/acquisition.rs::should_keep_the_installed_copy_when_the_package_manager_replaces_the_source`,
+      case `227-kuang-system-package-source`.
+- [x] **K11A 32 · An Ono-installed copy stays deterministic when its source disappears.** —
+      `crates/ono-cli/tests/acquisition.rs::should_keep_the_installed_copy_when_the_package_manager_replaces_the_source`,
+      case `227-kuang-system-package-source`.
+- [x] **K11A 33 · Reinstall after removal inherits no stale consent.** —
+      `crates/ono-cli/tests/permissions.rs::should_remove_the_decisions_and_grants_with_the_package_so_a_reinstall_asks_again`,
+      case `224-kuang-remove-and-reinstall`.
+
+#### 4.10.7 Offline (§25.7)
+
+- [x] **K11A 34 · Local-path installation works with no network.** —
+      `crates/ono-cli/tests/permissions.rs::should_accept_an_unsigned_local_package_by_explicit_path_unattended_with_a_warning`,
+      case `226-kuang-trust-and-a-manifest-that-lies`.
+- [x] **K11A 35 · System-package installation works with no public catalog.** —
+      `crates/ono-cli/tests/acquisition.rs::should_install_from_the_system_source_with_no_catalog_and_record_the_lineage`,
+      case `227-kuang-system-package-source`.
+- [x] **K11A 36 · Integrity and signature checks stay active offline.** —
+      case `227-kuang-system-package-source`,
+      `crates/ono-cli/tests/acquisition.rs::should_refuse_a_fetched_artifact_whose_signature_does_not_verify`.
+
+#### 4.10.8 Security (§25.8)
+
+- [x] **K11A 37 · No package-manager hook activates plugin runtime code.** —
+      `crates/ono-cli/tests/acquisition.rs::should_find_a_system_provided_payload_without_installing_or_granting_anything`,
+      case `227-kuang-system-package-source`.
+- [x] **K11A 38 · No package-manager hook writes a permission or trust record.** —
+      `crates/ono-cli/tests/acquisition.rs::should_find_a_system_provided_payload_without_installing_or_granting_anything`,
+      case `227-kuang-system-package-source`.
+- [x] **K11A 39 · Unverified staging files cannot be executed.** —
+      `crates/ono-cli/src/kuang_acquire.rs::should_refuse_an_archive_that_leaves_the_package_directory`,
+      `crates/ono-cli/tests/acquisition.rs::should_fetch_a_catalog_artifact_into_staging_verify_it_and_install`.
+- [x] **K11A 40 · Installed state is pinned to canonical id, publisher lineage, version and digest.** —
+      `crates/ono-cli/tests/acquisition.rs::should_install_from_the_system_source_with_no_catalog_and_record_the_lineage`,
+      `crates/ono-cli/tests/acquisition.rs::should_fetch_a_catalog_artifact_into_staging_verify_it_and_install`.
+
 ## 5. Stopping rule
 
 An agent stops when `scripts/release-check.sh` prints `release-check: the shell is
@@ -2457,8 +2610,9 @@ section 4 is unticked, the work is unfinished, and the next increment starts.
 **Every subsection of section 4 counts, including the tranches.** The checklist grew with the
 specification: sections 4.1–4.5 are the v0.2 shell, section 4.6 is the v0.3 External Command
 Adaptation Layer, section 4.7 is the v0.4 Spatial Systems Interface, and section 4.8 is the v0.4.1
-Hardening, Trust & Release Integrity tranche, and section 4.9 is the KUANG/11 plugin
-installation, resolution and permission layer. Section 4.10 is reserved for v0.5. A tranche whose
+Hardening, Trust & Release Integrity tranche, section 4.9 is the KUANG/11 plugin
+installation, resolution and permission layer, and section 4.10 its acquisition and
+system-distribution addendum. Section 4.11 is reserved for v0.5. A tranche whose
 subsection still holds an unticked box
 is an unfinished product, however green the gate and the acceptance suite are on their own, and
 the run continues into it.

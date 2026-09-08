@@ -1,4 +1,4 @@
-# Permission. Source: `docs/kuang11/kuang11-plugin-installation-permissions-spec.md` (K11P) §4.4
+# Permission. Source: `docs/specs/kuang11/kuang11-plugin-installation-permissions-spec.md` (K11P) §4.4
 # (a permission is a user-facing statement that maps to capabilities), §6.2 (the descriptor),
 # §16.1 (`get permission`'s table), §23.3 (explainability), §28.3 (the projection of existing
 # grants). Output of `get permission` and `set permission` (`docs/contracts/commands/kuang.yaml`

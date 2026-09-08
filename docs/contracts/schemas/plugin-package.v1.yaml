@@ -38,6 +38,22 @@ fields:
       The resolved source reference, e.g. `registry:example/packet-eye@2.4.1` or
       `file:./packet-eye.k11` (spec §31.9). Part of the identity: the same package from two
       sources is two things worth telling apart.
+  source_kind:
+    type: enum
+    required: true
+    values: [catalog-network, local-path, system-package]
+    doc: >-
+      How the payload reaches this host (K11A §4.2): a catalog artifact fetched over the network,
+      a local directory (an explicit path, the package cache or a local package source), or a
+      payload an operating-system package placed under a system source root. Acquisition grants
+      nothing; every kind goes through the same verification, trust and permission steps.
+  system_package:
+    type: string
+    nullable: true
+    doc: >-
+      The outer distribution package that supplied a system-provided payload, e.g.
+      `ono-plugin-kubernetes`, when its sidecar said (K11A §10.1). Null for every other kind, and
+      for a payload whose wrapper left no sidecar.
   license:
     type: string
     required: true
@@ -116,4 +132,4 @@ fields:
     doc: When the source says the version was published. Null where the source does not say.
 # K11P §11.6: the name leads, the id stays available, and trust is a column of its own.
 default_view:
-  columns: [name, id, version, trust, source, installed]
+  columns: [name, id, version, trust, source_kind, source, installed]

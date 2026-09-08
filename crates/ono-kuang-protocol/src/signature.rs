@@ -25,11 +25,13 @@
 //! ```
 
 use std::fmt;
+use std::path::Path;
 
 use ed25519_dalek::ed25519::signature::Signer as _;
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
+use crate::artifact_files;
 use crate::error::{KuangError, KuangErrorCode};
 use crate::manifest::Manifest;
 
@@ -50,6 +52,22 @@ const SECRET_PREFIX: &str = "ed25519-secret:";
 
 fn invalid(message: impl Into<String>) -> KuangError {
     KuangError::new(KuangErrorCode::PackageSignatureInvalid, message)
+}
+
+/// The content digest of an unpacked package: `sha256:` over every artifact file's path and
+/// digest, in [`artifact_files`]' order (spec §31.36's "are these the exact bytes referenced?",
+/// K11A §6.1). It is the digest a catalog release vouches for, the one an installed package is
+/// pinned to, and the one two acquisition sources are compared by (K11A §10.2, §19): moving a
+/// byte from one file to another changes the answer.
+#[must_use]
+pub fn content_digest(directory: &Path) -> String {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    for file in artifact_files(directory) {
+        hasher.update(file.path.as_bytes());
+        hasher.update(file.sha256.as_bytes());
+    }
+    format!("sha256:{}", hex(&hasher.finalize()))
 }
 
 /// Lowercase hex, the spelling `sha256:` digests already use in this product.

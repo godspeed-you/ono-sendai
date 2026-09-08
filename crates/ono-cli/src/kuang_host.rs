@@ -60,6 +60,10 @@ pub struct Management {
     /// (ADR-0602). What readiness and an upgrade's delta are measured against.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+    /// Where the payload came from: the source kind, its identity, the distribution package
+    /// when one supplied it, and the digest the copy is pinned to (K11A §18, ADR-0606 §4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<crate::kuang_acquire::Origin>,
 }
 
 const fn enabled_by_default() -> bool {
@@ -76,6 +80,7 @@ impl Default for Management {
             catalog: None,
             publisher_key: None,
             profile: None,
+            origin: None,
         }
     }
 }
@@ -214,6 +219,8 @@ pub struct Host {
     pub(crate) sources: Vec<PathBuf>,
     /// The package cache a catalog release is looked for in first.
     pub(crate) cache_dir: Option<PathBuf>,
+    /// The system source roots an operating-system package places payloads under (K11A §8.2).
+    pub(crate) system_roots: Vec<PathBuf>,
 }
 
 /// What the operator's trust stores say, as a verification needs it.
@@ -286,9 +293,11 @@ impl Host {
         system_config_dir: PathBuf,
         sources: Vec<PathBuf>,
         cache_dir: Option<PathBuf>,
+        system_roots: Vec<PathBuf>,
     ) {
         self.sources = sources;
         self.cache_dir = cache_dir;
+        self.system_roots = system_roots;
         let read_from = (self.config_dir.clone(), system_config_dir.clone());
         if self.catalogs_read.as_ref() != Some(&read_from) {
             self.catalogs = crate::kuang_catalog::Catalogs::read(
@@ -1334,15 +1343,7 @@ pub fn source_of(package: &Installed, management: &Management) -> String {
 /// one file to another changes the answer.
 #[must_use]
 pub fn integrity_of(package: &Installed) -> String {
-    use sha2::Digest;
-    let mut hasher = sha2::Sha256::new();
-    for file in artifact_files(&package.directory) {
-        hasher.update(file.path.as_bytes());
-        hasher.update(file.sha256.as_bytes());
-    }
-    let digest = hasher.finalize();
-    let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
-    format!("sha256:{hex}")
+    ono_kuang_protocol::content_digest(&package.directory)
 }
 
 /// What the package's signature says (spec §31.36's "did a key sign these bytes?").
@@ -1628,6 +1629,15 @@ impl Host {
     ) -> Result<(Vec<RecordValue>, Vec<ErrorValue>), ErrorValue> {
         let schema = schema("ono.plugin-package")?;
         let (installed, _) = self.installed();
+        // `--source system|catalog|local` narrows to one kind (K11A §10.4); `path:<dir>` reads
+        // one directory; nothing narrows the installed set out of the answer.
+        let kinds = match source {
+            Some("system") => Some(ono_kuang_protocol::SourceKind::SystemPackage),
+            Some("catalog") => Some(ono_kuang_protocol::SourceKind::CatalogNetwork),
+            Some("local") => Some(ono_kuang_protocol::SourceKind::LocalPath),
+            _ => None,
+        };
+        let source = if kinds.is_some() { None } else { source };
         let (candidates, mut failures) = match source {
             None => (
                 installed
@@ -1647,7 +1657,10 @@ impl Host {
                         ErrorCode::ProviderUnsupported,
                         format!("`{reference}` is not a source this build searches"),
                     )
-                    .with_help("`--source path:<directory>` (spec §31.9)"));
+                    .with_help(
+                        "`--source system`, `--source catalog`, `--source local` or \
+                         `--source path:<directory>` (spec §31.9, K11A §10.4)",
+                    ));
                 };
                 let directory = PathBuf::from(path);
                 match read_package(&directory)? {
@@ -1679,6 +1692,15 @@ impl Host {
             let already = installed.iter().any(|held| {
                 held.manifest.package.id == info.id && held.manifest.package.version == info.version
             });
+            // An installed package answers with the lineage it was installed from (K11A §18).
+            let origin = already.then(|| self.management(&info.id).origin).flatten();
+            let kind = origin
+                .as_ref()
+                .and_then(crate::kuang_acquire::Origin::source_kind)
+                .unwrap_or(ono_kuang_protocol::SourceKind::LocalPath);
+            if kinds.is_some_and(|wanted| wanted != kind) {
+                continue;
+            }
             records.push(package_record(
                 &schema,
                 &package,
@@ -1686,11 +1708,17 @@ impl Host {
                 already,
                 &self.trust,
                 None,
+                kind,
+                origin
+                    .as_ref()
+                    .and_then(|origin| origin.system_package.as_deref()),
             )?);
         }
-        // The catalogs, after the installed set (K11P §11.6): nothing is executed, and a
-        // catalog's answer is marked as a catalog's (ADR-0601 §2).
-        let (from_catalogs, problems) = crate::kuang_catalog::search(self, term, &installed)?;
+        // The catalogs and the system sources, after the installed set (K11P §11.6, K11A
+        // §10.1): nothing is executed, and a catalog's answer is marked as a catalog's
+        // (ADR-0601 §2).
+        let (from_catalogs, problems) =
+            crate::kuang_catalog::search(self, term, &installed, kinds)?;
         records.extend(from_catalogs);
         failures.extend(problems);
         Ok((records, failures))
@@ -1990,6 +2018,10 @@ pub fn declared_contributions(manifest: &Manifest) -> Value {
 /// # Errors
 ///
 /// `provider.schema_violation` when the record does not fit its contract.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a package record has this many independent facts, and every caller states each"
+)]
 pub fn package_record(
     schema: &Arc<Schema>,
     package: &Installed,
@@ -1997,6 +2029,8 @@ pub fn package_record(
     installed: bool,
     trust: &TrustContext,
     catalog: Option<(&str, &str)>,
+    kind: ono_kuang_protocol::SourceKind,
+    system_package: Option<&str>,
 ) -> Result<RecordValue, ErrorValue> {
     let manifest = &package.manifest;
     let signature = signature_of(package);
@@ -2017,6 +2051,11 @@ pub fn package_record(
         .set("publisher", Value::string(&manifest.package.publisher))?
         .set("summary", Value::string(&manifest.package.description))?
         .set("source", Value::string(source))?
+        .set("source_kind", Value::string(kind.id()))?
+        .set(
+            "system_package",
+            system_package.map_or(Value::Null, Value::string),
+        )?
         .set("license", Value::string(&manifest.package.license))?
         .set(
             "kuang_api",
@@ -2373,6 +2412,12 @@ pub fn inspection_record(
             .set("permissions", Value::list(human.permissions.clone()))?
             .set("profiles", human.profiles.clone())?
             .set("readiness", Value::string(&human.readiness))?
+            .set(
+                "acquisition",
+                management.origin.as_ref().map_or(Value::Null, |origin| {
+                    origin.value(&manifest.package.version)
+                }),
+            )?
             .set(
                 "isolation_statement",
                 Value::string(isolation_statement(manifest)),

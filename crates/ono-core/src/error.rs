@@ -297,6 +297,12 @@ error_codes! {
         "The catalog names the release and its artifact is not available to this build.";
     PluginReleaseNotCompatible => "Ono-Sendai-E1604", "plugin.release_not_compatible", Conflict,
         "No release of the package the catalog offers can run on this host.";
+    PluginSourceConflict => "Ono-Sendai-E1605", "plugin.source_conflict", Conflict,
+        "Two acquisition sources offer the same package version with different content.";
+    PluginTransportRefused => "Ono-Sendai-E1606", "plugin.transport_refused", Safety,
+        "A plugin artifact would travel over a transport policy does not allow.";
+    PluginSourceRootRejected => "Ono-Sendai-E1607", "plugin.source_root_rejected", Safety,
+        "A system source root is not read-only to ordinary users and was not searched.";
 
     // --- KUANG/11, spec §31.79: the K11 family of docs/contracts/kuang/errors.v1.yaml, folded into
     // the global model (ADR-0108). Numbering follows §31.79's families.

@@ -616,6 +616,31 @@ errors:
     help: >-
       Every release was excluded by its `platforms` or its `kuang_api` range; the metadata says
       which. A package version is never installed to be found incompatible at load.
+  - code: Ono-Sendai-E1605
+    name: plugin.source_conflict
+    kind: conflict
+    summary: Two acquisition sources offer the same package version with different content.
+    help: >-
+      The same canonical id and version hash differently in two places, which is a supply-chain
+      conflict nothing resolves by order (K11A section 19.2). The metadata lists every source
+      with its digest and signer; choose one deliberately with `--source`, or remove the copy that
+      is wrong.
+  - code: Ono-Sendai-E1606
+    name: plugin.transport_refused
+    kind: safety
+    summary: A plugin artifact would travel over a transport policy does not allow.
+    help: >-
+      A catalog artifact is fetched over HTTPS. Plain `http://` is allowed only by an operator
+      catalog that declares `insecure_http: true`, and then the digest and the package signature
+      are still checked (K11A section 6.3).
+  - code: Ono-Sendai-E1607
+    name: plugin.source_root_rejected
+    kind: safety
+    summary: A system source root is not read-only to ordinary users and was not searched.
+    help: >-
+      A system source is owned by the package manager and writable by nobody else (K11A section
+      16.1); a root writable by its group or by everyone, or owned by another user, could hold
+      anything and is set aside with this warning rather than searched.
 
   # --- KUANG/11, spec §31.79 (folded into the global model by ADR-0108) ---------------------
   - code: Ono-Sendai-K11001

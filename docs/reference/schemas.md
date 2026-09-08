@@ -1303,6 +1303,7 @@ Default view: `plugin`, `origin`, `memory_current`, `open_streams`, `restart_cou
 | `permissions` | `list<ono.permission/1>` | — | required | The package's permission layer with its standing decisions — every descriptor, declared or derived, with the exact capabilities and scopes underneath (K11P §25.3). What `get permission <id> --all` answers, in one place with everything else. |
 | `profiles` | `list<record>` | — | required | The access profiles the package offers, as `{name, title, permissions, adds_mutation}`; `minimal` and `recommended` are always among them for a package with any permission request (K11P §9). `adds_mutation` is the host's own flag, appended to the title wherever a profile is offered (K11P §9.3). |
 | `readiness` | `enum` | — | required | The derived label of `ono.plugin/1.readiness`, beside the internal state it projects (K11P §17.2). |
+| `acquisition` | `record` | — | nullable | Where the installed copy came from (K11A §18, §21.4): `source_kind`, `source_identity`, `system_package` and `package_manager` when a distribution package supplied it, `source_path`, the `catalog` that resolved it, the `installed_digest` the copy is pinned to, and `origin_available` — whether that source still holds this version, or null for a network artifact this host does not probe. Null for a package placed by hand before the origin was recorded. |
 | `isolation_statement` | `string` | — | required | The host's own sentence about the execution tier, verbatim what the install prompt shows — for `native-process`, that brokered capabilities and process confinement are not a complete filesystem or network sandbox (v0.4.1 §15.2, K11P §18.2). Never package-authored. |
 | `runtime` | `ono.plugin-runtime/1` | — | nullable | The negotiated contract of the running instance. Null when nothing is loaded — not an empty record. |
 | `memory_current` | `bytesize` | — | nullable | Instance memory now. Null when nothing is loaded. |
@@ -1325,7 +1326,7 @@ A KUANG/11 package as an installation source describes it, before installing any
 
 Identity: `id`, `version`, `source`
 
-Default view: `name`, `id`, `version`, `trust`, `source`, `installed`
+Default view: `name`, `id`, `version`, `trust`, `source_kind`, `source`, `installed`
 
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
@@ -1335,6 +1336,8 @@ Default view: `name`, `id`, `version`, `trust`, `source`, `installed`
 | `publisher` | `string` | — | required | The publisher namespace `id` begins with. |
 | `summary` | `string` | — | required | One line, what the package is for. Package-authored text, sanitised before display (ADR-0015 T1). |
 | `source` | `string` | — | required | The resolved source reference, e.g. `registry:example/packet-eye@2.4.1` or `file:./packet-eye.k11` (spec §31.9). Part of the identity: the same package from two sources is two things worth telling apart. |
+| `source_kind` | `enum` | — | required | How the payload reaches this host (K11A §4.2): a catalog artifact fetched over the network, a local directory (an explicit path, the package cache or a local package source), or a payload an operating-system package placed under a system source root. Acquisition grants nothing; every kind goes through the same verification, trust and permission steps. |
+| `system_package` | `string` | — | nullable | The outer distribution package that supplied a system-provided payload, e.g. `ono-plugin-kubernetes`, when its sidecar said (K11A §10.1). Null for every other kind, and for a payload whose wrapper left no sidecar. |
 | `license` | `string` | — | required | The SPDX identifier the manifest declares. |
 | `kuang_api` | `string` | — | required | The host API range the package declares (spec §31.7). |
 | `platforms` | `list<string>` | — | required | The platform tuples the package supports. A host not in the list cannot install it. |

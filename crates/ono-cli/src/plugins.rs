@@ -666,6 +666,7 @@ pub fn run(session: &mut Session, request: Request, words: &[String]) -> Eval<Pr
                 &crate::kuang_install::InstallOptions {
                     access: option("--access").map(str::to_owned),
                     confirm: flag("--confirm"),
+                    source: option("--source").map(str::to_owned),
                 },
             )
         }

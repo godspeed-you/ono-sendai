@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-09-08
 - Spec refs: v0.2 §17.4, §31.8, §31.9, §31.36, §31.68; v0.4.1 §15.2, §17.3;
-  `docs/kuang11/kuang11-plugin-installation-permissions-spec.md` (K11P) §5, §9, §12, §13, §15,
+  `docs/specs/kuang11/kuang11-plugin-installation-permissions-spec.md` (K11P) §5, §9, §12, §13, §15,
   §17, §18, §20, §27, §33 Gates B–F, M, T, U; ADR-0109, ADR-0282, ADR-0312, ADR-0600, ADR-0601
 - Decided by: agent (autonomous)
 

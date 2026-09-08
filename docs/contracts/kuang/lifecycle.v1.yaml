@@ -216,6 +216,38 @@ sources:
   - {scheme: "git:", core: false, example: "git:https://example.org/packet-eye#v2.4.1", doc: "May be a source-provider extension rather than core."}
   - {scheme: "oci:", core: false, example: "oci:registry.example.org/ono/packet-eye:2.4.1", doc: "May be a source-provider extension rather than core."}
 
+# ---------------------------------------------------------------------------------------------
+# Acquisition — K11A (`docs/specs/kuang11/kuang11-plugin-package-acquisition-system-distribution.md`),
+# ADR-0606, ADR-0607. How a payload reaches the host is a *source kind*; what it may do is decided
+# afterwards by the same verification, trust, permission and transaction steps for every kind.
+# "Package acquisition may be delegated. Trust, permission and activation decisions may not."
+# ---------------------------------------------------------------------------------------------
+acquisition:
+  kinds:
+    - {id: catalog-network, doc: "A catalog release whose artifact is an `https://` URL naming a `.kuang` archive — a plain tar of the package's files — fetched to `<cache>/.staging/`, unpacked, hashed against the release digest, and only then moved to `<cache>/<id>/<version>/` as a local copy (K11A §6.2, §7). Plain `http://` only in an operator catalog declaring `insecure_http: true` (§6.3). `kuang-sign pack` writes the archive; `kuang-sign digest` prints the digest."}
+    - {id: local-path, doc: "An explicit path (`./dir`, `path:<dir>`), the package cache, or a local package source (`ONO_PLUGIN_SOURCES`, `~/.local/share/ono/packages`, `/usr/share/ono/packages`). Local is not trusted: an unsigned package installs under local-development semantics with the warning (K11A §7)."}
+    - {id: system-package, doc: "A payload an operating-system package placed under a system source root as `<root>/<id>/<version>/`, with an optional sidecar `<root>/<id>/<version>.origin.yaml` (`kuang-system-origin/1`: the outer package and its manager). Roots: `ONO_PLUGIN_SYSTEM_SOURCES`, or `/usr/lib/ono-sendai/plugin-sources` with no configuration (K11A §8.2). A root writable by its group or by everyone, or owned by another user, is set aside with `plugin.source_root_rejected` (§16.1)."}
+  rules:
+    - "A payload under a system root is *available*, and neither installed, enabled, trusted nor granted; `install plugin <name>` copies the verified payload into the plugin home through the ordinary transaction, so a package-manager upgrade changes a candidate and never the active package (K11A §8.3, §9, §14.1)."
+    - "Candidates for one release are deduplicated by canonical id, publisher lineage, version and content digest; the default preference chooses a system package, then a local copy, then the network; a newer system release is the candidate under a preference that admits it (K11A §10.2, §10.3, §14.2)."
+    - "`--source system|catalog|local` admits one kind; an installed package's upgrade admits its own lineage until `--source` names another (K11A §10.4, §18, §27)."
+    - "The same id and version with two different content digests — among the admitted candidates, and against the catalog's digest — is `plugin.source_conflict`, listing every source with its digest; a person selects (K11A §19.2)."
+    - "A locally available payload never resolves an ambiguity between two canonical ids under one short name (K11A §19.3)."
+    - "Nothing under staging, the cache or a system root is ever executed; a plugin runs from the installed copy only (K11A §16.3)."
+    - "`remove plugin` removes Ono's copy, its grants and its decisions, runs no package manager, and says when a system-provided source remains (K11A §15)."
+    - "Root ownership, a distribution's repository signature and a maintainer script are not publisher trust, consent or activation; the package's own signature and the operator's trust stores decide, and no script writes Ono's state (K11A §11)."
+  origin:
+    doc: "Remembered with the install and shown by `inspect plugin` as `acquisition` (K11A §18, §21.4)."
+    fields:
+      source_kind: {type: enum, values: [catalog-network, local-path, system-package], required: true}
+      source_identity: {type: string, required: true, doc: "The URL, the `path:` reference, or `system:<payload directory>`."}
+      system_package: {type: string, nullable: true, doc: "The outer distribution package, when the sidecar said."}
+      package_manager: {type: string, nullable: true, doc: "The manager that placed it, when the sidecar said."}
+      source_path: {type: path, nullable: true, doc: "The directory the payload was read from, or the cache directory for a network artifact."}
+      catalog: {type: string, nullable: true, doc: "The catalog that resolved it."}
+      installed_digest: {type: string, required: true, doc: "The content digest the installed copy is pinned to."}
+      origin_available: {type: bool, nullable: true, doc: "Whether the source still holds this version; null for a network artifact this host does not probe."}
+
 # spec §31.9. The plan is produced before any mutation, and it is an object, not a paragraph.
 install_plan:
   doc: >-
@@ -236,6 +268,9 @@ install_plan:
     trust: {type: record, required: true, doc: "`{signature, publisher, key, standing}`: the four separate answers of spec §31.36, as the compact view prints them."}
     runtime_tier: {type: string, required: true, doc: "The execution tier the package declares (v0.4.1 §17.2)."}
     isolation: {type: string, required: true, doc: "The host's own statement of what the tier is and is not — for `native-process`, that brokered capabilities and process confinement are not a complete filesystem or network sandbox (K11P §27.1, Gate M)."}
+    source_kind: {type: string, required: true, doc: "How the payload reached this host — `catalog-network`, `local-path` or `system-package` (K11A §4.2) — as one more fact beside the trust facts, never in place of the permission plan."}
+    system_package: {type: string, nullable: true, doc: "The distribution package that supplied a system-provided payload, when its sidecar said (K11A §10.1)."}
+    acquisition: {type: record, required: true, doc: "The origin record the install will remember (K11A §18): the `origin` fields above."}
     selected_profile: {type: string, required: true, doc: "The access profile the install decides, `recommended` unless `--access` named another."}
     permissions: {type: list<record>, required: true, doc: "Every permission of the selected profile, as `ono.permission/1` records with the decision the install will make."}
     automatic_privileges: {type: list<record>, required: true, doc: "The extension-local permissions included without a question (K11P §7.1)."}

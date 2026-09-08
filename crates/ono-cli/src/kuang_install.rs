@@ -14,6 +14,7 @@ use ono_kuang_protocol::{
 use ono_value::{ErrorValue, Value};
 
 use crate::eval::{Eval, Flow};
+use crate::kuang_acquire::Preference;
 use crate::kuang_catalog::{Located, candidates_of};
 use crate::kuang_host::{
     Host, Installed, Management, Resolved, action, action_result, capability_requests,
@@ -33,6 +34,9 @@ pub struct InstallOptions {
     pub access: Option<String>,
     /// `--confirm`.
     pub confirm: bool,
+    /// `--source system|catalog|local` (K11A §10.4); absent, the installed package's own
+    /// lineage, then a system package, a local copy, the network.
+    pub source: Option<String>,
 }
 
 /// The permission half of an install plan (K11P §12.1, §29.1).
@@ -138,9 +142,31 @@ pub fn install(session: &mut Session, reference: &str, options: &InstallOptions)
     session.publish_host();
     let parsed = PluginRef::parse(reference);
 
+    // 0. Which sources may answer (K11A §10.3, §10.4, §14.2, §27): what `--source` named; else
+    //    the lineage an installed package was acquired through, so a system package that
+    //    appears later never silently replaces a catalog install and vice versa; else the
+    //    default order. A root ordinary users can write to is set aside, and said.
+    let mut preference = Preference::parse(options.source.as_deref()).map_err(Flow::Failed)?;
+    if preference == Preference::Default && !parsed.is_explicit() {
+        let lineage = session.with_kuang(|host| {
+            host.resolve_installed(reference)
+                .ok()
+                .and_then(|package| host.management(&package.manifest.package.id).origin)
+                .and_then(|origin| origin.source_kind())
+        });
+        if let Some(kind) = lineage {
+            preference = Preference::Lineage(kind);
+        }
+    }
+    for warning in
+        session.with_kuang(|host| crate::kuang_catalog::rejected_roots(&host.system_scan()))
+    {
+        eprintln!("warning: {} {}", warning.code(), warning.message());
+    }
+
     // 1. Resolve. An ambiguity is a picker interactively and a structured refusal otherwise
     //    (K11P §10.3).
-    let located = match session.with_kuang(|host| host.locate_for_install(&parsed)) {
+    let located = match session.with_kuang(|host| host.locate_for_install(&parsed, preference)) {
         Ok(located) => located,
         Err(error)
             if error.code() == ErrorCode::PluginReferenceAmbiguous && session.is_interactive() =>
@@ -150,7 +176,7 @@ pub fn install(session: &mut Session, reference: &str, options: &InstallOptions)
                 return Err(Flow::Failed(error));
             };
             session
-                .with_kuang(|host| host.locate_for_install(&PluginRef::parse(&chosen)))
+                .with_kuang(|host| host.locate_for_install(&PluginRef::parse(&chosen), preference))
                 .map_err(Flow::Failed)?
         }
         Err(error) => return Err(Flow::Failed(error)),
@@ -540,6 +566,20 @@ fn prompt(
         if let Some((catalog, verification)) = &located.catalog {
             eprintln!("Catalog: {catalog} ({})", verification.id());
         }
+        // Where the payload came from, as a fact beside the trust facts and never in place of
+        // the permission plan (K11A §11.1, §12).
+        eprintln!(
+            "Source: {}{}",
+            located
+                .origin
+                .source_kind()
+                .map_or("unknown", ono_kuang_protocol::SourceKind::human),
+            located
+                .origin
+                .system_package
+                .as_deref()
+                .map_or_else(String::new, |package| format!(" ({package})"))
+        );
         if native {
             // Gate M: the isolation statement of K11P §18.2, on every native install.
             eprintln!("  {}", isolation_statement(manifest));
@@ -740,6 +780,19 @@ fn plan_value(
             )),
         ),
         ("source", Value::string(&located.source)),
+        ("source_kind", Value::string(&located.origin.kind)),
+        (
+            "system_package",
+            located
+                .origin
+                .system_package
+                .as_deref()
+                .map_or(Value::Null, Value::string),
+        ),
+        (
+            "acquisition",
+            located.origin.value(&manifest.package.version),
+        ),
         (
             "catalog",
             located
@@ -894,6 +947,7 @@ fn transact(
             catalog: located.catalog.as_ref().map(|(name, _)| name.clone()),
             publisher_key: Some(publisher_identity(&installed)),
             profile: plan.profile.as_ref().map(|profile| profile.name.clone()),
+            origin: Some(located.origin.clone()),
         };
         host.write_management(&id, &management)?;
         // Decisions retained from an earlier install apply only to the same publisher

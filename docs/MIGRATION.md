@@ -142,7 +142,7 @@ but intent and coverage are preserved.
 
 ## 6. KUANG/11 plugins after the permission layer — install by name, and what your grants become
 
-*(`docs/kuang11/kuang11-plugin-installation-permissions-spec.md` §28; ADR-0600 … ADR-0605)*
+*(`docs/specs/kuang11/kuang11-plugin-installation-permissions-spec.md` §28; ADR-0600 … ADR-0605)*
 
 **No manifest migration is required.** A `kuang-package/1` manifest installs and loads exactly as
 before; the host derives one human-readable permission per declared capability. A package that
@@ -180,6 +180,33 @@ revoke capability network.connect --plugin dev.example.thing
 
 Revoking a grant that a permission minted records the permission as denied, so it does not come
 back at the next load; `set permission <plugin> <permission> --decision ask` clears that.
+
+## 7. KUANG/11 plugins from a system package — acquisition is not consent
+
+*(`docs/specs/kuang11/kuang11-plugin-package-acquisition-system-distribution.md`; ADR-0606, ADR-0607)*
+
+**Nothing you have installed changes.** A package installed from a catalog or a local path keeps
+its lineage; a system package that appears later under `/usr/lib/ono-sendai/plugin-sources/` is a
+candidate for `find plugin` and never the upgrade path of a package acquired another way, until
+you say `install plugin <name> --source system`. `install plugin path:…` keeps working.
+
+**A distribution package is a source, not an install.** `apt install ono-plugin-kubernetes` (or
+`dnf`) places a versioned payload under the system root and nothing else: no `INSTALLED` state,
+no enabled flag, no publisher trust, no permission, no grant. `install plugin kubernetes` then
+takes it through the same verification, prompt and transaction as any other source, copying the
+payload into `~/.config/ono/plugins/` — so `apt upgrade` under the root changes a candidate and
+never the active package, and `remove plugin kubernetes` removes Ono's copy and tells you the
+system source remains for the package manager to remove.
+
+**Catalog artifacts are fetched now.** A catalog release naming an `https://` artifact is fetched
+to staging, hashed against the catalog's digest, unpacked into the package cache and installed
+from there; a release without a digest, or a plain `http://` artifact in a catalog that does not
+declare `insecure_http: true`, is refused. A system copy is preferred over a fetch, and the same
+version hashing differently in two places is `plugin.source_conflict`, which `--source` resolves.
+
+**Two new environment variables** name the roots and nothing else: `ONO_PLUGIN_SYSTEM_SOURCES`
+(the system roots; default `/usr/lib/ono-sendai/plugin-sources`) beside `ONO_PLUGIN_SOURCES`. A
+system root writable by its group or by everyone is set aside with a warning rather than searched.
 
 ## What to read next
 

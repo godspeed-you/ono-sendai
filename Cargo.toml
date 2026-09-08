@@ -76,6 +76,10 @@ serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 serde_yaml_ng = "0.10"
 sha2 = "0.11"
+# A plugin artifact reaches the host over HTTPS (K11A §6.2) and is a plain tar (§7); both are
+# read by the host and never executed from where they land (ADR-0607).
+tar = "0.4"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "process", "signal", "net", "fs"] }

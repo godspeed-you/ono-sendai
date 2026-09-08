@@ -9,6 +9,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+tar.workspace = true
 ono-kuang-protocol.workspace = true
 ono-value.workspace = true
 serde_json.workspace = true
