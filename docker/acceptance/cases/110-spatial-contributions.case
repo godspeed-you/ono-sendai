@@ -59,17 +59,20 @@ run: |
     outbound: none
   MANIFEST
 
+  # A `relation.write` bounded to the package's own shapes is included on load (K11P §7.1,
+  # ADR-0600), so "without the capability" is a decision a person made against it, kept in a
+  # configuration of its own so the granted half below starts clean.
   echo "== §35.5, §36.2: without the capability the package's edges are not in the map =="
   prove s9-a "a map drawn while the package is loaded without \`relation.write\` carries none of its edges" \
-    'ono -c "load plugin dev.example.echo; map --json --relations dev.example.echo" |
+    'XDG_CONFIG_HOME=$home/denied ono -c "set permission dev.example.echo relation-write --decision deny | count; load plugin dev.example.echo; map --json --relations dev.example.echo" |
        tail -1 > /tmp/s9-denied.json &&
      ! grep -q "dev.example.echo" /tmp/s9-denied.json'
   prove s9-b "the map is still a SpatialMap: a package that contributed nothing removes nothing (§22)" \
     'grep -q "\"edges\"" /tmp/s9-denied.json && grep -q "\"nodes\"" /tmp/s9-denied.json'
   prove s9-c "the package says which capability it lacks rather than failing silently (§31.17)" \
-    'ono -c "load plugin dev.example.echo; get plugin | where id == \"dev.example.echo\" |
+    'XDG_CONFIG_HOME=$home/denied ono -c "load plugin dev.example.echo; get plugin | where id == \"dev.example.echo\" |
              select state degraded_reason | to json" 2>&1 |
-       tail -1 | grep -q "relation.write not granted"'
+       tail -1 | grep -q "relation.write"'
 
   echo "== §36.1, §31.64, §11.5: with the grant, the edge is there and says where it came from =="
   ono -c 'load plugin dev.example.echo --grant relation.write; map --json --relations dev.example.echo' |

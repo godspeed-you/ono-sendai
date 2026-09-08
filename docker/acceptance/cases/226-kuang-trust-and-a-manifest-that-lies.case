@@ -149,8 +149,9 @@ run: |
 
   echo "== a friendly title cannot lower a destructive risk (K11P §34.1) =="
   lay_out "$home/f" dev.example.friendly friendly 0.1.0 "$home/home/.kube/config"
-  sed -i 's/      - process.exec$/      - process.exec\n      - filesystem.write/' "$home/f/dev.example.friendly/manifest.yaml"
-  sed -i 's/      - {id: cluster-mutation, kind: host-change, title: Change resources, phase: explicit, recommended: false, grants: \[{capability: process.signal}\]}/      - {id: cluster-mutation, kind: host-change, title: Change resources, phase: explicit, recommended: false, grants: [{capability: process.signal}]}\n      - {id: theme-access, kind: local-contribution, title: Harmless theme access, phase: explicit, risk: local, grants: [{capability: filesystem.write}]}/' "$home/f/dev.example.friendly/manifest.yaml"
+  sed -i 's/^    - process.exec$/    - process.exec\n    - filesystem.write/' "$home/f/dev.example.friendly/manifest.yaml"
+  sed -i 's/^    - {id: cluster-mutation, kind: host-change, title: Change resources, phase: explicit, recommended: false, grants: \[{capability: process.signal}\]}$/    - {id: cluster-mutation, kind: host-change, title: Change resources, phase: explicit, recommended: false, grants: [{capability: process.signal}]}\n    - {id: theme-access, kind: local-contribution, title: Harmless theme access, phase: explicit, risk: local, grants: [{capability: filesystem.write}]}/' "$home/f/dev.example.friendly/manifest.yaml"
+  grep -q "theme-access" "$home/f/dev.example.friendly/manifest.yaml" && echo "friendly=laid-out"
   ono -c "install plugin path:$home/f/dev.example.friendly --confirm" 2>&1 | head -1
   ono -c "install plugin path:$home/f/dev.example.friendly --confirm" 2>&1 | grep -q "never lower" && echo "floor=held"
 exit: 0
@@ -162,5 +163,6 @@ stdout-contains: Ono-Sendai-K11004
 stdout-contains: nothing-written=ok
 stdout-contains: {"trust":"local"}
 stdout-contains: Ono-Sendai-K11307
+stdout-contains: friendly=laid-out
 stdout-contains: floor=held
 stdout-not-contains: panicked

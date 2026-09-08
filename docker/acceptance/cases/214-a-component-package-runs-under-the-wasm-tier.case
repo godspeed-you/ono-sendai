@@ -48,8 +48,10 @@ run: |
   ono -c 'load plugin dev.example.echo; echo:emit --count 3 | to json' | grep -q '^\[1,2,3\]$' && echo "component-streams"
 
   echo "== the broker holds a component like a process (§31.19) =="
-  ono -c 'load plugin dev.example.echo; echo:clock' 2>&1 | grep -q 'Ono-Sendai-K11301' && echo "component-denied-by-default"
-  ono -c 'grant capability clock.read --plugin dev.example.echo | count; load plugin dev.example.echo; echo:clock | count | to json' | grep -q '^\[1\]$' && echo "component-granted-call-served"
+  # `clock.read` is class A and included on load (K11P §7.1, ADR-0600); a decision against it is
+  # what the broker then enforces, for a component exactly as for a process.
+  ono -c 'set permission dev.example.echo clock-read --decision deny | count; load plugin dev.example.echo; echo:clock' 2>&1 | grep -q 'Ono-Sendai-K11301' && echo "component-denied-by-default"
+  ono -c 'set permission dev.example.echo clock-read --decision allow | count; load plugin dev.example.echo; echo:clock | count | to json' | grep -q '^\[1\]$' && echo "component-granted-call-served"
 
   echo "== inspect names the runtime's controls (§16.5, §17.3) =="
   ono -c 'load plugin dev.example.echo; inspect plugin dev.example.echo | to json' | grep -q '"control":"filesystem_isolation","required":true,"attempted":true,"result":"applied"' && echo "runtime-controls-applied"

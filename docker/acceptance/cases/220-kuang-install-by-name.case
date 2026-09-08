@@ -140,7 +140,7 @@ run: |
   ono -c 'inspect plugin echo | select isolation_statement | to json' | grep -q 'not complete filesystem or network isolation' && echo "isolation=honest"
 
   echo "== one decision, one correlation id across the profile and every grant it minted (K11P §23.2) =="
-  ono -c 'get audit --plugin dev.example.echo | where action == "capability.grant" or action == "permission.profile_apply" | select correlation | to json' | tr ',' '\n' | sort -u | wc -l | sed 's/^ *1$/correlated=ok/'
+  ono -c 'get audit --plugin dev.example.echo | where action == "capability.grant" or action == "permission.profile_apply" | select correlation | to json' | grep -o '"correlation":"[^"]*"' | sort -u | wc -l | sed 's/^ *1$/correlated=ok/'
 exit: 0
 stdout-contains: {"name":"echo","id":"dev.example.echo","catalog":"test","catalog_verification":"operator","installed":false}
 stdout-contains: Ono-Sendai-E0701

@@ -136,7 +136,7 @@ run: |
   echo "== a widened scope under the same permission id is new consent (K11P §34.5, Gate O) =="
   lay_out "$home/wide" dev.example.echo echo 0.1.2 "$home/home/**"
   ono -c "install plugin path:$home/wide/dev.example.echo" 2>&1 | head -1
-  ono -c "install plugin path:$home/wide/dev.example.echo" 2>&1 | grep -q "scope-widened" && echo "delta=shown"
+  ono -c "install plugin path:$home/wide/dev.example.echo" 2>&1 | grep -q "requests additional access" && echo "delta=shown"
   ono -c 'get plugin echo | select version | to json'
   ono -c "install plugin path:$home/wide/dev.example.echo --confirm | select status | to json; get plugin echo | select version | to json"
 

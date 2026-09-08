@@ -122,6 +122,7 @@ run: |
   echo "== not found, unavailable, incompatible: three answers (K11P §24.1) =="
   ono -c 'install plugin nonesuch --confirm' 2>&1 | head -1
   catalog remote dev.remote.thing thing 1.0.0
+  sed -i 's/publisher: dev.example/publisher: dev.remote/' "$home/config/ono/kuang/catalogs/remote.yaml"
   ono -c 'install plugin thing --confirm' 2>&1 | head -1
   cat > "$home/config/ono/kuang/catalogs/future.yaml" <<CATALOG
   format: kuang-catalog/1
