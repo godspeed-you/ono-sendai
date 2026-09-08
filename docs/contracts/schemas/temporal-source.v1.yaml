@@ -1,0 +1,70 @@
+# Canonical TemporalSource schema. Source: v0.5 §21.1 (the `TemporalCapabilities` field list and
+# "capabilities MUST be inspectable"), §21.5 (`exhaustive_events` is a strong contract and
+# "providers MUST NOT advertise it merely because events usually arrive"), §21.6 (causal
+# tokens), §21.7 (checkpointable), §21.8 (a temporal provider failure produces coverage loss)
+# and §7.1 (the source classes that name a source).
+#
+# The record exists so that "what can this source tell me about the past?" is answerable before a
+# query is run rather than after it comes back thin.
+#
+# Identity is `source`: §7.1 requires sources to have stable inspectable identity.
+id: ono.temporal-source/1
+name: TemporalSource
+summary: What one evidence source can answer about time, and how far back it reaches.
+identity: [source]
+fields:
+  source:
+    type: string
+    required: true
+    doc: The §7.1 source class — `linux.journald`, `adapter:ps`, `kuang:<package>/<provider>`.
+  provider:
+    type: string
+    required: true
+    doc: The provider behind it, as `get provider` names it.
+  current_snapshot:
+    type: bool
+    required: true
+    doc: Whether the source can report current state, which is what a checkpoint is built from (§21.2).
+  live_events:
+    type: bool
+    required: true
+    doc: Whether it emits canonical or mappable events as they happen (§21.3).
+  historical_query:
+    type: bool
+    required: true
+    doc: Whether it can answer directly about past state or events (§21.4).
+  exhaustive_events:
+    type: bool
+    required: true
+    doc: >-
+      Whether sequence continuity supports absence and change claims for the declared capability
+      (§21.5). A polled source answers false; §7.4's negative claims depend on this.
+  causal_tokens:
+    type: bool
+    required: true
+    doc: Whether it carries transaction, job or action identifiers supporting direct causal links (§21.6).
+  checkpointable:
+    type: bool
+    required: true
+    doc: >-
+      Whether its snapshot can be serialised into the temporal store with canonical identity and
+      provenance (§21.7).
+  retained_history:
+    type: duration
+    nullable: true
+    doc: >-
+      How far back the source itself keeps material (§21.1). Null where the source does not say,
+      which is not the same as saying none.
+  availability:
+    type: enum
+    required: true
+    values: [available, empty, unknown, permission_denied, unsupported, stale]
+    doc: >-
+      Whether the source answers for this user now (v0.4 §35.2). §21.8: a failure is coverage
+      loss, stated here, rather than a frozen last-known state presented as history.
+  detail:
+    type: string
+    nullable: true
+    doc: What a reader needs beside the flags — why it is unavailable, which capability it covers. Null where nothing is needed.
+default_view:
+  columns: [source, live_events, historical_query, exhaustive_events, retained_history]

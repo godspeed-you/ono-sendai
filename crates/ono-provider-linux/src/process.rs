@@ -30,6 +30,7 @@ use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
 use ono_provider_api::{
     Action, ActionOutcome, Availability, Capability, ObjectRef, Provider, Query, Risk, Selector,
+    TemporalCapabilities,
 };
 use ono_value::{ByteSize, ErrorValue, RecordValue, Schema, Value, ValueRef};
 
@@ -173,6 +174,7 @@ struct Reader {
     accounts: Arc<dyn Accounts>,
     clock: Arc<dyn Clock>,
     boot_seconds: Option<i64>,
+    boot_id: Option<String>,
     /// How long the machine had been up when this reader was made, from `/proc/uptime`. It is
     /// read once per query rather than once per process: every process of one snapshot is
     /// measured against the same instant (ADR-0232).
@@ -223,6 +225,7 @@ impl ProcessProvider {
         Self {
             reader: Reader {
                 boot_seconds: procfs::boot_time_seconds(&proc_root),
+                boot_id: procfs::boot_id(&proc_root),
                 uptime_seconds: procfs::uptime_seconds(&proc_root),
                 proc_root,
                 accounts: Arc::new(NssAccounts::new()),
@@ -270,6 +273,35 @@ impl ProcessProvider {
     pub fn with_boot_time(mut self, seconds: i64) -> Self {
         self.reader.boot_seconds = Some(seconds);
         self
+    }
+
+    /// Treats the kernel as having minted `boot_id`, for a fixture whose `/proc` is not the
+    /// running kernel's.
+    #[must_use]
+    pub fn with_boot_id(mut self, boot_id: impl Into<String>) -> Self {
+        self.reader.boot_id = Some(boot_id.into());
+        self
+    }
+
+    /// The kernel's boot id, where `/proc/sys/kernel/random/boot_id` could be read.
+    ///
+    /// This is the stronger of the two facts a Linux host offers about which boot it is on, and
+    /// v0.5 §25.5 asks for it by name. With [`ProcessProvider::boot_time_seconds`] it is
+    /// everything `ono_spatial_core::BootIdentity::of` needs to compose the boot identity that
+    /// §10.2 makes part of every process identity — the provider gathers the facts, the spatial
+    /// layer composes them (§2.16), so no precedence rule lives in two places.
+    #[must_use]
+    pub fn boot_id(&self) -> Option<&str> {
+        self.reader.boot_id.as_deref()
+    }
+
+    /// The second the machine booted, from `/proc/stat`'s `btime`.
+    ///
+    /// The weaker of the two boot facts, and the fallback where no boot id can be read: `btime`
+    /// is derived from the wall clock, so an NTP correction moves it inside a single boot.
+    #[must_use]
+    pub fn boot_time_seconds(&self) -> Option<i64> {
+        self.reader.boot_seconds
     }
 
     /// `set process --priority N` (ADR-0092): the niceness, through `setpriority(2)`.
@@ -907,6 +939,19 @@ impl Provider for ProcessProvider {
                 "{} is not a mounted proc filesystem",
                 self.reader.proc_root.display()
             ))
+        }
+    }
+
+    fn temporal(&self) -> TemporalCapabilities {
+        // v0.5 §22.1: "`procfs` is primarily a snapshot source. The reference provider MUST NOT
+        // claim native historical process coverage." A process that ended left nothing in `/proc`
+        // to read, so appearance and disappearance are the recorder's to derive from two
+        // snapshots — with provenance saying `snapshot_diff` — and never this provider's to
+        // claim as events it saw.
+        TemporalCapabilities {
+            current_snapshot: true,
+            checkpointable: true,
+            ..TemporalCapabilities::none()
         }
     }
 

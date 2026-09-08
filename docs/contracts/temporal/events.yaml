@@ -1,0 +1,300 @@
+# The canonical event model: the seventeen top-level event kinds of spec v0.5 §6.1, what each
+# one must carry, and the rule that keeps it honest (§36.2).
+#
+# §6.1 closes the list. "Providers and plugins MAY define namespaced subtypes, but the top-level
+# semantics MUST map to one of these classes", so a source refining an observation writes its
+# refinement into `subtype` and still declares one of these kinds. §36.4 fails the gate when the
+# implementation emits a kind this file does not carry, and when this file carries one the
+# implementation does not know: `xtask/src/temporal.rs::check` compares the two in both
+# directions. Decisions: ADR-0625.
+#
+# Fields of a kind row
+#
+#   kind             the top-level name, exactly as §6.1 spells it.
+#   subject          `required` when the event is about one identified object, `optional` when
+#                    the kind is about a scope or a source rather than an object, `forbidden`
+#                    where naming a subject would be a claim the kind cannot support.
+#   required_fields  what this kind must carry beyond `common_fields` below. A field that is
+#                    always present for every kind is not repeated here.
+#   before / after   what the two state fields mean for this kind. `null` means the kind does
+#                    not use that side, which is a different statement from an unknown value —
+#                    §6.2 forbids overloading `before == null` to mean arbitrary unknown, and the
+#                    value model's absent/unknown/error distinction stays intact (§35.3).
+#   rule             the constraint §6 places on emitting this kind. It is the sentence a review
+#                    checks an ingest path against.
+#   spec             the sections that fix it.
+
+version: 1
+
+# ---------------------------------------------------------------------------------------------
+# What every event carries, whatever its kind (§3.3, §25, §7.3).
+# ---------------------------------------------------------------------------------------------
+common_fields:
+  - name: event_id
+    doc: >-
+      The content digest of the observation. Two source reports of the same observation collide
+      by construction, which is how §6.8's deduplication works without comparing rendered text.
+  - name: kind
+    doc: One of the seventeen below. Never a provider's own word.
+  - name: subtype
+    doc: >-
+      §6.1's namespaced provider or plugin refinement, or null. It refines the kind; it never
+      replaces it.
+  - name: scope
+    doc: The spatial scope the event happened in, so a query can filter without resolving ids.
+  - name: times
+    doc: >-
+      §25's clock record: source time where the source gave one, observed at, ingested at,
+      source sequence, monotonic reading, clock uncertainty and the clock domain. The instant a
+      human navigates by is the source time where there is one and the observed time otherwise.
+  - name: evidence
+    doc: >-
+      The evidence records supporting the event (§3.4, §7.3). An event with no evidence is not a
+      weaker event; it is a defect, because every kind below states what evidence it needs.
+  - name: causal_parents
+    doc: The causal links naming this event as an effect, or empty. Never inferred by a renderer.
+  - name: provenance
+    doc: >-
+      Who reported it, over which link, at which instant. The host owns attribution; a plugin
+      cannot forge a source (§37.3).
+
+# ---------------------------------------------------------------------------------------------
+# The seventeen kinds of §6.1.
+# ---------------------------------------------------------------------------------------------
+kinds:
+  - kind: object.observed
+    subject: required
+    required_fields: [subject]
+    before: null
+    after: >-
+      The observed record, where the source produced one. It is a statement about the instant,
+      not about an interval.
+    rule: >-
+      The weakest of the object kinds and the honest default: the source saw the object at this
+      instant and claims nothing about before or after. A snapshot source emits this rather than
+      `object.appeared`.
+    spec: "§3.2, §3.3, §6.1"
+
+  - kind: object.appeared
+    subject: required
+    required_fields: [subject]
+    before: null
+    after: The record as first observed, where the source produced one.
+    rule: >-
+      §6.3: emitted only when evidence supports that the object became observable within the
+      source's coverage semantics. From a snapshot source this is a `snapshot_diff` derivation
+      whose coverage reflects the polling interval (§22.1), never an authoritative appearance.
+    spec: "§6.1, §6.3, §22.1"
+
+  - kind: object.changed
+    subject: required
+    required_fields: [subject, changed_fields]
+    before: The record or field values as last known. Unknown fields stay unknown.
+    after: The record or field values as observed now.
+    rule: >-
+      §6.2: field changes are typed, and each carries its own certainty — `observed` when both
+      sides came from evidence, `derived` when one side came from a documented rule, `inferred`
+      when reconstruction filled it from an interval, `unknown` when one side has no evidence.
+      A change with no changed field is not a change.
+    spec: "§6.1, §6.2, §13.2"
+
+  - kind: object.disappeared
+    subject: required
+    required_fields: [subject]
+    before: The last known record, where one exists.
+    after: null
+    rule: >-
+      §6.3, and the one rule in this file most likely to be broken by accident: emitted only
+      when an authoritative source reports the object ceased to exist, or when the provider
+      contract defines missing-from-complete-snapshot as meaningful absence and that snapshot
+      was complete. "A polling gap MUST NOT automatically emit disappearance." Absence is a
+      claim, and §7.4 requires coverage capable of proving it.
+    spec: "§6.1, §6.3, §7.4, §22.1"
+
+  - kind: relation.added
+    subject: required
+    required_fields: [subject, related, relation, confidence]
+    before: null
+    after: The edge as observed, with its confidence.
+    rule: >-
+      §6.4: the event identifies both ends, the relation type, the source and the confidence. A
+      historical `map` reconstructs the edge set from these, so an edge without both ends is not
+      renderable and is refused at ingest rather than dropped at render.
+    spec: "§6.1, §6.4, §9.5"
+
+  - kind: relation.removed
+    subject: required
+    required_fields: [subject, related, relation, confidence]
+    before: The edge as last observed.
+    after: null
+    rule: >-
+      §6.4, and §7.4 again: an edge is reported gone only where coverage could have seen it
+      still present. A provider that enumerates edges by polling reports removal at the
+      confidence its sampling supports, never at `exact`.
+    spec: "§6.1, §6.4, §7.4"
+
+  - kind: action.requested
+    subject: optional
+    required_fields: [action_id, actor, session_id, command, operation]
+    before: null
+    after: null
+    rule: >-
+      §17.2: the first event of an Ono action's lifecycle, emitted when the operator asked, before
+      any authorization decision. The command summary is already redacted when it reaches the
+      ledger — §17.5 and §30.3 keep the raw text out of the type entirely.
+    spec: "§6.1, §6.6, §17.2, §17.4"
+
+  - kind: action.authorized
+    subject: optional
+    required_fields: [action_id, authorization]
+    before: null
+    after: null
+    rule: >-
+      §17.2: records the authorization decision and what granted it. A refused action has this
+      event with a refusing decision and no `action.executed`, which is what makes a refusal
+      visible on a timeline rather than an absence.
+    spec: "§6.1, §17.2, §17.4"
+
+  - kind: action.executed
+    subject: optional
+    required_fields: [action_id]
+    before: null
+    after: null
+    rule: >-
+      §17.2: the action reached the system. Where the operation produced a provider-side
+      transaction — a systemd job path, a request id — the event carries it, and that token is
+      what the `ono.action-to-transaction` rule of `causality.yaml` joins on. Temporal proximity
+      is never the join.
+    spec: "§6.1, §17.2, §17.6, §15.2"
+
+  - kind: action.completed
+    subject: optional
+    required_fields: [action_id, result]
+    before: null
+    after: null
+    rule: >-
+      §17.2: the action finished, with the result summary. Completion is not success; the result
+      says which it was.
+    spec: "§6.1, §17.2, §17.4"
+
+  - kind: action.failed
+    subject: optional
+    required_fields: [action_id, result]
+    before: null
+    after: null
+    rule: >-
+      §17.2: the action did not finish, with the structured error it failed with. A failed
+      action still anchors causality — knowing that a restart was attempted and refused explains
+      a subsequent state as well as a successful one would.
+    spec: "§6.1, §17.2, §16.5"
+
+  - kind: provider.event
+    subject: optional
+    required_fields: [payload]
+    before: null
+    after: null
+    rule: >-
+      §6.5: source-native information that does not yet map to a canonical object mutation. It
+      MUST still be typed and namespaced, and it MAY later serve as evidence in a causal
+      explanation without ever becoming canonical object state. This is the pressure valve that
+      keeps the other sixteen kinds closed.
+    spec: "§6.1, §6.5"
+
+  - kind: coverage.started
+    subject: forbidden
+    required_fields: [capability, source, completeness]
+    before: null
+    after: null
+    rule: >-
+      §8.1: a source began covering a capability over a scope, at a stated completeness and, for
+      a sampled source, a stated sampling interval. Coverage is per capability; §8.1 forbids
+      representing it as one global boolean, so this event names exactly one.
+    spec: "§6.1, §8.1, §8.5"
+
+  - kind: coverage.ended
+    subject: forbidden
+    required_fields: [capability, source, reason]
+    before: null
+    after: null
+    rule: >-
+      §8.1 and §21.8: a source stopped covering a capability, with the gap reason from
+      `evidence.yaml`. §21.8's binding sentence is that a temporal provider failure MUST produce
+      coverage loss rather than silently freezing the last known state as current history, and
+      this event is how the loss becomes visible.
+    spec: "§6.1, §8.1, §21.8, §44.1"
+
+  - kind: checkpoint.created
+    subject: forbidden
+    required_fields: [checkpoint_id, captured_at]
+    before: null
+    after: null
+    rule: >-
+      §3.6: a complete-enough state capture for a scope was written, with its own coverage
+      record. Reconstruction starts from the checkpoint before the requested instant and replays
+      forward (§9.1), so a checkpoint that claims more coverage than it holds corrupts every
+      later answer.
+    spec: "§6.1, §3.6, §9.1, §21.7"
+
+  - kind: landmark.added
+    subject: optional
+    required_fields: [landmark]
+    before: null
+    after: null
+    rule: >-
+      §27.1: a deterministic landmark rule fired, giving a timeline something a human can orient
+      by. §27.2 is the constraint that matters: a landmark is orientation, never an alert, and
+      nothing about emitting one notifies anybody.
+    spec: "§6.1, §27.1, §27.2"
+
+  - kind: landmark.removed
+    subject: optional
+    required_fields: [landmark]
+    before: null
+    after: null
+    rule: >-
+      §27.1: the condition a landmark marked no longer holds. Emitted by the same deterministic
+      rule that added it, so a landmark cannot appear from one rule and vanish by another's
+      opinion.
+    spec: "§6.1, §27.1"
+
+# ---------------------------------------------------------------------------------------------
+# §6.3, restated as a check rather than a paragraph, because it is the rule an ingest path is
+# most likely to violate while behaving reasonably.
+# ---------------------------------------------------------------------------------------------
+disappearance_contract:
+  kind: object.disappeared
+  permitted_when:
+    - id: authoritative_source_event
+      doc: >-
+        An authoritative source reported the object ceased to exist or ceased to be represented
+        — a systemd unit removed, a container runtime's own destroy event, a kernel exit event.
+        Evidence strength `authoritative`.
+    - id: complete_snapshot_contract
+      doc: >-
+        The provider contract defines missing-from-a-complete-snapshot as meaningful absence,
+        and the snapshot the object was missing from was `complete` for the relevant capability
+        over the relevant scope. Evidence strength `derived`, provenance `snapshot_diff` (§22.1).
+  forbidden_when:
+    - id: polling_gap
+      doc: >-
+        §6.3: "A polling gap MUST NOT automatically emit disappearance." The object being absent
+        from a snapshot Ono is not entitled to call complete is a coverage gap, and the honest
+        output is a `TemporalGap` with reason `not_recorded` or `source_disconnected`, not an
+        event claiming the object is gone.
+  spec: "§6.3, §7.4, §8.2, §22.1"
+
+# ---------------------------------------------------------------------------------------------
+# The two invariants §6 states about the store itself, recorded here because they constrain what
+# an event kind means rather than how it is stored.
+# ---------------------------------------------------------------------------------------------
+invariants:
+  - id: append_only
+    doc: >-
+      §6.7: persisted events are append-only. A correction is a new event or a new evidence
+      record referencing the prior one; a persisted event is never silently rewritten, except
+      during an explicit storage migration that preserves semantic identity.
+  - id: deduplication_by_identity
+    doc: >-
+      §6.8: the ledger deduplicates where sources give stable sequence or event ids, and MUST NOT
+      collapse two distinct source events merely because their rendered text is equal. The event
+      digest is over identity and payload, never over rendering.

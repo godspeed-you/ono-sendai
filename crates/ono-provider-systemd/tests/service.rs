@@ -20,13 +20,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fixture::{
-    NGINX_MEMORY_BYTES, NGINX_STATE_CHANGE_USEC, POSTGRES_STATE_CHANGE_USEC, RecordedSystemd,
+    FIRST_JOB_ID, FIRST_JOB_PATH, NGINX_MEMORY_BYTES, NGINX_STATE_CHANGE_USEC, PENDING_JOB_PATH,
+    POSTGRES_STATE_CHANGE_USEC, RecordedSystemd,
 };
 use jiff::Timestamp;
 use ono_core::ErrorCode;
 use ono_pipeline::Collected;
 use ono_provider_api::{Action, ActionOutcome, ObjectId, Provider, Query, Selector};
-use ono_provider_systemd::{PROVIDER_ID, SystemdProvider, service_schema};
+use ono_provider_systemd::{JobKind, PROVIDER_ID, SystemdBus, SystemdProvider, service_schema};
 use ono_testkit::{SkipReason, require, skipped};
 use ono_value::{ActionStatus, ByteSize, FieldAccess, RecordValue, SchemaId, Value};
 
@@ -866,5 +867,109 @@ async fn should_state_the_whole_population_when_a_query_bounds_what_it_answers()
         Some(population as u64),
         "an unbounded answer states the same figure; a caller must not have to know whether it \
          bounded the query to read the count"
+    );
+}
+
+// --- job identity (v0.5 §15.2, §17.3) ------------------------------------------------------------
+
+#[tokio::test]
+async fn should_answer_with_the_job_the_service_manager_created_when_one_is_queued() {
+    // §17.3: "If an external authority returns its own transaction/job ID, the event ledger MUST
+    // record the mapping." Nothing can record it if the call that queued the job discards it.
+    let bus = RecordedSystemd::running();
+    let queued = tokio::time::timeout(
+        BUDGET,
+        bus.queue_job("postgresql.service", JobKind::Restart),
+    )
+    .await
+    .expect("queueing a recorded job must not hang")
+    .expect("the recorded service manager accepts the job");
+
+    assert_eq!(queued.path, FIRST_JOB_PATH);
+    assert_eq!(queued.id, Some(FIRST_JOB_ID));
+    assert_eq!(queued.token(), format!("systemd:{FIRST_JOB_PATH}"));
+}
+
+#[tokio::test]
+async fn should_carry_the_job_reference_on_the_outcome_of_a_mutation() {
+    let provider = provider_over(RecordedSystemd::running()).await;
+
+    let outcome = act(&provider, "restart", "nginx.service").await;
+    assert_eq!(outcome.status(), ActionStatus::Success);
+    assert_eq!(
+        outcome.metadata_value("systemd.job"),
+        Some(&Value::string(FIRST_JOB_PATH)),
+        "the mapping from this action to systemd's job is the evidence §15.2 needs"
+    );
+    assert_eq!(
+        outcome.metadata_value("systemd.job_id"),
+        Some(&Value::Int(i128::from(FIRST_JOB_ID)))
+    );
+}
+
+#[tokio::test]
+async fn should_carry_no_job_reference_when_the_service_manager_refused_the_job() {
+    // A refused job is not a job. Recording a transaction identity for a transaction that never
+    // existed would put a causal token in the ledger with nothing behind it (§15.2).
+    let provider = provider_over(RecordedSystemd::refusing_authorisation()).await;
+
+    let outcome = act(&provider, "restart", "nginx.service").await;
+    assert_eq!(outcome.status(), ActionStatus::Failed);
+    assert_eq!(outcome.metadata_value("systemd.job"), None);
+    assert!(outcome.metadata().is_empty());
+    assert_eq!(
+        outcome.error().expect("a refusal says why").code(),
+        ErrorCode::IoPermissionDenied
+    );
+}
+
+#[tokio::test]
+async fn should_carry_no_job_reference_when_the_unit_was_already_in_the_requested_state() {
+    let provider = provider_over(RecordedSystemd::running()).await;
+
+    let outcome = act(&provider, "start", "nginx.service").await;
+    assert_eq!(outcome.status(), ActionStatus::Skipped);
+    assert!(
+        outcome.metadata().is_empty(),
+        "no job was queued, so there is no job to attribute a later change to"
+    );
+}
+
+#[tokio::test]
+async fn should_give_two_mutations_two_job_identities() {
+    let provider = provider_over(RecordedSystemd::running()).await;
+
+    let first = act(&provider, "restart", "nginx.service").await;
+    let second = act(&provider, "restart", "postgresql.service").await;
+    assert_ne!(
+        first.metadata_value("systemd.job"),
+        second.metadata_value("systemd.job"),
+        "two jobs are two transactions, and a shared identity would merge two causal chains"
+    );
+}
+
+#[tokio::test]
+async fn should_report_the_job_a_unit_already_has_in_flight_when_its_properties_are_read() {
+    // `org.freedesktop.systemd1.Unit.Job` arrives in the same `GetAll` as every other property,
+    // so a unit read while a job is pending can attribute a later transition to that job.
+    let bus = RecordedSystemd::running();
+    let pending = tokio::time::timeout(BUDGET, bus.unit_properties("postgresql.service"))
+        .await
+        .expect("reading recorded properties must not hang")
+        .expect("the recorded service manager answers")
+        .expect("postgresql.service is one of the recorded units");
+    assert_eq!(
+        pending.job.map(|job| job.path),
+        Some(PENDING_JOB_PATH.to_owned())
+    );
+
+    let settled = tokio::time::timeout(BUDGET, bus.unit_properties("nginx.service"))
+        .await
+        .expect("reading recorded properties must not hang")
+        .expect("the recorded service manager answers")
+        .expect("nginx.service is one of the recorded units");
+    assert_eq!(
+        settled.job, None,
+        "a unit with no job in flight must report none rather than a job at the root path"
     );
 }

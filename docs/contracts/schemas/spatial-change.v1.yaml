@@ -32,7 +32,18 @@ fields:
     required: true
     doc: >-
       When the difference was seen. §24.3 forbids a fabricated change summary, and a change with
-      no time behind it is exactly that.
+      no time behind it is exactly that. Where `source` is `snapshot_comparison` this is the
+      later of the two observations — the first moment the space was seen with the change — and
+      `observed_since` is the earlier one.
+  observed_since:
+    type: timestamp
+    nullable: true
+    doc: >-
+      The earlier of the two observations a comparison found this change between: the last moment
+      the space was seen without it. Null where a provider announced the change and stated when
+      it saw it, because then the instant is known and there is no interval to state. v0.5 §9.2
+      forbids claiming a state between two observations, and a change dated only by the later of
+      them would claim exactly that (ADR-0680).
   label:
     type: string
     required: true

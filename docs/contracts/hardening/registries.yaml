@@ -274,6 +274,82 @@ registries:
       compared against the README, the Wiki's Install page and the generated reference so three
       documents cannot print three different sequences (ADR-0542, ADR-0545).
 
+  # --- the temporal registries of v0.5 §36 -----------------------------------------------------
+  # These six live one directory across, in `docs/contracts/temporal/`, because §36 gives the
+  # temporal and causal interface its own contract set and AGENTS.md §2 maps the specification's
+  # `docs/spec/temporal/` onto `docs/contracts/temporal/`. They are indexed here rather than in a
+  # second index of their own, because §52.3's word is *every* and two inventories is one
+  # inventory nobody reads. `file` is therefore a path relative to this directory (ADR-0625).
+  #
+  # `xtask/src/temporal.rs::check` validates the six together: most of what can go wrong with
+  # them is a cross-reference between two of the six — a rule requiring an evidence strength
+  # nobody declares, a source naming an evidence class that does not exist — so one function
+  # holds them against each other and against the shared registries.
+
+  - file: ../temporal/temporal.yaml
+    domain: null
+    validated_by: [xtask/src/temporal.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.5 §36.1, §4, §8.6, §21.1, §33"
+    doc: >-
+      The temporal coordinate: the two context modes, §4.4's selector grammar as data, the
+      prompt markers and the coverage each requires, §4.7's read-only policy and its four
+      classes of operation, the default windows, §21.1's seven capability keys, and §33's twelve
+      settings compared against `ono_cli::settings::CATALOGUE` in both directions.
+
+  - file: ../temporal/events.yaml
+    domain: null
+    validated_by: [xtask/src/temporal.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.5 §36.2, §6"
+    doc: >-
+      §6.1's seventeen canonical event kinds with the fields each carries, whether it names a
+      subject, what `before` and `after` mean for it and the rule that constrains it. §6.3's
+      disappearance contract is encoded rather than described: an authoritative source event or
+      a complete-snapshot contract permits the kind, and a polling gap does not.
+
+  - file: ../temporal/evidence.yaml
+    domain: null
+    validated_by: [xtask/src/temporal.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.5 §7"
+    doc: >-
+      §7.1's nine source classes with their id grammar, §7.2's five strengths in strength order
+      with the specification's own definitions and the rule that nothing may raise one, §7.4's
+      precondition for a negative claim, and §7.5's eight gap reasons.
+
+  - file: ../temporal/causality.yaml
+    domain: null
+    validated_by: [xtask/src/temporal.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.5 §36.3, §15, §45.3"
+    doc: >-
+      §15.1's five relation classes with their inverse labels and whether each is causal, the
+      seven built-in causal rules and three correlation rules with the seven fields §15.8 says a
+      rule records, and §15.6's forbidden wording. §15.8: "No renderer may create causal
+      language outside this registry."
+
+  - file: ../temporal/sources.yaml
+    domain: null
+    validated_by: [xtask/src/temporal.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.5 §21, §22"
+    doc: >-
+      The source capability matrix: for each evidence source, which of §21.1's capabilities it
+      may honestly claim and what its coverage means. Held against
+      `docs/contracts/providers/*.yaml` in both directions, so a provider cannot advertise a
+      temporal capability the matrix does not carry (§36.4).
+
+  - file: ../temporal/recorder.yaml
+    domain: null
+    validated_by: [xtask/src/temporal.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.5 §10, §30, §44.1"
+    doc: >-
+      The recorder's collection policy: §10.6's two lists, §10.5's four privilege prohibitions,
+      §10.7's session ledger bound, §10.8's lifecycle, §30.2's file permissions, §30.4's argv
+      rule and the setting that turns it on, and §44.1's restart procedure.
+
 # ---------------------------------------------------------------------------------------------
 # §52.3's first named failure: an unknown capability id in an authorization fixture.
 # ---------------------------------------------------------------------------------------------

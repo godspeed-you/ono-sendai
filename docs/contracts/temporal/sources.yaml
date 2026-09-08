@@ -1,0 +1,391 @@
+# The temporal source capability matrix: for each evidence source, what it may honestly claim
+# and what its coverage actually means (spec v0.5 §21, §22).
+#
+# §21.1 lets every provider advertise seven temporal capabilities. This file is the audited list
+# of what each source in this tree is entitled to advertise, and it is deliberately conservative,
+# because two of §21's sentences are prohibitions rather than permissions:
+#
+#   §21.5  "Providers MUST NOT advertise `exhaustive_events` merely because events usually
+#           arrive." Nothing below claims it. It is a contract about sequence continuity strong
+#           enough to support absence claims, and no source in this tree can keep it.
+#   §22.1  "`procfs` is primarily a snapshot source. The reference provider MUST NOT claim
+#           native historical process coverage." So `linux.procfs` has `historical_query: false`,
+#           and the appearance and disappearance events the recorder derives from procfs
+#           snapshots carry provenance `snapshot_diff` rather than reading as observations.
+#
+# The survey fact this matrix records, which is easy to get wrong from the specification alone:
+# **only netlink (link, address, route) and inotify implement live subscription in this tree.**
+# systemd, procfs, containers, mounts and sockets are polled. A polled source has `live_events:
+# false` here however promptly it notices a change, because §21.3 is about the source pushing and
+# §8 is about what the sampling interval does to coverage.
+#
+# `xtask/src/temporal.rs::check` holds this file against `temporal.yaml` (every capability key
+# must be one of §21.1's seven), against `evidence.yaml` (every `evidence_class` must be a
+# declared source class) and against `docs/contracts/providers/*.yaml` (a row naming a provider
+# must name one that exists, and where that provider's contract carries a `temporal:` block the
+# two must agree — §36.4's last drift rule). Decisions: ADR-0625, ADR-0628.
+#
+# Fields
+#
+#   id              the source id, as an evidence source spells it.
+#   evidence_class  the class of `evidence.yaml` it belongs to.
+#   provider        the provider id in `docs/contracts/providers/*.yaml` that fronts it, or null
+#                   for a source that is not a provider.
+#   capabilities    the seven keys of §21.1. `retained_history: null` means unknown, which is a
+#                   different statement from none (§35.3).
+#   coverage        what a coverage record from this source means: the completeness it can
+#                   support, whether it samples, and what absence from it does not prove.
+#   spec            the sections that fix the row.
+
+version: 1
+
+sources:
+  # --- built-in Linux sources (§22) ------------------------------------------------------------
+  - id: linux.procfs
+    evidence_class: linux.procfs
+    provider: linux.procfs
+    capabilities:
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+    coverage:
+      completeness: point_sample
+      sampled: true
+      derived_events_provenance: snapshot_diff
+      absence_proves: nothing
+      doc: >-
+        §22.1 and §8.4. A read of `/proc` is authoritative about the instant it was read and
+        says nothing about the interval between two reads. The recorder MAY derive appearance
+        and disappearance by comparing complete-enough snapshots, and when it does the events
+        carry provenance `snapshot_diff` and coverage that states the polling interval. A
+        process that started and exited between two samples leaves no trace, which is exactly
+        why `absence_proves` is `nothing` and why `object.disappeared` from this source needs
+        `events.yaml`'s complete-snapshot contract rather than a missing row.
+    spec: "§21.2, §21.7, §22.1, §8.4"
+
+  - id: linux.systemd-dbus
+    evidence_class: linux.systemd-dbus
+    provider: systemd
+    capabilities:
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: true
+      checkpointable: true
+      retained_history: null
+    coverage:
+      completeness: partial
+      sampled: true
+      derived_events_provenance: null
+      absence_proves: nothing
+      doc: >-
+        §22.2 calls systemd a strong source for service state and job correlation, and it is:
+        the unit states it reports are authoritative, and the job paths it returns from
+        `StartUnit` and `RestartUnit` are the identifiers three rules of `causality.yaml` join
+        on. What it is not, in this tree, is a live source: this implementation polls unit
+        properties rather than subscribing to `PropertiesChanged`, so `live_events` is false and
+        coverage is `partial` with a sampling interval. §21.3 describes a capability this
+        provider will claim when it subscribes, and claiming it earlier would make every
+        coverage record it writes a small lie.
+    spec: "§21.3, §21.6, §22.2"
+
+  - id: linux.journald
+    evidence_class: linux.journald
+    provider: systemd-journal
+    capabilities:
+      current_snapshot: true
+      live_events: false
+      historical_query: true
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: false
+      retained_history: null
+    coverage:
+      completeness: partial
+      sampled: false
+      derived_events_provenance: null
+      absence_proves: nothing
+      doc: >-
+        §21.4 and §22.3: the one built-in source that answers about the past without the
+        recorder. Its window is whatever the journal retains, which Ono does not control and
+        does not guess — `retained_history` stays null rather than reporting a configured value
+        Ono has not read. `exhaustive_events` is false because journal completeness depends on
+        rate limiting, unit logging behaviour and the reader's permissions; §7.4's example is
+        this source: "A sparse journal without a process start event MUST NOT be treated as
+        proof that the process never existed."
+    spec: "§21.4, §22.3, §7.4"
+
+  - id: linux.netlink
+    evidence_class: linux.netlink
+    provider: linux.netlink
+    capabilities:
+      current_snapshot: true
+      live_events: true
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+    coverage:
+      completeness: partial
+      sampled: false
+      derived_events_provenance: null
+      absence_proves: nothing
+      doc: >-
+        §22.4, and the only built-in source that genuinely pushes: link, address and route
+        changes arrive on a subscribed socket. `exhaustive_events` is still false — a netlink
+        socket can drop messages under buffer pressure and the kernel says so, which breaks the
+        sequence continuity §21.5 demands. When a drop is detected the honest output is a
+        coverage gap with reason `source_disconnected`. §22.4's own warning is recorded here
+        too: socket connection history is not exhaustive merely because netlink is used for
+        interfaces.
+    spec: "§21.3, §21.5, §22.4"
+
+  - id: linux.mountinfo
+    evidence_class: linux.procfs
+    provider: linux.mountinfo
+    capabilities:
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+    coverage:
+      completeness: point_sample
+      sampled: true
+      derived_events_provenance: snapshot_diff
+      absence_proves: nothing
+      doc: >-
+        §22.6: mount state may be checkpointed and changes derived from authoritative mount
+        snapshots. `/proc/self/mountinfo` is a complete list at the instant it is read, which
+        makes a mount that vanished between two reads derivable — but §22.6 also fixes what is
+        not collected: filesystem usage is not a default high-frequency time series, and is
+        captured at a checkpoint or a landmark transition rather than sampled.
+    spec: "§22.6, §21.7"
+
+  - id: linux.fs
+    evidence_class: linux.procfs
+    provider: linux.fs
+    capabilities:
+      current_snapshot: true
+      live_events: true
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: false
+      retained_history: null
+    coverage:
+      completeness: partial
+      sampled: false
+      derived_events_provenance: null
+      absence_proves: nothing
+      doc: >-
+        §22.5, the section that is mostly a prohibition: "v0.5 MUST NOT promise complete generic
+        filesystem history." inotify is a real subscription, so `live_events` is true, and its
+        limits are structural — it does not recurse, it has a watch ceiling, and it reports a
+        queue overflow rather than the events it lost. `checkpointable` is false because a
+        filesystem's current state is not a thing that fits in a checkpoint, and file content is
+        outside the recorder entirely (§30.3).
+    spec: "§22.5, §30.3"
+
+  - id: container-engine
+    evidence_class: linux.procfs
+    provider: container-engine
+    capabilities:
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+    coverage:
+      completeness: point_sample
+      sampled: true
+      derived_events_provenance: snapshot_diff
+      absence_proves: nothing
+      doc: >-
+        §22.7: container runtimes SHOULD expose runtime-native lifecycle events where the
+        runtime supports them, and the event ids and runtime identities MUST reconcile with
+        v0.4's container spatial identity. This implementation polls, so `live_events` is false
+        and lifecycle is derived from snapshot comparison. A runtime event stream is the upgrade
+        this row is waiting for, and it changes `live_events`, not the identity model.
+    spec: "§22.7, §21.3"
+
+  # --- Ono's own sources -----------------------------------------------------------------------
+  - id: ono.session
+    evidence_class: ono.session
+    # Null deliberately, and the reason is a name collision worth stating: the provider
+    # `ono.session` of `docs/contracts/providers/linux-procfs.yaml` serves login-session
+    # *objects*, while this row is the *shell itself* as an evidence source (§7.1). They share a
+    # word and nothing else, so joining them would make the matrix claim that the object provider
+    # is exhaustive about actions, which it knows nothing about.
+    provider: null
+    capabilities:
+      current_snapshot: true
+      live_events: true
+      historical_query: true
+      exhaustive_events: true
+      causal_tokens: true
+      checkpointable: false
+      retained_history: null
+    coverage:
+      completeness: complete
+      sampled: false
+      derived_events_provenance: null
+      absence_proves: "that this session took no such action"
+      doc: >-
+        The one source entitled to `exhaustive_events` under §21.5, and the reason the exception
+        is defensible: the capability is *actions taken through this shell*, and the shell is the
+        sole authority for it. Every action it authorizes it also records, in sequence, with no
+        sampling. So absence does prove something here — narrowly, and only about this session.
+        §17.1: the shell possesses unusually strong knowledge of operator intent and execution.
+        `retained_history` is null because the session ledger's span is the session's, bounded by
+        `temporal.session.max_events` rather than by an age (§10.7).
+    spec: "§17.1, §17.2, §10.7, §21.5"
+
+  - id: ono.recorder
+    evidence_class: ono.recorder
+    provider: null
+    capabilities:
+      current_snapshot: false
+      live_events: false
+      historical_query: true
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: 24h
+    coverage:
+      completeness: partial
+      sampled: true
+      derived_events_provenance: snapshot_diff
+      absence_proves: nothing
+      doc: >-
+        The recorder is a store rather than an observer: it answers about the past from what it
+        persisted, and its coverage is the union of the coverage its sources had while it was
+        running. It never claims more than its weakest input, and it never claims coverage for
+        an interval it was not running — §44.1 requires unobserved downtime to be marked as a
+        gap on restart, and §10.2 makes recording off by default, so on most installations most
+        of the past is `not_recorded`. `retained_history` is `temporal.retention.max_age`'s
+        default; the effective value is the configured one, and §33 forbids a raised ceiling
+        from resurrecting expired data.
+    spec: "§10.1, §10.4, §44.1, §21.4"
+
+  # --- extension sources -----------------------------------------------------------------------
+  - id: "adapter:<adapter-id>"
+    evidence_class: "adapter:<adapter-id>"
+    provider: null
+    capabilities:
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: false
+      retained_history: null
+    coverage:
+      completeness: point_sample
+      sampled: true
+      derived_events_provenance: null
+      absence_proves: nothing
+      doc: >-
+        §23.1 and §23.2: a v0.3 external-command adapter parses a tool's output into canonical
+        objects. An adapter whose underlying command accepts a time range — `journalctl --since`
+        is the archetype — MAY declare `historical_query`, and its own adapter contract is where
+        that claim lives; the ceiling stated here is what an adapter gets by default. §22.3:
+        when the adapter path is used instead of a native API, the provenance says so, so a
+        reader can tell a parsed line from a structured field.
+    spec: "§23.1, §23.2, §22.3"
+
+  - id: "remote:<link-id>/<provider-id>"
+    evidence_class: "remote:<link-id>/<provider-id>"
+    provider: null
+    capabilities:
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: false
+      retained_history: null
+    coverage:
+      completeness: partial
+      sampled: true
+      derived_events_provenance: null
+      absence_proves: nothing
+      doc: >-
+        §24.1: remote history is a separate evidence domain, and the capabilities a link
+        actually offers are whatever the peer's providers advertise at negotiation. The row
+        states the floor: a link with no history degrades to no history rather than failing
+        (§24.5), which is why every capability here is false by default and raised only by what
+        the peer declares. §24.2 governs the timestamps — the remote source time is preserved
+        and never overwritten with the local ingest time — and §24.3 forbids composing the two
+        hosts into one total order.
+    spec: "§24.1, §24.2, §24.3, §24.5"
+
+  - id: "kuang:<package-id>/<provider-id>"
+    evidence_class: "kuang:<package-id>/<provider-id>"
+    provider: null
+    capabilities:
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: false
+      retained_history: null
+    coverage:
+      completeness: partial
+      sampled: true
+      derived_events_provenance: null
+      absence_proves: nothing
+      doc: >-
+        §37.5: a package may front an external historical store — a metrics backend, a tracing
+        backend, a runtime archive, an audit log — and MUST map what it returns into canonical
+        Ono objects and events with coverage and provenance. The row states the floor; what a
+        given package may claim is bounded by the capabilities it was granted
+        (`temporal.contribute.events`, `temporal.contribute.causality`, `temporal.read.history`)
+        and by §37.4's ceiling of `asserted` on contributed causal strength. The host stamps the
+        source id, so a package cannot present its claims as a built-in provider's.
+    spec: "§37.2, §37.4, §37.5, §30.7"
+
+# ---------------------------------------------------------------------------------------------
+# The two §21 rules that are prohibitions, restated as checks so a future row cannot drift past
+# them without a reviewer noticing.
+# ---------------------------------------------------------------------------------------------
+claim_rules:
+  - id: exhaustive_events_is_a_contract
+    doc: >-
+      §21.5: `exhaustive_events` means sequence continuity can support absence and change claims
+      for the declared capability. A source claiming it is asserting that Ono may say "this did
+      not happen". Only `ono.session` claims it here, for the one capability it is the sole
+      authority for. A polled source may never claim it, and neither may a live source that can
+      drop messages.
+    spec: "§21.5, §7.4"
+  - id: procfs_is_not_historical
+    doc: >-
+      §22.1: the reference procfs provider MUST NOT claim native historical process coverage.
+      Process history on a default installation comes from the recorder comparing snapshots, and
+      it is labelled as such: provenance `snapshot_diff`, coverage stating the polling interval.
+    spec: "§22.1"
+  - id: failure_is_coverage_loss
+    doc: >-
+      §21.8: a temporal provider failure MUST produce coverage loss, not a silently frozen last
+      known state presented as current history. A source that stops answering emits
+      `coverage.ended` with a gap reason from `evidence.yaml`.
+    spec: "§21.8, §7.5"
+
+# ---------------------------------------------------------------------------------------------
+# The errors this registry names (§36.4).
+# ---------------------------------------------------------------------------------------------
+errors:
+  - temporal.unsupported_source
+  - temporal.coverage_gap
+  - temporal.clock_uncertain

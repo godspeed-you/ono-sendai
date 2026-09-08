@@ -28,6 +28,18 @@ providers:
     conformance:
       package: enumerable
       package-source: enumerable
+    temporal:
+      # The database as it is now. dpkg and rpm both keep an install log, and this provider reads
+      # neither, so it claims no history — the log is a source somebody could add, not one that is
+      # already answering (§21.1).
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+      coverage: snapshot
 
   - id: linux.packages.rpm
     doc: >-
@@ -42,3 +54,15 @@ providers:
     conformance:
       package: enumerable
       package-source: enumerable
+    temporal:
+      # The database as it is now. dpkg and rpm both keep an install log, and this provider reads
+      # neither, so it claims no history — the log is a source somebody could add, not one that is
+      # already answering (§21.1).
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+      coverage: snapshot

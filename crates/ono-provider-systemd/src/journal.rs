@@ -20,7 +20,10 @@ use std::sync::Arc;
 use ono_adapter::{Adapter, Decoding, Trace};
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, StreamSink, ValueStream};
-use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Risk, Selector};
+use ono_provider_api::{
+    Availability, Capability, ObjectRef, Provider, Query, Risk, Selector, TemporalCapabilities,
+    TimeWindow,
+};
 use ono_value::{ErrorValue, Provenance, RecordValue, Schema, SchemaId, Value, builtin_schemas};
 use tokio::io::AsyncReadExt;
 
@@ -399,6 +402,42 @@ impl Provider for JournalProvider {
             Ok(_) => Availability::Available,
             Err(error) => Availability::unavailable(error.message().to_owned()),
         }
+    }
+
+    fn temporal(&self) -> TemporalCapabilities {
+        TemporalCapabilities {
+            current_snapshot: true,
+            // `--follow` is a query option rather than a subscription: the runtime asks for a
+            // live tail, this provider does not push one (§21.3).
+            live_events: false,
+            // The journal is the one source in this tree that genuinely keeps the past: it
+            // answers `--since`/`--until` about events it recorded before it was asked (§22.3).
+            historical_query: true,
+            // §21.5: the journal drops messages under rate limiting and a volatile journal is
+            // lost at reboot, so its sequence cannot carry an absence claim.
+            exhaustive_events: false,
+            causal_tokens: false,
+            // A journal is a stream of what happened, never a snapshot of object state, so
+            // there is nothing here to serialise into a checkpoint (§21.7).
+            checkpointable: false,
+            // The journal's retention is `journald.conf`'s to state and this provider does not
+            // read it; an unknown bound stays unknown rather than becoming "forever".
+            retained_history: None,
+        }
+    }
+
+    fn history(&self, query: &Query, window: &TimeWindow) -> Result<ValueStream, ErrorValue> {
+        // The journal answers about the past through the same call that answers about now; the
+        // window is the query's `--since` and `--until`. An end the caller left open is left
+        // open here too, rather than filled in from a clock this provider must not read.
+        let mut bounded = query.clone();
+        if let Some(from) = window.from {
+            bounded = bounded.option("since", Value::Timestamp(from));
+        }
+        if let Some(until) = window.until {
+            bounded = bounded.option("until", Value::Timestamp(until));
+        }
+        self.snapshot(&bounded)
     }
 
     fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {

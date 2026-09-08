@@ -139,6 +139,7 @@ pub struct ActionOutcome {
     changed: bool,
     message: Option<String>,
     error: Option<ErrorValue>,
+    metadata: Vec<(String, Value)>,
 }
 
 impl ActionOutcome {
@@ -153,6 +154,7 @@ impl ActionOutcome {
             changed,
             message: None,
             error: None,
+            metadata: Vec::new(),
         }
     }
 
@@ -167,6 +169,7 @@ impl ActionOutcome {
             changed: false,
             message: Some(why.into()),
             error: None,
+            metadata: Vec::new(),
         }
     }
 
@@ -181,7 +184,21 @@ impl ActionOutcome {
             changed: false,
             message: Some(error.message().to_owned()),
             error: Some(error),
+            metadata: Vec::new(),
         }
+    }
+
+    /// Records something the answering system said about the action beyond its result.
+    ///
+    /// The key is namespaced by the authority that issued the value — `systemd.job` for the job
+    /// path `StartUnit` answered with. Spec v0.5 §17.3 requires the ledger to record the mapping
+    /// from Ono's own `ActionId` to an external transaction id where the authority returns one,
+    /// and this is where a provider hands that id up: an outcome is the only thing a mutation
+    /// produces, so an identity that is not on it is an identity that was thrown away.
+    #[must_use]
+    pub fn with_metadata(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.metadata.push((key.into(), value));
+        self
     }
 
     /// Which object it was.
@@ -233,7 +250,26 @@ impl ActionOutcome {
         self.error.as_ref()
     }
 
+    /// Everything the answering system said beyond the result, in the order it was recorded.
+    #[must_use]
+    pub fn metadata(&self) -> &[(String, Value)] {
+        &self.metadata
+    }
+
+    /// One metadata value by its namespaced key, if the provider recorded it.
+    #[must_use]
+    pub fn metadata_value(&self, key: &str) -> Option<&Value> {
+        self.metadata
+            .iter()
+            .find(|(candidate, _)| candidate == key)
+            .map(|(_, value)| value)
+    }
+
     /// The outcome as the `ActionResult` record that flows through a pipeline (spec §11.5).
+    ///
+    /// `ActionResult` is what a user reads, and it carries no metadata: an external transaction
+    /// identity is evidence for the ledger rather than a column in a result table. Whatever needs
+    /// [`ActionOutcome::metadata`] reads it from the outcome, before this conversion.
     #[must_use]
     pub fn into_record(self, duration: ono_value::Duration) -> ActionResult {
         // The reference names the identity, which is what `inspect` resolves, and the label a

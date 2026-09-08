@@ -243,6 +243,21 @@ capabilities! {
             enforcement: Enforcement::Advisory,
         }],
         "Changing state in the external system a provider package fronts (ADR-0594).";
+    TemporalReadCurrent => "temporal.read.current", Read, None, [],
+        "Reading the present temporal context: whether the session is historical, and at which instant (v0.5 §30.7).";
+    TemporalReadHistory => "temporal.read.history", Read, None,
+        [broker("window", ScopeKind::Window)],
+        "Reading recorded events and reconstructed past state within the scoped window (v0.5 §30.7).";
+    TemporalReadEvidence => "temporal.read.evidence", Read, None, [],
+        "Reading the evidence records and coverage behind a temporal claim (v0.5 §7.3, §30.7).";
+    TemporalContributeEvents => "temporal.contribute.events", Mutate, None,
+        [broker("kinds", ScopeKind::NameList)],
+        "Contributing canonical temporal events of the scoped kinds, attributed to the package by the host (v0.5 §37.3).";
+    TemporalContributeCausality => "temporal.contribute.causality", Mutate, None,
+        [broker("rules", ScopeKind::IdList)],
+        "Registering namespaced causal rules and contributing the causal links they produce (v0.5 §37.4).";
+    TemporalRecorderManage => "temporal.recorder.manage", Mutate, None, [],
+        "Starting and stopping the persistent history recorder (v0.5 §10.3, §30.7).";
 }
 
 impl Capability {
@@ -348,9 +363,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn should_carry_all_30_families_of_the_registry_when_enumerated() {
-        // §31.16's twenty-nine, and `provider.mutate` (ADR-0594).
-        assert_eq!(Capability::ALL.len(), 30);
+    fn should_carry_all_36_families_of_the_registry_when_enumerated() {
+        // §31.16's twenty-nine, `provider.mutate` (ADR-0594), and v0.5 §30.7's six temporal
+        // families (ADR-0626).
+        assert_eq!(Capability::ALL.len(), 36);
     }
 
     #[test]

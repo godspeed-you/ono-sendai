@@ -8,7 +8,7 @@ use ono_value::{ErrorValue, Schema};
 
 use crate::{
     Action, ActionOutcome, Availability, EventStream, ObjectId, ObjectRef, Provider, Query,
-    Selector,
+    Selector, TemporalCapabilities, TimeWindow,
 };
 
 /// The providers this shell knows about.
@@ -116,6 +116,30 @@ impl ProviderRegistry {
     /// cannot watch.
     pub fn subscribe(&self, query: &Query) -> Result<EventStream, ErrorValue> {
         self.provider_for(query.target_name())?.subscribe(query)
+    }
+
+    /// What the provider that would answer about `target` claims about time (v0.5 §21.1).
+    ///
+    /// The registry reports the claim; it never widens it. A registry that added a capability
+    /// its provider does not implement would be the shell inventing coverage, which is what
+    /// §7.4 and §21.5 exist to forbid.
+    ///
+    /// # Errors
+    ///
+    /// See [`ProviderRegistry::provider_for`].
+    pub fn temporal_of(&self, target: &str) -> Result<TemporalCapabilities, ErrorValue> {
+        Ok(self.provider_for(target)?.temporal())
+    }
+
+    /// The objects or events matching `query` as they were within `window` (v0.5 §21.4).
+    ///
+    /// # Errors
+    ///
+    /// See [`ProviderRegistry::provider_for`], plus `temporal.unsupported_source` when the
+    /// provider that answers for the target keeps no history.
+    pub fn history(&self, query: &Query, window: &TimeWindow) -> Result<ValueStream, ErrorValue> {
+        self.provider_for(query.target_name())?
+            .history(query, window)
     }
 
     /// The objects a selector names within `target`.

@@ -8,8 +8,8 @@ use std::process::{Command, ExitCode};
 
 use xtask::{
     architecture, baseline, bindings, conformance, contracts, metrics as repo_metrics, narrative,
-    notices, perf, provenance, reference, reproducibility, scan, supply_chain, terminology,
-    verification,
+    notices, perf, provenance, reference, reproducibility, scan, supply_chain, temporal,
+    terminology, verification,
 };
 
 fn main() -> ExitCode {
@@ -680,6 +680,7 @@ fn spec_check() -> ExitCode {
             .chain(terminology::check_documents(&root))
             .chain(terminology::check_decisions(&root))
             .chain(architecture::check(&root))
+            .chain(temporal::check(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 

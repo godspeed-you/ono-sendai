@@ -22,6 +22,11 @@ use ono_value::{Provenance, RecordValue, SchemaId, Value, builtin_schemas};
 
 /// One `ono.socket-event/1` exactly as the v0.2 watch runtime writes it (ADR-0024).
 fn watch_event(kind: &str, source: &str, inode: i128) -> Value {
+    watch_event_at(kind, source, inode, Timestamp::UNIX_EPOCH)
+}
+
+/// The same envelope, observed at a stated instant.
+fn watch_event_at(kind: &str, source: &str, inode: i128, at: Timestamp) -> Value {
     let schema = builtin_schemas()
         .get(&SchemaId::new("ono.socket-event", 1))
         .expect("the workspace carries the socket event contract");
@@ -41,7 +46,7 @@ fn watch_event(kind: &str, source: &str, inode: i128) -> Value {
     )
     .set("kind", Value::string(kind))
     .expect("`kind` is a declared field")
-    .set("at", Value::Timestamp(Timestamp::UNIX_EPOCH))
+    .set("at", Value::Timestamp(at))
     .expect("`at` is a declared field")
     .set("socket", Value::Record(Arc::new(object)))
     .expect("`socket` is a declared field")
@@ -165,5 +170,121 @@ fn should_name_a_removal_as_a_removal_so_the_place_can_be_tombstoned() {
     assert!(
         observed.object().is_some(),
         "spec §10.3: a tombstone needs the object as it last was, so the removal carries it"
+    );
+}
+
+/// The same envelope as [`watch_event`], with the observation time left out.
+///
+/// v0.5 §3.3 keeps source time, observed time and ingestion time apart and forbids collapsing
+/// them, so a stream that states no time must produce an event that states no time.
+fn watch_event_without_time(kind: &str, source: &str) -> Value {
+    let schema = builtin_schemas()
+        .get(&SchemaId::new("ono.socket-event", 1))
+        .expect("the workspace carries the socket event contract");
+    let event = RecordValue::builder(
+        schema,
+        Provenance::local("ono.runtime", SchemaId::new("ono.socket-event", 1)),
+    )
+    .set("kind", Value::string(kind))
+    .expect("`kind` is a declared field")
+    .set("source", Value::string(source))
+    .expect("`source` is a declared field")
+    .build();
+    Value::Record(Arc::new(event))
+}
+
+/// The `changed` envelope of v0.2 §18.2: the names of the fields whose values moved.
+fn changed_event(fields: Option<Vec<&str>>) -> Value {
+    let schema = builtin_schemas()
+        .get(&SchemaId::new("ono.socket-event", 1))
+        .expect("the workspace carries the socket event contract");
+    let mut event = RecordValue::builder(
+        schema,
+        Provenance::local("ono.runtime", SchemaId::new("ono.socket-event", 1)),
+    )
+    .set("kind", Value::string("changed"))
+    .expect("`kind` is a declared field")
+    .set("at", Value::Timestamp(Timestamp::UNIX_EPOCH))
+    .expect("`at` is a declared field")
+    .set("source", Value::string("poll"))
+    .expect("`source` is a declared field");
+    if let Some(fields) = fields {
+        event = event
+            .set(
+                "changed",
+                Value::list(fields.into_iter().map(Value::string).collect::<Vec<_>>()),
+            )
+            .expect("`changed` is a declared field");
+    }
+    Value::Record(Arc::new(event.build()))
+}
+
+#[test]
+fn should_carry_the_observation_time_when_the_envelope_states_one() {
+    // v0.5 §3.3: an event's `observed_at` is when the observing component detected it. The watch
+    // envelope has carried it since v0.2 §18.2; throwing it away leaves a change nothing
+    // downstream can place in time without inventing a timestamp.
+    let mut merge = EventMerge::new();
+    let at = Timestamp::from_second(1_756_000_000).expect("a representable instant");
+
+    let observed = merge
+        .absorb(&watch_event_at("added", "poll", 4711, at))
+        .expect("an `ono.socket-event/1` record is an event this merge understands");
+
+    assert_eq!(
+        observed.at(),
+        Some(at),
+        "spec v0.5 §3.3: the instant the provider saw it is the event's own, not a later one"
+    );
+}
+
+#[test]
+fn should_report_no_observation_time_when_the_envelope_states_none() {
+    // v0.5 §3.3: an absent observation time is a fact. Substituting one would make the ledger
+    // claim knowledge no source supplied.
+    let mut merge = EventMerge::new();
+
+    let observed = merge
+        .absorb(&watch_event_without_time("added", "poll"))
+        .expect("an envelope without `at` is still an event");
+
+    assert_eq!(
+        observed.at(),
+        None,
+        "spec v0.5 §3.3: an event with no stated time says so rather than borrowing one"
+    );
+}
+
+#[test]
+fn should_carry_the_changed_field_names_the_envelope_lists() {
+    // v0.5 §6.2: `object.changed` carries typed field changes where known, and v0.2 §18.2's
+    // `changed` is exactly that list of names.
+    let mut merge = EventMerge::new();
+
+    let observed = merge
+        .absorb(&changed_event(Some(vec!["state", "queue"])))
+        .expect("a `changed` envelope is an event");
+
+    assert_eq!(
+        observed.changed_fields(),
+        ["state", "queue"],
+        "spec v0.5 §6.2: the fields whose values moved travel with the event"
+    );
+}
+
+#[test]
+fn should_report_no_changed_fields_when_the_envelope_lists_none() {
+    // v0.2 §18.2: `changed` is null for every kind but `changed`. An empty list is the honest
+    // answer, and §35.3 forbids fabricating names for it.
+    let mut merge = EventMerge::new();
+
+    let observed = merge
+        .absorb(&changed_event(None))
+        .expect("an envelope without `changed` is still an event");
+
+    assert!(
+        observed.changed_fields().is_empty(),
+        "spec v0.2 §18.2: no field list is an empty field list, got {:?}",
+        observed.changed_fields()
     );
 }

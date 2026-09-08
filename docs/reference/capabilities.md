@@ -131,3 +131,9 @@ Two vocabularies that are not the same thing. A **provider capability** is what 
 | `state.persist` | mutate | none | Store extension state across sessions (spec §31.31). |
 | `clock.read` | read | none | Read the wall clock. |
 | `provider.mutate` | mutate | none | Change state in the external system a provider package fronts. |
+| `temporal.read.current` | read | none | Read the present temporal context — whether the session is historical, and at which instant. |
+| `temporal.read.history` | read | none | Read recorded history and reconstructed past state, within the granted window. |
+| `temporal.read.evidence` | read | none | Read the evidence records and coverage behind a temporal claim. |
+| `temporal.contribute.events` | mutate | none | Contribute canonical temporal events of the granted kinds. |
+| `temporal.contribute.causality` | mutate | none | Register namespaced causal rules and contribute the causal links they produce. |
+| `temporal.recorder.manage` | mutate | none | Start and stop the persistent history recorder. |

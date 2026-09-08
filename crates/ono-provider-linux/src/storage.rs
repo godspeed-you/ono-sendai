@@ -1197,7 +1197,11 @@ impl StorageProvider {
             },
         };
         match bus.queue_job(&unit, job).await {
-            Ok(()) => ActionOutcome::succeeded(action, true),
+            // The mount unit's job is the service manager's transaction identity for this
+            // mutation, and it travels on the outcome for the same reason a service job does
+            // (v0.5 §17.3).
+            Ok(queued) => ActionOutcome::succeeded(action, true)
+                .with_metadata("systemd.job", Value::string(&queued.path)),
             Err(error) => ActionOutcome::failed(action, error.into_error()),
         }
     }

@@ -1,0 +1,64 @@
+# Canonical TemporalHistory schema. Source: v0.5 §30.8 (`remove temporal-history` is destructive
+# and uses the existing destructive-operation confirmation policy, and `temporal-history` is the
+# canonical target name), §30.9 (v0.5 supports full local ledger removal plus retention expiry,
+# and no selective event editing), §30.1 and §30.2 (the user must know how much is retained and
+# under which file permissions), §10.4 (the retention policy) and §31.1 (one local store).
+#
+# This is what `remove temporal-history` acts on and what `get temporal-history` shows before it:
+# a destructive command that cannot state the size of what it destroys is a command nobody should
+# confirm.
+#
+# There is one local ledger, so the record declares no identity of its own.
+id: ono.temporal-history/1
+name: TemporalHistory
+summary: The retained local temporal ledger — where it is, how large it is, what it spans and under which policy.
+identity: []
+fields:
+  store:
+    type: path
+    required: true
+    doc: >-
+      Where the retained history lives, so §30.2's file permissions are checkable and the target
+      of a destructive removal is unambiguous.
+  size:
+    type: bytesize
+    required: true
+    doc: How much space it occupies now.
+  events:
+    type: int
+    required: true
+    doc: How many events it holds.
+  earliest:
+    type: timestamp
+    nullable: true
+    doc: The earliest retained instant. Null when the ledger holds nothing.
+  latest:
+    type: timestamp
+    nullable: true
+    doc: The most recent retained instant. Null when the ledger holds nothing.
+  max_age:
+    type: duration
+    required: true
+    doc: "The `temporal.retention.max_age` in force — 24h by default (§10.4)."
+  max_size:
+    type: bytesize
+    required: true
+    doc: "The `temporal.retention.max_size` in force — 512MiB by default (§10.4)."
+  expired:
+    type: int
+    required: true
+    doc: >-
+      How many events retention has already removed (§10.4). The count is what turns an expired
+      interval into a `retention_expired` gap rather than into silence (§7.5).
+  scopes:
+    type: list<string>
+    required: true
+    doc: >-
+      The v0.4 §3.2 boundaries the ledger holds history for. §30.9 does not offer selective
+      removal, so this is a statement of what removal would take.
+  provenance:
+    type: record
+    required: true
+    doc: Where the answer came from (v0.2 §25.2).
+default_view:
+  columns: [store, size, events, earliest, latest]

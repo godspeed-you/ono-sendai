@@ -1,0 +1,74 @@
+# Canonical Timeline schema. Source: v0.5 §11.1 (a timeline is the temporal counterpart of the
+# map), §11.3 (default scope is the current place and its immediate relationships), §11.4
+# (`timeline` returns a stream of events, and the renderer is only a presentation), §11.7 (a
+# material coverage gap in a visible interval MUST be shown and "MUST not be hidden simply
+# because events exist on both sides"), §11.8 (in historical context the window centres on that
+# time) and §19.2 (the full-screen layout a renderer draws from this).
+#
+# This record is the framing `timeline` puts around that stream: the window, the place it is
+# scoped to, the coverage behind it and the gaps inside it. The events remain
+# `ono.temporal-event/1` so §11.4's `timeline --since 1h | where kind == "object.changed"` is an
+# ordinary pipeline over ordinary values.
+#
+# A timeline is a computed view rather than a stored object, so it declares no identity.
+id: ono.temporal-timeline/1
+name: Timeline
+summary: A window of events for a place, with the coverage that backs it and the gaps inside it.
+identity: []
+fields:
+  scope:
+    type: string
+    required: true
+    doc: The v0.4 §3.2 boundary the timeline covers, rendered `<kind>:<id>`.
+  place:
+    type: string
+    nullable: true
+    doc: >-
+      The `spatial_id` of the place the timeline is scoped to (§11.3). Null for a timeline that
+      was asked for across a scope rather than at a place.
+  place_label:
+    type: string
+    nullable: true
+    doc: What a person calls that place, so a rendered header needs no second lookup. Null with `place`.
+  from:
+    type: timestamp
+    required: true
+    doc: The start of the window (§11.8).
+  until:
+    type: timestamp
+    required: true
+    doc: The end of the window.
+  centre:
+    type: timestamp
+    nullable: true
+    doc: >-
+      The instant the window is centred on — the active historical context, where there is one
+      (§11.8). Null for a window anchored to its own ends.
+  events:
+    type: list<ono.temporal-event/1>
+    required: true
+    doc: >-
+      The events in the window, in presentation order (§26.3). Presentation order is a stable
+      display order and makes no ordering claim; `inspect` is where ordering evidence is stated.
+  gaps:
+    type: list<ono.temporal-gap/1>
+    required: true
+    doc: >-
+      The coverage gaps inside the window (§11.7). A renderer draws each one as a break in the
+      timeline; an empty list means the window is covered, not that gaps were left out.
+  coverage:
+    type: record
+    required: true
+    doc: The composed coverage summary over the window (§8.5).
+  truncated:
+    type: bool
+    required: true
+    doc: >-
+      Whether the event list was cut by a limit rather than by the window (§19.4's density
+      handling). A reader must be able to tell a quiet interval from a truncated one.
+  provenance:
+    type: record
+    required: true
+    doc: Where the answer came from (v0.2 §25.2).
+default_view:
+  columns: [place_label, from, until, truncated]

@@ -1,0 +1,90 @@
+# Canonical temporal Evidence schema. Source: v0.5 §3.4 (the field list, and the rule that raw
+# log content and secret-bearing payloads MUST NOT be copied into evidence for convenience),
+# §7.1 (the nine source classes), §7.2 (the five strengths, which nothing may upgrade), §7.3
+# (a derived claim references what it derives from) and §7.6 (the ledger retains references and
+# parsed structured facts rather than duplicated raw logs).
+#
+# The name is `ono.temporal-evidence/1` rather than §35's `ono.evidence/1` because that id is
+# already the shipped finding-evidence schema of v0.2 §31.24, and two different shapes cannot
+# share one id (ADR-0611).
+#
+# Identity is `evidence_id`: §7.3's chains are references to it, and `inspect --provenance` walks
+# them.
+id: ono.temporal-evidence/1
+name: TemporalEvidence
+summary: One inspectable observation, with the source that made it and the strength Ono may claim for it.
+identity: [evidence_id]
+fields:
+  evidence_id:
+    type: string
+    required: true
+    doc: The stable identity a chain and an event's `evidence` list refer to, rendered `@v<hex>`.
+  source:
+    type: string
+    required: true
+    doc: >-
+      The §7.1 source class — `ono.recorder`, `linux.journald`, `adapter:ps`,
+      `remote:<link>/<provider>`, `kuang:<package>/<provider>`. Sources have stable inspectable
+      identity, so this is a name a reader can go and check.
+  observed_at:
+    type: timestamp
+    required: true
+    doc: When the observing component made the observation.
+  source_time:
+    type: timestamp
+    nullable: true
+    doc: When the source says the fact held. Null where the source gave no time of its own.
+  scope:
+    type: string
+    required: true
+    doc: The v0.4 §3.2 boundary the claim is about, rendered `<kind>:<id>`.
+  subject:
+    type: string
+    nullable: true
+    doc: The `spatial_id` the claim is about. Null for evidence about no single object.
+  claim_kind:
+    type: enum
+    required: true
+    values:
+      - object_existed
+      - object_absent
+      - field_value
+      - relation_held
+      - transition
+      - transaction
+      - source_statement
+    doc: >-
+      What sort of claim this is. `object_absent` is the negative claim §7.4 guards: it is worth
+      recording only where the source had coverage capable of proving it.
+  claim:
+    type: record
+    required: true
+    doc: >-
+      The claim itself, in the shape its kind fixes — the field and value for `field_value`, the
+      relation and the other end for `relation_held`, the token for `transaction`.
+  strength:
+    type: enum
+    required: true
+    values: [authoritative, asserted, derived, correlated, observational]
+    doc: >-
+      §7.2's strength, strongest first. "Evidence strength MUST NOT be automatically upgraded by
+      renderers, AI assistants or plugins", and no API in Ono raises one.
+  raw_ref:
+    type: record
+    nullable: true
+    doc: >-
+      A provider-owned handle the user may explicitly inspect — a journal cursor, a segment
+      reference (§3.4, §7.6). Never a copied log body and never a secret-bearing payload. Null
+      where the source owns nothing further to show.
+  derived_from:
+    type: list<string>
+    required: true
+    doc: >-
+      The evidence this claim was derived from (§7.3). Non-empty for `derived` strength: a
+      derived claim that cites nothing is a claim with no chain to walk.
+  provenance:
+    type: record
+    required: true
+    doc: Where the record came from (v0.2 §25.2).
+default_view:
+  columns: [evidence_id, source, claim_kind, strength, observed_at]

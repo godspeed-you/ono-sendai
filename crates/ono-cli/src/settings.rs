@@ -13,7 +13,7 @@ use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
 use ono_core::ErrorCode;
-use ono_value::{ByteSize, ErrorValue, Provenance, RecordValue, SchemaId, Value};
+use ono_value::{ByteSize, Duration, ErrorValue, Provenance, RecordValue, SchemaId, Value};
 
 /// Which of ADR-0010's five layers a value came from, in override order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -55,6 +55,13 @@ pub enum SettingType {
     String,
     /// A byte size such as `64MiB`.
     ByteSize,
+    /// A span of time such as `24h`, `5m` or `100ms`.
+    ///
+    /// v0.5 §33 spells its retention, checkpoint and flush settings as durations, and a
+    /// duration written as an integer of milliseconds would put the unit in the key name
+    /// instead of the type. The value model already carries `Duration`, so the catalogue
+    /// carries it too.
+    Duration,
 }
 
 impl SettingType {
@@ -66,6 +73,7 @@ impl SettingType {
             SettingType::Bool => "bool",
             SettingType::String => "string",
             SettingType::ByteSize => "bytesize",
+            SettingType::Duration => "duration",
         }
     }
 
@@ -77,6 +85,7 @@ impl SettingType {
                 | (SettingType::Bool, Value::Bool(_))
                 | (SettingType::String, Value::String(_))
                 | (SettingType::ByteSize, Value::ByteSize(_) | Value::Int(_))
+                | (SettingType::Duration, Value::Duration(_))
         )
     }
 
@@ -95,6 +104,7 @@ impl SettingType {
                 .ok()
                 .map(Value::ByteSize)
                 .or_else(|| word.parse().ok().map(Value::Int)),
+            SettingType::Duration => Duration::parse(word).ok().map(Value::Duration),
         }
     }
 }
@@ -106,6 +116,7 @@ enum DefaultValue {
     Bool(bool),
     Str(&'static str),
     Bytes(u128),
+    Nanos(i128),
 }
 
 impl DefaultValue {
@@ -115,6 +126,9 @@ impl DefaultValue {
             DefaultValue::Bool(flag) => Value::Bool(flag),
             DefaultValue::Str(text) => Value::string(text),
             DefaultValue::Bytes(bytes) => Value::ByteSize(ByteSize::from_bytes(bytes)),
+            DefaultValue::Nanos(nanoseconds) => {
+                Value::Duration(Duration::from_nanoseconds(nanoseconds))
+            }
         }
     }
 }
@@ -507,6 +521,96 @@ pub const CATALOGUE: &[SettingSpec] = &[
             max: 600000,
         }),
     },
+    // --- the temporal settings of v0.5 §33 ----------------------------------------------------
+    // Declared here and in `docs/contracts/temporal/temporal.yaml`, which
+    // `xtask/src/temporal.rs::check` compares against this catalogue on key, type and default in
+    // both directions (§36.4). Ranges are deliberately absent: v0.4.1 §55.2 makes range checking
+    // mandatory for the `limits.*` family, whose values are security boundaries, and these are
+    // not that family (ADR-0625).
+    SettingSpec {
+        key: "temporal.recording.enabled",
+        ty: SettingType::Bool,
+        description: "Whether the recorder persists system history across sessions (v0.5 §10.2, §33). Disabled by default, and §10.2 makes that a contract: a shell that retains history without being asked is surveillance.",
+        default: DefaultValue::Bool(false),
+        range: None,
+    },
+    SettingSpec {
+        key: "temporal.retention.max_age",
+        ty: SettingType::Duration,
+        description: "The oldest data the temporal ledger keeps (v0.5 §10.4, §33). Raising it bounds future history and resurrects none.",
+        default: DefaultValue::Nanos(86_400_000_000_000),
+        range: None,
+    },
+    SettingSpec {
+        key: "temporal.retention.max_size",
+        ty: SettingType::ByteSize,
+        description: "The size ceiling of the temporal ledger; retention removes the oldest eligible data when either this or the age ceiling is exceeded (v0.5 §10.4, §33).",
+        default: DefaultValue::Bytes(536_870_912),
+        range: None,
+    },
+    SettingSpec {
+        key: "temporal.checkpoint.interval",
+        ty: SettingType::Duration,
+        description: "How often the recorder writes a checkpoint for its configured scopes (v0.5 §10.4, §33). A checkpoint bounds reconstruction cost, so this is the trade between store size and how long `at` takes to answer.",
+        default: DefaultValue::Nanos(300_000_000_000),
+        range: None,
+    },
+    SettingSpec {
+        key: "temporal.flush.interval",
+        ty: SettingType::Duration,
+        description: "How long an event may sit unflushed (v0.5 §10.4, §33). It bounds what a crash loses, and §44.1 makes that loss a coverage gap rather than a silence.",
+        default: DefaultValue::Nanos(2_000_000_000),
+        range: None,
+    },
+    SettingSpec {
+        key: "temporal.session.max_events",
+        ty: SettingType::Int,
+        description: "The bound on the in-memory session ledger that exists even without the recorder (v0.5 §10.7, §33). The ledger is discarded at session end.",
+        default: DefaultValue::Int(100_000),
+        range: None,
+    },
+    SettingSpec {
+        key: "temporal.timeline.default_window",
+        ty: SettingType::Duration,
+        description: "How far back a bare `timeline` reaches in present context (v0.5 §11.3, §33). In historical context the window centres on the active instant instead (§11.8).",
+        default: DefaultValue::Nanos(1_800_000_000_000),
+        range: None,
+    },
+    SettingSpec {
+        key: "temporal.timeline.default_depth",
+        ty: SettingType::Int,
+        description: "How many causal hops `why` follows before it stops and says there is more (v0.5 §16.7, §33).",
+        default: DefaultValue::Int(3),
+        range: None,
+    },
+    SettingSpec {
+        key: "temporal.why.max_candidates",
+        ty: SettingType::Int,
+        description: "How many candidate events one causal query considers before it stops and reports that it stopped (v0.5 §33).",
+        default: DefaultValue::Int(1000),
+        range: None,
+    },
+    SettingSpec {
+        key: "temporal.remote.clock_uncertainty_warn",
+        ty: SettingType::Duration,
+        description: "The clock-offset estimate above which a remote event's ordering is rendered as uncertain rather than asserted (v0.5 §24.4, §33).",
+        default: DefaultValue::Nanos(100_000_000),
+        range: None,
+    },
+    SettingSpec {
+        key: "temporal.record.process_argv",
+        ty: SettingType::Bool,
+        description: "Whether the recorder persists full process argv (v0.5 §30.4, §33). Off by default because argv carries secrets; turning it on changes what the ledger contains.",
+        default: DefaultValue::Bool(false),
+        range: None,
+    },
+    SettingSpec {
+        key: "temporal.ui.show_source_tags",
+        ty: SettingType::Bool,
+        description: "Whether a rendered event carries its source tag (v0.5 §33, §45.2). On by default: the source is how a reader tells an observation from a composition.",
+        default: DefaultValue::Bool(true),
+        range: None,
+    },
 ];
 
 /// The declaration of `key`, if there is one.
@@ -810,6 +914,7 @@ fn magnitude_of(value: &Value) -> Option<i128> {
     match value {
         Value::Int(number) => Some(*number),
         Value::ByteSize(size) => i128::try_from(size.bytes()).ok(),
+        Value::Duration(span) => Some(span.nanoseconds()),
         _ => None,
     }
 }
@@ -866,6 +971,7 @@ fn with_article(ty: SettingType) -> &'static str {
         SettingType::Bool => "a bool",
         SettingType::String => "a string",
         SettingType::ByteSize => "a bytesize",
+        SettingType::Duration => "a duration",
     }
 }
 

@@ -1,0 +1,149 @@
+# Canonical TemporalEvent schema. Source: v0.5 §35.1 (the required field list), §3.3 (the three
+# timestamps that MUST NOT be silently collapsed into one), §6.1 (the seventeen top-level kinds
+# and the namespaced `subtype` a provider or plugin may refine one with), §6.2 (`FieldChange`),
+# §5.5 (a subject a source named but Ono could not reconcile stays an unresolved temporal
+# subject), §25.1 and §25.5 (wall clock, monotonic clock and the boot identity that separates
+# clock domains) and §26 (ordering evidence is what a reader needs to see, so the fields that
+# carry it travel with the event).
+#
+# Identity is `event_id` alone: it is already the content digest of the observation (ADR-0620),
+# so two reports of one observation carry one id and §6.8's deduplication is a property of
+# identity rather than of comparing rendered rows.
+id: ono.temporal-event/1
+name: TemporalEvent
+summary: One typed temporal record — a change, an observation or an action — with its evidence, its clock domain and the identity it happened to.
+identity: [event_id]
+fields:
+  event_id:
+    type: string
+    required: true
+    doc: >-
+      The stable content identity of §3.3, rendered `@e<hex>`. §11.6 requires it to be usable in
+      a later command — `inspect event @e42`, `at event @e42`, `why event @e42`.
+  kind:
+    type: enum
+    required: true
+    values:
+      - object.observed
+      - object.appeared
+      - object.changed
+      - object.disappeared
+      - relation.added
+      - relation.removed
+      - action.requested
+      - action.authorized
+      - action.executed
+      - action.completed
+      - action.failed
+      - provider.event
+      - coverage.started
+      - coverage.ended
+      - checkpoint.created
+      - landmark.added
+      - landmark.removed
+    doc: The top-level class of §6.1. The list is closed; a provider refines it in `subtype`.
+  subtype:
+    type: string
+    nullable: true
+    doc: >-
+      §6.1's namespaced provider or plugin refinement, such as `linux.systemd.job-result`. Null
+      where the top-level kind says everything the source said.
+  scope:
+    type: string
+    required: true
+    doc: The v0.4 §3.2 boundary the event belongs to, rendered `<kind>:<id>` — `host:web01`.
+  subject:
+    type: record
+    nullable: true
+    doc: >-
+      What the event happened to. Either a resolved canonical identity — `spatial_id`,
+      `object_type`, `label` — or, per §5.5, an unresolved subject carrying only the source and
+      the text it used, so a guess is never dressed as an identity. Null for an event about no
+      single object.
+  related:
+    type: list<record>
+    required: true
+    doc: >-
+      Further subjects the event touches, in the same shape as `subject`: both ends of a relation
+      event (§6.4), the target of an action. Empty where there are none.
+  source_time:
+    type: timestamp
+    nullable: true
+    doc: When the source says the event happened (§3.3). Null where the source gave no time.
+  observed_at:
+    type: timestamp
+    required: true
+    doc: When the observing component received or detected it (§3.3).
+  ingested_at:
+    type: timestamp
+    required: true
+    doc: When it entered the Ono ledger (§3.3). Never a substitute for `source_time` (§24.2).
+  source_sequence:
+    type: int
+    nullable: true
+    doc: >-
+      The source's own sequence number within its stream, where it has one. §25.4 makes this the
+      ordering evidence that survives an NTP correction; wall time alone never orders (§26.1).
+  monotonic_nanos:
+    type: int
+    nullable: true
+    doc: >-
+      A monotonic reading in nanoseconds within this clock domain (§25.1). Comparable only against
+      another reading from the same `boot_id`, because monotonic clocks reset across boot (§25.5).
+  boot_id:
+    type: string
+    nullable: true
+    doc: >-
+      The boot the monotonic clock and the sequence belong to (§25.5). Null where the source
+      could not say which boot it is, which is itself a reason two events cannot be ordered.
+  host:
+    type: string
+    required: true
+    doc: >-
+      The host whose clock domain this event was timed in (§25.5, §26.4). Two events from
+      different hosts are concurrent unless the evidence chain actually crosses the boundary.
+  clock_uncertainty:
+    type: duration
+    nullable: true
+    doc: >-
+      How far the source's wall clock may be from this host's (§24.4). Null where no offset was
+      measured, which is not the same as a measured zero.
+  before:
+    type: value
+    nullable: true
+    doc: The subject's value before the change, where the evidence gives one (§3.3).
+  after:
+    type: value
+    nullable: true
+    doc: The subject's value after the change, where the evidence gives one (§3.3).
+  changed_fields:
+    type: list<record>
+    required: true
+    doc: >-
+      §6.2's typed field changes — `field`, `before`, `after`, `certainty`. Null on either side
+      means unknown and nothing else; §6.2 forbids overloading it (v0.2 §10.5). Empty for an
+      event that changed no field.
+  evidence:
+    type: list<string>
+    required: true
+    doc: The `ono.temporal-evidence/1` ids that support the event (§3.4, §7.3).
+  causal_parents:
+    type: list<string>
+    required: true
+    doc: The `ono.causal-link/1` ids whose effect is this event (§15).
+  payload:
+    type: value
+    nullable: true
+    doc: >-
+      The kind-specific body, typed and namespaced. For `provider.event` it is §6.5's
+      source-native information; for a relation event it carries the relation type and the
+      confidence §6.4 requires beside both ends; for an action event the `action_id` and the
+      lifecycle detail of §17.2; for a coverage event the capability, source and completeness or
+      reason of §8.1. `docs/contracts/temporal/events.yaml` states which per kind. Null where the
+      kind needs nothing beyond the common fields.
+  provenance:
+    type: record
+    required: true
+    doc: Where the record came from — provider, observation time, source and link (v0.2 §25.2).
+default_view:
+  columns: [observed_at, event_id, kind, subject]

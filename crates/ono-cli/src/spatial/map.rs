@@ -581,9 +581,26 @@ fn change_records(changes: Option<&ono_spatial_events::ChangeSet>) -> Result<Val
     let Some(changes) = changes else {
         return Ok(Value::list(Vec::new()));
     };
-    let observed_at = Timestamp::now();
     let mut rows = Vec::new();
     for change in changes.changes() {
+        // v0.5 §3.3: the observation time is the one the observation had. A change found by
+        // comparing two projections was seen at the later of them, and one a provider announced
+        // was seen when the provider said — reading the clock here would date the record by when
+        // it happened to be built rather than by when anything was observed.
+        let observed_at = change
+            .observed()
+            .latest()
+            .unwrap_or_else(|| changes.window().until());
+        // v0.5 §9.2: a change found by comparing two observations happened somewhere between
+        // them and nowhere more precise, so the earlier bound travels with the later one. A
+        // provider that announced the change stated the instant, and then there is no interval
+        // to state (ADR-0680).
+        let observed_since = match change.observed() {
+            ono_spatial_events::ObservedAt::Between { from, .. } => Value::Timestamp(from),
+            ono_spatial_events::ObservedAt::At(_) | ono_spatial_events::ObservedAt::Unknown => {
+                Value::Null
+            }
+        };
         let places: Vec<Value> = change
             .places()
             .map(|place| Value::string(&place.to_string()))
@@ -596,6 +613,7 @@ fn change_records(changes: Option<&ono_spatial_events::ChangeSet>) -> Result<Val
             .set("kind", Value::string(change.kind().as_str()))?
             .set("id", Value::string(change.subject()))?
             .set("observed_at", Value::Timestamp(observed_at))?
+            .set("observed_since", observed_since)?
             .set("label", Value::string(change.label()))?
             .set(
                 "reason",

@@ -18,7 +18,7 @@ use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
 use ono_provider_api::{
     Action, ActionOutcome, Availability, Capability, EventStream, ObjectEvent, ObjectRef, Provider,
-    Query, Risk, Selector,
+    Query, Risk, Selector, TemporalCapabilities, TimeWindow,
 };
 use ono_value::{
     ErrorValue, FieldDef, FieldType, Provenance, RecordValue, Schema, SchemaId, Value,
@@ -49,6 +49,9 @@ pub struct FixtureProvider {
     availability: Availability,
     subscribes: bool,
     violate: bool,
+    /// What the fixture claims about time. All-false unless a test turns a claim on, which is
+    /// the default every real provider starts from (v0.5 §21.1).
+    temporal: TemporalCapabilities,
 }
 
 impl FixtureProvider {
@@ -57,6 +60,7 @@ impl FixtureProvider {
             availability: Availability::Available,
             subscribes: true,
             violate: false,
+            temporal: TemporalCapabilities::snapshot_only(),
         }
     }
 
@@ -65,6 +69,7 @@ impl FixtureProvider {
             availability: Availability::unavailable(reason),
             subscribes: true,
             violate: false,
+            temporal: TemporalCapabilities::snapshot_only(),
         }
     }
 
@@ -75,6 +80,26 @@ impl FixtureProvider {
 
     pub fn emitting_a_violation(mut self) -> Self {
         self.violate = true;
+        self
+    }
+
+    /// A fixture that keeps history: it claims `historical_query` and answers one.
+    ///
+    /// The retention is stated too, because a source that answers about the past and says
+    /// nothing about how far back it goes has told only half the truth (v0.5 §21.1).
+    pub fn keeping_history(mut self, retained: ono_value::Duration) -> Self {
+        self.temporal = TemporalCapabilities {
+            historical_query: true,
+            retained_history: Some(retained),
+            ..TemporalCapabilities::snapshot_only()
+        };
+        self
+    }
+
+    /// A fixture that claims nothing at all about time, as a provider that never thought about
+    /// it does.
+    pub fn claiming_nothing_about_time(mut self) -> Self {
+        self.temporal = TemporalCapabilities::none();
         self
     }
 
@@ -127,6 +152,30 @@ impl Provider for FixtureProvider {
 
     fn availability(&self) -> Availability {
         self.availability.clone()
+    }
+
+    fn temporal(&self) -> TemporalCapabilities {
+        self.temporal
+    }
+
+    fn history(&self, _query: &Query, _window: &TimeWindow) -> Result<ValueStream, ErrorValue> {
+        if !self.temporal.historical_query {
+            // The same refusal a provider that never overrode `history` answers with: a
+            // fixture that answered anyway would be claiming what it did not advertise.
+            return Err(ono_provider_api::unsupported_history(self.id()));
+        }
+        let widgets = self.widgets();
+        Ok(ValueStream::spawn(
+            PipelineConfig::new(),
+            Boundedness::Bounded,
+            move |sink| async move {
+                for widget in widgets {
+                    if sink.send(Value::Record(Arc::new(widget))).await.is_err() {
+                        break;
+                    }
+                }
+            },
+        ))
     }
 
     fn snapshot(&self, _query: &Query) -> Result<ValueStream, ErrorValue> {

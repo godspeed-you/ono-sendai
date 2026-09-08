@@ -14,7 +14,7 @@ use std::time::Duration;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 use zbus::{Connection, Proxy};
 
-use crate::{BusError, JobKind, SystemdBus, UnitListing, UnitProperties};
+use crate::{BusError, JobKind, JobRef, SystemdBus, UnitListing, UnitProperties};
 
 const DESTINATION: &str = "org.freedesktop.systemd1";
 const MANAGER_PATH: &str = "/org/freedesktop/systemd1";
@@ -139,6 +139,7 @@ impl SystemBus {
             result: text(&properties, "Result"),
             exec_main_status: number::<i32>(&properties, "ExecMainStatus"),
             dependencies: dependencies(&properties),
+            job: pending_job(&properties),
         }))
     }
 
@@ -225,14 +226,14 @@ impl SystemdBus for SystemBus {
         self.read_at(&path, unit).await
     }
 
-    async fn queue_job(&self, unit: &str, job: JobKind) -> Result<(), BusError> {
+    async fn queue_job(&self, unit: &str, job: JobKind) -> Result<JobRef, BusError> {
         budgeted(
             job.method(),
             self.manager
                 .call::<_, _, OwnedObjectPath>(job.method(), &(unit, JOB_MODE)),
         )
         .await
-        .map(|_| ())
+        .map(|path| JobRef::new(path.as_str()))
     }
 
     async fn set_unit_file_enabled(&self, unit: &str, enabled: bool) -> Result<bool, BusError> {
@@ -360,6 +361,20 @@ fn translate(error: &zbus::Error, what: &str) -> BusError {
         }
         other => BusError::Refused(format!("{other}: {said}")),
     }
+}
+
+/// The job `org.freedesktop.systemd1.Unit.Job` names, where the unit has one pending.
+///
+/// The property is the pair `(job id, job object path)`, and systemd writes `(0, "/")` for a unit
+/// with no job in flight. Both halves of that idle value are rejected here, so "no job" never
+/// becomes a job reference to nowhere (spec §35.3: unknown stays unknown).
+fn pending_job(properties: &HashMap<String, OwnedValue>) -> Option<JobRef> {
+    let value = properties.get("Job")?;
+    let (id, path) = <(u32, OwnedObjectPath)>::try_from(value.clone()).ok()?;
+    if id == 0 || path.as_str() == "/" {
+        return None;
+    }
+    Some(JobRef::new(path.as_str()))
 }
 
 fn non_empty(text: String) -> Option<String> {

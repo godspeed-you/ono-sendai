@@ -1,0 +1,283 @@
+# The recorder's contract: what it collects, what it must never keep, how long it keeps it, and
+# what it does when it is interrupted (spec v0.5 §10, §30, §44.1).
+#
+# §10.1 fixes the scope by saying what the recorder is not: "It is **not** a metrics platform,
+# log archive or general monitoring product." It exists so that Ono's temporal interface stays
+# useful across shell sessions, and nothing more. §10's intent states the boundary this whole
+# file defends: "Persistent history should be easy to enable but impossible to confuse with
+# hidden surveillance."
+#
+# That is why the two lists of §10.6 are here as data rather than as guidance. A collection
+# policy in prose is an intention; a collection policy a check can read is a contract. Decisions:
+# ADR-0625, ADR-0629.
+
+version: 1
+
+# ---------------------------------------------------------------------------------------------
+# §10.2, §10.4. The defaults, each pointing at the setting in `temporal.yaml` that holds the
+# figure, so this file states policy and that one states numbers (v0.4.1 §52.2).
+# ---------------------------------------------------------------------------------------------
+defaults:
+  enabled: false
+  enabled_setting: temporal.recording.enabled
+  enabled_doc: >-
+    §10.2: "Persistent recording MUST be disabled by default." An installation that has never
+    been asked records nothing across sessions, and everything temporal still works on
+    provider-owned history, adapter and plugin sources, and the in-memory session ledger.
+  on_first_start:
+    - setting: temporal.recording.enabled
+      value: true
+    - setting: temporal.retention.max_age
+      value: 24h
+    - setting: temporal.retention.max_size
+      value: 512MiB
+    - setting: temporal.checkpoint.interval
+      value: 5m
+    - setting: temporal.flush.interval
+      value: 2s
+  on_first_start_doc: >-
+    §10.4: the values a user gets when they first run `start recorder` without custom settings.
+  retention_policy: >-
+    §10.4: retention removes the oldest eligible data when either the age ceiling or the size
+    ceiling is exceeded. §33: changing retention MUST NOT retroactively resurrect expired data —
+    a raised ceiling applies from the moment it is raised.
+
+# ---------------------------------------------------------------------------------------------
+# §10.6, first list. What the recorder SHOULD collect.
+# ---------------------------------------------------------------------------------------------
+collects:
+  - id: provider_events
+    doc: Canonical provider events already available to Ono. Nothing the user could not query.
+  - id: checkpoint_snapshots
+    doc: Snapshots required for the configured checkpoint scopes, at `temporal.checkpoint.interval`.
+  - id: spatial_relation_changes
+    doc: >-
+      Relation additions and removals, so a historical `map` can reconstruct the edge set rather
+      than only the objects (§6.4, §9.5).
+  - id: action_events
+    doc: >-
+      Ono's own action events, with the redacted command summary (§17.4, §17.5). These are what
+      make causal explanation strong, and they are the one class of evidence no other source can
+      supply.
+  - id: coverage_markers
+    doc: >-
+      Source coverage markers — `coverage.started` and `coverage.ended`. Without them a stored
+      interval cannot be distinguished from an unwatched one, and every later answer becomes an
+      overstatement.
+  - id: landmark_transitions
+    doc: >-
+      Landmark transitions, where the landmark rule is itself deterministic and useful for
+      timeline orientation (§27.1). Orientation only; §27.2 makes clear a landmark is not an
+      alert.
+
+# ---------------------------------------------------------------------------------------------
+# §10.6, second list, reinforced by §30.3 and §30.5. What the recorder MUST NOT persist by
+# default. Each row names the rule that forbids it, because each is a privacy boundary rather
+# than a storage preference.
+# ---------------------------------------------------------------------------------------------
+must_not_persist:
+  - id: command_output_bodies
+    doc: Arbitrary stdout and stderr bodies. §10.6, and §30.3's "Command outputs are not bulk-recorded."
+    spec: "§10.6, §30.3"
+  - id: file_contents
+    doc: 'Complete file contents, and partial ones. §30.3: "File contents are not recorded."'
+    spec: "§10.6, §30.3"
+  - id: environment_dumps
+    doc: >-
+      Shell environment dumps. §30.3: "Environment variables are not bulk-recorded." An
+      environment is a secret store people forget they filled.
+    spec: "§10.6, §30.3"
+  - id: secrets
+    doc: >-
+      Secret values, in any field. §30.3: values typed as secret are redacted before persistence,
+      and the redaction happens before the value reaches the ledger type rather than at render
+      time.
+    spec: "§10.6, §30.3, §17.5"
+  - id: secret_bearing_argv
+    doc: >-
+      Command-line arguments known to contain secret values. See `process_argv` below for the
+      full argv rule.
+    spec: "§10.6, §30.4"
+  - id: packet_payloads
+    doc: >-
+      Raw network packet payloads. §30.5: the recorder MAY retain endpoint metadata for
+      connection topology — protocol, local endpoint, remote endpoint, process identity where
+      visible — and MUST NOT capture payloads.
+    spec: "§10.6, §30.5"
+  - id: unlimited_metrics_samples
+    doc: >-
+      Unlimited metrics samples. §10.1 again: this is not a metrics platform. A usage figure is
+      captured at a checkpoint or a landmark transition, not sampled on a timer (§22.6).
+    spec: "§10.6, §22.6"
+
+# ---------------------------------------------------------------------------------------------
+# §30.4. The argv rule, and the one setting that changes it.
+# ---------------------------------------------------------------------------------------------
+process_argv:
+  default: false
+  setting: temporal.record.process_argv
+  retained_by_default:
+    - executable
+    - name
+    - identity_fields
+  doc: >-
+    §30.4: process command lines may contain secrets. The default recorder MUST retain the
+    executable, the process name and the identity fields needed for useful topology, and SHOULD
+    NOT persist full raw argv unless a provider has already produced a redacted safe
+    representation. §30.4 permits a configuration option that enables argv persistence with a
+    clear privacy warning; it is off by default, and turning it on changes what the ledger
+    contains rather than what it shows.
+  spec: "§30.4, §10.6"
+
+# ---------------------------------------------------------------------------------------------
+# §10.5. Privilege. Four prohibitions, and they are prohibitions rather than defaults.
+# ---------------------------------------------------------------------------------------------
+privilege:
+  runs_as: user
+  must_not:
+    - id: setuid
+      doc: The recorder MUST NOT become setuid.
+    - id: automatic_sudo
+      doc: It MUST NOT automatically request sudo.
+    - id: privileged_daemon_for_visibility
+      doc: >-
+        It MUST NOT run a privileged system daemon merely to increase visibility. Higher-fidelity
+        privileged sources are extensions under explicit policy (§22.8), never a hidden
+        prerequisite.
+    - id: read_beyond_user
+      doc: >-
+        It MUST NOT read data the same user could not query through Ono providers. The recorder
+        widens the *time* a user can see, never the *scope*.
+  doc: >-
+    §10.5: "The recorder MUST run with the user's privileges by default." A future separately
+    configured privileged source may contribute evidence; that is outside the default v0.5
+    recorder.
+  spec: "§10.5, §22.8"
+
+# ---------------------------------------------------------------------------------------------
+# §10.7. The in-memory ledger that exists whether or not the recorder does.
+# ---------------------------------------------------------------------------------------------
+session_ledger:
+  max_events: 100000
+  max_events_setting: temporal.session.max_events
+  max_age: session_lifetime
+  discarded_at_session_end: true
+  doc: >-
+    §10.7: even without the recorder, the interactive session maintains a bounded in-memory
+    ledger for current-session temporal features, and it is discarded at session end unless
+    recording is enabled. Bounded is the operative word — v0.4.1 §43.1 forbids an unbounded
+    buffer anywhere, and an event ledger that grows with uptime is the shape that fails last and
+    worst.
+  spec: "§10.7, §33"
+
+# ---------------------------------------------------------------------------------------------
+# §10.8, §10.9. Lifecycle.
+# ---------------------------------------------------------------------------------------------
+lifecycle:
+  commands:
+    - id: ono.recorder.get
+      spelling: "get recorder"
+      returns: ono.recorder-status/1
+      doc: "§10.3: the recorder's status as a typed object, so a script can read it."
+    - id: ono.recorder.start
+      spelling: "start recorder"
+      idempotent: true
+      doc: >-
+        §10.8: "`start recorder` MUST be idempotent." Starting a running recorder reports the
+        running recorder; it is not `temporal.recorder_already_running` unless the caller asked
+        for a start that could not be satisfied.
+    - id: ono.recorder.stop
+      spelling: "stop recorder"
+      idempotent: false
+      doc: >-
+        §10.8: "`stop recorder` MUST flush the ledger and stop cleanly." Stopping a stopped
+        recorder is `temporal.recorder_not_running`.
+  crash_rule: >-
+    §10.8: a crash MUST NOT leave the primary ledger unrecoverable. Corruption is bounded to a
+    segment, reported as a gap with reason `corrupt_segment`, and the rest of the ledger stays
+    readable.
+  service:
+    unit: ono-recorder.service
+    scope: user
+    doc: >-
+      §10.9: the reference Linux implementation SHOULD support a user service by this name. The
+      user-facing semantics remain `start recorder` and `stop recorder` whatever the command
+      layer does underneath — the unit is an implementation of the verb, never a second
+      interface to it.
+  spec: "§10.3, §10.8, §10.9"
+
+# ---------------------------------------------------------------------------------------------
+# §44.1. Restart.
+# ---------------------------------------------------------------------------------------------
+restart_procedure:
+  spec: "§44.1, §44.2, §44.3"
+  steps:
+  - step: 1
+    id: validate_store_metadata
+    doc: Validate the store metadata before writing anything into it.
+  - step: 2
+    id: restore_source_sequence_checkpoints
+    doc: >-
+      Restore each source's sequence checkpoint, so a source that supports sequence continuity
+      resumes rather than restarts.
+  - step: 3
+    id: mark_downtime_as_gap
+    doc: >-
+      Mark any unobserved downtime as a coverage gap, with reason `source_disconnected` or
+      `not_recorded` as the case requires. This is the step that makes the rest honest.
+  - step: 4
+    id: fresh_checkpoint
+    doc: Take a fresh checkpoint where the configured scopes call for one.
+  - step: 5
+    id: continue_without_pretending
+    doc: >-
+      §44.1's fifth clause, quoted because it is the whole point: "continue without pretending
+      the gap was covered."
+
+# ---------------------------------------------------------------------------------------------
+# §30.2. Where it lives, and who may read it.
+# ---------------------------------------------------------------------------------------------
+storage:
+  directory: "~/.local/share/ono/temporal/"
+  directory_mode: "0700"
+  database: ledger.sqlite3
+  database_mode: "0600"
+  doc: >-
+    §30.2: "The local ledger directory MUST be user-private." The modes are the reference Linux
+    permissions §30.2 states. §30.1 is the reason they are strict: temporal retention turns
+    harmless current-state facts into a behavioural history, so the default is conservative.
+  spec: "§30.1, §30.2, §31"
+
+# ---------------------------------------------------------------------------------------------
+# §30.6, §30.8, §30.9. Remote history, and deletion.
+# ---------------------------------------------------------------------------------------------
+remote_history:
+  doc: >-
+    §30.6: remote temporal access respects the same link authorization and capability model as
+    current remote provider access, and a local client MUST NOT silently copy a complete remote
+    ledger merely because it can query the remote host. A remote answer is fetched for a
+    question, not mirrored.
+  spec: "§30.6, §24.1"
+
+deletion:
+  command: ono.temporal-history.remove
+  spelling: "remove temporal-history"
+  destructive: true
+  granularity: whole_local_ledger
+  doc: >-
+    §30.8: the user MUST be able to clear local retained history explicitly, and the operation
+    takes the existing destructive-operation confirmation and policy semantics rather than a
+    temporal-specific one. §30.9: v0.5 does not offer selective event-by-event editing, because
+    removing one event from an evidence chain destroys the integrity of every claim derived from
+    it. What v0.5 supports is full local ledger removal plus retention expiry.
+  spec: "§30.8, §30.9"
+
+# ---------------------------------------------------------------------------------------------
+# The errors this registry names (§36.4).
+# ---------------------------------------------------------------------------------------------
+errors:
+  - temporal.recorder_not_running
+  - temporal.recorder_already_running
+  - temporal.store_unavailable
+  - temporal.store_corrupt
+  - temporal.out_of_retention

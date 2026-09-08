@@ -1,0 +1,205 @@
+# The evidence model: where a temporal claim came from, how strong that makes it, and what a gap
+# in the record is (spec v0.5 §7).
+#
+# §7's intent is the whole reason this file is separate from `events.yaml`: "Evidence must remain
+# inspectable enough that a skeptical operator can distinguish a fact Ono observed from a story
+# Ono composed." An event says what happened; evidence says why Ono believes it. The two are
+# stored, rendered and inspected separately so the second can never quietly become the first.
+#
+# `xtask/src/temporal.rs::check` holds this file against `causality.yaml` and `sources.yaml`:
+# every strength a causal rule requires must be declared here, and every source class a source
+# entry names must be declared here. Decisions: ADR-0625.
+
+version: 1
+
+# ---------------------------------------------------------------------------------------------
+# §7.1's nine canonical source classes. "Sources MUST have stable inspectable identity", so each
+# row states the id grammar that makes the identity readable rather than merely unique.
+# ---------------------------------------------------------------------------------------------
+source_classes:
+  - id: ono.session
+    grammar: "ono.session"
+    parameterised: false
+    doc: >-
+      The running shell itself. It knows what the operator asked for, when, and what Ono did
+      about it, which is knowledge no external source has (§17.1). Actions are its evidence.
+  - id: ono.recorder
+    grammar: "ono.recorder"
+    parameterised: false
+    doc: >-
+      The persistent recorder (§10). Evidence it produces by comparing snapshots carries
+      provenance `snapshot_diff` and coverage that reflects the polling interval (§22.1) — the
+      recorder never launders a derivation into an observation.
+  - id: linux.procfs
+    grammar: "linux.procfs"
+    parameterised: false
+    doc: >-
+      The kernel's process and file interfaces. A snapshot source: authoritative about the
+      instant it was read and about nothing between two reads (§22.1).
+  - id: linux.netlink
+    grammar: "linux.netlink"
+    parameterised: false
+    doc: >-
+      The kernel's networking notification socket — link, address, route and neighbour changes.
+      The one live subscription in the built-in Linux set (§22.4).
+  - id: linux.systemd-dbus
+    grammar: "linux.systemd-dbus"
+    parameterised: false
+    doc: >-
+      systemd over D-Bus: unit state, and job identity where it is available. Authoritative for
+      unit state, and the source of the job identifiers `causality.yaml` joins on (§22.2).
+  - id: linux.journald
+    grammar: "linux.journald"
+    parameterised: false
+    doc: >-
+      The journal, as a provider-owned historical event source (§22.3). Structured fields
+      wherever a native route exists; where v0.3's `journalctl` adapter is used instead, the
+      provenance identifies the adapter path rather than pretending to be the journal API.
+  - id: "adapter:<adapter-id>"
+    grammar: "adapter:<adapter-id>"
+    parameterised: true
+    doc: >-
+      A v0.3 external-command adapter (§23.1). The adapter id is part of the source identity
+      because the fidelity of the evidence is a property of the adapter, not of the command it
+      wraps.
+  - id: "remote:<link-id>/<provider-id>"
+    grammar: "remote:<link-id>/<provider-id>"
+    parameterised: true
+    doc: >-
+      A provider on a linked host (§24.1). Remote history is a separate evidence domain: the
+      link is part of the identity, so two hosts' claims about the same object never merge into
+      one unattributed fact, and the remote source time is preserved rather than overwritten
+      with the local ingest time (§24.2).
+  - id: "kuang:<package-id>/<provider-id>"
+    grammar: "kuang:<package-id>/<provider-id>"
+    parameterised: true
+    doc: >-
+      A KUANG/11 package's contributed source (§37.2, §37.5). The host stamps the package id; a
+      package cannot present itself as a built-in source, and §37.4 caps a plugin's causal
+      strength at `asserted` unless the host contract explicitly trusts it as authoritative for
+      a domain.
+
+# ---------------------------------------------------------------------------------------------
+# §7.2's five strengths, strongest first. `rank` 1 is the strongest; the ordering is total, and
+# `xtask/src/temporal.rs::check` requires this list to be written in strength order so a reader
+# of the file sees the same order the type imposes.
+#
+# The `doc` of each is §7.2's own definition, verbatim.
+# ---------------------------------------------------------------------------------------------
+strengths:
+  - id: authoritative
+    rank: 1
+    doc: >-
+      The source owns the relevant fact for the queried scope, such as a systemd unit state
+      reported by systemd.
+  - id: asserted
+    rank: 2
+    doc: >-
+      A source explicitly reports a fact or relation but is not itself the sole authority.
+  - id: derived
+    rank: 3
+    doc: >-
+      Ono computed the claim through a deterministic documented rule from stronger evidence.
+  - id: correlated
+    rank: 4
+    doc: >-
+      The evidence establishes meaningful association but not causation.
+  - id: observational
+    rank: 5
+    doc: >-
+      Ono observed a sample or snapshot without exhaustive coverage guarantees.
+
+# ---------------------------------------------------------------------------------------------
+# The rule that makes the ordering mean something.
+# ---------------------------------------------------------------------------------------------
+strength_rules:
+  - id: no_promotion
+    doc: >-
+      §7.2: "Evidence strength MUST NOT be automatically upgraded by renderers, AI assistants or
+      plugins." The type offers no operation that raises a strength — there is no promote, no
+      max, no upgrade — and composition takes the weakest of its inputs. A claim built from
+      `observational` evidence is `observational` however many sources agree.
+  - id: chain_carries_provenance
+    doc: >-
+      §7.3: "A derived claim MUST reference the evidence it derives from", and
+      `inspect --provenance` makes the chain navigable. A derivation whose inputs are not
+      recorded is not `derived`; it is an assertion with a confident name.
+  - id: plugin_ceiling
+    doc: >-
+      §37.4: a KUANG/11 package's contributed causal claim may not exceed `asserted` unless the
+      host contract explicitly trusts that package or source as authoritative for a domain.
+
+# ---------------------------------------------------------------------------------------------
+# §7.4. Absence is the claim that goes wrong quietly, so its precondition is written as data.
+# ---------------------------------------------------------------------------------------------
+negative_evidence:
+  claim_form: "object X did not exist over interval T"
+  requires:
+    - id: coverage_capable_of_proving_absence
+      doc: >-
+        §7.4: an authoritative or sufficiently complete source had coverage capable of proving
+        the absence over the whole interval. The predicate is
+        `CoverageSummary::can_prove_absence(capability)`, computed per capability, and anything
+        reporting an object as gone without it returning true is a defect.
+  forbidden:
+    - id: sparse_source_silence
+      doc: >-
+        §7.4: "A sparse journal without a process start event MUST NOT be treated as proof that
+        the process never existed." Silence from a source that was not watching is a gap, and a
+        gap renders as a gap.
+  spec: "§7.4, §8.2, §8.3"
+
+# ---------------------------------------------------------------------------------------------
+# §7.5's eight gap reasons. A gap is a typed temporal object carrying scope, interval,
+# capability, reason and source — never a missing row.
+# ---------------------------------------------------------------------------------------------
+gap_reasons:
+  - id: not_recorded
+    doc: >-
+      Nothing was watching. The commonest reason, and the one the recorder exists to reduce:
+      persistent recording is off by default (§10.2), so a fresh installation's history before
+      this session is entirely this reason.
+  - id: retention_expired
+    doc: >-
+      The interval was recorded and has since been removed by the age or size ceiling (§10.4).
+      Distinct from `not_recorded` because it tells the user that raising retention would have
+      helped, while §33 makes clear that raising it now will not bring the data back.
+  - id: provider_unavailable
+    doc: >-
+      The provider could not be asked — not running, not installed, not reachable. §21.8: a
+      temporal provider failure produces coverage loss rather than a frozen last-known state.
+  - id: permission_denied
+    doc: >-
+      The evidence exists and this user may not read it. Reported as a gap with this reason
+      rather than as absence, so a restricted view never reads as an empty world.
+  - id: source_disconnected
+    doc: >-
+      A live subscription dropped. The interval between the last event and the reconnection is
+      uncovered even though the source is available again, and §44.1 requires the recorder to
+      mark exactly this on restart.
+  - id: clock_uncertain
+    doc: >-
+      The interval cannot be placed on this host's timeline with enough confidence to answer
+      about it — a clock jump (§25.4), a boot boundary without continuity (§25.5, §44.2), or a
+      remote domain whose offset exceeds the configured warning threshold (§24.4).
+  - id: corrupt_segment
+    doc: >-
+      A store segment failed validation. §31 requires the rest of the ledger to remain readable;
+      the damage is bounded to an interval and named, rather than making the whole store
+      unavailable.
+  - id: unsupported
+    doc: >-
+      No source in this configuration can answer about this capability at all, at any time. The
+      honest answer to "what were the file contents then" on a default installation (§22.5,
+      §30.3).
+
+# ---------------------------------------------------------------------------------------------
+# The errors this registry names (§36.4).
+# ---------------------------------------------------------------------------------------------
+errors:
+  - temporal.coverage_gap
+  - temporal.permission_denied
+  - temporal.out_of_retention
+  - temporal.clock_uncertain
+  - temporal.store_corrupt
+  - temporal.unsupported_source

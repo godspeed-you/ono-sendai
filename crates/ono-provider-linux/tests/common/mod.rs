@@ -36,6 +36,9 @@ pub const USER_HZ: u64 = 100;
 /// The uptime every `/proc` fixture declares, so a process's lifetime is an exact expectation.
 pub const FIXTURE_UPTIME_SECONDS: u64 = 12_845;
 
+/// The kernel boot id every `/proc` fixture declares, in the shape the kernel writes it.
+pub const FIXTURE_BOOT_ID: &str = "4d0a1f2b-9c6e-4a71-8f2d-0b1c2d3e4f50";
+
 /// Everything a bounded stream produced, with a deadline so a hung provider fails the test
 /// instead of hanging the suite.
 pub async fn drain(stream: ValueStream) -> Collected {
@@ -76,11 +79,30 @@ pub struct ProcFixture {
 }
 
 impl ProcFixture {
-    /// A fixture whose `/proc/stat` declares [`FIXTURE_BOOT_TIME`].
+    /// A fixture whose `/proc/stat` declares [`FIXTURE_BOOT_TIME`] and whose kernel published
+    /// [`FIXTURE_BOOT_ID`], as a Linux host does.
     pub fn new() -> Self {
+        Self::booted_as(Some(FIXTURE_BOOT_ID))
+    }
+
+    /// A fixture whose kernel publishes no boot id at all, as a restricted `/proc` in a container
+    /// does. Everything that depends on knowing which boot this is has to fall back or say so.
+    pub fn without_boot_id() -> Self {
+        Self::booted_as(None)
+    }
+
+    /// A fixture on the boot `boot_id` names — the same machine after a reboot, when the boot id
+    /// differs and the pids start again from the beginning.
+    pub fn booted_as(boot_id: Option<&str>) -> Self {
         let root = tempfile::tempdir().expect("a temporary directory");
         let proc = root.path().join("proc");
         fs::create_dir_all(&proc).expect("the proc directory");
+        if let Some(boot_id) = boot_id {
+            let random = proc.join("sys").join("kernel").join("random");
+            fs::create_dir_all(&random).expect("the proc/sys/kernel/random directory");
+            fs::write(random.join("boot_id"), format!("{boot_id}\n"))
+                .expect("the proc/sys/kernel/random/boot_id file");
+        }
         fs::write(
             proc.join("stat"),
             format!("cpu  1 2 3\nbtime {FIXTURE_BOOT_TIME}\nprocesses 12345\n"),

@@ -16,6 +16,20 @@ providers:
     conformance:
       container: enumerable
       image: enumerable
+    temporal:
+      # §22.7: "Container providers SHOULD expose runtime-native lifecycle events when the runtime
+      # supports them." `GET /events` is such a stream and this provider does not open it, so the
+      # claim is a snapshot: the engine can do more than this provider currently asks it for, and
+      # the advertisement states what is implemented rather than what is possible (§21.1).
+      # The engine's container id is stable and never reused, so a snapshot checkpoints cleanly.
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+      coverage: snapshot
     spatial:
       # The engine's full container id is stable for the container's whole existence and is
       # never reused (§10.1 Tier A). The name is a label the engine lets a user change, so it

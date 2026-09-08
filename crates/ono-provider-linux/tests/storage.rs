@@ -541,7 +541,7 @@ async fn should_not_report_a_device_whose_filesystem_type_udev_did_not_record() 
 // --- persistent definitions and mount units (ADR-0099) ---------------------------------------
 
 use ono_provider_api::{Action, ObjectId};
-use ono_provider_systemd::{BusError, JobKind, SystemdBus, UnitListing, UnitProperties};
+use ono_provider_systemd::{BusError, JobKind, JobRef, SystemdBus, UnitListing, UnitProperties};
 use ono_value::{ActionStatus, SchemaId};
 
 fn mount_action(operation: &str, target: &str) -> Action {
@@ -684,7 +684,7 @@ async fn should_resolve_a_defined_but_unmounted_mount_by_its_target() {
 /// A service manager that answers every job the same way.
 #[derive(Debug)]
 struct RecordedManager {
-    answer: Result<(), BusError>,
+    answer: Result<JobRef, BusError>,
     jobs: std::sync::Mutex<Vec<(String, JobKind)>>,
 }
 
@@ -699,7 +699,7 @@ impl SystemdBus for RecordedManager {
     async fn unit_properties(&self, _unit: &str) -> Result<Option<UnitProperties>, BusError> {
         Ok(None)
     }
-    async fn queue_job(&self, unit: &str, job: JobKind) -> Result<(), BusError> {
+    async fn queue_job(&self, unit: &str, job: JobKind) -> Result<JobRef, BusError> {
         self.jobs
             .lock()
             .expect("the job log")
@@ -714,7 +714,7 @@ impl SystemdBus for RecordedManager {
 #[tokio::test]
 async fn should_start_and_stop_a_mount_through_its_systemd_mount_unit() {
     let manager = Arc::new(RecordedManager {
-        answer: Ok(()),
+        answer: Ok(JobRef::new("/org/freedesktop/systemd1/job/771")),
         jobs: std::sync::Mutex::new(Vec::new()),
     });
     let fixture = StorageFixture::new("");

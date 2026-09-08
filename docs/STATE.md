@@ -2280,6 +2280,22 @@ the provider samples — and no assertion changed.
 
 ## Found, not yet filed
 
+- **A backward wall-clock step splits one process into two spatial identities (2026-09-08, found
+  while giving the process provider the kernel's boot id, ADR-0713).** Half of a process's
+  identity digest is `started`, and `ProcessProvider::started` computes it as
+  `boot_time_seconds + stat.starttime / clock_ticks` — `/proc/stat`'s `btime`, which is a
+  wall-clock second the kernel recomputes, plus an offset. An NTP correction or a manual clock
+  step changes `btime`, so the same running process observed before and after the step yields two
+  different `started` values and therefore two different `SpatialId`s. v0.5 §25.4 asks that a
+  clock jump not disturb what the ledger knows, and this disturbs identity itself: a
+  reconstruction across the step sees one process end and another begin, with no evidence that
+  anything happened. Reproduction: observe a process, step the host clock backward by a minute,
+  observe it again, and compare `spatial_id`. What closes it: key the identity on the
+  boot-relative tick count (`stat.starttime`, which does not move) rather than on the derived
+  wall-clock instant, and keep the instant as a rendered field. **This moves every process
+  `SpatialId` in the tree**, so it is its own increment with its own ADR and its own list of
+  changed tests; the boot-id read landed in v0.5 is a prerequisite for it and not the fix.
+
 - **A plugin artifact behind a private certificate authority cannot be fetched.**
   `ureq` verifies against the Mozilla root store `webpki-roots` embeds (ADR-0607 §4), so an
   enterprise HTTPS artifact server presenting an internally issued certificate is refused —

@@ -13,6 +13,10 @@
 //!
 //! The three primitives of spec §31.14 are [`Provider::snapshot`] (state now),
 //! [`Provider::subscribe`] (changes over time) and, built on them, the runtime-managed `watch`.
+//! Spec v0.5 §21 adds a fourth: [`Provider::history`] (state and events *before* now), together
+//! with [`Provider::temporal`], which states what the provider can honestly answer about the past
+//! before anybody asks it. Both default to the truthful answer for a provider that has never
+//! thought about time — it claims nothing, and refuses.
 
 #![forbid(unsafe_code)]
 
@@ -23,6 +27,7 @@ mod label;
 mod object;
 mod query;
 mod registry;
+mod temporal;
 
 pub use action::{Action, ActionOutcome};
 pub use capability::{Availability, Capability, Risk};
@@ -31,6 +36,7 @@ pub use label::{declared_label, endpoint_label, endpoint_text, label_of};
 pub use object::{EventKind, ObjectEvent, ObjectId, ObjectRef};
 pub use query::{Query, Selector};
 pub use registry::ProviderRegistry;
+pub use temporal::{TemporalCapabilities, TimeWindow, unsupported_history};
 
 use std::sync::Arc;
 
@@ -105,6 +111,31 @@ pub trait Provider: Send + Sync + std::fmt::Debug {
             format!("{} cannot watch for changes", self.id()),
         )
         .with_help("`watch` needs a provider that can subscribe or poll; this one does neither"))
+    }
+
+    /// What this provider can answer about time (spec v0.5 §21.1).
+    ///
+    /// The default claims nothing, which is the only honest default: a provider that has not
+    /// declared a temporal capability has not implemented one, and nothing downstream may read
+    /// its silence as coverage (§7.4, §21.5).
+    fn temporal(&self) -> TemporalCapabilities {
+        TemporalCapabilities::none()
+    }
+
+    /// The objects or events matching `query` as they were within `window` (spec v0.5 §21.4).
+    ///
+    /// Only a provider whose source genuinely keeps the past answers this — journald does, a
+    /// container runtime's event database may, `/proc` does not (§22.1, §22.3). Everything else
+    /// refuses, and the refusal is what lets the shell look for the answer somewhere it was
+    /// recorded rather than silently present a snapshot of now as a snapshot of then.
+    ///
+    /// # Errors
+    ///
+    /// `temporal.unsupported_source` by default: the provider cannot answer about the past at
+    /// all. A provider that can, and could not this time, reports whatever went wrong.
+    fn history(&self, query: &Query, window: &TimeWindow) -> Result<ValueStream, ErrorValue> {
+        let _ = (query, window);
+        Err(unsupported_history(self.id()))
     }
 
     /// The objects a selector names.

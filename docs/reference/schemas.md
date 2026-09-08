@@ -4,6 +4,28 @@
 
 The object contracts of spec §28. A **nullable** field may be `null`, which means the value is unknown — never that it is zero or empty (spec §10.5). `identity` is what makes two observations of the same object the same object.
 
+## ActionEvent — `ono.action-event/1`
+
+A mutation requested through Ono — what was asked for, who asked, what authorised it and what came of it.
+
+Identity: `action_id`
+
+Default view: `requested_at`, `action_id`, `operation`, `target`, `command`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `action_id` | `string` | — | required | The identity minted before execution (§17.3), rendered `ono:a<hex>`. |
+| `command` | `string` | — | required | The redacted command summary of §17.5. Every secret-shaped argument reads `<secret:redacted>`; the raw text never enters the ledger. |
+| `actor` | `string` | — | required | The user identity that requested the action. |
+| `session_id` | `string` | — | required | The session the request came from, so one operator's work can be read as one thread. |
+| `requested_at` | `timestamp` | — | required | When the request was made — the first step of §17.2's lifecycle. |
+| `target` | `string` | — | nullable | The `spatial_id` acted on. Null for an action with no single spatial target. |
+| `operation` | `string` | — | required | The operation as the command registry spells it — `restart`, `set`, `remove`. |
+| `authorization` | `record` | — | required | What allowed the action: the decision, the declared risk class, the capability required and the reason a confirmation was or was not asked for (§17.2's `action.authorized`). |
+| `result` | `record` | — | nullable | What came of it — status, completion time, detail — once §17.2's `action.completed` or `action.failed` is known. Null while the action is still in flight, which is unknown and not failure. |
+| `external_transaction` | `string` | — | nullable | The external authority's own job or transaction id, as §17.3's `systemd:/org/freedesktop/systemd1/job/4821`. This is the token a causal rule joins on (§21.6). Null where the authority returned none. |
+| `provenance` | `record` | — | required | Where the record came from (v0.2 §25.2). |
+
 ## ActionResult — `ono.action-result/1`
 
 The outcome of one mutation against one target.
@@ -153,6 +175,48 @@ Default view: `plugin`, `capability`, `scope`, `duration`, `decision`, `expires_
 | `revoked_at` | `timestamp` | — | nullable | When it was revoked. Null while it stands. A revoked grant is retained rather than deleted, so the record of what was once permitted survives. |
 | `permission` | `string` | — | nullable | The user-facing permission whose decision minted this grant (K11P §16.3, ADR-0604), by its package-local id. Null for a grant made by hand with `grant capability` or read from policy that names none — which is what lets `get permission` show such a grant as `custom` rather than hide it (Gate L). |
 | `profile` | `string` | — | nullable | The access profile whose selection minted it, e.g. `recommended`. Null otherwise. |
+
+## CausalExplanation — `ono.causal-explanation/1`
+
+Why a state or a change came about — the cause where evidence supports one, and the correlations and gaps where it does not.
+
+Identity: 
+
+Default view: `state_or_change`, `cause`, `coverage`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `subject` | `string` | — | nullable | The `spatial_id` the question was asked about. Null where the question named an event. |
+| `explained_event` | `string` | — | nullable | The `ono.temporal-event/1` id being explained. Null where the question named a state. |
+| `state_or_change` | `string` | — | required | What is being explained, in words a person asked for — `nginx.service is active`, `process/2741 appeared`. |
+| `cause` | `record` | — | nullable | The immediate cause, where a registered rule found one: the event, the relation and the rule. Null is §15.7's `cause: unknown` — a valid outcome, still carrying everything below. |
+| `causal_chain` | `list<record>` | — | required | The chain from the explained event back towards its origin, one `ono.causal-link/1` per step, nearest first (§16.7). Empty where no rule matched. |
+| `correlations` | `list<record>` | — | required | Associations a correlation rule found without causal evidence (§15.5). Kept apart from `causal_chain` by §35.5, and rendered without causal language (§15.6). |
+| `preceding` | `list<record>` | — | required | Events the ordering model supports as earlier, with no claim beyond order (§15.6, §26.3). |
+| `gaps` | `list<record>` | — | required | The `ono.temporal-gap/1` intervals that materially affect the answer (§7.5). An explanation built over a hole says so. |
+| `coverage` | `record` | — | required | The composed coverage summary the explanation rests on (§8.5). |
+| `provenance` | `record` | — | required | Where the answer came from (v0.2 §25.2). |
+
+## CausalLink — `ono.causal-link/1`
+
+A typed relationship between two events, the rule that emitted it and the evidence that supports it.
+
+Identity: `link_id`
+
+Default view: `link_id`, `relation`, `cause`, `effect`, `rule`, `strength`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `link_id` | `string` | — | required | The stable identity an event's `causal_parents` refer to. |
+| `relation` | `enum` | — | required | §15.1's class, read from the effect's side. The list is closed; a rule that needs another word is a rule that has not established causation. |
+| `inverse` | `enum` | — | required | The §15.1 label of the same link read from the cause's side. |
+| `is_causal` | `bool` | — | required | Whether this class asserts causation — true for `caused_by`, `triggered_by` and `resulted_in`, false for `correlated_with` and `preceded_by`. A renderer keys its edge style and its wording on this and never on prose (§15.5, §15.6). |
+| `cause` | `string` | — | required | The `ono.temporal-event/1` id at the cause end. |
+| `effect` | `string` | — | required | The `ono.temporal-event/1` id at the effect end. |
+| `rule` | `string` | — | required | The registered rule that emitted the link — `ono.action-to-job`, or a publisher-namespaced id for a plugin rule (§15.8, §37.4). A link with no rule behind it cannot be inspected, so there is none. |
+| `evidence` | `list<string>` | — | required | The `ono.temporal-evidence/1` ids the rule matched on (§15.4). |
+| `strength` | `enum` | — | required | The weakest strength in the chain (§7.2). Nothing raises it, so a chain is never stronger than its weakest link. |
+| `source` | `string` | — | required | The §7.1 source that produced the link. |
 
 ## Cgroup — `ono.cgroup/1`
 
@@ -1550,6 +1614,33 @@ Default view: `title`, `horizon`, `mutating`, `risk`, `command`
 | `subject` | `value` | — | nullable | A reference to the object the recommendation is about. Null when it is about the finding as a whole. |
 | `evidence` | `list<ono.evidence/1>` | — | required | What supports this being the right next step. Empty is allowed — a recommendation is advice, not a claim — but an empty list is visible as one, and spec §31.25 encourages conclusions that stay connected to the data that produced them. |
 
+## RecorderStatus — `ono.recorder-status/1`
+
+Whether Ono is retaining system history, under which limits, and how much it currently holds.
+
+Identity: 
+
+Default view: `running`, `events`, `earliest`, `latest`, `health`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `running` | `bool` | — | required | Whether the recorder process is collecting now (§10.8). |
+| `enabled` | `bool` | — | required | The `temporal.recording.enabled` setting, which §10.2 defaults to false. Distinct from `running`: a recorder can be configured on and not yet started. |
+| `since` | `timestamp` | — | nullable | When the running recorder started. Null when it is not running. |
+| `store` | `path` | — | nullable | Where retained history lives, so §30.2's file permissions are checkable by the person they protect. Null when nothing is retained beyond the session. |
+| `max_age` | `duration` | — | required | `temporal.retention.max_age` — 24h by default (§10.4). |
+| `max_size` | `bytesize` | — | required | `temporal.retention.max_size` — 512MiB by default (§10.4). |
+| `checkpoint_interval` | `duration` | — | required | `temporal.checkpoint.interval` — 5m by default (§10.4, §31.9). |
+| `flush_interval` | `duration` | — | required | `temporal.flush.interval` — 2s by default (§10.4). |
+| `session_max_events` | `int` | — | required | "`temporal.session.max_events` — the ceiling of §10.7's in-memory session ledger, 100000 by default. It applies whether or not the recorder runs." |
+| `events` | `int` | — | required | How many events are retained now. |
+| `size` | `bytesize` | — | nullable | How much space the retained history occupies. Null where nothing is retained on disk. |
+| `earliest` | `timestamp` | — | nullable | The earliest instant still retained — the boundary `at` refuses beyond with `temporal.out_of_retention` (§12.3). Null when nothing is retained. |
+| `latest` | `timestamp` | — | nullable | The most recent instant retained. Null when nothing is retained. |
+| `sources` | `list<string>` | — | required | The §7.1 sources the recorder is subscribed to, so the collection policy of §10.6 is visible. |
+| `dropped` | `int` | — | required | How many events the bounded queues of §43.1 discarded. §43.2 forbids silent loss, so the count is part of the status rather than a log line. |
+| `health` | `enum` | — | required | §43.4's recorder health. `degraded` is what a run of dropped events or a coverage loss produces; §21.8 forbids freezing the last known state and calling it current. |
+
 ## RouteEvent — `ono.route-event/1`
 
 One routing table change, as a live stream emits it.
@@ -1696,7 +1787,8 @@ Identity: `kind`, `id`
 |---|---|---|---|---|
 | `kind` | `enum` | — | required | What kind of difference this is (§25.1). |
 | `id` | `string` | — | required | The node identity or edge identity it happened to — the same id the map draws. |
-| `observed_at` | `timestamp` | — | required | When the difference was seen. §24.3 forbids a fabricated change summary, and a change with no time behind it is exactly that. |
+| `observed_at` | `timestamp` | — | required | When the difference was seen. §24.3 forbids a fabricated change summary, and a change with no time behind it is exactly that. Where `source` is `snapshot_comparison` this is the later of the two observations — the first moment the space was seen with the change — and `observed_since` is the earlier one. |
+| `observed_since` | `timestamp` | — | nullable | The earlier of the two observations a comparison found this change between: the last moment the space was seen without it. Null where a provider announced the change and stated when it saw it, because then the instant is known and there is no interval to state. v0.5 §9.2 forbids claiming a state between two observations, and a change dated only by the later of them would claim exactly that (ADR-0680). |
 | `label` | `string` | — | required | What a person calls it, so the change reads without resolving the id (§11.4). |
 | `reason` | `string` | — | nullable | The §3.7 landmark reason this change amounts to — `new_object`, `removed_object` or `recently_changed` — or null where §3.7's closed vocabulary has no word for it. A core rule may not invent one. |
 | `places` | `list<string>` | — | required | The places the change touches, whose landmarks §26 has to re-judge: one for a node, both ends for an edge. |
@@ -1837,6 +1929,200 @@ Default view: `hostname`, `os`, `kernel`, `uptime`
 | `landmarks` | `list<ono.landmark/1>` | — | required | What deserves attention here (§3.7). Empty is a real answer; null would not be. |
 | `links` | `list<ono.link/1>` | — | nullable | The linked hosts reachable from here (§19.1); null until the federation phase serves them. |
 | `generated_at` | `timestamp` | — | required | When the projection was made. |
+
+## TemporalChange — `ono.temporal-change/1`
+
+What became different about one subject between two instants, and how well each side is known.
+
+Identity: `change_id`
+
+Default view: `kind`, `subject`, `from_time`, `to_time`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `change_id` | `string` | — | required | A stable identity for this change within the answer, so it can be referenced and pinned. |
+| `kind` | `enum` | — | required | §13.2's class. Relation changes stay separate from object changes because they are (§6.4). |
+| `subject` | `record` | — | required | The object the change is about — the canonical identity, its type and its label — or, per §5.5, an unresolved subject where the source named something Ono could not reconcile. |
+| `from_time` | `timestamp` | — | required | The instant the comparison starts at — `--since` (§13.1). |
+| `to_time` | `timestamp` | — | required | The instant the comparison ends at — `--until`, or the present (§13.1). |
+| `field_changes` | `list<record>` | — | required | §6.2's typed field changes: `field`, `before`, `after`, `certainty`. Empty for `added` and `removed`, where the whole object is the change. |
+| `relation` | `record` | — | nullable | For `relation_added` and `relation_removed`, the edge that changed — both ends, the relation type, the source and the confidence (§6.4). Null for an object change. |
+| `coverage` | `record` | — | required | The composed coverage over the window (§8.5). A change list computed across a gap says so here, which is what keeps §13.4's unknown honest. |
+| `provenance` | `record` | — | required | Where the answer came from (v0.2 §25.2). |
+
+## TemporalContext — `ono.temporal-context/1`
+
+The session's temporal coordinate — the present, or a resolved historical instant with the coverage that backs it.
+
+Identity: 
+
+Default view: `mode`, `requested`, `resolved_at`, `marker`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `mode` | `enum` | — | required | Which of §3.9's two contexts this is. |
+| `requested` | `string` | — | nullable | The time selector the user typed, verbatim — `-10m`, `event @e42` (§4.2). Kept because the resolved instant alone cannot tell a reader what was asked for. Null in the present. |
+| `resolved_at` | `timestamp` | — | nullable | The instant the selector resolved to, which is what a query evaluates at. Null in the present. |
+| `coverage` | `record` | — | nullable | The composed `TemporalCoverageSummary` behind the reconstruction: a headline, the completeness per capability, and the gaps (§8.5). Null in the present, where nothing is reconstructed. |
+| `anchor_event` | `string` | — | nullable | The event `at event @e42` resolved through (§12.2). Null where the selector named no event. |
+| `marker` | `string` | — | nullable | The prompt marker of §4.6 — `[PAST]` where coverage is complete, `[PAST?]` where the reconstruction is materially partial or uncertain (§8.6). Null in the present. The word carries the meaning without colour (§45.2). |
+
+## TemporalCoverage — `ono.temporal-coverage/1`
+
+What one source was capable of observing, for one capability, over one interval.
+
+Identity: 
+
+Default view: `capability`, `from`, `until`, `completeness`, `source`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `scope` | `string` | — | required | The v0.4 §3.2 boundary the claim is about, rendered `<kind>:<id>`. |
+| `capability` | `string` | — | required | The state class the claim covers — `process.existence`, `service.state`, `relation:process.owns_socket`. §8.1 makes coverage per capability, because a source that sees every unit transition may see no process at all. |
+| `from` | `timestamp` | — | required | When the interval starts. For a `point_sample` this equals `until` (§8.4). |
+| `until` | `timestamp` | — | required | When the interval ends. |
+| `completeness` | `enum` | — | required | §3.5's vocabulary. `complete` is a contract claim — the source could observe every relevant event or object of this class over this interval (§8.2) — and only it supports a negative claim (§7.4). |
+| `sampling_interval` | `duration` | — | nullable | How often a polled source looked (§3.5). Null for an event stream and for a point sample. A recorder polling every second describes itself as `partial` with this set, unless the provider itself guarantees exhaustive delivery (§21.5). |
+| `source` | `string` | — | required | The §7.1 evidence source that makes the claim — `linux.systemd-dbus`, `adapter:ps`. |
+| `permission_state` | `enum` | — | required | What this user could be told over the interval (v0.4 §35.2). History that exists but cannot be read is `permission_denied`, never absence (§34 `temporal.permission_denied`). |
+
+## TemporalEvent — `ono.temporal-event/1`
+
+One typed temporal record — a change, an observation or an action — with its evidence, its clock domain and the identity it happened to.
+
+Identity: `event_id`
+
+Default view: `observed_at`, `event_id`, `kind`, `subject`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `event_id` | `string` | — | required | The stable content identity of §3.3, rendered `@e<hex>`. §11.6 requires it to be usable in a later command — `inspect event @e42`, `at event @e42`, `why event @e42`. |
+| `kind` | `enum` | — | required | The top-level class of §6.1. The list is closed; a provider refines it in `subtype`. |
+| `subtype` | `string` | — | nullable | §6.1's namespaced provider or plugin refinement, such as `linux.systemd.job-result`. Null where the top-level kind says everything the source said. |
+| `scope` | `string` | — | required | The v0.4 §3.2 boundary the event belongs to, rendered `<kind>:<id>` — `host:web01`. |
+| `subject` | `record` | — | nullable | What the event happened to. Either a resolved canonical identity — `spatial_id`, `object_type`, `label` — or, per §5.5, an unresolved subject carrying only the source and the text it used, so a guess is never dressed as an identity. Null for an event about no single object. |
+| `related` | `list<record>` | — | required | Further subjects the event touches, in the same shape as `subject`: both ends of a relation event (§6.4), the target of an action. Empty where there are none. |
+| `source_time` | `timestamp` | — | nullable | When the source says the event happened (§3.3). Null where the source gave no time. |
+| `observed_at` | `timestamp` | — | required | When the observing component received or detected it (§3.3). |
+| `ingested_at` | `timestamp` | — | required | When it entered the Ono ledger (§3.3). Never a substitute for `source_time` (§24.2). |
+| `source_sequence` | `int` | — | nullable | The source's own sequence number within its stream, where it has one. §25.4 makes this the ordering evidence that survives an NTP correction; wall time alone never orders (§26.1). |
+| `monotonic_nanos` | `int` | — | nullable | A monotonic reading in nanoseconds within this clock domain (§25.1). Comparable only against another reading from the same `boot_id`, because monotonic clocks reset across boot (§25.5). |
+| `boot_id` | `string` | — | nullable | The boot the monotonic clock and the sequence belong to (§25.5). Null where the source could not say which boot it is, which is itself a reason two events cannot be ordered. |
+| `host` | `string` | — | required | The host whose clock domain this event was timed in (§25.5, §26.4). Two events from different hosts are concurrent unless the evidence chain actually crosses the boundary. |
+| `clock_uncertainty` | `duration` | — | nullable | How far the source's wall clock may be from this host's (§24.4). Null where no offset was measured, which is not the same as a measured zero. |
+| `before` | `value` | — | nullable | The subject's value before the change, where the evidence gives one (§3.3). |
+| `after` | `value` | — | nullable | The subject's value after the change, where the evidence gives one (§3.3). |
+| `changed_fields` | `list<record>` | — | required | §6.2's typed field changes — `field`, `before`, `after`, `certainty`. Null on either side means unknown and nothing else; §6.2 forbids overloading it (v0.2 §10.5). Empty for an event that changed no field. |
+| `evidence` | `list<string>` | — | required | The `ono.temporal-evidence/1` ids that support the event (§3.4, §7.3). |
+| `causal_parents` | `list<string>` | — | required | The `ono.causal-link/1` ids whose effect is this event (§15). |
+| `payload` | `value` | — | nullable | The kind-specific body, typed and namespaced. For `provider.event` it is §6.5's source-native information; for a relation event it carries the relation type and the confidence §6.4 requires beside both ends; for an action event the `action_id` and the lifecycle detail of §17.2; for a coverage event the capability, source and completeness or reason of §8.1. `docs/contracts/temporal/events.yaml` states which per kind. Null where the kind needs nothing beyond the common fields. |
+| `provenance` | `record` | — | required | Where the record came from — provider, observation time, source and link (v0.2 §25.2). |
+
+## TemporalEvidence — `ono.temporal-evidence/1`
+
+One inspectable observation, with the source that made it and the strength Ono may claim for it.
+
+Identity: `evidence_id`
+
+Default view: `evidence_id`, `source`, `claim_kind`, `strength`, `observed_at`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `evidence_id` | `string` | — | required | The stable identity a chain and an event's `evidence` list refer to, rendered `@v<hex>`. |
+| `source` | `string` | — | required | The §7.1 source class — `ono.recorder`, `linux.journald`, `adapter:ps`, `remote:<link>/<provider>`, `kuang:<package>/<provider>`. Sources have stable inspectable identity, so this is a name a reader can go and check. |
+| `observed_at` | `timestamp` | — | required | When the observing component made the observation. |
+| `source_time` | `timestamp` | — | nullable | When the source says the fact held. Null where the source gave no time of its own. |
+| `scope` | `string` | — | required | The v0.4 §3.2 boundary the claim is about, rendered `<kind>:<id>`. |
+| `subject` | `string` | — | nullable | The `spatial_id` the claim is about. Null for evidence about no single object. |
+| `claim_kind` | `enum` | — | required | What sort of claim this is. `object_absent` is the negative claim §7.4 guards: it is worth recording only where the source had coverage capable of proving it. |
+| `claim` | `record` | — | required | The claim itself, in the shape its kind fixes — the field and value for `field_value`, the relation and the other end for `relation_held`, the token for `transaction`. |
+| `strength` | `enum` | — | required | §7.2's strength, strongest first. "Evidence strength MUST NOT be automatically upgraded by renderers, AI assistants or plugins", and no API in Ono raises one. |
+| `raw_ref` | `record` | — | nullable | A provider-owned handle the user may explicitly inspect — a journal cursor, a segment reference (§3.4, §7.6). Never a copied log body and never a secret-bearing payload. Null where the source owns nothing further to show. |
+| `derived_from` | `list<string>` | — | required | The evidence this claim was derived from (§7.3). Non-empty for `derived` strength: a derived claim that cites nothing is a claim with no chain to walk. |
+| `provenance` | `record` | — | required | Where the record came from (v0.2 §25.2). |
+
+## TemporalGap — `ono.temporal-gap/1`
+
+An interval in which a capability was not covered, and why.
+
+Identity: 
+
+Default view: `from`, `until`, `capability`, `reason`, `source`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `scope` | `string` | — | required | The v0.4 §3.2 boundary the gap is in, rendered `<kind>:<id>`. |
+| `capability` | `string` | — | required | The state class that went uncovered — the same word `ono.temporal-coverage/1` uses. |
+| `from` | `timestamp` | — | required | When the gap starts. |
+| `until` | `timestamp` | — | required | When the gap ends. |
+| `reason` | `enum` | — | required | Why nothing is known here (§7.5). The list is closed: a gap Ono cannot explain is `not_recorded`, which is honest, rather than a reason invented for the occasion. |
+| `source` | `string` | — | required | The §7.1 source that would have covered the interval. A gap belongs to a source: "nobody recorded this" and "systemd was not running" are different facts. |
+| `detail` | `string` | — | nullable | What a renderer adds to the reason — `recorder offline` in §11.7's own example. Null where the reason says everything. |
+
+## TemporalHistory — `ono.temporal-history/1`
+
+The retained local temporal ledger — where it is, how large it is, what it spans and under which policy.
+
+Identity: 
+
+Default view: `store`, `size`, `events`, `earliest`, `latest`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `store` | `path` | — | required | Where the retained history lives, so §30.2's file permissions are checkable and the target of a destructive removal is unambiguous. |
+| `size` | `bytesize` | — | required | How much space it occupies now. |
+| `events` | `int` | — | required | How many events it holds. |
+| `earliest` | `timestamp` | — | nullable | The earliest retained instant. Null when the ledger holds nothing. |
+| `latest` | `timestamp` | — | nullable | The most recent retained instant. Null when the ledger holds nothing. |
+| `max_age` | `duration` | — | required | The `temporal.retention.max_age` in force — 24h by default (§10.4). |
+| `max_size` | `bytesize` | — | required | The `temporal.retention.max_size` in force — 512MiB by default (§10.4). |
+| `expired` | `int` | — | required | How many events retention has already removed (§10.4). The count is what turns an expired interval into a `retention_expired` gap rather than into silence (§7.5). |
+| `scopes` | `list<string>` | — | required | The v0.4 §3.2 boundaries the ledger holds history for. §30.9 does not offer selective removal, so this is a statement of what removal would take. |
+| `provenance` | `record` | — | required | Where the answer came from (v0.2 §25.2). |
+
+## TemporalSource — `ono.temporal-source/1`
+
+What one evidence source can answer about time, and how far back it reaches.
+
+Identity: `source`
+
+Default view: `source`, `live_events`, `historical_query`, `exhaustive_events`, `retained_history`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `source` | `string` | — | required | The §7.1 source class — `linux.journald`, `adapter:ps`, `kuang:<package>/<provider>`. |
+| `provider` | `string` | — | required | The provider behind it, as `get provider` names it. |
+| `current_snapshot` | `bool` | — | required | Whether the source can report current state, which is what a checkpoint is built from (§21.2). |
+| `live_events` | `bool` | — | required | Whether it emits canonical or mappable events as they happen (§21.3). |
+| `historical_query` | `bool` | — | required | Whether it can answer directly about past state or events (§21.4). |
+| `exhaustive_events` | `bool` | — | required | Whether sequence continuity supports absence and change claims for the declared capability (§21.5). A polled source answers false; §7.4's negative claims depend on this. |
+| `causal_tokens` | `bool` | — | required | Whether it carries transaction, job or action identifiers supporting direct causal links (§21.6). |
+| `checkpointable` | `bool` | — | required | Whether its snapshot can be serialised into the temporal store with canonical identity and provenance (§21.7). |
+| `retained_history` | `duration` | — | nullable | How far back the source itself keeps material (§21.1). Null where the source does not say, which is not the same as saying none. |
+| `availability` | `enum` | — | required | Whether the source answers for this user now (v0.4 §35.2). §21.8: a failure is coverage loss, stated here, rather than a frozen last-known state presented as history. |
+| `detail` | `string` | — | nullable | What a reader needs beside the flags — why it is unavailable, which capability it covers. Null where nothing is needed. |
+
+## Timeline — `ono.temporal-timeline/1`
+
+A window of events for a place, with the coverage that backs it and the gaps inside it.
+
+Identity: 
+
+Default view: `place_label`, `from`, `until`, `truncated`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `scope` | `string` | — | required | The v0.4 §3.2 boundary the timeline covers, rendered `<kind>:<id>`. |
+| `place` | `string` | — | nullable | The `spatial_id` of the place the timeline is scoped to (§11.3). Null for a timeline that was asked for across a scope rather than at a place. |
+| `place_label` | `string` | — | nullable | What a person calls that place, so a rendered header needs no second lookup. Null with `place`. |
+| `from` | `timestamp` | — | required | The start of the window (§11.8). |
+| `until` | `timestamp` | — | required | The end of the window. |
+| `centre` | `timestamp` | — | nullable | The instant the window is centred on — the active historical context, where there is one (§11.8). Null for a window anchored to its own ends. |
+| `events` | `list<ono.temporal-event/1>` | — | required | The events in the window, in presentation order (§26.3). Presentation order is a stable display order and makes no ordering claim; `inspect` is where ordering evidence is stated. |
+| `gaps` | `list<ono.temporal-gap/1>` | — | required | The coverage gaps inside the window (§11.7). A renderer draws each one as a break in the timeline; an empty list means the window is covered, not that gaps were left out. |
+| `coverage` | `record` | — | required | The composed coverage summary over the window (§8.5). |
+| `truncated` | `bool` | — | required | Whether the event list was cut by a limit rather than by the window (§19.4's density handling). A reader must be able to tell a quiet interval from a truncated one. |
+| `provenance` | `record` | — | required | Where the answer came from (v0.2 §25.2). |
 
 ## UserEvent — `ono.user-event/1`
 

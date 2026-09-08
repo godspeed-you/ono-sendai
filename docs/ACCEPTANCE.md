@@ -2629,6 +2629,13 @@ Conventions this subsection relies on:
 
 #### 4.11.1 Contracts and vocabulary (T1, §34, §35, §36)
 
+- [ ] **This subsection is held to the tree.** Every proof a ticked box names resolves to a test
+      that exists and is not `#[ignore]`d, or to a case file the referee collects; every box sits
+      at column 0 where `release-check.sh`'s `^- \[ \]` grep can see it; and the case numbers
+      stay inside the block this subsection claims —
+      `xtask/tests/temporal_evidence.rs`. This box closes last, because a harvester that
+      resolves nothing looks identical to one that works: its own suite mutates the checklist and
+      proves each rule reports what it is for.
 - [ ] **The temporal error family exists in both registries.** Fourteen codes with the names §34
       fixes, compared bidirectionally on code, name and kind by
       `cargo run -p xtask -- spec-check` (`xtask/src/contracts.rs::check_error_registry`), and
@@ -2947,8 +2954,9 @@ Conventions this subsection relies on:
       overhead, a 15-minute timeline, a 1-hour changes query, a recent reconstruction, a
       historical L1 map, a `why`, and retention cleanup under load —
       `docs/contracts/hardening/performance_baseline.json`, `xtask/tests/perf.rs`.
-- [ ] **v0.4's current-state budgets do not regress.** (§32.2) — `cargo run -p xtask -- perf
-      --compare`, case `060-performance-budgets`, case `100-spatial-performance-budgets`.
+- [ ] **v0.4's current-state budgets do not regress.** (§32.2) —
+      `cargo run -p xtask -- perf`, compared against the recorded baseline, plus
+      case `060-performance-budgets` and case `100-spatial-performance-budgets`.
 - [ ] **A long historical query is cancellable and Ctrl-C leaves no lock held.** (§32.6) —
       `crates/ono-cli/tests/temporal_cancellation.rs`, case 271-temporal-cancellation.
 - [ ] **Retention cleanup runs as bounded background work.** It does not block the prompt
@@ -2986,8 +2994,10 @@ Conventions this subsection relies on:
 - [ ] **Recording does not escalate privilege** — `crates/ono-recorder/tests/privilege.rs`.
 - [ ] **Secrets stay out of history** — `crates/ono-temporal-ledger/tests/privacy.rs`.
 - [ ] **Machine-readable semantics precede rendering.** A renderer consumes canonical query
-      output and reaches no provider, ledger or network —
-      `xtask/src/architecture.rs`, `crates/ono-temporal-render/tests/`.
+      output and reaches no provider, ledger or network — the crate layering says so and
+      `xtask/tests/architecture.rs::should_hold_every_crate_to_the_layer_it_is_declared_in`
+      checks it, and `crates/ono-temporal-render/tests/timeline.rs` builds its input by hand
+      because it can.
 - [ ] **No fake rewind** — `crates/ono-temporal-render/tests/gap_frame.rs`.
 
 #### 4.11.13 Release criteria (§56) and delivery
@@ -2999,9 +3009,15 @@ Conventions this subsection relies on:
       `xtask/src/bindings.rs`, `crates/ono-cli/tests/temporal_discoverability.rs`,
       case 231-temporal-configuration.
 - [ ] **The shell is unchanged when temporal persistence is disabled.** v0.2–v0.4 behaviour is
-      green: typed pipelines, external programs, v0.3 adapters, spatial navigation, maps, live
-      maps, remote links, KUANG/11, prompt and PTY behaviour — the existing suite and the
-      existing acceptance cases, unmodified.
+      green with the tranche in the tree and the recorder off: typed pipelines, external
+      programs, v0.3 adapters, spatial navigation, maps, live maps, remote links, KUANG/11,
+      prompt and PTY behaviour. Proven by the existing suites and cases running unmodified —
+      case `010-replaces-bash-for-ordinary-work`, case `040-object-pipeline`,
+      case `046-live-system-semantics`, case `074-adapters-util-linux-end-to-end`,
+      case `090-spatial-cold-start-discovery`, case `108-spatial-live`, case `049-remote-link`,
+      case `050-kuang-plugin` — and by one case that asserts the default state itself,
+      case 273-temporal-disabled-changes-nothing, which runs a v0.4 session end to end with
+      `temporal.recording.enabled` false and shows no temporal store was created.
 - [ ] **`ono-cli` is not the temporal engine.** The crate layering forbids it and the module
       inventory records the temporal modules — `xtask/src/architecture.rs`,
       `docs/contracts/hardening/module_architecture.yaml`.

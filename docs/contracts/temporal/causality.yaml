@@ -1,0 +1,372 @@
+# The causal model: the five relationship classes, the rules that are allowed to emit them, and
+# the words a renderer may use about each (spec v0.5 §15, §36.3).
+#
+# §15.8 is the sentence this file exists to satisfy: "Every built-in rule that emits `caused_by`,
+# `triggered_by` or `resulted_in` MUST be machine-readable and inspectable", and "No renderer may
+# create causal language outside this registry." So causal language in Ono has exactly one
+# source, and it is a table.
+#
+# §1.4's framing is worth keeping in view while reading a rule: causality here is evidence, not
+# storytelling. Every rule below joins on an identity a source actually published — a job path,
+# an action id, a parent pid, a cgroup, a transaction token. None of them joins on proximity in
+# time. §15.2: "Temporal proximity is insufficient." The rules that do use a time window are in
+# `correlation_rules:` further down, they emit `correlated_with`, and §15.5 requires them to be
+# visually and structurally distinct from causation.
+#
+# `xtask/src/temporal.rs::check` holds this file against itself and against its neighbours: every
+# class has an inverse, every rule names an output relation that exists here, every evidence
+# strength a rule requires exists in `evidence.yaml`, and every rule id is registered with the
+# causal engine. Decisions: ADR-0625, ADR-0627.
+
+version: 1
+
+# ---------------------------------------------------------------------------------------------
+# §15.1's five classes and their inverse labels. `causal: true` is the predicate a renderer keys
+# its edge style on (§45.3) and the predicate that decides whether causal wording is permitted
+# at all (§15.6).
+# ---------------------------------------------------------------------------------------------
+relation_classes:
+  - id: caused_by
+    inverse_label: caused
+    causal: true
+    doc: >-
+      §15.2: a direct causal statement, permitted only under a registered rule or a source
+      contract that supports it. The strongest claim Ono makes about the world, and the one it
+      makes least often.
+  - id: triggered_by
+    inverse_label: triggered
+    causal: true
+    doc: >-
+      §15.3: A initiated a mechanism that may involve intermediate steps before B. The
+      difference from `caused_by` is semantic and source-dependent, so §15.3 requires each
+      registered rule to say which of the two it emits rather than leaving a renderer to choose.
+  - id: resulted_in
+    inverse_label: result
+    causal: true
+    doc: >-
+      §15.4: the forward-facing projection of a known effect chain, particularly for operator
+      actions. It MUST reference the same evidence chain as its inverse causal view, so
+      "what did my restart do" and "why is this process here" are two readings of one edge set
+      rather than two independently computed answers.
+  - id: correlated_with
+    inverse_label: correlated_with
+    causal: false
+    doc: >-
+      §15.5: a registered correlation rule found a meaningful temporal or structural association
+      without sufficient causal evidence. Symmetric, which is why its inverse label is itself:
+      correlation has no direction to invert.
+  - id: preceded_by
+    inverse_label: followed_by
+    causal: false
+    doc: >-
+      §15.6: temporal order according to the supported ordering model, and nothing more. Where
+      §26's happens-before cannot establish order from sequence, monotonic readings or a shared
+      transaction, two events are concurrent and no `preceded_by` edge exists at all.
+
+# ---------------------------------------------------------------------------------------------
+# The built-in causal rules (§15.2, §15.8). Each row carries exactly the seven things §15.8 says
+# a rule records, under those names:
+#
+#   rule_id                       the registered id. `ono.*` is reserved to the project (§31.5).
+#   input_event_kinds             the kinds of `events.yaml` the rule reads.
+#   required_evidence_strengths   the minimum strength each input must carry, keyed by input.
+#                                 The link's own strength is the weakest of them (§7.2).
+#   identity_constraints          what must be *equal* for the rule to fire. This is the whole
+#                                 substance of a causal rule: a join on a published identity.
+#   time_constraints              ordering or bounding constraints, or null where the identity
+#                                 join is sufficient on its own — which is the better rule.
+#   output_relation               the class above that the rule emits.
+#   provider_source_constraints   which sources of `sources.yaml` may supply the inputs.
+#
+# The implementations land with the causal engine; declaring them first is the contract-first
+# order AGENTS.md §7 requires, and `status` says which of the two states a rule is in.
+# ---------------------------------------------------------------------------------------------
+rules:
+  - rule_id: ono.action-to-transaction
+    status: declared
+    input_event_kinds: [action.executed, provider.event, object.changed]
+    required_evidence_strengths:
+      action.executed: authoritative
+      provider.event: asserted
+      object.changed: asserted
+    identity_constraints: >-
+      The Ono `ActionId` the shell minted for the action appears in the provider's transaction
+      identifier for the effect event — a systemd job queued by that action, a container runtime
+      request carrying the id, a remote request whose correlation id is the action. The join is
+      on the identifier, never on the two events being close together.
+    time_constraints: >-
+      The effect's presentation instant is at or after the action's, in the same clock domain or
+      in one with explicit continuity (§26.1). No upper bound: a job that takes four minutes was
+      still triggered by the action that queued it.
+    output_relation: triggered_by
+    provider_source_constraints: [ono.session, linux.systemd-dbus, "adapter:<adapter-id>", "remote:<link-id>/<provider-id>", "kuang:<package-id>/<provider-id>"]
+    doc: >-
+      §15.3's canonical example. `triggered_by` rather than `caused_by` because an action starts
+      a mechanism with steps of its own; what the mechanism then does is other rules' work.
+    spec: "§15.2, §15.3, §17.3, §17.4"
+
+  - rule_id: ono.systemd-job-result
+    status: declared
+    input_event_kinds: [provider.event, object.changed]
+    required_evidence_strengths:
+      provider.event: authoritative
+      object.changed: authoritative
+    identity_constraints: >-
+      A systemd `JobRemoved` result names the unit whose transition the effect event records,
+      and the job path in the result equals the job path the effect event carries. systemd owns
+      both facts, so the join is inside one authority.
+    time_constraints: >-
+      The unit transition lies within the job's lifetime, bounded by the job's creation and
+      removal instants that systemd itself reports.
+    output_relation: caused_by
+    provider_source_constraints: [linux.systemd-dbus]
+    doc: >-
+      §15.2's second example: "systemd job result explicitly identifies the unit transition".
+      The strongest built-in rule, because one authoritative source states both ends.
+    spec: "§15.2, §22.2"
+
+  - rule_id: ono.systemd-job-to-unit-state
+    status: declared
+    input_event_kinds: [provider.event, object.changed]
+    required_evidence_strengths:
+      provider.event: authoritative
+      object.changed: authoritative
+    identity_constraints: >-
+      The job identity links a requested operation to a unit state change: the job's unit equals
+      the changed object, and the job's type — start, stop, restart, reload — is consistent with
+      the observed transition.
+    time_constraints: >-
+      The state change lies between the job's creation and its removal.
+    output_relation: caused_by
+    provider_source_constraints: [linux.systemd-dbus]
+    doc: >-
+      The companion to `ono.systemd-job-result`, for the transitions a job produces while it is
+      running rather than the one its result names. Kept separate because the two carry
+      different evidence and a reader of an explanation is entitled to know which fired.
+    spec: "§15.2, §22.2"
+
+  - rule_id: ono.process-parent
+    status: declared
+    input_event_kinds: [object.appeared]
+    required_evidence_strengths:
+      object.appeared: authoritative
+    identity_constraints: >-
+      The child's parent identity — boot, pid, start time, pid namespace — equals the parent
+      process's identity as the kernel reported it at creation. The lifetime-safe identity is
+      required: a bare pid is reused, and a rule that joined on the number would attribute a new
+      process to a dead one.
+    time_constraints: >-
+      The child's creation instant lies within the parent's lifetime.
+    output_relation: caused_by
+    provider_source_constraints: [linux.procfs, "kuang:<package-id>/<provider-id>"]
+    doc: >-
+      §15.2's third example: "a parent process creation event from the kernel identifies its
+      parent/child creation relationship". The kernel is the authority for process parentage, so
+      the claim is authoritative even though procfs is a snapshot source for everything else —
+      the strength belongs to the fact, not to the polling.
+    spec: "§15.2, §22.1"
+
+  - rule_id: ono.service-controls-process
+    status: declared
+    input_event_kinds: [object.appeared, object.disappeared]
+    required_evidence_strengths:
+      object.appeared: derived
+      object.disappeared: authoritative
+    identity_constraints: >-
+      The process's cgroup at the observed instant is the service's cgroup, joining through
+      v0.4's `service.controls_process` edge. The membership is what explains the appearance or
+      the disappearance; the service and the process must both resolve to canonical spatial
+      identities.
+    time_constraints: >-
+      The process event lies within an interval where the service held that cgroup, which is a
+      fact the coverage record has to support rather than an assumption.
+    output_relation: caused_by
+    provider_source_constraints: [linux.systemd-dbus, linux.procfs]
+    doc: >-
+      Why a process appeared or went away when nobody typed anything: the service that owns its
+      cgroup was doing something. Requires `authoritative` evidence for the disappearance side,
+      because §6.3 already forbids inventing a disappearance and a causal claim about one must
+      not be the thing that launders it.
+    spec: "§15.2, §22.2, §6.3"
+
+  - rule_id: ono.action-launched-process
+    status: declared
+    input_event_kinds: [action.executed, object.appeared]
+    required_evidence_strengths:
+      action.executed: authoritative
+      object.appeared: authoritative
+    identity_constraints: >-
+      The appearing process is the one the shell itself created for the external command, joined
+      on the process identity the shell holds from the moment it forked. The shell owns process
+      creation, which is why this is a fact rather than an inference.
+    time_constraints: null
+    output_relation: caused_by
+    provider_source_constraints: [ono.session, linux.procfs]
+    doc: >-
+      §17.6: "Ono can safely claim external process P was launched because command C executed,
+      because the shell owns process creation." The same section fixes the rule's boundary: Ono
+      MUST NOT claim arbitrary downstream effects of P unless an adapter, provider or other
+      evidence source reports them. This rule emits exactly one edge, to exactly one process.
+    spec: "§17.6, §15.2"
+
+  - rule_id: ono.provider-causal-token
+    status: declared
+    input_event_kinds: [provider.event, object.changed, object.appeared, object.disappeared]
+    required_evidence_strengths:
+      provider.event: asserted
+      object.changed: asserted
+      object.appeared: asserted
+      object.disappeared: authoritative
+    identity_constraints: >-
+      The provider published an explicit causal transaction identifier on both events, and the
+      two identifiers are equal. The provider must advertise `causal_tokens` in `sources.yaml`;
+      a token from a source that does not claim the capability is not a token.
+    time_constraints: >-
+      The effect is at or after the cause within the provider's own sequence, which is the
+      ordering evidence §26.1 accepts. Wall-clock order alone is never sufficient.
+    output_relation: caused_by
+    provider_source_constraints: ["adapter:<adapter-id>", "remote:<link-id>/<provider-id>", "kuang:<package-id>/<provider-id>", linux.systemd-dbus]
+    doc: >-
+      §15.2's fourth example and §21.6's capability, as one generic rule: where a provider is
+      willing to say "these two events are the same transaction", Ono relays that claim and
+      attributes it to the provider. Where a plugin is the provider, §37.4 caps the link's
+      strength at `asserted`.
+    spec: "§15.2, §21.6, §37.4"
+
+# ---------------------------------------------------------------------------------------------
+# §15.5's correlation rules. These are the rules that may use a time window, and the window is
+# the reason they emit `correlated_with` and nothing else. A correlation rule can never be
+# promoted into a causal one by finding more instances of itself.
+# ---------------------------------------------------------------------------------------------
+correlation_rules:
+  - rule_id: ono.change-before-failure
+    status: declared
+    input_event_kinds: [object.changed, action.failed, object.changed]
+    required_evidence_strengths:
+      object.changed: observational
+      action.failed: asserted
+    identity_constraints: >-
+      The changed object and the failing object are joined by an existing spatial relation — a
+      configuration file a service reads, a mount a container depends on. An association with no
+      structural link at all is not meaningful and is not emitted.
+    time_constraints: >-
+      The change precedes the failure by at most 5m, in the same clock domain.
+    window: 5m
+    output_relation: correlated_with
+    provider_source_constraints: [linux.procfs, linux.systemd-dbus, linux.journald, ono.recorder]
+    doc: >-
+      §15.5's first example: "config file changed 9 seconds before a service failure". Emits
+      `correlated_with` only. It is offered as context beside an explanation, never as the
+      explanation.
+    spec: "§15.5"
+
+  - rule_id: ono.resource-pressure-overlap
+    status: declared
+    input_event_kinds: [object.changed, action.failed]
+    required_evidence_strengths:
+      object.changed: observational
+      action.failed: asserted
+    identity_constraints: >-
+      The pressure and the errors share a scope — the same filesystem, the same cgroup, the same
+      host. Scope is the structural association; without it two coincident readings are two
+      coincident readings.
+    time_constraints: >-
+      The two intervals overlap, or are separated by at most 1m.
+    window: 1m
+    output_relation: correlated_with
+    provider_source_constraints: [linux.procfs, ono.recorder, "kuang:<package-id>/<provider-id>"]
+    doc: >-
+      §15.5's second example: "filesystem pressure and application errors overlapped". Emits
+      `correlated_with` only.
+    spec: "§15.5, §22.6"
+
+  - rule_id: ono.remote-endpoint-retry-spike
+    status: declared
+    input_event_kinds: [object.disappeared, object.changed]
+    required_evidence_strengths:
+      object.disappeared: asserted
+      object.changed: observational
+    identity_constraints: >-
+      The endpoint that went away is one the local process was connected to, joined through the
+      socket's remote address. The two events are in different clock domains, so §26.1's
+      happens-before returns concurrent and no ordering is claimed.
+    time_constraints: >-
+      The two lie within 30s of each other, subject to the clock uncertainty of the remote
+      domain (§24.4).
+    window: 30s
+    output_relation: correlated_with
+    provider_source_constraints: [linux.netlink, linux.procfs, "remote:<link-id>/<provider-id>"]
+    doc: >-
+      §15.5's third example: "a remote endpoint disappeared near a local retry spike". The
+      clearest case for why correlation exists as a separate class: two hosts, no shared
+      ordering evidence, and a pattern an operator still wants to see.
+    spec: "§15.5, §24.3, §26.3"
+
+# ---------------------------------------------------------------------------------------------
+# §15.7. Unknown cause is an outcome, not an error.
+# ---------------------------------------------------------------------------------------------
+unknown_cause:
+  doc: >-
+    §15.7: a causal query must be able to answer `cause: unknown` while still listing evidence,
+    correlated events and gaps. An explanation with no causal edge is a complete answer, and it
+    is the answer a conservative rule set produces most of the time. §1.4: "I do not know" is
+    better than a confident fiction.
+  renders: [evidence, correlated_events, gaps]
+  is_error: false
+  spec: "§15.7, §16.6"
+
+# ---------------------------------------------------------------------------------------------
+# §15.6 and §45.3: what a renderer may write, and what it may not.
+# ---------------------------------------------------------------------------------------------
+renderer_wording:
+  forbidden_for_non_causal:
+    - because
+    - therefore
+    - "led to"
+    - caused
+  forbidden_doc: >-
+    §15.6 lists these four words as language `preceded_by` MUST NOT be rendered with, and the
+    prohibition extends to every class whose `causal` is false: a renderer that writes "because"
+    about a `correlated_with` edge has manufactured causality its input does not contain, which
+    §37.6 forbids for a plugin view and §38.2 forbids for a model's hypothesis. The permitted
+    wording for a non-causal edge is the class's own label — `correlated`, `preceded by`,
+    `followed by`.
+  connector_style:
+    causal:
+      style: arrow
+      example: "|\n| triggered\nv"
+      doc: >-
+        §45.3: a causal edge is drawn as a directed connector labelled with the relation's own
+        inverse label — `triggered`, `caused`, `result`.
+    non_causal:
+      style: dotted
+      example: "nginx.conf changed  .... correlated ....  nginx.service failed"
+      doc: >-
+        §45.3: a non-causal edge uses a distinct non-directional connector. "A renderer MUST
+        never use the same edge style/label for both."
+    rule: >-
+      §45.2: colour must not be the sole carrier of the distinction. The connector glyph and the
+      label carry it, so the difference survives a monochrome terminal, a pipe and a screen
+      reader.
+  spec: "§15.6, §45.2, §45.3"
+
+# ---------------------------------------------------------------------------------------------
+# Third-party rules (§37.4), stated here because the constraint is on this registry's namespace.
+# ---------------------------------------------------------------------------------------------
+contributed_rules:
+  namespace_rule: >-
+    §37.4: a third-party causal rule MUST be namespaced to its publisher and MUST identify its
+    source. `ono.*` is reserved to the project (§31.5), so a package's rule id looks like
+    `dev.example.packet-eye.retransmit-to-drop`.
+  capability: temporal.contribute.causality
+  strength_ceiling: asserted
+  strength_ceiling_doc: >-
+    §37.4: "By default, plugin causal strength MUST NOT exceed `asserted` unless the host
+    contract explicitly trusts that package/source as authoritative for a domain."
+
+# ---------------------------------------------------------------------------------------------
+# The errors this registry names (§36.4).
+# ---------------------------------------------------------------------------------------------
+errors:
+  - temporal.clock_uncertain
+  - temporal.coverage_gap

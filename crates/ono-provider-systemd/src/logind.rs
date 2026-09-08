@@ -19,7 +19,9 @@ use std::sync::{Arc, OnceLock};
 use jiff::Timestamp;
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
-use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Risk, Selector};
+use ono_provider_api::{
+    Availability, Capability, ObjectRef, Provider, Query, Risk, Selector, TemporalCapabilities,
+};
 use ono_value::{ErrorValue, Provenance, RecordValue, Schema, SchemaId, Value, builtin_schemas};
 use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 use zbus::{Connection, Proxy};
@@ -429,6 +431,15 @@ impl Provider for SessionProvider {
         match &self.backing {
             Backing::Ready(_) => Availability::Available,
             Backing::Missing(reason) => Availability::unavailable(reason.clone()),
+        }
+    }
+
+    fn temporal(&self) -> TemporalCapabilities {
+        // logind answers about the logins that exist now. It keeps no history of logins that
+        // ended, and this provider subscribes to no signal, so a snapshot is the whole claim.
+        TemporalCapabilities {
+            checkpointable: true,
+            ..TemporalCapabilities::snapshot_only()
         }
     }
 

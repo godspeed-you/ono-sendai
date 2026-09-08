@@ -16,6 +16,19 @@
 #                      answering emptily (spec §35.3);
 #   unbounded          a snapshot is a live stream that does not end on its own; what it emits
 #                      still has to satisfy the contract it claims.
+#
+# `temporal:` is the source capability matrix of spec v0.5 §21.1 and §22: the seven capabilities
+# a provider may claim about time, and one word for what the *source* fundamentally is. It says
+# what the answering system can do, and it is deliberately conservative — §21.5 forbids claiming
+# `exhaustive_events` "merely because events usually arrive", and §22.1 forbids the procfs
+# provider claiming native historical process coverage at all. Only netlink's link, address and
+# route tables and the filesystem's inotify watches emit live events in this tree; everything
+# else is polled by the runtime and says `live_events: false` however often it is polled.
+#
+#   coverage: snapshot            the source states what is true now and keeps nothing;
+#             event_stream        the source pushes changes as they happen;
+#             historical_query    the source answers about instants before it was asked;
+#             none                the source cannot be asked about time at all.
 
 providers:
   - id: linux.procfs
@@ -26,6 +39,22 @@ providers:
     conformance:
       process: enumerable
       signal: enumerable
+    temporal:
+      # §22.1: "`procfs` is primarily a snapshot source. The reference provider MUST NOT claim
+      # native historical process coverage." A process that exited left nothing in `/proc` to read,
+      # so appearance and disappearance are the recorder's to derive by comparing snapshots — with
+      # provenance saying `snapshot_diff` and coverage reflecting the polling interval — and never
+      # this provider's to claim as events it witnessed.
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      # A process record carries lifetime identity and provenance, so it serialises into a
+      # checkpoint as itself (§21.7).
+      checkpointable: true
+      retained_history: null
+      coverage: snapshot
     spatial:
       # §10.2: a pid is an attribute, a process identity is boot + pid + start time + pid
       # namespace. The tier is therefore B, never A: the number is reused the moment the
@@ -55,6 +84,19 @@ providers:
     conformance:
       file: enumerable
       dir: enumerable
+    temporal:
+      # inotify is the one filesystem event source here, and §22.5 bounds what it may promise:
+      # "v0.5 MUST NOT promise complete generic filesystem history". A watch is per directory, the
+      # kernel queue overflows under load, and file content is outside the recorder entirely — so
+      # events yes, exhaustiveness no, and nothing here is checkpointed.
+      current_snapshot: true
+      live_events: true
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: false
+      retained_history: null
+      coverage: event_stream
     spatial:
       # A file is device + inode: the same object under any number of paths, and the same
       # object after a rename (§10.1 Tier A).
@@ -85,6 +127,18 @@ providers:
     conformance:
       user: enumerable
       group: enumerable
+    temporal:
+      # NSS answers about the accounts that exist now. A directory behind it may keep history; this
+      # provider cannot ask it for any, and says so rather than implying the account database is
+      # as old as the machine.
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+      coverage: snapshot
     spatial:
       identity_strategy: stable
       canonical_parent:
@@ -107,6 +161,17 @@ providers:
     schemas: [ono.env-var/1]
     conformance:
       env: enumerable
+    temporal:
+      # The session's own environment as it is now. It changes only when the shell changes it, and
+      # the shell records that as an action rather than as a provider event.
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+      coverage: snapshot
 
   - id: ono.shell
     doc: >-
@@ -141,6 +206,17 @@ providers:
       assistant: enumerable
       model: enumerable
       finding: enumerable
+    temporal:
+      # The shell's own tables, read when asked. The session knows every change it made to them,
+      # and records those as actions (§17.2), so nothing here is a provider event.
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+      coverage: snapshot
     spatial:
       # The job table is as long-lived as the session's jobs; a host is a stable name. One
       # claim covers both, so it is the weaker of the two (§42).
@@ -166,6 +242,18 @@ providers:
     conformance:
       mount: enumerable
       filesystem: enumerable
+    temporal:
+      # §22.6: mount state MAY be checkpointed and changes derived from authoritative snapshots.
+      # `/proc/self/mountinfo` is pollable rather than subscribable here, and filesystem usage is
+      # not a default high-frequency series — it is captured at a checkpoint or a landmark.
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+      coverage: snapshot
     spatial:
       # A filesystem UUID is Tier A and a mount is Tier B — a mount point is reused the
       # moment the filesystem is unmounted. One entry serves both, so the claim is the
@@ -191,6 +279,17 @@ providers:
     schemas: [ono.device/1]
     conformance:
       device: enumerable
+    temporal:
+      # The device nodes and their sysfs entries as they are now. uevent would be an event source;
+      # this provider does not open one, so it claims none.
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+      coverage: snapshot
     spatial:
       # The device node is the identity, and it is stable for as long as the device is
       # attached (§18: a device is a spatial object only where the provider supplies stable

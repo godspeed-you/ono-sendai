@@ -42,7 +42,9 @@ pub use hierarchy::{
     PATH_PARENT, ParentRule, canonical_parent, canonical_parent_with, parent_of_space,
     parent_rules, path_to_space,
 };
-pub use id::{BootIdentity, IdentityTier, ProcessIdentity, SpatialId, SpatialIdentity};
+pub use id::{
+    BootEvidence, BootIdentity, IdentityTier, ProcessIdentity, SpatialId, SpatialIdentity,
+};
 pub use landmark::{Landmark, LandmarkReason, LandmarkSource};
 pub use neighborhood::{Completeness, Freshness, Neighborhood, NeighborhoodGroup, PermissionState};
 pub use object::{

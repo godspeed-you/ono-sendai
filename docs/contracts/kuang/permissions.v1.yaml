@@ -133,6 +133,18 @@ families:
   - {id: state.persist, class: extension-local, risk: local, kind: local-contribution, title: "Keep its own state between sessions"}
   - {id: clock.read, class: extension-local, risk: local, kind: local-contribution, title: "Read the clock"}
   - {id: provider.mutate, class: explicit, risk: mutate, kind: external-change, title: "Change resources in the external system"}
+  # v0.5 §30.7's six temporal families. The read side is `observation` because it reads state
+  # that already exists, with one exception: `temporal.read.history` carries a `sensitive-read`
+  # floor, because §30.1 is explicit that retention turns harmless current-state facts into a
+  # behavioural history of the person at the keyboard. The contribute side is `explicit` because
+  # it changes what Ono asserts about the world rather than what it reports about itself
+  # (ADR-0626).
+  - {id: temporal.read.current, class: observation, risk: observe, kind: host-observe, title: "Read the current time context"}
+  - {id: temporal.read.history, class: observation, risk: sensitive-read, kind: host-observe, title: "Read this machine's recorded history"}
+  - {id: temporal.read.evidence, class: observation, risk: observe, kind: host-observe, title: "Read the evidence behind temporal claims"}
+  - {id: temporal.contribute.events, class: explicit, risk: mutate, kind: host-change, title: "Add events to Ono's temporal record"}
+  - {id: temporal.contribute.causality, class: explicit, risk: mutate, kind: host-change, title: "Add causal explanations to Ono"}
+  - {id: temporal.recorder.manage, class: explicit, risk: mutate, kind: host-change, title: "Start and stop the history recorder"}
 
 # ---------------------------------------------------------------------------------------------
 # A permission descriptor, as a `kuang-package/2` manifest declares one under

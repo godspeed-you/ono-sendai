@@ -6,7 +6,8 @@
 # §31.49 (leases), §31.63 (negotiation at load). Decisions: ADR-0022. Threat model: ADR-0015 T3.
 #
 # Authority: the *family list* is `kuang_capabilities` in `docs/contracts/capabilities.yaml`, which
-# carries §31.16's twenty-nine families verbatim with their `risk`, `elevation` and scope keys.
+# carries §31.16's twenty-nine families verbatim with their `risk`, `elevation` and scope keys,
+# plus `provider.mutate` (ADR-0594) and v0.5 §30.7's six temporal families (ADR-0626).
 # This file adds what that registry deliberately leaves out — the shape of each scope, whether
 # the host can actually enforce it, and the lifecycle of a grant. The two files MUST agree on
 # every id, risk, elevation and scope-key list; `cargo xtask spec-check` compares them, and
@@ -454,6 +455,112 @@ families:
           action remains distinguishable from a reversible one by the contribution's declared
           risk, which the host's confirmation policy reads independently of this grant.
         caveat: The same caveat as `instances`.
+
+  # --- the six temporal families of v0.5 §30.7 -------------------------------------------------
+  # §30.7: "Temporal access is capability-controlled." The list is closed, and it is deliberately
+  # split three ways on the read side, because the three answer different questions and carry
+  # different risk. Reading that the session is at 12:07 is not reading what the machine was
+  # doing at 12:07, and neither is reading the raw material Ono derived that from. §30.7's own
+  # sentence: "A plugin with current object read permission does not automatically receive
+  # historical access." Decisions: ADR-0626.
+
+  - id: temporal.read.current
+    risk: read
+    elevation: none
+    permits: >-
+      Reading the present temporal context — whether the session is in historical context, the
+      instant it resolved to, and the coverage summary behind the prompt marker. It grants no
+      access to recorded events; a package that only needs to render correctly in a historical
+      session needs this and nothing more.
+    scopable: false
+    scope: {}
+
+  - id: temporal.read.history
+    risk: read
+    elevation: none
+    permits: >-
+      Reading recorded events, reconstructed past state and past relations, within the granted
+      window. This is the capability §30.1 is about: a machine's retained history is a
+      behavioural record of the person using it, so the grant is separate from current object
+      read, its risk floor is `sensitive-read` rather than `observe`, and the window is a
+      boundary the broker enforces rather than a hint.
+    scopable: true
+    scope:
+      window:
+        type: window
+        enforcement: broker
+        doc: >-
+          How far back the package may read (v0.5 §30.7, §33). The same shape `history.read`
+          uses for the session's semantic history, for the same reason: "how far back" is the
+          one dimension a temporal read is naturally bounded on. A read outside the window is
+          `capability.denied`, not an empty answer.
+
+  - id: temporal.read.evidence
+    risk: read
+    elevation: none
+    permits: >-
+      Reading the evidence records, evidence chains and coverage intervals behind a temporal
+      claim (v0.5 §7.3, §7.6). Separate from `temporal.read.history` because evidence carries
+      source-native material an event summary does not — a journal cursor, a source statement,
+      a raw reference — and a package that renders a timeline does not need it.
+    scopable: false
+    scope: {}
+
+  - id: temporal.contribute.events
+    risk: mutate
+    elevation: none
+    permits: >-
+      Contributing canonical temporal events of the granted kinds (v0.5 §37.3). The host
+      validates every one: the schema, the source identity it stamps itself, the timestamps, the
+      scope visibility, the spatial identities referenced, and the size and rate limits. A
+      package cannot assert that an object exists outside the objects it can resolve through
+      providers it has been granted, so this capability widens what a package may *say*, never
+      what it may *see*.
+    scopable: true
+    scope:
+      kinds:
+        type: name-list
+        enforcement: broker
+        doc: >-
+          The canonical event kinds of `docs/contracts/temporal/events.yaml` the package may
+          contribute — `provider.event`, `object.observed`, or `*`. A prompt that says "may add
+          provider events" is one an operator can weigh; "may add events" is not. A kind outside
+          the grant is `capability.denied`.
+
+  - id: temporal.contribute.causality
+    risk: mutate
+    elevation: none
+    permits: >-
+      Registering namespaced causal rules and contributing the causal links they produce
+      (v0.5 §37.4). This changes what Ono asserts about the world rather than what it reports
+      about itself, which is why it is an explicit decision at install rather than an
+      extension-local one. Two host rules bound it whatever is granted: a third-party rule MUST
+      be namespaced to its publisher and identify its source, and contributed causal strength
+      MUST NOT exceed `asserted` unless the host contract explicitly trusts that package as
+      authoritative for a domain.
+    scopable: true
+    scope:
+      rules:
+        type: id-list
+        enforcement: broker
+        doc: >-
+          The rule ids the package may register, in its own namespace —
+          `dev.example.packet-eye.retransmit-to-drop`, or `dev.example.packet-eye.*`. A rule id
+          in another publisher's namespace, or in `ono.*`, is refused whatever the grant says
+          (spec §31.5).
+
+  - id: temporal.recorder.manage
+    risk: mutate
+    elevation: none
+    permits: >-
+      Starting and stopping the persistent history recorder (v0.5 §10.3, §30.7). Unscoped
+      because there is one recorder and the decision is binary. It is a mutating capability
+      rather than a read one because starting the recorder changes what the machine retains
+      about its user, which §10's intent requires to be impossible to confuse with something
+      that happened quietly. It does not grant reading what the recorder collects; that is
+      `temporal.read.history`.
+    scopable: false
+    scope: {}
 
 # ---------------------------------------------------------------------------------------------
 # Declaration classes — spec §31.17. A property of the package's declaration, not of the

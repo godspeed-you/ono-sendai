@@ -1,0 +1,72 @@
+# Canonical CausalLink schema. Source: v0.5 §15.1 (the five relationship classes and their
+# inverse labels), §15.2 ("temporal proximity is insufficient"), §15.5 (correlation MUST be
+# visually and structurally distinct from causation), §15.6 (`preceded_by` MUST NOT be rendered
+# with causal language) and §15.8 (every built-in rule that emits a causal relation is
+# machine-readable and inspectable, and "no renderer may create causal language outside this
+# registry").
+#
+# `is_causal` is a field rather than a renderer's guess: §15.5 and §15.6 make the distinction
+# structural, and a renderer that had to re-derive it from the class name would be one rename
+# away from calling a correlation a cause.
+#
+# Identity is `link_id`: an event's `causal_parents` refer to it.
+id: ono.causal-link/1
+name: CausalLink
+summary: A typed relationship between two events, the rule that emitted it and the evidence that supports it.
+identity: [link_id]
+fields:
+  link_id:
+    type: string
+    required: true
+    doc: The stable identity an event's `causal_parents` refer to.
+  relation:
+    type: enum
+    required: true
+    values: [caused_by, triggered_by, resulted_in, correlated_with, preceded_by]
+    doc: >-
+      §15.1's class, read from the effect's side. The list is closed; a rule that needs another
+      word is a rule that has not established causation.
+  inverse:
+    type: enum
+    required: true
+    values: [caused, triggered, result, correlated_with, followed_by]
+    doc: The §15.1 label of the same link read from the cause's side.
+  is_causal:
+    type: bool
+    required: true
+    doc: >-
+      Whether this class asserts causation — true for `caused_by`, `triggered_by` and
+      `resulted_in`, false for `correlated_with` and `preceded_by`. A renderer keys its edge
+      style and its wording on this and never on prose (§15.5, §15.6).
+  cause:
+    type: string
+    required: true
+    doc: The `ono.temporal-event/1` id at the cause end.
+  effect:
+    type: string
+    required: true
+    doc: The `ono.temporal-event/1` id at the effect end.
+  rule:
+    type: string
+    required: true
+    doc: >-
+      The registered rule that emitted the link — `ono.action-to-job`, or a publisher-namespaced
+      id for a plugin rule (§15.8, §37.4). A link with no rule behind it cannot be inspected,
+      so there is none.
+  evidence:
+    type: list<string>
+    required: true
+    doc: The `ono.temporal-evidence/1` ids the rule matched on (§15.4).
+  strength:
+    type: enum
+    required: true
+    values: [authoritative, asserted, derived, correlated, observational]
+    doc: >-
+      The weakest strength in the chain (§7.2). Nothing raises it, so a chain is never stronger
+      than its weakest link.
+  source:
+    type: string
+    required: true
+    doc: The §7.1 source that produced the link.
+default_view:
+  columns: [link_id, relation, cause, effect, rule, strength]

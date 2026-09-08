@@ -165,10 +165,14 @@ pub fn stream(
                 let shape = MapSnapshot::of(&map);
                 let changes = match &previous {
                     // §24.3: no change is invented where there is nothing to compare to. The
-                    // opening value is a snapshot and says so by carrying no changes at all.
+                    // opening value is a snapshot and says so by carrying no changes at all, and
+                    // the window it covers is the one instant it was observed at: v0.5 §9.2 lets
+                    // a set speak for the period between two observations, and there has been
+                    // only one.
                     None => ChangeSet::new(
                         ono_spatial_events::ChangeSource::SnapshotComparison,
                         merge.freshness(),
+                        ono_spatial_events::ObservationWindow::at(map.generated_at),
                     ),
                     Some(before) => compare(before, &shape, merge.freshness()),
                 };

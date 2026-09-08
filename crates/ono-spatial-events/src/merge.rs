@@ -19,9 +19,10 @@
 //! state the view simply had not seen yet, and §43.6 forbids reporting a startup artefact as a
 //! real change.
 
+use jiff::Timestamp;
 use ono_value::{RecordValue, Value};
 
-use crate::change::Freshness;
+use crate::change::{Freshness, ObservedAt};
 
 /// What the runtime says happened (v0.2 §18.2's `kind`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +96,8 @@ impl EventSource {
 #[derive(Debug, Clone)]
 pub struct ObservedEvent {
     kind: EventKind,
+    at: Option<Timestamp>,
+    changed: Vec<String>,
     source: EventSource,
     object: Option<RecordValue>,
 }
@@ -104,6 +107,35 @@ impl ObservedEvent {
     #[must_use]
     pub fn kind(&self) -> EventKind {
         self.kind
+    }
+
+    /// When the runtime observed it (v0.2 §18.2's `at`, v0.5 §3.3's `observed_at`).
+    ///
+    /// `None` where the envelope stated no time. v0.5 §3.3 keeps source time, observed time and
+    /// ingestion time apart, so the one instant this envelope carries is reported as the one
+    /// instant it is, and an envelope carrying none reports none.
+    #[must_use]
+    pub fn at(&self) -> Option<Timestamp> {
+        self.at
+    }
+
+    /// When it was observed, in the terms v0.5 §9.2 allows a consumer to use.
+    ///
+    /// This is the seam a change built from a provider event takes its time from: the event
+    /// states an instant, so the change states that instant, and an event that states none
+    /// produces a change that states none.
+    #[must_use]
+    pub fn observed(&self) -> ObservedAt {
+        self.at.map_or(ObservedAt::Unknown, ObservedAt::At)
+    }
+
+    /// The names of the fields whose values moved (v0.2 §18.2's `changed`, v0.5 §6.2).
+    ///
+    /// Empty where the envelope named none — for every kind but `changed` it names none, and
+    /// §35.3 forbids inventing field names to fill the gap.
+    #[must_use]
+    pub fn changed_fields(&self) -> &[String] {
+        &self.changed
     }
 
     /// How it was seen.
@@ -156,6 +188,8 @@ impl EventMerge {
         }
         Some(ObservedEvent {
             kind,
+            at: instant_of(record),
+            changed: changed_fields_of(record),
             source,
             object: object_of(record),
         })
@@ -180,6 +214,25 @@ impl EventMerge {
 /// A string field of an event.
 fn word<'a>(record: &'a RecordValue, field: &str) -> Option<&'a str> {
     record.get(field).and_then(|value| value.as_str().ok())
+}
+
+/// When the envelope says the change was observed, where it says so (v0.2 §18.2's `at`).
+fn instant_of(record: &RecordValue) -> Option<Timestamp> {
+    match record.get("at") {
+        Some(Value::Timestamp(at)) => Some(*at),
+        _ => None,
+    }
+}
+
+/// The field names the envelope lists as moved (v0.2 §18.2's `changed`).
+fn changed_fields_of(record: &RecordValue) -> Vec<String> {
+    match record.get("changed") {
+        Some(Value::List(fields)) => fields
+            .iter()
+            .filter_map(|field| field.as_str().ok().map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// The object an event carries, under whichever target field the envelope names it.

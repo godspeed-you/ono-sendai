@@ -1,0 +1,56 @@
+# Canonical TemporalGap schema. Source: v0.5 §7.5 (a gap is itself a typed temporal object, with
+# the closed reason vocabulary), §8.5 (composition computes gaps per capability), §11.7 (a
+# timeline MUST show a gap in a visible interval and "MUST not [hide it] simply because events
+# exist on both sides") and §18.6 (rewinding beyond coverage reports the boundary).
+#
+# A gap is a structural sub-record rather than an addressable object, so it declares no identity.
+id: ono.temporal-gap/1
+name: TemporalGap
+summary: An interval in which a capability was not covered, and why.
+identity: []
+fields:
+  scope:
+    type: string
+    required: true
+    doc: The v0.4 §3.2 boundary the gap is in, rendered `<kind>:<id>`.
+  capability:
+    type: string
+    required: true
+    doc: The state class that went uncovered — the same word `ono.temporal-coverage/1` uses.
+  from:
+    type: timestamp
+    required: true
+    doc: When the gap starts.
+  until:
+    type: timestamp
+    required: true
+    doc: When the gap ends.
+  reason:
+    type: enum
+    required: true
+    values:
+      - not_recorded
+      - retention_expired
+      - provider_unavailable
+      - permission_denied
+      - source_disconnected
+      - clock_uncertain
+      - corrupt_segment
+      - unsupported
+    doc: >-
+      Why nothing is known here (§7.5). The list is closed: a gap Ono cannot explain is
+      `not_recorded`, which is honest, rather than a reason invented for the occasion.
+  source:
+    type: string
+    required: true
+    doc: >-
+      The §7.1 source that would have covered the interval. A gap belongs to a source: "nobody
+      recorded this" and "systemd was not running" are different facts.
+  detail:
+    type: string
+    nullable: true
+    doc: >-
+      What a renderer adds to the reason — `recorder offline` in §11.7's own example. Null where
+      the reason says everything.
+default_view:
+  columns: [from, until, capability, reason, source]

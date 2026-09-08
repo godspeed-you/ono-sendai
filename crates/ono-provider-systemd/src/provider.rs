@@ -6,12 +6,12 @@ use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
 use ono_provider_api::{
     Action, ActionOutcome, Availability, Capability, ObjectId, ObjectRef, Provider, Query, Risk,
-    Selector,
+    Selector, TemporalCapabilities,
 };
 use ono_value::{ErrorValue, SchemaId, Value};
 
 use crate::record::{already_in_state, service_schema, unit_name_candidates, unit_record};
-use crate::{BusError, JobKind, SystemdBus, UnitProperties};
+use crate::{BusError, JobKind, JobRef, SystemdBus, UnitProperties};
 
 /// The id this provider signs its records with, and the value of their `provider` field.
 ///
@@ -269,6 +269,24 @@ impl Provider for SystemdProvider {
         }
     }
 
+    fn temporal(&self) -> TemporalCapabilities {
+        TemporalCapabilities {
+            current_snapshot: true,
+            // The unit state this provider serves is read on demand and polled by the runtime;
+            // it does not subscribe to `PropertiesChanged`. §21.5 and §22.2: a polled source
+            // states its live and exhaustive claims as false however reliably it is polled.
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            // A queued job answers with its object path, and a unit read while a job is in
+            // flight names it. Both are transaction identities in the sense of §21.6, and they
+            // are what §15.2 admits as evidence for `caused_by`.
+            causal_tokens: true,
+            checkpointable: true,
+            retained_history: None,
+        }
+    }
+
     fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
         let bus = self.bus()?;
         let plan = Plan::of(query);
@@ -429,7 +447,11 @@ impl Provider for SystemdProvider {
                     ));
                 }
                 match bus.queue_job(&properties.name, job).await {
-                    Ok(()) => Ok(ActionOutcome::succeeded(action, true)),
+                    // §17.3: the job path is the service manager's own transaction identity, and
+                    // the outcome is the only thing this call produces, so it is where the
+                    // mapping from Ono's `ActionId` to systemd's job has to be handed up. A
+                    // refused job produces no job, and carries none.
+                    Ok(queued) => Ok(job_outcome(action, &queued)),
                     Err(error) => Ok(ActionOutcome::failed(action, error.into_error())),
                 }
             }
@@ -460,5 +482,21 @@ impl Provider for SystemdProvider {
                 }
             }
         }
+    }
+}
+
+/// The outcome of a queued job, carrying the identity systemd gave it.
+///
+/// `systemd.job` is the object path verbatim — the token spec §17.3's example writes as
+/// `ActionId ono:a91f -> systemd job /org/freedesktop/systemd1/job/4821` — and `systemd.job_id`
+/// is the number in it, so a consumer that correlates a `JobRemoved` signal by id does not have
+/// to re-parse a path. Where systemd answered with a path that carries no number, the id is
+/// absent rather than invented (spec §35.3).
+fn job_outcome(action: &Action, queued: &JobRef) -> ActionOutcome {
+    let outcome = ActionOutcome::succeeded(action, true)
+        .with_metadata("systemd.job", Value::string(&queued.path));
+    match queued.id {
+        Some(id) => outcome.with_metadata("systemd.job_id", Value::Int(i128::from(id))),
+        None => outcome,
     }
 }

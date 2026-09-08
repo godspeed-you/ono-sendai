@@ -10,6 +10,21 @@ providers:
     schemas: [ono.service/1]
     conformance:
       service: enumerable
+    temporal:
+      # §22.2: the systemd provider "SHOULD contribute live unit state transitions and job identity
+      # where available". Job identity is here — `StartUnit` and its siblings answer with the job's
+      # object path, and `Unit.Job` names a job in flight — and that is a causal token in the sense
+      # of §21.6 and the evidence §15.2 admits for `caused_by`. Live transitions are not: this
+      # provider reads unit state on demand and the runtime polls it, so `live_events` stays false
+      # until it subscribes to `PropertiesChanged` (§21.5).
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: true
+      checkpointable: true
+      retained_history: null
+      coverage: snapshot
     spatial:
       # §13: "A service place represents the stable service-manager concept rather than a
       # single process lifetime." The unit name is that concept, and it survives every
@@ -36,6 +51,23 @@ providers:
     conformance:
       journal: unbounded
       log: unbounded
+    temporal:
+      # §22.3: the journal is the one source in this tree that genuinely answers about the past.
+      # `--since` and `--until` reach events recorded before anything asked for them, which is a
+      # `historical_query` and nothing weaker. It is still not exhaustive: journald rate-limits, a
+      # volatile journal is lost at reboot, and a rotated one is gone — so no absence claim rests on
+      # it (§21.5). Its retention is `journald.conf`'s to state and this provider does not read it,
+      # so the bound is null rather than a guess.
+      current_snapshot: true
+      live_events: false
+      historical_query: true
+      exhaustive_events: false
+      causal_tokens: false
+      # A journal is a stream of what happened, never a snapshot of object state, so there is
+      # nothing here to serialise into a checkpoint (§21.7).
+      checkpointable: false
+      retained_history: null
+      coverage: historical_query
 
   - id: systemd-logind
     doc: >-
@@ -46,6 +78,17 @@ providers:
     schemas: [ono.session/1]
     conformance:
       session: enumerable
+    temporal:
+      # logind answers about the logins that exist now. A login that ended leaves nothing here; the
+      # journal is where its record is, under another provider.
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+      coverage: snapshot
     spatial:
       identity_strategy: lifetime
       canonical_parent:

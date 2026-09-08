@@ -129,6 +129,21 @@ pub(crate) fn boot_time_seconds(proc_root: &Path) -> Option<i64> {
         .ok()
 }
 
+/// The kernel's identity for this boot, from `/proc/sys/kernel/random/boot_id`.
+///
+/// A random value the kernel mints once at boot and never changes, so it separates one boot from
+/// the next without depending on the wall clock — which is exactly what v0.5 §25.5 asks for and
+/// what `btime` cannot give, because an NTP correction moves `btime` inside a single boot.
+///
+/// `None` where the file cannot be read: a container with a restricted `/proc`, a fixture that
+/// does not declare one, a kernel that does not publish it. The absence is reported rather than
+/// substituted, and [`crate::ProcessProvider::boot_identity`] states what it falls back to.
+pub(crate) fn boot_id(proc_root: &Path) -> Option<String> {
+    let text = fs::read_to_string(proc_root.join("sys/kernel/random/boot_id")).ok()?;
+    let trimmed = text.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
 /// How long the machine has been up, in seconds, from `/proc/uptime`.
 ///
 /// It is what turns a process's `starttime` — a tick count measured from the same boot — into a

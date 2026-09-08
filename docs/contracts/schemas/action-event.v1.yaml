@@ -1,0 +1,72 @@
+# Canonical ActionEvent schema. Source: v0.5 §17.4 (the field list), §17.2 (the four-step action
+# lifecycle the canonical event model must represent), §17.3 (an ActionId exists before execution
+# and the ledger records the mapping to an external authority's own job id), §17.5 (semantic
+# redaction: a secret-typed argument is persisted as `<secret:redacted>`, and arbitrary external
+# command text is not persisted as an action body by default) and §30.3 (no secret values).
+#
+# The shell knows what the operator asked for, which is the one causal fact external monitoring
+# usually lacks (§17.1). That is why the action is an event in its own right rather than a log
+# line.
+#
+# Identity is `action_id`, which §17.3 mints before execution.
+id: ono.action-event/1
+name: ActionEvent
+summary: A mutation requested through Ono — what was asked for, who asked, what authorised it and what came of it.
+identity: [action_id]
+fields:
+  action_id:
+    type: string
+    required: true
+    doc: The identity minted before execution (§17.3), rendered `ono:a<hex>`.
+  command:
+    type: string
+    required: true
+    doc: >-
+      The redacted command summary of §17.5. Every secret-shaped argument reads
+      `<secret:redacted>`; the raw text never enters the ledger.
+  actor:
+    type: string
+    required: true
+    doc: The user identity that requested the action.
+  session_id:
+    type: string
+    required: true
+    doc: The session the request came from, so one operator's work can be read as one thread.
+  requested_at:
+    type: timestamp
+    required: true
+    doc: When the request was made — the first step of §17.2's lifecycle.
+  target:
+    type: string
+    nullable: true
+    doc: The `spatial_id` acted on. Null for an action with no single spatial target.
+  operation:
+    type: string
+    required: true
+    doc: The operation as the command registry spells it — `restart`, `set`, `remove`.
+  authorization:
+    type: record
+    required: true
+    doc: >-
+      What allowed the action: the decision, the declared risk class, the capability required and
+      the reason a confirmation was or was not asked for (§17.2's `action.authorized`).
+  result:
+    type: record
+    nullable: true
+    doc: >-
+      What came of it — status, completion time, detail — once §17.2's `action.completed` or
+      `action.failed` is known. Null while the action is still in flight, which is unknown and
+      not failure.
+  external_transaction:
+    type: string
+    nullable: true
+    doc: >-
+      The external authority's own job or transaction id, as §17.3's
+      `systemd:/org/freedesktop/systemd1/job/4821`. This is the token a causal rule joins on
+      (§21.6). Null where the authority returned none.
+  provenance:
+    type: record
+    required: true
+    doc: Where the record came from (v0.2 §25.2).
+default_view:
+  columns: [requested_at, action_id, operation, target, command]

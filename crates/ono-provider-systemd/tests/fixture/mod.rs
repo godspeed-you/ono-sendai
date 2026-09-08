@@ -20,7 +20,7 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use ono_provider_systemd::{BusError, JobKind, SystemdBus, UnitListing, UnitProperties};
+use ono_provider_systemd::{BusError, JobKind, JobRef, SystemdBus, UnitListing, UnitProperties};
 
 /// The microsecond timestamp `nginx.service` last changed state at, fixed so the assertion on
 /// `since` is a value and not a tolerance.
@@ -31,6 +31,17 @@ pub const POSTGRES_STATE_CHANGE_USEC: u64 = 1_787_000_252_000_000;
 
 /// The resident memory systemd reports for `nginx.service`, in bytes.
 pub const NGINX_MEMORY_BYTES: u64 = 41_943_040;
+
+/// The object path this recorded systemd answers the first queued job with, and the numeric id
+/// in it. Fixed, so an assertion about a job identity is a value rather than a shape.
+pub const FIRST_JOB_PATH: &str = "/org/freedesktop/systemd1/job/4821";
+
+/// The numeric id in [`FIRST_JOB_PATH`].
+pub const FIRST_JOB_ID: u32 = 4821;
+
+/// The path of the job `postgresql.service` already has in flight when it is read, so a property
+/// read can be asserted to carry a pending job without one having been queued in the test.
+pub const PENDING_JOB_PATH: &str = "/org/freedesktop/systemd1/job/3107";
 
 /// A systemd whose answers are recorded rather than observed.
 #[derive(Debug)]
@@ -43,6 +54,9 @@ pub struct RecordedSystemd {
     unit_files: Mutex<BTreeMap<String, UnitProperties>>,
     version: Result<String, BusError>,
     authorised: bool,
+    /// The number of jobs queued so far. systemd's job ids ascend, and so do these, starting at
+    /// [`FIRST_JOB_ID`], so a second job in one test is a different job.
+    queued: Mutex<u32>,
 }
 
 impl RecordedSystemd {
@@ -62,6 +76,7 @@ impl RecordedSystemd {
             unit_files: Mutex::new(BTreeMap::new()),
             version: Ok("257 (257.5-1)".to_owned()),
             authorised: true,
+            queued: Mutex::new(0),
         }
     }
 
@@ -72,6 +87,7 @@ impl RecordedSystemd {
             unit_files: Mutex::new(BTreeMap::new()),
             version: Err(BusError::Unavailable(reason.to_owned())),
             authorised: true,
+            queued: Mutex::new(0),
         }
     }
 
@@ -203,7 +219,7 @@ impl SystemdBus for RecordedSystemd {
         Ok(Some(not_found(unit)))
     }
 
-    async fn queue_job(&self, unit: &str, job: JobKind) -> Result<(), BusError> {
+    async fn queue_job(&self, unit: &str, job: JobKind) -> Result<JobRef, BusError> {
         self.guard(unit)?;
         self.with_unit(unit, |properties| match job {
             JobKind::Start | JobKind::Restart => {
@@ -222,7 +238,13 @@ impl SystemdBus for RecordedSystemd {
                 properties.sub_state = Some("running".to_owned());
             }
         });
-        Ok(())
+        let mut queued = self
+            .queued
+            .lock()
+            .expect("the recorded job counter is not poisoned");
+        let id = FIRST_JOB_ID + *queued;
+        *queued += 1;
+        Ok(JobRef::new(format!("/org/freedesktop/systemd1/job/{id}")))
     }
 
     async fn set_unit_file_enabled(&self, unit: &str, enabled: bool) -> Result<bool, BusError> {
@@ -260,6 +282,9 @@ pub fn nginx() -> UnitProperties {
             "network-online.target".to_owned(),
             "nginx.socket".to_owned(),
         ],
+        // A settled unit has no job in flight; systemd reports `(0, "/")` and the provider reads
+        // that as no job rather than as a job at the root path.
+        job: None,
     }
 }
 
@@ -281,6 +306,9 @@ pub fn postgresql() -> UnitProperties {
         result: Some("exit-code".to_owned()),
         exec_main_status: Some(1),
         dependencies: vec!["network-online.target".to_owned()],
+        // A restart is already in flight: `org.freedesktop.systemd1.Unit.Job` names it, and a
+        // state change observed afterwards can be attributed to that job (v0.5 §15.2).
+        job: Some(JobRef::new(PENDING_JOB_PATH)),
     }
 }
 
@@ -301,6 +329,7 @@ pub fn masked() -> UnitProperties {
         result: None,
         exec_main_status: None,
         dependencies: Vec::new(),
+        job: None,
     }
 }
 
@@ -322,6 +351,7 @@ pub fn timer_without_main_process() -> UnitProperties {
         result: None,
         exec_main_status: None,
         dependencies: Vec::new(),
+        job: None,
     }
 }
 
@@ -345,6 +375,7 @@ pub fn on_disk_only() -> UnitProperties {
         result: None,
         exec_main_status: None,
         dependencies: Vec::new(),
+        job: None,
     }
 }
 

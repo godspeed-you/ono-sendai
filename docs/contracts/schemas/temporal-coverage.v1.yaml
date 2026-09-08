@@ -1,0 +1,64 @@
+# Canonical TemporalCoverage schema. Source: v0.5 §35.3 (the field list), §3.5 (the six
+# completeness states and the point sample that cannot be stretched into an interval), §8.1
+# (coverage is described per scope, capability, interval, source, completeness, sampling period
+# and permission state, and "MUST NOT be represented by one global boolean"), §8.2, §8.3, §8.4
+# and §7.4 (only an authoritative or sufficiently complete source can prove an absence).
+#
+# One record is one source's claim about one capability over one interval. The composition of
+# many — the summary a prompt and a reconstruction carry — is a per-capability computation over
+# these (§8.5), never a strongest-label pick.
+#
+# Coverage is a structural sub-record rather than an addressable object, so it declares no
+# identity: two sources may legitimately state overlapping coverage for the same capability.
+id: ono.temporal-coverage/1
+name: TemporalCoverage
+summary: What one source was capable of observing, for one capability, over one interval.
+identity: []
+fields:
+  scope:
+    type: string
+    required: true
+    doc: The v0.4 §3.2 boundary the claim is about, rendered `<kind>:<id>`.
+  capability:
+    type: string
+    required: true
+    doc: >-
+      The state class the claim covers — `process.existence`, `service.state`,
+      `relation:process.owns_socket`. §8.1 makes coverage per capability, because a source that
+      sees every unit transition may see no process at all.
+  from:
+    type: timestamp
+    required: true
+    doc: When the interval starts. For a `point_sample` this equals `until` (§8.4).
+  until:
+    type: timestamp
+    required: true
+    doc: When the interval ends.
+  completeness:
+    type: enum
+    required: true
+    values: [complete, partial, point_sample, unknown, unavailable, permission_denied]
+    doc: >-
+      §3.5's vocabulary. `complete` is a contract claim — the source could observe every relevant
+      event or object of this class over this interval (§8.2) — and only it supports a negative
+      claim (§7.4).
+  sampling_interval:
+    type: duration
+    nullable: true
+    doc: >-
+      How often a polled source looked (§3.5). Null for an event stream and for a point sample.
+      A recorder polling every second describes itself as `partial` with this set, unless the
+      provider itself guarantees exhaustive delivery (§21.5).
+  source:
+    type: string
+    required: true
+    doc: The §7.1 evidence source that makes the claim — `linux.systemd-dbus`, `adapter:ps`.
+  permission_state:
+    type: enum
+    required: true
+    values: [available, empty, unknown, permission_denied, unsupported, stale]
+    doc: >-
+      What this user could be told over the interval (v0.4 §35.2). History that exists but cannot
+      be read is `permission_denied`, never absence (§34 `temporal.permission_denied`).
+default_view:
+  columns: [capability, from, until, completeness, source]

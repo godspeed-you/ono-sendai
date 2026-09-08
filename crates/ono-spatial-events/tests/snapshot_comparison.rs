@@ -13,65 +13,12 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use jiff::Timestamp;
-use ono_spatial_core::Completeness;
-use ono_spatial_core::{
-    Confidence, Direction, LandmarkReason, SpatialId, SpatialIdentity, SpatialType,
-};
+use ono_spatial_core::LandmarkReason;
 use ono_spatial_events::{ChangeKind, ChangeSource, Freshness, MapSnapshot, compare};
-use ono_spatial_query::{EdgeKind, HiddenSummary, MapEdge, MapNode, SpatialMap};
-use ono_value::Provenance;
 
-/// The identity of a socket the fixture calls `name` — built through `SpatialIdentity`, because
-/// §3.1 makes the id opaque and nothing outside `ono-spatial-core` may spell one by hand.
-fn id(name: &str) -> SpatialId {
-    SpatialIdentity::observation(SpatialType::Connection, [("inode", name)]).spatial_id()
-}
+mod common;
 
-fn node(name: &str, label: &str) -> MapNode {
-    MapNode {
-        id: id(name),
-        space: None,
-        object_type: SpatialType::Connection,
-        label: label.to_owned(),
-        state: Some("established".to_owned()),
-        canonical_parent: None,
-        landmark_reasons: Vec::new(),
-        depth: 1,
-    }
-}
-
-fn edge(name: &str, source: &str, target: &str) -> MapEdge {
-    MapEdge {
-        id: format!("edge:{name}"),
-        source: id(source).to_string(),
-        source_label: source.to_owned(),
-        target: id(target).to_string(),
-        target_label: target.to_owned(),
-        relation: "socket.accepts_connection".to_owned(),
-        kind: EdgeKind::Relationship,
-        confidence: Confidence::Strong,
-        direction: Direction::Outbound,
-        provenance: Provenance::local("linux.sock-diag", ono_value::SchemaId::new("ono.socket", 1)),
-        evidence: ono_value::MapValue::new(),
-        observed_at: None,
-    }
-}
-
-fn map(nodes: Vec<MapNode>, edges: Vec<MapEdge>) -> SpatialMap {
-    SpatialMap {
-        center: id("listener"),
-        focus: None,
-        zoom_level: 4,
-        nodes,
-        edges,
-        clusters: Vec::new(),
-        landmarks: Vec::new(),
-        hidden: HiddenSummary::default(),
-        generated_at: Timestamp::UNIX_EPOCH,
-        completeness: Completeness::Complete,
-    }
-}
+use common::{edge, id, map, node};
 
 #[test]
 fn should_report_no_change_at_all_when_two_successive_projections_are_the_same() {

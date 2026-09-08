@@ -1521,3 +1521,131 @@ fn should_accept_one_provider_of_a_target_that_declares_no_identity_token() {
         0
     );
 }
+
+// --- the v0.5 §21.1 temporal capability matrix --------------------------------------------------
+
+/// The temporal-matrix problems of a fixture repository.
+fn temporal_claim_problems(repo: &Scratch) -> Vec<String> {
+    xtask::contracts::check_provider_temporal_claims(repo.path())
+        .into_iter()
+        .map(|problem| format!("{} — {}", problem.location, problem.detail))
+        .collect()
+}
+
+/// A provider declaration with `temporal:` written out, so a test can bend exactly one field.
+fn provider_declaring(temporal: &str) -> String {
+    format!(
+        "providers:\n  - id: test.source\n    doc: A source.\n    targets: [process]\n    \
+         capabilities: [process.list]\n    schemas: [ono.process/1]\n    conformance:\n      \
+         process: enumerable\n    temporal:\n{temporal}"
+    )
+}
+
+/// Seven honest claims from a source that only ever says what is true now.
+const SNAPSHOT_CLAIMS: &str = "      current_snapshot: true\n      live_events: false\n      \
+                               historical_query: false\n      exhaustive_events: false\n      \
+                               causal_tokens: false\n      checkpointable: true\n      \
+                               retained_history: null\n      coverage: snapshot\n";
+
+#[test]
+fn should_accept_a_provider_whose_temporal_claims_and_coverage_word_agree() {
+    let repo = consistent();
+    repo.write(
+        "docs/contracts/providers/test.yaml",
+        provider_declaring(SNAPSHOT_CLAIMS),
+    );
+    assert_eq!(temporal_claim_problems(&repo), Vec::<String>::new());
+}
+
+#[test]
+fn should_reject_a_provider_that_declares_no_temporal_capabilities_at_all() {
+    // v0.5 §21.1 makes temporal capabilities inspectable. A provider that declares none is one
+    // nothing can reason about, and silence must be written down as `false`.
+    let repo = consistent();
+    repo.write(
+        "docs/contracts/providers/test.yaml",
+        "providers:\n  - id: test.source\n    doc: A source.\n    targets: [process]\n    \
+         capabilities: [process.list]\n    schemas: [ono.process/1]\n    conformance:\n      \
+         process: enumerable\n",
+    );
+    let found = temporal_claim_problems(&repo);
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.contains("no `temporal:` block")),
+        "got {found:?}"
+    );
+}
+
+#[test]
+fn should_reject_a_polled_source_that_claims_its_events_are_exhaustive() {
+    // v0.5 §21.5: "Providers MUST NOT advertise it merely because events usually arrive."
+    // Sequence continuity is a property of a stream nobody is subscribed to here.
+    let repo = consistent();
+    repo.write(
+        "docs/contracts/providers/test.yaml",
+        provider_declaring(
+            &SNAPSHOT_CLAIMS.replace("exhaustive_events: false", "exhaustive_events: true"),
+        ),
+    );
+    let found = temporal_claim_problems(&repo);
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.contains("`exhaustive_events` without `live_events`")),
+        "got {found:?}"
+    );
+}
+
+#[test]
+fn should_reject_a_source_whose_coverage_word_and_capabilities_disagree() {
+    let repo = consistent();
+    repo.write(
+        "docs/contracts/providers/test.yaml",
+        provider_declaring(
+            &SNAPSHOT_CLAIMS.replace("coverage: snapshot", "coverage: event_stream"),
+        ),
+    );
+    let found = temporal_claim_problems(&repo);
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.contains("a stream nobody subscribes to is a snapshot")),
+        "got {found:?}"
+    );
+}
+
+#[test]
+fn should_reject_a_retention_stated_by_a_source_that_answers_nothing_about_the_past() {
+    let repo = consistent();
+    repo.write(
+        "docs/contracts/providers/test.yaml",
+        provider_declaring(
+            &SNAPSHOT_CLAIMS.replace("retained_history: null", "retained_history: 24h"),
+        ),
+    );
+    let found = temporal_claim_problems(&repo);
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.contains("claims no `historical_query`")),
+        "got {found:?}"
+    );
+}
+
+#[test]
+fn should_require_this_repositorys_own_providers_to_declare_an_honest_temporal_matrix() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let found = xtask::contracts::check_provider_temporal_claims(root);
+    assert!(
+        found.is_empty(),
+        "the provider registry's temporal matrix is not internally consistent:\n{}",
+        found
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}

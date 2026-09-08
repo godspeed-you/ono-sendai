@@ -67,6 +67,26 @@ impl fmt::Display for IdentityTier {
     }
 }
 
+/// What a boot identity was built from (§2.17, v0.5 §25.5).
+///
+/// v0.5 §25.5 requires `boot_id` "or equivalent" to separate clock domains, and the two things
+/// Linux offers are not equally good. The kernel's boot id is a random value minted at boot and
+/// never touched again; the boot time from `/proc/stat`'s `btime` is a wall-clock second that
+/// moves when the clock is corrected. Both separate boots; only one of them is stable within a
+/// boot. Which one is behind an identity therefore has to be visible rather than guessed at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BootEvidence {
+    /// The kernel's own boot id, such as `/proc/sys/kernel/random/boot_id`. Stable for the whole
+    /// boot whatever happens to the clock.
+    KernelBootId,
+    /// The boot wall-clock second, as a fallback where no boot id could be read. It changes when
+    /// the machine reboots and *also* when the clock is corrected, so an identity built on it is
+    /// stable only as far as the clock is.
+    BootTime,
+    /// Neither could be read: the host cannot say which boot this is (§2.17).
+    Unknown,
+}
+
 /// Which boot of which host an identity belongs to (§10.2).
 ///
 /// Two processes with the same pid and start time on either side of a reboot are not the same
@@ -83,6 +103,33 @@ impl BootIdentity {
     #[must_use]
     pub fn new(host: &str, boot: &str) -> Self {
         Self(format!("{host}/{boot}").into())
+    }
+
+    /// The boot identity of `host`, distinguished by the second the host booted.
+    ///
+    /// The fallback for a host with no readable boot id — a container, a fixture, a kernel built
+    /// without `CONFIG_...` — and it is a weaker fact than a boot id: `btime` is derived from the
+    /// wall clock, so an NTP correction moves it (v0.5 §25.5). The `btime:` prefix keeps that
+    /// weakness visible in the identity itself rather than leaving it to a comment, and
+    /// [`BootIdentity::evidence`] reports it.
+    #[must_use]
+    pub fn from_boot_time(host: &str, boot_time_seconds: i64) -> Self {
+        Self(format!("{host}/btime:{boot_time_seconds}").into())
+    }
+
+    /// The strongest boot identity the two facts a Linux host can offer support (v0.5 §25.5).
+    ///
+    /// The kernel's boot id wins wherever it can be read, the boot second is the fallback, and
+    /// where neither is available the identity says so rather than inventing one. Composing the
+    /// precedence here rather than in each caller is what keeps "we fell back" one decision with
+    /// one meaning: this crate composes facts, the caller gathers them (§2.16).
+    #[must_use]
+    pub fn of(host: &str, boot_id: Option<&str>, boot_time_seconds: Option<i64>) -> Self {
+        match (boot_id, boot_time_seconds) {
+            (Some(boot_id), _) => Self::new(host, boot_id),
+            (None, Some(seconds)) => Self::from_boot_time(host, seconds),
+            (None, None) => Self::unknown_boot(host),
+        }
     }
 
     /// A boot identity for a host that cannot tell us which boot this is.
@@ -103,7 +150,24 @@ impl BootIdentity {
     /// Whether the boot this identity names is known (§2.17: unknown is visible).
     #[must_use]
     pub fn is_known(&self) -> bool {
-        !self.0.ends_with("/?")
+        !matches!(self.evidence(), BootEvidence::Unknown)
+    }
+
+    /// What the identity was built from (v0.5 §25.5).
+    ///
+    /// A consumer that has to decide whether two observations share a clock domain needs to know
+    /// whether the thing separating them is a boot id or a wall-clock second, because only the
+    /// first survives a clock correction.
+    #[must_use]
+    pub fn evidence(&self) -> BootEvidence {
+        let boot = self.0.rsplit('/').next().unwrap_or_default();
+        if boot == "?" {
+            BootEvidence::Unknown
+        } else if boot.starts_with("btime:") {
+            BootEvidence::BootTime
+        } else {
+            BootEvidence::KernelBootId
+        }
     }
 }
 

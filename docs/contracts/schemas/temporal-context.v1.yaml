@@ -1,0 +1,49 @@
+# Canonical TemporalContext schema. Source: v0.5 §35.2 (the field list), §3.9 (the context is
+# either Present or Historical), §4.2 (`at` reports what was requested and what it resolved to),
+# §4.6 (the marker must stay visible in monochrome and plain text) and §8.6 (`[PAST]` requires
+# supported coverage; a prompt MUST NOT show it merely because one event exists near that time).
+#
+# The context is a value, not a place: §4.2 changes only the temporal coordinate and leaves the
+# spatial place alone, so nothing about a place appears here.
+#
+# It is a structural value rather than an addressable object, so it declares no identity.
+id: ono.temporal-context/1
+name: TemporalContext
+summary: The session's temporal coordinate — the present, or a resolved historical instant with the coverage that backs it.
+identity: []
+fields:
+  mode:
+    type: enum
+    required: true
+    values: [present, historical]
+    doc: Which of §3.9's two contexts this is.
+  requested:
+    type: string
+    nullable: true
+    doc: >-
+      The time selector the user typed, verbatim — `-10m`, `event @e42` (§4.2). Kept because the
+      resolved instant alone cannot tell a reader what was asked for. Null in the present.
+  resolved_at:
+    type: timestamp
+    nullable: true
+    doc: The instant the selector resolved to, which is what a query evaluates at. Null in the present.
+  coverage:
+    type: record
+    nullable: true
+    doc: >-
+      The composed `TemporalCoverageSummary` behind the reconstruction: a headline, the
+      completeness per capability, and the gaps (§8.5). Null in the present, where nothing is
+      reconstructed.
+  anchor_event:
+    type: string
+    nullable: true
+    doc: The event `at event @e42` resolved through (§12.2). Null where the selector named no event.
+  marker:
+    type: string
+    nullable: true
+    doc: >-
+      The prompt marker of §4.6 — `[PAST]` where coverage is complete, `[PAST?]` where the
+      reconstruction is materially partial or uncertain (§8.6). Null in the present. The word
+      carries the meaning without colour (§45.2).
+default_view:
+  columns: [mode, requested, resolved_at, marker]

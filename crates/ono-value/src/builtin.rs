@@ -27,6 +27,7 @@ use crate::schema::{FieldDef, FieldType, Schema, SchemaId, SchemaRegistry, Unit}
 /// which is the point of embedding them. They are embedded as JSON, transcoded from the YAML by
 /// `build.rs`, because reading ninety YAML documents cost a quarter of a cold start (ADR-0571).
 const CONTRACTS: &[&str] = &[
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/action-event.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/action-result.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/assistant.v1.json")),
     include_str!(concat!(
@@ -54,11 +55,17 @@ const CONTRACTS: &[&str] = &[
     include_str!(concat!(env!("OUT_DIR"), "/schemas/plugin-package.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/plugin-runtime.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/recommendation.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/recorder-status.v1.json")),
     include_str!(concat!(
         env!("OUT_DIR"),
         "/schemas/verification-result.v1.json"
     )),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/block-device.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/causal-explanation.v1.json"
+    )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/causal-link.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/cgroup.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/command.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/commit.v1.json")),
@@ -146,6 +153,30 @@ const CONTRACTS: &[&str] = &[
         "/schemas/spatial-relation.v1.json"
     )),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/system.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/temporal-change.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/temporal-context.v1.json"
+    )),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/temporal-coverage.v1.json"
+    )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/temporal-event.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/temporal-evidence.v1.json"
+    )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/temporal-gap.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/temporal-history.v1.json"
+    )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/temporal-source.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/temporal-timeline.v1.json"
+    )),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/user-event.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/user.v1.json")),
 ];

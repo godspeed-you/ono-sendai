@@ -584,3 +584,36 @@ kuang_capabilities:
     risk: mutate
     elevation: none
     scopes: [instances, resources, actions]
+
+  # The six temporal families of v0.5 §30.7. Temporal access is capability-controlled and
+  # separate from current access by construction: §30.7's binding sentence is "A plugin with
+  # current object read permission does not automatically receive historical access", because
+  # §30.1's risk is that retention turns harmless current-state facts into a behavioural
+  # history. Reading now and reading the past are therefore two decisions (ADR-0626).
+  - id: temporal.read.current
+    summary: Read the present temporal context — whether the session is historical, and at which instant.
+    risk: read
+    elevation: none
+  - id: temporal.read.history
+    summary: Read recorded history and reconstructed past state, within the granted window.
+    risk: read
+    elevation: none
+    scopes: [window]
+  - id: temporal.read.evidence
+    summary: Read the evidence records and coverage behind a temporal claim.
+    risk: read
+    elevation: none
+  - id: temporal.contribute.events
+    summary: Contribute canonical temporal events of the granted kinds.
+    risk: mutate
+    elevation: none
+    scopes: [kinds]
+  - id: temporal.contribute.causality
+    summary: Register namespaced causal rules and contribute the causal links they produce.
+    risk: mutate
+    elevation: none
+    scopes: [rules]
+  - id: temporal.recorder.manage
+    summary: Start and stop the persistent history recorder.
+    risk: mutate
+    elevation: none

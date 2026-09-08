@@ -11,6 +11,19 @@ providers:
     schemas: [ono.interface/1]
     conformance:
       interface: enumerable
+    temporal:
+      # §22.4: netlink is live evidence for interface and address changes, and this provider does
+      # subscribe — `RTMGRP_LINK` plus the IPv4 and IPv6 address groups. A netlink socket still
+      # drops messages when its receive buffer overruns, and the kernel says so with `ENOBUFS`
+      # rather than replaying them, so the stream cannot carry an absence claim (§21.5).
+      current_snapshot: true
+      live_events: true
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+      coverage: event_stream
     spatial:
       identity_strategy: stable
       canonical_parent:
@@ -33,6 +46,16 @@ providers:
     schemas: [ono.route/1]
     conformance:
       route: enumerable
+    temporal:
+      # The route groups of §22.4, subscribed the same way and bounded by the same overrun.
+      current_snapshot: true
+      live_events: true
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+      coverage: event_stream
     spatial:
       # A route is identified by the tuple it carries; delete it and add it again and it is a
       # new route with the same shape (§10.1 Tier B).
@@ -54,6 +77,18 @@ providers:
     schemas: [ono.neighbor/1]
     conformance:
       neighbor: enumerable
+    temporal:
+      # §22.4 lists neighbour changes among what netlink *can* provide live. This provider reads
+      # the table and does not subscribe to `RTMGRP_NEIGH`, so it claims a snapshot and no more:
+      # a capability the kernel offers and the code does not use is not a capability (§21.1).
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+      coverage: snapshot
     spatial:
       identity_strategy: lifetime
       canonical_parent:
@@ -75,6 +110,18 @@ providers:
     conformance:
       socket: enumerable
       connection: enumerable
+    temporal:
+      # §22.4: "Socket connection history is not automatically exhaustive merely because netlink is
+      # used elsewhere." sock_diag dumps the sockets that exist at the moment of the dump; a
+      # connection that opened and closed between two dumps was never visible to it.
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+      coverage: snapshot
     spatial:
       # A socket inode is reused after the socket closes, so the identity lasts exactly as
       # long as the socket does (§10.1 Tier B).

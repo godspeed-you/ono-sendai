@@ -80,6 +80,13 @@ pub struct UnitProperties {
     /// The units this one requires: `Requires`, `Requisite`, `BindsTo` and `Wants`, merged and
     /// sorted. Ordering (`After`, `Before`) is deliberately not among them (ADR-0239).
     pub dependencies: Vec<String>,
+    /// `Job` — the job currently queued for this unit, where one is.
+    ///
+    /// It arrives in the same `GetAll` that carries every other property, so reading it costs
+    /// nothing (ADR-0712). A state change observed afterwards can be attributed to the job that
+    /// was pending when the unit was read, which is the evidence §15.2 asks for and the reason
+    /// the field is here rather than behind a second round trip.
+    pub job: Option<JobRef>,
 }
 
 impl UnitProperties {
@@ -96,6 +103,51 @@ impl UnitProperties {
             // so it names no path: whoever holds these properties has nothing left to read.
             path: None,
         }
+    }
+}
+
+/// The identity systemd gave a job it queued (spec v0.5 §15.2, §17.3).
+///
+/// `StartUnit`, `StopUnit`, `RestartUnit` and `ReloadUnit` each answer with the object path of
+/// the job they created — `/org/freedesktop/systemd1/job/4821`. That path is the service
+/// manager's own transaction identity, and §17.3 requires the ledger to record the mapping from
+/// Ono's `ActionId` to it, because §15.2 names "systemd job result explicitly identifies the unit
+/// transition" as one of the few pieces of evidence strong enough to support `caused_by`.
+/// Temporal proximity is not; a job path is.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct JobRef {
+    /// The D-Bus object path systemd answered with, verbatim.
+    pub path: String,
+    /// The numeric job id in the path's last segment, where the path has one.
+    ///
+    /// `None` when systemd answered with a path whose final segment is not a number — which is
+    /// not a shape systemd produces today, so the path stays authoritative and the number stays
+    /// a convenience.
+    pub id: Option<u32>,
+}
+
+impl JobRef {
+    /// The job at `path`, with its numeric id read from the final path segment.
+    #[must_use]
+    pub fn new(path: impl Into<String>) -> Self {
+        let path = path.into();
+        let id = path.rsplit('/').next().and_then(|last| last.parse().ok());
+        Self { path, id }
+    }
+
+    /// The job as the external transaction token an action event records (§17.4).
+    ///
+    /// The `systemd:` prefix says which authority issued the identity, so a ledger holding jobs
+    /// from several sources never has to guess whose path it is looking at.
+    #[must_use]
+    pub fn token(&self) -> String {
+        format!("systemd:{}", self.path)
+    }
+}
+
+impl fmt::Display for JobRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.path)
     }
 }
 
@@ -275,9 +327,15 @@ pub trait SystemdBus: Send + Sync + fmt::Debug {
     ///
     /// # Errors
     ///
+    /// Answers with the job systemd created, so the caller can record the mapping from its own
+    /// `ActionId` to the service manager's transaction identity (§17.3). Throwing the path away
+    /// would throw away the only evidence strong enough for a `caused_by` link (§15.2).
+    ///
+    /// # Errors
+    ///
     /// [`BusError::PermissionDenied`] when polkit refuses, [`BusError::NoSuchUnit`] when the unit
     /// is unknown, [`BusError::Refused`] when systemd declines for a reason of its own.
-    async fn queue_job(&self, unit: &str, job: JobKind) -> Result<(), BusError>;
+    async fn queue_job(&self, unit: &str, job: JobKind) -> Result<JobRef, BusError>;
 
     /// Calls `EnableUnitFiles` or `DisableUnitFiles`, and reports whether systemd listed any
     /// change. An empty change list is systemd saying the unit files were already that way.

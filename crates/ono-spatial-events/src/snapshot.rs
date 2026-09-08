@@ -5,18 +5,28 @@
 //!
 //! A [`MapSnapshot`] is a projection reduced to what a change can be about: which places are
 //! drawn, what they are called, what state their provider reported, and which relationships hold
-//! between them. Everything that moves without the system moving — when the projection was made,
-//! its identity, the order the ranking happened to choose — is deliberately not in it, because a
-//! comparison that noticed those would report change on every tick, which is precisely the
-//! decorative motion §25.2 forbids.
+//! between them. Everything that moves without the system moving — its identity, the order the
+//! ranking happened to choose — is deliberately not in it, because a comparison that noticed
+//! those would report change on every tick, which is precisely the decorative motion §25.2
+//! forbids.
+//!
+//! A snapshot does carry **when it was observed**, taken from the projection it reduces, and that
+//! instant takes no part in what counts as a difference: two identical projections made an hour
+//! apart still compare to nothing at all. What the instant is for is v0.5 §9.2. A difference
+//! between two observations happened somewhere in the interval separating them, and the change
+//! records that interval rather than a point inside it — so a consumer building a temporal event
+//! from it never has to invent a timestamp, which v0.5 §3.3 forbids.
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use jiff::Timestamp;
 use ono_spatial_core::{LandmarkReason, Neighborhood, SpatialId};
 use ono_spatial_index::SpatialIndex;
 use ono_spatial_query::SpatialMap;
 
-use crate::change::{ChangeKind, ChangeSet, ChangeSource, Freshness, SpatialChange};
+use crate::change::{
+    ChangeKind, ChangeSet, ChangeSource, Freshness, ObservationWindow, ObservedAt, SpatialChange,
+};
 
 /// What a node looks like, as far as a change is concerned.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,10 +44,25 @@ struct EdgeShape {
 }
 
 /// One projection, reduced to what can differ (§25.4).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Eq)]
 pub struct MapSnapshot {
     nodes: BTreeMap<SpatialId, NodeShape>,
     edges: BTreeMap<String, EdgeShape>,
+    /// When the projection this reduces was made. It is what the observation was, rather than
+    /// something about it that can differ, so [`PartialEq`] ignores it.
+    observed_at: Timestamp,
+}
+
+/// Two snapshots are equal when they saw the same space, whatever the clock said while they
+/// were taken.
+///
+/// §25.2 makes change a property of the system: "Motion and visual updates MUST correspond to
+/// actual topology or metric changes." Time passing is not such a change, so the observation
+/// instant is excluded from equality exactly as it is excluded from [`compare`].
+impl PartialEq for MapSnapshot {
+    fn eq(&self, other: &Self) -> bool {
+        self.nodes == other.nodes && self.edges == other.edges
+    }
 }
 
 impl MapSnapshot {
@@ -72,7 +97,11 @@ impl MapSnapshot {
                 },
             );
         }
-        Self { nodes, edges }
+        Self {
+            nodes,
+            edges,
+            observed_at: map.generated_at,
+        }
     }
 
     /// Whether the projection drew nothing at all.
@@ -80,16 +109,34 @@ impl MapSnapshot {
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty() && self.edges.is_empty()
     }
+
+    /// When the projection this reduces was made (v0.5 §3.3).
+    ///
+    /// The instant is the projection's own — [`SpatialMap::generated_at`] — so nothing here reads
+    /// a clock and a comparison is reproducible from its inputs alone (v0.5 §39.2).
+    #[must_use]
+    pub fn observed_at(&self) -> Timestamp {
+        self.observed_at
+    }
 }
 
-/// What differs between two projections of the same space (§25.4).
+/// What differs between two projections of the same space (§25.4, v0.5 §9.2).
 ///
 /// `freshness` is the caller's, because only the caller knows how the two projections were
 /// obtained — §25.3 makes that part of what a live view must expose, and a comparison cannot
 /// discover it from the pictures it is comparing.
+///
+/// Every change this reports is dated `between` the two projections' own instants. That is all a
+/// comparison knows: the difference arose after the first observation and by the second one, and
+/// v0.5 §9.2 forbids claiming any moment inside that interval.
 #[must_use]
 pub fn compare(before: &MapSnapshot, after: &MapSnapshot, freshness: Freshness) -> ChangeSet {
-    let mut changes = ChangeSet::new(ChangeSource::SnapshotComparison, freshness);
+    let window = ObservationWindow::new(before.observed_at, after.observed_at);
+    let observed = ObservedAt::Between {
+        from: window.since(),
+        until: window.until(),
+    };
+    let mut changes = ChangeSet::new(ChangeSource::SnapshotComparison, freshness, window);
 
     for (id, shape) in &after.nodes {
         match before.nodes.get(id) {
@@ -97,6 +144,7 @@ pub fn compare(before: &MapSnapshot, after: &MapSnapshot, freshness: Freshness) 
                 ChangeKind::NodeAppeared,
                 id.clone(),
                 &shape.label,
+                observed,
             )),
             Some(previous) if previous != shape => {
                 let reasons: BTreeSet<&LandmarkReason> = shape.reasons.iter().collect();
@@ -106,6 +154,7 @@ pub fn compare(before: &MapSnapshot, after: &MapSnapshot, freshness: Freshness) 
                         ChangeKind::NodeChanged,
                         id.clone(),
                         &shape.label,
+                        observed,
                     ));
                 }
                 if reasons.difference(&before_reasons).next().is_some() {
@@ -113,6 +162,7 @@ pub fn compare(before: &MapSnapshot, after: &MapSnapshot, freshness: Freshness) 
                         ChangeKind::LandmarkAppeared,
                         id.clone(),
                         &shape.label,
+                        observed,
                     ));
                 }
                 if before_reasons.difference(&reasons).next().is_some() {
@@ -120,6 +170,7 @@ pub fn compare(before: &MapSnapshot, after: &MapSnapshot, freshness: Freshness) 
                         ChangeKind::LandmarkRemoved,
                         id.clone(),
                         &shape.label,
+                        observed,
                     ));
                 }
             }
@@ -132,6 +183,7 @@ pub fn compare(before: &MapSnapshot, after: &MapSnapshot, freshness: Freshness) 
                 ChangeKind::NodeRemoved,
                 id.clone(),
                 &shape.label,
+                observed,
             ));
         }
     }
@@ -142,6 +194,7 @@ pub fn compare(before: &MapSnapshot, after: &MapSnapshot, freshness: Freshness) 
                 id,
                 &shape.label,
                 shape.ends.clone(),
+                observed,
             ));
         }
     }
@@ -152,6 +205,7 @@ pub fn compare(before: &MapSnapshot, after: &MapSnapshot, freshness: Freshness) 
                 id,
                 &shape.label,
                 shape.ends.clone(),
+                observed,
             ));
         }
     }
@@ -165,10 +219,21 @@ pub fn compare(before: &MapSnapshot, after: &MapSnapshot, freshness: Freshness) 
 /// neighbours are behind each exit, what those neighbours are called and what state their
 /// provider reports — plus the state of the exit itself, because §35.2 makes `files —
 /// permission denied` a different fact from `files — 3`.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Eq)]
 pub struct PlaceSnapshot {
     members: BTreeMap<SpatialId, NodeShape>,
     groups: BTreeMap<String, String>,
+    /// When the neighborhood this reduces was observed. [`PartialEq`] ignores it, for the reason
+    /// [`MapSnapshot`] gives.
+    observed_at: Timestamp,
+}
+
+/// Two observations of a place are equal when they saw the same place, for the reason
+/// [`MapSnapshot`]'s own [`PartialEq`] gives.
+impl PartialEq for PlaceSnapshot {
+    fn eq(&self, other: &Self) -> bool {
+        self.members == other.members && self.groups == other.groups
+    }
 }
 
 impl PlaceSnapshot {
@@ -197,7 +262,11 @@ impl PlaceSnapshot {
                 );
             }
         }
-        Self { members, groups }
+        Self {
+            members,
+            groups,
+            observed_at: neighborhood.generated_at(),
+        }
     }
 
     /// Whether the place had no neighbours at all.
@@ -205,25 +274,43 @@ impl PlaceSnapshot {
     pub fn is_empty(&self) -> bool {
         self.members.is_empty() && self.groups.is_empty()
     }
+
+    /// When the neighborhood this reduces was observed (v0.5 §3.3).
+    ///
+    /// It is the neighborhood's own instant, which is what lets a baseline stored between two
+    /// `look --changes` calls still say which interval the comparison spans (v0.5 §9.2).
+    #[must_use]
+    pub fn observed_at(&self) -> Timestamp {
+        self.observed_at
+    }
 }
 
-/// What differs between two observations of one place (§24.3, §25.4).
+/// What differs between two observations of one place (§24.3, §25.4, v0.5 §9.2).
+///
+/// The changes are dated `between` the two observations' own instants, for the reason
+/// [`compare`] gives.
 #[must_use]
 pub fn compare_places(
     before: &PlaceSnapshot,
     after: &PlaceSnapshot,
     freshness: Freshness,
 ) -> ChangeSet {
-    let mut changes = ChangeSet::new(ChangeSource::SnapshotComparison, freshness);
+    let window = ObservationWindow::new(before.observed_at, after.observed_at);
+    let observed = ObservedAt::Between {
+        from: window.since(),
+        until: window.until(),
+    };
+    let mut changes = ChangeSet::new(ChangeSource::SnapshotComparison, freshness, window);
     for (id, shape) in &after.members {
         match before.members.get(id) {
             None => changes.push(SpatialChange::to_node(
                 ChangeKind::NodeAppeared,
                 id.clone(),
                 &shape.label,
+                observed,
             )),
             Some(previous) if previous.label != shape.label => changes.push(
-                SpatialChange::to_node(ChangeKind::NodeChanged, id.clone(), &shape.label),
+                SpatialChange::to_node(ChangeKind::NodeChanged, id.clone(), &shape.label, observed),
             ),
             Some(previous) => {
                 let now: BTreeSet<&LandmarkReason> = shape.reasons.iter().collect();
@@ -233,6 +320,7 @@ pub fn compare_places(
                         ChangeKind::LandmarkAppeared,
                         id.clone(),
                         &shape.label,
+                        observed,
                     ));
                 }
                 if then.difference(&now).next().is_some() {
@@ -240,6 +328,7 @@ pub fn compare_places(
                         ChangeKind::LandmarkRemoved,
                         id.clone(),
                         &shape.label,
+                        observed,
                     ));
                 }
             }
@@ -251,6 +340,7 @@ pub fn compare_places(
                 ChangeKind::NodeRemoved,
                 id.clone(),
                 &shape.label,
+                observed,
             ));
         }
     }

@@ -25,6 +25,9 @@ tokio.workspace = true
 
 [dev-dependencies]
 ono-testkit.workspace = true
+# §10.2's process identity is composed in the spatial layer from the boot facts this crate reads;
+# the tests assert the composition, so the crate under test keeps no dependency on it (ADR-0713).
+ono-spatial-core.workspace = true
 async-trait.workspace = true
 jiff.workspace = true
 nix = { workspace = true, features = ["fs"] }

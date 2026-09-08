@@ -11,6 +11,17 @@ providers:
     schemas: [ono.dns-record/1]
     conformance:
       dns: selector_required
+    temporal:
+      # A resolution is an observation made when it was asked for, and the answer may differ the
+      # next time. There is nothing here to keep and nothing to check against a past instant.
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: false
+      retained_history: null
+      coverage: snapshot
 
   - id: ono.probe
     doc: >-
@@ -21,3 +32,14 @@ providers:
     schemas: [ono.probe-result/1]
     conformance:
       port: selector_required
+    temporal:
+      # A probe is a point sample by construction: it says what one connection attempt found at one
+      # instant, and §8.4's `point_sample` is what its coverage becomes in the ledger.
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: false
+      retained_history: null
+      coverage: snapshot

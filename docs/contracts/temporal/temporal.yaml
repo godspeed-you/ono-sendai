@@ -1,0 +1,385 @@
+# The temporal coordinate itself: how a session names an instant, what it may do once it is
+# standing there, and which figures decide the default answer (spec v0.5 §36.1).
+#
+# §36 requires six version-controlled registries under `docs/spec/temporal/`. AGENTS.md §2 maps
+# every `spec/...` path in a narrative specification onto `docs/contracts/...`, so they live here.
+# This is the first of them, and it holds the six things §36.1 enumerates: context modes, the
+# time-selector grammar metadata, prompt markers, the read-only historical policy, the default
+# windows, and the canonical capabilities a provider may advertise.
+#
+# `cargo run -p xtask -- spec-check` holds it against the implementation through
+# `xtask/src/temporal.rs::check`, which is §36.4's drift gate. Two of the comparisons bite
+# immediately: `settings:` is compared against `ono_cli::settings::CATALOGUE` on key, type and
+# default in both directions, and `capabilities:` is the closed vocabulary every row of
+# `sources.yaml` draws from. Decisions: ADR-0625, ADR-0626.
+#
+# Why the whole file is data rather than prose: §36.4 fails the gate when "default configuration
+# differs from registry", which is only checkable if the registry states the defaults in a form a
+# program can read. A duration written as `30m` is one figure with one home (v0.4.1 §52.2).
+
+version: 1
+
+# ---------------------------------------------------------------------------------------------
+# Context modes (§3.9, §4.1, §4.3). A session is in exactly one of them at any instant.
+# ---------------------------------------------------------------------------------------------
+context_modes:
+  - id: present
+    marker: null
+    doc: >-
+      The default. Queries read the clock, mutations are permitted subject to the ordinary
+      authorization model, and external programs run. §4.3: `now` returns to it from anywhere,
+      and returning is always available — a session can never be stranded in the past.
+  - id: historical
+    marker: "[PAST]"
+    doc: >-
+      A resolved instant is the coordinate every read evaluates at (§4.2). Entered by `at
+      <time-selector>`, which resolves before it changes context (§12.1), so a selector that
+      cannot be resolved leaves the session where it was. Every Ono mutation refuses while it is
+      active (§4.7), and an arbitrary external program does not run at all (§4.8).
+
+# ---------------------------------------------------------------------------------------------
+# Time-selector grammar (§4.4). `form` is the shape a user types; `class` says what the shape is
+# anchored to. `ono_temporal_core::TimeSelector::parse` accepts exactly these and refuses
+# everything else with `temporal.invalid_time`.
+# ---------------------------------------------------------------------------------------------
+time_selectors:
+  - form: absolute_rfc3339
+    class: absolute
+    example: "2026-08-31T12:17:00+02:00"
+    resolves_to: instant
+    doc: >-
+      An RFC 3339 timestamp carrying its own offset. It names one instant on any host, in any
+      zone, which is why it is the form a script writes and the form an error message quotes
+      back.
+  - form: local_date_time
+    class: absolute
+    example: "2026-08-31 12:17:00"
+    resolves_to: instant
+    doc: >-
+      A wall date and time in the session's zone. §4.4 and §25.6: a local time that a DST fold
+      covers exists twice, and both instants must be offered rather than one silently chosen; a
+      local time a DST gap skipped exists never. Either is `temporal.invalid_time` with both
+      candidate instants in the metadata.
+  - form: local_time_today
+    class: absolute
+    example: "12:17:00"
+    resolves_to: instant
+    doc: >-
+      A wall time today, in the session's zone. The most common form a person types while
+      reading a log beside the shell, and the reason the prompt shows `@12:07:14` rather than a
+      full timestamp (§4.6).
+  - form: relative_past
+    class: relative
+    example: "-10m"
+    resolves_to: instant
+    doc: >-
+      An offset back from the session's `now`, in the duration syntax of the value model. §4.4:
+      "Relative future selectors are invalid for historical context." A positive or
+      forward-naming offset is `temporal.invalid_time`, and so is `-0s` resolving past the
+      instant the command was entered.
+  - form: event_reference
+    class: reference
+    example: "event @e42"
+    resolves_to: instant
+    doc: >-
+      The presentation instant of a recorded event (§12.2). The event becomes the context's
+      anchor, so `timeline` centres on it and `why` has a subject without being told one again.
+      An unresolvable reference is `temporal.not_recorded`; a prefix matching several events is
+      `temporal.ambiguous_event`, which lists the candidates rather than picking one.
+
+# The rule that is a rule rather than a form. Stated as data because §36.4 asks the gate to hold
+# the grammar metadata, and a constraint that lives only in prose is not metadata.
+time_selector_rules:
+  - id: no_future_relative
+    applies_to: [relative_past]
+    error: temporal.invalid_time
+    doc: >-
+      §4.4: a relative selector naming a future instant is invalid. Historical context is a claim
+      about evidence, and there is none for an instant that has not happened.
+  - id: dst_ambiguity_requires_disambiguation
+    applies_to: [local_date_time, local_time_today]
+    error: temporal.invalid_time
+    doc: >-
+      §4.4: "Ambiguous local times during DST transitions MUST require disambiguation by offset
+      when both instants exist." The refusal names both instants and the offsets that separate
+      them, so the user retypes one selector rather than guessing.
+
+# ---------------------------------------------------------------------------------------------
+# Prompt markers (§4.6, §8.6). The word carries the meaning; colour never does (§45.2).
+# ---------------------------------------------------------------------------------------------
+prompt_markers:
+  - marker: "[PAST]"
+    context_mode: historical
+    requires: supported_coverage
+    doc: >-
+      §8.6: shown when coverage is sufficient for the current place summary. §8.6's binding
+      sentence is a prohibition: "A prompt MUST NOT display `[PAST]` merely because at least one
+      event exists near that time." The predicate is `CoverageSummary::headline() == complete`,
+      computed per capability and composed (§8.5), not the existence of a nearby event.
+  - marker: "[PAST?]"
+    context_mode: historical
+    requires: partial_or_uncertain_coverage
+    doc: >-
+      §8.6: shown when the current reconstruction is materially partial or uncertain. It is the
+      honest default: a session whose coverage cannot be established shows the question mark
+      rather than the bare marker, because overstating coverage is the failure this whole
+      registry exists to prevent.
+
+# ---------------------------------------------------------------------------------------------
+# The read-only policy of §4.7. This is a safety boundary, not a convention: the guard sits at
+# the one seam every command implementation passes through, so all four classes are covered by
+# one implementation rather than four.
+# ---------------------------------------------------------------------------------------------
+read_only_policy:
+  error: temporal.read_only
+  external_command_error: temporal.present_only
+  escape_hatch: "present <external-command> [args...]"
+  covered_operations:
+    - id: native_mutation
+      doc: >-
+        Any Ono-native command whose verb is mutating, including provider mutations and spatial
+        mutations. `restart service nginx` in historical context is `temporal.read_only` with
+        `now` offered as the way out (§4.7).
+    - id: kuang_mutation_tool
+      doc: >-
+        A KUANG/11 package's mutating contribution, and an assistant tool action taken on the
+        package's behalf (§4.7, §38.4). Historical context binds the plugin exactly as it binds
+        the operator; a package cannot mutate on behalf of a session that may not.
+    - id: remote_mutation
+      doc: >-
+        A mutation dispatched across a link. The refusal happens locally, before the request is
+        sent, so the historical context of the local session is never a request the peer has to
+        interpret.
+    - id: shell_state_change
+      doc: >-
+        A shell-state-changing operation whose semantics would be confusing in a historical
+        world — §4.7's fourth class. Returning to the present is never in this class: `now` must
+        work from anywhere, or the read-only rule would be a trap rather than a guard.
+  external_commands:
+    doc: >-
+      §4.8: an arbitrary external program executes in the present and may have side effects, so
+      it MUST NOT run while historical context is active. `present <command>` is the explicit
+      escape hatch, it does not change the temporal context, and the result metadata says the
+      execution was present-bound at least once.
+
+# ---------------------------------------------------------------------------------------------
+# Default windows. Each is the built-in figure a command uses when the user names none; the
+# `setting` column points at the configuration key that overrides it, where one exists.
+# ---------------------------------------------------------------------------------------------
+default_windows:
+  - id: timeline.default_window
+    value: 30m
+    setting: temporal.timeline.default_window
+    doc: >-
+      §11.3, §33: how far back a bare `timeline` reaches in present context.
+  - id: timeline.centered_half_window
+    value: 15m
+    setting: null
+    doc: >-
+      §11.8: in historical context `timeline` centres on the active instant and reaches 15
+      minutes either side of it, rather than back from `now`. Derived from the context rather
+      than configured, because it is a framing of a coordinate the user already chose.
+  - id: timeline.default_depth
+    value: 3
+    setting: temporal.timeline.default_depth
+    doc: >-
+      §16.7, §33: how many causal hops `why` follows before it stops and says there is more.
+
+# ---------------------------------------------------------------------------------------------
+# The canonical `TemporalCapabilities` keys of §21.1. `sources.yaml` draws every claim it makes
+# from this list, and `xtask/src/temporal.rs::check` refuses a source claiming anything else.
+# ---------------------------------------------------------------------------------------------
+capabilities:
+  - key: current_snapshot
+    type: bool
+    doc: >-
+      §21.2: the provider answers for the present. Every v0.2 provider already does, and v0.5
+      uses it for checkpoints and for the two ends of a comparison.
+  - key: live_events
+    type: bool
+    doc: >-
+      §21.3: the provider emits canonical or mappable events as they happen, rather than being
+      asked. In this tree only netlink and inotify do; everything else is polled, and
+      `sources.yaml` says so per source.
+  - key: historical_query
+    type: bool
+    doc: >-
+      §21.4: the provider itself can answer about past state or past events, without the
+      recorder. journald is the one built-in source that can.
+  - key: exhaustive_events
+    type: bool
+    doc: >-
+      §21.5: a strong contract. Sequence continuity supports absence and change claims for the
+      declared capability. "Providers MUST NOT advertise it merely because events usually
+      arrive", which is why no built-in source claims it.
+  - key: causal_tokens
+    type: bool
+    doc: >-
+      §21.6: the provider carries a transaction, job or action identifier that supports a direct
+      causal link rather than an inference from proximity.
+  - key: checkpointable
+    type: bool
+    doc: >-
+      §21.7: the provider's current snapshot can be serialized into the temporal store with
+      canonical identity and provenance, so it can be replayed as a state at an instant.
+  - key: retained_history
+    type: duration
+    nullable: true
+    doc: >-
+      §21.1: how far back the provider's own history reaches, where the provider knows. Null
+      means unknown rather than none — the distinction the value model already makes (§35.3).
+
+# ---------------------------------------------------------------------------------------------
+# The twelve canonical settings of §33. `xtask/src/temporal.rs::check` compares this block
+# against `ono_cli::settings::CATALOGUE` on key, type and default, in both directions: a key the
+# shell declares and this file omits fails the gate, and so does the reverse.
+#
+# `type` is the name `ono_cli::settings::SettingType::name()` reports. `default` is written the
+# way a user would type it, and the check parses it in the declared type rather than comparing
+# text, so `24h` here and 86_400_000_000_000 nanoseconds in the catalogue are the same figure.
+# ---------------------------------------------------------------------------------------------
+settings:
+  - key: temporal.recording.enabled
+    type: bool
+    default: false
+    doc: >-
+      §10.2, §33: whether the recorder persists events across sessions. Disabled by default, and
+      §10.2's "MUST" makes that a contract rather than a preference — a temporal shell that
+      records without being asked is surveillance.
+  - key: temporal.retention.max_age
+    type: duration
+    default: 24h
+    doc: >-
+      §10.4, §33: the oldest data the ledger keeps. Retention removes the oldest eligible data
+      when either this or the size ceiling is exceeded. §33: raising it never resurrects expired
+      data.
+  - key: temporal.retention.max_size
+    type: bytesize
+    default: 512MiB
+    doc: "§10.4, §33: the size ceiling of the local ledger."
+  - key: temporal.checkpoint.interval
+    type: duration
+    default: 5m
+    doc: >-
+      §10.4, §33: how often the recorder writes a checkpoint for its configured scopes. A
+      checkpoint bounds reconstruction cost, so this figure is the trade between store size and
+      the time `at` takes to answer.
+  - key: temporal.flush.interval
+    type: duration
+    default: 2s
+    doc: >-
+      §10.4, §33: how long an event may sit unflushed. It bounds what a crash loses, and §44.1
+      makes the loss a coverage gap rather than a silence.
+  - key: temporal.session.max_events
+    type: int
+    default: 100000
+    doc: >-
+      §10.7, §33: the bound on the in-memory session ledger that exists even without the
+      recorder. The ledger is discarded at session end.
+  - key: temporal.timeline.default_window
+    type: duration
+    default: 30m
+    doc: "§11.3, §33: how far back a bare `timeline` reaches in present context."
+  - key: temporal.timeline.default_depth
+    type: int
+    default: 3
+    doc: "§16.7, §33: how many causal hops `why` follows by default."
+  - key: temporal.why.max_candidates
+    type: int
+    default: 1000
+    doc: >-
+      §33: how many candidate events one causal query considers before it stops and reports that
+      it stopped. A bound on work, and therefore a bound on how long `why` can hold the prompt.
+  - key: temporal.remote.clock_uncertainty_warn
+    type: duration
+    default: 100ms
+    doc: >-
+      §24.4, §33: the clock-offset estimate above which a remote event's ordering is rendered as
+      uncertain rather than asserted.
+  - key: temporal.record.process_argv
+    type: bool
+    default: false
+    doc: >-
+      §30.4, §33: whether the recorder persists full process argv. Off by default because argv
+      carries secrets; §30.4 permits the option and requires the warning that turning it on
+      changes what the ledger contains.
+  - key: temporal.ui.show_source_tags
+    type: bool
+    default: true
+    doc: >-
+      §33, §45.2: whether a rendered event carries its source tag. On by default, because the
+      source is how a skeptical reader distinguishes an observation from a composition (§7).
+
+# ---------------------------------------------------------------------------------------------
+# The stable temporal commands of §36.4's first drift rule. Every command id in
+# `docs/contracts/commands/temporal.yaml` must appear here; the check is bidirectional the
+# moment that file exists, and silent until then, because a registry describes the whole product
+# and the command contracts arrive with their implementations (ADR-0012, AGENTS.md §14).
+# ---------------------------------------------------------------------------------------------
+commands:
+  - id: ono.temporal.at
+    spelling: "at <time-selector>"
+    spec: "§4.2, §12"
+    doc: Resolves a selector and enters historical context at the instant it names.
+  - id: ono.temporal.now
+    spelling: "now"
+    spec: "§4.3"
+    doc: Returns the session to the present. Available from anywhere, always.
+  - id: ono.temporal.present
+    spelling: "present <external-command>..."
+    spec: "§4.8"
+    doc: >-
+      Runs one external command in the real present without leaving historical context, and says
+      in the result metadata that it did.
+  - id: ono.temporal.timeline
+    spelling: "timeline [selector] [--since] [--until] [--kind] [--all] [--view]"
+    spec: "§11, §20.2"
+    doc: The ordered event view over a scope and a window.
+  - id: ono.temporal.changes
+    spelling: "changes [selector] --since <t> [--until <t>]"
+    spec: "§13"
+    doc: What is different between two instants, classified and with per-field certainty.
+  - id: ono.temporal.why
+    spelling: "why <target> <selector>"
+    spec: "§16"
+    doc: >-
+      The causal explanation of an object, an event or a field, built only from links a
+      registered rule of `causality.yaml` produced.
+  - id: ono.event.find
+    spelling: "find event <predicate>"
+    spec: "§20.3"
+    doc: Search across events when the user does not know when something happened.
+  - id: ono.event.inspect
+    spelling: "inspect event @e42"
+    spec: "§7.3, §11.6"
+    doc: One event with its evidence chain, navigable to the material it derives from.
+  - id: ono.recorder.get
+    spelling: "get recorder"
+    spec: "§10.3"
+    doc: The recorder's status, as `ono.recorder-status/1`.
+  - id: ono.recorder.start
+    spelling: "start recorder"
+    spec: "§10.3, §10.8"
+    doc: Starts persistent recording. Idempotent.
+  - id: ono.recorder.stop
+    spelling: "stop recorder"
+    spec: "§10.3, §10.8"
+    doc: Flushes the ledger and stops cleanly.
+  - id: ono.temporal-history.remove
+    spelling: "remove temporal-history"
+    spec: "§30.8"
+    doc: >-
+      Destroys the local retained history. Destructive, and takes the existing
+      destructive-operation confirmation path rather than a temporal-specific one.
+
+# ---------------------------------------------------------------------------------------------
+# The errors this registry names, so §36.4's "an error referenced in temporal contracts does not
+# exist" has something to resolve. Each must appear in `docs/contracts/errors.yaml` (ADR-0610
+# renumbered §34's codes to E1301–E1314).
+# ---------------------------------------------------------------------------------------------
+errors:
+  - temporal.invalid_time
+  - temporal.not_recorded
+  - temporal.ambiguous_event
+  - temporal.read_only
+  - temporal.present_only

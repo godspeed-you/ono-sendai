@@ -14,12 +14,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    FIXTURE_UPTIME_SECONDS, FakeAccounts, ProcFixture, RecordingSignals, StatFields, TestClock,
-    USER_HZ, drain, expected_start, find, records,
+    FIXTURE_BOOT_ID, FIXTURE_UPTIME_SECONDS, FakeAccounts, ProcFixture, RecordingSignals,
+    StatFields, TestClock, USER_HZ, drain, expected_start, find, records,
 };
 use ono_core::ErrorCode;
 use ono_provider_api::{Action, ObjectId, Provider, Query, Selector};
 use ono_provider_linux::{ProcessProvider, schemas};
+use ono_spatial_core::{BootEvidence, BootIdentity, ProcessIdentity, SpatialId};
 use ono_testkit::SkipReason;
 use ono_value::{ByteSize, FieldAccess, Value};
 
@@ -920,5 +921,105 @@ async fn should_measure_the_share_over_the_interval_the_caller_asked_to_sample()
         (cpu - 0.0).abs() < 1e-9,
         "the fixture's counters did not move during the interval, so the share over it is zero \
          — not the 0.033% its lifetime average would have shown: got {cpu}"
+    );
+}
+
+// --- boot identity (spec §10.2, v0.5 §5.2, §25.5) -------------------------------------------
+
+/// The pid namespace a process fixture is read in. Constant here, so the only thing that changes
+/// between the two identities below is the boot.
+const FIXTURE_PID_NAMESPACE: Option<u64> = Some(4_026_531_836);
+
+fn process_identity(provider: &ProcessProvider, host: &str, pid: i64, start: u64) -> SpatialId {
+    let boot = BootIdentity::of(host, provider.boot_id(), provider.boot_time_seconds());
+    ProcessIdentity::new(boot, pid, start, FIXTURE_PID_NAMESPACE).spatial_id()
+}
+
+#[tokio::test]
+async fn should_read_the_kernels_boot_id_when_the_proc_tree_publishes_one() {
+    // v0.5 §25.5: `boot_id` or equivalent MUST separate clock domains. The kernel publishes one
+    // and, until now, nothing in the process provider read it.
+    let fixture = ProcFixture::new();
+    let provider = provider(&fixture);
+    assert_eq!(provider.boot_id(), Some(FIXTURE_BOOT_ID));
+}
+
+#[tokio::test]
+async fn should_fall_back_to_the_boot_second_visibly_when_no_boot_id_is_published() {
+    // A container's `/proc` may not carry the file. Falling back is allowed; falling back
+    // silently is not, so the identity says which fact it was built from (§2.17).
+    let fixture = ProcFixture::without_boot_id();
+    let provider = provider(&fixture);
+    assert_eq!(provider.boot_id(), None);
+
+    let boot = BootIdentity::of("testbox", provider.boot_id(), provider.boot_time_seconds());
+    assert_eq!(boot.evidence(), BootEvidence::BootTime);
+    assert!(
+        boot.is_known(),
+        "a boot second still says which boot this is"
+    );
+    assert!(
+        boot.as_str().contains("btime:"),
+        "the fallback must be visible in the identity itself, got `{boot}`"
+    );
+}
+
+#[tokio::test]
+async fn should_say_the_boot_is_unknown_when_neither_boot_fact_can_be_read() {
+    let boot = BootIdentity::of("testbox", None, None);
+    assert_eq!(boot.evidence(), BootEvidence::Unknown);
+    assert!(!boot.is_known());
+}
+
+#[tokio::test]
+async fn should_prefer_the_kernel_boot_id_over_the_boot_second_when_both_are_readable() {
+    let fixture = ProcFixture::new();
+    let provider = provider(&fixture);
+    let boot = BootIdentity::of("testbox", provider.boot_id(), provider.boot_time_seconds());
+    assert_eq!(boot.evidence(), BootEvidence::KernelBootId);
+    assert_eq!(boot.as_str(), format!("testbox/{FIXTURE_BOOT_ID}"));
+}
+
+#[tokio::test]
+async fn should_give_two_processes_with_one_pid_two_identities_across_a_reboot() {
+    // v0.5 §5.2: "Historical references MUST NOT accidentally resolve a dead process to a later
+    // process reusing the same PID." After a reboot the pid *and* the start time repeat, because
+    // the start time is measured from the boot the process belongs to; only the boot tells them
+    // apart.
+    let before = ProcFixture::new();
+    before
+        .process(1842)
+        .stat("nginx", StatFields::default())
+        .status(1000, 100);
+    let after = ProcFixture::booted_as(Some("9f3c7e10-0c4a-4d1e-9b77-2a5f6c8d0e11"));
+    after
+        .process(1842)
+        .stat("nginx", StatFields::default())
+        .status(1000, 100);
+
+    let start = StatFields::default().starttime;
+    let earlier = process_identity(&provider(&before), "testbox", 1842, start);
+    let later = process_identity(&provider(&after), "testbox", 1842, start);
+
+    assert_ne!(
+        earlier, later,
+        "the same pid on either side of a reboot is two processes, not one"
+    );
+}
+
+#[tokio::test]
+async fn should_give_one_process_one_identity_across_two_observations_of_one_boot() {
+    let fixture = ProcFixture::new();
+    fixture
+        .process(1842)
+        .stat("nginx", StatFields::default())
+        .status(1000, 100);
+    let start = StatFields::default().starttime;
+
+    let first = process_identity(&provider(&fixture), "testbox", 1842, start);
+    let second = process_identity(&provider(&fixture), "testbox", 1842, start);
+    assert_eq!(
+        first, second,
+        "reading the same process twice must not make it two objects"
     );
 }

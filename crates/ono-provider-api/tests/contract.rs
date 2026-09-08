@@ -16,6 +16,7 @@ use std::sync::Arc;
 use ono_core::ErrorCode;
 use ono_provider_api::{
     Action, Capability, EventKind, ObjectId, Provider, ProviderRegistry, Query, Risk, Selector,
+    TemporalCapabilities, TimeWindow,
 };
 use ono_value::{Provenance, RecordValue, Schema, SchemaId, Value};
 
@@ -581,4 +582,131 @@ async fn should_act_through_the_first_available_provider_when_a_selector_named_t
         ),
         (1, 0)
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The fourth primitive: what a provider can answer about the past (v0.5 §21).
+// ---------------------------------------------------------------------------------------------
+
+/// A provider that overrides nothing beyond the four required methods.
+///
+/// It exists so the *defaults* of the trait can be exercised as a contract rather than assumed:
+/// a provider author who implements the minimum must still refuse a historical query honestly.
+#[derive(Debug)]
+struct MinimalProvider;
+
+#[async_trait::async_trait]
+impl Provider for MinimalProvider {
+    fn id(&self) -> &str {
+        "test.minimal"
+    }
+    fn targets(&self) -> &[&str] {
+        &["gadget"]
+    }
+    fn schemas(&self) -> Vec<Arc<Schema>> {
+        Vec::new()
+    }
+    fn capabilities(&self) -> Vec<Capability> {
+        Vec::new()
+    }
+    fn snapshot(&self, _query: &Query) -> Result<ono_pipeline::ValueStream, ono_value::ErrorValue> {
+        Ok(ono_pipeline::ValueStream::from_values([]))
+    }
+    async fn resolve(
+        &self,
+        _selector: &Selector,
+    ) -> Result<Vec<ono_provider_api::ObjectRef>, ono_value::ErrorValue> {
+        Ok(Vec::new())
+    }
+}
+
+#[tokio::test]
+async fn should_claim_nothing_about_time_when_a_provider_says_nothing() {
+    // §21.1 and §7.4: silence is not coverage. A provider that never thought about the past must
+    // not have a capability inferred for it, because the whole ledger reasons from these claims.
+    let claims = MinimalProvider.temporal();
+    assert_eq!(claims, TemporalCapabilities::none());
+    assert!(!claims.current_snapshot);
+    assert!(!claims.live_events);
+    assert!(!claims.historical_query);
+    assert!(!claims.exhaustive_events);
+    assert!(!claims.causal_tokens);
+    assert!(!claims.checkpointable);
+    assert_eq!(claims.retained_history, None);
+}
+
+#[tokio::test]
+async fn should_refuse_a_historical_query_when_the_source_keeps_no_history() {
+    // §21.4: a source that cannot answer about the past says so, so the shell can look for the
+    // answer where it was recorded instead of presenting now as then.
+    let mut registry = ProviderRegistry::new();
+    registry.register(Arc::new(MinimalProvider));
+    let error = registry
+        .history(&Query::target("gadget"), &TimeWindow::unbounded())
+        .expect_err("a snapshot source must refuse a question about the past");
+    assert_eq!(error.code(), ErrorCode::TemporalUnsupportedSource);
+    assert!(
+        error.help().is_some_and(|help| !help.is_empty()),
+        "the refusal must say where the past can come from instead"
+    );
+}
+
+#[tokio::test]
+async fn should_refuse_a_historical_query_when_the_provider_advertises_only_a_snapshot() {
+    let mut registry = ProviderRegistry::new();
+    registry.register(Arc::new(FixtureProvider::new()));
+    let error = registry
+        .history(&Query::target("widget"), &TimeWindow::unbounded())
+        .expect_err("`current_snapshot` alone is not a claim about the past");
+    assert_eq!(error.code(), ErrorCode::TemporalUnsupportedSource);
+}
+
+#[tokio::test]
+async fn should_answer_a_historical_query_when_the_provider_claims_one() {
+    let mut registry = ProviderRegistry::new();
+    registry.register(Arc::new(FixtureProvider::new().keeping_history(
+        ono_value::Duration::from_nanoseconds(3_600_000_000_000),
+    )));
+    let window = TimeWindow::between(
+        "2026-08-31T12:00:00Z".parse().expect("an instant"),
+        "2026-08-31T13:00:00Z".parse().expect("an instant"),
+    );
+    let collected = registry
+        .history(&Query::target("widget"), &window)
+        .expect("a provider claiming `historical_query` answers one")
+        .collect()
+        .await;
+    assert_eq!(collected.values().len(), 3, "got {:?}", collected.values());
+    assert!(collected.errors().is_empty());
+}
+
+#[tokio::test]
+async fn should_report_a_providers_own_temporal_claim_without_widening_it() {
+    // §21.5: no layer above a provider may add a capability the provider does not implement.
+    // The registry routes the question; it never answers it more generously than the source did.
+    let retained = ono_value::Duration::from_nanoseconds(3_600_000_000_000);
+    let provider = Arc::new(FixtureProvider::new().keeping_history(retained));
+    let mut registry = ProviderRegistry::new();
+    registry.register(Arc::clone(&provider) as Arc<dyn Provider>);
+
+    let reported = registry
+        .temporal_of("widget")
+        .expect("the fixture answers `widget`");
+    assert_eq!(reported, provider.temporal());
+    assert!(reported.historical_query);
+    assert_eq!(reported.retained_history, Some(retained));
+    assert!(
+        !reported.exhaustive_events,
+        "the registry must not turn a claim the provider withheld into one it made"
+    );
+    assert!(!reported.live_events);
+    assert!(!reported.causal_tokens);
+}
+
+#[tokio::test]
+async fn should_say_which_provider_cannot_answer_about_a_target_no_provider_claims() {
+    let error = registry()
+        .temporal_of("nothing-answers-this")
+        .expect_err("an unclaimed target is a resolution failure, not an empty claim");
+    assert_eq!(error.code(), ErrorCode::ResolveTargetNotFound);
 }

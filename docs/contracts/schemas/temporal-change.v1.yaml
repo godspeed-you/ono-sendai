@@ -1,0 +1,63 @@
+# Canonical TemporalChange schema. Source: v0.5 §35.4 (the field list), §13.1 (`changes
+# [selector] --since <t> [--until <t>]`), §13.2 (the five change classes and that the output is a
+# stream of canonical values rather than a diff rendering), §13.4 (unknown comparison: a field
+# with no evidence on one side is unknown, never "changed to nothing") and §6.2 (the typed field
+# changes and their certainty).
+#
+# §13.4 is why `certainty` travels on every field change: a comparison across a coverage gap can
+# be honest only if it can say which side it could not see.
+#
+# A change is a computed answer over a window rather than a stored object, so `change_id` is a
+# stable identity for the answer, not a row in the ledger.
+id: ono.temporal-change/1
+name: TemporalChange
+summary: What became different about one subject between two instants, and how well each side is known.
+identity: [change_id]
+fields:
+  change_id:
+    type: string
+    required: true
+    doc: A stable identity for this change within the answer, so it can be referenced and pinned.
+  kind:
+    type: enum
+    required: true
+    values: [added, removed, changed, relation_added, relation_removed]
+    doc: §13.2's class. Relation changes stay separate from object changes because they are (§6.4).
+  subject:
+    type: record
+    required: true
+    doc: >-
+      The object the change is about — the canonical identity, its type and its label — or, per
+      §5.5, an unresolved subject where the source named something Ono could not reconcile.
+  from_time:
+    type: timestamp
+    required: true
+    doc: The instant the comparison starts at — `--since` (§13.1).
+  to_time:
+    type: timestamp
+    required: true
+    doc: The instant the comparison ends at — `--until`, or the present (§13.1).
+  field_changes:
+    type: list<record>
+    required: true
+    doc: >-
+      §6.2's typed field changes: `field`, `before`, `after`, `certainty`. Empty for `added` and
+      `removed`, where the whole object is the change.
+  relation:
+    type: record
+    nullable: true
+    doc: >-
+      For `relation_added` and `relation_removed`, the edge that changed — both ends, the
+      relation type, the source and the confidence (§6.4). Null for an object change.
+  coverage:
+    type: record
+    required: true
+    doc: >-
+      The composed coverage over the window (§8.5). A change list computed across a gap says so
+      here, which is what keeps §13.4's unknown honest.
+  provenance:
+    type: record
+    required: true
+    doc: Where the answer came from (v0.2 §25.2).
+default_view:
+  columns: [kind, subject, from_time, to_time]

@@ -547,6 +547,9 @@ pub fn consent_class(capability: Capability, scope: Option<&ScopeTemplate>) -> C
         | C::RelationRead
         | C::HistoryRead
         | C::FilesystemRead
+        | C::TemporalReadCurrent
+        | C::TemporalReadHistory
+        | C::TemporalReadEvidence
         | C::SecretUse => ConsentClass::Observation,
         C::ProcessExec | C::ContainerExec => ConsentClass::Conditional,
         C::ProviderMutate
@@ -555,6 +558,9 @@ pub fn consent_class(capability: Capability, scope: Option<&ScopeTemplate>) -> C
         | C::NetworkListen
         | C::RemoteMutate
         | C::PluginInvoke
+        | C::TemporalContributeEvents
+        | C::TemporalContributeCausality
+        | C::TemporalRecorderManage
         | C::ModelInfer => ConsentClass::Explicit,
         C::FilesystemWrite => ConsentClass::Destructive,
     }
@@ -565,7 +571,7 @@ pub fn consent_class(capability: Capability, scope: Option<&ScopeTemplate>) -> C
 pub fn minimum_risk(capability: Capability, scope: Option<&ScopeTemplate>) -> PermissionRisk {
     use Capability as C;
     match capability {
-        C::FilesystemRead | C::SecretUse => PermissionRisk::SensitiveRead,
+        C::FilesystemRead | C::SecretUse | C::TemporalReadHistory => PermissionRisk::SensitiveRead,
         C::ProcessExec | C::ContainerExec => PermissionRisk::Execute,
         C::FilesystemWrite => PermissionRisk::Destructive,
         _ => match consent_class(capability, scope) {
@@ -608,11 +614,17 @@ pub fn default_kind(capability: Capability, scope: Option<&ScopeTemplate>) -> Pe
         | C::RemoteRead
         | C::ContextRead
         | C::RelationRead
-        | C::HistoryRead => PermissionKind::HostObserve,
+        | C::HistoryRead
+        | C::TemporalReadCurrent
+        | C::TemporalReadHistory
+        | C::TemporalReadEvidence => PermissionKind::HostObserve,
         C::ProcessSignal
         | C::ServiceMutate
         | C::NetworkListen
         | C::RemoteMutate
+        | C::TemporalContributeEvents
+        | C::TemporalContributeCausality
+        | C::TemporalRecorderManage
         | C::PluginInvoke => PermissionKind::HostChange,
     }
 }
@@ -652,6 +664,12 @@ pub const fn family_title(capability: Capability) -> &'static str {
         C::StatePersist => "Keep its own state between sessions",
         C::ClockRead => "Read the clock",
         C::ProviderMutate => "Change resources in the external system",
+        C::TemporalReadCurrent => "Read the current time context",
+        C::TemporalReadHistory => "Read this machine's recorded history",
+        C::TemporalReadEvidence => "Read the evidence behind temporal claims",
+        C::TemporalContributeEvents => "Add events to Ono's temporal record",
+        C::TemporalContributeCausality => "Add causal explanations to Ono",
+        C::TemporalRecorderManage => "Start and stop the history recorder",
     }
 }
 

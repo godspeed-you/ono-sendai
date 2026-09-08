@@ -1,0 +1,68 @@
+# Canonical CausalExplanation schema. Source: v0.5 §16.4 (the field list) and §35.5, which
+# requires causal and correlated associations to stay separate arrays; §15.7 (unknown cause is a
+# valid outcome and not an error, and the explanation still lists evidence, correlations and
+# gaps); §16.7 (explanation depth) and §16.6 (the rendering of an unknown cause).
+#
+# The separation §35.5 demands is why `cause`, `causal_chain`, `correlations` and `preceding` are
+# four fields rather than one ranked list: a renderer that merged them would be free to promote a
+# correlation into a cause, which §15.5 forbids.
+#
+# An explanation is a computed answer rather than a stored object, so it declares no identity.
+id: ono.causal-explanation/1
+name: CausalExplanation
+summary: Why a state or a change came about — the cause where evidence supports one, and the correlations and gaps where it does not.
+identity: []
+fields:
+  subject:
+    type: string
+    nullable: true
+    doc: The `spatial_id` the question was asked about. Null where the question named an event.
+  explained_event:
+    type: string
+    nullable: true
+    doc: The `ono.temporal-event/1` id being explained. Null where the question named a state.
+  state_or_change:
+    type: string
+    required: true
+    doc: >-
+      What is being explained, in words a person asked for — `nginx.service is active`,
+      `process/2741 appeared`.
+  cause:
+    type: record
+    nullable: true
+    doc: >-
+      The immediate cause, where a registered rule found one: the event, the relation and the
+      rule. Null is §15.7's `cause: unknown` — a valid outcome, still carrying everything below.
+  causal_chain:
+    type: list<record>
+    required: true
+    doc: >-
+      The chain from the explained event back towards its origin, one `ono.causal-link/1` per
+      step, nearest first (§16.7). Empty where no rule matched.
+  correlations:
+    type: list<record>
+    required: true
+    doc: >-
+      Associations a correlation rule found without causal evidence (§15.5). Kept apart from
+      `causal_chain` by §35.5, and rendered without causal language (§15.6).
+  preceding:
+    type: list<record>
+    required: true
+    doc: >-
+      Events the ordering model supports as earlier, with no claim beyond order (§15.6, §26.3).
+  gaps:
+    type: list<record>
+    required: true
+    doc: >-
+      The `ono.temporal-gap/1` intervals that materially affect the answer (§7.5). An explanation
+      built over a hole says so.
+  coverage:
+    type: record
+    required: true
+    doc: The composed coverage summary the explanation rests on (§8.5).
+  provenance:
+    type: record
+    required: true
+    doc: Where the answer came from (v0.2 §25.2).
+default_view:
+  columns: [state_or_change, cause, coverage]

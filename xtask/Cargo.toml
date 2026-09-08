@@ -27,6 +27,7 @@ ono-value.workspace = true
 ono-parser.workspace = true
 ono-spatial-core.workspace = true
 ono-spatial-query.workspace = true
+ono-temporal-core.workspace = true
 ono-fuzz.workspace = true
 ono-testkit.workspace = true
 serde = { workspace = true }

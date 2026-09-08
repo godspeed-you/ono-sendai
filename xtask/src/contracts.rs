@@ -95,6 +95,7 @@ pub fn check_contracts(root: &Path) -> Vec<Problem> {
     problems.extend(check_spatial_registry(root));
     problems.extend(check_spatial_implementation(root));
     problems.extend(check_provider_claims(root));
+    problems.extend(check_provider_temporal_claims(root));
     problems.extend(check_identity_tokens(root));
     problems.extend(check_kuang_contracts(root));
     problems.extend(check_hardening_contracts(root));
@@ -4264,4 +4265,158 @@ fn collect_fixture_sources(root: &Path, directory: &Path, into: &mut Vec<(String
             into.push((relative(root, &path), text));
         }
     }
+}
+
+/// Checks the v0.5 §21.1 temporal capability matrix every provider declares.
+///
+/// The matrix says what a source can honestly answer about time, and the rules that bind it are
+/// rules about what a document may say, so this is where they bite:
+///
+/// - every provider declares all seven capabilities and a `coverage:` word, because a missing key
+///   is a claim nobody made and a claim nobody made must be visible as `false` rather than as an
+///   omission a reader fills in (§21.1);
+/// - `exhaustive_events` needs `live_events`: sequence continuity is a property of a stream, and
+///   §21.5 forbids the claim outright for a source that is merely polled reliably;
+/// - `coverage:` and the capabilities agree — `historical_query` as a word requires the capability
+///   and the capability requires the word, and `event_stream` requires `live_events`. The word is
+///   what a person reads and the booleans are what the shell reasons over; they must be one claim;
+/// - `retained_history` belongs to a source that keeps history. A retention on a source that
+///   answers nothing about the past states a bound on nothing (§21.4).
+#[must_use]
+pub fn check_provider_temporal_claims(root: &Path) -> Vec<Problem> {
+    /// The word list of ADR-0711, closed.
+    const COVERAGE: [&str; 4] = ["snapshot", "event_stream", "historical_query", "none"];
+    /// The seven capabilities of §21.1, in the order the specification lists them.
+    const CAPABILITIES: [&str; 6] = [
+        "current_snapshot",
+        "live_events",
+        "historical_query",
+        "exhaustive_events",
+        "causal_tokens",
+        "checkpointable",
+    ];
+
+    let providers = root.join("docs").join("contracts").join("providers");
+    if !providers.is_dir() {
+        return Vec::new();
+    }
+    let mut problems = Vec::new();
+    for path in yaml_files(&providers) {
+        let location = relative(root, &path);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+            continue;
+        };
+        for provider in sequence(&document, "providers") {
+            let id = string_at(provider, "id").unwrap_or_default();
+            let Some(claims) = provider.get("temporal") else {
+                problems.push(Problem::new(
+                    location.clone(),
+                    format!(
+                        "`{id}` declares no `temporal:` block. v0.5 §21.1 makes temporal \
+                         capabilities inspectable, and a source that says nothing is one nothing \
+                         can reason about"
+                    ),
+                ));
+                continue;
+            };
+            let mut declared = BTreeMap::new();
+            for key in CAPABILITIES {
+                match claims.get(key).and_then(Yaml::as_bool) {
+                    Some(value) => {
+                        declared.insert(key, value);
+                    }
+                    None => problems.push(Problem::new(
+                        location.clone(),
+                        format!(
+                            "`{id}` declares no `{key}` among its §21.1 temporal capabilities; \
+                             an omitted claim must be written `false` rather than left out"
+                        ),
+                    )),
+                }
+            }
+            let claimed = |key: &str| declared.get(key).copied().unwrap_or(false);
+
+            match string_at(claims, "coverage") {
+                None => problems.push(Problem::new(
+                    location.clone(),
+                    format!("`{id}` declares no `coverage:` word for what its source is"),
+                )),
+                Some(word) if !COVERAGE.contains(&word.as_str()) => {
+                    problems.push(Problem::new(
+                        location.clone(),
+                        format!(
+                            "`{id}` declares `coverage: {word}`, which is not one of {}",
+                            COVERAGE.join(", ")
+                        ),
+                    ));
+                }
+                Some(word) => {
+                    if (word == "historical_query") != claimed("historical_query") {
+                        problems.push(Problem::new(
+                            location.clone(),
+                            format!(
+                                "`{id}` declares `coverage: {word}` and \
+                                 `historical_query: {}`. The word and the capability are one \
+                                 claim about the same source (§21.4)",
+                                claimed("historical_query")
+                            ),
+                        ));
+                    }
+                    if word == "event_stream" && !claimed("live_events") {
+                        problems.push(Problem::new(
+                            location.clone(),
+                            format!(
+                                "`{id}` calls its source an `event_stream` and claims no \
+                                 `live_events`; a stream nobody subscribes to is a snapshot"
+                            ),
+                        ));
+                    }
+                    if word == "none" && CAPABILITIES.iter().any(|key| claimed(key)) {
+                        problems.push(Problem::new(
+                            location.clone(),
+                            format!(
+                                "`{id}` declares `coverage: none` and claims a capability; a \
+                                 source that cannot be asked about time claims nothing"
+                            ),
+                        ));
+                    }
+                }
+            }
+
+            if claimed("exhaustive_events") && !claimed("live_events") {
+                problems.push(Problem::new(
+                    location.clone(),
+                    format!(
+                        "`{id}` claims `exhaustive_events` without `live_events`. §21.5: \
+                         sequence continuity is a property of a stream, and a polled source has \
+                         none however reliably it is polled"
+                    ),
+                ));
+            }
+            let retained = claims.get("retained_history");
+            if retained.is_none() {
+                problems.push(Problem::new(
+                    location.clone(),
+                    format!(
+                        "`{id}` declares no `retained_history`; a source that does not state how \
+                         far back it goes says `null`, which is not the same as forever"
+                    ),
+                ));
+            } else if retained.is_some_and(|value| !value.is_null()) && !claimed("historical_query")
+            {
+                problems.push(Problem::new(
+                    location.clone(),
+                    format!(
+                        "`{id}` states a `retained_history` and claims no `historical_query`; a \
+                         retention bounds history a source can be asked for, and this one cannot \
+                         be asked for any"
+                    ),
+                ));
+            }
+        }
+    }
+    problems
 }

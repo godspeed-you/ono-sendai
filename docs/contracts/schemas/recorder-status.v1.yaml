@@ -1,0 +1,95 @@
+# Canonical RecorderStatus schema. Source: v0.5 §10.3 (`get recorder` returns
+# `ono.recorder-status/1`), §10.2 (persistent recording is disabled by default and a normal
+# installation without it still answers temporal queries), §10.4 (the five retention defaults),
+# §10.7 (the bounded session ledger that exists even without the recorder), §10.8 (lifecycle),
+# §30.1 ("the user must know when Ono is retaining system history and how much it retains"),
+# §30.2 (file permissions) and §43.4 (the recorder's own health is a timeline landmark).
+#
+# Every number here exists so that retention is legible rather than implied: §30.1's intent is
+# that persistent history be "impossible to confuse with hidden surveillance".
+#
+# There is one recorder per user, so the record declares no identity of its own.
+id: ono.recorder-status/1
+name: RecorderStatus
+summary: Whether Ono is retaining system history, under which limits, and how much it currently holds.
+identity: []
+fields:
+  running:
+    type: bool
+    required: true
+    doc: Whether the recorder process is collecting now (§10.8).
+  enabled:
+    type: bool
+    required: true
+    doc: >-
+      The `temporal.recording.enabled` setting, which §10.2 defaults to false. Distinct from
+      `running`: a recorder can be configured on and not yet started.
+  since:
+    type: timestamp
+    nullable: true
+    doc: When the running recorder started. Null when it is not running.
+  store:
+    type: path
+    nullable: true
+    doc: >-
+      Where retained history lives, so §30.2's file permissions are checkable by the person they
+      protect. Null when nothing is retained beyond the session.
+  max_age:
+    type: duration
+    required: true
+    doc: "`temporal.retention.max_age` — 24h by default (§10.4)."
+  max_size:
+    type: bytesize
+    required: true
+    doc: "`temporal.retention.max_size` — 512MiB by default (§10.4)."
+  checkpoint_interval:
+    type: duration
+    required: true
+    doc: "`temporal.checkpoint.interval` — 5m by default (§10.4, §31.9)."
+  flush_interval:
+    type: duration
+    required: true
+    doc: "`temporal.flush.interval` — 2s by default (§10.4)."
+  session_max_events:
+    type: int
+    required: true
+    doc: >-
+      "`temporal.session.max_events` — the ceiling of §10.7's in-memory session ledger, 100000 by
+      default. It applies whether or not the recorder runs."
+  events:
+    type: int
+    required: true
+    doc: How many events are retained now.
+  size:
+    type: bytesize
+    nullable: true
+    doc: How much space the retained history occupies. Null where nothing is retained on disk.
+  earliest:
+    type: timestamp
+    nullable: true
+    doc: >-
+      The earliest instant still retained — the boundary `at` refuses beyond with
+      `temporal.out_of_retention` (§12.3). Null when nothing is retained.
+  latest:
+    type: timestamp
+    nullable: true
+    doc: The most recent instant retained. Null when nothing is retained.
+  sources:
+    type: list<string>
+    required: true
+    doc: The §7.1 sources the recorder is subscribed to, so the collection policy of §10.6 is visible.
+  dropped:
+    type: int
+    required: true
+    doc: >-
+      How many events the bounded queues of §43.1 discarded. §43.2 forbids silent loss, so the
+      count is part of the status rather than a log line.
+  health:
+    type: enum
+    required: true
+    values: [healthy, degraded, stopped, failed]
+    doc: >-
+      §43.4's recorder health. `degraded` is what a run of dropped events or a coverage loss
+      produces; §21.8 forbids freezing the last known state and calling it current.
+default_view:
+  columns: [running, events, earliest, latest, health]
