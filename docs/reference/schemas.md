@@ -147,10 +147,12 @@ Default view: `plugin`, `capability`, `scope`, `duration`, `decision`, `expires_
 | `actions` | `list<string>` | — | nullable | The operations permitted, e.g. `[restart]` (spec §31.49). Null means every operation the capability allows — which a lease should rarely choose. |
 | `selector` | `string` | — | nullable | The objects a lease reaches, e.g. `"host=staging-3 service=staging-api"` (spec §31.49). Evaluated by the host at each use, against the object it is about to act on. |
 | `condition` | `string` | — | nullable | A probe or policy reference that must hold at each use. Null means unconditional. |
-| `source` | `enum` | — | required | Which layer produced the decision, in the precedence order of spec §31.19. It is what lets an operator see why a grant they did not make exists. |
+| `source` | `enum` | — | required | Which layer produced the decision, in the precedence order of spec §31.19. It is what lets an operator see why a grant they did not make exists. `automatic` is the host including a bounded extension-local permission without a question (K11P §7.1, ADR-0600 §2) — a scoped grant in §31.19's order, made by the host rather than by a person. |
 | `link` | `string` | — | nullable | The link the grant applies to, for a remote projection. Null for a local grant. A local grant does not become a remote one; effective authority is the intersection of both sides' policy (spec §31.40). |
 | `purpose` | `string` | — | nullable | What the package said it needed the capability for, as shown in the prompt (spec §31.18). Package-authored, sanitised, and attributed to the package rather than to Ono. |
 | `revoked_at` | `timestamp` | — | nullable | When it was revoked. Null while it stands. A revoked grant is retained rather than deleted, so the record of what was once permitted survives. |
+| `permission` | `string` | — | nullable | The user-facing permission whose decision minted this grant (K11P §16.3, ADR-0604), by its package-local id. Null for a grant made by hand with `grant capability` or read from policy that names none — which is what lets `get permission` show such a grant as `custom` rather than hide it (Gate L). |
+| `profile` | `string` | — | nullable | The access profile whose selection minted it, e.g. `recommended`. Null otherwise. |
 
 ## Cgroup — `ono.cgroup/1`
 
@@ -1199,6 +1201,35 @@ Default view: `name`, `version`, `installed`, `description`
 | `description` | `string` | — | nullable | The manager's one-line description, where the query that produced the record carried one. |
 | `provider` | `string` | — | required | The package manager that answered, such as `dpkg`; part of the identity. |
 
+## Permission — `ono.permission/1`
+
+What one KUANG/11 package is permitted to do, in human terms, and the capabilities underneath.
+
+Identity: `plugin`, `id`
+
+Default view: `title`, `state`, `when`, `scope`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `plugin` | `ref<ono.plugin/1>` | — | required | The package the permission belongs to, by canonical id. |
+| `id` | `string` | — | required | The package-local permission id, e.g. `cluster-access`, or `capability:<family>` for a legacy grant no descriptor maps. |
+| `title` | `string` | — | required | The human statement, package-authored and sanitised, or the host's own wording for a derived permission. |
+| `purpose` | `string` | — | nullable | Why the package needs it, package-authored and sanitised. Null when the package said nothing. |
+| `kind` | `enum` | — | required | The host-controlled kind of K11P §6.4, rendered beside the title whatever the title says. |
+| `phase` | `enum` | — | required | When it is decided (K11P §6.5). |
+| `risk` | `enum` | — | required | The risk, never below the host's floor for what it grants (K11P §6.6). |
+| `recommended` | `bool` | — | required | Whether it is part of the package's recommended profile. |
+| `state` | `enum` | — | required | The standing decision. `included` is an automatic permission the host grants without a question; `ask` is a just-in-time permission nothing has decided, or one set back to asking; `custom` is a permission whose capabilities are held by grants that do not match its mapping exactly — wider, narrower, or made by hand with `grant capability`; `legacy` is a standing grant no descriptor maps (K11P §28.3, Gate L). |
+| `when` | `enum` | — | required | The duration of the decision, or when it would be made — `when-needed` for an undecided just-in-time permission, `explicit` for an undecided explicit one. |
+| `scope` | `string` | — | nullable | The human rendering of the scope (K11P §19.1). Null for a permission with nothing to scope. |
+| `capabilities` | `list<string>` | — | required | The exact capability ids the permission resolves to, from `kuang_capabilities` of `docs/contracts/capabilities.yaml`. |
+| `grants` | `list<record>` | — | required | One `{capability, scope, enforcement, decision, source, duration, grant}` per capability: the exact scope record or scope word, whether the broker enforces it, the broker's standing decision for it, which layer produced that decision, how long it lasts, and the grant id when a grant stands. This is where `details` and `get permission --all` read from. |
+| `enforcement` | `enum` | — | required | The weakest enforcement among the permission's scopes; an advisory scope is never shown as a boundary (K11P §18.3, §19.3). |
+| `source` | `enum` | — | nullable | Which layer produced the standing decision. Null when nothing has decided it. |
+| `profile` | `string` | — | nullable | The access profile that selected it, when a profile did. |
+| `derived` | `bool` | — | required | Whether the host derived the permission because the package declared none for the capability (K11P §8.1). |
+| `decided_at` | `timestamp` | — | nullable | When the standing decision was made. Null when nothing has decided it. |
+
 ## PlaceView — `ono.place-view/1`
 
 The current place, its exits, its landmarks and what changed around it.
@@ -1250,6 +1281,7 @@ Default view: `at`, `plugin`, `capability`, `action`, `target`, `result`
 | `lease` | `string` | — | nullable | The capability lease the action was taken under (spec §31.49). Null for a standing grant. |
 | `link` | `string` | — | nullable | The link the action crossed, for a remote action (spec §31.40). Null for a local one. Local and remote are separate scopes and the trail keeps them separate. |
 | `error` | `ono.error/1` | — | nullable | The structured error, for `denied` and `failed`. Null for `success`. |
+| `correlation` | `string` | — | nullable | The request one user action minted — a profile applied, a just-in-time answer, a `set permission` — shared by the `permission.*` event and every `capability.grant` or `capability.revoke` it produced, so the trail can be read as one decision rather than as several (K11P §23.2, ADR-0604). Null for an action that stands on its own. |
 
 ## PluginInspection — `ono.plugin-inspection/1`
 
@@ -1268,6 +1300,10 @@ Default view: `plugin`, `origin`, `memory_current`, `open_streams`, `restart_cou
 | `capability_grants` | `list<ono.capability-grant/1>` | — | required | Every grant and lease the package currently holds, with scope, duration and source. Empty when it holds none. |
 | `capability_requests` | `list<record>` | — | required | Every capability the package asks for, as `{capability, class, scope, roles, purpose, state}` where `state` is `granted`, `denied` or `not-requested-yet`. This is the display spec §31.1 shows under `requests` and `optional`. |
 | `verification` | `ono.verification-result/1` | — | required | The most recent verification: integrity, signature, publisher, transparency, compatibility, runtime. |
+| `permissions` | `list<ono.permission/1>` | — | required | The package's permission layer with its standing decisions — every descriptor, declared or derived, with the exact capabilities and scopes underneath (K11P §25.3). What `get permission <id> --all` answers, in one place with everything else. |
+| `profiles` | `list<record>` | — | required | The access profiles the package offers, as `{name, title, permissions, adds_mutation}`; `minimal` and `recommended` are always among them for a package with any permission request (K11P §9). `adds_mutation` is the host's own flag, appended to the title wherever a profile is offered (K11P §9.3). |
+| `readiness` | `enum` | — | required | The derived label of `ono.plugin/1.readiness`, beside the internal state it projects (K11P §17.2). |
+| `isolation_statement` | `string` | — | required | The host's own sentence about the execution tier, verbatim what the install prompt shows — for `native-process`, that brokered capabilities and process confinement are not a complete filesystem or network sandbox (v0.4.1 §15.2, K11P §18.2). Never package-authored. |
 | `runtime` | `ono.plugin-runtime/1` | — | nullable | The negotiated contract of the running instance. Null when nothing is loaded — not an empty record. |
 | `memory_current` | `bytesize` | — | nullable | Instance memory now. Null when nothing is loaded. |
 | `memory_limit` | `bytesize` | — | required | The effective memory ceiling, whether or not an instance exists. |
@@ -1289,7 +1325,7 @@ A KUANG/11 package as an installation source describes it, before installing any
 
 Identity: `id`, `version`, `source`
 
-Default view: `name`, `version`, `publisher`, `signature`, `source`, `installed`
+Default view: `name`, `id`, `version`, `trust`, `source`, `installed`
 
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
@@ -1310,6 +1346,8 @@ Default view: `name`, `version`, `publisher`, `signature`, `source`, `installed`
 | `signature` | `enum` | — | required | The signature state, as far as it can be judged without downloading the artifact. `unknown` is the honest answer for a source that does not say (spec §35.3). |
 | `trust` | `enum` | — | required | What is known about the publisher, using the same vocabulary as `ono.plugin/1.trust`. |
 | `installed` | `bool` | — | required | Whether this exact id and version is already installed on this host. |
+| `catalog` | `string` | — | nullable | The catalog that answered, by name, e.g. `official` (K11P §11). Null for a package read from an installed directory or an explicit path. |
+| `catalog_verification` | `enum` | — | nullable | How the shell knows the catalog: part of the release, placed by the operator, or claimed. A separate answer from `signature` and `trust` on purpose — a catalog saying a package exists makes nobody trusted (K11P §11.3, ADR-0601 §2). Null when no catalog answered. |
 | `size` | `bytesize` | — | nullable | The artifact's size where the source reports it; null where it does not. |
 | `published_at` | `timestamp` | — | nullable | When the source says the version was published. Null where the source does not say. |
 
@@ -1362,6 +1400,7 @@ Default view: `id`, `version`, `state`, `trust`, `jobs`, `memory`
 | `execution_tier` | `enum` | — | required | The named tier a loaded instance of this package runs in (v0.4.1 §17.2), and the name that reaches audit, diagnostics and documentation. A name rather than a boolean: v0.4.1 §17.3 forbids describing a tier as "sandboxed" without stating the boundary, and `native-confined` states it — capability mediation and process confinement, no kernel isolation of the filesystem or the network. `inspect plugin` shows the controls that name stands for. |
 | `roles` | `list<string>` | — | required | The extension roles of spec §31.4 the package declares, at least one. |
 | `enabled` | `bool` | — | required | Whether policy makes it eligible for loading. Distinct from `state`, which says what is happening now: a package can be enabled and unloaded, which is the normal resting state under lazy loading (spec §31.68). |
+| `readiness` | `enum` | — | required | The derived user-facing label of K11P §12.2 and §17.2, a projection over `state` and `enabled` and never a replacement for them: `ready` is installed, enabled, registered, with every install-time permission of its selected profile allowed and not quarantined; `needs-permission` lacks one of those decisions; `blocked` is disabled or quarantined; `running` is loaded or active. For a `startup: lazy` package, `ready` with `state: installed` is the normal resting state (ADR-0602 §2). |
 | `active_version` | `bool` | — | required | Whether this is the version contributions currently resolve to. During an upgrade two versions are installed and exactly one is active (spec §31.35). |
 | `source` | `string` | — | required | The source reference the artifact was installed from, e.g. `registry:example/packet-eye@2.4.1` (spec §31.9). |
 | `integrity` | `string` | — | required | The content hash recorded at install, e.g. `sha256:...`. Re-verified at load. |

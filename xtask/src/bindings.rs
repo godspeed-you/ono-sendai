@@ -144,6 +144,10 @@ const BOUND_ELSEWHERE: &[(&str, &str)] = &[
         "ono.capability.revoke",
         "`ono-cli`'s capability broker (spec §31.16)",
     ),
+    (
+        "ono.permission.set",
+        "`ono-cli`'s permission layer over the broker (K11P §16, ADR-0604)",
+    ),
     ("ono.assistant.ask", "`ono-cli`'s KUANG/11 host (spec §31)"),
     ("ono.host.link", "`ono-cli`'s link table (ADR-0104)"),
     ("ono.link.detach", "`ono-cli`'s link table (ADR-0104)"),

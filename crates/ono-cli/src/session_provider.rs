@@ -45,6 +45,7 @@ const ALL_TARGETS: &[&str] = &[
     "client-key",
     "plugin",
     "capability",
+    "permission",
     "audit",
     "assistant",
     "model",
@@ -205,6 +206,10 @@ impl SessionProvider {
                 Ok((records, failures))
             }
             "capability" => Ok((self.lock().kuang.capability_records(None)?, Vec::new())),
+            "permission" => Ok((
+                self.lock().kuang.permission_records(None, false)?,
+                Vec::new(),
+            )),
             "audit" => Ok((self.lock().kuang.audit_records()?, Vec::new())),
             // The operator's model providers, from `<config>/kuang/models.yaml` (spec §31.43,
             // ADR-0566); no file is the typed, empty answer.
@@ -233,11 +238,11 @@ impl SessionProvider {
                 _ => None,
             })
             .map(str::to_owned);
-        let (package, management, instance, trust) = {
+        let (package, management, instance, trust, human) = {
             let tables = self.lock();
             let Some(package) = id
                 .as_deref()
-                .and_then(|id| tables.kuang.installed_package(id))
+                .and_then(|id| tables.kuang.resolve_installed(id).ok())
             else {
                 return Ok(ValueStream::from_values([]));
             };
@@ -251,7 +256,10 @@ impl SessionProvider {
                     loaded_at: instance.loaded_at.clone(),
                 });
             let trust = tables.kuang.trust().clone();
-            (package, management, instance, trust)
+            let human = tables
+                .kuang
+                .inspection_human(&package, &management, instance.as_ref())?;
+            (package, management, instance, trust, human)
         };
         Ok(ValueStream::spawn(
             ono_pipeline::PipelineConfig::new(),
@@ -274,6 +282,7 @@ impl SessionProvider {
                     &contributions,
                     failure,
                     &trust,
+                    &human,
                 );
                 match record {
                     Ok(record) => {
@@ -415,6 +424,34 @@ impl SessionProvider {
                 ));
             }
             tables.kuang.revoke(*id);
+            // A grant a permission minted is the permission's decision: revoking it by hand is
+            // deciding `deny`, and the decision is kept so the permission does not come back
+            // included at the next load (ADR-0604 §2).
+            if let Some(package) = tables.kuang.installed_package(&grant.plugin)
+                && let Some(descriptor) = {
+                    let set = package.manifest.permission_set();
+                    grant
+                        .permission
+                        .as_deref()
+                        .and_then(|permission| set.descriptor(permission))
+                        .or_else(|| {
+                            // A grant made by hand for a family an automatic permission covers:
+                            // revoking it means the permission, or the next load includes it again.
+                            set.for_capability(grant.capability)
+                                .find(|descriptor| descriptor.is_automatic())
+                        })
+                        .cloned()
+                }
+            {
+                let correlation = format!("{}:revoke:{}", grant.plugin, grant.id);
+                crate::kuang_permissions::deny(
+                    &mut tables.kuang,
+                    &package,
+                    &descriptor,
+                    &correlation,
+                );
+                tables.kuang.persist_permissions()?;
+            }
             let instance = tables.kuang.plugin(&grant.plugin);
             let policy = tables.kuang.policy_for(&grant.plugin);
             (grant, instance, policy)
@@ -447,10 +484,14 @@ impl SessionProvider {
             tables.kuang.remove_package(&package, keep_state)?;
             if !keep_grants {
                 // The package is gone, so the permissions it held are gone with it: a package
-                // that comes back must ask again (spec §31.18, §31.81, ADR-0233).
+                // that comes back must ask again (spec §31.18, §31.81, K11P §22.1, ADR-0604 §4).
                 tables.kuang.revoke_grants_of(&id);
+                tables.kuang.forget_decisions_of(&id);
+                tables.kuang.persist_permissions()?;
             }
         }
+        // Its contributions leave the registry with it (ADR-0602 §2).
+        crate::plugin_registry::refresh();
         Ok(ActionOutcome::succeeded(action, true))
     }
 
@@ -915,6 +956,7 @@ impl Provider for SessionProvider {
                 "ono.plugin-package",
                 "ono.plugin-inspection",
                 "ono.capability-grant",
+                "ono.permission",
                 "ono.plugin-audit-event",
                 "ono.assistant",
                 "ono.model-provider",
@@ -942,6 +984,7 @@ impl Provider for SessionProvider {
             Capability::new("plugin.set", Risk::Mutate),
             Capability::new("capability.list", Risk::Read),
             Capability::new("capability.revoke", Risk::Mutate),
+            Capability::new("permission.list", Risk::Read),
             Capability::new("audit.list", Risk::Read),
             Capability::new("assistant.list", Risk::Read),
             Capability::new("model.list", Risk::Read),
@@ -1020,6 +1063,38 @@ impl Provider for SessionProvider {
                         return self.inspect(query);
                     }
                 }
+                // `get permission [<plugin>] [--all]`: the human layer of one package or of
+                // every installed one (K11P §16.1, ADR-0604 §2).
+                if query.target_name() == "permission" {
+                    let wanted = query
+                        .selectors()
+                        .iter()
+                        .find_map(|selector| match selector {
+                            Selector::Field { name, value } if name == "plugin" => {
+                                value.as_str().ok().map(str::to_owned)
+                            }
+                            _ => None,
+                        });
+                    let all = query.flag("all");
+                    let records = {
+                        let tables = self.lock();
+                        match wanted {
+                            Some(reference) => {
+                                let package = tables.kuang.resolve_installed(&reference)?;
+                                tables.kuang.permission_records(Some(&package), all)?
+                            }
+                            None => tables.kuang.permission_records(None, all)?,
+                        }
+                    };
+                    return Ok(stream_of(
+                        records
+                            .into_iter()
+                            .take(limit)
+                            .map(RecordValue::into_value)
+                            .collect(),
+                        Vec::new(),
+                    ));
+                }
                 let plugin = query
                     .option_value("plugin")
                     .and_then(|value| value.as_str().ok())
@@ -1086,9 +1161,48 @@ impl Provider for SessionProvider {
                     }
                     None => None,
                 };
+                // `get plugin kubernetes`: the `id` selector of a plugin answers to the short
+                // name too, when exactly one installed package carries it (K11P §10.4).
+                let short_name = (query.target_name() == "plugin")
+                    .then(|| {
+                        query
+                            .selectors()
+                            .iter()
+                            .find_map(|selector| match selector {
+                                ono_provider_api::Selector::Field { name, value }
+                                    if name == "id" =>
+                                {
+                                    value.as_str().ok().map(str::to_owned)
+                                }
+                                _ => None,
+                            })
+                    })
+                    .flatten()
+                    .filter(|wanted| {
+                        let field = |record: &RecordValue, name: &str| {
+                            record
+                                .get(name)
+                                .and_then(|value| value.as_str().ok())
+                                .map(str::to_owned)
+                        };
+                        !records
+                            .iter()
+                            .any(|record| field(record, "id").as_deref() == Some(wanted))
+                            && records
+                                .iter()
+                                .filter(|record| field(record, "name").as_deref() == Some(wanted))
+                                .count()
+                                == 1
+                    });
+                let matches = |record: &RecordValue| match &short_name {
+                    Some(wanted) => {
+                        record.get("name").and_then(|value| value.as_str().ok()) == Some(wanted)
+                    }
+                    None => query.matches(record),
+                };
                 let values: Vec<Value> = records
                     .into_iter()
-                    .filter(|record| query.matches(record))
+                    .filter(|record| matches(record))
                     .filter(|record| {
                         state.as_deref().is_none_or(|wanted| {
                             record.get("state").and_then(|value| value.as_str().ok())
@@ -1168,6 +1282,28 @@ impl Provider for SessionProvider {
                     .filter(|record| selector.matches(record))
                     .filter_map(ObjectRef::of),
             );
+        }
+        // A package by its short name, when exactly one installed package carries it
+        // (K11P §10.4, ADR-0601 §1): `remove plugin kubernetes`, `set plugin kubernetes …`.
+        if found.is_empty()
+            && let Selector::Field { value, .. } = selector
+            && let Ok(name) = value.as_str()
+        {
+            let (records, _) = self.table("plugin")?;
+            let named: Vec<&RecordValue> = records
+                .iter()
+                .filter(|record| {
+                    record
+                        .get("name")
+                        .and_then(|held| held.as_str().ok())
+                        .is_some_and(|held| held == name)
+                })
+                .collect();
+            if let [one] = named.as_slice()
+                && let Some(reference) = ObjectRef::of(one)
+            {
+                found.push(reference);
+            }
         }
         Ok(found)
     }

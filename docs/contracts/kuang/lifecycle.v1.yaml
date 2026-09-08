@@ -200,8 +200,8 @@ transitions:
       - "The operator saw what will be removed and what will be retained (spec §31.81)."
     effects:
       - "Package versions and registry entries are removed."
-      - "State is retained unless `--purge-state`; grants are retained but disabled unless `--purge-policy` (spec §31.81)."
-      - "A retained grant for an absent package is inert and visible, so nothing survives removal invisibly (spec §31.80: \"plugin persistence survives removal\")."
+      - "State is retained unless `--keep-state` is absent; the package's permission decisions and the grants they minted are removed with it unless `--keep-grants` (K11P §22.1, ADR-0604 §4) — a package that comes back asks again (K11P §22.3)."
+      - "A grant retained with `--keep-grants` applies on reinstall only when the canonical id and the publisher identity match what the decision recorded; otherwise it is dropped with a notice (K11P §22.3, §34.8)."
     errors: []
 
 # ---------------------------------------------------------------------------------------------
@@ -231,9 +231,22 @@ install_plan:
     filesystem: {type: list<path>, required: true, doc: "Every path that will be written."}
     state: {type: record, nullable: true, doc: "The state class and quota the package declares. Null when it declares none."}
     network: {type: record, required: true, doc: "The declared outbound policy and destinations. `none` is stated, not inferred."}
+    # K11P §29.1, ADR-0602: the human layer of the plan, beside the exact one above.
+    catalog: {type: string, nullable: true, doc: "The catalog that resolved the reference, and how it is known, as `<name> (<verification>)`. Null for an explicit source."}
+    trust: {type: record, required: true, doc: "`{signature, publisher, key, standing}`: the four separate answers of spec §31.36, as the compact view prints them."}
+    runtime_tier: {type: string, required: true, doc: "The execution tier the package declares (v0.4.1 §17.2)."}
+    isolation: {type: string, required: true, doc: "The host's own statement of what the tier is and is not — for `native-process`, that brokered capabilities and process confinement are not a complete filesystem or network sandbox (K11P §27.1, Gate M)."}
+    selected_profile: {type: string, required: true, doc: "The access profile the install decides, `recommended` unless `--access` named another."}
+    permissions: {type: list<record>, required: true, doc: "Every permission of the selected profile, as `ono.permission/1` records with the decision the install will make."}
+    automatic_privileges: {type: list<record>, required: true, doc: "The extension-local permissions included without a question (K11P §7.1)."}
+    asked_when_needed: {type: list<record>, required: true, doc: "The just-in-time permissions, asked at first concrete need (K11P §14)."}
+    denied_explicit_permissions: {type: list<record>, required: true, doc: "The explicit permissions the install leaves undecided — mutation among them (K11P §15.1)."}
+    delta: {type: list<record>, nullable: true, doc: "For an upgrade, what the new version needs beyond what is consented to (K11P §21.3); null for a first install, empty when nothing widened."}
+    unattended: {type: record, required: true, doc: "`{accepted_by_confirm: bool, reason: string}`: whether `--confirm` may accept this plan without a person, and why not when it may not (ADR-0602 §4)."}
   rules:
     - "Nothing in the plan is marketing metadata. Spec §31.1: \"Every line MUST be backed by a manifest field or a resolved dependency/capability.\""
-    - "Scripts opt into non-interactive policy with an explicit flag; absence of a prompt MUST NOT imply automatic capability grants (spec §31.9)."
+    - "Scripts opt into non-interactive policy with an explicit flag; absence of a prompt MUST NOT imply automatic capability grants (spec §31.9). `--confirm` accepts the selected profile's safe defaults and nothing explicit or destructive (K11P §20.2)."
+    - "The interactive prompt is presentation over this object (K11P §29.2): the compact view of K11P §13.2, and `details` the whole plan."
 
 # ---------------------------------------------------------------------------------------------
 # Isolation tiers — spec §31.10. `runtime.kind` in the manifest names one of these.
@@ -351,7 +364,8 @@ upgrade:
     - {step: 6, id: drain, doc: "The old instance drains its active invocations. A mutating invocation is never replaced mid-action (spec §31.72)."}
     - {step: 7, id: retain, doc: "The old version is retained for rollback until the operator removes it."}
   rules:
-    - "A plugin update that requests new capabilities MUST NOT inherit grants automatically unless policy says the new scopes are already covered (spec §31.35)."
+    - "A plugin update that requests new capabilities MUST NOT inherit grants automatically unless policy says the new scopes are already covered (spec §31.35). K11P §21.3 names what counts as more: a permission newly in the selected profile, a capability added, a scope widened, a risk raised, a phase loosened, an enforcement weakened, an id repurposed — `permissions.v1.yaml` → `delta`. An empty delta keeps every decision; a non-empty one is shown and consented to before the upgrade commits, and declining leaves the installed version intact (ADR-0604 §3)."
+    - "An upgrade keeps the installed package's canonical id and signing-key lineage: a package signed by an unrelated key is refused as `publisher.untrusted` (K11P §34.4, ADR-0601 §4)."
     - "Rollback is available when the migration was reversible or a checkpoint exists (spec §31.32)."
     - "One version is active per scope unless the package was explicitly designed otherwise (spec §31.35)."
 

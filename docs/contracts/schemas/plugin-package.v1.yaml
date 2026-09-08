@@ -94,6 +94,18 @@ fields:
     type: bool
     required: true
     doc: Whether this exact id and version is already installed on this host.
+  catalog:
+    type: string
+    nullable: true
+    doc: The catalog that answered, by name, e.g. `official` (K11P §11). Null for a package read from an installed directory or an explicit path.
+  catalog_verification:
+    type: enum
+    nullable: true
+    values: [built-in, operator, unknown]
+    doc: >-
+      How the shell knows the catalog: part of the release, placed by the operator, or claimed.
+      A separate answer from `signature` and `trust` on purpose — a catalog saying a package
+      exists makes nobody trusted (K11P §11.3, ADR-0601 §2). Null when no catalog answered.
   size:
     type: bytesize
     nullable: true
@@ -102,5 +114,6 @@ fields:
     type: timestamp
     nullable: true
     doc: When the source says the version was published. Null where the source does not say.
+# K11P §11.6: the name leads, the id stays available, and trust is a column of its own.
 default_view:
-  columns: [name, version, publisher, signature, source, installed]
+  columns: [name, id, version, trust, source, installed]

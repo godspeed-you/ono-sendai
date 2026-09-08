@@ -1,0 +1,31 @@
+# The bootstrap catalog Ono ships with (K11P §11.4, ADR-0601 §2): the first-party and reference
+# packages known at this core release's date, embedded in the `ono` binary so that
+# `install plugin kubernetes` resolves on a clean installation without a configured source.
+#
+# Shape: `catalog.v1.yaml`. This file is part of the release and covered by its integrity chain;
+# it is read, never executed, and it confers no trust — the package's own signature and the
+# operator's trust stores decide that (K11P §11.3).
+#
+# `artifact` is a source reference. This build resolves local artifacts only: a release is
+# available when its unpacked package sits in the package cache or one of the local package
+# sources, and otherwise `install plugin` answers `plugin.catalog_unavailable` naming the
+# artifact and those directories (ADR-0601 §3).
+format: kuang-catalog/1
+
+catalog:
+  name: official
+  description: Packages the Ono-Sendai project builds and maintains.
+
+entries:
+  - id: io.github.godspeed-you.kubernetes
+    name: kubernetes
+    description: Kubernetes as typed resources, relationships and places rather than a command namespace.
+    publisher: io.github.godspeed-you
+    homepage: https://github.com/godspeed-you/ono-sendai-kubernetes
+    categories: [provider, cloud-native]
+    releases:
+      - version: 0.2.0
+        platforms: [linux-amd64, linux-arm64]
+        kuang_api: ">=11.2 <12"
+        ono_language: ">=0.2"
+        artifact: "git:https://github.com/godspeed-you/ono-sendai-kubernetes#v0.2.0"

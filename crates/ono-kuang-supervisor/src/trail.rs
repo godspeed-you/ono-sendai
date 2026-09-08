@@ -80,6 +80,40 @@ impl AuditTrail {
         result: AuditResult,
         error: Option<WireError>,
     ) {
+        self.record_correlated(
+            plugin,
+            invocation,
+            capability,
+            scope,
+            enforcement,
+            action,
+            target,
+            at,
+            result,
+            error,
+            None,
+        );
+    }
+
+    /// [`Self::record`], stamped with the request id one user action minted (ADR-0604 §5).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the audit record simply has this many parts"
+    )]
+    pub fn record_correlated(
+        &self,
+        plugin: &str,
+        invocation: &str,
+        capability: &str,
+        scope: Option<Json>,
+        enforcement: Enforcement,
+        action: &str,
+        target: Option<Json>,
+        at: String,
+        result: AuditResult,
+        error: Option<WireError>,
+        correlation: Option<String>,
+    ) {
         let id = {
             let mut counter = match self.counter.lock() {
                 Ok(counter) => counter,
@@ -105,6 +139,7 @@ impl AuditTrail {
             lease: None,
             link: None,
             error,
+            correlation,
         };
         match self.events.lock() {
             Ok(mut events) => events.push(event),

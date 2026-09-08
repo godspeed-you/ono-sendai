@@ -49,6 +49,32 @@ fields:
     type: ono.verification-result/1
     required: true
     doc: "The most recent verification: integrity, signature, publisher, transparency, compatibility, runtime."
+  permissions:
+    type: list<ono.permission/1>
+    required: true
+    doc: >-
+      The package's permission layer with its standing decisions — every descriptor, declared
+      or derived, with the exact capabilities and scopes underneath (K11P §25.3). What
+      `get permission <id> --all` answers, in one place with everything else.
+  profiles:
+    type: list<record>
+    required: true
+    doc: >-
+      The access profiles the package offers, as `{name, title, permissions, adds_mutation}`;
+      `minimal` and `recommended` are always among them for a package with any permission
+      request (K11P §9). `adds_mutation` is the host's own flag, appended to the title wherever
+      a profile is offered (K11P §9.3).
+  readiness:
+    type: enum
+    required: true
+    values: [ready, needs-permission, blocked, running]
+    doc: The derived label of `ono.plugin/1.readiness`, beside the internal state it projects (K11P §17.2).
+  isolation_statement:
+    type: string
+    required: true
+    doc: >-
+      The host's own sentence about the execution tier, verbatim what the install prompt shows —
+      for `native-process`, that brokered capabilities and process confinement are not a complete filesystem or network sandbox (v0.4.1 §15.2, K11P §18.2). Never package-authored.
   runtime:
     type: ono.plugin-runtime/1
     nullable: true

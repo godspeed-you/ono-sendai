@@ -46,6 +46,7 @@ const CONTRACTS: &[&str] = &[
         env!("OUT_DIR"),
         "/schemas/plugin-audit-event.v1.json"
     )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/permission.v1.json")),
     include_str!(concat!(
         env!("OUT_DIR"),
         "/schemas/plugin-inspection.v1.json"

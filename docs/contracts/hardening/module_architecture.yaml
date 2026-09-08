@@ -130,7 +130,10 @@ composition_root:
     - expand.rs
     - hosts.rs
     - invocation.rs
+    - kuang_catalog.rs
     - kuang_host.rs
+    - kuang_install.rs
+    - kuang_permissions.rs
     - kuang_services.rs
     - kuang_trust.rs
     - kuang_views.rs

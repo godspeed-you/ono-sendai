@@ -40,6 +40,9 @@ use ono_kuang_testhost::{TestHost, VIRTUAL_NOW};
 use ono_value::Value;
 use serde_json::{Map as JsonMap, Value as Json, json};
 
+mod support;
+use support::values_of;
+
 const PLUGIN: &str = env!("CARGO_BIN_EXE_kuang-example-plugin");
 
 /// The same manifest with a declared overflow preference (spec §31.15).
@@ -131,16 +134,6 @@ fn fully_granted(host: TestHost) -> TestHost {
         .grant(Capability::NetworkConnect)
         .grant(Capability::NetworkListen)
         .grant(Capability::UiView)
-}
-
-fn values_of(events: &[StreamEvent]) -> Vec<Value> {
-    events
-        .iter()
-        .filter_map(|event| match event {
-            StreamEvent::Value(value) => Some(value.clone()),
-            StreamEvent::Failed(_) => None,
-        })
-        .collect()
 }
 
 // --- contribution surface ----------------------------------------------------------------------

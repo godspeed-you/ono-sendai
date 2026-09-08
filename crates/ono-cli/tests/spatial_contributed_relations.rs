@@ -176,22 +176,24 @@ fn should_name_the_contributing_package_in_the_evidence_of_a_contributed_edge() 
 }
 
 #[test]
-fn should_contribute_no_relation_between_contributed_places_without_the_capability() {
+fn should_contribute_no_relation_between_contributed_places_when_the_permission_is_denied() {
     // §35.5: "the spatial host MUST filter plugin nodes/edges according to capability scope
-    // **before** merging them into maps", and `relation.write` is never granted by default. A
-    // shape between two contributed kinds is a contribution like any other, so the same gate
-    // holds for it: without the grant the exit does not exist at all.
+    // **before** merging them into maps". A bounded `relation.write` is included without a
+    // question (K11P §7.1), so the gate is the user's decision: with the permission denied, a
+    // shape between two contributed kinds is a contribution like any other and the same gate
+    // holds for it — the exit does not exist at all.
     let home = echo_plugin_home_with(ECHO, TARGETS, &[SHAPE]);
     let run = ono_with_plugins(
         &home,
         &format!(
-            "load plugin {ECHO}; get echo-place | where uid == \"u-3\" | enter; near | to json"
+            "set permission {ECHO} relation-write --decision deny | count; \
+             load plugin {ECHO}; get echo-place | where uid == \"u-3\" | enter; near | to json"
         ),
     );
     assert!(
         !run.output().contains(RELATION),
-        "without `relation.write` the package contributes no relation, so no exit of the place \
-         bears its name, got {:?}",
+        "with `relation.write` denied the package contributes no relation, so no exit of the \
+         place bears its name, got {:?}",
         run.output()
     );
 }

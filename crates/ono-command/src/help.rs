@@ -649,6 +649,7 @@ fn overview(registry: &CommandRegistry) -> TopicHelp {
             "help adapt             force a program's output into values".to_owned(),
             "help spatial           moving through the system as a space".to_owned(),
             "help plugin-trust      what a KUANG/11 plugin can and cannot reach".to_owned(),
+            "help permissions       what you grant a plugin, and what the broker grants".to_owned(),
             "help here              what the place you are standing in offers".to_owned(),
         ],
     }
@@ -672,6 +673,10 @@ pub fn topics() -> &'static [(&'static str, &'static str)] {
         (
             "plugin-trust",
             "what a KUANG/11 plugin can and cannot reach",
+        ),
+        (
+            "permissions",
+            "what you grant a plugin, and what the broker grants",
         ),
         ("spatial", "moving through the system as a space"),
         ("here", "what the place you are standing in offers"),
@@ -808,6 +813,50 @@ fn builtin_topic(registry: &CommandRegistry, topic: &str) -> Option<TopicHelp> {
             see_also: vec![
                 "inspect plugin <id>    the execution tier and the controls in force".to_owned(),
                 "get capability         the broker's table, default-deny".to_owned(),
+                "help permissions       the human layer over that table".to_owned(),
+            ],
+        },
+        // K11P §0.3: "A user grants intentions. KUANG/11 grants capabilities." This page is
+        // where `help` keeps the two vocabularies apart (K11P §25.2, ADR-0600).
+        "permissions" => TopicHelp {
+            name: "permissions".to_owned(),
+            summary: "What you grant a plugin, in your terms, and what the broker grants underneath (K11P §4, §16).".to_owned(),
+            entries: vec![
+                (
+                    "install plugin <name>".to_owned(),
+                    "resolves the name through the catalogs, verifies the package, shows its                      recommended access in plain words — `Connect to Kubernetes clusters`,                      `Read Kubernetes configuration` — and installs it ready to use. Nothing                      mutating is granted by default; `--access <profile>` names a wider profile                      deliberately, `--confirm` accepts the plan in a script."
+                        .to_owned(),
+                ),
+                (
+                    "a permission".to_owned(),
+                    "one human statement that resolves to one or more exact capabilities and                      scopes. Its kind and risk are the host's, whatever the package calls it;                      its phase says when it is decided — included automatically, at install,                      asked when the need is concrete, or only when you enable it explicitly."
+                        .to_owned(),
+                ),
+                (
+                    "get permission <name>".to_owned(),
+                    "the standing decisions, with the capabilities, scopes, enforcement and                      policy source in the same record; `--all` adds the support permissions                      and any grant no permission maps."
+                        .to_owned(),
+                ),
+                (
+                    "set permission <name> …".to_owned(),
+                    "`--profile operate` applies a profile; `<permission> --decision                      allow|deny|ask` decides one. A permission that changes external or host                      state is summarised and confirmed; a destructive one is never enabled                      unattended."
+                        .to_owned(),
+                ),
+                (
+                    "asked when needed".to_owned(),
+                    "a helper program is asked about at first concrete need, naming the exact                      program and the reason: once, this session, or always for that program.                      A script meets `permission.required` with the command line that decides                      it instead."
+                        .to_owned(),
+                ),
+                (
+                    "the capability underneath".to_owned(),
+                    "`get capability`, `grant capability` and `revoke capability` remain the                      exact administrative surface; a grant a permission minted names it, and                      a grant made by hand shows as `custom` rather than disappearing."
+                        .to_owned(),
+                ),
+            ],
+            see_also: vec![
+                "help install plugin    the install command in full".to_owned(),
+                "help plugin-trust      what a native plugin can reach regardless".to_owned(),
+                "help capabilities      the provider capabilities commands need".to_owned(),
             ],
         },
         // v0.4 §38.1: the overview a user reaches for before they know a verb to ask about. The

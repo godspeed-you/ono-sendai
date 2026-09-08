@@ -40,6 +40,7 @@ pub struct TestHost {
     context: Option<std::sync::Arc<dyn ono_kuang_supervisor::ContextSource>>,
     host: Option<std::sync::Arc<dyn ono_kuang_supervisor::HostServices>>,
     views: Option<std::sync::Arc<dyn ono_kuang_supervisor::ViewHost>>,
+    consent: Option<std::sync::Arc<dyn ono_kuang_supervisor::ConsentSource>>,
 }
 
 impl std::fmt::Debug for TestHost {
@@ -72,7 +73,20 @@ impl TestHost {
             context: None,
             host: None,
             views: None,
+            consent: None,
         }
+    }
+
+    /// Who answers a just-in-time permission request (K11P §14, ADR-0603). Without one, nobody
+    /// can be asked and every such request is `permission.required`;
+    /// [`ono_kuang_supervisor::ScriptedConsent`] answers what a test wrote down.
+    #[must_use]
+    pub fn consent(
+        mut self,
+        source: std::sync::Arc<dyn ono_kuang_supervisor::ConsentSource>,
+    ) -> Self {
+        self.consent = Some(source);
+        self
     }
 
     /// Overrides what installs the process-level confinement controls of v0.4.1 §16.1.
@@ -202,6 +216,9 @@ impl TestHost {
         }
         if let Some(views) = self.views {
             config.views = views;
+        }
+        if let Some(consent) = self.consent {
+            config.consent = consent;
         }
         if let Some(platform) = self.platform {
             config.platform = platform;

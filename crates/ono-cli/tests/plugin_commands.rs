@@ -22,7 +22,7 @@ use std::path::Path;
 use serde_yaml_ng::Value;
 
 mod support;
-use support::{items, json, ono_with_plugins};
+use support::{items, json, last_json_document, ono_with_plugins};
 
 const ECHO: &str = "dev.example.echo";
 
@@ -92,16 +92,6 @@ fn plugin_home() -> ono_testkit::Scratch {
     scratch
 }
 
-/// The last `to json` line on stdout as a JSON document — a script's final `| to json`.
-fn last_json(run: &ono_testkit::Run) -> Value {
-    let line = run
-        .stdout()
-        .lines()
-        .rfind(|line| line.starts_with('['))
-        .unwrap_or_else(|| panic!("a `to json` document on stdout, got {:?}", run.output()));
-    json(line)
-}
-
 /// The last `to json` line on stdout verbatim — for exact comparisons such as `[0]` and `[]`.
 fn last_line(run: &ono_testkit::Run) -> &str {
     run.stdout()
@@ -161,7 +151,7 @@ fn should_emit_plugin_records_when_get_plugin_is_piped() {
     let home = plugin_home();
     let run = ono_with_plugins(&home, "get plugin | to json");
     run.assert_success();
-    let value = last_json(&run);
+    let value = last_json_document(&run);
     let record = only(&run, &value);
     assert_eq!(
         str_field(record, "id"),
@@ -242,15 +232,28 @@ fn should_count_loaded_packages_before_and_after_load() {
     );
 }
 
+/// Lays out the example package declaring `filesystem.read` beside `clock.read`: a class-B
+/// capability nothing grants by default, where `clock.read` is extension-local and included
+/// without a question (K11P §7, ADR-0600 §2).
+fn lay_out_package_reading(root: &Path, id: &str, paths: &str) {
+    lay_out_package(root, id, "echo", "0.1.0", ">=11.1 <12");
+    let manifest = manifest(id, "echo", "0.1.0", ">=11.1 <12").replace(
+        "    - clock.read\n",
+        &format!("    - clock.read\n    - filesystem.read: {{paths: [\"{paths}\"]}}\n"),
+    );
+    std::fs::write(root.join(id).join("manifest.yaml"), manifest).expect("the manifest");
+}
+
 #[test]
 fn should_report_degraded_when_an_optional_capability_was_denied_at_load() {
-    let home = plugin_home();
+    let home = ono_testkit::scratch();
+    lay_out_package_reading(&home.path().join("plugins"), ECHO, "/tmp/**");
     let run = ono_with_plugins(
         &home,
         &format!("load plugin {ECHO}; get plugin {ECHO} | select state degraded_reason | to json"),
     );
     run.assert_success();
-    let value = last_json(&run);
+    let value = last_json_document(&run);
     let record = only(&run, &value);
     assert_eq!(
         str_field(record, "state"),
@@ -259,7 +262,7 @@ fn should_report_degraded_when_an_optional_capability_was_denied_at_load() {
     );
     let reason = str_field(record, "degraded_reason");
     assert!(
-        reason.contains("clock.read"),
+        reason.contains("filesystem.read"),
         "plugin.v1: `degraded_reason` names the unavailable capability, got {reason:?}"
     );
 }
@@ -269,7 +272,7 @@ fn should_resolve_one_package_by_its_id_selector() {
     let home = plugin_home();
     let run = ono_with_plugins(&home, &format!("get plugin {ECHO} | to json"));
     run.assert_success();
-    let value = last_json(&run);
+    let value = last_json_document(&run);
     let record = only(&run, &value);
     assert_eq!(str_field(record, "id"), ECHO, "kuang.yaml selector `id`");
 
@@ -290,7 +293,7 @@ fn should_show_manifest_contributions_and_capability_requests_when_inspected() {
     let home = plugin_home();
     let run = ono_with_plugins(&home, &format!("inspect plugin {ECHO} | to json"));
     run.assert_success();
-    let value = last_json(&run);
+    let value = last_json_document(&run);
     let record = only(&run, &value);
     assert_eq!(
         str_field(record, "origin"),
@@ -414,7 +417,7 @@ fn should_find_an_uninstalled_package_in_a_path_source() {
         ),
     );
     run.assert_success();
-    let value = last_json(&run);
+    let value = last_json_document(&run);
     let package = only(&run, &value);
     assert_eq!(
         str_field(package, "id"),
@@ -441,7 +444,7 @@ fn should_report_an_unsigned_local_package_as_compatible_when_verified() {
     let home = plugin_home();
     let run = ono_with_plugins(&home, &format!("verify plugin {ECHO} | to json"));
     run.assert_success();
-    let value = last_json(&run);
+    let value = last_json_document(&run);
     let result = only(&run, &value);
     assert_eq!(
         str_field(result, "package"),
@@ -492,7 +495,7 @@ fn should_report_incompatibility_when_the_kuang_api_range_excludes_the_host() {
         "lifecycle.v1 verification: a blocking check that fails is a failed verification, got {:?}",
         run.output()
     );
-    let value = last_json(&run);
+    let value = last_json_document(&run);
     let result = only(&run, &value);
     assert_eq!(
         str_field(result, "compatibility"),
@@ -537,7 +540,7 @@ fn should_verify_the_piped_packages_when_verify_plugin_follows_get_plugin() {
     let home = plugin_home();
     let run = ono_with_plugins(&home, "get plugin | verify plugin | to json");
     run.assert_success();
-    let value = last_json(&run);
+    let value = last_json_document(&run);
     let result = only(&run, &value);
     assert_eq!(
         str_field(result, "package"),
@@ -610,7 +613,7 @@ fn should_install_a_package_from_a_path_reference_when_confirmed() {
         &format!("install plugin {reference} --confirm | to json"),
     );
     run.assert_success();
-    let value = last_json(&run);
+    let value = last_json_document(&run);
     let result = only(&run, &value);
     assert_eq!(
         str_field(result, "status"),
@@ -630,7 +633,7 @@ fn should_install_a_package_from_a_path_reference_when_confirmed() {
         "get plugin | where id == \"dev.example.other\" | select id version state | to json",
     );
     listed.assert_success();
-    let value = last_json(&listed);
+    let value = last_json_document(&listed);
     let record = only(&listed, &value);
     assert_eq!(
         str_field(record, "version"),
@@ -803,7 +806,7 @@ fn should_persist_enablement_across_sessions() {
         &format!("get plugin {ECHO} | select enabled | to json"),
     );
     later.assert_success();
-    let value = last_json(&later);
+    let value = last_json_document(&later);
     assert_eq!(
         field(only(&later, &value), "enabled").as_bool(),
         Some(false),
@@ -820,7 +823,7 @@ fn should_remove_the_package_directory_when_removed() {
     let home = plugin_home();
     let run = ono_with_plugins(&home, &format!("remove plugin {ECHO} | to json"));
     run.assert_success();
-    let value = last_json(&run);
+    let value = last_json_document(&run);
     let result = only(&run, &value);
     assert_eq!(
         str_field(result, "status"),
@@ -871,13 +874,19 @@ fn should_unload_a_loaded_package_before_removing_it() {
     );
 }
 
-/// A session script that grants `clock.read`, removes the package with `flags`, reinstalls it
-/// from `spare` and asks the reinstalled package for the clock.
-fn removal_keeping(spare: &Path, flags: &str) -> String {
+/// A session script that grants `filesystem.read`, removes the package with `flags`, reinstalls
+/// it from `spare` with its minimal access and asks the reinstalled package to read `file`. A
+/// class-B capability, because `clock.read` is extension-local and included whichever way the
+/// package arrives; and the minimal profile, because a reinstall with recommended access would
+/// decide `filesystem.read` anew — a reinstall asks again, and `--confirm` answers (K11P §7.1,
+/// §22.3, ADR-0602).
+fn removal_keeping(spare: &Path, flags: &str, file: &Path) -> String {
     format!(
-        "load plugin {ECHO} --grant clock.read; remove plugin {ECHO}{flags}; \
-         install plugin path:{spare} --confirm; load plugin {ECHO}; echo:clock | to json",
-        spare = spare.join(ECHO).display()
+        "load plugin {ECHO} --grant filesystem.read; remove plugin {ECHO}{flags}; \
+         install plugin path:{spare} --access minimal --confirm; load plugin {ECHO}; \
+         echo:read-file --path {file} | to json",
+        spare = spare.join(ECHO).display(),
+        file = file.display()
     )
 }
 
@@ -888,26 +897,33 @@ fn should_revoke_the_grants_of_a_removed_package_unless_asked_to_keep_them() {
     // permission it held unless the user says otherwise — and a package that comes back must not
     // silently inherit what an earlier installation was allowed to do (spec §31.81).
     let spare = ono_testkit::scratch();
-    lay_out_package(spare.path(), ECHO, "echo", "0.1.0", ">=11.1 <12");
+    let file = spare.path().join("readable.txt");
+    std::fs::write(&file, "readable\n").expect("the file");
+    let scope = format!("{}/**", spare.path().display());
+    lay_out_package_reading(spare.path(), ECHO, &scope);
+    let home = ono_testkit::scratch();
+    lay_out_package_reading(&home.path().join("plugins"), ECHO, &scope);
 
-    let removed = ono_with_plugins(&plugin_home(), &removal_keeping(spare.path(), ""));
+    let removed = ono_with_plugins(&home, &removal_keeping(spare.path(), "", &file));
     assert!(
         !removed.status().is_success()
             && (removed.stderr().contains("capability.denied")
                 || removed.stderr().contains("K11301")),
         "spec §31.81: the package was removed, so the grant it held ended with it and the \
-         reinstalled package is denied the clock; got {:?}",
+         reinstalled package is denied the file; got {:?}",
         removed.output()
     );
 
+    let home = ono_testkit::scratch();
+    lay_out_package_reading(&home.path().join("plugins"), ECHO, &scope);
     let kept = ono_with_plugins(
-        &plugin_home(),
-        &removal_keeping(spare.path(), " --keep-grants"),
+        &home,
+        &removal_keeping(spare.path(), " --keep-grants", &file),
     );
     assert!(
-        kept.status().is_success() && kept.stdout().contains("20"),
-        "`--keep-grants` retains the grants made to the package, so the clock still answers \
-         after it is reinstalled; got {:?}",
+        kept.status().is_success() && kept.stdout().contains("[9]"),
+        "`--keep-grants` retains the grants made to the package, so the file's nine bytes still \
+         answer after it is reinstalled; got {:?}",
         kept.output()
     );
 }
@@ -921,7 +937,7 @@ fn should_list_capability_definitions() {
     let home = plugin_home();
     let run = ono_with_plugins(&home, "get capability | to json");
     run.assert_success();
-    let text = text(&last_json(&run));
+    let text = text(&last_json_document(&run));
     assert!(
         text.contains("clock.read") && text.contains("process.exec"),
         "kuang.yaml: `get capability` shows capability definitions (docs/contracts/capabilities.yaml → kuang_capabilities), got {text}"
@@ -938,7 +954,7 @@ fn should_show_a_grant_made_at_load_for_the_package() {
         ),
     );
     run.assert_success();
-    let value = last_json(&run);
+    let value = last_json_document(&run);
     let grant = only(&run, &value);
     assert_eq!(
         str_field(grant, "decision"),
@@ -1038,7 +1054,7 @@ fn should_record_the_scope_the_operator_named_on_the_grant() {
         ),
     );
     run.assert_success();
-    let document = last_json(&run);
+    let document = last_json_document(&run);
     let grant = only(&run, &document);
     let scope = text(field(grant, "scope"));
     assert!(
@@ -1078,7 +1094,7 @@ fn should_make_a_lease_that_expires_when_a_grant_is_given_a_span() {
         &format!("grant capability clock.read --plugin {ECHO} --duration 1h | to json"),
     );
     run.assert_success();
-    let document = last_json(&run);
+    let document = last_json_document(&run);
     let grant = only(&run, &document);
     let expires = field(grant, "expires_at");
     assert!(
@@ -1133,7 +1149,7 @@ fn should_read_back_an_always_grant_in_a_later_session() {
         &format!("get capability --plugin {ECHO} | where capability == \"clock.read\" | to json"),
     );
     later.assert_success();
-    let document = last_json(&later);
+    let document = last_json_document(&later);
     let grant = only(&later, &document);
     assert_eq!(
         str_field(grant, "decision"),
@@ -1199,7 +1215,7 @@ fn should_keep_the_audit_trail_across_sessions() {
 
     let later = ono_with_plugins(&home, "get audit | to json");
     later.assert_success();
-    let document = last_json(&later);
+    let document = last_json_document(&later);
     let events = items(&document);
     assert!(
         events
@@ -1239,7 +1255,7 @@ fn should_record_a_capability_use_in_the_audit_trail() {
         ),
     );
     run.assert_success();
-    let value = last_json(&run);
+    let value = last_json_document(&run);
     let events = items(&value);
     let used = events
         .iter()
@@ -1269,18 +1285,20 @@ fn should_record_a_capability_use_in_the_audit_trail() {
 #[test]
 fn should_record_a_denied_capability_use_in_the_audit_trail() {
     let home = plugin_home();
+    // `filesystem.read` rather than `clock.read`: the clock is extension-local and included
+    // without a question (K11P §7.1), so a denial needs a capability nothing includes.
     let run = ono_with_plugins(
         &home,
         &format!(
-            "load plugin {ECHO}; echo:clock; get audit --plugin {ECHO} | where result == \"denied\" | to json"
+            "load plugin {ECHO}; echo:read-file --path /etc/hostname; get audit --plugin {ECHO} | where result == \"denied\" | to json"
         ),
     );
-    let value = last_json(&run);
+    let value = last_json_document(&run);
     let events = items(&value);
     assert!(
         events
             .iter()
-            .any(|event| event.get("capability").and_then(Value::as_str) == Some("clock.read")),
+            .any(|event| event.get("capability").and_then(Value::as_str) == Some("filesystem.read")),
         "spec §31.37: a denial is audited as `denied` with the capability that was refused, got {events:?}"
     );
 }
@@ -1295,7 +1313,7 @@ fn should_give_every_audit_event_an_identity_of_its_own() {
         &home,
         &format!("load plugin {ECHO}; echo:clock; get audit | select id | to json"),
     );
-    let document = last_json(&run);
+    let document = last_json_document(&run);
     let ids: Vec<&str> = items(&document)
         .iter()
         .map(|record| str_field(record, "id"))

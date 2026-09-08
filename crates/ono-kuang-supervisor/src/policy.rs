@@ -20,6 +20,10 @@ pub struct Grant {
     /// When the grant stops working. `None` for a grant with no expiry; a grant with one is a
     /// lease (spec §31.49), and the broker checks the window on every call.
     pub expires_at: Option<jiff::Timestamp>,
+    /// The permission whose decision minted the grant, when one did (ADR-0603, ADR-0604). A
+    /// call outside the scope of a grant a just-in-time answer minted is another question; a
+    /// call outside a scope an operator wrote by hand is a violation.
+    pub permission: Option<String>,
 }
 
 /// The policy the broker evaluates on every call. Deny by default is the floor, not a fallback
@@ -117,7 +121,9 @@ pub enum ScopeUse {
 }
 
 impl ScopeUse {
-    fn key(&self) -> &'static str {
+    /// The scope key the use is checked against.
+    #[must_use]
+    pub fn key(&self) -> &'static str {
         match self {
             ScopeUse::Path { key, .. }
             | ScopeUse::Name { key, .. }
@@ -125,7 +131,9 @@ impl ScopeUse {
         }
     }
 
-    fn display(&self) -> String {
+    /// The concrete value, as text.
+    #[must_use]
+    pub fn display(&self) -> String {
         match self {
             ScopeUse::Path { value, .. } | ScopeUse::Name { value, .. } => value.clone(),
             ScopeUse::Port { value, .. } => value.to_string(),
@@ -180,6 +188,26 @@ impl Policy {
             capability,
             scope,
             expires_at: None,
+            permission: None,
+        });
+        self
+    }
+
+    /// Adds a grant a permission decision minted (ADR-0604): the same grant, remembering which
+    /// permission it answers, so the broker knows whether a scope miss is a new question.
+    #[must_use]
+    pub fn grant_for(
+        mut self,
+        capability: Capability,
+        scope: Option<JsonMap<String, Json>>,
+        expires_at: Option<jiff::Timestamp>,
+        permission: Option<String>,
+    ) -> Self {
+        self.grants.push(Grant {
+            capability,
+            scope,
+            expires_at,
+            permission,
         });
         self
     }
@@ -196,6 +224,7 @@ impl Policy {
             capability,
             scope,
             expires_at,
+            permission: None,
         });
         self
     }

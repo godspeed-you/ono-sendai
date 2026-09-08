@@ -140,6 +140,47 @@ tree in both directions: an undeclared skip fails, and a declared skip that stop
 fails too. A test name may be changed when the old name encodes semantics that no longer hold,
 but intent and coverage are preserved.
 
+## 6. KUANG/11 plugins after the permission layer — install by name, and what your grants become
+
+*(`docs/kuang11/kuang11-plugin-installation-permissions-spec.md` §28; ADR-0600 … ADR-0605)*
+
+**No manifest migration is required.** A `kuang-package/1` manifest installs and loads exactly as
+before; the host derives one human-readable permission per declared capability. A package that
+wants its own wording declares a `permissions` section under `format: kuang-package/2`
+(`docs/contracts/kuang/manifest.v1.yaml` → `permissions`).
+
+**Existing grants are kept and projected, never rewritten.** Every grant in
+`~/.config/ono/kuang/policy.yaml` stays what it is. `get permission <plugin>` shows it as
+`allowed` where it matches a permission's mapping exactly, as `custom` where it is wider or
+narrower or was made by hand, and as a `legacy` row where no permission maps its capability.
+A broad `process.exec` grant reads `custom`; nothing narrows it for you.
+
+**Two things change what a package holds by default.** A bounded extension-local capability —
+`clock.read`, `state.persist`, `ui.view`, and `relation.write` scoped to the package's own
+declared shapes — is included without a question, whichever way the package arrived. If you
+relied on such a capability being *denied* by default, deny it deliberately:
+
+```text
+set permission <plugin> relation-write --decision deny
+```
+
+And installing a package now decides its recommended access. `install plugin <name>` (or
+`install plugin path:<dir> --confirm`) grants the package's recommended, read-only profile; pass
+`--access minimal` for the smallest one, and name a wider profile — `--access operate` — only on
+purpose. Mutation is never part of recommended access, and an upgrade that widens authority asks
+again (or, in a script, needs `--confirm` for a safe widening and refuses an explicit one).
+
+The old sequence keeps working and is documented as the administrative surface:
+
+```text
+install plugin path:/srv/packages/dev.example.thing --confirm
+grant capability network.connect --plugin dev.example.thing --duration always
+revoke capability network.connect --plugin dev.example.thing
+```
+
+Revoking a grant that a permission minted records the permission as denied, so it does not come
+back at the next load; `set permission <plugin> <permission> --decision ask` clears that.
+
 ## What to read next
 
 - [`SECURITY.md`](../SECURITY.md) — the trust boundaries and how to report a vulnerability.

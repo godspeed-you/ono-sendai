@@ -26,7 +26,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::negotiate::{HostLimits, negotiate};
 use crate::platform::{ConfinementPlatform, NativePlatform};
-use crate::policy::{Evaluation, Policy, ScopeUse, denial_error};
+use crate::policy::{DenialSource, Evaluation, Policy, ScopeUse, denial_error};
 use crate::report::ConfinementReport;
 use crate::sandbox::Sandbox;
 use crate::state::StateStore;
@@ -107,6 +107,9 @@ pub struct LoadConfig {
     /// What takes a view (spec §31.27, ADR-0572): the shell's terminal, or a recorder under
     /// test. The default takes none, so every view falls back.
     pub views: Arc<dyn crate::view::ViewHost>,
+    /// Who answers a just-in-time permission request (K11P §14, ADR-0603): the shell's prompt,
+    /// a test's script, or the default that can ask nobody and answers `permission.required`.
+    pub consent: Arc<dyn crate::consent::ConsentSource>,
 }
 
 impl std::fmt::Debug for LoadConfig {
@@ -144,6 +147,7 @@ impl LoadConfig {
             context: Arc::new(crate::context::FixedContext::test_host()),
             host: Arc::new(crate::host::NoHost),
             views: Arc::new(crate::view::NoViews),
+            consent: Arc::new(crate::consent::NoConsent),
         }
     }
 }
@@ -210,8 +214,13 @@ impl Supervisor {
             context,
             host,
             views,
+            consent,
         } = config;
         manifest.check_host(HOST_API, &platform)?;
+        // The human layer over the capabilities, read once here: which families are decided just
+        // in time is what the broker needs to know before it can ask (ADR-0600, ADR-0603).
+        let permissions = manifest.permission_set();
+        let package_name = manifest.package.name.clone();
         // Negotiation before code: a denied required capability means nothing is spawned.
         let contract = negotiate(&manifest, &policy, &limits)?;
         let frame_limits = FrameLimits {
@@ -428,6 +437,11 @@ impl Supervisor {
             schemas,
             msg_sender: msg_tx.clone(),
             sandbox: sandbox.clone(),
+            consent,
+            permissions,
+            package_name,
+            consents: 0,
+            exec_arguments: Vec::new(),
         };
         tokio::spawn(actor.run());
         Ok(LoadedPlugin {
@@ -791,7 +805,7 @@ impl Handshake<'_> {
         let Envelope::Hello(hello) = self.next_envelope().await? else {
             return Err(protocol_violation("the first frame was not a hello"));
         };
-        if hello.format != PACKAGE_FORMAT {
+        if !ono_kuang_protocol::PACKAGE_FORMATS.contains(&hello.format.as_str()) {
             return Err(invalid(format!(
                 "the instance speaks `{}`, this host reads `{PACKAGE_FORMAT}`",
                 hello.format
@@ -1449,6 +1463,18 @@ struct Actor {
     /// What the instance was started inside, so a death can be checked against its ceilings
     /// (spec §31.34).
     sandbox: Sandbox,
+    /// Who answers a just-in-time request (ADR-0603).
+    consent: Arc<dyn crate::consent::ConsentSource>,
+    /// The package's permission layer: which families are decided just in time, and under
+    /// which human permission (ADR-0600).
+    permissions: ono_kuang_protocol::PermissionSet,
+    /// The package's display name, for a refusal in the permission's words (K11P §24.4).
+    package_name: String,
+    /// How many consent requests this instance has minted, for their correlation ids.
+    consents: u64,
+    /// The arguments of the `process.exec` call being checked, so a consent request can show
+    /// the command line (K11P §14.2). Set by the handler before the check and taken by it.
+    exec_arguments: Vec<String>,
 }
 
 enum LoopStep {
@@ -1986,6 +2012,15 @@ impl Actor {
                 continue;
             };
             let evaluation = self.policy.evaluate(capability, &[]);
+            // A family the package's permission layer decides just in time is decided at the
+            // host call, where the concrete scope is known — not here, where it is not
+            // (K11P §14, ADR-0603). The invocation proceeds; the call asks or refuses.
+            if !matches!(evaluation, Evaluation::Allowed(_))
+                && matches!(evaluation, Evaluation::Denied(DenialSource::Default))
+                && self.permissions.jit_permission(capability).is_some()
+            {
+                continue;
+            }
             if let Evaluation::Allowed(grant) = &evaluation {
                 // A host call inside the invocation audits itself. A capability that gates the
                 // invocation and names no host call — `provider.mutate`, whose act is the
@@ -2012,7 +2047,21 @@ impl Actor {
                 continue;
             }
             if !matches!(evaluation, Evaluation::Allowed(_)) {
-                let error = denial_error(capability, &evaluation);
+                // A family a permission of the package governs is refused in the permission's
+                // words, with the elevation named (K11P §24.4, §26.4; ADR-0602 §5): nothing has
+                // decided it, and the command is what a person would type to decide it.
+                let explicit = self
+                    .permissions
+                    .for_capability(capability)
+                    .find(|descriptor| {
+                        descriptor.phase == ono_kuang_protocol::PermissionPhase::Explicit
+                    });
+                let error = match (&evaluation, explicit) {
+                    (Evaluation::Denied(DenialSource::Default), Some(descriptor)) => {
+                        permission_refusal(&self.package_id, &self.package_name, descriptor, &label)
+                    }
+                    _ => denial_error(capability, &evaluation),
+                };
                 self.audit.record(
                     &self.package_id,
                     &label,
@@ -2104,6 +2153,90 @@ impl Actor {
 enum InvocationKind {
     Command(String),
     Target(String),
+}
+
+/// The refusal of an invocation whose capability a permission governs and nobody has decided
+/// (K11P §24.4, §36.7): the permission first, the capability in the metadata, the elevation named.
+fn permission_refusal(
+    package_id: &str,
+    package_name: &str,
+    descriptor: &ono_kuang_protocol::PermissionDescriptor,
+    operation: &str,
+) -> KuangError {
+    let mut chars = descriptor.title.chars();
+    let title = match chars.next() {
+        Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    };
+    let mut chars = package_name.chars();
+    let display = match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => package_name.to_owned(),
+    };
+    KuangError::new(
+        KuangErrorCode::PermissionDenied,
+        format!(
+            "{display} is installed without permission to {title}; `{operation}` is not allowed"
+        ),
+    )
+    .with_help(format!(
+        "enable the \"{}\" permission to continue: `set permission {package_name} {} --decision allow`",
+        descriptor.title, descriptor.id
+    ))
+    .with_metadata("plugin", Json::String(package_id.to_owned()))
+    .with_metadata("permission", Json::String(descriptor.id.clone()))
+    .with_metadata(
+        "capability",
+        Json::Array(
+            descriptor
+                .capabilities()
+                .map(|capability| Json::String(capability.id().to_owned()))
+                .collect(),
+        ),
+    )
+    .with_metadata("operation", Json::String(operation.to_owned()))
+}
+
+/// What a consent request came back as.
+enum Consent {
+    /// The family is not decided just in time, so nothing was asked.
+    NotAsked,
+    /// Allowed, for this evaluation at least, in this scope.
+    Allowed(crate::policy::Grant),
+    /// Refused, with the error the source built.
+    Refused(KuangError),
+}
+
+/// The answered scope, never wider than the asked one (K11P §14.3): a key the request bounded
+/// keeps only the values both name, and a key the request did not bound is dropped.
+fn narrowed(
+    asked: Option<JsonMap<String, Json>>,
+    answered: Option<JsonMap<String, Json>>,
+) -> Option<JsonMap<String, Json>> {
+    let asked = asked?;
+    let Some(answered) = answered else {
+        return Some(asked);
+    };
+    let mut narrowed = JsonMap::new();
+    for (key, value) in &asked {
+        let asked_items: Vec<Json> = match value {
+            Json::Array(items) => items.clone(),
+            other => vec![other.clone()],
+        };
+        let kept: Vec<Json> = match answered.get(key) {
+            Some(Json::Array(items)) => asked_items
+                .into_iter()
+                .filter(|item| items.contains(item))
+                .collect(),
+            Some(other) => asked_items
+                .into_iter()
+                .filter(|item| item == other)
+                .collect(),
+            None => asked_items,
+        };
+        narrowed.insert(key.clone(), Json::Array(kept));
+    }
+    Some(narrowed)
 }
 
 enum ParamsBuilder {
@@ -2331,17 +2464,43 @@ impl Actor {
     }
 
     /// Checks one capability use: evaluates policy against the values the operation will
-    /// actually use, audits the outcome either way, and answers the structured denial the
-    /// contracts name.
-    fn broker_check(
+    /// actually use, asks for consent where the package's permission layer decides the family
+    /// just in time and nothing has decided it yet (ADR-0603), audits the outcome either way,
+    /// and answers the structured denial the contracts name.
+    async fn broker_check(
         &mut self,
         capability: ono_kuang_protocol::Capability,
         action: &str,
         used: &[ScopeUse],
         target: Option<Json>,
     ) -> Result<crate::policy::Grant, KuangError> {
-        let evaluation = self.policy.evaluate(capability, used);
         let label = self.invocation_label();
+        // Nothing a person decided covers the use: no grant at all, or only a grant for another
+        // scope — an earlier `always for this program` answered about a different program. A
+        // system or operator deny is never re-asked.
+        let evaluation = self.policy.evaluate(capability, used);
+        let undecided = match &evaluation {
+            Evaluation::Denied(DenialSource::Default) => true,
+            // Outside the scope of a grant a just-in-time answer minted: another program is
+            // another question. Outside a scope an operator wrote: a violation, as ADR-0264 says.
+            Evaluation::ScopeViolation { grant, .. } => grant
+                .permission
+                .as_deref()
+                .and_then(|permission| self.permissions.descriptor(permission))
+                .is_some_and(|descriptor| {
+                    descriptor.phase == ono_kuang_protocol::PermissionPhase::Jit
+                }),
+            _ => false,
+        };
+        let (evaluation, refusal) = if undecided {
+            match self.ask_consent(capability, action, used, &label).await {
+                Consent::NotAsked => (evaluation, None),
+                Consent::Allowed(grant) => (Evaluation::Allowed(grant), None),
+                Consent::Refused(error) => (evaluation, Some(error)),
+            }
+        } else {
+            (evaluation, None)
+        };
         match evaluation {
             Evaluation::Allowed(grant) => {
                 self.audit.record(
@@ -2359,7 +2518,7 @@ impl Actor {
                 Ok(grant)
             }
             refused => {
-                let error = denial_error(capability, &refused);
+                let error = refusal.unwrap_or_else(|| denial_error(capability, &refused));
                 self.audit.record(
                     &self.package_id,
                     &label,
@@ -2378,6 +2537,135 @@ impl Actor {
                     Some((&error).into()),
                 );
                 Err(error)
+            }
+        }
+    }
+
+    /// Asks the consent source about one use the policy does not cover, when the package's
+    /// permission layer says the family is decided just in time (K11P §14, ADR-0603).
+    ///
+    /// Only a `Denied(Default)` reaches here — a system or operator deny is never re-asked. The
+    /// request carries the concrete values the call will use, and an answer that lasts longer
+    /// than once becomes a grant scoped to exactly those values, never wider (K11P §14.3).
+    async fn ask_consent(
+        &mut self,
+        capability: ono_kuang_protocol::Capability,
+        action: &str,
+        used: &[ScopeUse],
+        label: &str,
+    ) -> Consent {
+        let Some(permission) = self.permissions.jit_permission(capability).cloned() else {
+            return Consent::NotAsked;
+        };
+        let mut scope: JsonMap<String, Json> = JsonMap::new();
+        let mut uses = Vec::new();
+        for use_ in used {
+            let (key, value) = (use_.key(), use_.display());
+            let entry = scope
+                .entry(key.to_owned())
+                .or_insert_with(|| Json::Array(Vec::new()));
+            if let Json::Array(items) = entry {
+                items.push(Json::String(value.clone()));
+            }
+            uses.push((key.to_owned(), value));
+        }
+        let scope = (!scope.is_empty()).then_some(scope);
+        self.consents += 1;
+        let correlation = format!("{}:consent:{}", self.package_id, self.consents);
+        let request = crate::consent::ConsentRequest {
+            package: self.package_id.clone(),
+            capability,
+            permission: permission.clone(),
+            action: action.to_owned(),
+            invocation: label.to_owned(),
+            uses,
+            arguments: std::mem::take(&mut self.exec_arguments),
+            scope: scope.clone(),
+        };
+        let permission_target = |duration: Option<&str>| {
+            let mut target = JsonMap::new();
+            target.insert("permission".to_owned(), Json::String(permission.id.clone()));
+            if let Some(duration) = duration {
+                target.insert("duration".to_owned(), Json::String(duration.to_owned()));
+            }
+            Some(Json::Object(target))
+        };
+        self.audit.record_correlated(
+            &self.package_id,
+            label,
+            capability.id(),
+            scope.clone().map(Json::Object),
+            Enforcement::Broker,
+            "permission.ask",
+            permission_target(None),
+            self.now(),
+            AuditResult::Success,
+            None,
+            Some(correlation.clone()),
+        );
+        // Off the runtime's worker threads: a source may wait for a person, and the plugin is
+        // waiting for this reply anyway.
+        let source = Arc::clone(&self.consent);
+        let asked = request.clone();
+        let answer = tokio::task::spawn_blocking(move || source.consent(&asked))
+            .await
+            .unwrap_or_else(|_| {
+                crate::consent::ConsentAnswer::required(
+                    &request,
+                    "the consent source failed; grant the capability deliberately",
+                )
+            });
+        match answer {
+            crate::consent::ConsentAnswer::Allow {
+                duration,
+                scope: answered,
+            } => {
+                let scope = narrowed(request.scope.clone(), answered);
+                let grant = crate::policy::Grant {
+                    capability,
+                    scope: scope.clone(),
+                    expires_at: None,
+                    permission: Some(permission.id.clone()),
+                };
+                if duration != crate::consent::ConsentDuration::Once {
+                    let policy = std::mem::take(&mut self.policy);
+                    self.policy = policy.grant_for(
+                        capability,
+                        scope.clone(),
+                        None,
+                        Some(permission.id.clone()),
+                    );
+                }
+                self.audit.record_correlated(
+                    &self.package_id,
+                    label,
+                    capability.id(),
+                    scope.map(Json::Object),
+                    Enforcement::Broker,
+                    "permission.allow",
+                    permission_target(Some(duration.word())),
+                    self.now(),
+                    AuditResult::Success,
+                    None,
+                    Some(correlation),
+                );
+                Consent::Allowed(grant)
+            }
+            crate::consent::ConsentAnswer::Deny(error) => {
+                self.audit.record_correlated(
+                    &self.package_id,
+                    label,
+                    capability.id(),
+                    scope.map(Json::Object),
+                    Enforcement::Broker,
+                    "permission.deny",
+                    permission_target(None),
+                    self.now(),
+                    AuditResult::Denied,
+                    Some((&error).into()),
+                    Some(correlation),
+                );
+                Consent::Refused(error)
             }
         }
     }
@@ -2592,6 +2880,12 @@ impl Actor {
                 let evaluation = self.policy.evaluate(capability, &used);
                 if matches!(evaluation, Evaluation::Allowed(_)) {
                     CheckAnswer::Granted
+                } else if matches!(evaluation, Evaluation::Denied(DenialSource::Default))
+                    && self.permissions.jit_permission(capability).is_some()
+                {
+                    // Nothing has decided it and the package's permission layer decides this
+                    // family just in time: a call would ask (ADR-0603 §4). Not a grant.
+                    CheckAnswer::Ask
                 } else {
                     if check.scope.is_some() {
                         let error = denial_error(capability, &evaluation);
@@ -2762,7 +3056,7 @@ impl Actor {
 
     async fn host_state_get(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
         let get: StateKeyParams = Self::parse_params(params)?;
-        if let Err(error) = self.state_class_check(&get.class, "state.get") {
+        if let Err(error) = self.state_class_check(&get.class, "state.get").await {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -2777,7 +3071,7 @@ impl Actor {
 
     async fn host_state_set(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
         let set: StateSetParams = Self::parse_params(params)?;
-        if let Err(error) = self.state_class_check(&set.class, "state.set") {
+        if let Err(error) = self.state_class_check(&set.class, "state.set").await {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -2790,7 +3084,7 @@ impl Actor {
 
     async fn host_state_delete(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
         let delete: StateKeyParams = Self::parse_params(params)?;
-        if let Err(error) = self.state_class_check(&delete.class, "state.delete") {
+        if let Err(error) = self.state_class_check(&delete.class, "state.delete").await {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -2800,25 +3094,29 @@ impl Actor {
     }
 
     /// `persistent` state costs `state.persist`; the other classes are free (spec §31.31).
-    fn state_class_check(&mut self, class: &str, action: &str) -> Result<(), KuangError> {
+    async fn state_class_check(&mut self, class: &str, action: &str) -> Result<(), KuangError> {
         if class == "persistent" {
             self.broker_check(
                 ono_kuang_protocol::Capability::StatePersist,
                 action,
                 &[],
                 None,
-            )?;
+            )
+            .await?;
         }
         Ok(())
     }
 
     async fn host_clock_now(&mut self, seq: u64) -> Result<(), KuangError> {
-        match self.broker_check(
-            ono_kuang_protocol::Capability::ClockRead,
-            "clock.now",
-            &[],
-            None,
-        ) {
+        match self
+            .broker_check(
+                ono_kuang_protocol::Capability::ClockRead,
+                "clock.now",
+                &[],
+                None,
+            )
+            .await
+        {
             Ok(_) => {
                 let now = self.now();
                 self.reply_ok(seq, json!({"now": {"$timestamp": now}}))
@@ -2978,12 +3276,15 @@ impl Actor {
 
     /// `context.get`: the context stack the shell published, and nothing beyond it.
     async fn host_context_get(&mut self, seq: u64) -> Result<(), KuangError> {
-        match self.broker_check(
-            ono_kuang_protocol::Capability::ContextRead,
-            "context.get",
-            &[],
-            None,
-        ) {
+        match self
+            .broker_check(
+                ono_kuang_protocol::Capability::ContextRead,
+                "context.get",
+                &[],
+                None,
+            )
+            .await
+        {
             Ok(_) => {
                 let context = self.context.context();
                 self.reply_ok(seq, context).await;
@@ -2997,12 +3298,15 @@ impl Actor {
     /// record of its fields, identity and default view (spec §31.64).
     async fn host_schemas_get(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
         let get: SchemaGetParams = Self::parse_params(params)?;
-        if let Err(error) = self.broker_check(
-            ono_kuang_protocol::Capability::SchemaRead,
-            "schemas.get",
-            &[],
-            Some(Json::String(get.id.clone())),
-        ) {
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::SchemaRead,
+                "schemas.get",
+                &[],
+                Some(Json::String(get.id.clone())),
+            )
+            .await
+        {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -3033,12 +3337,15 @@ impl Actor {
     /// `schemas.list`: every registered schema under a prefix, as a stream the plugin pulls.
     async fn host_schemas_list(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
         let list: SchemaListParams = Self::parse_params(params)?;
-        if let Err(error) = self.broker_check(
-            ono_kuang_protocol::Capability::SchemaRead,
-            "schemas.list",
-            &[],
-            list.prefix.clone().map(Json::String),
-        ) {
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::SchemaRead,
+                "schemas.list",
+                &[],
+                list.prefix.clone().map(Json::String),
+            )
+            .await
+        {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -3111,12 +3418,15 @@ impl Actor {
     /// `objects.get`: one object by identity, through the host's providers.
     async fn host_objects_get(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
         let id = params.get("id").cloned().unwrap_or(Json::Null);
-        if let Err(error) = self.broker_check(
-            ono_kuang_protocol::Capability::ObjectRead,
-            "objects.get",
-            &[],
-            Some(id.clone()),
-        ) {
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::ObjectRead,
+                "objects.get",
+                &[],
+                Some(id.clone()),
+            )
+            .await
+        {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -3146,12 +3456,15 @@ impl Actor {
             .get("target")
             .and_then(Json::as_str)
             .map(str::to_owned);
-        if let Err(error) = self.broker_check(
-            ono_kuang_protocol::Capability::ObjectRead,
-            action,
-            &[],
-            target.map(Json::String),
-        ) {
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::ObjectRead,
+                action,
+                &[],
+                target.map(Json::String),
+            )
+            .await
+        {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -3218,12 +3531,15 @@ impl Actor {
             .await;
             return Ok(());
         };
-        if let Err(error) = self.broker_check(
-            ono_kuang_protocol::Capability::ObjectRead,
-            "objects.resolve",
-            &[],
-            Some(Json::String(target.clone())),
-        ) {
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::ObjectRead,
+                "objects.resolve",
+                &[],
+                Some(Json::String(target.clone())),
+            )
+            .await
+        {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -3258,12 +3574,15 @@ impl Actor {
                     .collect()
             });
         let depth = params.get("depth").and_then(Json::as_u64);
-        if let Err(error) = self.broker_check(
-            ono_kuang_protocol::Capability::RelationRead,
-            "relations.query",
-            &[],
-            from.clone().or_else(|| to.clone()),
-        ) {
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::RelationRead,
+                "relations.query",
+                &[],
+                from.clone().or_else(|| to.clone()),
+            )
+            .await
+        {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -3298,12 +3617,25 @@ impl Actor {
             .and_then(Json::as_array)
             .cloned()
             .unwrap_or_default();
-        if let Err(error) = self.broker_check(
-            ono_kuang_protocol::Capability::RelationWrite,
-            "relations.contribute",
-            &[],
-            Some(Json::from(edges.len())),
-        ) {
+        // Every edge's relation is a use the `relations` scope bounds (ADR-0600 §2): a grant
+        // bounded to the package's own declared shapes covers exactly those ids.
+        let uses: Vec<ScopeUse> = edges
+            .iter()
+            .filter_map(|edge| edge.get("relation").and_then(Json::as_str))
+            .map(|relation| ScopeUse::Name {
+                key: "relations",
+                value: relation.to_owned(),
+            })
+            .collect();
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::RelationWrite,
+                "relations.contribute",
+                &uses,
+                Some(Json::from(edges.len())),
+            )
+            .await
+        {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -3331,12 +3663,15 @@ impl Actor {
             .and_then(Json::as_str)
             .map(str::to_owned);
         let filter = params.get("filter").filter(|v| !v.is_null()).cloned();
-        if let Err(error) = self.broker_check(
-            ono_kuang_protocol::Capability::HistoryRead,
-            "history.query",
-            &[],
-            window.clone().map(Json::String),
-        ) {
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::HistoryRead,
+                "history.query",
+                &[],
+                window.clone().map(Json::String),
+            )
+            .await
+        {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -3360,12 +3695,15 @@ impl Actor {
     /// `history.append`: an entry the host attributes to the package.
     async fn host_history_append(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
         let entry = params.get("entry").cloned().unwrap_or(Json::Null);
-        if let Err(error) = self.broker_check(
-            ono_kuang_protocol::Capability::HistoryWrite,
-            "history.append",
-            &[],
-            None,
-        ) {
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::HistoryWrite,
+                "history.append",
+                &[],
+                None,
+            )
+            .await
+        {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -3394,15 +3732,18 @@ impl Actor {
             .and_then(Json::as_str)
             .unwrap_or_default()
             .to_owned();
-        if let Err(error) = self.broker_check(
-            ono_kuang_protocol::Capability::ProcessSignal,
-            "process.signal",
-            &[ScopeUse::Name {
-                key: "signals",
-                value: signal.clone(),
-            }],
-            Some(object.clone()),
-        ) {
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::ProcessSignal,
+                "process.signal",
+                &[ScopeUse::Name {
+                    key: "signals",
+                    value: signal.clone(),
+                }],
+                Some(object.clone()),
+            )
+            .await
+        {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -3435,12 +3776,15 @@ impl Actor {
     /// answered `mounted: false` when output is redirected (spec §31.27, §31.28).
     async fn host_views_open(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
         let open: ono_kuang_protocol::ViewOpenParams = Self::parse_params(params)?;
-        if let Err(error) = self.broker_check(
-            ono_kuang_protocol::Capability::UiView,
-            "views.open",
-            &[],
-            Some(Json::String(open.view.clone())),
-        ) {
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::UiView,
+                "views.open",
+                &[],
+                Some(Json::String(open.view.clone())),
+            )
+            .await
+        {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -3531,12 +3875,15 @@ impl Actor {
     /// `views.submit`: a tree, validated and drawn; an invalid one tears the view down.
     async fn host_views_submit(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
         let submit: ono_kuang_protocol::ViewSubmitParams = Self::parse_params(params)?;
-        if let Err(error) = self.broker_check(
-            ono_kuang_protocol::Capability::UiView,
-            "views.submit",
-            &[],
-            Some(Json::from(submit.view)),
-        ) {
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::UiView,
+                "views.submit",
+                &[],
+                Some(Json::from(submit.view)),
+            )
+            .await
+        {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -3662,24 +4009,30 @@ impl Actor {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
         let target = Some(Json::String(resolved.clone()));
-        if let Err(error) = self.broker_check(
-            ono_kuang_protocol::Capability::ProcessExec,
-            "process.exec",
-            &[
-                ScopeUse::Path {
-                    key: "programs",
-                    value: resolved.clone(),
-                },
-                ScopeUse::Name {
-                    key: "executables",
-                    value: executable,
-                },
-            ],
-            target.clone(),
-        ) {
+        self.exec_arguments = arguments.clone();
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::ProcessExec,
+                "process.exec",
+                &[
+                    ScopeUse::Path {
+                        key: "programs",
+                        value: resolved.clone(),
+                    },
+                    ScopeUse::Name {
+                        key: "executables",
+                        value: executable,
+                    },
+                ],
+                target.clone(),
+            )
+            .await
+        {
+            self.exec_arguments.clear();
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
+        self.exec_arguments.clear();
         let host = Arc::clone(&self.host);
         let outcome = host
             .process_exec(&self.package_id, resolved, arguments, environment)
@@ -3719,21 +4072,24 @@ impl Actor {
             .unwrap_or("tcp")
             .to_owned();
         let target = Some(json!({"host": host_name, "port": port, "protocol": protocol}));
-        if let Err(error) = self.broker_check(
-            ono_kuang_protocol::Capability::NetworkConnect,
-            "network.connect",
-            &[
-                ScopeUse::Name {
-                    key: "hosts",
-                    value: host_name.clone(),
-                },
-                ScopeUse::Port {
-                    key: "ports",
-                    value: port,
-                },
-            ],
-            target.clone(),
-        ) {
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::NetworkConnect,
+                "network.connect",
+                &[
+                    ScopeUse::Name {
+                        key: "hosts",
+                        value: host_name.clone(),
+                    },
+                    ScopeUse::Port {
+                        key: "ports",
+                        value: port,
+                    },
+                ],
+                target.clone(),
+            )
+            .await
+        {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -3771,15 +4127,18 @@ impl Actor {
             .unwrap_or("tcp")
             .to_owned();
         let target = Some(json!({"port": port, "protocol": protocol}));
-        if let Err(error) = self.broker_check(
-            ono_kuang_protocol::Capability::NetworkListen,
-            "network.listen",
-            &[ScopeUse::Port {
-                key: "ports",
-                value: port,
-            }],
-            target.clone(),
-        ) {
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::NetworkListen,
+                "network.listen",
+                &[ScopeUse::Port {
+                    key: "ports",
+                    value: port,
+                }],
+                target.clone(),
+            )
+            .await
+        {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -3840,15 +4199,18 @@ impl Actor {
             .and_then(Json::as_str)
             .unwrap_or_default()
             .to_owned();
-        if let Err(error) = self.broker_check(
-            ono_kuang_protocol::Capability::SecretUse,
-            "secrets.request",
-            &[ScopeUse::Name {
-                key: "secrets",
-                value: name.clone(),
-            }],
-            Some(Json::String(name.clone())),
-        ) {
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::SecretUse,
+                "secrets.request",
+                &[ScopeUse::Name {
+                    key: "secrets",
+                    value: name.clone(),
+                }],
+                Some(Json::String(name.clone())),
+            )
+            .await
+        {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -3891,12 +4253,15 @@ impl Actor {
     /// `models.list`: the providers this package may use — the catalogue, filtered by the
     /// grant's `providers` scope (spec §31.43, ADR-0566).
     async fn host_models_list(&mut self, seq: u64) -> Result<(), KuangError> {
-        match self.broker_check(
-            ono_kuang_protocol::Capability::ModelInfer,
-            "models.list",
-            &[],
-            None,
-        ) {
+        match self
+            .broker_check(
+                ono_kuang_protocol::Capability::ModelInfer,
+                "models.list",
+                &[],
+                None,
+            )
+            .await
+        {
             Ok(grant) => {
                 let path = std::env::var_os("PATH");
                 let listed: Vec<Json> = self
@@ -3972,15 +4337,18 @@ impl Actor {
             return Ok(());
         };
         let target = Some(Json::String(provider.id.clone()));
-        if let Err(error) = self.broker_check(
-            ono_kuang_protocol::Capability::ModelInfer,
-            "models.infer",
-            &[ScopeUse::Name {
-                key: "providers",
-                value: provider.id.clone(),
-            }],
-            target.clone(),
-        ) {
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::ModelInfer,
+                "models.infer",
+                &[ScopeUse::Name {
+                    key: "providers",
+                    value: provider.id.clone(),
+                }],
+                target.clone(),
+            )
+            .await
+        {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
@@ -4080,15 +4448,18 @@ impl Actor {
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or(requested);
         let target = Some(Json::String(resolved.clone()));
-        match self.broker_check(
-            ono_kuang_protocol::Capability::FilesystemRead,
-            "filesystem.read",
-            &[ScopeUse::Path {
-                key: "paths",
-                value: resolved.clone(),
-            }],
-            target.clone(),
-        ) {
+        match self
+            .broker_check(
+                ono_kuang_protocol::Capability::FilesystemRead,
+                "filesystem.read",
+                &[ScopeUse::Path {
+                    key: "paths",
+                    value: resolved.clone(),
+                }],
+                target.clone(),
+            )
+            .await
+        {
             Ok(_) => {}
             Err(error) => {
                 self.reply_err(seq, error.into()).await;

@@ -63,4 +63,8 @@ pub struct AuditEvent {
     /// The structured error, for `denied` and `failed`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<WireError>,
+    /// The request one user action minted, shared by the `permission.*` event and every grant
+    /// or revocation it produced (K11P §23.2, ADR-0604 §5). `None` for an action of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation: Option<String>,
 }

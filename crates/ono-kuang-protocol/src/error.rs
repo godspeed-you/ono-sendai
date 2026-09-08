@@ -97,6 +97,18 @@ kuang_error_codes! {
         "The plugin holds the capability but the call fell outside its granted scope.";
     CapabilityLeaseExpired => "Ono-Sendai-K11303", "capability.lease_expired", Permission,
         "The lease backing this call has expired, been used up, or its condition no longer holds.";
+    PermissionRequired => "Ono-Sendai-K11304", "permission.required", Permission,
+        "The operation needs a permission nobody has decided, and this context cannot ask.";
+    PermissionDenied => "Ono-Sendai-K11305", "permission.denied", Permission,
+        "The operation needs a permission the user denied.";
+    PermissionInvalidProfile => "Ono-Sendai-K11306", "permission.invalid_profile", Resolution,
+        "The named access profile does not exist for this package.";
+    PermissionInvalidMapping => "Ono-Sendai-K11307", "permission.invalid_mapping", Parse,
+        "The package's permission declarations do not map validly onto its capabilities.";
+    PermissionScopeUnavailable => "Ono-Sendai-K11308", "permission.scope_unavailable", Safety,
+        "The concrete scope a permission needs could not be derived or enforced.";
+    PermissionEscalationRequiresConfirmation => "Ono-Sendai-K11309", "permission.escalation_requires_confirmation", Safety,
+        "The permission widens authority and needs a deliberate confirmation this context cannot give.";
     StateQuotaExceeded => "Ono-Sendai-K11401", "state.quota_exceeded", Safety,
         "The plugin's persistent state would exceed its quota.";
     StateMigrationFailed => "Ono-Sendai-K11402", "state.migration_failed", External,
@@ -341,6 +353,8 @@ mod tests {
         let inherited = KuangErrorCode::ALL
             .iter()
             .filter(|code| !code.name().starts_with("plugin."))
+            // The permission layer is K11P's, not §31.79's (ADR-0605).
+            .filter(|code| !code.name().starts_with("permission."))
             .filter(|code| !added.contains(&code.name()))
             .count();
         assert_eq!(inherited, 27);

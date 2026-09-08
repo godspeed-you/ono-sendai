@@ -28,6 +28,7 @@
 mod artifact;
 mod audit;
 mod capability;
+mod catalog;
 mod confinement;
 mod contract;
 mod error;
@@ -35,6 +36,7 @@ mod frame;
 mod lifecycle;
 mod manifest;
 mod message;
+mod permission;
 mod signature;
 mod version;
 
@@ -43,6 +45,10 @@ pub use audit::{AuditEvent, AuditResult};
 pub use capability::{
     Capability, Decision, DeclarationClass, Elevation, Enforcement, GrantDuration, Lease, Risk,
     ScopeKey, ScopeKind,
+};
+pub use catalog::{
+    CATALOG_FORMAT, Catalog, CatalogEntry, CatalogRelease, CatalogVerification, PluginRef,
+    compare_versions, looks_like_id,
 };
 pub use confinement::{Control, ExecutionTier, FailureBehaviour, Requirement};
 pub use contract::{
@@ -68,11 +74,21 @@ pub use message::{
     ViewContribution, ViewEvent, ViewEventParams, ViewHandleParams, ViewMountParams,
     ViewOpenParams, ViewOpenResult, ViewSize, ViewSubmitParams, method, parse_type_name,
 };
+pub use permission::{
+    AccessProfile, ConsentClass, DeltaEntry, DeltaKind, GrantTemplate, MINIMAL, PURPOSE_LIMIT,
+    PermissionDescriptor, PermissionKind, PermissionPhase, PermissionRisk, PermissionSet,
+    RECOMMENDED, RawGrantTemplate, RawPermissionRequest, RawPermissions, RawProfile, ScopeTemplate,
+    TITLE_LIMIT, consent_class, default_kind, delta, derived_id, describe_scope, family_title,
+    is_permission_id, minimum_risk, sanitize, validate_declared,
+};
 pub use signature::{
     FileDigest, PackageSignature, PublicKey, SIGNATURE_ALGORITHM, SIGNATURE_FILE, SIGNATURE_FORMAT,
     SecretKey, SignedPackage,
 };
-pub use version::{ApiVersion, HOST_API, PACKAGE_FORMAT, VALUE_PROTOCOL, VersionRange};
+pub use version::{
+    ApiVersion, HOST_API, PACKAGE_FORMAT, PACKAGE_FORMAT_2, PACKAGE_FORMATS, VALUE_PROTOCOL,
+    VersionRange,
+};
 
 /// Whether `word` is a semantic role word: kebab-case ASCII, starting with a letter (ADR-0596).
 ///

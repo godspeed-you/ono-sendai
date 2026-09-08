@@ -53,9 +53,24 @@ fn contributors() -> &'static Mutex<BTreeMap<String, Arc<LoadedPlugin>>> {
 /// grant from the negotiated contract. A package without the grant is left alone: it is degraded,
 /// `load plugin` says which capability it lacks (§31.17), and no relation of its bears its name.
 pub fn adopt(id: &str, plugin: &Arc<LoadedPlugin>, shapes: &[String]) {
-    if plugin.contract().grant(RELATION_WRITE).is_none() {
+    let Some(granted) = plugin.contract().grant(RELATION_WRITE) else {
         return;
-    }
+    };
+    // A grant bounded by `relations` (ADR-0600 §2) covers exactly the ids it names: a shape
+    // outside it is not adopted, so the package contributes nothing under that name.
+    let allowed: Option<Vec<String>> = granted
+        .scope
+        .as_ref()
+        .and_then(|scope| scope.get("relations"))
+        .map(|value| match value {
+            serde_json::Value::Array(items) => items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+            serde_json::Value::String(text) => vec![text.clone()],
+            _ => Vec::new(),
+        });
     let mut contributed = false;
     for shape in shapes {
         let Some((from, to)) = ono_spatial_core::relation::parse_shape(shape) else {
@@ -65,6 +80,11 @@ pub fn adopt(id: &str, plugin: &Arc<LoadedPlugin>, shapes: &[String]) {
             continue;
         };
         let relation = ono_spatial_core::relation::contributed_id(id, from, to);
+        if let Some(allowed) = &allowed
+            && !allowed.iter().any(|name| name == &relation || name == "*")
+        {
+            continue;
+        }
         let leak = |text: String| -> &'static str { Box::leak(text.into_boxed_str()) };
         ono_spatial_core::relation::contribute(
             RelationSpec {

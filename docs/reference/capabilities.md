@@ -91,6 +91,8 @@ Two vocabularies that are not the same thing. A **provider capability** is what 
 | `model.list` | read | none | Enumerate configured model providers and their policy characteristics. |
 | `finding.list` | read | none | Query findings emitted by analyses and assistants. |
 | `audit.list` | read | none | Query the record of capability-sensitive KUANG/11 actions. |
+| `permission.list` | read | none | Show what a package is permitted to do, in human terms, with the capabilities underneath (K11P §16.1). |
+| `permission.set` | mutate | none | Apply an access profile or decide one permission of a package (K11P §16.2). |
 | `config.read` | read | none | Read resolved configuration settings with their provenance. |
 | `config.set` | mutate | none | Change a configuration setting in the current scope. |
 | `command.list` | read | none | Enumerate native and external commands and their metadata. |

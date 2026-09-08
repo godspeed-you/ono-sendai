@@ -2267,6 +2267,133 @@ pub fn check_kuang_contracts(root: &Path) -> Vec<Problem> {
     if let Some((location, document)) = read("contributions.v1.yaml") {
         problems.extend(check_kuang_contributions(&location, &document));
     }
+    if let Some((location, document)) = read("permissions.v1.yaml") {
+        problems.extend(check_kuang_permissions(&location, &document));
+    }
+    problems
+}
+
+/// The permission layer's class table against the runtime that classifies (K11P §7, ADR-0600).
+///
+/// A family the contract classifies differently from `consent_class`, `minimum_risk`,
+/// `default_kind` or `family_title` is the drift a user would meet as a prompt that says one
+/// thing and a broker that does another; and a family either side forgets is a capability with
+/// no human projection at all.
+fn check_kuang_permissions(location: &str, document: &Yaml) -> Vec<Problem> {
+    use ono_kuang_protocol::{
+        Capability, ConsentClass, PermissionKind, PermissionPhase, PermissionRisk, ScopeTemplate,
+        consent_class, default_kind, family_title, minimum_risk,
+    };
+
+    let mut problems = Vec::new();
+    let problem = |detail: String| Problem {
+        location: location.to_owned(),
+        detail,
+    };
+    let declared_words = |key: &str| -> BTreeSet<String> {
+        sequence(document, key)
+            .into_iter()
+            .filter_map(|entry| string_at(entry, "id"))
+            .collect()
+    };
+    for (key, runtime) in [
+        (
+            "kinds",
+            PermissionKind::ALL
+                .iter()
+                .map(|kind| kind.id().to_owned())
+                .collect::<BTreeSet<_>>(),
+        ),
+        (
+            "phases",
+            PermissionPhase::ALL
+                .iter()
+                .map(|phase| phase.id().to_owned())
+                .collect(),
+        ),
+        (
+            "risks",
+            PermissionRisk::ALL
+                .iter()
+                .map(|risk| risk.id().to_owned())
+                .collect(),
+        ),
+        (
+            "classes",
+            ConsentClass::ALL
+                .iter()
+                .map(|class| class.id().to_owned())
+                .collect(),
+        ),
+    ] {
+        let declared = declared_words(key);
+        for word in declared.difference(&runtime) {
+            problems.push(problem(format!(
+                "`{key}` declares `{word}` and the runtime has no such value"
+            )));
+        }
+        for word in runtime.difference(&declared) {
+            problems.push(problem(format!(
+                "the runtime carries the {key} value `{word}` and the contract declares it nowhere"
+            )));
+        }
+    }
+
+    let mut classified = BTreeSet::new();
+    for family in sequence(document, "families") {
+        let Some(id) = string_at(family, "id") else {
+            continue;
+        };
+        classified.insert(id.clone());
+        let Some(capability) = Capability::from_id(&id) else {
+            problems.push(problem(format!(
+                "`{id}` is classified and `ono_kuang_protocol::Capability` has no such family"
+            )));
+            continue;
+        };
+        let expect = |field: &str, actual: String| -> Option<Problem> {
+            let declared = string_at(family, field)?;
+            (declared != actual).then(|| {
+                problem(format!(
+                    "`{id}` declares {field} `{declared}` and the runtime derives `{actual}`"
+                ))
+            })
+        };
+        problems.extend(expect(
+            "class",
+            consent_class(capability, None).id().to_owned(),
+        ));
+        problems.extend(expect(
+            "risk",
+            minimum_risk(capability, None).id().to_owned(),
+        ));
+        problems.extend(expect(
+            "kind",
+            default_kind(capability, None).id().to_owned(),
+        ));
+        problems.extend(expect("title", family_title(capability).to_owned()));
+        let bounded = Some(ScopeTemplate::PackageContributions);
+        problems.extend(expect(
+            "bounded_class",
+            consent_class(capability, bounded.as_ref()).id().to_owned(),
+        ));
+        problems.extend(expect(
+            "bounded_risk",
+            minimum_risk(capability, bounded.as_ref()).id().to_owned(),
+        ));
+        problems.extend(expect(
+            "bounded_kind",
+            default_kind(capability, bounded.as_ref()).id().to_owned(),
+        ));
+    }
+    for capability in Capability::ALL {
+        if !classified.contains(capability.id()) {
+            problems.push(problem(format!(
+                "the runtime classifies `{}` and the contract's `families` table does not list it",
+                capability.id()
+            )));
+        }
+    }
     problems
 }
 

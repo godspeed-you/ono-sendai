@@ -1,0 +1,166 @@
+# K11P §8.3, §13.3, §13.4, §18.1, §21.4, §34.1, §34.6 (ADR-0600 §3, ADR-0602 §4): a native
+# package from a catalog whose publisher no trust store enrols is not installed unattended until
+# the key is enrolled; signature validity and publisher trust stay two answers; an unsigned local
+# package by explicit path installs unattended, visibly untrusted; and a manifest whose
+# recommended profile hides mutation, or whose friendly title lowers a destructive risk, is
+# refused before any of its code runs. Gates S, T.
+case: trust facts stay separate, and a manifest cannot label its authority away
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export ONO_PLUGIN_SOURCES="$home/sources"
+  export ONO_SYSTEM_CONFIG_DIR="$home/system"
+  export HOME="$home/home"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  export XDG_CACHE_HOME="$home/cache"
+  export ONO_CONFIG_DIR="$home/config/ono"
+  mkdir -p "$home/plugins" "$home/home" "$home/config/ono/kuang/catalogs"
+  # A `kuang-package/2` package in the shape of the reference provider (K11P §8.2), over the
+  # example runtime: observation recommended, relationships automatic, a login helper asked
+  # just in time, mutation explicit.
+  lay_out() {
+    mkdir -p "$1/$2/runtime" "$1/$2/contributions"
+    cp /usr/local/bin/kuang-example-plugin "$1/$2/runtime/echo"
+    cat > "$1/$2/manifest.yaml" <<MANIFEST
+  format: kuang-package/2
+  package:
+    id: $2
+    name: $3
+    version: $4
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.2 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - network.connect
+      - process.signal
+      - filesystem.read: {paths: ["$5"]}
+      - secret.use
+      - clock.read
+      - relation.write
+      - process.exec
+  network:
+    outbound: none
+  contributions:
+    commands: [contributions/commands.yaml]
+  permissions:
+    profiles:
+      minimal: {title: Minimal, permissions: [spatial-relations]}
+      recommended: {title: Recommended, permissions: [cluster-access, kubeconfig-read, credential-use, spatial-relations]}
+      operate: {title: Observe and change, permissions: [cluster-access, kubeconfig-read, credential-use, spatial-relations, cluster-mutation]}
+    requests:
+      - {id: cluster-access, kind: external-observe, title: Connect to clusters, phase: install, recommended: true, grants: [{capability: network.connect, scope: runtime-derived}]}
+      - {id: kubeconfig-read, kind: filesystem-read, title: Read cluster configuration, phase: install, recommended: true, grants: [{capability: filesystem.read, scope: {paths: ["$5"]}}]}
+      - {id: credential-use, kind: secret-use, title: Use credentials without exposing their values, phase: install, recommended: true, grants: [{capability: secret.use}]}
+      - {id: spatial-relations, kind: local-contribution, title: Add relationships to Ono, phase: automatic, recommended: true, grants: [{capability: relation.write, scope: package-contributions}]}
+      - {id: login-helper, kind: execute-helper, title: Run an external login helper when a context requires it, purpose: authenticate to the selected context, phase: jit, recommended: false, grants: [{capability: process.exec, scope: runtime-derived}]}
+      - {id: cluster-mutation, kind: host-change, title: Change resources, phase: explicit, recommended: false, grants: [{capability: process.signal}]}
+  MANIFEST
+    cat > "$1/$2/contributions/commands.yaml" <<CONTRIB
+  commands:
+    - id: $2.command.emit
+      verb: get
+      target: echo-item
+      summary: Emit a counted stream of integers.
+      output: stream<int>
+      argument_mode: expression
+      capabilities: []
+      examples:
+        - get echo-item --count 3
+    - id: $2.command.exec
+      verb: get
+      target: echo-exec
+      summary: Run a program through the host and report its output.
+      output: stream<string>
+      argument_mode: expression
+      capabilities: [process.exec]
+      examples:
+        - get echo-exec --program /bin/true
+    - id: $2.command.signal
+      verb: get
+      target: echo-signal
+      summary: Send a signal to a process through the host.
+      output: stream<string>
+      argument_mode: expression
+      capabilities: [process.signal]
+      examples:
+        - get echo-signal --pid 1 --signal TERM
+  CONTRIB
+  }
+  catalog() {
+    cat > "$home/config/ono/kuang/catalogs/$1.yaml" <<CATALOG
+  format: kuang-catalog/1
+  catalog:
+    name: $1
+    description: A test catalog.
+  entries:
+    - id: $2
+      name: $3
+      description: A package from the catalog.
+      publisher: dev.example
+      releases:
+        - version: $4
+          platforms: [linux-amd64, linux-arm64]
+          kuang_api: ">=11.1 <12"
+          artifact: "git:https://example.invalid/$3#v$4"
+  CATALOG
+  }
+  lay_out "$home/sources" dev.example.echo echo 0.1.0 "$home/home/.kube/config"
+  catalog test dev.example.echo echo 0.1.0
+
+  echo "== a signed native package from a catalog, unknown key: not unattended (K11P §13.3) =="
+  key=$(kuang-sign keygen --out "$home/signing.key" | tail -1)
+  kuang-sign sign "$home/sources/dev.example.echo" --key "$home/signing.key" > /dev/null
+  ono -c 'install plugin echo --confirm' 2>&1 | head -1
+  ono -c 'install plugin echo --confirm' 2>&1 | grep -q "trust.yaml" && echo "policy=named"
+  printf 'format: kuang-trust/1\nkeys:\n  - publisher: dev.example\n    key: %s\n    trust: trusted\n' "$key" > "$home/config/ono/kuang/trust.yaml"
+  ono -c 'install plugin echo --confirm | select status | to json'
+  ono -c 'verify plugin echo | select signature trust | to json'
+
+  echo "== a tampered package is refused whatever the flags say (Gate T) =="
+  lay_out "$home/t" dev.example.tampered tampered 0.1.0 "$home/home/.kube/config"
+  kuang-sign sign "$home/t/dev.example.tampered" --key "$home/signing.key" > /dev/null
+  printf 'commands: []\n' > "$home/t/dev.example.tampered/contributions/commands.yaml"
+  ono -c "install plugin path:$home/t/dev.example.tampered --confirm" 2>&1 | head -1
+  test ! -d "$home/plugins/dev.example.tampered" && echo "nothing-written=ok"
+
+  echo "== an unsigned local package by explicit path installs unattended, visibly untrusted (K11P §13.4) =="
+  lay_out "$home/dev" dev.example.local local 0.1.0 "$home/home/.kube/config"
+  ono -c "install plugin path:$home/dev/dev.example.local --confirm | select status | to json"
+  ono -c 'get plugin local | select trust | to json'
+
+  echo "== a recommended profile that hides mutation is refused before any code runs (K11P §34.6) =="
+  lay_out "$home/h" dev.example.hidden hidden 0.1.0 "$home/home/.kube/config"
+  sed -i 's/recommended: {title: Recommended, permissions: \[cluster-access, kubeconfig-read, credential-use, spatial-relations\]}/recommended: {title: Recommended, permissions: [cluster-access, kubeconfig-read, credential-use, spatial-relations, cluster-mutation]}/' "$home/h/dev.example.hidden/manifest.yaml"
+  ono -c "install plugin path:$home/h/dev.example.hidden --confirm" 2>&1 | head -1
+
+  echo "== a friendly title cannot lower a destructive risk (K11P §34.1) =="
+  lay_out "$home/f" dev.example.friendly friendly 0.1.0 "$home/home/.kube/config"
+  sed -i 's/      - process.exec$/      - process.exec\n      - filesystem.write/' "$home/f/dev.example.friendly/manifest.yaml"
+  sed -i 's/      - {id: cluster-mutation, kind: host-change, title: Change resources, phase: explicit, recommended: false, grants: \[{capability: process.signal}\]}/      - {id: cluster-mutation, kind: host-change, title: Change resources, phase: explicit, recommended: false, grants: [{capability: process.signal}]}\n      - {id: theme-access, kind: local-contribution, title: Harmless theme access, phase: explicit, risk: local, grants: [{capability: filesystem.write}]}/' "$home/f/dev.example.friendly/manifest.yaml"
+  ono -c "install plugin path:$home/f/dev.example.friendly --confirm" 2>&1 | head -1
+  ono -c "install plugin path:$home/f/dev.example.friendly --confirm" 2>&1 | grep -q "never lower" && echo "floor=held"
+exit: 0
+stdout-contains: Ono-Sendai-E0701
+stdout-contains: policy=named
+stdout-contains: {"status":"success"}
+stdout-contains: {"signature":"valid","trust":"user-trusted"}
+stdout-contains: Ono-Sendai-K11004
+stdout-contains: nothing-written=ok
+stdout-contains: {"trust":"local"}
+stdout-contains: Ono-Sendai-K11307
+stdout-contains: floor=held
+stdout-not-contains: panicked

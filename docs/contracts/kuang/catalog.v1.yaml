@@ -1,0 +1,93 @@
+# Plugin references and catalogs, as data.
+#
+# Source: `docs/kuang11/kuang11-plugin-installation-permissions-spec.md` (K11P) §4.1–§4.3
+# (references, canonical ids, short names), §10 (resolution), §11 (the catalog model), §25.1
+# (completion), §30 (offline behaviour), §34.3 (catalog name takeover). Decisions: ADR-0601.
+#
+# The point of this file is K11P §1.3: a reverse-DNS id is identity, a source URI is an explicit
+# source, and neither is the name a user normally types. `install plugin kubernetes` resolves
+# against a catalog, which is data the shell reads and never executes.
+
+version: 1
+
+# ---------------------------------------------------------------------------------------------
+# What a user may type wherever a command takes a plugin (K11P §4.1). `ono_kuang_protocol::PluginRef`.
+# ---------------------------------------------------------------------------------------------
+reference:
+  forms:
+    - {form: "kubernetes", kind: word, doc: "A short name — `package.name` — or an exact canonical id."}
+    - {form: "io.github.godspeed-you.kubernetes", kind: word, doc: "An exact canonical id (spec §31.5)."}
+    - {form: "./my-plugin", kind: path, doc: "An explicit local package directory. `./`, `../`, `/` and `~/` are the only spellings; a bare word is never a path."}
+    - {form: "path:/srv/packages/my-plugin", kind: path, doc: "The legacy explicit source form of `lifecycle.v1.yaml` → `sources`."}
+    - {form: "official/kubernetes", kind: catalog, doc: "A short name inside one named catalog, which is how an ambiguity is answered."}
+    - {form: "registry:dev.example/packet-eye@2.4.1", kind: source, doc: "A source scheme. This build resolves `path:` only and says so for the rest."}
+  resolution_order:
+    - "an explicit path, or the legacy `path:` form"
+    - "an exact canonical id among installed packages and enabled catalog entries"
+    - "an explicit `<catalog>/<name>` selector"
+    - "an exact short name across enabled catalogs"
+  rules:
+    - "For every command but `install plugin` and `find plugin`, a short name resolves first against the installed set: when exactly one installed package carries it, the name means that package (K11P §10.4, Gate R)."
+    - "Two installed packages with one name, or two catalog entries with one name and different ids, is `plugin.reference_ambiguous`, listing every candidate as a canonical id and as `<catalog>/<name>`; interactively it is a numbered picker. Nothing is chosen by catalog order, network timing, popularity or publisher (K11P §10.3)."
+    - "A name nothing answers to is `plugin.not_found`, distinct from `resolve.target_not_found`."
+    - "Nothing about resolution executes package code (K11P §3 invariant 2, Gate B)."
+
+# ---------------------------------------------------------------------------------------------
+# A catalog document, `kuang-catalog/1` (K11P §11.2). `ono_kuang_protocol::Catalog::parse`.
+# ---------------------------------------------------------------------------------------------
+document:
+  format: kuang-catalog/1
+  fields:
+    catalog:
+      name: {type: string, required: true, doc: "A kebab-case slug: what `<catalog>/<name>` selects by."}
+      description: {type: string, nullable: true, doc: "One line, for humans, sanitised."}
+    entries:
+      type: list<record>
+      doc: "One per package."
+      fields:
+        id: {type: string, required: true, doc: "The canonical reverse-DNS id, under its publisher, never `ono.*`."}
+        name: {type: string, required: true, doc: "The short name. Not unique by definition; resolution handles ambiguity."}
+        description: {type: string, nullable: true, doc: "One line, sanitised before display."}
+        publisher: {type: string, required: true, doc: "The publisher namespace the id begins with."}
+        releases: {type: list<record>, required: true, doc: "One per release; read newest first."}
+        categories: {type: list<string>, nullable: true}
+        homepage: {type: string, nullable: true, doc: "A URL for humans. Never fetched."}
+        deprecated: {type: string, nullable: true, doc: "Why the package is deprecated, when it is."}
+    release:
+      version: {type: string, required: true, doc: "Semantic version. Ordered numerically."}
+      platforms: {type: list<string>, required: true}
+      kuang_api: {type: string, required: true, doc: "The host API range, as a manifest writes it."}
+      ono_language: {type: string, nullable: true, doc: "Absent means `>=0.2`."}
+      artifact: {type: string, required: true, doc: "A source reference: `path:<dir>`, `file:<archive>`, `git:<url>#<ref>`, `https://…`. Resolved by the shell's source resolver; this build reads local artifacts only (ADR-0601 §3)."}
+      digest: {type: string, nullable: true, doc: "`sha256:…` over the package as `integrity` computes it, or absent when the catalog cannot vouch — the plan then says `integrity: unknown` and the signature decides."}
+      signing_key: {type: string, nullable: true, doc: "`ed25519:…`, the key the catalog expects the release to be signed with. A mismatch is reported; the trust stores decide."}
+      published_at: {type: timestamp, nullable: true}
+
+# ---------------------------------------------------------------------------------------------
+# Where catalogs come from, and how each is known (K11P §11.3, §11.4, §11.5).
+# ---------------------------------------------------------------------------------------------
+catalogs:
+  - id: built-in
+    where: "`docs/contracts/kuang/bootstrap-catalog.yaml`, embedded in the `ono` binary"
+    verification: built-in
+    doc: >-
+      The bootstrap catalog: first-party and reference packages known at the core release date,
+      so first-run short-name installation depends on no configured source (K11P §11.4). Part of
+      the Ono release and therefore covered by its integrity chain.
+  - id: operator
+    where: "`<config dir>/kuang/catalogs/*.yaml` and `/etc/ono/kuang/catalogs/*.yaml`"
+    verification: operator
+    doc: >-
+      Placed by the operator, like `trust.yaml` and `policy.yaml`. A document that does not read
+      as a catalog is reported beside `find plugin`'s rows, never silently skipped.
+  - id: remote
+    where: "not in this build"
+    verification: unknown
+    doc: >-
+      K11P §11.5's signed remote refresh is not implemented; no catalog is fetched, and a failed
+      refresh cannot erase anything because none runs. A document claiming a remote origin reads
+      `catalog_verification: unknown`.
+rules:
+  - "Catalog verification, package integrity, package signature validity and publisher trust are four separate answers, and `find plugin` and the install plan report each of them (K11P §11.3)."
+  - "Resolution looks for a release locally first — the package cache and the local package sources of `ono.plugin-package/1` → `source` — and reports `plugin.catalog_unavailable` naming the artifact and those directories when this build cannot reach the artifact (K11P §30.2, ADR-0601 §3)."
+  - "An installed package pins its canonical id, catalog and signing key; a later catalog entry with the same short name and a different id never redirects an upgrade (K11P §10.5, §34.3)."

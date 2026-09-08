@@ -177,6 +177,57 @@ errors:
       A lease is checked at every use, not at grant time (spec §31.49). Issue a new lease if the
       delegation is still wanted; a lease is never extended in place, so the audit trail shows
       two decisions rather than one.
+  # The human layer over the capability family (K11P §24.2, ADR-0605): a permission is a
+  # projection of a capability decision, so its errors take the family's next numbers.
+  - code: Ono-Sendai-K11304
+    name: permission.required
+    kind: permission
+    summary: The operation needs a permission nobody has decided, and this context cannot ask.
+    help: >-
+      A script never waits for a prompt and never assumes consent (K11P §20.3). The metadata
+      carries the plugin, the permission, the capability, the requested scope, the reason and a
+      `remedy`: a `set permission` or `grant capability` line that decides it deliberately.
+  - code: Ono-Sendai-K11305
+    name: permission.denied
+    kind: permission
+    summary: The operation needs a permission the user denied.
+    help: >-
+      The message leads with the permission and the reason; the capability and the operation
+      are in the metadata (K11P §24.4). `get permission <plugin>` shows the decision, and
+      `set permission <plugin> <permission> --decision allow` or `--decision ask` changes it.
+  - code: Ono-Sendai-K11306
+    name: permission.invalid_profile
+    kind: resolution
+    summary: The named access profile does not exist for this package.
+    help: >-
+      `inspect plugin <plugin>` lists the profiles a package offers; every package with
+      permission requests offers `minimal` and `recommended` (K11P §9.1).
+  - code: Ono-Sendai-K11307
+    name: permission.invalid_mapping
+    kind: parse
+    summary: The package's permission declarations do not map validly onto its capabilities.
+    help: >-
+      The manifest is invalid and nothing of the package runs (K11P §8.2, ADR-0600 §3). The
+      message names the rule: a permission grants a capability the manifest does not declare, a
+      phase or a risk below the class of what it grants, a `recommended` profile carrying
+      mutation, or a title that could spoof the text beside it.
+  - code: Ono-Sendai-K11308
+    name: permission.scope_unavailable
+    kind: safety
+    summary: The concrete scope a permission needs could not be derived or enforced.
+    help: >-
+      A runtime-derived scope is granted for the exact value in use; where that value cannot be
+      established or the broker cannot enforce it, the permission is refused rather than granted
+      wider (K11P §19.3).
+  - code: Ono-Sendai-K11309
+    name: permission.escalation_requires_confirmation
+    kind: safety
+    summary: The permission widens authority and needs a deliberate confirmation this context cannot give.
+    help: >-
+      A destructive permission is never enabled by `--confirm` or any unattended acceptance
+      (K11P §7.5), and a mutating profile applied non-interactively must be named outright.
+      Re-run interactively, or name the profile or permission on the command line together with
+      `--confirm`.
 
   # --- state: bounded persistence, spec §31.31, §31.32 ---------------------------------------
   - code: Ono-Sendai-K11401

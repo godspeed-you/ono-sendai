@@ -1,4 +1,5 @@
-//! The `kuang-package/1` manifest: parsing and fail-closed validation (spec §31.5, §31.7).
+//! The `kuang-package/1` and `kuang-package/2` manifest: parsing and fail-closed validation
+//! (spec §31.5, §31.7; ADR-0600 §3 for `/2`, which is `/1` plus the `permissions` section).
 //!
 //! The manifest is read and judged before any package byte executes — spec §31.89 rule 1,
 //! "Manifest before code". Every section that carries authority is closed: an unknown key in it
@@ -13,7 +14,8 @@ use serde_json::{Map as JsonMap, Value as Json};
 
 use crate::{
     ApiVersion, Capability, DeclarationClass, KuangError, KuangErrorCode, OverflowPolicy,
-    PACKAGE_FORMAT, VersionRange,
+    PACKAGE_FORMAT, PACKAGE_FORMAT_2, PACKAGE_FORMATS, PermissionSet, RawPermissions, VersionRange,
+    validate_declared,
 };
 
 /// An extension role of spec §31.4.
@@ -237,12 +239,17 @@ pub struct Dependencies {
     pub optional: Option<bool>,
 }
 
-/// A parsed, validated `kuang-package/1` manifest.
+/// A parsed, validated `kuang-package/1` or `kuang-package/2` manifest.
 ///
 /// Constructed only through [`Manifest::parse`], so a value of this type is a manifest every
 /// identity rule of spec §31.5 has already accepted.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Manifest {
+    /// The format the document declared, `kuang-package/1` or `kuang-package/2`.
+    pub format: String,
+    /// The `permissions` section the package declared, validated (ADR-0600 §3). `None` for a
+    /// package that declares none; [`PermissionSet::of`] derives one then.
+    pub permissions: Option<PermissionSet>,
     /// The `package` section.
     pub package: PackageInfo,
     /// The `compatibility` section.
@@ -294,10 +301,18 @@ impl Manifest {
         }
         let raw: RawManifest = serde_yaml_ng::from_str(text)
             .map_err(|error| invalid(format!("not a valid kuang-package/1 manifest: {error}")))?;
-        if raw.format != PACKAGE_FORMAT {
+        if !PACKAGE_FORMATS.contains(&raw.format.as_str()) {
             return Err(invalid(format!(
-                "format is `{}`, this host reads `{PACKAGE_FORMAT}`",
+                "format is `{}`, this host reads `{PACKAGE_FORMAT}` and `{PACKAGE_FORMAT_2}`",
                 raw.format
+            )));
+        }
+        // `/1` keeps meaning one thing: a `/1` reader refuses `permissions` as an unknown
+        // field, so this host refuses it under `/1` too (K11P §8.1, ADR-0600 §3).
+        if raw.format == PACKAGE_FORMAT && raw.permissions.is_some() {
+            return Err(invalid(format!(
+                "a `permissions` section needs `format: {PACKAGE_FORMAT_2}`; `{PACKAGE_FORMAT}` \
+                 does not carry one (ADR-0600)"
             )));
         }
         validate_package(&raw.package)?;
@@ -343,6 +358,28 @@ impl Manifest {
             }
         }
         let network = validate_network(raw.network)?;
+        // The permission layer is checked against the capabilities the same document declares,
+        // before any of it can be shown to a user (ADR-0600 §3).
+        let permissions = raw
+            .permissions
+            .map(|declared| {
+                let declared_requests: Vec<(DeclarationClass, &CapabilityRequest)> = required
+                    .iter()
+                    .map(|request| (DeclarationClass::Required, request))
+                    .chain(
+                        optional
+                            .iter()
+                            .map(|request| (DeclarationClass::Optional, request)),
+                    )
+                    .chain(
+                        runtime_requested
+                            .iter()
+                            .map(|request| (DeclarationClass::RuntimeRequested, request)),
+                    )
+                    .collect();
+                validate_declared(declared, &declared_requests)
+            })
+            .transpose()?;
         // §31.23: an annotation key is namespaced, and declaring it "is what keeps an annotation
         // from being an undeclared schema fork". `contributions.v1.yaml`'s `id-in-namespace`
         // registration check applies to every contributed id, so a key outside the package's own
@@ -365,6 +402,8 @@ impl Manifest {
         }
 
         Ok(Self {
+            format: raw.format,
+            permissions,
             package: PackageInfo {
                 id: raw.package.id,
                 name: raw.package.name,
@@ -443,6 +482,13 @@ impl Manifest {
         Ok(())
     }
 
+    /// The permission layer of this package: declared, completed by derived descriptors for
+    /// every capability left unmapped, or derived entirely (ADR-0600 §4).
+    #[must_use]
+    pub fn permission_set(&self) -> PermissionSet {
+        PermissionSet::of(self)
+    }
+
     /// Every declared capability request with its class, in declaration order.
     pub fn capability_requests(
         &self,
@@ -487,6 +533,8 @@ struct RawManifest {
     remote: Option<RawRemote>,
     #[serde(default)]
     assistant: Option<RawAssistant>,
+    #[serde(default)]
+    permissions: Option<RawPermissions>,
 }
 
 /// The `remote` section (spec §31.39), closed but carried as data.

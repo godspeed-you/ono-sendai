@@ -9,17 +9,27 @@ use std::str::FromStr;
 
 use crate::{KuangError, KuangErrorCode};
 
-/// The host API version this build implements: `kuang-host/11.1` (ADR-0022 §9).
+/// The host API version this build implements: `kuang-host/11.2` (ADR-0022 §9, ADR-0600 §3).
+///
+/// `11.2` is `11.1` plus the permission layer: `capabilities.check` may answer `ask`, a
+/// `process.exec` call may wait for consent, and a `kuang-package/2` manifest is read. A package
+/// declaring `>=11.1` still loads, because the minor is additive.
 pub const HOST_API: ApiVersion = ApiVersion {
     major: 11,
-    minor: 1,
+    minor: 2,
 };
 
 /// The value protocol values cross the boundary in (spec §31.62).
 pub const VALUE_PROTOCOL: &str = "ono-value/1";
 
-/// The package format this build reads (spec §31.7).
+/// The package format this build writes and the first it reads (spec §31.7).
 pub const PACKAGE_FORMAT: &str = "kuang-package/1";
+
+/// `kuang-package/1` plus the optional `permissions` section (ADR-0600 §3, K11P §8.1).
+pub const PACKAGE_FORMAT_2: &str = "kuang-package/2";
+
+/// Every package format this build reads, oldest first.
+pub const PACKAGE_FORMATS: &[&str] = &[PACKAGE_FORMAT, PACKAGE_FORMAT_2];
 
 /// A `major.minor` API version, e.g. `11.1`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -172,8 +182,8 @@ mod tests {
 
     #[test]
     fn should_refuse_a_version_outside_the_range_when_checked() {
-        let range: VersionRange = ">=11.2 <12".parse().expect("range parses");
-        assert!(!range.contains(HOST_API), "11.1 is below >=11.2");
+        let range: VersionRange = ">=11.3 <12".parse().expect("range parses");
+        assert!(!range.contains(HOST_API), "11.2 is below >=11.3");
         let range: VersionRange = "<11".parse().expect("range parses");
         assert!(!range.contains(HOST_API));
     }

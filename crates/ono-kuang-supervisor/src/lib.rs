@@ -24,6 +24,7 @@
 //! shell's integration step.
 
 mod adapters;
+mod consent;
 mod context;
 mod host;
 mod negotiate;
@@ -38,6 +39,10 @@ mod view;
 mod wasm;
 
 pub use adapters::{AdapterPackageError, declared_executables, validate_package};
+pub use consent::{
+    ConsentAnswer, ConsentDuration, ConsentRequest, ConsentSource, NoConsent, ScriptedConsent,
+    scope_words,
+};
 pub use context::{ContextSource, FixedContext};
 pub use host::{Connection, HostError, HostServices, LiveStream, NoHost, ready_stream};
 pub use negotiate::{HostLimits, negotiate};

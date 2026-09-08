@@ -33,14 +33,17 @@ request.
 git push origin implementation && git push origin --tags
 ```
 
-**The workspace declares `0.4.2`.** It is a patch release on top of `v0.4.1`, gathering the
-KUANG/11 extension work that let a loaded package be an external-system provider — a contributed
-target queried as a provider, contributed places and relations, concurrent invocations, declared
-arguments, `provider.mutate` and the provider-action contract, semantic roles, `up`, the error
-taxonomy, and load-time schema validation (the generic boundaries recorded as ADR-0582 through
-ADR-0599, every one provider-neutral) — and the documentation that records the Kubernetes reference
-provider now exercises them. `docs/releases/v0.4.2.md` is its note. No new specification tranche is
-implemented and no user-facing surface changes; `docs/ACCEPTANCE.md`'s boxes stay closed.
+**The workspace declares `0.4.3`.** It is a patch release on top of `v0.4.2` that implements the
+KUANG/11 plugin installation, resolution and permission specification
+(`docs/kuang11/kuang11-plugin-installation-permissions-spec.md`, K11P; ADR-0600 through
+ADR-0605): `install plugin kubernetes` as the whole ceremony, permissions a person decides in
+their own words over the unchanged capability broker, consent classes the host owns, just-in-time
+consent at the moment of use, `get permission`/`set permission`, upgrades that re-consent only for
+the delta, and the Kubernetes provider as the reference in its own repository.
+`docs/releases/v0.4.3.md` is its note and `docs/ACCEPTANCE.md` §4.9 its checklist, every box
+proven by `xtask/tests/permission_evidence.rs`. Before it, `v0.4.2` gathered the KUANG/11
+extension work that let a loaded package be an external-system provider (ADR-0582 through
+ADR-0599).
 
 **`release-check: the shell is release-ready` — printed 2026-09-05 at commit 57f1542, with
 `docs/ACCEPTANCE.md` §4.8 at 118 of 118 and `v0.4.1` signed and published.** Every stage: gate
@@ -307,6 +310,9 @@ quality), and answers that invite the next question (`@2 | inspect`). Phase F's 
 showcase: a live view of the machine should feel like instrumentation, not like polling.
 
 ## In progress
+
+*Empty.*
+
 
 ## What is left, and why
 
@@ -1993,7 +1999,7 @@ rebase, and un-ignored the rest):
 
 | Suite | Test | Owed by |
 |---|---|---|
-| contracts | `should_keep_a_package_relation_out_of_the_map_until_its_capability_is_granted` | S9 |
+| contracts | `should_keep_a_package_relation_out_of_the_map_when_its_permission_is_denied` | S9 |
 | contracts | `should_carry_the_contributing_package_as_the_origin_of_every_plugin_edge` | S9 |
 | contracts | `should_reconcile_an_adapted_object_with_its_native_twin_into_one_place` | S10 |
 | contracts | `should_never_let_raw_command_output_become_a_place` | S10 |
@@ -2194,6 +2200,17 @@ the provider samples — and no assertion changed.
 
 
 ## Found, not yet filed
+
+- **Two tests read the machine's namespace support and fail where the kernel withholds it.**
+  `crates/ono-cli/tests/adapters.rs::should_compose_a_familiar_command_with_ono_semantics`
+  retries `lsns` five times and it exits 2 every time on a kernel answering `Unsupported ioctl
+  NS_GET_USERNS`; `spatial_contracts.rs::should_serve_every_relation_it_declares_and_declare_every_relation_it_serves`
+  follows `namespace` from `process/1`, whose `/proc/1/ns` an unprivileged user cannot read
+  (`follow namespace` from the shell's own pid answers). Both pass in the container and on an
+  ordinary developer machine; on the 2026-09-08 machine both were red with no code involved.
+  What closes it: an announced skip under `missing_kernel_feature` / `missing_privilege` for the
+  two, in the register of `docs/contracts/hardening/expected_test_skips.yaml`, or a fixture
+  process of the suite's own for the second.
 
 - **A `docs/architecture/external-system-provider.md` §21.4 violation reachable by any package
   with an unbounded target, fixed in `ADR-0590`, and worth a regression watch (2026-09-06).**

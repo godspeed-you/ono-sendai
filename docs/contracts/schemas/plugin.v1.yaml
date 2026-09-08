@@ -77,6 +77,17 @@ fields:
       Whether policy makes it eligible for loading. Distinct from `state`, which says what is
       happening now: a package can be enabled and unloaded, which is the normal resting state
       under lazy loading (spec §31.68).
+  readiness:
+    type: enum
+    required: true
+    values: [ready, needs-permission, blocked, running]
+    doc: >-
+      The derived user-facing label of K11P §12.2 and §17.2, a projection over `state` and
+      `enabled` and never a replacement for them: `ready` is installed, enabled, registered, with
+      every install-time permission of its selected profile allowed and not quarantined;
+      `needs-permission` lacks one of those decisions; `blocked` is disabled or quarantined;
+      `running` is loaded or active. For a `startup: lazy` package, `ready` with `state:
+      installed` is the normal resting state (ADR-0602 §2).
   active_version:
     type: bool
     required: true

@@ -166,33 +166,10 @@ fn should_keep_integrity_valid_when_nothing_of_the_package_changed() {
 
 // --- signing, and what a bad answer does (spec §31.36, ADR-0311, ADR-0312) --------------------
 
-use ono_kuang_protocol::{Manifest, PublicKey, SIGNATURE_FILE, SecretKey, SignedPackage};
+use ono_kuang_protocol::PublicKey;
 
 mod support;
-use support::ono_with_plugins;
-
-/// A key whose bytes are fixed, so a test never depends on the machine's entropy.
-fn key(seed: u8) -> SecretKey {
-    SecretKey::from_bytes(&[seed; 32])
-}
-
-/// Signs the package in `directory` with `key`, as a package author would.
-fn sign(directory: &Path, key: &SecretKey) {
-    let text = std::fs::read_to_string(directory.join("manifest.yaml")).expect("the manifest");
-    let manifest = Manifest::parse(&text).expect("the fixture manifest is valid");
-    let described = SignedPackage::new(
-        &manifest.package.id,
-        &manifest.package.version,
-        &manifest.package.publisher,
-        ono_kuang_protocol::artifact_files(directory),
-    )
-    .expect("the fixture package is describable");
-    std::fs::write(
-        directory.join(SIGNATURE_FILE),
-        key.sign(&described).to_yaml(),
-    )
-    .expect("the signature is written");
-}
+use support::{key, ono_with_plugins, sign};
 
 /// Writes a trust store enrolling `key` for `publisher` with `standing`.
 fn enrol(home: &ono_testkit::Scratch, publisher: &str, key: &PublicKey, standing: &str) {

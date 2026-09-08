@@ -795,8 +795,22 @@ impl Session {
         // The machine-wide trust store is the administrator's, so it comes from the environment
         // and not from the user's configuration directory (ADR-0312).
         let system_trust = crate::kuang_trust::system_path(self.env_var("ONO_KUANG_SYSTEM_TRUST"));
+        let env = |name: &str| {
+            self.env_var(name)
+                .map(|value| value.to_string_lossy().into_owned())
+        };
+        let home = self.home();
+        let sources = crate::kuang_catalog::local_sources(env, home.as_deref());
+        let cache = crate::kuang_catalog::cache_dir(env, home.as_deref());
+        // The machine's configuration, where an administrator places catalogs beside the trust
+        // store (ADR-0601 §2); `ONO_SYSTEM_CONFIG_DIR` points a test at a scratch directory.
+        let system_config_dir = env("ONO_SYSTEM_CONFIG_DIR").map_or_else(
+            || std::path::PathBuf::from("/etc/ono"),
+            std::path::PathBuf::from,
+        );
         self.with_kuang(|host| {
             host.configure(plugin_path, state_dir, config_dir, system_trust);
+            host.configure_sources(system_config_dir, sources, cache);
             // Spec §31.37: the trail outlives the process. Appending at the start of every
             // pipeline keeps a session that is killed from losing everything before it.
             host.persist_audit();

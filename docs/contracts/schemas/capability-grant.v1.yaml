@@ -103,10 +103,12 @@ fields:
   source:
     type: enum
     required: true
-    values: [system-policy, user-policy, session, prompt, default]
+    values: [system-policy, user-policy, session, prompt, default, automatic]
     doc: >-
       Which layer produced the decision, in the precedence order of spec §31.19. It is what lets
-      an operator see why a grant they did not make exists.
+      an operator see why a grant they did not make exists. `automatic` is the host including a
+      bounded extension-local permission without a question (K11P §7.1, ADR-0600 §2) — a scoped
+      grant in §31.19's order, made by the host rather than by a person.
   link:
     type: string
     nullable: true
@@ -126,5 +128,17 @@ fields:
     doc: >-
       When it was revoked. Null while it stands. A revoked grant is retained rather than deleted,
       so the record of what was once permitted survives.
+  permission:
+    type: string
+    nullable: true
+    doc: >-
+      The user-facing permission whose decision minted this grant (K11P §16.3, ADR-0604), by its
+      package-local id. Null for a grant made by hand with `grant capability` or read from policy
+      that names none — which is what lets `get permission` show such a grant as `custom` rather
+      than hide it (Gate L).
+  profile:
+    type: string
+    nullable: true
+    doc: The access profile whose selection minted it, e.g. `recommended`. Null otherwise.
 default_view:
   columns: [plugin, capability, scope, duration, decision, expires_at]

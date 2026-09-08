@@ -1,0 +1,241 @@
+# The KUANG/11 permission layer, as data.
+#
+# Source: `docs/kuang11/kuang11-plugin-installation-permissions-spec.md` (K11P) §4.4–§4.8
+# (terminology), §6 (the permission model), §7 (capability classification), §8 (manifest
+# metadata), §9 (access profiles), §14 (just-in-time permissions), §21.3 (upgrade deltas),
+# §23 (persistence and audit), §29 (machine-readable contracts). Decisions: ADR-0600,
+# ADR-0603, ADR-0604.
+#
+# The rule this file exists to serve, K11P §0.3 verbatim:
+#
+#   "A user grants intentions. KUANG/11 grants capabilities."
+#
+# A permission is a projection: every entry resolves to exact capabilities of
+# `docs/contracts/capabilities.yaml` → `kuang_capabilities`, and the broker of
+# `capabilities.v1.yaml` is what enforces the result. Nothing here grants anything. What this
+# file fixes is the vocabulary a package may use (`kinds`, `phases`, `risks`), the class the
+# host places every family in (`families`), and the shape of a descriptor, a profile and a
+# decision. `cargo xtask spec-check` compares `families` against
+# `ono_kuang_protocol::consent_class`, `minimum_risk`, `default_kind` and `family_title`, in
+# both directions.
+
+version: 1
+capability_registry: ../capabilities.yaml
+
+# ---------------------------------------------------------------------------------------------
+# The host-controlled kind of a permission (K11P §6.4). A package chooses one; the host renders
+# it beside the package's own title, so friendly wording cannot relabel the authority under it.
+# The list is K11P §6.4's nine plus two the host needs for its own object world.
+# ---------------------------------------------------------------------------------------------
+kinds:
+  - {id: external-observe, doc: "Reaching an external system to read it."}
+  - {id: external-change, doc: "Changing state in an external system."}
+  - {id: filesystem-read, doc: "Reading files on this machine."}
+  - {id: filesystem-write, doc: "Creating, changing or deleting files on this machine."}
+  - {id: execute-helper, doc: "Running a program on this machine."}
+  - {id: secret-use, doc: "Using a secret without exposing its value."}
+  - {id: local-contribution, doc: "Contributing to Ono itself, within the package's own declarations."}
+  - {id: model-use, doc: "Sending requests to a model provider."}
+  - {id: host-observe, doc: "Reading what Ono already knows about this machine (ADR-0600)."}
+  - {id: host-change, doc: "Changing this machine through Ono's own providers (ADR-0600)."}
+  - {id: other-sensitive, doc: "Sensitive authority of another shape; the host names the capability."}
+
+# When a permission is decided (K11P §6.5).
+phases:
+  - {id: automatic, doc: "Bounded extension-local authority; included, never asked."}
+  - {id: install, doc: "Decided at installation, as part of an access profile."}
+  - {id: jit, doc: "Asked when the concrete need and scope are known (K11P §14)."}
+  - {id: explicit, doc: "Never granted by the recommended flow; the user enables it deliberately."}
+
+# The risk a permission carries (K11P §6.6), least first. The host derives the floor from the
+# capabilities; a package may raise it and never lower it.
+risks:
+  - {id: local, doc: "Affects only the package's own contributions to Ono."}
+  - {id: observe, doc: "Reads state that already exists."}
+  - {id: sensitive-read, doc: "Reads files or secrets."}
+  - {id: execute, doc: "Runs a program."}
+  - {id: mutate, doc: "Changes state reversibly."}
+  - {id: destructive, doc: "Changes state in a way that destroys something."}
+
+# The consent classes of K11P §7, and what each may be decided as (ADR-0600 §2).
+classes:
+  - id: extension-local
+    letter: A
+    phases: [automatic, install, jit, explicit]
+    derived_phase: automatic
+    doc: >-
+      Authority the host constrains to the package's own declared contributions. Included in
+      every profile without a question (K11P §7.1).
+  - id: observation
+    letter: B
+    phases: [install, jit, explicit]
+    derived_phase: install
+    doc: >-
+      The package's core non-mutating purpose. May be in the recommended profile when its scope
+      is bounded and visible (K11P §7.2).
+  - id: conditional
+    letter: C
+    phases: [jit, explicit]
+    derived_phase: jit
+    doc: >-
+      The concrete scope is known only at use: asked just in time, for exactly that value
+      (K11P §7.3, §14). A recommended profile may carry one only with a concrete program scope.
+  - id: explicit
+    letter: D
+    phases: [explicit]
+    derived_phase: explicit
+    doc: >-
+      Changes external or host state. Never in the recommended profile; the user chooses an
+      operating profile or sets the permission later (K11P §7.4).
+  - id: destructive
+    letter: E
+    phases: [explicit]
+    derived_phase: explicit
+    doc: >-
+      Destructive or exceptional authority. Explicit consent, and never enabled by `--confirm`
+      or any unattended acceptance (K11P §7.5).
+
+# ---------------------------------------------------------------------------------------------
+# Every capability family, classified. `title` is the host's own wording for a derived
+# permission (K11P §8.1); `kind` and `risk` are the floor a descriptor over the family starts
+# from. `relation.write` is the one family whose class depends on its scope: bounded to the
+# package's contributions (`package-contributions`, or a `relations` scope) it is class A; a
+# broad grant that could name another provider's relation is class D (K11P §7.1).
+# ---------------------------------------------------------------------------------------------
+families:
+  - {id: object.read, class: observation, risk: observe, kind: host-observe, title: "Read objects Ono already knows"}
+  - {id: schema.read, class: extension-local, risk: local, kind: local-contribution, title: "Read object schemas"}
+  - {id: process.read, class: observation, risk: observe, kind: host-observe, title: "Read processes"}
+  - {id: process.signal, class: explicit, risk: mutate, kind: host-change, title: "Send signals to processes"}
+  - {id: process.exec, class: conditional, risk: execute, kind: execute-helper, title: "Run external programs"}
+  - {id: filesystem.read, class: observation, risk: sensitive-read, kind: filesystem-read, title: "Read files"}
+  - {id: filesystem.write, class: destructive, risk: destructive, kind: filesystem-write, title: "Create, change or delete files"}
+  - {id: filesystem.watch, class: observation, risk: observe, kind: filesystem-read, title: "Watch files for changes"}
+  - {id: network.observe, class: observation, risk: observe, kind: host-observe, title: "Observe network state"}
+  - {id: network.connect, class: observation, risk: observe, kind: external-observe, title: "Connect to network hosts"}
+  - {id: network.listen, class: explicit, risk: mutate, kind: host-change, title: "Accept incoming network connections"}
+  - {id: service.read, class: observation, risk: observe, kind: host-observe, title: "Read services"}
+  - {id: service.mutate, class: explicit, risk: mutate, kind: host-change, title: "Start, stop or change services"}
+  - {id: container.read, class: observation, risk: observe, kind: host-observe, title: "Read containers"}
+  - {id: container.exec, class: conditional, risk: execute, kind: execute-helper, title: "Run programs inside containers"}
+  - {id: remote.read, class: observation, risk: observe, kind: host-observe, title: "Read objects on linked hosts"}
+  - {id: remote.mutate, class: explicit, risk: mutate, kind: host-change, title: "Change objects on linked hosts"}
+  - {id: history.read, class: observation, risk: observe, kind: host-observe, title: "Read the session history"}
+  - {id: history.write, class: extension-local, risk: local, kind: local-contribution, title: "Add entries to the session history"}
+  - {id: context.read, class: observation, risk: observe, kind: host-observe, title: "Read the current context"}
+  - {id: ui.view, class: extension-local, risk: local, kind: local-contribution, title: "Show a view in the terminal"}
+  - {id: ui.notify, class: extension-local, risk: local, kind: local-contribution, title: "Show notifications"}
+  - {id: relation.read, class: observation, risk: observe, kind: host-observe, title: "Read relationships"}
+  - {id: relation.write, class: explicit, bounded_class: extension-local, risk: mutate, bounded_risk: local, kind: host-change, bounded_kind: local-contribution, title: "Add relationships to Ono"}
+  - {id: secret.use, class: observation, risk: sensitive-read, kind: secret-use, title: "Use secrets without exposing their values"}
+  - {id: model.infer, class: explicit, risk: mutate, kind: model-use, title: "Send requests to a model provider"}
+  - {id: plugin.invoke, class: explicit, risk: mutate, kind: host-change, title: "Invoke other plugins"}
+  - {id: state.persist, class: extension-local, risk: local, kind: local-contribution, title: "Keep its own state between sessions"}
+  - {id: clock.read, class: extension-local, risk: local, kind: local-contribution, title: "Read the clock"}
+  - {id: provider.mutate, class: explicit, risk: mutate, kind: external-change, title: "Change resources in the external system"}
+
+# ---------------------------------------------------------------------------------------------
+# A permission descriptor, as a `kuang-package/2` manifest declares one under
+# `permissions.requests` (K11P §6.2, §8.2; `manifest.v1.yaml` → `permissions`).
+# ---------------------------------------------------------------------------------------------
+descriptor:
+  fields:
+    id: {type: string, required: true, doc: "A package-local stable kebab slug (K11P §6.3). Never reused for materially different authority: a changed mapping is an upgrade delta."}
+    kind: {type: enum, required: true, doc: "One of `kinds`."}
+    title: {type: string, required: true, doc: "Package text, sanitised, at most 120 characters, no line break (K11P §8.3)."}
+    purpose: {type: string, nullable: true, doc: "Package text, sanitised, at most 240 characters."}
+    phase: {type: enum, required: true, doc: "One of `phases`, no earlier than the class of every capability it grants allows."}
+    recommended: {type: bool, required: true, doc: "Whether it may sit in the recommended profile. True only for a safe default (see `profiles.rules`)."}
+    risk: {type: enum, nullable: true, doc: "One of `risks`. Absent means the host's floor; present may only raise it."}
+    grants: {type: list<record>, required: true, doc: "At least one `{capability, scope}`; every capability is declared in the manifest's `capabilities` section."}
+    scope_text: {type: string, nullable: true, doc: "The package's rendering of the scope. The host renders the exact scope beside it in every detailed view (K11P §19.2)."}
+  grant_scope:
+    doc: >-
+      `scope` is a record of scope keys the capability declares (`capabilities.v1.yaml`), or one
+      of three words. A word is not a wildcard: the host resolves it to an exact value.
+    words:
+      - {word: runtime-derived, families: any-scoped, doc: "The host derives the concrete value from validated data at the time of use and grants only that value (K11P §19.3)."}
+      - {word: package-contributions, families: [relation.write], doc: "The relation ids derived from the package's own `contributions.relations` (K11P §7.1)."}
+      - {word: provider-instance, families: [provider.mutate], doc: "The provider instance the package fronts."}
+  derived:
+    doc: >-
+      A package that declares no `permissions` section, and every declared capability a declared
+      section leaves unmapped, gets a derived descriptor (K11P §8.1): id `<family with . as ->`,
+      the family's `title`, the manifest's own scope (a bare `relation.write` becomes
+      `package-contributions`), kind, risk and phase from the class, `recommended` for classes A
+      and B. A required class C capability is decided `explicit`, because a prompt cannot precede
+      a load. A derived descriptor over a capability a declared section left out is in no
+      declared profile, so nothing is granted by being left out.
+
+# ---------------------------------------------------------------------------------------------
+# Access profiles (K11P §4.6, §9).
+# ---------------------------------------------------------------------------------------------
+profiles:
+  required: [minimal, recommended]
+  default: recommended
+  rules:
+    - "`minimal` and `recommended` exist whenever the package has any permission request; a derived layer has both."
+    - "A safe default is decided at install or automatic, below the `mutate` risk, over class A or B capabilities — or class C with a concrete `programs`/`executables` scope. `minimal`, `recommended` and every `recommended: true` descriptor consist only of safe defaults; a manifest that breaks this is `permission.invalid_mapping` before any code runs (K11P §9.1, §21.4, §34.6)."
+    - "A profile may add explicit permissions — `operate` is the canonical one for an external-system provider — and the host appends the derived risk to its name wherever it is offered (K11P §9.3)."
+    - "Selecting a profile decides every permission it names `allow`; automatic permissions are included in every profile."
+
+# ---------------------------------------------------------------------------------------------
+# A decision, and the record that keeps it (K11P §23.1, ADR-0604).
+# ---------------------------------------------------------------------------------------------
+decision:
+  values: [allow, deny, ask]
+  durations: [once, session, always]
+  store: "<config dir>/kuang/permissions.yaml, format kuang-permissions/1; only `always` decisions are stored"
+  record:
+    fields:
+      decision: {type: enum, required: true, doc: "`allow`, `deny` or `ask`."}
+      duration: {type: enum, required: true, doc: "`always` in the store; `session` and `once` live in the session."}
+      profile: {type: string, nullable: true, doc: "The profile that selected it, or null for a decision made one at a time."}
+      created_at: {type: timestamp, required: true}
+      updated_at: {type: timestamp, required: true}
+      grants: {type: list<uuid>, required: true, doc: "The capability grants the decision minted, as `policy.yaml` records them."}
+      package_version: {type: string, required: true, doc: "The version consented to (K11P §23.1)."}
+      publisher: {type: string, required: true, doc: "The signing key at consent, or `unsigned`. A retained decision applies on reinstall only when both the id and this match (K11P §22.3)."}
+  rules:
+    - "`policy.yaml` stays what the broker enforces; a decision names the grants it minted and a grant names the permission and profile that minted it, so the two stores describe one fact from two sides."
+    - "A decision is executed by minting grants through the same policy every manual grant goes through. There is no second security engine (K11P §6.1)."
+    - "A `deny` records an operator deny the broker honours ahead of any grant; an `ask` clears the decision and any remembered denial."
+
+# ---------------------------------------------------------------------------------------------
+# Just-in-time consent (K11P §14, ADR-0603).
+# ---------------------------------------------------------------------------------------------
+jit:
+  asked_when: "the broker's evaluation is `Denied(Default)` — never a system or operator deny — for a capability whose permission phase is `jit`"
+  answers:
+    - {answer: once, effect: "this evaluation proceeds; nothing is stored; audited as `permission.allow` with duration `once`"}
+    - {answer: session, effect: "a session grant scoped to the exact value in use, added to the live policy"}
+    - {answer: always, effect: "the same grant with duration `always`, written to `policy.yaml`, with a decision record"}
+    - {answer: deny, effect: "`permission.denied`; remembered for the session for that exact scope"}
+  rules:
+    - "`always for this program` grants `process.exec` scoped to the resolved executable path and nothing wider (K11P §14.3, §34.7)."
+    - "Where no one can be asked, the answer is `permission.required` carrying `plugin`, `permission`, `capability`, `requested_scope`, `reason` and a `remedy` command line (K11P §20.3). Nothing is assumed."
+    - "`capabilities.check` answers `ask` for a capability a just-in-time permission governs and no decision covers; asking never prompts (protocol.v1.yaml)."
+
+# ---------------------------------------------------------------------------------------------
+# The audit events one decision produces (K11P §23.2).
+# ---------------------------------------------------------------------------------------------
+audit:
+  events: [permission.allow, permission.deny, permission.ask, permission.profile_apply, capability.grant, capability.revoke]
+  rules:
+    - "One user action mints one correlation id and stamps it on the `permission.*` event and on every grant or revocation it produced (`ono.plugin-audit-event/1.correlation`)."
+
+# ---------------------------------------------------------------------------------------------
+# What makes an upgrade need renewed consent (K11P §21.3, ADR-0604 §3).
+# ---------------------------------------------------------------------------------------------
+delta:
+  kinds:
+    - {id: added, doc: "A permission newly in the selected profile."}
+    - {id: capability-added, doc: "A permission that resolves to a capability it did not before."}
+    - {id: scope-widened, doc: "A scope that became broader, including one that stopped being bounded."}
+    - {id: risk-raised, doc: "A risk that rose."}
+    - {id: phase-loosened, doc: "A permission that moved from asked or explicit towards automatic or recommended."}
+    - {id: enforcement-weakened, doc: "A boundary that became advisory."}
+    - {id: repurposed, doc: "A permission id whose kind or capability set changed shape."}
+  rules:
+    - "An empty delta keeps every decision without a prompt and reports `Permissions unchanged.`"
+    - "A non-empty delta is shown line by line and needs consent before the upgrade commits; declining leaves the installed version intact."

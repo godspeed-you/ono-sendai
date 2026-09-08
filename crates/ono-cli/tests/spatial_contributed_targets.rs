@@ -403,12 +403,16 @@ fn should_say_that_no_domain_holds_a_contributed_place_when_up_has_nowhere_to_go
     // nowhere to go. §40 wants the refusal to say which question failed, and "you are at the top
     // of this host" would be an answer about the host rather than about the place.
     let home = support::echo_plugin_home_with(ECHO, TARGETS_WITH_ZONE, &[PLACE_TO_ZONE]);
-    // Without `relation.write` the package contributes no edge, so the parent it declared cannot
-    // be reached — and the refusal says which grant is missing rather than that the host's
-    // hierarchy ends here (ADR-0597).
+    // With `relation.write` denied the package contributes no edge, so the parent it declared
+    // cannot be reached — and the refusal says which grant is missing rather than that the
+    // host's hierarchy ends here (ADR-0597). Denied rather than merely not granted, because a
+    // bounded relation contribution is included without a question (K11P §7.1).
     let run = ono_with_plugins(
         &home,
-        &format!("load plugin {ECHO}; get echo-place | where uid == \"u-3\" | enter; up"),
+        &format!(
+            "set permission {ECHO} relation-write --decision deny | count; \
+             load plugin {ECHO}; get echo-place | where uid == \"u-3\" | enter; up"
+        ),
     );
     assert!(
         run.stderr()

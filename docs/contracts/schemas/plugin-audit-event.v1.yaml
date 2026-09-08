@@ -83,5 +83,13 @@ fields:
     type: ono.error/1
     nullable: true
     doc: The structured error, for `denied` and `failed`. Null for `success`.
+  correlation:
+    type: string
+    nullable: true
+    doc: >-
+      The request one user action minted — a profile applied, a just-in-time answer, a
+      `set permission` — shared by the `permission.*` event and every `capability.grant` or
+      `capability.revoke` it produced, so the trail can be read as one decision rather than as
+      several (K11P §23.2, ADR-0604). Null for an action that stands on its own.
 default_view:
   columns: [at, plugin, capability, action, target, result]

@@ -1,0 +1,160 @@
+# K11P §10, §11, §12, §16 (ADR-0600, ADR-0601, ADR-0602, ADR-0604): a plugin is installed by its
+# short name through a catalog, in one transaction that ends ready — no `load plugin`, no
+# `grant capability` — with its recommended access decided in human terms, the exact
+# capabilities inspectable underneath, the decision and its grants stored and correlated, and
+# the native tier described honestly. Gates A, C, D, E, G, M, V.
+case: a plugin is installed by its short name and is ready to use with its recommended access
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export ONO_PLUGIN_SOURCES="$home/sources"
+  export ONO_SYSTEM_CONFIG_DIR="$home/system"
+  export HOME="$home/home"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  export XDG_CACHE_HOME="$home/cache"
+  export ONO_CONFIG_DIR="$home/config/ono"
+  mkdir -p "$home/plugins" "$home/home" "$home/config/ono/kuang/catalogs"
+  # A `kuang-package/2` package in the shape of the reference provider (K11P §8.2), over the
+  # example runtime: observation recommended, relationships automatic, a login helper asked
+  # just in time, mutation explicit.
+  lay_out() {
+    mkdir -p "$1/$2/runtime" "$1/$2/contributions"
+    cp /usr/local/bin/kuang-example-plugin "$1/$2/runtime/echo"
+    cat > "$1/$2/manifest.yaml" <<MANIFEST
+  format: kuang-package/2
+  package:
+    id: $2
+    name: $3
+    version: $4
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.2 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - network.connect
+      - process.signal
+      - filesystem.read: {paths: ["$5"]}
+      - secret.use
+      - clock.read
+      - relation.write
+      - process.exec
+  network:
+    outbound: none
+  contributions:
+    commands: [contributions/commands.yaml]
+  permissions:
+    profiles:
+      minimal: {title: Minimal, permissions: [spatial-relations]}
+      recommended: {title: Recommended, permissions: [cluster-access, kubeconfig-read, credential-use, spatial-relations]}
+      operate: {title: Observe and change, permissions: [cluster-access, kubeconfig-read, credential-use, spatial-relations, cluster-mutation]}
+    requests:
+      - {id: cluster-access, kind: external-observe, title: Connect to clusters, phase: install, recommended: true, grants: [{capability: network.connect, scope: runtime-derived}]}
+      - {id: kubeconfig-read, kind: filesystem-read, title: Read cluster configuration, phase: install, recommended: true, grants: [{capability: filesystem.read, scope: {paths: ["$5"]}}]}
+      - {id: credential-use, kind: secret-use, title: Use credentials without exposing their values, phase: install, recommended: true, grants: [{capability: secret.use}]}
+      - {id: spatial-relations, kind: local-contribution, title: Add relationships to Ono, phase: automatic, recommended: true, grants: [{capability: relation.write, scope: package-contributions}]}
+      - {id: login-helper, kind: execute-helper, title: Run an external login helper when a context requires it, purpose: authenticate to the selected context, phase: jit, recommended: false, grants: [{capability: process.exec, scope: runtime-derived}]}
+      - {id: cluster-mutation, kind: host-change, title: Change resources, phase: explicit, recommended: false, grants: [{capability: process.signal}]}
+  MANIFEST
+    cat > "$1/$2/contributions/commands.yaml" <<CONTRIB
+  commands:
+    - id: $2.command.emit
+      verb: get
+      target: echo-item
+      summary: Emit a counted stream of integers.
+      output: stream<int>
+      argument_mode: expression
+      capabilities: []
+      examples:
+        - get echo-item --count 3
+    - id: $2.command.exec
+      verb: get
+      target: echo-exec
+      summary: Run a program through the host and report its output.
+      output: stream<string>
+      argument_mode: expression
+      capabilities: [process.exec]
+      examples:
+        - get echo-exec --program /bin/true
+    - id: $2.command.signal
+      verb: get
+      target: echo-signal
+      summary: Send a signal to a process through the host.
+      output: stream<string>
+      argument_mode: expression
+      capabilities: [process.signal]
+      examples:
+        - get echo-signal --pid 1 --signal TERM
+  CONTRIB
+  }
+  catalog() {
+    cat > "$home/config/ono/kuang/catalogs/$1.yaml" <<CATALOG
+  format: kuang-catalog/1
+  catalog:
+    name: $1
+    description: A test catalog.
+  entries:
+    - id: $2
+      name: $3
+      description: A package from the catalog.
+      publisher: dev.example
+      releases:
+        - version: $4
+          platforms: [linux-amd64, linux-arm64]
+          kuang_api: ">=11.1 <12"
+          artifact: "git:https://example.invalid/$3#v$4"
+  CATALOG
+  }
+  lay_out "$home/sources" dev.example.echo echo 0.1.0 "$home/home/.kube/config"
+  catalog test dev.example.echo echo 0.1.0
+
+  echo "== the catalog answers the search, and says how it is known (K11P §11.3, §11.6) =="
+  ono -c 'find plugin echo | select name id catalog catalog_verification installed | to json'
+
+  echo "== a script never waits for the prompt; the refusal carries the plan (spec §17.4, K11P §20.1) =="
+  ono -c 'install plugin echo' 2>&1 | head -1
+
+  echo "== one command: resolved, verified, installed, enabled, decided, registered, ready (K11P §12) =="
+  ono -c 'install plugin echo --confirm | select status changed | to json; get plugin | select id readiness state enabled | to json; get echo-item --count 3 | to json'
+
+  echo "== the recommended access in human terms, with the capability underneath (K11P §16.1) =="
+  ono -c 'get permission echo | select id state when | to json'
+  ono -c 'get permission echo --all | where id == "clock-read" | select state | to json'
+  ono -c 'get capability --plugin dev.example.echo | where capability == "filesystem.read" | select decision permission profile duration | to json'
+  test -f "$home/config/ono/kuang/policy.yaml" && test -f "$home/config/ono/kuang/permissions.yaml" && echo "stores=ok"
+
+  echo "== the native tier is what it is, and no more (v0.4.1 §15.2, K11P §27.1) =="
+  ono -c 'inspect plugin echo | select readiness | to json'
+  ono -c 'inspect plugin echo | select isolation_statement | to json' | grep -q 'not complete filesystem or network isolation' && echo "isolation=honest"
+
+  echo "== one decision, one correlation id across the profile and every grant it minted (K11P §23.2) =="
+  ono -c 'get audit --plugin dev.example.echo | where action == "capability.grant" or action == "permission.profile_apply" | select correlation | to json' | tr ',' '\n' | sort -u | wc -l | sed 's/^ *1$/correlated=ok/'
+exit: 0
+stdout-contains: {"name":"echo","id":"dev.example.echo","catalog":"test","catalog_verification":"operator","installed":false}
+stdout-contains: Ono-Sendai-E0701
+stdout-contains: {"status":"success","changed":true}
+stdout-contains: {"id":"dev.example.echo","readiness":"ready","state":"installed","enabled":true}
+stdout-contains: [1,2,3]
+stdout-contains: {"id":"cluster-access","state":"allowed","when":"always"}
+stdout-contains: {"id":"spatial-relations","state":"included","when":"automatic"}
+stdout-contains: {"id":"login-helper","state":"ask","when":"when-needed"}
+stdout-contains: {"id":"cluster-mutation","state":"denied","when":"explicit"}
+stdout-contains: {"state":"included"}
+stdout-contains: {"decision":"allow","permission":"kubeconfig-read","profile":"recommended","duration":"always"}
+stdout-contains: stores=ok
+stdout-contains: {"readiness":"ready"}
+stdout-contains: isolation=honest
+stdout-contains: correlated=ok
+stdout-not-contains: panicked

@@ -1,0 +1,106 @@
+# Permission. Source: `docs/kuang11/kuang11-plugin-installation-permissions-spec.md` (K11P) §4.4
+# (a permission is a user-facing statement that maps to capabilities), §6.2 (the descriptor),
+# §16.1 (`get permission`'s table), §23.3 (explainability), §28.3 (the projection of existing
+# grants). Output of `get permission` and `set permission` (`docs/contracts/commands/kuang.yaml`
+# → `ono.permission.get`, `ono.permission.set`). Decisions: ADR-0600, ADR-0604.
+#
+# One record is one permission of one package, seen from the human side, with the exact
+# capabilities underneath it in the same record: the compact table shows the human columns and
+# `to json` shows all of it, so nobody who wants precision loses it (K11P §5.3, invariant 6).
+id: ono.permission/1
+name: Permission
+summary: What one KUANG/11 package is permitted to do, in human terms, and the capabilities underneath.
+identity: [plugin, id]
+fields:
+  plugin:
+    type: ref<ono.plugin/1>
+    required: true
+    doc: The package the permission belongs to, by canonical id.
+  id:
+    type: string
+    required: true
+    doc: The package-local permission id, e.g. `cluster-access`, or `capability:<family>` for a legacy grant no descriptor maps.
+  title:
+    type: string
+    required: true
+    doc: The human statement, package-authored and sanitised, or the host's own wording for a derived permission.
+  purpose:
+    type: string
+    nullable: true
+    doc: Why the package needs it, package-authored and sanitised. Null when the package said nothing.
+  kind:
+    type: enum
+    required: true
+    values: [external-observe, external-change, filesystem-read, filesystem-write, execute-helper, secret-use, local-contribution, model-use, host-observe, host-change, other-sensitive]
+    doc: The host-controlled kind of K11P §6.4, rendered beside the title whatever the title says.
+  phase:
+    type: enum
+    required: true
+    values: [automatic, install, jit, explicit]
+    doc: When it is decided (K11P §6.5).
+  risk:
+    type: enum
+    required: true
+    values: [local, observe, sensitive-read, execute, mutate, destructive]
+    doc: The risk, never below the host's floor for what it grants (K11P §6.6).
+  recommended:
+    type: bool
+    required: true
+    doc: Whether it is part of the package's recommended profile.
+  state:
+    type: enum
+    required: true
+    values: [allowed, denied, ask, included, custom, legacy]
+    doc: >-
+      The standing decision. `included` is an automatic permission the host grants without a
+      question; `ask` is a just-in-time permission nothing has decided, or one set back to
+      asking; `custom` is a permission whose capabilities are held by grants that do not match
+      its mapping exactly — wider, narrower, or made by hand with `grant capability`; `legacy`
+      is a standing grant no descriptor maps (K11P §28.3, Gate L).
+  when:
+    type: enum
+    required: true
+    values: [always, session, once, automatic, when-needed, explicit]
+    doc: >-
+      The duration of the decision, or when it would be made — `when-needed` for an undecided
+      just-in-time permission, `explicit` for an undecided explicit one.
+  scope:
+    type: string
+    nullable: true
+    doc: The human rendering of the scope (K11P §19.1). Null for a permission with nothing to scope.
+  capabilities:
+    type: list<string>
+    required: true
+    doc: The exact capability ids the permission resolves to, from `kuang_capabilities` of `docs/contracts/capabilities.yaml`.
+  grants:
+    type: list<record>
+    required: true
+    doc: >-
+      One `{capability, scope, enforcement, decision, source, duration, grant}` per capability:
+      the exact scope record or scope word, whether the broker enforces it, the broker's standing
+      decision for it, which layer produced that decision, how long it lasts, and the grant id
+      when a grant stands. This is where `details` and `get permission --all` read from.
+  enforcement:
+    type: enum
+    required: true
+    values: [broker, advisory]
+    doc: The weakest enforcement among the permission's scopes; an advisory scope is never shown as a boundary (K11P §18.3, §19.3).
+  source:
+    type: enum
+    nullable: true
+    values: [system-policy, user-policy, session, prompt, default, automatic]
+    doc: Which layer produced the standing decision. Null when nothing has decided it.
+  profile:
+    type: string
+    nullable: true
+    doc: The access profile that selected it, when a profile did.
+  derived:
+    type: bool
+    required: true
+    doc: Whether the host derived the permission because the package declared none for the capability (K11P §8.1).
+  decided_at:
+    type: timestamp
+    nullable: true
+    doc: When the standing decision was made. Null when nothing has decided it.
+default_view:
+  columns: [title, state, when, scope]

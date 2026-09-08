@@ -585,6 +585,38 @@ errors:
       `limits.remote_handshake_timeout_ms`. A link dropped this way is worth retrying: nothing
       about the client was refused.
 
+  # --- plugin references: names, catalogs and releases (K11P §10, §11, §24.1; ADR-0601, ADR-0605)
+  - code: Ono-Sendai-E1601
+    name: plugin.not_found
+    kind: resolution
+    summary: No installed package and no catalog entry answers to the plugin reference.
+    help: >-
+      `find plugin <word>` searches the installed set and every catalog; `get plugin` lists what is
+      installed. A short name is the package's `name`, a canonical id its reverse-DNS `id`, and
+      `./dir` or `path:<dir>` an explicit local package (K11P section 4.1).
+  - code: Ono-Sendai-E1602
+    name: plugin.reference_ambiguous
+    kind: resolution
+    summary: The short name resolves to more than one canonical package.
+    help: >-
+      The metadata lists every candidate as a canonical id and a `<catalog>/<name>` selector.
+      Name one of those; nothing is chosen by catalog order or by publisher (K11P section 10.3).
+  - code: Ono-Sendai-E1603
+    name: plugin.catalog_unavailable
+    kind: resolution
+    summary: The catalog names the release and its artifact is not available to this build.
+    help: >-
+      This build fetches nothing over the network. Place the unpacked package under one of the
+      local package sources the metadata names, or install it from an explicit path with
+      `install plugin path:<dir>` (ADR-0601 section 3).
+  - code: Ono-Sendai-E1604
+    name: plugin.release_not_compatible
+    kind: conflict
+    summary: No release of the package the catalog offers can run on this host.
+    help: >-
+      Every release was excluded by its `platforms` or its `kuang_api` range; the metadata says
+      which. A package version is never installed to be found incompatible at load.
+
   # --- KUANG/11, spec §31.79 (folded into the global model by ADR-0108) ---------------------
   - code: Ono-Sendai-K11001
     name: package.invalid
@@ -700,6 +732,42 @@ errors:
     summary: The lease backing this call has expired, been used up, or its condition no longer holds.
     help: >-
       A lease is checked at every use, not at grant time (spec §31.49). Issue a new lease if the delegation is still wanted; a lease is never extended in place, so the audit trail shows two decisions rather than one.
+  - code: Ono-Sendai-K11304
+    name: permission.required
+    kind: permission
+    summary: The operation needs a permission nobody has decided, and this context cannot ask.
+    help: >-
+      A script never waits for a prompt and never assumes consent (K11P section 20.3). The metadata carries the plugin, the permission, the capability, the requested scope, the reason and a `remedy`: a `set permission` or `grant capability` line that decides it deliberately.
+  - code: Ono-Sendai-K11305
+    name: permission.denied
+    kind: permission
+    summary: The operation needs a permission the user denied.
+    help: >-
+      The message leads with the permission and the reason; the capability and the operation are in the metadata (K11P section 24.4). `get permission <plugin>` shows the decision, and `set permission <plugin> <permission> --decision allow` or `--decision ask` changes it.
+  - code: Ono-Sendai-K11306
+    name: permission.invalid_profile
+    kind: resolution
+    summary: The named access profile does not exist for this package.
+    help: >-
+      `inspect plugin <plugin>` lists the profiles a package offers; every package with permission requests offers `minimal` and `recommended` (K11P section 9.1).
+  - code: Ono-Sendai-K11307
+    name: permission.invalid_mapping
+    kind: parse
+    summary: The package's permission declarations do not map validly onto its capabilities.
+    help: >-
+      The manifest is invalid and nothing of the package runs (K11P section 8.2, ADR-0600 section 3). The message names the rule: a permission grants a capability the manifest does not declare, a phase or a risk below the class of what it grants, a `recommended` profile carrying mutation, or a title that could spoof the text beside it.
+  - code: Ono-Sendai-K11308
+    name: permission.scope_unavailable
+    kind: safety
+    summary: The concrete scope a permission needs could not be derived or enforced.
+    help: >-
+      A runtime-derived scope is granted for the exact value in use; where that value cannot be established or the broker cannot enforce it, the permission is refused rather than granted wider (K11P section 19.3).
+  - code: Ono-Sendai-K11309
+    name: permission.escalation_requires_confirmation
+    kind: safety
+    summary: The permission widens authority and needs a deliberate confirmation this context cannot give.
+    help: >-
+      A destructive permission is never enabled by `--confirm` or any unattended acceptance (K11P section 7.5), and a mutating profile applied non-interactively must be named outright. Re-run interactively, or name the profile or permission on the command line together with `--confirm`.
   - code: Ono-Sendai-K11401
     name: state.quota_exceeded
     kind: safety

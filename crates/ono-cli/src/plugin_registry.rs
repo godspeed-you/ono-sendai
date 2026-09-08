@@ -10,7 +10,6 @@
 //! one — the same boundary spec §31.8 already draws between installing and having.
 
 use std::path::PathBuf;
-use std::sync::OnceLock;
 
 use ono_command::{
     CommandContract, CommandRegistry, ContributedCommand, ContributedParameter, Origin,
@@ -32,15 +31,43 @@ use crate::kuang_host::{Installed, packages_under};
 /// whose declaration does not read is *not* an error here: it is refused, and the refusal is
 /// available through [`refusals`].
 pub fn registry() -> Result<&'static CommandRegistry, ErrorValue> {
-    if let Some((registry, _)) = EXTENDED.get() {
+    if let Some((registry, _)) = current() {
         return Ok(registry);
     }
+    let built = build()?;
+    let mut slot = EXTENDED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (registry, _) = slot.get_or_insert(built);
+    Ok(registry)
+}
+
+/// Rebuilds the registry from disk, so a package installed or removed in this session has its
+/// contributions as placeholders now rather than in the next session (ADR-0602 §2).
+///
+/// The registry hands out `'static` references, so a rebuilt one is leaked like the first; an
+/// install is rare and the cost is one registry per install in this process.
+pub fn refresh() {
+    if let Ok(built) = build() {
+        let mut slot = EXTENDED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *slot = Some(built);
+    }
+}
+
+fn current() -> Option<&'static (CommandRegistry, Vec<ErrorValue>)> {
+    *EXTENDED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn build() -> Result<&'static (CommandRegistry, Vec<ErrorValue>), ErrorValue> {
     let embedded = CommandRegistry::embedded()?;
     let (declared, mut problems) = declared_commands(&plugin_path());
     let (extended, refused) = embedded.extended(declared);
     problems.extend(refused);
-    let (registry, _) = EXTENDED.get_or_init(|| (extended, problems));
-    Ok(registry)
+    Ok(Box::leak(Box::new((extended, problems))))
 }
 
 /// Every contributed declaration this process refused, and why (spec §31.65).
@@ -50,13 +77,13 @@ pub fn registry() -> Result<&'static CommandRegistry, ErrorValue> {
 #[must_use]
 pub fn refusals() -> Vec<ErrorValue> {
     let _ = registry();
-    EXTENDED
-        .get()
+    current()
         .map(|(_, problems)| problems.clone())
         .unwrap_or_default()
 }
 
-static EXTENDED: OnceLock<(CommandRegistry, Vec<ErrorValue>)> = OnceLock::new();
+static EXTENDED: std::sync::Mutex<Option<&'static (CommandRegistry, Vec<ErrorValue>)>> =
+    std::sync::Mutex::new(None);
 
 /// The directories `ONO_PLUGIN_PATH` names, or the user's plugin directory.
 ///

@@ -42,6 +42,7 @@ The nouns of spec §8 — the resources a verb acts on. `schema` names the objec
 | `signal` | system | `—` | planned | A Unix signal, as the object a `send` or `kill` delivers. |
 | `plugin` | system | `—` | I | A KUANG/11 package in one of its install/enable/load states (spec §31.8). |
 | `capability` | system | `—` | I | A KUANG/11 capability definition, request, grant or lease (spec §31.16). |
+| `permission` | system | `ono.permission/1` | I | What a KUANG/11 package is permitted to do, in human terms, and the capabilities underneath (K11P §4.4). |
 | `assistant` | system | `—` | I | A loaded assistant extension (spec §31.41). |
 | `model` | system | `—` | I | A configured model provider and its policy characteristics (spec §31.43). |
 | `view` | system | `—` | I | A specialized view or TUI lens contributed by a package (spec §31.27). |

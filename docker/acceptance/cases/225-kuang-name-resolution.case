@@ -1,0 +1,171 @@
+# K11P §4.1, §10, §11, §24.1, §33 Gates Q and R (ADR-0601, ADR-0605): a name nothing answers to,
+# a name two catalogs answer with different packages, a release this build cannot reach, a
+# release this host cannot run — each its own structured refusal; a `<catalog>/<name>` selector
+# settles the ambiguity; and every command that takes the canonical id takes the short name.
+case: a plugin reference resolves deterministically, and a short name works wherever an id does
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export ONO_PLUGIN_SOURCES="$home/sources"
+  export ONO_SYSTEM_CONFIG_DIR="$home/system"
+  export HOME="$home/home"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  export XDG_CACHE_HOME="$home/cache"
+  export ONO_CONFIG_DIR="$home/config/ono"
+  mkdir -p "$home/plugins" "$home/home" "$home/config/ono/kuang/catalogs"
+  # A `kuang-package/2` package in the shape of the reference provider (K11P §8.2), over the
+  # example runtime: observation recommended, relationships automatic, a login helper asked
+  # just in time, mutation explicit.
+  lay_out() {
+    mkdir -p "$1/$2/runtime" "$1/$2/contributions"
+    cp /usr/local/bin/kuang-example-plugin "$1/$2/runtime/echo"
+    cat > "$1/$2/manifest.yaml" <<MANIFEST
+  format: kuang-package/2
+  package:
+    id: $2
+    name: $3
+    version: $4
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.2 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - network.connect
+      - process.signal
+      - filesystem.read: {paths: ["$5"]}
+      - secret.use
+      - clock.read
+      - relation.write
+      - process.exec
+  network:
+    outbound: none
+  contributions:
+    commands: [contributions/commands.yaml]
+  permissions:
+    profiles:
+      minimal: {title: Minimal, permissions: [spatial-relations]}
+      recommended: {title: Recommended, permissions: [cluster-access, kubeconfig-read, credential-use, spatial-relations]}
+      operate: {title: Observe and change, permissions: [cluster-access, kubeconfig-read, credential-use, spatial-relations, cluster-mutation]}
+    requests:
+      - {id: cluster-access, kind: external-observe, title: Connect to clusters, phase: install, recommended: true, grants: [{capability: network.connect, scope: runtime-derived}]}
+      - {id: kubeconfig-read, kind: filesystem-read, title: Read cluster configuration, phase: install, recommended: true, grants: [{capability: filesystem.read, scope: {paths: ["$5"]}}]}
+      - {id: credential-use, kind: secret-use, title: Use credentials without exposing their values, phase: install, recommended: true, grants: [{capability: secret.use}]}
+      - {id: spatial-relations, kind: local-contribution, title: Add relationships to Ono, phase: automatic, recommended: true, grants: [{capability: relation.write, scope: package-contributions}]}
+      - {id: login-helper, kind: execute-helper, title: Run an external login helper when a context requires it, purpose: authenticate to the selected context, phase: jit, recommended: false, grants: [{capability: process.exec, scope: runtime-derived}]}
+      - {id: cluster-mutation, kind: host-change, title: Change resources, phase: explicit, recommended: false, grants: [{capability: process.signal}]}
+  MANIFEST
+    cat > "$1/$2/contributions/commands.yaml" <<CONTRIB
+  commands:
+    - id: $2.command.emit
+      verb: get
+      target: echo-item
+      summary: Emit a counted stream of integers.
+      output: stream<int>
+      argument_mode: expression
+      capabilities: []
+      examples:
+        - get echo-item --count 3
+    - id: $2.command.exec
+      verb: get
+      target: echo-exec
+      summary: Run a program through the host and report its output.
+      output: stream<string>
+      argument_mode: expression
+      capabilities: [process.exec]
+      examples:
+        - get echo-exec --program /bin/true
+    - id: $2.command.signal
+      verb: get
+      target: echo-signal
+      summary: Send a signal to a process through the host.
+      output: stream<string>
+      argument_mode: expression
+      capabilities: [process.signal]
+      examples:
+        - get echo-signal --pid 1 --signal TERM
+  CONTRIB
+  }
+  catalog() {
+    cat > "$home/config/ono/kuang/catalogs/$1.yaml" <<CATALOG
+  format: kuang-catalog/1
+  catalog:
+    name: $1
+    description: A test catalog.
+  entries:
+    - id: $2
+      name: $3
+      description: A package from the catalog.
+      publisher: dev.example
+      releases:
+        - version: $4
+          platforms: [linux-amd64, linux-arm64]
+          kuang_api: ">=11.1 <12"
+          artifact: "git:https://example.invalid/$3#v$4"
+  CATALOG
+  }
+  lay_out "$home/sources" dev.example.echo echo 0.1.0 "$home/home/.kube/config"
+  catalog test dev.example.echo echo 0.1.0
+
+  echo "== not found, unavailable, incompatible: three answers (K11P §24.1) =="
+  ono -c 'install plugin nonesuch --confirm' 2>&1 | head -1
+  catalog remote dev.remote.thing thing 1.0.0
+  ono -c 'install plugin thing --confirm' 2>&1 | head -1
+  cat > "$home/config/ono/kuang/catalogs/future.yaml" <<CATALOG
+  format: kuang-catalog/1
+  catalog:
+    name: future
+  entries:
+    - id: dev.future.thing
+      name: future-thing
+      publisher: dev.future
+      releases:
+        - version: 9.0.0
+          platforms: [linux-amd64, linux-arm64]
+          kuang_api: ">=99"
+          artifact: "git:https://example.invalid/future"
+  CATALOG
+  ono -c 'install plugin future-thing --confirm' 2>&1 | head -1
+
+  echo "== two catalogs, two ids, one name: nothing is chosen by order (Gate Q) =="
+  lay_out "$home/sources" dev.other.echo echo 0.1.0 "$home/home/.kube/config"
+  sed -i 's/publisher: dev.example/publisher: dev.other/' "$home/sources/dev.other.echo/manifest.yaml"
+  catalog second dev.other.echo echo 0.1.0
+  sed -i 's/publisher: dev.example/publisher: dev.other/' "$home/config/ono/kuang/catalogs/second.yaml"
+  ono -c 'install plugin echo --confirm' 2>&1 | head -1
+  ono -c 'install plugin echo --confirm' 2>&1 | grep -q "test/echo" && echo "candidates=named"
+  ono -c 'install plugin second/echo --confirm | select status | to json; get plugin | select id | to json'
+
+  echo "== the short name works wherever the canonical id does (Gate R) =="
+  ono -c 'inspect plugin echo | select readiness | to json'
+  ono -c 'verify plugin echo | select manifest | to json'
+  ono -c 'get permission echo | count | to json'
+  ono -c 'set plugin echo --enabled false | select status | to json; get plugin echo | select readiness | to json'
+  ono -c 'get echo-item --count 1' 2>&1 | head -1
+  ono -c 'set plugin echo --enabled true | count' > /dev/null
+  ono -c 'remove plugin echo | select status | to json; get plugin | count | to json'
+exit: 0
+stdout-contains: Ono-Sendai-E1601
+stdout-contains: Ono-Sendai-E1603
+stdout-contains: Ono-Sendai-E1604
+stdout-contains: Ono-Sendai-E1602
+stdout-contains: candidates=named
+stdout-contains: {"id":"dev.other.echo"}
+stdout-contains: {"readiness":"ready"}
+stdout-contains: {"manifest":"valid"}
+stdout-contains: {"readiness":"blocked"}
+stdout-contains: Ono-Sendai-E0702
+stdout-contains: [0]
+stdout-not-contains: panicked

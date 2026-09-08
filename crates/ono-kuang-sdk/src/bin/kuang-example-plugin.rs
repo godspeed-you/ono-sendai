@@ -498,6 +498,12 @@ fn honest_at_most(at_once: u32) -> Plugin {
             &["process.exec"],
         ))
         .contribute_command(command(
+            "check",
+            "Ask the host whether a capability would be granted, without prompting.",
+            "stream<string>",
+            &[],
+        ))
+        .contribute_command(command(
             "connect",
             "Open a brokered connection, send a line, and report what came back.",
             "stream<string>",
@@ -1253,6 +1259,26 @@ fn honest_at_most(at_once: u32) -> Plugin {
                 Err(_) => "error",
             };
             let _ = ctx.emit(&Value::String(format!("filesystem.read:{answer}").into()));
+            Outcome::Completed
+        })
+        // `capabilities.check` never prompts (spec §31.61): a package asks before it composes a
+        // call, and `ask` is the answer that says the host would ask a person at the call itself
+        // (ADR-0603 §4).
+        .command(&format!("{PACKAGE}.command.check"), |ctx| {
+            let capability = ctx
+                .arguments()
+                .get("capability")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("filesystem.read")
+                .to_owned();
+            let answer = match ctx.check_capability(&capability) {
+                Ok(ono_kuang_protocol::CheckAnswer::Granted) => "granted",
+                Ok(ono_kuang_protocol::CheckAnswer::Denied) => "denied",
+                Ok(ono_kuang_protocol::CheckAnswer::Ask) => "ask",
+                Ok(ono_kuang_protocol::CheckAnswer::Unknown) => "unknown",
+                Err(_) => "error",
+            };
+            let _ = ctx.emit(&Value::String(format!("{capability}:{answer}").into()));
             Outcome::Completed
         })
         .command(&format!("{PACKAGE}.command.state-write"), |ctx| {

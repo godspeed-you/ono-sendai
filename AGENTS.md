@@ -68,6 +68,9 @@ ono-sendai/
     │   └── cncf-readiness.md
     ├── architecture/             cross-cutting contracts tied to no numbered release
     │   └── external-system-provider.md
+    ├── kuang11/                  the KUANG/11 plugin installation, resolution and permission
+    │   │                         UX specification (K11P) — cross-cutting, the user placed it here
+    │   └── kuang11-plugin-installation-permissions-spec.md
     ├── STATE.md                  progress board (§9)
     ├── ACCEPTANCE.md             definition of release-ready + stopping rule (§15)
     ├── adr/ADR-*.md              recorded agent decisions (§8)

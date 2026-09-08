@@ -251,6 +251,14 @@ targets:
     summary: A KUANG/11 capability definition, request, grant or lease (spec §31.16).
     schema: null
     phase: I
+  # The human layer over `capability` (K11P §16, ADR-0604): what a package is permitted to do,
+  # in the user's terms, with the capabilities underneath in the same record.
+  - id: ono.target.permission
+    name: permission
+    category: system
+    summary: What a KUANG/11 package is permitted to do, in human terms, and the capabilities underneath (K11P §4.4).
+    schema: ono.permission/1
+    phase: I
   - id: ono.target.assistant
     name: assistant
     category: system

@@ -754,7 +754,7 @@ in `docs/dogfood/v0.4-2026-08-28.md`, and in the issue tracker (ADR-0425).
 - [x] **KUANG/11 can extend spatial relationships under capabilities** (§36). A package's edges
       stay out of the map until its capability is granted and carry the contributing package as
       their origin when they appear —
-      `spatial_contracts.rs::should_keep_a_package_relation_out_of_the_map_until_its_capability_is_granted`,
+      `spatial_contracts.rs::should_keep_a_package_relation_out_of_the_map_when_its_permission_is_denied`,
       `::should_carry_the_contributing_package_as_the_origin_of_every_plugin_edge`, case `110`
       (`s9-a`–`s9-g`), with the spatial contribution APIs validated before load by
       `ono_kuang_testhost` in the same shape as `ono-kuang-testhost/tests/adapter_package.rs`
@@ -845,7 +845,7 @@ layer so that each layer's own checklist is checkable.
       (§35.1/§35.2), `::should_name_one_of_the_defined_permission_states_for_every_neighborhood_group`
       (§35.2), case `097` (§35.3, no escalation),
       `spatial_remote.rs::should_refuse_to_jump_to_a_hostname_that_is_not_a_known_link`
-      (§35.4), `spatial_contracts.rs::should_keep_a_package_relation_out_of_the_map_until_its_capability_is_granted`
+      (§35.4), `spatial_contracts.rs::should_keep_a_package_relation_out_of_the_map_when_its_permission_is_denied`
       (§35.5).
 - [x] **The renderer works with colour disabled and with an ASCII fallback** (§39.1, §39.2).
       The six distinctions §39.1 forbids colour to own — current node, inferred edge, failed
@@ -1117,8 +1117,9 @@ The tranche is 101 GitHub issues carrying the milestones **H0 … H12**, one per
 every box below names the issues that deliver it; `docs/STATE.md` holds the intended order inside
 each phase. **Nothing here is delivered yet.** Every box is open, so `scripts/release-check.sh`
 stops at the first of them — which is what a tranche that has just started looks like, and is the
-reason this subsection is written before the work rather than after it (#29). §4.9 is reserved
-for the v0.5 Temporal & Causal Systems Interface.
+reason this subsection is written before the work rather than after it (#29). §4.9 holds the
+KUANG/11 plugin installation and permission layer; §4.10 is reserved for the v0.5 Temporal &
+Causal Systems Interface.
 
 **A box is ticked by a named automated proof** — a test that runs un-ignored in `scripts/gate.sh`,
 or a case that runs in `scripts/acceptance.sh` — never by judgement, never by reading code, and
@@ -2271,6 +2272,179 @@ exclusion ADR dated after it is refused (ADR-0575).
       which reads §66 from the specification and this subsection from this file, so a criterion that
       lost its box fails the gate rather than passing unnoticed (§66.9's second paragraph).
 
+### 4.9 The KUANG/11 plugin installation, resolution and permission layer (K11P)
+
+`docs/kuang11/kuang11-plugin-installation-permissions-spec.md` (K11P) is a cross-cutting
+architecture specification over the existing KUANG/11 extension runtime: the normative user-facing
+layer through which the package lifecycle, the trust model and the capability broker are exposed.
+Its rule is one sentence — *a user grants intentions; KUANG/11 grants capabilities* (§0.3) — and
+its definition of done is §33's twenty-four gates and §34's eight security tests, in boxes below,
+implemented by ADR-0600 … ADR-0605. **The internal lifecycle and the capability broker are
+unchanged**; every box here is about the layer above them, and the Kubernetes reference provider in
+its own repository is the acceptance reference §26 names.
+
+**A box is ticked by a named automated proof** — a test that runs un-ignored in `scripts/gate.sh`,
+or a case that runs in `scripts/acceptance.sh` — held to the tree by
+`xtask/tests/permission_evidence.rs` the way §4.8 is held by `xtask/tests/hardening_evidence.rs`.
+The case numbers 220–226 belong to this layer.
+
+#### 4.9.1 The gates of K11P §33
+
+- [x] **Gate A · Short-name installation.** `install plugin kubernetes` resolves the canonical
+      package through the bootstrap catalog without a reverse-DNS id or a source URI —
+      `crates/ono-cli/tests/permissions.rs::should_install_a_package_by_its_short_name_through_a_catalog_and_be_ready_to_use`,
+      `crates/ono-cli/src/kuang_catalog.rs::should_ship_a_bootstrap_catalog_that_reads_and_names_the_reference_provider`,
+      case `220-kuang-install-by-name`.
+- [x] **Gate B · No code during resolution.** Catalog search, resolution and install planning
+      execute no plugin bytes: the package is `state: installed` after the transaction and a lazy
+      runtime is not spawned —
+      `crates/ono-cli/tests/permissions.rs::should_install_a_package_by_its_short_name_through_a_catalog_and_be_ready_to_use`,
+      `crates/ono-kuang-protocol/src/catalog.rs::should_never_read_a_bare_word_as_a_path`,
+      case `220-kuang-install-by-name`.
+- [x] **Gate C · One-step readiness.** Installed, enabled, ready, no separate `load plugin`, and
+      the contribution answers in the session that installed it —
+      `crates/ono-cli/tests/permissions.rs::should_use_a_contributed_command_in_the_session_that_installed_the_package`,
+      case `220-kuang-install-by-name`.
+- [x] **Gate D · Human permission rendering.** The default prompt is human descriptions and no
+      capability id —
+      `crates/ono-cli/tests/permissions.rs::should_show_the_recommended_access_in_plain_words_and_install_on_yes_at_a_terminal`,
+      `crates/ono-cli/tests/permissions.rs::should_decide_the_recommended_access_in_human_terms_with_the_capabilities_underneath`,
+      case `220-kuang-install-by-name`.
+- [x] **Gate E · Details preserve precision.** `details` exposes the exact capabilities, scopes,
+      durations and the verification, trust and isolation facts —
+      `crates/ono-cli/tests/permissions.rs::should_show_the_recommended_access_in_plain_words_and_install_on_yes_at_a_terminal`,
+      `crates/ono-cli/tests/permissions.rs::should_show_the_grants_a_permission_minted_in_the_capability_table`.
+- [x] **Gate F · Read-only default.** The recommended profile never carries mutation, and a
+      mutation attempt before elevation is refused in the permission's words —
+      `crates/ono-cli/tests/permissions.rs::should_refuse_a_mutation_in_the_permissions_words_until_it_is_enabled_deliberately`,
+      `crates/ono-cli/tests/permissions.rs::should_apply_the_operate_profile_deliberately_and_never_by_default`,
+      `crates/ono-kuang-protocol/tests/permissions.rs::should_refuse_a_recommended_profile_that_carries_mutation_however_it_is_labelled`,
+      case `221-kuang-mutation-is-explicit`.
+- [x] **Gate G · Relations without a grant ceremony.** A package's declared bounded relations
+      reach the map with no manual `relation.write` —
+      `crates/ono-cli/tests/spatial_contracts.rs::should_contribute_the_declared_relations_without_a_manual_grant`,
+      `crates/ono-cli/tests/spatial_contracts.rs::should_keep_a_package_relation_out_of_the_map_when_its_permission_is_denied`,
+      `crates/ono-kuang-protocol/tests/permissions.rs::should_derive_a_whole_layer_for_a_package_that_declares_none`.
+- [x] **Gate H · JIT process execution.** A command that needs no helper never asks for
+      `process.exec`; a helper is asked about at first use and named exactly —
+      `crates/ono-cli/tests/permissions.rs::should_never_ask_for_a_helper_when_no_helper_is_needed`,
+      `crates/ono-cli/tests/permissions.rs::should_ask_at_first_use_and_keep_an_always_answer_for_that_program_at_a_terminal`,
+      `crates/ono-kuang-sdk/tests/consent.rs::should_ask_at_the_call_and_run_the_helper_once_when_allowed_once`,
+      `crates/ono-kuang-sdk/tests/consent.rs::should_not_ask_for_a_family_the_policy_already_grants`,
+      case `222-kuang-jit-permission`.
+- [x] **Gate I · Narrow JIT persistence.** `always for this program` grants exactly that program
+      and never unrestricted `process.exec` —
+      `crates/ono-kuang-sdk/tests/consent.rs::should_never_widen_an_always_answer_beyond_the_program_that_was_asked_about`,
+      `crates/ono-kuang-sdk/tests/consent.rs::should_keep_a_session_answer_for_that_program_and_ask_again_for_another`,
+      `crates/ono-cli/tests/permissions.rs::should_answer_permission_required_with_a_remedy_when_a_script_meets_a_helper`,
+      case `222-kuang-jit-permission`.
+- [x] **Gate J · Non-interactive refusal.** A script that meets a missing JIT permission fails
+      with structured `permission.required` and never waits or assumes —
+      `crates/ono-kuang-sdk/tests/consent.rs::should_answer_permission_required_with_the_remedy_when_nobody_can_be_asked`,
+      `crates/ono-cli/tests/permissions.rs::should_answer_permission_required_with_a_remedy_when_a_script_meets_a_helper`,
+      case `222-kuang-jit-permission`.
+- [x] **Gate K · Advanced capability compatibility.** `grant capability`, `revoke capability` and
+      `get capability` keep working —
+      `crates/ono-cli/tests/plugin_commands.rs::should_grant_and_revoke_a_capability_at_runtime`,
+      `crates/ono-cli/tests/plugin_commands.rs::should_forget_a_stored_grant_when_it_is_revoked_in_a_later_session`,
+      `crates/ono-cli/tests/permissions.rs::should_show_a_manual_grant_as_custom_and_an_unmapped_one_as_legacy`,
+      case `221-kuang-mutation-is-explicit`.
+- [x] **Gate L · Manual grant projection.** A manual grant shows as matched or `custom`, an
+      unmapped one as `legacy`, never disappearing —
+      `crates/ono-cli/tests/permissions.rs::should_show_a_manual_grant_as_custom_and_an_unmapped_one_as_legacy`,
+      case `221-kuang-mutation-is-explicit`.
+- [x] **Gate M · Native isolation honesty.** The install UI and `inspect plugin` state that
+      broker permissions are not filesystem or network isolation —
+      `crates/ono-cli/tests/permissions.rs::should_state_native_isolation_honestly_in_the_plan_and_the_inspection`,
+      `crates/ono-cli/tests/permissions.rs::should_show_the_recommended_access_in_plain_words_and_install_on_yes_at_a_terminal`,
+      case `220-kuang-install-by-name`.
+- [x] **Gate N · Upgrade without escalation.** An upgrade whose authority is unchanged keeps
+      every decision without a redundant prompt —
+      `crates/ono-cli/tests/permissions.rs::should_upgrade_without_a_new_decision_when_nothing_widened`,
+      `crates/ono-kuang-protocol/tests/permissions.rs::should_answer_an_empty_delta_when_an_upgrade_asks_for_nothing_new`,
+      case `223-kuang-install-transaction-and-upgrade`.
+- [x] **Gate O · Upgrade with escalation.** A widened scope or capability cannot commit without
+      renewed consent, and declining leaves the installed version intact —
+      `crates/ono-cli/tests/permissions.rs::should_need_renewed_consent_when_an_upgrade_widens_a_scope`,
+      `crates/ono-kuang-protocol/tests/permissions.rs::should_detect_a_widened_scope_under_a_reused_permission_id`,
+      `crates/ono-kuang-protocol/tests/permissions.rs::should_detect_a_permission_newly_in_the_recommended_profile`,
+      case `223-kuang-install-transaction-and-upgrade`.
+- [x] **Gate P · Remove cleans grants.** `remove plugin` removes the decisions and the grants
+      they minted; a reinstall asks again —
+      `crates/ono-cli/tests/permissions.rs::should_remove_the_decisions_and_grants_with_the_package_so_a_reinstall_asks_again`,
+      `crates/ono-cli/tests/permissions.rs::should_keep_the_decisions_when_asked_and_apply_them_to_the_same_publisher_only`,
+      `crates/ono-cli/tests/plugin_commands.rs::should_revoke_the_grants_of_a_removed_package_unless_asked_to_keep_them`,
+      case `224-kuang-remove-and-reinstall`.
+- [x] **Gate Q · Ambiguity is deterministic.** Two catalogs with one name and two ids produce
+      `plugin.reference_ambiguous` listing every candidate, and `<catalog>/<name>` settles it —
+      `crates/ono-cli/tests/permissions.rs::should_refuse_an_ambiguous_short_name_deterministically_and_take_the_catalog_selector`,
+      case `225-kuang-name-resolution`.
+- [x] **Gate R · Canonical id remains available.** Every command accepting a short name accepts
+      the canonical id, and the reverse —
+      `crates/ono-cli/tests/permissions.rs::should_take_the_short_name_wherever_a_command_takes_the_canonical_id`,
+      case `225-kuang-name-resolution`.
+- [x] **Gate S · Trust facts remain separate.** `signature: valid` beside `trust: unknown` is
+      representable and never one generic status; a signed native package whose key no store
+      enrols is not installed unattended —
+      `crates/ono-cli/tests/permissions.rs::should_refuse_an_unattended_native_install_from_a_catalog_until_the_publisher_is_enrolled`,
+      `crates/ono-cli/tests/plugins_signature.rs::should_answer_signature_valid_and_trust_unknown_when_no_store_names_the_key`,
+      case `226-kuang-trust-and-a-manifest-that-lies`.
+- [x] **Gate T · Invalid signature cannot be confirmed away.** A tampered package is refused
+      before installation whatever the flags —
+      `crates/ono-cli/tests/permissions.rs::should_refuse_a_tampered_package_whatever_the_flags_say`,
+      case `226-kuang-trust-and-a-manifest-that-lies`.
+- [x] **Gate U · Transaction rollback.** A failure after the package was placed leaves neither
+      package state nor persisted grants —
+      `crates/ono-cli/tests/permissions.rs::should_leave_nothing_behind_when_the_decisions_cannot_be_written`,
+      `crates/ono-cli/tests/permissions.rs::should_leave_nothing_behind_when_the_plugin_home_cannot_be_written`,
+      case `223-kuang-install-transaction-and-upgrade`.
+- [x] **Gate V · Audit correlation.** One decision and the grants it minted share a correlation
+      id in the structured trail —
+      `crates/ono-cli/tests/permissions.rs::should_correlate_a_profile_decision_with_the_grants_it_minted_in_the_audit_trail`,
+      `crates/ono-kuang-sdk/tests/consent.rs::should_refuse_with_permission_denied_when_the_person_says_no`,
+      case `220-kuang-install-by-name`.
+- [x] **Gate W · Help teaches the right path.** `help install plugin` leads with the short name
+      and the capability commands are advanced help —
+      `crates/ono-cli/tests/permissions.rs::should_teach_the_short_name_first_and_keep_the_capability_commands_as_advanced_help`.
+- [x] **Gate X · No core domain exception.** Kubernetes wording lives in the Kubernetes package;
+      core carries generic kinds, classes and rendering only —
+      `xtask/tests/permission_evidence.rs::should_keep_provider_wording_out_of_core_code`,
+      `xtask/tests/contracts.rs::should_accept_registries_that_agree_with_each_other_when_checked`.
+
+#### 4.9.2 The security tests of K11P §34
+
+- [x] **§34.1 · Misleading permission text.** A "harmless" title over `filesystem.write` keeps
+      the host-owned destructive risk —
+      `crates/ono-kuang-protocol/tests/permissions.rs::should_refuse_a_friendly_title_that_lowers_the_risk_of_what_it_grants`,
+      case `226-kuang-trust-and-a-manifest-that-lies`.
+- [x] **§34.2 · Terminal escape injection.** Package text with control sequences cannot alter the
+      surrounding UI —
+      `crates/ono-cli/tests/permissions.rs::should_sanitise_a_permission_title_that_carries_terminal_escapes`,
+      `crates/ono-kuang-protocol/tests/permissions.rs::should_refuse_a_title_with_a_line_break_that_could_spoof_the_text_beside_it`.
+- [x] **§34.3 · Catalog name takeover.** A new entry with the installed short name cannot redirect
+      the installed package —
+      `crates/ono-cli/tests/permissions.rs::should_never_let_a_new_catalog_entry_redirect_an_installed_package`.
+- [x] **§34.4 · Publisher substitution.** The same id signed by an unrelated key is not an update —
+      `crates/ono-cli/tests/permissions.rs::should_refuse_an_upgrade_signed_by_an_unrelated_key`,
+      case `223-kuang-install-transaction-and-upgrade`.
+- [x] **§34.5 · Permission-ID reuse.** `kubeconfig-read` widened from `~/.kube/**` to `~/**` is
+      a scope expansion needing consent —
+      `crates/ono-kuang-protocol/tests/permissions.rs::should_detect_a_widened_scope_under_a_reused_permission_id`,
+      `crates/ono-cli/tests/permissions.rs::should_need_renewed_consent_when_an_upgrade_widens_a_scope`.
+- [x] **§34.6 · Hidden mutation.** A `recommended` profile carrying `provider.mutate` is rejected
+      whatever the package says —
+      `crates/ono-kuang-protocol/tests/permissions.rs::should_refuse_a_recommended_profile_that_carries_mutation_however_it_is_labelled`,
+      `crates/ono-cli/tests/permissions.rs::should_refuse_a_package_whose_recommended_profile_hides_mutation`,
+      case `226-kuang-trust-and-a-manifest-that-lies`.
+- [x] **§34.7 · Broad helper grant.** A JIT request for one program never becomes unrestricted
+      process execution —
+      `crates/ono-kuang-sdk/tests/consent.rs::should_never_widen_an_always_answer_beyond_the_program_that_was_asked_about`.
+- [x] **§34.8 · Stale removed grants.** Removing and reinstalling does not reactivate removed
+      grants unless explicitly retained —
+      `crates/ono-cli/tests/permissions.rs::should_remove_the_decisions_and_grants_with_the_package_so_a_reinstall_asks_again`,
+      `crates/ono-cli/tests/permissions.rs::should_keep_the_decisions_when_asked_and_apply_them_to_the_same_publisher_only`,
+      case `224-kuang-remove-and-reinstall`.
+
 ## 5. Stopping rule
 
 An agent stops when `scripts/release-check.sh` prints `release-check: the shell is
@@ -2283,8 +2457,9 @@ section 4 is unticked, the work is unfinished, and the next increment starts.
 **Every subsection of section 4 counts, including the tranches.** The checklist grew with the
 specification: sections 4.1–4.5 are the v0.2 shell, section 4.6 is the v0.3 External Command
 Adaptation Layer, section 4.7 is the v0.4 Spatial Systems Interface, and section 4.8 is the v0.4.1
-Hardening, Trust & Release Integrity tranche — open in full, because that tranche has just
-started. Section 4.9 is reserved for v0.5. A tranche whose subsection still holds an unticked box
+Hardening, Trust & Release Integrity tranche, and section 4.9 is the KUANG/11 plugin
+installation, resolution and permission layer. Section 4.10 is reserved for v0.5. A tranche whose
+subsection still holds an unticked box
 is an unfinished product, however green the gate and the acceptance suite are on their own, and
 the run continues into it.
 

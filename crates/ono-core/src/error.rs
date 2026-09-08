@@ -288,6 +288,16 @@ error_codes! {
     RemoteHandshakeTimeout => "Ono-Sendai-E1502", "remote.handshake_timeout", Timeout,
         "The peer did not complete TLS and Ono negotiation within the time a handshake is given.";
 
+    // --- plugin references, K11P §10, §11, §24.1 (ADR-0601, ADR-0605) -----------------------
+    PluginNotFound => "Ono-Sendai-E1601", "plugin.not_found", Resolution,
+        "No installed package and no catalog entry answers to the plugin reference.";
+    PluginReferenceAmbiguous => "Ono-Sendai-E1602", "plugin.reference_ambiguous", Resolution,
+        "The short name resolves to more than one canonical package.";
+    PluginCatalogUnavailable => "Ono-Sendai-E1603", "plugin.catalog_unavailable", Resolution,
+        "The catalog names the release and its artifact is not available to this build.";
+    PluginReleaseNotCompatible => "Ono-Sendai-E1604", "plugin.release_not_compatible", Conflict,
+        "No release of the package the catalog offers can run on this host.";
+
     // --- KUANG/11, spec §31.79: the K11 family of docs/contracts/kuang/errors.v1.yaml, folded into
     // the global model (ADR-0108). Numbering follows §31.79's families.
     KuangPackageInvalid => "Ono-Sendai-K11001", "package.invalid", Parse,
@@ -328,6 +338,18 @@ error_codes! {
         "The plugin holds the capability but the call fell outside its granted scope.";
     KuangCapabilityLeaseExpired => "Ono-Sendai-K11303", "capability.lease_expired", Permission,
         "The lease backing this call has expired, been used up, or its condition no longer holds.";
+    KuangPermissionRequired => "Ono-Sendai-K11304", "permission.required", Permission,
+        "The operation needs a permission nobody has decided, and this context cannot ask.";
+    KuangPermissionDenied => "Ono-Sendai-K11305", "permission.denied", Permission,
+        "The operation needs a permission the user denied.";
+    KuangPermissionInvalidProfile => "Ono-Sendai-K11306", "permission.invalid_profile", Resolution,
+        "The named access profile does not exist for this package.";
+    KuangPermissionInvalidMapping => "Ono-Sendai-K11307", "permission.invalid_mapping", Parse,
+        "The package's permission declarations do not map validly onto its capabilities.";
+    KuangPermissionScopeUnavailable => "Ono-Sendai-K11308", "permission.scope_unavailable", Safety,
+        "The concrete scope a permission needs could not be derived or enforced.";
+    KuangPermissionEscalationRequiresConfirmation => "Ono-Sendai-K11309", "permission.escalation_requires_confirmation", Safety,
+        "The permission widens authority and needs a deliberate confirmation this context cannot give.";
     KuangStateQuotaExceeded => "Ono-Sendai-K11401", "state.quota_exceeded", Safety,
         "The plugin's persistent state would exceed its quota.";
     KuangStateMigrationFailed => "Ono-Sendai-K11402", "state.migration_failed", External,

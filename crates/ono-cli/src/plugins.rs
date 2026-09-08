@@ -135,15 +135,12 @@ pub fn load_plugin_with(
     options: &LoadOptions,
 ) -> Eval<ExitStatus> {
     session.publish_host();
-    let Some(package) = session.with_kuang(|host| host.installed_package(id)) else {
-        return Err(Flow::Failed(
-            ErrorValue::new(
-                ErrorCode::ResolveTargetNotFound,
-                format!("no installed package answers to `{id}`"),
-            )
-            .with_help("`get plugin` lists the installed set (spec §31.8)"),
-        ));
-    };
+    // A short name resolves to the one installed package that carries it (K11P §10.4).
+    let package = session
+        .with_kuang(|host| host.resolve_installed(id))
+        .map_err(Flow::Failed)?;
+    let canonical = package.manifest.package.id.clone();
+    let id = canonical.as_str();
 
     // `load` is a transition from `enabled` (lifecycle.v1): a package the operator disabled
     // stays inert until `set plugin --enabled true`.
@@ -204,9 +201,21 @@ pub fn load_plugin_with(
                 .standing_grants(id)
                 .any(|grant| grant.capability == capability)
             {
-                host.grant(id, capability, scope, class, "session", "session", None);
+                host.grant(
+                    id,
+                    capability,
+                    scope,
+                    class,
+                    "session",
+                    "session",
+                    None,
+                    crate::kuang_host::GrantOrigin::default(),
+                );
             }
         }
+        // A bounded extension-local permission is included whichever way the package arrived
+        // (K11P §7.1, ADR-0600 §2): a package placed by hand gets its automatic grants here.
+        crate::kuang_permissions::ensure_automatic(host, &package);
         host.policy_for(id)
     });
 
@@ -306,6 +315,11 @@ pub fn load_plugin_with(
         &declared_schemas,
     )
     .map_err(Flow::Failed)?;
+    let consent = std::sync::Arc::new(crate::kuang_permissions::ShellConsent::new(
+        std::sync::Arc::clone(session.tables()),
+        session.is_interactive(),
+        package.clone(),
+    ));
     let mut config = LoadConfig::new(entry, package.manifest);
     config.policy = policy;
     // The instance runs in its own directory under the state root, not in the user's (spec
@@ -326,6 +340,9 @@ pub fn load_plugin_with(
     config.views = std::sync::Arc::new(crate::kuang_views::ShellViews::new(std::sync::Arc::clone(
         session.theme(),
     )));
+    // Who answers a just-in-time request: a person at this session's terminal, or nobody
+    // (K11P §14, ADR-0603 §2).
+    config.consent = consent;
     let (runtime, _) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,
@@ -407,6 +424,8 @@ pub enum Request {
     InstallPlugin,
     /// `grant capability <capability> --plugin <id>` (spec §31.18).
     GrantCapability,
+    /// `set permission <plugin> …` (K11P §16.2).
+    SetPermission,
     /// `ask assistant <id> <request>` (spec §31.42).
     AskAssistant,
 }
@@ -438,6 +457,7 @@ pub fn claims(stage: &ono_parser::Stage) -> Option<Request> {
         ("verify", "plugin") => Some(Request::VerifyPlugin),
         ("install", "plugin") => Some(Request::InstallPlugin),
         ("grant", "capability") => Some(Request::GrantCapability),
+        ("set", "permission") => Some(Request::SetPermission),
         ("ask", "assistant") => Some(Request::AskAssistant),
         _ => None,
     }
@@ -481,6 +501,10 @@ pub fn run_piped(
         Request::GrantCapability => Err(Flow::Failed(crate::remote::no_stream_input(
             "grant capability",
             "capability",
+        ))),
+        Request::SetPermission => Err(Flow::Failed(crate::remote::no_stream_input(
+            "set permission",
+            "permission",
         ))),
     }
 }
@@ -627,14 +651,28 @@ pub fn run(session: &mut Session, request: Request, words: &[String]) -> Eval<Pr
             let Some(reference) = arguments.first() else {
                 return Err(Flow::Failed(
                     ErrorValue::new(
-                        ErrorCode::ResolveTargetNotFound,
-                        "`install plugin` needs the package reference to install",
+                        ErrorCode::PluginNotFound,
+                        "`install plugin` needs the package to install",
                     )
-                    .with_help("`path:<directory>` (spec §31.9)"),
+                    .with_help(
+                        "a short name a catalog lists, a canonical id, or `path:<directory>` \
+                         (K11P §4.1)",
+                    ),
                 ));
             };
-            install_plugin(session, reference, flag("--confirm"))
+            crate::kuang_install::install(
+                session,
+                reference,
+                &crate::kuang_install::InstallOptions {
+                    access: option("--access").map(str::to_owned),
+                    confirm: flag("--confirm"),
+                },
+            )
         }
+        Request::SetPermission => crate::kuang_permissions::set_permission(
+            session,
+            &crate::kuang_permissions::SetPermission::from_words(words),
+        ),
         Request::VerifyPlugin => {
             let Some(reference) = arguments.first() else {
                 return Err(Flow::Failed(
@@ -658,91 +696,6 @@ pub fn run(session: &mut Session, request: Request, words: &[String]) -> Eval<Pr
             })
         }
     }
-}
-
-/// Runs `install plugin <reference>`: verify, plan, confirm, place (spec §31.9).
-fn install_plugin(session: &mut Session, reference: &str, confirmed: bool) -> Eval<Produced> {
-    use crate::kuang_host::{action, action_result, install_plan};
-    let started = std::time::Instant::now();
-    session.publish_host();
-    let resolved = session
-        .with_kuang(|host| host.resolve(reference))
-        .map_err(Flow::Failed)?;
-    // Verification comes first: a blocking check never produces a prompt offering to continue
-    // (lifecycle.v1, ADR-0015 rule 4).
-    let verification = session
-        .with_kuang(|host| host.verify(&resolved))
-        .map_err(Flow::Failed)?;
-    if let Some(failure) = verification.blocking.into_iter().next() {
-        return Err(Flow::Failed(failure));
-    }
-    let package = resolved.package.map_err(Flow::Failed)?;
-    let id = package.manifest.package.id.clone();
-    let version = package.manifest.package.version.clone();
-    let (destination, already) = session
-        .with_kuang(|host| {
-            host.install_destination(&package)
-                .map(|destination| (destination, host.is_installed(&id, &version)))
-        })
-        .map_err(Flow::Failed)?;
-    if already {
-        return Err(Flow::Failed(
-            ErrorValue::new(
-                ErrorCode::IoAlreadyExists,
-                format!("`{id}` {version} is already installed"),
-            )
-            .with_help(
-                "`remove plugin` it first; a package version is never silently replaced \
-                 (spec §31.35)",
-            ),
-        ));
-    }
-
-    // The plan comes before any mutation (spec §31.9), and a script never waits for its
-    // prompt (spec §17.4): without `--confirm` the answer is a refusal that carries the plan.
-    let plan = install_plan(&package, &resolved.source, &destination);
-    if !confirmed {
-        if session.is_interactive() && !prompt_for_install(&plan) {
-            return Err(Flow::Failed(ErrorValue::new(
-                ErrorCode::SafetyConfirmationRequired,
-                format!("installing `{id}` was not confirmed"),
-            )));
-        }
-        if !session.is_interactive() {
-            return Err(Flow::Failed(
-                ErrorValue::new(
-                    ErrorCode::SafetyConfirmationRequired,
-                    format!(
-                        "installing `{id}` {version} from {} needs the install plan confirmed",
-                        resolved.source
-                    ),
-                )
-                .with_help(
-                    "nothing was written. Write `--confirm` to accept the plan \
-                     non-interactively (spec §17.4, §31.9)",
-                )
-                .with_metadata("plan", plan),
-            ));
-        }
-    }
-
-    let outcome = session.with_kuang(|host| {
-        let action = action("install", &id, &version);
-        match host.install(&package, &resolved.source) {
-            Ok(_) => ono_provider_api::ActionOutcome::succeeded(&action, true),
-            Err(error) => ono_provider_api::ActionOutcome::failed(&action, error),
-        }
-    });
-    let failed = !outcome.is_success();
-    let failure = if failed {
-        outcome.error().cloned()
-    } else {
-        None
-    };
-    Ok(Produced {
-        values: vec![action_result(outcome, "ono.plugin.install", started)],
-        failure,
-    })
 }
 
 /// Runs `grant capability <capability> --plugin <id>` (spec §31.18): a standing session grant,
@@ -875,15 +828,11 @@ fn grant_capability(
         ));
     };
     session.publish_host();
-    let Some(package) = session.with_kuang(|host| host.installed_package(plugin)) else {
-        return Err(Flow::Failed(
-            ErrorValue::new(
-                ErrorCode::ResolveTargetNotFound,
-                format!("no installed package answers to `{plugin}`"),
-            )
-            .with_help("`get plugin` lists the installed set (spec §31.8)"),
-        ));
-    };
+    let package = session
+        .with_kuang(|host| host.resolve_installed(plugin))
+        .map_err(Flow::Failed)?;
+    let canonical = package.manifest.package.id.clone();
+    let plugin = canonical.as_str();
     let request = declared_request(&package.manifest, capability);
     // §31.19's precedence is "system deny > user deny > scoped grant > plugin request": the
     // operator's scope outranks the manifest's, key by key. Keys the operator did not name keep
@@ -902,7 +851,14 @@ fn grant_capability(
     let class = request.map(|(_, class)| class);
     let (grant, value, policy, instance) = session.with_kuang(|host| {
         let grant = host.grant(
-            plugin, capability, scope, class, "prompt", duration, expires_at,
+            plugin,
+            capability,
+            scope,
+            class,
+            "prompt",
+            duration,
+            expires_at,
+            crate::kuang_host::GrantOrigin::default(),
         );
         let value =
             crate::kuang_host::grant_value(&grant, purpose.as_deref(), host.instance(plugin));
@@ -947,19 +903,6 @@ fn declared_request(
                 .map(|request| (request, DeclarationClass::RuntimeRequested)),
         )
         .find(|(request, _)| request.capability == capability)
-}
-
-/// Shows the install plan and asks (spec §31.9's `proceed? [y/N]`); only an explicit yes is one.
-fn prompt_for_install(plan: &Value) -> bool {
-    let rendered = ono_value::to_yaml_data(plan).unwrap_or_default();
-    println!("INSTALL PLAN\n{rendered}");
-    print!("proceed? [y/N] ");
-    let _ = std::io::Write::flush(&mut std::io::stdout());
-    let mut answer = String::new();
-    if std::io::stdin().read_line(&mut answer).is_err() {
-        return false;
-    }
-    matches!(answer.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
 /// Whether `namespace` names a loaded package, by full id or by its last segment.

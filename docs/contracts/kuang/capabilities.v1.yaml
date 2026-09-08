@@ -336,10 +336,20 @@ families:
     elevation: none
     permits: >-
       Contributing relationship edges. Every contributed edge carries the contributing package as
-      its `provider` and cannot claim another source, so there is no scope to grant: a package can
-      only ever add edges attributed to itself (spec §31.26, §31.80 "plugin forges provenance").
-    scopable: false
-    scope: {}
+      its `provider` and cannot claim another source (spec §31.26, §31.80 "plugin forges
+      provenance"). What a scope adds is *which* relations: bounded to the ids derived from the
+      package's own `contributions.relations`, the authority is extension-local and included
+      without a question; unscoped, it could name a relation another provider owns and is an
+      explicit grant (K11P §7.1, ADR-0600 §2).
+    scopable: true
+    scope:
+      relations:
+        type: id-list
+        enforcement: broker
+        doc: >-
+          The relation ids the package may contribute. The host checks every edge it registers
+          and every `relations.contribute` call against them. A derived or
+          `package-contributions` grant carries exactly the ids of the package's declared shapes.
 
   - id: secret.use
     risk: mutate

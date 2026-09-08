@@ -1890,7 +1890,7 @@ Enumerate installed and loaded KUANG/11 packages and their runtime health.
 
 | name | type | meaning |
 |---|---|---|
-| `id` | `string` | Resolve one package by its publisher-namespaced id (spec §31.5). |
+| `id` | `string` | Resolve one package by its publisher-namespaced id (spec §31.5), or by its short name when exactly one installed package carries it (K11P §10.4). |
 
 **Options**
 
@@ -1940,7 +1940,7 @@ find plugin postgres
 
 ### `inspect plugin`
 
-Show a package's manifest, origin, contributions, capabilities, resource use and errors.
+Show a package's manifest, origin, contributions, permissions, capabilities, resource use and errors.
 
 | | |
 |---|---|
@@ -1957,17 +1957,18 @@ Show a package's manifest, origin, contributions, capabilities, resource use and
 
 | name | type | meaning |
 |---|---|---|
-| `id` | `string` | The package to inspect. |
+| `id` | `string` | The package to inspect: its canonical id, or its short name when that is unique among installed packages (K11P §10.4). |
 
 **Examples**
 
 ```text
+inspect plugin kubernetes
 inspect plugin dev.example.packet-eye
 ```
 
 ### `install plugin`
 
-Verify and install a package after an explicit install and capability plan.
+Resolve, verify and install a package with its recommended access, so it is ready to use.
 
 | | |
 |---|---|
@@ -1984,24 +1985,27 @@ Verify and install a package after an explicit install and capability plan.
 
 | name | type | meaning |
 |---|---|---|
-| `reference` | `string` | The package reference to install. |
+| `reference` | `string` | A short name (`kubernetes`), a canonical id, `<catalog>/<name>`, an explicit path (`./dir`, `/dir`, `path:<dir>`) — the forms of `docs/contracts/kuang/catalog.v1.yaml` (K11P §4.1). |
 
 **Options**
 
 | name | type | meaning |
 |---|---|---|
 | `--source` | `string` | Install from one configured source. |
-| `--confirm` | `bool` | Accept the install and capability plan non-interactively. A script never waits for a prompt (spec §17.4). |
+| `--access` | `string` | The access profile to install with: `recommended` (the default), `minimal`, or a profile the package offers such as `operate`. A profile that adds mutation is named here deliberately (K11P §9, §20.2). |
+| `--confirm` | `bool` | Accept the install plan non-interactively (spec §17.4). Confirms the selected profile's safe defaults and never an explicit or destructive permission (K11P §20.2, ADR-0602 §4). |
 
 **Examples**
 
 ```text
-install plugin dev.example.packet-eye
+install plugin kubernetes
+install plugin kubernetes --access recommended --confirm
+install plugin path:/srv/packages/dev.example.packet-eye --confirm
 ```
 
 ### `remove plugin`
 
-Remove a package; state and policy retention is explicit.
+Remove a package with its permissions; state and policy retention is explicit.
 
 | | |
 |---|---|
@@ -2018,24 +2022,25 @@ Remove a package; state and policy retention is explicit.
 
 | name | type | meaning |
 |---|---|---|
-| `id` | `string` | The package to remove. |
+| `id` | `string` | The package to remove: its canonical id, or its short name when that is unique among installed packages. |
 
 **Options**
 
 | name | type | meaning |
 |---|---|---|
 | `--keep-state` | `bool` | Retain the package's persisted state (spec §31.31, §31.81). |
-| `--keep-grants` | `bool` | Retain the capability grants made to it. |
+| `--keep-grants` | `bool` | Retain the capability grants made to it and the permission decisions that minted them, for fleet provisioning (K11P §22.2). Never the default: a reinstall asks again (K11P §22.3). |
 
 **Examples**
 
 ```text
+remove plugin kubernetes
 remove plugin dev.example.packet-eye
 ```
 
 ### `load plugin`
 
-Negotiate capabilities and instantiate a package's runtime.
+Negotiate capabilities and instantiate a package's runtime — explicitly; an installed package's contributions load it on first use.
 
 | | |
 |---|---|
@@ -2052,7 +2057,7 @@ Negotiate capabilities and instantiate a package's runtime.
 
 | name | type | meaning |
 |---|---|---|
-| `id` | `string` | The package to load. |
+| `id` | `string` | The package to load: its canonical id, or its short name when that is unique among installed packages. |
 
 **Examples**
 
@@ -2155,6 +2160,81 @@ Validate a package's integrity, signature and compatibility.
 verify plugin dev.example.packet-eye
 ```
 
+### `get permission`
+
+Show what a package is permitted to do, in human terms, with the capabilities underneath.
+
+| | |
+|---|---|
+| id | `ono.permission.get` |
+| stability | stable |
+| phase | I |
+| input | `null` |
+| output | `stream<ono.permission/1>` |
+| provider capability | `permission.list` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `plugin` | `string` | The package, by short name or canonical id. Absent means every installed package. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--all` | `bool` | Include the support permissions the compact view hides and the legacy rows for grants no permission maps (K11P §16.1, §28.3). |
+
+**Examples**
+
+```text
+get permission kubernetes
+get permission kubernetes --all
+get permission
+```
+
+### `set permission`
+
+Apply an access profile, or decide one permission of a package.
+
+| | |
+|---|---|
+| id | `ono.permission.set` |
+| stability | stable |
+| phase | I |
+| input | `null` |
+| output | `stream<ono.permission/1>` |
+| provider capability | `permission.set` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `plugin` | `string` | The package, by short name or canonical id. |
+| `permission` | `string` | The permission to decide. Absent with `--profile`. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--profile` | `string` | Apply this access profile: every permission it names is allowed. A profile that adds mutation shows its summary and asks (K11P §15.2); non-interactively it needs `--confirm`. |
+| `--decision` | `string` | `allow`, `deny` or `ask` for the named permission (K11P §16.2). |
+| `--duration` | `string` | `session` or `always` (the default) for an `allow`. Precision that ordinary guided flows do not need. |
+| `--scope` | `string` | `key=value[,value]`, repeatable: the scope an `allow` carries, for a just-in-time permission decided ahead of its use, e.g. `programs=/usr/bin/aws`. The keys are the capability's own (spec §31.16). |
+| `--confirm` | `bool` | Accept a mutating profile or permission non-interactively. Never a destructive one (K11P §7.5). |
+
+**Examples**
+
+```text
+set permission kubernetes --profile operate
+set permission kubernetes cluster-mutation --decision allow
+set permission kubernetes credential-helper --decision allow --scope programs=/usr/bin/aws
+```
+
 ### `get capability`
 
 Show capability definitions, requests, grants and leases.
@@ -2191,7 +2271,7 @@ get capability --plugin dev.example.packet-eye
 
 ### `grant capability`
 
-Create a scoped capability grant or lease, subject to policy.
+Create a scoped capability grant or lease, subject to policy — the exact administrative form of a permission decision.
 
 | | |
 |---|---|

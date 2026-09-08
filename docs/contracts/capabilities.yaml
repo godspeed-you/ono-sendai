@@ -402,6 +402,14 @@ provider_capabilities:
     summary: Query the record of capability-sensitive KUANG/11 actions.
     risk: read
     elevation: none
+  - id: permission.list
+    summary: Show what a package is permitted to do, in human terms, with the capabilities underneath (K11P §16.1).
+    risk: read
+    elevation: none
+  - id: permission.set
+    summary: Apply an access profile or decide one permission of a package (K11P §16.2).
+    risk: mutate
+    elevation: none
 
   # shell-owned surfaces
   - id: config.read
@@ -539,6 +547,7 @@ kuang_capabilities:
     summary: Contribute relationship edges to the graph.
     risk: mutate
     elevation: none
+    scopes: [relations]
   - id: secret.use
     summary: >-
       Use a secret without reading its value. Spec §17.5 and §31.20 keep the value redacted;

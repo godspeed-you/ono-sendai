@@ -97,9 +97,9 @@ Each [GitHub release](https://github.com/godspeed-you/ono-sendai/releases) carri
 
 ```bash
 # Debian, Ubuntu and relatives
-sudo apt install ./ono_0.4.2_amd64.deb          # or ono_0.4.2_arm64.deb
+sudo apt install ./ono_0.4.3_amd64.deb          # or ono_0.4.3_arm64.deb
 # Fedora, RHEL and relatives
-sudo dnf install ./ono-0.4.2-1.x86_64.rpm       # or ono-0.4.2-1.aarch64.rpm
+sudo dnf install ./ono-0.4.3-1.x86_64.rpm       # or ono-0.4.3-1.aarch64.rpm
 
 chsh -s /usr/bin/ono                             # make it your login shell
 ```
@@ -127,7 +127,7 @@ before you install anything. `cosign` is the one tool you add
 ([sigstore/cosign](https://github.com/sigstore/cosign)); everything else is coreutils.
 
 ```bash
-VERSION=0.4.2; ARCH=amd64
+VERSION=0.4.3; ARCH=amd64
 BASE=https://github.com/godspeed-you/ono-sendai/releases/download/v$VERSION
 curl -fLO $BASE/ono_${VERSION}_${ARCH}.deb
 curl -fLO $BASE/SHA256SUMS
@@ -288,6 +288,49 @@ contribute real objects and real relationships to the same typed pipeline as nat
 plugin that inspects Postgres internals produces `Stream<T>` you can filter and sort like anything
 else.
 
+**Installing one is a sentence.** A plugin is named by its short name and installed with its
+recommended access in one command; the recommended access is read-only, a helper program is asked
+about when a context actually needs it, and changing anything outside Ono is a permission you
+enable deliberately:
+
+```text
+local://~ > install plugin kubernetes
+
+Kubernetes 0.2.0
+Publisher: io.github.godspeed-you
+Signature: valid
+Publisher trust: user-trusted
+Runtime: native process
+
+Recommended access:
+  - Connect to Kubernetes clusters
+  - Read Kubernetes configuration (paths ~/.kube/config, ~/.kube/*.yaml)
+  - Use Kubernetes credentials without exposing their values
+  - Add Kubernetes relationships to Ono
+
+Asked only when needed:
+  - Run an external login helper when a selected context requires it
+
+Not granted:
+  - Change Kubernetes resources
+
+Install with recommended access? [Y/n/details]
+> y
+Installed kubernetes 0.2.0
+Ready to use.
+
+local://~ > get k8s-pod --context prod --namespace shop | where phase == "Running"
+local://~ > get permission kubernetes
+local://~ > set permission kubernetes --profile operate      # deliberately, to change things
+```
+
+*A user grants intentions; KUANG/11 grants capabilities.* Every line of that prompt resolves to
+exact capabilities and scopes the broker enforces — `get permission <name> --all`,
+`get capability` and `inspect plugin` show them, and `grant capability` / `revoke capability`
+remain the administrative surface underneath. Nothing runs during resolution, a script never
+waits for a prompt (`--confirm` accepts the recommended access and nothing more), and an update
+that would widen authority asks again.
+
 **What the native tier is, exactly.** A native KUANG/11 plugin executes as a process of the Ono
 user. Ono limits its brokered capabilities and applies process confinement — resource ceilings,
 no-new-privileges, its own session, a sanitized environment, a private working directory, each one
@@ -365,7 +408,7 @@ in this shell is a side effect of telling the truth about the system.
 
 ## Project status
 
-**Current release: v0.4.2.** All ten phases of the specification are implemented, with the
+**Current release: v0.4.3.** All ten phases of the specification are implemented, with the
 External Command Adaptation Layer (v0.3) and the Spatial Systems Interface (v0.4) on top of them,
 and every box of `docs/ACCEPTANCE.md` is ticked by a named automated proof. Primary platform is
 Linux (x86_64 and aarch64). Two further enhancement specifications — the Temporal & Causal
@@ -383,13 +426,13 @@ canonical CI environment expects to.
 ```text
 crates=31
 workspace_members=33
-tests=3581
+tests=3659
 tests_that_can_skip=82
 expected_ci_skips=3
-acceptance_cases=148
-adrs=420
+acceptance_cases=155
+adrs=426
 command_contract_files=13
-commands=195
+commands=197
 ```
 
 <!-- end generated -->

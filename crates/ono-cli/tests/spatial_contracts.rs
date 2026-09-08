@@ -877,24 +877,36 @@ network:
 }
 
 fn ono_with_plugins(home: &Scratch, script: &str) -> ono_testkit::Run {
+    // Every persisted byte — a permission decision among them — stays inside the scratch.
     Shell::new()
         .args(["-c", script])
         .env("ONO_PLUGIN_PATH", home.path().display().to_string())
+        .env("HOME", home.path().join("home").display().to_string())
+        .env(
+            "XDG_STATE_HOME",
+            home.path().join("state").display().to_string(),
+        )
+        .env(
+            "XDG_CONFIG_HOME",
+            home.path().join("config").display().to_string(),
+        )
         .run()
 }
 
 #[test]
-fn should_keep_a_package_relation_out_of_the_map_until_its_capability_is_granted() {
+fn should_keep_a_package_relation_out_of_the_map_when_its_permission_is_denied() {
     // §35.5: "KUANG/11 plugins cannot use the map as a side channel to expose information
     // outside granted capabilities. The spatial host MUST filter plugin nodes/edges according to
     // capability scope before merging them into maps." §36.2 forbids exposing data outside
-    // capabilities at all. The package below declares a relation contribution and asks for
-    // `relation.write` optionally, so without the grant it loads degraded — and a degraded
-    // package's edges must be absent from the map, not merely unlabelled.
+    // capabilities at all. The package below declares a relation contribution bounded to its own
+    // shapes, which the host includes without a question (K11P §7.1, ADR-0600 §2) — so the gate
+    // is a decision the user makes: with the permission denied, the package loads degraded and
+    // a degraded package's edges must be absent from the map, not merely unlabelled.
     let home = relation_plugin_home();
     let denied = ono_with_plugins(
         &home,
-        "load plugin dev.example.echo; map --json --relations dev.example.echo",
+        "set permission dev.example.echo relation-write --decision deny | count; \
+         load plugin dev.example.echo; map --json --relations dev.example.echo",
     );
     let map = document(
         &denied,
@@ -906,7 +918,7 @@ fn should_keep_a_package_relation_out_of_the_map_until_its_capability_is_granted
         .collect();
     assert!(
         leaked.is_empty(),
-        "§35.5/§36.2: `relation.write` was not granted, so the package's edges are filtered out \
+        "§35.5/§36.2: `relation.write` was denied, so the package's edges are filtered out \
          before the merge; the map carried {leaked:?}"
     );
     assert!(
@@ -1377,5 +1389,32 @@ fn should_answer_repeated_looks_far_inside_the_look_budget() {
          each (one look took {baseline:?}, twenty-one took {repeated:?}), which is an order of \
          magnitude outside the budget and means the view is being recomputed rather than read \
          from the spatial index (§33.1)"
+    );
+}
+
+#[test]
+fn should_contribute_the_declared_relations_without_a_manual_grant() {
+    // Gate G, K11P §7.1, §26.2: a package's declared relation shapes are an extension-local
+    // permission bounded to those shapes, included without a `grant capability relation.write`
+    // ceremony (ADR-0600 §2). The edge still carries the package as its provider.
+    let home = relation_plugin_home();
+    let run = ono_with_plugins(
+        &home,
+        "load plugin dev.example.echo; map --json --relations dev.example.echo",
+    );
+    let map = document(&run, "§22: `map --json` returns a SpatialMap");
+    let edges: Vec<Value> = list_at(&map, "edges", "§22: a SpatialMap carries `edges`")
+        .into_iter()
+        .filter(|edge| rendered(edge).contains("dev.example.echo"))
+        .collect();
+    assert!(
+        !edges.is_empty(),
+        "the declared shapes reach the map with no manual grant, got {:?}",
+        run.stdout()
+    );
+    assert!(
+        run.stdout().contains("(loaded)"),
+        "the package is not degraded: its bounded relation permission is included, got {:?}",
+        run.stdout()
     );
 }

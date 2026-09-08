@@ -48,6 +48,18 @@ pub struct Management {
     /// (spec §31.38). Recorded; nothing in this build starts such jobs.
     #[serde(default)]
     pub background: bool,
+    /// The catalog that resolved the install, by name, so an upgrade resolves through the same
+    /// lineage and a later catalog collision cannot redirect it (K11P §10.5, ADR-0601 §4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog: Option<String>,
+    /// The signing key at install, `ed25519:…`, or `unsigned`. An upgrade signed by an unrelated
+    /// key is refused (K11P §34.4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publisher_key: Option<String>,
+    /// The access profile the install decided, `recommended` unless another was named
+    /// (ADR-0602). What readiness and an upgrade's delta are measured against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 const fn enabled_by_default() -> bool {
@@ -61,6 +73,9 @@ impl Default for Management {
             installed_from: None,
             integrity: None,
             background: false,
+            catalog: None,
+            publisher_key: None,
+            profile: None,
         }
     }
 }
@@ -120,6 +135,25 @@ pub struct Grant {
     pub expires_at: Option<jiff::Timestamp>,
     /// When it was revoked; `None` while it stands.
     pub revoked_at: Option<Value>,
+    /// The user-facing permission whose decision minted it (K11P §16.3, ADR-0604). `None` for
+    /// a grant made by hand, which is what lets `get permission` show it as `custom`.
+    pub permission: Option<String>,
+    /// The access profile whose selection minted it, when one did.
+    pub profile: Option<String>,
+    /// The request the decision was part of, shared with its audit events (ADR-0604 §5).
+    pub correlation: Option<String>,
+}
+
+/// What minted a grant beyond the operator's own hand: the permission, the profile and the
+/// request it belongs to (ADR-0604).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GrantOrigin {
+    /// The permission id, when a permission decision minted the grant.
+    pub permission: Option<String>,
+    /// The access profile, when a profile selected it.
+    pub profile: Option<String>,
+    /// The correlation id of the user action.
+    pub correlation: Option<String>,
 }
 
 impl Grant {
@@ -162,6 +196,22 @@ pub struct Host {
     /// Why the catalogue could not be read, when it could not: shown beside `get model`'s rows
     /// rather than swallowed, because a catalogue nobody can read is not an empty one.
     models_problem: Option<ErrorValue>,
+    /// The permission decisions, read from `<config>/kuang/permissions.yaml` and made this
+    /// session (ADR-0604).
+    pub(crate) decisions: Vec<crate::kuang_permissions::Decision>,
+    /// Which store the decisions were read from, so it is read once per session.
+    pub(crate) decisions_read: Option<PathBuf>,
+    /// Just-in-time denials remembered for this session, as `(plugin, permission, subject)`,
+    /// so a pipeline is not asked twice (ADR-0603 §2).
+    pub(crate) session_denials: std::collections::BTreeSet<(String, String, String)>,
+    /// The catalogs this session resolves names against (ADR-0601).
+    pub(crate) catalogs: crate::kuang_catalog::Catalogs,
+    /// Which directories the catalogs were read from, so they are read once per session.
+    pub(crate) catalogs_read: Option<(Option<PathBuf>, PathBuf)>,
+    /// The local package sources a catalog release is looked for in (ADR-0601 §3).
+    pub(crate) sources: Vec<PathBuf>,
+    /// The package cache a catalog release is looked for in first.
+    pub(crate) cache_dir: Option<PathBuf>,
 }
 
 /// What the operator's trust stores say, as a verification needs it.
@@ -193,6 +243,13 @@ struct StoredDecision {
     decision: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scope: Option<serde_json::Map<String, serde_json::Value>>,
+    /// The permission whose decision minted it (ADR-0604 §1). Absent for a manual grant, and
+    /// for every grant an earlier release wrote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    permission: Option<String>,
+    /// The profile whose selection minted it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    profile: Option<String>,
 }
 
 fn allow_word() -> String {
@@ -213,9 +270,31 @@ impl Host {
         self.state_dir = state_dir;
         self.config_dir = config_dir;
         self.read_policy();
+        self.read_decisions();
         self.read_models();
         self.read_trust(system_trust);
         self.read_audit();
+    }
+
+    /// Tells the host where names resolve from and where a catalog release is looked for:
+    /// the operator's catalogs beside the machine's, the local package sources and the package
+    /// cache (ADR-0601). Called beside [`Self::configure`].
+    pub fn configure_sources(
+        &mut self,
+        system_config_dir: PathBuf,
+        sources: Vec<PathBuf>,
+        cache_dir: Option<PathBuf>,
+    ) {
+        self.sources = sources;
+        self.cache_dir = cache_dir;
+        let read_from = (self.config_dir.clone(), system_config_dir.clone());
+        if self.catalogs_read.as_ref() != Some(&read_from) {
+            self.catalogs = crate::kuang_catalog::Catalogs::read(
+                self.config_dir.as_deref(),
+                &system_config_dir,
+            );
+            self.catalogs_read = Some(read_from);
+        }
     }
 
     /// Where the operator's model providers are declared: beside `policy.yaml` (ADR-0566).
@@ -295,6 +374,12 @@ impl Host {
         &self.trust
     }
 
+    /// The operator's configuration directory, where policy, decisions and catalogs live.
+    #[must_use]
+    pub fn config_dir(&self) -> Option<&Path> {
+        self.config_dir.as_deref()
+    }
+
     /// Where the operator's capability policy lives (spec §31.19's suggested location).
     fn policy_path(&self) -> Option<PathBuf> {
         self.config_dir
@@ -351,15 +436,22 @@ impl Host {
                     duration: "always",
                     expires_at: None,
                     revoked_at: None,
+                    permission: decision.permission,
+                    profile: decision.profile,
+                    correlation: None,
                 });
             }
         }
     }
 
     /// Writes the `always` grants that stand back to the policy store (spec §31.18, §31.19).
-    fn write_policy(&self) {
+    ///
+    /// # Errors
+    ///
+    /// The I/O failure, which an install transaction rolls back on (ADR-0602 §1).
+    pub(crate) fn write_policy(&self) -> Result<(), ErrorValue> {
         let Some(path) = self.policy_path() else {
-            return;
+            return Ok(());
         };
         let mut stored = StoredPolicy::default();
         for grant in self
@@ -376,16 +468,21 @@ impl Host {
                     StoredDecision {
                         decision: "allow".to_owned(),
                         scope: grant.scope.clone(),
+                        permission: grant.permission.clone(),
+                        profile: grant.profile.clone(),
                     },
                 );
         }
-        let Ok(text) = serde_yaml_ng::to_string(&stored) else {
-            return;
-        };
+        let text = serde_yaml_ng::to_string(&stored).map_err(|error| {
+            ErrorValue::new(
+                ErrorCode::ProviderSchemaViolation,
+                format!("the policy store does not serialise: {error}"),
+            )
+        })?;
         if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            std::fs::create_dir_all(parent).map_err(|error| io_error(parent, &error))?;
         }
-        let _ = std::fs::write(&path, text);
+        std::fs::write(&path, text).map_err(|error| io_error(&path, &error))
     }
 
     /// Reads the trail earlier sessions wrote (spec §31.37).
@@ -484,6 +581,57 @@ impl Host {
             .0
             .into_iter()
             .find(|package| package.manifest.package.id == id)
+    }
+
+    /// The installed package a reference names: its canonical id, or its short name when
+    /// exactly one installed package carries it (K11P §10.4, ADR-0601 §1).
+    ///
+    /// # Errors
+    ///
+    /// `plugin.not_found` when nothing answers, `plugin.reference_ambiguous` listing every
+    /// candidate when two installed packages share the name.
+    pub fn resolve_installed(&self, reference: &str) -> Result<Installed, ErrorValue> {
+        let (installed, _) = self.installed();
+        if let Some(package) = installed
+            .iter()
+            .find(|package| package.manifest.package.id == reference)
+        {
+            return Ok(package.clone());
+        }
+        let named: Vec<&Installed> = installed
+            .iter()
+            .filter(|package| package.manifest.package.name == reference)
+            .collect();
+        match named.as_slice() {
+            [one] => Ok((*one).clone()),
+            [] => Err(ErrorValue::new(
+                ErrorCode::PluginNotFound,
+                format!("no installed package answers to `{reference}`"),
+            )
+            .with_help(
+                "`get plugin` lists the installed set by id and name; `find plugin <word>` \
+                 searches the catalogs (K11P §10)",
+            )),
+            several => {
+                let ids: Vec<String> = several
+                    .iter()
+                    .map(|package| package.manifest.package.id.clone())
+                    .collect();
+                Err(ErrorValue::new(
+                    ErrorCode::PluginReferenceAmbiguous,
+                    format!(
+                        "`{reference}` names {} installed packages: {}",
+                        ids.len(),
+                        ids.join(", ")
+                    ),
+                )
+                .with_help("name one of them by its canonical id (K11P §10.3)")
+                .with_metadata(
+                    "candidates",
+                    Value::list(ids.iter().map(|id| Value::string(id))),
+                ))
+            }
+        }
     }
 
     /// The management state recorded for `id`; the defaults when nothing was recorded.
@@ -599,7 +747,12 @@ impl Host {
         ono_value::Uuid::from_bytes(bytes)
     }
 
-    /// Records a grant of `capability` to `plugin`, answering it (spec §31.18).
+    /// Records a grant of `capability` to `plugin`, answering it (spec §31.18). `origin` says
+    /// which permission decision minted it, when one did (ADR-0604).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "a grant simply has this many parts, and every caller states each one"
+    )]
     pub fn grant(
         &mut self,
         plugin: &str,
@@ -609,6 +762,7 @@ impl Host {
         source: &'static str,
         duration: &'static str,
         expires_at: Option<jiff::Timestamp>,
+        origin: GrantOrigin,
     ) -> Grant {
         let grant = Grant {
             id: self.mint(),
@@ -621,11 +775,20 @@ impl Host {
             duration,
             expires_at,
             revoked_at: None,
+            permission: origin.permission,
+            profile: origin.profile,
+            correlation: origin.correlation.clone(),
         };
         self.grants.push(grant.clone());
-        self.record_host_event(plugin, capability.id(), "capability.grant", true);
+        self.record_host_event_correlated(
+            plugin,
+            capability.id(),
+            "capability.grant",
+            true,
+            origin.correlation,
+        );
         if duration == "always" {
-            self.write_policy();
+            let _ = self.write_policy();
         }
         grant
     }
@@ -639,15 +802,26 @@ impl Host {
         self.grants[index].revoked_at = Some(Value::now());
         let grant = self.grants[index].clone();
         if grant.duration == "always" {
-            self.write_policy();
+            let _ = self.write_policy();
         }
-        self.record_host_event(
+        self.record_host_event_correlated(
             &grant.plugin,
             grant.capability.id(),
             "capability.revoke",
             true,
+            grant.correlation.clone(),
         );
         Some(grant)
+    }
+
+    /// [`Self::revoke`], stamped with the request the revocation is part of (ADR-0604 §5).
+    pub fn revoke_correlated(&mut self, id: ono_value::Uuid, correlation: &str) -> Option<Grant> {
+        let index = self
+            .grants
+            .iter()
+            .position(|grant| grant.id == id && grant.revoked_at.is_none())?;
+        self.grants[index].correlation = Some(correlation.to_owned());
+        self.revoke(id)
     }
 
     /// Revokes every grant that still stands for `plugin`, answering how many ended.
@@ -683,13 +857,32 @@ impl Host {
         &self.grants
     }
 
-    /// The broker policy the standing grants of `plugin` amount to (spec §31.19).
+    /// The broker policy the standing grants of `plugin` amount to (spec §31.19), with a
+    /// permission the user denied standing ahead of any grant (ADR-0604 §2).
     #[must_use]
     pub fn policy_for(&self, plugin: &str) -> Policy {
-        self.standing_grants(plugin)
+        let mut policy = self
+            .standing_grants(plugin)
             .fold(Policy::deny_all(), |policy, grant| {
-                policy.lease(grant.capability, grant.scope.clone(), grant.expires_at)
-            })
+                policy.grant_for(
+                    grant.capability,
+                    grant.scope.clone(),
+                    grant.expires_at,
+                    grant.permission.clone(),
+                )
+            });
+        for decision in self
+            .decisions
+            .iter()
+            .filter(|decision| decision.plugin == plugin && decision.record.decision == "deny")
+        {
+            for capability in &decision.record.capabilities {
+                if let Some(capability) = Capability::from_id(capability) {
+                    policy = policy.deny(capability);
+                }
+            }
+        }
+        policy
     }
 
     /// Keeps the trail of an instance that is going away.
@@ -700,6 +893,18 @@ impl Host {
     /// Records a host-side action about a package — a load, a grant, a revocation — in the
     /// same trail the packages' own actions go to (spec §31.37).
     pub fn record_host_event(&mut self, plugin: &str, capability: &str, action: &str, ok: bool) {
+        self.record_host_event_correlated(plugin, capability, action, ok, None);
+    }
+
+    /// [`Self::record_host_event`], stamped with the request it is part of (ADR-0604 §5).
+    pub fn record_host_event_correlated(
+        &mut self,
+        plugin: &str,
+        capability: &str,
+        action: &str,
+        ok: bool,
+        correlation: Option<String>,
+    ) {
         let id = self.mint();
         self.retained_audit.push(AuditEvent {
             // The host is one source among several (`AuditTrail::for_source`); its events carry
@@ -723,6 +928,7 @@ impl Host {
             lease: None,
             link: None,
             error: None,
+            correlation,
         });
     }
 
@@ -840,6 +1046,45 @@ impl Host {
         Ok(records)
     }
 
+    /// The derived readiness of a package (K11P §12.2, §17.2, ADR-0602 §2): a projection over
+    /// the internal state, never a replacement for it.
+    #[must_use]
+    pub fn readiness(
+        &self,
+        package: &Installed,
+        management: &Management,
+        instance: Option<&Instance>,
+    ) -> &'static str {
+        if let Some(instance) = instance {
+            match instance.plugin.state() {
+                PluginState::Quarantined => return "blocked",
+                PluginState::Installed | PluginState::Enabled => {}
+                _ => return "running",
+            }
+        }
+        if !management.enabled {
+            return "blocked";
+        }
+        let signature = signature_of(package);
+        if signature.failure.is_some() {
+            return "blocked";
+        }
+        if let Some(document) = &signature.document
+            && self
+                .trust
+                .store
+                .judge(document.publisher(), document.key())
+                .blocks()
+        {
+            return "blocked";
+        }
+        if crate::kuang_permissions::undecided(self, package, management).is_empty() {
+            "ready"
+        } else {
+            "needs-permission"
+        }
+    }
+
     /// The `ono.plugin/1` records of the installed set, with this session's runtime states over
     /// them (spec §31.8), and the packages that could not be read.
     ///
@@ -852,12 +1097,15 @@ impl Host {
         let mut records = Vec::with_capacity(packages.len());
         for package in &packages {
             let management = self.management(&package.manifest.package.id);
+            let instance = self.instance(&package.manifest.package.id);
+            let readiness = self.readiness(package, &management, instance);
             records.push(plugin_record(
                 &schema,
                 package,
                 &management,
-                self.instance(&package.manifest.package.id),
+                instance,
                 &self.trust,
+                readiness,
             )?);
         }
         Ok((records, failures))
@@ -946,8 +1194,16 @@ pub fn read_package(directory: &Path) -> Result<Option<Installed>, ErrorValue> {
             manifest,
         })),
         Err(error) => {
+            // A permission mapping that lies is refused under its own code (ADR-0605), so a
+            // script can tell it from a manifest that is merely malformed.
+            let code =
+                if error.code() == ono_kuang_protocol::KuangErrorCode::PermissionInvalidMapping {
+                    ErrorCode::KuangPermissionInvalidMapping
+                } else {
+                    ErrorCode::ProviderSchemaViolation
+                };
             let mut failure = ErrorValue::new(
-                ErrorCode::ProviderSchemaViolation,
+                code,
                 format!(
                     "{} holds a package that does not validate: {}: {}",
                     directory.display(),
@@ -1160,6 +1416,7 @@ pub fn plugin_record(
     management: &Management,
     instance: Option<&Instance>,
     trust: &TrustContext,
+    readiness: &str,
 ) -> Result<RecordValue, ErrorValue> {
     let manifest = &package.manifest;
     let plugin = instance.map(|instance| &*instance.plugin);
@@ -1198,6 +1455,7 @@ pub fn plugin_record(
         .set("execution_tier", Value::string(execution_tier(manifest)))?
         .set("roles", roles)?
         .set("enabled", Value::Bool(management.enabled))?
+        .set("readiness", Value::string(readiness))?
         // One directory per package id in the plugin home (ADR-0051): the installed version is
         // the active one.
         .set("active_version", Value::Bool(true))?
@@ -1241,7 +1499,7 @@ pub fn plugin_record(
         .build())
 }
 
-fn io_error(path: &Path, error: &std::io::Error) -> ErrorValue {
+pub(crate) fn io_error(path: &Path, error: &std::io::Error) -> ErrorValue {
     let code = match error.kind() {
         std::io::ErrorKind::NotFound => ErrorCode::IoNotFound,
         std::io::ErrorKind::PermissionDenied => ErrorCode::IoPermissionDenied,
@@ -1307,13 +1565,8 @@ impl Host {
             )
             .with_help("`path:<directory>` is the source this build resolves (spec §31.9)"));
         }
-        let package = self.installed_package(reference).ok_or_else(|| {
-            ErrorValue::new(
-                ErrorCode::ResolveTargetNotFound,
-                format!("no installed package answers to `{reference}`"),
-            )
-            .with_help("`get plugin` lists the installed set (spec §31.8)")
-        })?;
+        // An installed package by its canonical id or its short name (K11P §10.4).
+        let package = self.resolve_installed(reference)?;
         Ok(Resolved {
             source: format!("path:{}", package.directory.display()),
             package: Ok(package),
@@ -1326,9 +1579,17 @@ impl Host {
     ///
     /// `provider.schema_violation` when the record does not fit its contract.
     pub fn verify(&self, resolved: &Resolved) -> Result<Verification, ErrorValue> {
+        // The hash recorded at install is what the *installed* bytes are held to. A candidate
+        // read from elsewhere — an upgrade waiting in a source directory — is judged on its own
+        // signature and trust, and recorded once it is placed (K11P §21.1).
         let management = resolved
             .package
             .as_ref()
+            .ok()
+            .filter(|package| {
+                self.installed_package(&package.manifest.package.id)
+                    .is_some_and(|installed| installed.directory == package.directory)
+            })
             .map(|package| self.management(&package.manifest.package.id))
             .unwrap_or_default();
         verification(resolved, &management, &self.trust)
@@ -1347,7 +1608,7 @@ impl Host {
     ) -> Result<(Vec<RecordValue>, Vec<ErrorValue>), ErrorValue> {
         let schema = schema("ono.plugin-package")?;
         let (installed, _) = self.installed();
-        let (candidates, failures) = match source {
+        let (candidates, mut failures) = match source {
             None => (
                 installed
                     .iter()
@@ -1404,8 +1665,14 @@ impl Host {
                 &reference,
                 already,
                 &self.trust,
+                None,
             )?);
         }
+        // The catalogs, after the installed set (K11P §11.6): nothing is executed, and a
+        // catalog's answer is marked as a catalog's (ADR-0601 §2).
+        let (from_catalogs, problems) = crate::kuang_catalog::search(self, term, &installed)?;
+        records.extend(from_catalogs);
+        failures.extend(problems);
         Ok((records, failures))
     }
 }
@@ -1709,6 +1976,7 @@ pub fn package_record(
     source: &str,
     installed: bool,
     trust: &TrustContext,
+    catalog: Option<(&str, &str)>,
 ) -> Result<RecordValue, ErrorValue> {
     let manifest = &package.manifest;
     let signature = signature_of(package);
@@ -1754,12 +2022,57 @@ pub fn package_record(
         .set("signature", Value::string(signature.state))?
         .set("trust", Value::string(trust_word(&signature, standing)))?
         .set("installed", Value::Bool(installed))?
+        .set(
+            "catalog",
+            catalog.map_or(Value::Null, |(name, _)| Value::string(name)),
+        )?
+        .set(
+            "catalog_verification",
+            catalog.map_or(Value::Null, |(_, verification)| Value::string(verification)),
+        )?
         .set("size", Value::Null)?
         .set("published_at", Value::Null)?
         .build())
 }
 
 // --- inspection, spec §31.33 -------------------------------------------------------------------
+
+/// The human layer of an inspection (K11P §25.3): the permission records, the profiles, the
+/// derived readiness and the standing grants, computed by the host while it holds its tables.
+#[derive(Debug, Clone, Default)]
+pub struct InspectionHuman {
+    /// `ono.permission/1` values, every descriptor with its standing decision.
+    pub permissions: Vec<Value>,
+    /// The profiles the package offers, as records.
+    pub profiles: Value,
+    /// The derived readiness label.
+    pub readiness: String,
+    /// `ono.capability-grant/1` values of every grant that stands.
+    pub grants: Vec<Value>,
+}
+
+/// The host's own sentence about a package's execution tier (v0.4.1 §15.2, K11P §18.2, §27.1):
+/// never package-authored, and never the word "sandboxed" without the boundary it means.
+#[must_use]
+pub fn isolation_statement(manifest: &Manifest) -> &'static str {
+    match manifest.runtime.as_ref().map(|runtime| runtime.kind) {
+        Some(RuntimeKind::NativeProcess) => {
+            "This plugin runs as the Ono user. KUANG/11 mediates brokered host capabilities and \
+             applies process confinement, but this execution tier is not complete filesystem or \
+             network isolation."
+        }
+        Some(RuntimeKind::WasmComponent) => {
+            "This plugin runs as a component inside the runtime Ono embeds, with nothing but \
+             its standard streams; every file, connection and program goes through the broker."
+        }
+        Some(RuntimeKind::RemoteService) => {
+            "This plugin runs no local code; it is a protocol endpoint the broker connects to."
+        }
+        Some(RuntimeKind::Declarative) | None => {
+            "This package runs no code; it contributes declarations only."
+        }
+    }
+}
 
 /// What an instance contributes, by kind — the resolved ids.
 #[derive(Debug, Clone, Default)]
@@ -2004,6 +2317,7 @@ pub fn inspection_record(
     contributions: &Contributions,
     last_error: Option<ErrorValue>,
     trust: &TrustContext,
+    human: &InspectionHuman,
 ) -> Result<RecordValue, ErrorValue> {
     let schema = schema("ono.plugin-inspection")?;
     let manifest = &package.manifest;
@@ -2033,9 +2347,16 @@ pub fn inspection_record(
             .set("manifest", manifest_value)?
             .set("origin", Value::string("plugin"))?
             .set("contributions", contributions.value())?
-            .set("capability_grants", Value::list([]))?
+            .set("capability_grants", Value::list(human.grants.clone()))?
             .set("capability_requests", capability_requests(manifest, plugin))?
             .set("verification", verification.record.into_value())?
+            .set("permissions", Value::list(human.permissions.clone()))?
+            .set("profiles", human.profiles.clone())?
+            .set("readiness", Value::string(&human.readiness))?
+            .set(
+                "isolation_statement",
+                Value::string(isolation_statement(manifest)),
+            )?
             .set("runtime", runtime)?
             // Spec §31.33's health block. The figures come from the kernel's own accounting of
             // the instance, sampled while it runs; `null` until the host has taken a sample, and
@@ -2093,59 +2414,6 @@ pub fn inspection_record(
 
 // --- install and remove, spec §31.9 and §31.81 ------------------------------------------------
 
-/// The plan `install plugin` shows before it mutates anything (spec §31.9, lifecycle.v1
-/// `install_plan`): what will be added, what was requested, and what will be written.
-#[must_use]
-pub fn install_plan(package: &Installed, source: &str, destination: &Path) -> Value {
-    let manifest = &package.manifest;
-    // Spec §31.9's plan prints `signature      valid / dev.ono-labs`; a package that carries no
-    // signature says `unsigned`, which is a stated answer and not a blank.
-    let signature = signature_of(package);
-    let signature = match &signature.document {
-        Some(document) if signature.failure.is_none() => {
-            format!("valid / {}", document.publisher())
-        }
-        Some(_) | None if signature.state == "absent" => "unsigned".to_owned(),
-        _ => "invalid".to_owned(),
-    };
-    map([
-        (
-            "package",
-            Value::string(&format!(
-                "{}@{}",
-                manifest.package.id, manifest.package.version
-            )),
-        ),
-        ("source", Value::string(source)),
-        ("integrity", Value::string(&integrity_of(package))),
-        ("signature", Value::string(&signature)),
-        ("contributions", declared_contributions(manifest)),
-        ("capabilities", capability_requests(manifest, None)),
-        (
-            "filesystem",
-            Value::list([Value::Path(Arc::from(destination))]),
-        ),
-        (
-            "state",
-            manifest.state.as_ref().map_or(Value::Null, |state| {
-                map([
-                    (
-                        "persistence",
-                        Value::string(&format!("{:?}", state.persistence).to_lowercase()),
-                    ),
-                    (
-                        "quota",
-                        state.quota.map_or(Value::Null, |quota| {
-                            Value::ByteSize(ono_value::ByteSize::from_bytes(u128::from(quota)))
-                        }),
-                    ),
-                ])
-            }),
-        ),
-        ("network", network_of(manifest)),
-    ])
-}
-
 /// The identity of a package version as an action's object.
 #[must_use]
 pub fn object_id(id: &str, version: &str) -> ObjectId {
@@ -2196,45 +2464,6 @@ impl Host {
             .is_some_and(|held| held.manifest.package.version == version)
     }
 
-    /// Places a verified package in the plugin home and records where it came from. No
-    /// package code runs and nothing is granted (spec §31.9).
-    ///
-    /// # Errors
-    ///
-    /// `io.already_exists` when the same version is installed; the I/O failure otherwise.
-    pub fn install(&self, package: &Installed, source: &str) -> Result<Installed, ErrorValue> {
-        let manifest = &package.manifest;
-        let destination = self.install_destination(package)?;
-        if self.is_installed(&manifest.package.id, &manifest.package.version) {
-            return Err(ErrorValue::new(
-                ErrorCode::IoAlreadyExists,
-                format!(
-                    "`{}` {} is already installed",
-                    manifest.package.id, manifest.package.version
-                ),
-            )
-            .with_help("`remove plugin` it first; a package version is never silently replaced (spec §31.35)"));
-        }
-        if destination.exists() {
-            // Another version of the same package: one directory per id (ADR-0051), so the
-            // old version leaves. Its state stays (spec §31.81).
-            self.remove_directory(&destination)?;
-        }
-        copy_tree(&package.directory, &destination)?;
-        let installed = Installed {
-            directory: destination,
-            manifest: manifest.clone(),
-        };
-        let management = Management {
-            enabled: true,
-            installed_from: Some(source.to_owned()),
-            integrity: Some(integrity_of(&installed)),
-            background: false,
-        };
-        self.write_management(&manifest.package.id, &management)?;
-        Ok(installed)
-    }
-
     /// Removes an installed package's directory, and its management state unless `keep_state`
     /// (spec §31.81). The caller unloads a running instance first.
     ///
@@ -2249,7 +2478,7 @@ impl Host {
         Ok(())
     }
 
-    fn remove_directory(&self, directory: &Path) -> Result<(), ErrorValue> {
+    pub(crate) fn remove_directory(&self, directory: &Path) -> Result<(), ErrorValue> {
         // Only a directory under the plugin path is ever removed: a manifest elsewhere is a
         // source, never an installation.
         if !self
@@ -2271,7 +2500,7 @@ impl Host {
 
 /// Copies a package directory, file by file, keeping permissions so the runtime entry stays
 /// executable.
-fn copy_tree(from: &Path, to: &Path) -> Result<(), ErrorValue> {
+pub(crate) fn copy_tree(from: &Path, to: &Path) -> Result<(), ErrorValue> {
     std::fs::create_dir_all(to).map_err(|error| io_error(to, &error))?;
     for entry in std::fs::read_dir(from).map_err(|error| io_error(from, &error))? {
         let entry = entry.map_err(|error| io_error(from, &error))?;
@@ -2420,6 +2649,18 @@ fn grant_record(
                 .and_then(|grant| grant.revoked_at.clone())
                 .unwrap_or(Value::Null),
         )?
+        .set(
+            "permission",
+            grant
+                .and_then(|grant| grant.permission.as_deref())
+                .map_or(Value::Null, Value::string),
+        )?
+        .set(
+            "profile",
+            grant
+                .and_then(|grant| grant.profile.as_deref())
+                .map_or(Value::Null, Value::string),
+        )?
         .build())
 }
 
@@ -2501,5 +2742,6 @@ fn audit_record(schema: &Arc<Schema>, event: &AuditEvent) -> Result<RecordValue,
                 .as_ref()
                 .map_or(Value::Null, |error| wire_error_value(error).into_value()),
         )?
+        .set("correlation", text_or_null(event.correlation.as_ref()))?
         .build())
 }

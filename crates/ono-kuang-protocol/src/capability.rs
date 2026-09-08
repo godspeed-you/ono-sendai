@@ -208,8 +208,9 @@ capabilities! {
         "Raising a rate-limited notification to the operator.";
     RelationRead => "relation.read", Read, None, [],
         "Reading relationship edges from the graph.";
-    RelationWrite => "relation.write", Mutate, None, [],
-        "Contributing edges, attributed to the package by the host (spec §31.26).";
+    RelationWrite => "relation.write", Mutate, None,
+        [broker("relations", ScopeKind::IdList)],
+        "Contributing edges along the scoped relation ids, attributed to the package by the host (spec §31.26, ADR-0600 §2).";
     SecretUse => "secret.use", Mutate, None,
         [broker("secrets", ScopeKind::NameList)],
         "Requesting opaque secret handles by name. Never enumeration (spec §31.20).";

@@ -22,7 +22,13 @@ version: 1
 
 # The manifest's own format identifier, spec §31.7's `format:` line. It versions the *package
 # format* and nothing else; spec §31.62 requires the version dimensions to move independently.
-format: kuang-package/1
+#
+# Two formats are read (ADR-0600 §3). `kuang-package/1` is every section below except
+# `permissions`; `kuang-package/2` is `/1` plus the optional `permissions` section. A `/1`
+# document that carries `permissions` is refused, so `/1` keeps meaning one thing, and a `/1`
+# reader refuses a `/2` document by its format line rather than by an unknown field.
+format: kuang-package/2
+formats_read: [kuang-package/1, kuang-package/2]
 
 # ---------------------------------------------------------------------------------------------
 # Identity and naming rules — spec §31.5, normative.
@@ -565,6 +571,35 @@ sections:
           Link name patterns the package may be projected onto. Null means none may be assumed;
           the operator names the link at grant time. Effective authority is the intersection of
           local and remote policy (spec §31.40).
+
+  # --- permissions: the human layer over the capabilities, K11P §6, §8, §9 (ADR-0600) --------
+  - name: permissions
+    required: false
+    closed: true
+    since: kuang-package/2
+    doc: >-
+      What the package asks a user for, in the user's terms, and what each of those resolves to
+      in the broker's. Absent means the host derives one permission per declared capability
+      with its own wording (K11P §8.1). Every rule is checked before any package byte runs and a
+      failure is `permission.invalid_mapping`; the vocabulary, the class table and the rules are
+      `permissions.v1.yaml`.
+    fields:
+      profiles:
+        type: record
+        nullable: true
+        doc: >-
+          `{<name>: {title: string?, permissions: list<string>}}`. `minimal` and `recommended`
+          are required whenever `requests` is non-empty; both may name only safe defaults. A
+          package may add profiles such as `operate`.
+      requests:
+        type: list<record>
+        nullable: true
+        doc: >-
+          The descriptors, each `{id, kind, title, purpose?, phase, recommended?, risk?, grants,
+          scope_text?}` as `permissions.v1.yaml` → `descriptor` defines them. Every `grants[]`
+          entry names a capability the `capabilities` section declares, with a scope that is a
+          record of that family's scope keys or one of the words `runtime-derived`,
+          `package-contributions` (relation.write) and `provider-instance` (provider.mutate).
 
   # --- assistant: only for the assistant role, spec §31.41–§31.51 ----------------------------
   - name: assistant
