@@ -2636,32 +2636,47 @@ Conventions this subsection relies on:
       `xtask/tests/temporal_evidence.rs`. This box closes last, because a harvester that
       resolves nothing looks identical to one that works: its own suite mutates the checklist and
       proves each rule reports what it is for.
-- [ ] **The temporal error family exists in both registries.** Fourteen codes with the names §34
+- [x] **The temporal error family exists in both registries.** Fourteen codes with the names §34
       fixes, compared bidirectionally on code, name and kind by
-      `cargo run -p xtask -- spec-check` (`xtask/src/contracts.rs::check_error_registry`), and
-      renumbered into E13 by ADR-0610.
-- [ ] **Every schema §35 names is registered, embedded and validating.** The eleven schemas of
-      §35 plus the two the tranche's commands return, each in
-      `docs/contracts/schemas/`, each embedded in `crates/ono-value/src/builtin.rs`, each
-      producing a record that validates —
+      `xtask/src/contracts.rs::check_error_registry`, which `cargo run -p xtask -- spec-check`
+      runs and `xtask/tests/contracts.rs::should_match_the_error_registry_against_the_implementation_when_both_exist`
+      proves bites. Renumbered into E13 by ADR-0610, and
+      `crates/ono-temporal-core/tests/errors.rs` shows each code carrying the metadata §34's
+      examples show.
+- [x] **Every schema §35 names is registered, embedded and validating.** The eleven schemas of
+      §35 plus the two the tranche's commands return, each in `docs/contracts/schemas/`, each
+      embedded in `crates/ono-value/src/builtin.rs`, each producing a record that validates
+      against it —
       `crates/ono-value/src/builtin.rs::should_embed_every_schema_contract_as_the_spec_states_it`,
-      `crates/ono-temporal-core/tests/schemas.rs`.
-- [ ] **The six machine-readable temporal registries exist under `docs/contracts/temporal/`.**
-      `temporal.yaml`, `events.yaml`, `evidence.yaml`, `causality.yaml`, `sources.yaml`,
-      `recorder.yaml`, each parsing and each internally consistent —
-      `xtask/tests/temporal_contracts.rs`.
-- [ ] **`spec-check` fails on temporal contract drift.** §36.4's six conditions each have a test
-      that mutates a registry and asserts the problem is reported: an unregistered stable
-      command, an undocumented event kind, an unregistered built-in causal rule, a dangling
-      error or schema reference, a default configuration that differs from the registry, and a
-      provider advertising a temporal capability its contract does not declare —
-      `xtask/tests/temporal_contracts.rs`.
+      `crates/ono-value/src/builtin.rs::should_load_every_embedded_contract_without_a_single_failure`
+      and `crates/ono-temporal-core/tests/value_records.rs`. §35's `ono.evidence/1` is registered
+      as `ono.temporal-evidence/1`, because the name it asked for is v0.2 §31.24's (ADR-0611).
+- [x] **The six machine-readable temporal registries exist under `docs/contracts/temporal/`.**
+      `temporal.yaml`, `events.yaml`, `evidence.yaml`, `causality.yaml`, `sources.yaml` and
+      `recorder.yaml`, each parsing, each internally consistent, and each indexed by the
+      hardening registry inventory —
+      `xtask/tests/temporal_contracts.rs::should_accept_the_registries_this_repository_ships_when_checked`,
+      `::should_reject_a_required_registry_that_is_missing`,
+      `::should_reject_a_temporal_registry_the_hardening_inventory_does_not_index`.
+- [x] **`spec-check` fails on temporal contract drift.** §36.4's six conditions each have a test
+      that copies this repository's own registries, breaks one thing and asserts the refusal —
+      `xtask/tests/temporal_contracts.rs::should_reject_a_stable_temporal_command_the_registry_inventory_omits`,
+      `::should_reject_an_event_kind_the_registry_declares_and_the_core_crate_never_names`,
+      `::should_reject_a_built_in_causal_rule_that_is_not_registered`,
+      `::should_reject_an_error_a_temporal_registry_names_and_the_error_registry_does_not`,
+      `::should_reject_a_schema_a_temporal_registry_names_and_the_schema_directory_does_not_hold`,
+      `::should_reject_a_setting_default_that_differs_from_the_shell`,
+      `::should_reject_a_source_claiming_a_capability_its_provider_does_not_advertise`. The
+      event-kind rule reads `ono_temporal_core::EventKind::ALL`, so a kind renamed in Rust and
+      not in the registry fails too.
 - [ ] **The twelve configuration settings of §33 are typed, inspectable and default as specified.**
       `temporal.recording.enabled` is `false` —
       `crates/ono-cli/tests/temporal_settings.rs`, case 231-temporal-configuration.
-- [ ] **No renderer, plugin or assistant can raise an evidence strength.** The type offers no
-      such operation and the property test says so —
-      `crates/ono-temporal-core/tests/evidence.rs`.
+- [x] **No renderer, plugin or assistant can raise an evidence strength.** The type offers only
+      `weakest_of`, and combining evidence never yields something stronger than what went in —
+      `crates/ono-temporal-core/tests/evidence.rs::should_order_strengths_strongest_first_when_they_are_compared`,
+      `::should_take_the_weaker_strength_when_two_are_combined`,
+      `::should_offer_no_way_to_raise_a_strength_when_evidence_is_combined`.
 
 #### 4.11.2 Temporal context (§4, §12, §48.1 scenarios 1–6)
 
