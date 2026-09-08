@@ -22,15 +22,12 @@ use base64::Engine as _;
 use rustls_pki_types::{CertificateDer, TrustAnchor, UnixTime};
 use serde::Deserialize;
 
-use crate::error::{KuangError, KuangErrorCode};
+use ono_kuang_protocol::{KuangError, KuangErrorCode, Manifest, SignedPackage};
 
 /// Sigstore's published trust material, as this release took it (ADR-0609 §4).
 ///
 /// Data, embedded rather than fetched: an install must work on a machine with no route out.
 pub const TRUST_ROOT: &str = include_str!("../../../docs/contracts/kuang/sigstore-trust-root.json");
-
-/// Where a package carries its keyless signature, beside `manifest.yaml`.
-pub const BUNDLE_FILE: &str = "signature.sigstore.json";
 
 /// The extended key usage a code-signing certificate must carry: 1.3.6.1.5.5.7.3.3.
 const CODE_SIGNING: &[u8] = &[0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x03];
@@ -68,6 +65,30 @@ impl KeylessIdentity {
             None => self.subject == subject,
         }
     }
+}
+
+/// Verifies the keyless signature a package carries, against the package on disk (ADR-0609 §1).
+///
+/// The bundle covers exactly the bytes an ed25519 signature covers: the package's own
+/// description, recomputed here from the files that are there. So a package signed either way is
+/// signed about the same thing, and a bundle that vouches for anything else is refused.
+///
+/// # Errors
+///
+/// `package.signature_invalid` when the bundle does not verify, and `package.invalid` when the
+/// description cannot be built from the package at all.
+pub fn check_package(
+    bundle: &str,
+    manifest: &Manifest,
+    files: Vec<ono_kuang_protocol::FileDigest>,
+) -> Result<KeylessIdentity, KuangError> {
+    let described = SignedPackage::new(
+        &manifest.package.id,
+        &manifest.package.version,
+        &manifest.package.publisher,
+        files,
+    )?;
+    verify(bundle, &described.canonical_bytes())
 }
 
 /// Verifies `bundle` against `payload` under the embedded trust root.
@@ -470,6 +491,15 @@ struct RawLogKey {
 mod tests {
     use super::*;
 
+    /// The Sigstore bundle this project's own `v0.4.3` release published over its `SHA256SUMS`,
+    /// with the bytes it covers. A real certificate, a real entry in the public transparency log
+    /// and a real signature: a verifier that accepts a fixture somebody invented proves nothing
+    /// about the one case that matters. They live under `tests/fixtures` because that is where
+    /// this crate keeps fixtures, and they are read from here because the logic they exercise is
+    /// a module's own rather than the shell's.
+    const BUNDLE: &str = include_str!("../tests/fixtures/release-SHA256SUMS.sigstore.json");
+    const PAYLOAD: &[u8] = include_bytes!("../tests/fixtures/release-SHA256SUMS");
+
     #[test]
     fn should_read_the_trust_root_this_build_carries() {
         // The embedded material is what every verification rests on; a build that shipped an
@@ -523,5 +553,85 @@ mod tests {
     fn should_refuse_a_bundle_that_is_not_one() {
         let refused = verify("{}", b"anything").expect_err("an empty object is not a bundle");
         assert_eq!(refused.code(), KuangErrorCode::PackageSignatureInvalid);
+    }
+    const ISSUER: &str = "https://token.actions.githubusercontent.com";
+
+    #[test]
+    fn should_verify_the_bundle_this_project_published_and_name_who_signed_it() {
+        let identity = verify(BUNDLE, PAYLOAD).expect("the release bundle verifies");
+        assert_eq!(identity.issuer, ISSUER);
+        assert!(
+            identity.subject.starts_with(
+                "https://github.com/godspeed-you/ono-sendai/.github/workflows/release.yml@"
+            ),
+            "the subject names the workflow that signed: {}",
+            identity.subject
+        );
+        assert!(
+            identity.subject.ends_with("refs/tags/v0.4.3"),
+            "and the tag it ran on: {}",
+            identity.subject
+        );
+        assert!(
+            identity.signed_at > 1_700_000_000,
+            "and the log's own time is carried out: {}",
+            identity.signed_at
+        );
+    }
+
+    #[test]
+    fn should_refuse_the_same_bundle_over_other_bytes() {
+        // The first thing verified, before anything cryptographic: a bundle vouches for one thing.
+        let mut tampered = PAYLOAD.to_vec();
+        tampered[0] ^= 0x01;
+        let refused = verify(BUNDLE, &tampered).expect_err("other bytes are refused");
+        assert_eq!(refused.code(), KuangErrorCode::PackageSignatureInvalid);
+        assert!(
+            refused.message().contains("other bytes"),
+            "and says so: {}",
+            refused.message()
+        );
+    }
+
+    #[test]
+    fn should_refuse_a_bundle_whose_signature_was_replaced() {
+        // The signature is swapped for another well-formed one; the certificate and the log entry
+        // stay as they are, so only step 3 can catch it.
+        let other = "MEUCIQCh3Hi/CI4XngzTzGN0zQjS+CC/syVa+OZ9P+7TmWAYqAIgPxIohRaKhIz+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let bundle: serde_json::Value = serde_json::from_str(BUNDLE).expect("the fixture reads");
+        let mut bundle = bundle;
+        bundle["messageSignature"]["signature"] = serde_json::Value::String(other.to_owned());
+        let refused = verify(&bundle.to_string(), PAYLOAD)
+            .expect_err("a signature the certificate did not make is refused");
+        assert_eq!(refused.code(), KuangErrorCode::PackageSignatureInvalid);
+    }
+
+    #[test]
+    fn should_refuse_a_bundle_whose_log_timestamp_was_replaced() {
+        // Step 4: the log's own signature over its entry. Moving the recorded time would move the
+        // certificate's ten-minute window, which is the whole reason the log is consulted.
+        let mut bundle: serde_json::Value =
+            serde_json::from_str(BUNDLE).expect("the fixture reads");
+        bundle["verificationMaterial"]["tlogEntries"][0]["integratedTime"] =
+            serde_json::Value::String("1788871999".to_owned());
+        let refused = verify(&bundle.to_string(), PAYLOAD)
+            .expect_err("an entry the log did not sign is refused");
+        assert_eq!(refused.code(), KuangErrorCode::PackageSignatureInvalid);
+    }
+
+    #[test]
+    fn should_refuse_a_bundle_with_no_transparency_log_entry() {
+        // Without the log nothing says *when* the signature was made, and a leaked ephemeral key
+        // would be usable for ever.
+        let mut bundle: serde_json::Value =
+            serde_json::from_str(BUNDLE).expect("the fixture reads");
+        bundle["verificationMaterial"]["tlogEntries"] = serde_json::Value::Array(Vec::new());
+        let refused = verify(&bundle.to_string(), PAYLOAD)
+            .expect_err("a bundle with no log entry is refused");
+        assert!(
+            refused.message().contains("transparency-log"),
+            "and says what is missing: {}",
+            refused.message()
+        );
     }
 }

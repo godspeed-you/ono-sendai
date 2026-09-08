@@ -10,6 +10,12 @@ use std::path::Path;
 
 use crate::signature::{FileDigest, SIGNATURE_FILE};
 
+/// Where a package carries a keyless signature, beside `manifest.yaml` (ADR-0609).
+///
+/// The name lives here, with the rest of the package layout: what a package may contain is the
+/// protocol's business, and verifying what it contains is the host's.
+pub const BUNDLE_FILE: &str = "signature.sigstore.json";
+
 /// Every file a package artifact is made of, with its digest, sorted by path.
 ///
 /// Everything under the package directory except the signature. What a manifest *declares* is
@@ -19,8 +25,8 @@ use crate::signature::{FileDigest, SIGNATURE_FILE};
 /// the declared files would answer "these are the exact bytes referenced" while most of the
 /// bytes went unlooked at (spec §31.36, ADR-0311).
 ///
-/// `signature.yaml` is excluded because it is a statement *about* the artifact: a signature
-/// cannot cover itself.
+/// `signature.yaml` and `signature.sigstore.json` are excluded because each is a statement
+/// *about* the artifact: a signature cannot cover itself.
 #[must_use]
 pub fn artifact_files(directory: &Path) -> Vec<FileDigest> {
     let mut files = Vec::new();
@@ -47,7 +53,7 @@ fn collect_artifact_files(directory: &Path, prefix: &str, files: &mut Vec<FileDi
         };
         // Neither signature covers itself: the ed25519 document, and the keyless bundle beside
         // it (ADR-0311, ADR-0609 §1).
-        if relative == SIGNATURE_FILE || relative == crate::keyless::BUNDLE_FILE {
+        if relative == SIGNATURE_FILE || relative == BUNDLE_FILE {
             continue;
         }
         let Ok(metadata) = entry.path().symlink_metadata() else {

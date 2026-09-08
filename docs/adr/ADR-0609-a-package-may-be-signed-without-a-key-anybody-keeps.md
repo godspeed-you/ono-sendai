@@ -91,17 +91,27 @@ identity and a moment.
 
 ## Consequences
 
-- `ono-kuang-protocol` gains `ring` and `rustls-webpki`, both already resolved in the graph and
-  both already allowed by `deny.toml`, and `x509-parser` for the two certificate fields webpki does
-  not expose. Fifteen new crates, all pure Rust.
-- A publisher can release a signed package from a workflow with no secret. The Kubernetes provider
-  does exactly that, and core enrols its identity so `install plugin kubernetes` from the built-in
-  catalog is `project-trusted` without anybody holding a key.
+- **The verifier lives in `ono-cli`, not in `ono-kuang-protocol`.** A package verifies nothing; a
+  host verifies packages. Putting it in the protocol crate was the first attempt and the
+  acceptance image caught it: `ono-kuang-sdk` builds the example plugin for `wasm32-wasip2`, and
+  `ring` compiles its assembly through `clang`, which that target's build needs and the builder
+  image does not carry. The protocol keeps only `BUNDLE_FILE`, the name of the file — what a
+  package may contain is the protocol's business, and checking what it contains is the host's.
+- `ono-cli` gains `ring` and `rustls-webpki`, both already resolved in the graph and both already
+  allowed by `deny.toml`, `rustls-pki-types` for their argument types, and `x509-parser` for the
+  two certificate fields webpki does not expose. Fifteen new crates, all pure Rust.
+- A publisher can release a signed package from a workflow with no secret, and the Kubernetes
+  provider does exactly that (ADR-0071 there). Trusting it stays the operator's action, as it is
+  for a key: nothing here ships a trust store, so a fresh machine answers `signature: valid`,
+  `trust: unknown` until somebody enrols the identity. The provider's README gives that block
+  verbatim.
 - `kuang-sign` keeps working unchanged. Nothing about an existing signed package changes, and no
   installed package needs re-signing.
-- Encoded by `ono-kuang-protocol/tests/keyless.rs` against a real bundle: the one this project's own
-  `v0.4.3` release published over its `SHA256SUMS`, which is a Fulcio-issued certificate, a real log
-  entry and a real signature rather than a fixture somebody wrote to pass.
+- Encoded by the tests of `ono-cli::kuang_keyless` against a real bundle: the one this project's
+  own `v0.4.3` release published over its `SHA256SUMS`, which is a Fulcio-issued certificate, a
+  real log entry and a real signature rather than a fixture somebody wrote to pass. The package
+  path is `ono-cli/tests/plugins_signature.rs`, where a bundle covering other bytes is `invalid`
+  and the package `untrusted`.
 
 ## Alternatives considered
 

@@ -20,6 +20,7 @@ pub mod kuang_acquire;
 mod kuang_catalog;
 pub mod kuang_host;
 pub mod kuang_install;
+mod kuang_keyless;
 pub mod kuang_permissions;
 mod kuang_services;
 pub mod kuang_trust;

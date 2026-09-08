@@ -1538,6 +1538,7 @@ name = "ono-cli"
 version = "0.4.3"
 dependencies = [
  "async-trait",
+ "base64 0.23.1",
  "bytes",
  "futures",
  "jiff",
@@ -1569,6 +1570,9 @@ dependencies = [
  "ono-spatial-render",
  "ono-testkit",
  "ono-value",
+ "ring",
+ "rustls-pki-types",
+ "rustls-webpki",
  "serde",
  "serde_json",
  "serde_yaml_ng",
@@ -1576,6 +1580,7 @@ dependencies = [
  "tar",
  "tokio",
  "ureq",
+ "x509-parser",
 ]
 
 [[package]]
@@ -1662,20 +1667,15 @@ dependencies = [
 name = "ono-kuang-protocol"
 version = "0.4.3"
 dependencies = [
- "base64 0.23.1",
  "ed25519-dalek",
  "globset",
  "ono-core",
  "ono-value",
- "ring",
- "rustls-pki-types",
- "rustls-webpki",
  "serde",
  "serde_json",
  "serde_yaml_ng",
  "sha2 0.11.0",
  "thiserror",
- "x509-parser",
 ]
 
 [[package]]

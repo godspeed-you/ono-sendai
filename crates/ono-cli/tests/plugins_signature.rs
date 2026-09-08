@@ -454,7 +454,7 @@ fn should_report_a_trust_store_it_cannot_read_rather_than_treating_its_keys_as_a
 /// real certificate, a real transparency-log entry and a real signature — over bytes that are
 /// not this package's description.
 const RELEASE_BUNDLE: &str =
-    include_str!("../../ono-kuang-protocol/tests/fixtures/release-SHA256SUMS.sigstore.json");
+    include_str!("fixtures/release-SHA256SUMS.sigstore.json");
 
 #[test]
 fn should_refuse_a_keyless_signature_that_vouches_for_other_bytes() {

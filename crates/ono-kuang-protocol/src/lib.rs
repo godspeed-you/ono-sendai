@@ -33,7 +33,6 @@ mod confinement;
 mod contract;
 mod error;
 mod frame;
-mod keyless;
 mod lifecycle;
 mod manifest;
 mod message;
@@ -41,7 +40,7 @@ mod permission;
 mod signature;
 mod version;
 
-pub use artifact::artifact_files;
+pub use artifact::{BUNDLE_FILE, artifact_files};
 pub use audit::{AuditEvent, AuditResult};
 pub use capability::{
     Capability, Decision, DeclarationClass, Elevation, Enforcement, GrantDuration, Lease, Risk,
@@ -57,7 +56,6 @@ pub use contract::{
 };
 pub use error::{KuangError, KuangErrorCode, WireError};
 pub use frame::{FrameError, FrameLimits, decode_payload, encode_frame, read_frame, write_frame};
-pub use keyless::{BUNDLE_FILE, KeylessIdentity, TRUST_ROOT, verify as verify_keyless};
 pub use lifecycle::{Lifecycle, PluginState, TransitionError};
 pub use manifest::{
     CapabilityRequest, Compatibility, ContributionPaths, CpuBudget, Dependencies, Manifest,
@@ -85,7 +83,7 @@ pub use permission::{
 };
 pub use signature::{
     FileDigest, PackageSignature, PublicKey, SIGNATURE_ALGORITHM, SIGNATURE_FILE, SIGNATURE_FORMAT,
-    SecretKey, SignedPackage, check_keyless, content_digest,
+    SecretKey, SignedPackage, content_digest,
 };
 pub use version::{
     ApiVersion, HOST_API, PACKAGE_FORMAT, PACKAGE_FORMAT_2, PACKAGE_FORMATS, VALUE_PROTOCOL,

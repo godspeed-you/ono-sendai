@@ -179,7 +179,7 @@ impl TrustStore {
     pub fn judge_identity(
         &self,
         publisher: &str,
-        identity: &ono_kuang_protocol::KeylessIdentity,
+        identity: &crate::kuang_keyless::KeylessIdentity,
     ) -> Trust {
         let matching = || {
             self.identities.iter().filter(|entry| {

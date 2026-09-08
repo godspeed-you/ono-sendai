@@ -1353,7 +1353,7 @@ pub struct SignatureCheck {
     pub failure: Option<ErrorValue>,
     /// Who a keyless signature says signed, once it verified (ADR-0609). `None` when the package
     /// carries none, or when the one it carries did not verify.
-    pub identity: Option<ono_kuang_protocol::KeylessIdentity>,
+    pub identity: Option<crate::kuang_keyless::KeylessIdentity>,
     /// The publisher the package claims, which is what an enrolled identity is judged against.
     pub publisher: String,
 }
@@ -1430,7 +1430,7 @@ pub fn signature_of(package: &Installed) -> SignatureCheck {
     }
     let mut identity = None;
     if let Some(text) = &bundle {
-        match ono_kuang_protocol::check_keyless(
+        match crate::kuang_keyless::check_package(
             text,
             &package.manifest,
             artifact_files(&package.directory),
