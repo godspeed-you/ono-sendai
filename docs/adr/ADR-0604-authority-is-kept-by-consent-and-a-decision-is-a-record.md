@@ -107,7 +107,7 @@ and `get permission` recommends narrowing it; nothing narrows it silently (K11P 
   gains `correlation` (nullable); `ono.permission/1` is new.
 - Encoded by `ono-cli/tests/permissions.rs` (get/set, custom and legacy projection, deny ahead of
   grant), `ono-cli/tests/plugin_upgrade.rs` (unchanged, expanded, repurposed, refused key
-  lineage), `ono-cli/tests/plugin_install.rs` (removal and reinstall) and acceptance cases
+  lineage), `ono-cli/tests/permissions.rs` (removal and reinstall) and acceptance cases
   `223`, `225`, `226`.
 
 ## Alternatives considered

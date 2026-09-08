@@ -110,7 +110,7 @@ Command-level `risk`, dry-run defaults and provider preconditions stay in force 
 - `install plugin` resolves every `PluginRef` of ADR-0601; `path:` and `--confirm` keep working.
 - `set plugin <ref> --enabled false` overrides `ready`; an invocation of a disabled package's
   contribution refuses and says so, and no lazy load overrides the disablement (K11P §17.4).
-- Encoded by `ono-cli/tests/plugin_install.rs` (transaction, rollback under a read-only home and a
+- Encoded by `ono-cli/tests/permissions.rs` (transaction, rollback under a read-only home and a
   read-only config directory, readiness, one-session install-and-use, unattended rules) and
   acceptance cases `220`, `221`, `224`.
 
