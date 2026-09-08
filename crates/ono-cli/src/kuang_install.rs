@@ -427,16 +427,15 @@ struct TrustWords {
 
 fn trust_words(package: &Installed, session: &Session) -> TrustWords {
     let signature = signature_of(package);
-    let (standing, key) = match &signature.document {
-        Some(document) if signature.failure.is_none() => (
-            session.with_kuang(|host| {
-                host.trust()
-                    .store
-                    .judge(document.publisher(), document.key())
-            }),
-            document.key().to_string(),
-        ),
-        _ => (Trust::Unknown, "unsigned".to_owned()),
+    let standing =
+        session.with_kuang(|host| crate::kuang_host::standing_of(&signature, host.trust()));
+    // What a person is shown as *who signed*: a key where a key signed, and the identity a
+    // certificate carried where nobody kept one (ADR-0609 §2 step 5).
+    let key = match (&signature.document, &signature.identity) {
+        _ if signature.failure.is_some() => "unsigned".to_owned(),
+        (Some(document), _) => document.key().to_string(),
+        (None, Some(identity)) => identity.subject.clone(),
+        (None, None) => "unsigned".to_owned(),
     };
     TrustWords {
         signature: signature.state.to_owned(),

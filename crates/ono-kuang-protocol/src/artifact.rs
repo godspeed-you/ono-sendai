@@ -45,7 +45,9 @@ fn collect_artifact_files(directory: &Path, prefix: &str, files: &mut Vec<FileDi
         } else {
             format!("{prefix}/{name}")
         };
-        if relative == SIGNATURE_FILE {
+        // Neither signature covers itself: the ed25519 document, and the keyless bundle beside
+        // it (ADR-0311, ADR-0609 §1).
+        if relative == SIGNATURE_FILE || relative == crate::keyless::BUNDLE_FILE {
             continue;
         }
         let Ok(metadata) = entry.path().symlink_metadata() else {

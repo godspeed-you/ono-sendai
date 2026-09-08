@@ -5,8 +5,13 @@
 //! kuang-sign sign <directory> --key <file>
 //! kuang-sign verify <directory>
 //! kuang-sign digest <directory>      the content digest a catalog release vouches for
+//! kuang-sign describe <directory> --out <file>
 //! kuang-sign pack <directory> --out <file.kuang>
 //! ```
+//!
+//! `describe` writes the exact bytes a signature covers, so something other than this tool can
+//! sign them: `cosign sign-blob --bundle signature.sigstore.json <that file>` produces the
+//! keyless signature of `ADR-0609 (core)`, from a workflow that keeps no key at all.
 //!
 //! `pack` writes the `.kuang` archive a catalog's network artifact is (K11A §6, §7; ADR-0607): a
 //! plain, uncompressed tar of the package directory's files, relative to its root, and nothing
@@ -39,6 +44,7 @@ fn main() -> ExitCode {
         Some((&"sign", rest)) => sign(rest),
         Some((&"verify", rest)) => verify(rest),
         Some((&"digest", rest)) => digest(rest),
+        Some((&"describe", rest)) => describe(rest),
         Some((&"pack", rest)) => pack(rest),
         _ => {
             eprintln!(
@@ -47,6 +53,7 @@ fn main() -> ExitCode {
                  kuang-sign sign <directory> --key <file>\n  \
                  kuang-sign verify <directory>\n  \
                  kuang-sign digest <directory>\n  \
+                 kuang-sign describe <directory> --out <file>\n  \
                  kuang-sign pack <directory> --out <file.kuang>"
             );
             return ExitCode::from(2);
@@ -147,6 +154,35 @@ fn digest(words: &[&str]) -> Result<(), KuangError> {
         positional(words).ok_or_else(|| failed("`digest` needs a package directory"))?;
     manifest_of(&directory)?;
     println!("{}", content_digest(&directory));
+    Ok(())
+}
+
+/// Writes the exact bytes a signature covers, for a signer that is not this tool.
+///
+/// The ed25519 path signs these bytes with a key; the keyless path of `ADR-0609 (core)` hands
+/// them to `cosign sign-blob`. One description, so a package signed either way is signed about
+/// the same thing.
+fn describe(words: &[&str]) -> Result<(), KuangError> {
+    let directory =
+        positional(words).ok_or_else(|| failed("`describe` needs a package directory"))?;
+    let out = option(words, "--out")
+        .ok_or_else(|| failed("`describe` needs `--out <file>`, where to write the description"))?;
+    let manifest = manifest_of(&directory)?;
+    let described = SignedPackage::new(
+        &manifest.package.id,
+        &manifest.package.version,
+        &manifest.package.publisher,
+        artifact_files(&directory),
+    )?;
+    std::fs::write(&out, described.canonical_bytes())
+        .map_err(|error| failed(format!("cannot write {}: {error}", out.display())))?;
+    println!(
+        "{} {} described in {} ({} files)",
+        manifest.package.id,
+        manifest.package.version,
+        out.display(),
+        described.files.len()
+    );
     Ok(())
 }
 

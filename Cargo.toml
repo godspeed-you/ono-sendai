@@ -70,7 +70,17 @@ regex = "1"
 # `rcgen` writes the self-signed certificate that *is* a host's pinned identity.
 rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
 rustix = { version = "1", features = ["process"] }
+# The keyless package signature of ADR-0609 verifies a Fulcio certificate chain and an ECDSA
+# signature offline. `ring` and `rustls-webpki` are already in the graph through `rustls`;
+# `x509-parser` reads the two certificate fields webpki does not expose, the subject identity and
+# the OIDC issuer.
+# The bundle of ADR-0609 is JSON with base64 fields.
+base64 = "0.23"
+ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
+rustls-pki-types = "1"
+rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
+x509-parser = "0.18"
 rustls-pemfile = "2"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["preserve_order"] }
@@ -140,6 +150,34 @@ crate = "tokio-rustls"
 role = "the async adapter over rustls used by the listening agent and the client"
 adr = "ADR-0353"
 reviewed = "2026-08-29"
+
+# The keyless package signature of ADR-0609: a package signed by a workflow rather than by a key
+# anybody keeps. Four crates, none of them new to the graph but each now depended on directly,
+# and each doing one thing.
+
+[[workspace.metadata.supply-chain.cryptographic]]
+crate = "ring"
+role = "verifying a transparency log's signature over the entry that dates a keyless package signature, ECDSA P-256 and Ed25519"
+adr = "ADR-0609"
+reviewed = "2026-09-08"
+
+[[workspace.metadata.supply-chain.cryptographic]]
+crate = "rustls-webpki"
+role = "building and checking the certificate path from a keyless package signature to the certificate authority this build carries, and the signature that certificate's key made"
+adr = "ADR-0609"
+reviewed = "2026-09-08"
+
+[[workspace.metadata.supply-chain.cryptographic]]
+crate = "rustls-pki-types"
+role = "the certificate and time types rustls-webpki is asked in; no cryptography of its own"
+adr = "ADR-0609"
+reviewed = "2026-09-08"
+
+[[workspace.metadata.supply-chain.cryptographic]]
+crate = "x509-parser"
+role = "reading the two certificate fields webpki does not expose: the subject identity a keyless signature carries and the OpenID issuer that authenticated it"
+adr = "ADR-0609"
+reviewed = "2026-09-08"
 
 [[workspace.metadata.supply-chain.cryptographic]]
 crate = "rustls-pemfile"

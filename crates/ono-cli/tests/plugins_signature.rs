@@ -447,3 +447,72 @@ fn should_report_a_trust_store_it_cannot_read_rather_than_treating_its_keys_as_a
         run.output()
     );
 }
+
+// --- the keyless signature (ADR-0609) ------------------------------------------------------------
+
+/// The Sigstore bundle this project's own `v0.4.3` release published over its `SHA256SUMS`: a
+/// real certificate, a real transparency-log entry and a real signature — over bytes that are
+/// not this package's description.
+const RELEASE_BUNDLE: &str =
+    include_str!("../../ono-kuang-protocol/tests/fixtures/release-SHA256SUMS.sigstore.json");
+
+#[test]
+fn should_refuse_a_keyless_signature_that_vouches_for_other_bytes() {
+    // The wiring, at the level a user meets it: a package carrying a bundle that verifies as a
+    // bundle and covers something else is `invalid`, not `valid` and not `absent`. This is the
+    // one refusal that stops a real signature from being lifted off one artifact onto another.
+    let home = scratch();
+    let source = lay_out(&home.path().join("source"), PACKAGE);
+    let installed = install(&home, &source);
+    installed.assert_success();
+
+    std::fs::write(
+        home.path()
+            .join("plugins")
+            .join(PACKAGE)
+            .join("signature.sigstore.json"),
+        RELEASE_BUNDLE,
+    )
+    .expect("the bundle is placed in the plugin home");
+
+    let run = ono_with_plugins(&home, &format!("verify plugin {PACKAGE} | to json"));
+    let record = last_json(&run);
+    let record = only(&record);
+    assert_eq!(
+        str_field(record, "signature"),
+        "invalid",
+        "a bundle over other bytes is refused: {:?}",
+        run.output()
+    );
+
+    // And what a person reading the package list is told about it.
+    let listed = ono_with_plugins(&home, "get plugin | select trust | to json");
+    let listed_record = last_json(&listed);
+    assert_eq!(
+        str_field(only(&listed_record), "trust"),
+        "untrusted",
+        "a package whose signature does not hold is not trusted: {:?}",
+        listed.output()
+    );
+}
+
+#[test]
+fn should_report_a_package_with_no_signature_of_either_kind_as_absent() {
+    // The other end of the same reader: two files may be there, and neither being there is not
+    // a failure (spec §31.36).
+    let home = scratch();
+    let source = lay_out(&home.path().join("source"), PACKAGE);
+    install(&home, &source).assert_success();
+
+    let run = ono_with_plugins(&home, &format!("verify plugin {PACKAGE} | to json"));
+    let record = last_json(&run);
+    assert_eq!(str_field(only(&record), "signature"), "absent");
+
+    let listed = ono_with_plugins(&home, "get plugin | select trust | to json");
+    let listed_record = last_json(&listed);
+    assert_eq!(
+        str_field(only(&listed_record), "trust"),
+        "local",
+        "an unsigned package is local, which is a statement rather than a failure"
+    );
+}

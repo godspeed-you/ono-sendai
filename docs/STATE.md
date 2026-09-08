@@ -855,6 +855,19 @@ Two specifications the user placed under `docs/specs/kuang11/`, implemented end 
   wrappers placing the signed payload under the system root with no maintainer script
   (ADR-0071 there; `scripts/package.sh --key …`).
 
+**A package may be signed by nobody's key** (ADR-0609). Ono signs its own releases with no key,
+while the plugin layer asked a publisher to keep an ed25519 key for ever, which is why the
+Kubernetes provider shipped its wrappers as a source release and stopped. A package may now carry
+`signature.sigstore.json` over the same bytes the ed25519 signature covers, and the host verifies
+it offline: the certificate chains to an authority the build carries, its key made the signature,
+the transparency log's own signed timestamp places that inside the certificate's ten-minute life,
+and the subject and issuer are read out for the trust stores, which enrol an identity beside a
+key. The verifier is narrow, built on `ring` and `rustls-webpki` from the existing graph plus
+`x509-parser`, because `sigstore-verify` costs forty-four crates including an async HTTP stack and
+a C crypto library for a verification that must be offline. It is proven against the real bundle
+this project's own `v0.4.3` release published, with the tampering cases refused; the Kubernetes
+provider signs this way in a release workflow that holds no secret.
+
 **The notices the binary owes are generated and shipped** (ADR-0608). `deny.toml` decided which
 licences may be shipped; nothing discharged what they ask for once the binary is somewhere else —
 MIT's permission notice, Apache-2.0 §4's text, and CDLA-Permissive-2.0 §2.1's, which arrived with

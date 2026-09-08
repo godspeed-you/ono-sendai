@@ -1098,13 +1098,7 @@ impl Host {
         if signature.failure.is_some() {
             return "blocked";
         }
-        if let Some(document) = &signature.document
-            && self
-                .trust
-                .store
-                .judge(document.publisher(), document.key())
-                .blocks()
-        {
+        if standing_of(&signature, &self.trust).blocks() {
             return "blocked";
         }
         if crate::kuang_permissions::undecided(self, package, management).is_empty() {
@@ -1357,6 +1351,38 @@ pub struct SignatureCheck {
     /// Why the signature does not belong to this artifact. `None` when it does, and when there
     /// is none — `absent` is not a failure (spec §31.36).
     pub failure: Option<ErrorValue>,
+    /// Who a keyless signature says signed, once it verified (ADR-0609). `None` when the package
+    /// carries none, or when the one it carries did not verify.
+    pub identity: Option<ono_kuang_protocol::KeylessIdentity>,
+    /// The publisher the package claims, which is what an enrolled identity is judged against.
+    pub publisher: String,
+}
+
+/// What the operator's stores say about whoever signed, whichever way they signed (ADR-0609 §3).
+///
+/// A revocation anywhere wins, as it does for a key alone. Otherwise the strongest standing any
+/// signature on the package earns is the one reported: a package signed both ways is as trusted
+/// as the better of its two answers, and a package signed neither way is `Unknown`.
+#[must_use]
+pub fn standing_of(check: &SignatureCheck, trust: &TrustContext) -> Trust {
+    let mut standings = Vec::new();
+    if check.failure.is_none() {
+        if let Some(document) = &check.document {
+            standings.push(trust.store.judge(document.publisher(), document.key()));
+        }
+        if let Some(identity) = &check.identity {
+            standings.push(trust.store.judge_identity(&check.publisher, identity));
+        }
+    }
+    if standings.contains(&Trust::Untrusted) {
+        return Trust::Untrusted;
+    }
+    for wanted in [Trust::SystemTrusted, Trust::UserTrusted] {
+        if standings.contains(&wanted) {
+            return wanted;
+        }
+    }
+    Trust::Unknown
 }
 
 /// Checks the signature the package carries, if it carries one.
@@ -1365,30 +1391,60 @@ pub struct SignatureCheck {
 /// host cannot check is a claim it must not pass over.
 #[must_use]
 pub fn signature_of(package: &Installed) -> SignatureCheck {
-    let Ok(text) = std::fs::read_to_string(package.directory.join(SIGNATURE_FILE)) else {
+    let publisher = package.manifest.package.publisher.clone();
+    let keyed = std::fs::read_to_string(package.directory.join(SIGNATURE_FILE)).ok();
+    let bundle =
+        std::fs::read_to_string(package.directory.join(ono_kuang_protocol::BUNDLE_FILE)).ok();
+    if keyed.is_none() && bundle.is_none() {
         return SignatureCheck {
             state: "absent",
             document: None,
             failure: None,
+            identity: None,
+            publisher,
         };
-    };
-    let refused = |document, error: &ono_kuang_protocol::KuangError| SignatureCheck {
+    }
+    let refused = |document, identity, error: &ono_kuang_protocol::KuangError| SignatureCheck {
         state: "invalid",
         document,
         failure: Some(crate::plugins::error_value(error)),
+        identity,
+        publisher: package.manifest.package.publisher.clone(),
     };
-    match PackageSignature::parse(&text) {
-        Err(error) => refused(None, &error),
-        Ok(document) => {
-            match document.check(&package.manifest, &artifact_files(&package.directory)) {
-                Ok(()) => SignatureCheck {
-                    state: "valid",
-                    document: Some(document),
-                    failure: None,
-                },
-                Err(error) => refused(Some(document), &error),
+
+    // A package may carry either form or both, and where both are present both must verify: one
+    // that is honest under one signature and not the other is not honest (ADR-0609 §1).
+    let mut document = None;
+    if let Some(text) = &keyed {
+        match PackageSignature::parse(text) {
+            Err(error) => return refused(None, None, &error),
+            Ok(parsed) => {
+                if let Err(error) =
+                    parsed.check(&package.manifest, &artifact_files(&package.directory))
+                {
+                    return refused(Some(parsed), None, &error);
+                }
+                document = Some(parsed);
             }
         }
+    }
+    let mut identity = None;
+    if let Some(text) = &bundle {
+        match ono_kuang_protocol::check_keyless(
+            text,
+            &package.manifest,
+            artifact_files(&package.directory),
+        ) {
+            Err(error) => return refused(document, None, &error),
+            Ok(signer) => identity = Some(signer),
+        }
+    }
+    SignatureCheck {
+        state: "valid",
+        document,
+        failure: None,
+        identity,
+        publisher,
     }
 }
 
@@ -1450,16 +1506,7 @@ pub fn plugin_record(
     );
     let text_or_null = |text: Option<String>| text.map_or(Value::Null, |text| Value::string(&text));
     let signature = signature_of(package);
-    let standing = signature
-        .document
-        .as_ref()
-        .map_or(Trust::Unknown, |document| {
-            if signature.failure.is_none() {
-                trust.store.judge(document.publisher(), document.key())
-            } else {
-                Trust::Unknown
-            }
-        });
+    let standing = standing_of(&signature, trust);
     let package_trust = trust_word(&signature, standing);
     Ok(RecordValue::builder(Arc::clone(schema), provenance(schema))
         .set("id", Value::string(&manifest.package.id))?
@@ -1773,9 +1820,12 @@ pub fn verification(
                         .with_metadata("check", Value::string("signature")),
                 );
             }
-            match (&check.document, check.failure.is_none()) {
-                (Some(document), true) => {
-                    standing = trust.store.judge(document.publisher(), document.key());
+            match (
+                check.document.is_some() || check.identity.is_some(),
+                check.failure.is_none(),
+            ) {
+                (true, true) => {
+                    standing = standing_of(&check, trust);
                     if standing == Trust::Unknown {
                         warnings.push(
                             "trust: unknown, no trust store enrols this key for this publisher"

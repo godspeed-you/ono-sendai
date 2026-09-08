@@ -297,6 +297,32 @@ notes_on_tiers:
 
 # ---------------------------------------------------------------------------------------------
 # Verification — spec §31.36 for what `verify plugin` reports, spec §31.9 for when installation
+# The keyless signature of ADR-0609, beside the ed25519 one of ADR-0311.
+keyless_signature:
+  file: signature.sigstore.json
+  doc: >-
+    A Sigstore bundle over exactly the bytes an ed25519 signature covers: the package's own
+    description — its id, version, publisher and the digest of every artifact file. So a package
+    signed either way is signed about the same thing. Neither signature file is part of what a
+    signature covers. A package may carry either or both; where both are present both must
+    verify.
+  produced_by: "`cosign sign-blob --bundle signature.sigstore.json <description>`, in a workflow with no secret beyond an OIDC token"
+  verified:
+    - "The bundle's digest is the digest of the description recomputed from the package on disk, so a bundle that vouches for other bytes is refused before anything cryptographic is done with it."
+    - "The certificate chains to a certificate authority this build carries, for the code-signing usage, at the moment the transparency log recorded."
+    - "The certificate's key made the signature over those bytes."
+    - "The log's signed timestamp verifies under a log key this build carries, and the moment it records falls inside the certificate's validity window — which is what pins a signature to the run that made it."
+    - "The certificate's subject and OpenID issuer are read out, for the trust stores to judge."
+  not_verified:
+    - "The certificate transparency SCT: the chain says who was issued the certificate and the log says when it was used, and the SCT would add that the issuance was published (ADR-0609 §5)."
+    - "The Merkle inclusion proof against a signed checkpoint: the signed entry timestamp rests on the same log key the checkpoint would (ADR-0609 §5)."
+  trust_root:
+    file: sigstore-trust-root.json
+    doc: >-
+      Sigstore's own published trust material — the certificate authorities and the log keys —
+      embedded so verification needs no network, and updated the way a root store is. Both key
+      types the log has used are verified, so a bundle made before or after its rotation reads.
+
 # checks it. Integrity, signature, publisher trust and runtime isolation are four separate
 # questions and are reported as four separate answers (spec §31.36).
 # ---------------------------------------------------------------------------------------------
@@ -332,17 +358,26 @@ verification:
       error: publisher.untrusted
       doc: >-
         Publisher trust is held in two stores outside the plugin home: `/etc/ono/kuang/trust.yaml`
-        for the machine and `<config dir>/kuang/trust.yaml` for the operator (ADR-0312). An entry
-        matches on the key and the publisher together. A valid signature from a key no store
-        enrols is `unknown`, never trusted; a key a store marks `revoked` is `untrusted`, and
-        that blocks. A store that exists and cannot be read blocks too — it may be the one
-        holding the revocation.
+        for the machine and `<config dir>/kuang/trust.yaml` for the operator (ADR-0312). A
+        `keys:` entry matches on the key and the publisher together; an `identities:` entry
+        matches on the publisher, the OpenID issuer and the subject a keyless signature carried,
+        where the subject may end in one `*` so a repository's releases are enrolled once rather
+        than once per tag (ADR-0609). A valid signature nothing enrols is `unknown`, never
+        trusted; an entry marked `revoked` is `untrusted`, and that blocks. A store that exists
+        and cannot be read blocks too — it may be the one holding the revocation. A package
+        signed both ways is as trusted as the better of its two answers, and a revocation of
+        either wins.
     - id: transparency
       question: "Is the signature in a transparency log?"
       values: [present, absent, unknown]
       blocking_values: []
       error: null
-      doc: "`unknown` is the honest default where no log is configured, and spec §31.36's own example prints exactly that."
+      doc: >-
+        `unknown` is the honest default where no log is configured, and spec §31.36's own example
+        prints exactly that. A keyless signature is different in kind: its transparency-log entry
+        is not decoration but part of what makes it valid at all, because the log's own signed
+        timestamp is what places the signature inside the ten minutes its certificate lived
+        (ADR-0609 §2). A bundle without one is refused rather than reported as `absent`.
     - id: compatibility
       question: "Can this host run it?"
       values: [compatible, incompatible, unknown]

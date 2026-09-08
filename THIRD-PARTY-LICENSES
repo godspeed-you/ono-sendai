@@ -14,7 +14,7 @@ build dependency, over every platform the lockfile resolves: a superset of what 
 build links, which is the safe direction for a notice. Test-only dependencies are absent,
 because they are not distributed.
 
-311 crates, carrying 173 distinct licence documents.
+326 crates, carrying 177 distinct licence documents.
 
 
 1. The crates
@@ -26,6 +26,9 @@ allocator-api2 0.2.21  —  MIT OR Apache-2.0
 ambient-authority 0.0.2  —  Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
 anyhow 1.0.104  —  MIT OR Apache-2.0
 arbitrary 1.4.2  —  MIT OR Apache-2.0
+asn1-rs 0.7.2  —  MIT OR Apache-2.0
+asn1-rs-derive 0.6.0  —  MIT OR Apache-2.0
+asn1-rs-impl 0.2.0  —  MIT/Apache-2.0
 async-broadcast 0.7.2  —  MIT OR Apache-2.0
 async-recursion 1.1.1  —  MIT OR Apache-2.0
 async-trait 0.1.92  —  MIT OR Apache-2.0
@@ -77,9 +80,11 @@ csv 1.4.0  —  Unlicense/MIT
 csv-core 0.1.13  —  Unlicense/MIT
 curve25519-dalek 5.0.0  —  BSD-3-Clause
 curve25519-dalek-derive 0.1.1  —  MIT/Apache-2.0
+data-encoding 2.11.1  —  MIT
 defmt 1.1.1  —  MIT OR Apache-2.0
 defmt-macros 1.1.1  —  MIT OR Apache-2.0
 defmt-parser 1.0.0  —  MIT OR Apache-2.0
+der-parser 10.0.0  —  MIT OR Apache-2.0
 deranged 0.5.8  —  MIT OR Apache-2.0
 derive_more 2.1.1  —  MIT
 derive_more-impl 2.1.1  —  MIT
@@ -153,6 +158,7 @@ jiff-static 0.2.35  —  Unlicense OR MIT
 jiff-tzdb 0.1.8  —  Unlicense OR MIT
 jiff-tzdb-platform 0.1.3  —  Unlicense OR MIT
 js-sys 0.3.104  —  MIT OR Apache-2.0
+lazy_static 1.5.0  —  MIT OR Apache-2.0
 leb128fmt 0.1.0  —  MIT OR Apache-2.0
 libc 0.2.189  —  MIT OR Apache-2.0
 libm 0.2.16  —  MIT
@@ -166,10 +172,16 @@ maybe-owned 0.3.4  —  MIT OR Apache-2.0
 memchr 2.8.3  —  Unlicense OR MIT
 memfd 0.6.6  —  MIT OR Apache-2.0
 memoffset 0.9.1  —  MIT
+minimal-lexical 0.2.1  —  MIT/Apache-2.0
 mio 1.2.2  —  MIT
 nix 0.31.3  —  MIT
+nom 7.1.3  —  MIT
+num-bigint 0.4.8  —  MIT OR Apache-2.0
 num-conv 0.2.2  —  MIT OR Apache-2.0
+num-integer 0.1.47  —  MIT OR Apache-2.0
+num-traits 0.2.19  —  MIT OR Apache-2.0
 object 0.39.1  —  Apache-2.0 OR MIT
+oid-registry 0.8.1  —  MIT OR Apache-2.0
 once_cell 1.21.4  —  MIT OR Apache-2.0
 ordered-stream 0.2.0  —  MIT OR Apache-2.0
 parking 2.2.1  —  Apache-2.0 OR MIT
@@ -204,6 +216,7 @@ ring 0.17.14  —  Apache-2.0 AND ISC
 rustc-demangle 0.1.28  —  MIT/Apache-2.0
 rustc-hash 2.1.3  —  Apache-2.0 OR MIT
 rustc_version 0.4.1  —  MIT OR Apache-2.0
+rusticata-macros 4.1.0  —  MIT/Apache-2.0
 rustix 1.1.4  —  Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
 rustix-linux-procfs 0.1.1  —  Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
 rustls 0.23.43  —  Apache-2.0 OR ISC OR MIT
@@ -244,6 +257,7 @@ thiserror 2.0.20  —  MIT OR Apache-2.0
 thiserror-impl 2.0.20  —  MIT OR Apache-2.0
 time 0.3.55  —  MIT OR Apache-2.0
 time-core 0.1.9  —  MIT OR Apache-2.0
+time-macros 0.2.32  —  MIT OR Apache-2.0
 tinystr 0.8.4  —  Unicode-3.0
 tokio 1.53.1  —  MIT
 tokio-macros 2.7.2  —  MIT
@@ -313,6 +327,7 @@ winnow 1.0.4  —  MIT
 winx 0.36.4  —  Apache-2.0 WITH LLVM-exception
 wit-parser 0.252.0  —  Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
 writeable 0.6.4  —  Unicode-3.0
+x509-parser 0.18.1  —  MIT OR Apache-2.0
 xattr 1.6.1  —  MIT OR Apache-2.0
 yasna 0.5.2  —  MIT OR Apache-2.0
 yoke 0.8.3  —  Unicode-3.0
@@ -339,6 +354,7 @@ zvariant_utils 4.2.0  —  MIT
 Upstream ships no licence file with these. What stands for them is the expression
 they declare in their own manifest, reproduced here rather than passed over.
 
+asn1-rs-impl 0.2.0  —  MIT/Apache-2.0
 cranelift-assembler-x64 0.134.4  —  Apache-2.0 WITH LLVM-exception
 cranelift-assembler-x64-meta 0.134.4  —  Apache-2.0 WITH LLVM-exception
 cranelift-bitset 0.134.4  —  Apache-2.0 WITH LLVM-exception
@@ -369,7 +385,7 @@ Each is reproduced once, under the crates that ship it.
 
 ------------------------------------------------------------------------------
 LICENSE-APACHE
-carried by: addr2line 0.26.1, ambient-authority 0.0.2, arbitrary 1.4.2, autocfg 1.5.1, base64 0.22.1, base64 0.23.1, bitflags 1.3.2, bitflags 2.13.1, bstr 1.13.1, bumpalo 3.20.3, cap-fs-ext 4.0.3, cap-primitives 4.0.3, cap-std 4.0.3, cc 1.4.4, cfg-if 1.0.4, cpp_demangle 0.5.1, crossbeam-deque 0.8.7, crossbeam-epoch 0.9.20, crossbeam-utils 0.8.22, curve25519-dalek-derive 0.1.1, displaydoc 0.2.7, either 1.18.0, embedded-io 0.4.0, embedded-io 0.6.1, equivalent 1.0.2, errno 0.3.14, event-listener 5.4.2, event-listener-strategy 0.5.4, fastrand 2.5.0, filetime 0.2.29, find-msvc-tools 0.1.11, fnv 1.0.7, form_urlencoded 1.2.2, fs-set-times 0.20.3, futures-lite 2.6.1, gimli 0.33.0, hashbrown 0.16.1, hashbrown 0.17.1, heck 0.5.0, httparse 1.10.1, id-arena 2.3.0, idna 1.1.0, idna_adapter 1.2.2, indexmap 2.14.0, io-extras 0.19.0, io-lifetimes 2.0.4, io-lifetimes 3.0.1, itertools 0.14.0, js-sys 0.3.104, leb128fmt 0.1.0, linux-raw-sys 0.12.1, lock_api 0.4.14, log 0.4.34, object 0.39.1, once_cell 1.21.4, ordered-stream 0.2.0, parking 2.2.1, parking_lot 0.12.5, parking_lot_core 0.9.12, percent-encoding 2.3.2, postcard 1.1.3, rayon 1.12.0, rayon-core 1.13.0, regex 1.13.1, regex-automata 0.4.18, regex-syntax 0.8.11, rustc-demangle 0.1.28, rustc_version 0.4.1, rustix 1.1.4, rustix-linux-procfs 0.1.1, rustls 0.23.43, rustls-pemfile 2.2.0, scopeguard 1.2.0, signal-hook 0.3.18, signal-hook-mio 0.2.5, signal-hook-registry 1.4.8, smallvec 1.15.2, socket2 0.6.5, stable_deref_trait 1.2.1, tar 0.4.46, tempfile 3.27.0, unicode-segmentation 1.13.3, unicode-width 0.2.2, url 2.5.8, uuid 1.25.0, version_check 0.9.5, wasi 0.11.1+wasi-snapshot-preview1, wasm-bindgen 0.2.127, wasm-bindgen-macro 0.2.127, wasm-bindgen-macro-support 0.2.127, wasm-bindgen-shared 0.2.127, wasm-encoder 0.252.0, wasmparser 0.252.0, wasmprinter 0.252.0, wit-parser 0.252.0, xattr 1.6.1
+carried by: addr2line 0.26.1, ambient-authority 0.0.2, arbitrary 1.4.2, asn1-rs 0.7.2, asn1-rs-derive 0.6.0, autocfg 1.5.1, base64 0.22.1, base64 0.23.1, bitflags 1.3.2, bitflags 2.13.1, bstr 1.13.1, bumpalo 3.20.3, cap-fs-ext 4.0.3, cap-primitives 4.0.3, cap-std 4.0.3, cc 1.4.4, cfg-if 1.0.4, cpp_demangle 0.5.1, crossbeam-deque 0.8.7, crossbeam-epoch 0.9.20, crossbeam-utils 0.8.22, curve25519-dalek-derive 0.1.1, der-parser 10.0.0, displaydoc 0.2.7, either 1.18.0, embedded-io 0.4.0, embedded-io 0.6.1, equivalent 1.0.2, errno 0.3.14, event-listener 5.4.2, event-listener-strategy 0.5.4, fastrand 2.5.0, filetime 0.2.29, find-msvc-tools 0.1.11, fnv 1.0.7, form_urlencoded 1.2.2, fs-set-times 0.20.3, futures-lite 2.6.1, gimli 0.33.0, hashbrown 0.16.1, hashbrown 0.17.1, heck 0.5.0, httparse 1.10.1, id-arena 2.3.0, idna 1.1.0, idna_adapter 1.2.2, indexmap 2.14.0, io-extras 0.19.0, io-lifetimes 2.0.4, io-lifetimes 3.0.1, itertools 0.14.0, js-sys 0.3.104, lazy_static 1.5.0, leb128fmt 0.1.0, linux-raw-sys 0.12.1, lock_api 0.4.14, log 0.4.34, num-bigint 0.4.8, num-integer 0.1.47, num-traits 0.2.19, object 0.39.1, oid-registry 0.8.1, once_cell 1.21.4, ordered-stream 0.2.0, parking 2.2.1, parking_lot 0.12.5, parking_lot_core 0.9.12, percent-encoding 2.3.2, postcard 1.1.3, rayon 1.12.0, rayon-core 1.13.0, regex 1.13.1, regex-automata 0.4.18, regex-syntax 0.8.11, rustc-demangle 0.1.28, rustc_version 0.4.1, rusticata-macros 4.1.0, rustix 1.1.4, rustix-linux-procfs 0.1.1, rustls 0.23.43, rustls-pemfile 2.2.0, scopeguard 1.2.0, signal-hook 0.3.18, signal-hook-mio 0.2.5, signal-hook-registry 1.4.8, smallvec 1.15.2, socket2 0.6.5, stable_deref_trait 1.2.1, tar 0.4.46, tempfile 3.27.0, unicode-segmentation 1.13.3, unicode-width 0.2.2, url 2.5.8, uuid 1.25.0, version_check 0.9.5, wasi 0.11.1+wasi-snapshot-preview1, wasm-bindgen 0.2.127, wasm-bindgen-macro 0.2.127, wasm-bindgen-macro-support 0.2.127, wasm-bindgen-shared 0.2.127, wasm-encoder 0.252.0, wasmparser 0.252.0, wasmprinter 0.252.0, wit-parser 0.252.0, x509-parser 0.18.1, xattr 1.6.1
 ------------------------------------------------------------------------------
 
                               Apache License
@@ -1117,7 +1133,7 @@ Software.
 
 ------------------------------------------------------------------------------
 LICENSE-MIT, LICENSE
-carried by: ambient-authority 0.0.2, anyhow 1.0.104, async-trait 0.1.92, cap-fs-ext 4.0.3, cap-primitives 4.0.3, cap-std 4.0.3, curve25519-dalek-derive 0.1.1, displaydoc 0.2.7, endi 1.1.1, event-listener 5.4.2, event-listener-strategy 0.5.4, fastrand 2.5.0, fs-set-times 0.20.3, futures-lite 2.6.1, io-extras 0.19.0, io-lifetimes 2.0.4, io-lifetimes 3.0.1, itoa 1.0.18, leb128fmt 0.1.0, linux-raw-sys 0.12.1, once_cell 1.21.4, ordered-stream 0.2.0, parking 2.2.1, pin-project-lite 0.2.17, portable-atomic 1.15.0, portable-atomic-util 0.2.7, proc-macro-crate 3.5.0, proc-macro2 1.0.107, quote 1.0.47, rustix 1.1.4, rustix-linux-procfs 0.1.1, rustversion 1.0.23, semver 1.0.28, serde 1.0.229, serde_core 1.0.229, serde_derive 1.0.229, serde_json 1.0.151, serde_repr 0.1.21, syn 2.0.119, syn 3.0.4, thiserror 2.0.20, thiserror-impl 2.0.20, unicode-ident 1.0.24, unsafe-libyaml 0.2.11, utf8-zero 0.8.1, wasi 0.11.1+wasi-snapshot-preview1, wasm-encoder 0.252.0, wasmparser 0.252.0, wasmprinter 0.252.0, wit-parser 0.252.0, zmij 1.0.23, zvariant_utils 4.2.0
+carried by: ambient-authority 0.0.2, anyhow 1.0.104, async-trait 0.1.92, cap-fs-ext 4.0.3, cap-primitives 4.0.3, cap-std 4.0.3, curve25519-dalek-derive 0.1.1, displaydoc 0.2.7, endi 1.1.1, event-listener 5.4.2, event-listener-strategy 0.5.4, fastrand 2.5.0, fs-set-times 0.20.3, futures-lite 2.6.1, io-extras 0.19.0, io-lifetimes 2.0.4, io-lifetimes 3.0.1, itoa 1.0.18, leb128fmt 0.1.0, linux-raw-sys 0.12.1, minimal-lexical 0.2.1, once_cell 1.21.4, ordered-stream 0.2.0, parking 2.2.1, pin-project-lite 0.2.17, portable-atomic 1.15.0, portable-atomic-util 0.2.7, proc-macro-crate 3.5.0, proc-macro2 1.0.107, quote 1.0.47, rustix 1.1.4, rustix-linux-procfs 0.1.1, rustversion 1.0.23, semver 1.0.28, serde 1.0.229, serde_core 1.0.229, serde_derive 1.0.229, serde_json 1.0.151, serde_repr 0.1.21, syn 2.0.119, syn 3.0.4, thiserror 2.0.20, thiserror-impl 2.0.20, unicode-ident 1.0.24, unsafe-libyaml 0.2.11, utf8-zero 0.8.1, wasi 0.11.1+wasi-snapshot-preview1, wasm-encoder 0.252.0, wasmparser 0.252.0, wasmprinter 0.252.0, wit-parser 0.252.0, zmij 1.0.23, zvariant_utils 4.2.0
 ------------------------------------------------------------------------------
 
 Permission is hereby granted, free of charge, to any
@@ -1336,6 +1352,38 @@ carried by: arbitrary 1.4.2
 MIT License
 
 Copyright (c) 2019 Manish Goregaokar
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
+------------------------------------------------------------------------------
+LICENSE-MIT
+carried by: asn1-rs 0.7.2, asn1-rs-derive 0.6.0, der-parser 10.0.0, oid-registry 0.8.1, rusticata-macros 4.1.0, x509-parser 0.18.1
+------------------------------------------------------------------------------
+
+Copyright (c) 2017 Pierre Chifflier
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -1915,7 +1963,7 @@ THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 LICENSE-MIT
-carried by: bitflags 1.3.2, bitflags 2.13.1, log 0.4.34, regex 1.13.1, regex-automata 0.4.18, regex-syntax 0.8.11
+carried by: bitflags 1.3.2, bitflags 2.13.1, log 0.4.34, num-bigint 0.4.8, num-integer 0.1.47, num-traits 0.2.19, regex 1.13.1, regex-automata 0.4.18, regex-syntax 0.8.11
 ------------------------------------------------------------------------------
 
 Copyright (c) 2014 The Rust Project Developers
@@ -2986,8 +3034,37 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ------------------------------------------------------------------------------
+LICENSE
+carried by: data-encoding 2.11.1
+------------------------------------------------------------------------------
+
+The MIT License (MIT)
+
+Copyright (c) 2015-2020 Julien Cretin
+Copyright (c) 2017-2020 Google Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+------------------------------------------------------------------------------
 LICENSE-APACHE
-carried by: defmt 1.1.1, defmt-macros 1.1.1
+carried by: defmt 1.1.1, defmt-macros 1.1.1, minimal-lexical 0.2.1
 ------------------------------------------------------------------------------
 
                               Apache License
@@ -6078,6 +6155,38 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ------------------------------------------------------------------------------
 LICENSE-MIT
+carried by: lazy_static 1.5.0, rayon 1.12.0, rayon-core 1.13.0
+------------------------------------------------------------------------------
+
+Copyright (c) 2010 The Rust Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
+------------------------------------------------------------------------------
+LICENSE-MIT
 carried by: libc 0.2.189
 ------------------------------------------------------------------------------
 
@@ -6997,6 +7106,50 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
+LICENSE.md
+carried by: minimal-lexical 0.2.1
+------------------------------------------------------------------------------
+
+Minimal-lexical is dual licensed under the Apache 2.0 license as well as the MIT
+license. See the LICENCE-MIT and the LICENCE-APACHE files for the licenses.
+
+---
+
+`src/bellerophon.rs` is loosely based off the Golang implementation,
+found [here](https://github.com/golang/go/blob/b10849fbb97a2244c086991b4623ae9f32c212d0/src/strconv/extfloat.go).
+That code (used if the `compact` feature is enabled) is subject to a
+[3-clause BSD license](https://github.com/golang/go/blob/b10849fbb97a2244c086991b4623ae9f32c212d0/LICENSE):
+
+Copyright (c) 2009 The Go Authors. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * Neither the name of Google Inc. nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+------------------------------------------------------------------------------
 LICENSE
 carried by: mio 1.2.2
 ------------------------------------------------------------------------------
@@ -7051,8 +7204,35 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
+LICENSE
+carried by: nom 7.1.3
+------------------------------------------------------------------------------
+
+Copyright (c) 2014-2019 Geoffroy Couprie
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+
+------------------------------------------------------------------------------
 LICENSE-Apache, LICENSE-APACHE
-carried by: num-conv 0.2.2, pin-project-lite 0.2.17, portable-atomic 1.15.0, portable-atomic-util 0.2.7, time 0.3.55, time-core 0.1.9
+carried by: num-conv 0.2.2, pin-project-lite 0.2.17, portable-atomic 1.15.0, portable-atomic-util 0.2.7, time 0.3.55, time-core 0.1.9, time-macros 0.2.32
 ------------------------------------------------------------------------------
 
 
@@ -8257,38 +8437,6 @@ carried by: rand_core 0.10.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2018-2026 The Rand Project Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-
-------------------------------------------------------------------------------
-LICENSE-MIT
-carried by: rayon 1.12.0, rayon-core 1.13.0
-------------------------------------------------------------------------------
-
-Copyright (c) 2010 The Rust Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -9877,7 +10025,7 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 LICENSE-MIT
-carried by: time 0.3.55, time-core 0.1.9
+carried by: time 0.3.55, time-core 0.1.9, time-macros 0.2.32
 ------------------------------------------------------------------------------
 
 Copyright (c) Jacob Pratt et al.

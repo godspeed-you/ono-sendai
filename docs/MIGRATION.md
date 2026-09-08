@@ -208,6 +208,39 @@ version hashing differently in two places is `plugin.source_conflict`, which `--
 (the system roots; default `/usr/lib/ono-sendai/plugin-sources`) beside `ONO_PLUGIN_SOURCES`. A
 system root writable by its group or by everyone is set aside with a warning rather than searched.
 
+## 8. Signing a plugin without keeping a key
+
+*(ADR-0609; `docs/specs/kuang11/kuang11-plugin-package-acquisition-system-distribution.md` §17.2)*
+
+**Nothing you have changes.** A package signed with `kuang-sign` and a key verifies exactly as
+before, and no installed package needs re-signing. What is new is a second way to sign, for
+publishers who do not want to keep a private key — which is how Ono signs its own releases.
+
+A package may now carry `signature.sigstore.json` beside `manifest.yaml`: a Sigstore bundle over
+the same bytes the ed25519 signature covers, made by a workflow that holds no secret. Ono verifies
+it offline, against certificate authorities and transparency-log keys it carries, and reports the
+same four separate answers as before. A package may carry either signature or both; where both are
+there, both must verify.
+
+**Trusting one is enrolling an identity rather than a key.** `trust.yaml` gains a second list
+beside `keys:`:
+
+```yaml
+format: kuang-trust/1
+identities:
+  - publisher: io.github.godspeed-you
+    issuer: https://token.actions.githubusercontent.com
+    identity: https://github.com/godspeed-you/ono-sendai-kubernetes/.github/workflows/release.yml@refs/tags/*
+    trust: trusted
+```
+
+The subject may end in one `*`, so a repository's releases are enrolled once rather than once per
+tag. `revoked` works there as it does for a key, and a revocation of either wins over a trust.
+
+**Publishing one** needs `kuang-sign describe`, which writes the bytes a signature covers, and
+`cosign sign-blob --bundle signature.sigstore.json <those bytes>` in a workflow with `id-token:
+write` and no secret at all.
+
 ## What to read next
 
 - [`SECURITY.md`](../SECURITY.md) — the trust boundaries and how to report a vulnerability.

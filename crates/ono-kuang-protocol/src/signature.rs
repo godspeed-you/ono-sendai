@@ -308,6 +308,30 @@ impl SignedPackage {
     }
 }
 
+/// Verifies the keyless signature a package carries, if it carries one (ADR-0609).
+///
+/// The bundle covers exactly the bytes an ed25519 signature covers: the package's own
+/// description, recomputed here from the files on disk. So a package signed either way is signed
+/// about the same thing, and a bundle that vouches for anything else is refused.
+///
+/// # Errors
+///
+/// `package.signature_invalid` when the bundle does not verify, and `package.invalid` when the
+/// description cannot be built from the package at all.
+pub fn check_keyless(
+    bundle: &str,
+    manifest: &Manifest,
+    files: Vec<FileDigest>,
+) -> Result<crate::keyless::KeylessIdentity, KuangError> {
+    let described = SignedPackage::new(
+        &manifest.package.id,
+        &manifest.package.version,
+        &manifest.package.publisher,
+        files,
+    )?;
+    crate::keyless::verify(bundle, &described.canonical_bytes())
+}
+
 /// The document a signed package carries in `signature.yaml`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageSignature {

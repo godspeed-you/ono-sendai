@@ -80,10 +80,24 @@ struct Entry {
     standing: Standing,
 }
 
+/// What a store says about one signing identity (ADR-0609 §3).
+///
+/// The counterpart of [`Entry`] for a signature nobody kept a key for: the publisher it may sign
+/// for, the OpenID issuer that authenticated it, and the subject the certificate carries.
+#[derive(Debug, Clone)]
+struct IdentityEntry {
+    origin: Origin,
+    publisher: String,
+    issuer: String,
+    subject: String,
+    standing: Standing,
+}
+
 /// The keys this machine accepts, system store first.
 #[derive(Debug, Clone, Default)]
 pub struct TrustStore {
     entries: Vec<Entry>,
+    identities: Vec<IdentityEntry>,
 }
 
 /// A store as it is written.
@@ -92,6 +106,8 @@ struct Document {
     format: String,
     #[serde(default)]
     keys: Vec<RawEntry>,
+    #[serde(default)]
+    identities: Vec<RawIdentity>,
 }
 
 /// One line of a store.
@@ -99,6 +115,19 @@ struct Document {
 struct RawEntry {
     publisher: String,
     key: String,
+    #[serde(default = "trusted_word")]
+    trust: String,
+    #[serde(default)]
+    #[allow(dead_code, reason = "the operator's note, read by the operator")]
+    comment: Option<String>,
+}
+
+/// One `identities:` line of a store (ADR-0609 §3).
+#[derive(Debug, serde::Deserialize)]
+struct RawIdentity {
+    publisher: String,
+    issuer: String,
+    identity: String,
     #[serde(default = "trusted_word")]
     trust: String,
     #[serde(default)]
@@ -132,11 +161,44 @@ impl TrustStore {
         for (origin, path) in [(Origin::System, system), (Origin::User, user)] {
             let Some(path) = path else { continue };
             match read_one(origin, path) {
-                Ok(entries) => store.entries.extend(entries),
+                Ok((entries, identities)) => {
+                    store.entries.extend(entries);
+                    store.identities.extend(identities);
+                }
                 Err(problem) => problems.push(problem),
             }
         }
         (store, problems)
+    }
+
+    /// What the stores say about a keyless signature signing for `publisher` (ADR-0609 §3).
+    ///
+    /// The same rule as for a key: the publisher must match as well as the identity, a revocation
+    /// wins over a trust, and an identity nobody enrolled is `Unknown` rather than trusted.
+    #[must_use]
+    pub fn judge_identity(
+        &self,
+        publisher: &str,
+        identity: &ono_kuang_protocol::KeylessIdentity,
+    ) -> Trust {
+        let matching = || {
+            self.identities.iter().filter(|entry| {
+                entry.publisher == publisher && identity.matches(&entry.issuer, &entry.subject)
+            })
+        };
+        if matching().any(|entry| entry.standing == Standing::Revoked) {
+            return Trust::Untrusted;
+        }
+        let trusted = |origin: Origin| {
+            matching().any(|entry| entry.origin == origin && entry.standing == Standing::Trusted)
+        };
+        if trusted(Origin::System) {
+            Trust::SystemTrusted
+        } else if trusted(Origin::User) {
+            Trust::UserTrusted
+        } else {
+            Trust::Unknown
+        }
     }
 
     /// What the stores say about `key` signing for `publisher`.
@@ -179,9 +241,9 @@ impl TrustStore {
     }
 }
 
-fn read_one(origin: Origin, path: &Path) -> Result<Vec<Entry>, ErrorValue> {
+fn read_one(origin: Origin, path: &Path) -> Result<(Vec<Entry>, Vec<IdentityEntry>), ErrorValue> {
     let Ok(text) = std::fs::read_to_string(path) else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     };
     let refuse = |detail: String| {
         ErrorValue::new(
@@ -225,5 +287,34 @@ fn read_one(origin: Origin, path: &Path) -> Result<Vec<Entry>, ErrorValue> {
             standing,
         });
     }
-    Ok(entries)
+    let mut identities = Vec::with_capacity(document.identities.len());
+    for raw in document.identities {
+        let standing = standing_of(&raw.trust, &refuse)?;
+        if raw.issuer.trim().is_empty() || raw.identity.trim().is_empty() {
+            return Err(refuse(format!(
+                "`{}`: an identity needs both an `issuer` and an `identity`; without either it \
+                 would enrol more than was meant",
+                raw.publisher
+            )));
+        }
+        identities.push(IdentityEntry {
+            origin,
+            publisher: raw.publisher,
+            issuer: raw.issuer,
+            subject: raw.identity,
+            standing,
+        });
+    }
+    Ok((entries, identities))
+}
+
+/// `trusted` or `revoked`, and nothing else.
+fn standing_of(word: &str, refuse: &impl Fn(String) -> ErrorValue) -> Result<Standing, ErrorValue> {
+    match word {
+        "trusted" => Ok(Standing::Trusted),
+        "revoked" => Ok(Standing::Revoked),
+        other => Err(refuse(format!(
+            "`{other}` is not a standing; a signer is `trusted` or `revoked`"
+        ))),
+    }
 }
