@@ -1119,7 +1119,7 @@ each phase. **Nothing here is delivered yet.** Every box is open, so `scripts/re
 stops at the first of them — which is what a tranche that has just started looks like, and is the
 reason this subsection is written before the work rather than after it (#29). §4.9 holds the
 KUANG/11 plugin installation and permission layer, §4.10 its acquisition and system-distribution
-addendum; §4.11 is reserved for the v0.5 Temporal & Causal Systems Interface.
+addendum; §4.11 is the v0.5 Temporal & Causal Systems Interface.
 
 **A box is ticked by a named automated proof** — a test that runs un-ignored in `scripts/gate.sh`,
 or a case that runs in `scripts/acceptance.sh` — never by judgement, never by reading code, and
@@ -2598,6 +2598,427 @@ own repository (§22).
       `crates/ono-cli/tests/acquisition.rs::should_install_from_the_system_source_with_no_catalog_and_record_the_lineage`,
       `crates/ono-cli/tests/acquisition.rs::should_fetch_a_catalog_artifact_into_staging_verify_it_and_install`.
 
+### 4.11 The v0.5 tranche — Temporal & Causal Systems Interface
+
+`docs/specs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md` layers time onto the
+v0.4 spatial substrate: a temporal coordinate beside the spatial one, an evidence-backed event
+ledger, state reconstruction with explicit coverage, `timeline`, `changes`, `why`, historical
+navigation, and the rule that holds the whole tranche together — Ono may reconstruct only what
+its evidence supports, and correlation is never presented as causation. This subsection is its
+definition of done, written from §48's forty-seven acceptance scenarios, §49's performance
+evidence, §2's twenty core invariants and §56's twenty-three release criteria.
+
+**A box is ticked by a named automated proof** — a test that runs un-ignored in
+`scripts/gate.sh`, or a case that runs in `scripts/acceptance.sh` — never by judgement, never by
+reading code. `xtask/tests/temporal_evidence.rs` holds this subsection to the tree: every test
+and case a ticked box names must exist, and no test it names may be `#[ignore]`d.
+
+Conventions this subsection relies on:
+
+- The case numbers **230–279** belong to this tranche, blocked as 230–234 temporal context,
+  235–239 timeline and events, 240–244 reconstruction, 245–247 changes, 248–252 causality,
+  253–256 rewind, 257–261 recorder and privacy, 262–264 remote, 265–268 KUANG/11, 269–272
+  performance and scale.
+- A case that does not exist yet is named in plain text without backticks, so
+  `xtask/src/scan.rs::check_acceptance_case_references` does not resolve a file that is not
+  there; it gains its backticks in the increment that writes it (ADR-0401).
+- The temporal error family is `Ono-Sendai-E1301`…`E1314` and not §34's `E1101`…`E1114`, which
+  v0.4.1 §21.4 had already spent; ADR-0610 records the deviation and the mapping. The evidence
+  record is `ono.temporal-evidence/1` and not §35's `ono.evidence/1`, which v0.2 §31.24 already
+  holds; ADR-0611 records that one.
+
+#### 4.11.1 Contracts and vocabulary (T1, §34, §35, §36)
+
+- [ ] **The temporal error family exists in both registries.** Fourteen codes with the names §34
+      fixes, compared bidirectionally on code, name and kind by
+      `cargo run -p xtask -- spec-check` (`xtask/src/contracts.rs::check_error_registry`), and
+      renumbered into E13 by ADR-0610.
+- [ ] **Every schema §35 names is registered, embedded and validating.** The eleven schemas of
+      §35 plus the two the tranche's commands return, each in
+      `docs/contracts/schemas/`, each embedded in `crates/ono-value/src/builtin.rs`, each
+      producing a record that validates —
+      `crates/ono-value/src/builtin.rs::should_embed_every_schema_contract_as_the_spec_states_it`,
+      `crates/ono-temporal-core/tests/schemas.rs`.
+- [ ] **The six machine-readable temporal registries exist under `docs/contracts/temporal/`.**
+      `temporal.yaml`, `events.yaml`, `evidence.yaml`, `causality.yaml`, `sources.yaml`,
+      `recorder.yaml`, each parsing and each internally consistent —
+      `xtask/tests/temporal_contracts.rs`.
+- [ ] **`spec-check` fails on temporal contract drift.** §36.4's six conditions each have a test
+      that mutates a registry and asserts the problem is reported: an unregistered stable
+      command, an undocumented event kind, an unregistered built-in causal rule, a dangling
+      error or schema reference, a default configuration that differs from the registry, and a
+      provider advertising a temporal capability its contract does not declare —
+      `xtask/tests/temporal_contracts.rs`.
+- [ ] **The twelve configuration settings of §33 are typed, inspectable and default as specified.**
+      `temporal.recording.enabled` is `false` —
+      `crates/ono-cli/tests/temporal_settings.rs`, case 231-temporal-configuration.
+- [ ] **No renderer, plugin or assistant can raise an evidence strength.** The type offers no
+      such operation and the property test says so —
+      `crates/ono-temporal-core/tests/evidence.rs`.
+
+#### 4.11.2 Temporal context (§4, §12, §48.1 scenarios 1–6)
+
+- [ ] **`at -1m` enters historical context and the prompt says so.** The prompt carries the
+      resolved instant and `[PAST]` or `[PAST?]`, and the spatial place is unchanged —
+      `crates/ono-cli/tests/temporal_context.rs`, case 230-temporal-at-and-now.
+- [ ] **`now` returns to the present and keeps the place when it still exists.** Where the
+      historical place has no live counterpart it returns to the nearest live canonical parent
+      and reports the transition, and it never revives a tombstone (§4.3) —
+      `crates/ono-cli/tests/temporal_context.rs`, case 230-temporal-at-and-now.
+- [ ] **An invalid or ambiguous time leaves the context untouched.** `at` resolves before it
+      commits (§12.1); a future relative selector, an unparseable one and a local wall time
+      inside a daylight-saving fold each answer `temporal.invalid_time` with the session's
+      coordinate where it was — `crates/ono-cli/tests/temporal_context.rs`,
+      `crates/ono-temporal-core/tests/time_selector.rs`, case 230-temporal-at-and-now.
+- [ ] **A native mutation in past context answers `temporal.read_only`.** Nothing is changed, and
+      the message names `now` as the way back (§4.7) —
+      `crates/ono-cli/tests/temporal_read_only.rs`, case 232-temporal-past-is-read-only.
+- [ ] **The read-only rule covers KUANG/11 and remote mutations too.** A plugin mutation tool and
+      a remote action are refused by the same rule, at their own boundaries —
+      `crates/ono-cli/tests/temporal_read_only.rs`,
+      `crates/ono-kuang-sdk/tests/conformance.rs`, case 232-temporal-past-is-read-only.
+- [ ] **An arbitrary external command in past context answers `temporal.present_only`.** It does
+      not silently execute against the present machine (§4.8) —
+      `crates/ono-cli/tests/temporal_read_only.rs`, case 233-temporal-present-escape.
+- [ ] **`present printf ok` executes and preserves the historical coordinate.** The result
+      metadata makes the present-bound execution visible at least once (§4.8) —
+      `crates/ono-cli/tests/temporal_read_only.rs`, case 233-temporal-present-escape.
+- [ ] **A pure Ono transform over reconstructed values still runs in past context.**
+      `get process | where cpu > 20 | select pid name` answers from the reconstruction —
+      `crates/ono-cli/tests/temporal_context.rs`, case 234-temporal-pipelines-in-the-past.
+- [ ] **`--at` uses the same engine as `at`.** A command evaluated with `--at` and the same
+      command under an `at` context produce the same values and the same coverage (§4.5) —
+      `crates/ono-cli/tests/temporal_context.rs`.
+- [ ] **Temporal movement keeps its own trail and leaves `back` alone.** `back` remains spatial
+      (§12.4) — `crates/ono-cli/tests/temporal_context.rs`.
+
+#### 4.11.3 Timeline, events and discovery (§11, §20, §28, §48.2 scenarios 7–12)
+
+- [ ] **A process appearing is a typed event.** `timeline` shows it, and the value is an
+      `ono.temporal-event/1` that a pipeline can filter —
+      `crates/ono-cli/tests/timeline.rs`, case 235-timeline-is-typed.
+- [ ] **The process exiting is a disappearance carrying the same lifetime identity.** A PID
+      reused later is a different identity — `crates/ono-cli/tests/timeline.rs`,
+      `crates/ono-temporal-core/tests/identity.rs`, case 235-timeline-is-typed.
+- [ ] **`timeline` at a service place excludes the firehose by default.** The default scope is
+      the current place and its directly relevant events (§11.3) —
+      `crates/ono-temporal-query/tests/relevance.rs`, `crates/ono-cli/tests/timeline.rs`,
+      case 236-timeline-relevance.
+- [ ] **`timeline --all` widens to the visible scope.** Subject to retention and permission —
+      `crates/ono-cli/tests/timeline.rs`, case 236-timeline-relevance.
+- [ ] **`timeline` is pipeline-compatible.** `timeline --since 1h | where kind ==
+      "object.changed" | where subject.type == "service"` yields typed values (§11.4) —
+      `crates/ono-cli/tests/timeline.rs`, case 235-timeline-is-typed.
+- [ ] **An event reference is stable, inspectable and usable.** `@e42` survives into `inspect
+      event`, `at event` and `why event` (§11.6) — `crates/ono-cli/tests/timeline.rs`,
+      case 237-event-references.
+- [ ] **A recorder downtime interval is rendered as a gap.** The gap is shown even though events
+      exist on both sides of it (§11.7) — `crates/ono-temporal-render/tests/timeline.rs`,
+      `crates/ono-cli/tests/timeline.rs`, case 238-timeline-gaps.
+- [ ] **`find event` answers a predicate without a timestamp being known.** It reuses `find` and
+      Ono expression semantics and returns a stream of events (§20.3) —
+      `crates/ono-cli/tests/find_event.rs`, case 239-find-event.
+- [ ] **Historical context centres the default timeline on the coordinate.** ±15 minutes unless
+      retention or configuration narrows it (§11.8) —
+      `crates/ono-temporal-query/tests/timeline.rs`.
+- [ ] **`now()` and `context.time` are different things and both are documented.** `now()` is
+      real current time in expression semantics; the query coordinate is `context.time` (§28.3) —
+      `crates/ono-cli/tests/temporal_expressions.rs`, case 234-temporal-pipelines-in-the-past.
+- [ ] **Command history and the temporal ledger stay separate.** Ctrl-R remains command recall;
+      `timeline` is the system-event browser (§29) —
+      `crates/ono-cli/tests/temporal_context.rs`, case 237-event-references.
+
+#### 4.11.4 Reconstruction and coverage (§9, §42, §48.3 scenarios 13–18)
+
+- [ ] **A checkpoint plus later change reconstructs the earlier service state.** Nearest trusted
+      checkpoint at or before `T`, then ordered events (§9.1) —
+      `crates/ono-temporal-reconstruct/tests/reconstruction.rs`, case 240-reconstruction.
+- [ ] **A PID reused later does not resolve as the historical process.** The historical reference
+      resolves to the lifetime that existed then, or to nothing (§5.2) —
+      `crates/ono-temporal-reconstruct/tests/lifetime.rs`, case 241-pid-reuse.
+- [ ] **A relation added after `T` does not appear in a map at `T`.** Current-only exits do not
+      leak into a historical neighbourhood (§14.3) —
+      `crates/ono-temporal-reconstruct/tests/relations.rs`, case 242-historical-map.
+- [ ] **Absence is reported only where coverage can support it.** A point sample at 12:00 cannot
+      prove a process did not exist from 11:50 to 12:10 (§7.4, §3.5) —
+      `crates/ono-temporal-core/tests/coverage.rs`,
+      `crates/ono-temporal-reconstruct/tests/absence.rs`, case 243-coverage-and-absence.
+- [ ] **Sparse evidence produces unknown, never fake completeness.** A state between two
+      observations is `unknown in interval`, with the last and next observations named (§9.2) —
+      `crates/ono-temporal-reconstruct/tests/reconstruction.rs`, case 243-coverage-and-absence.
+- [ ] **A historical collection says whether it is the complete set.** `get process` at `T`
+      carries collection-level coverage and does not imply completeness it cannot prove (§9.6) —
+      `crates/ono-cli/tests/temporal_objects.rs`, case 243-coverage-and-absence.
+- [ ] **History outside retention answers `temporal.out_of_retention`.** Distinct from
+      `temporal.not_recorded`, and naming the earliest instant still retained (§34) —
+      `crates/ono-temporal-ledger/tests/retention.rs`, case 244-retention-boundary.
+- [ ] **A reconstructed object keeps its own schema and gains temporal metadata.** A historical
+      `Process` is an `ono.process/1` with a `temporal` sub-record, so pipelines are unchanged
+      (§9.4, §28.2) — `crates/ono-cli/tests/temporal_objects.rs`, case 240-reconstruction.
+- [ ] **Coverage is composed per capability, never as one global label.** `inspect` exposes the
+      source-level detail behind a `complete`/`partial`/`uncertain` headline (§8.5) —
+      `crates/ono-temporal-core/tests/coverage.rs`, case 243-coverage-and-absence.
+- [ ] **A place that did not exist at `T` says so and stays where it is.** `look` reports `place
+      not known at requested time` with coverage explaining known-absent from unknown, and
+      navigates nowhere on its own (§9.7) — `crates/ono-cli/tests/temporal_objects.rs`,
+      case 242-historical-map.
+
+#### 4.11.5 Changes (§13, §48.4 scenarios 19–21)
+
+- [ ] **`changes --since` reports added, removed and changed objects with typed values.**
+      Five change classes, each an `ono.temporal-change/1` (§13.2) —
+      `crates/ono-cli/tests/changes.rs`, case 245-changes.
+- [ ] **A partial before-state is unknown, never zero or empty.** The field reports `from
+      unknown` with the coverage that explains it (§13.4) —
+      `crates/ono-temporal-query/tests/changes.rs`, case 246-changes-unknown-before.
+- [ ] **v0.4 `look`'s recent-change section is backed by the temporal engine.** One change
+      implementation, not two (§13.5) — `crates/ono-cli/tests/spatial_look_changes.rs`,
+      case 247-look-changes-are-temporal.
+- [ ] **`changes` is pipeline-compatible.** `changes --since 30m | group subject.object_type`
+      (§28.1) — `crates/ono-cli/tests/changes.rs`, case 245-changes.
+
+#### 4.11.6 Causality (§15, §16, §17, §26, §48.5 scenarios 22–27)
+
+- [ ] **An Ono `restart service` creates an ActionId and records the systemd job it became.**
+      The mapping `ono:a91f -> /org/freedesktop/systemd1/job/4821` is in the ledger (§17.3) —
+      `crates/ono-provider-systemd/tests/jobs.rs`, `crates/ono-cli/tests/action_causality.rs`,
+      case 248-action-causality.
+- [ ] **`why` on the resulting transition returns a causal chain.** Every edge names its rule,
+      its source and its evidence (§16.5, §15.8) — `crates/ono-temporal-query/tests/why.rs`,
+      case 248-action-causality.
+- [ ] **A config change shortly before a failure is correlation and stays correlation.** It
+      appears under `correlated`, never under `known cause`, and no registered rule promotes it
+      (§16.6, §55.3) — `crates/ono-temporal-query/tests/correlation.rs`,
+      case 249-correlation-is-not-causation.
+- [ ] **A preceding unrelated event never appears under `known cause`.**
+      `crates/ono-temporal-query/tests/correlation.rs`, case 249-correlation-is-not-causation.
+- [ ] **Unknown cause is a successful typed explanation.** `cause: null` with evidence,
+      correlations and gaps, and no error code (§16.7, §34) —
+      `crates/ono-temporal-query/tests/why.rs`, case 250-unknown-cause.
+- [ ] **Every causal edge names its rule, source and evidence.** A `CausalLink` cannot be
+      constructed without them — `crates/ono-temporal-core/tests/causality.rs`,
+      `crates/ono-temporal-query/tests/why.rs`, case 251-causal-evidence.
+- [ ] **`why` works without a model configured.** No AI is required for any core temporal
+      feature (§16.1, §55.8) — `crates/ono-cli/tests/why.rs`, case 250-unknown-cause.
+- [ ] **`why` refuses ambiguity rather than choosing.** Several equally relevant transitions
+      answer `temporal.ambiguous_event` listing the references (§16.3) —
+      `crates/ono-temporal-query/tests/why.rs`, case 251-causal-evidence.
+- [ ] **The three forms of `why` all work.** `why <target> <selector>`, `why event <ref>` and
+      `why field <name>` (§16.2) — `crates/ono-cli/tests/why.rs`, case 248-action-causality.
+- [ ] **Temporal proximity alone never produces `caused_by`.** A property test over generated
+      event pairs with no shared evidence — `crates/ono-temporal-query/tests/correlation.rs`.
+- [ ] **The renderer never uses causal wording for a non-causal edge.** `because`, `therefore`,
+      `led to` and `caused` do not appear on a `preceded_by` or `correlated_with` edge, and the
+      connector style differs (§15.6, §45.3) — `crates/ono-temporal-render/tests/causal.rs`,
+      case 252-causal-rendering.
+- [ ] **An AI hypothesis cannot become a canonical causal edge.** It is an `Inference` with its
+      model, inputs and confidence, and no registered rule accepts it (§38.2) —
+      `crates/ono-model-broker/tests/inference.rs`, case 268-kuang-causality-is-bounded.
+
+#### 4.11.7 Rewind, the temporal HUD and the full-screen timeline (§18, §19, §48.6 scenarios 28–33)
+
+- [ ] **`map --live` pauses without stopping ingestion.** Space freezes the view's cursor; the
+      providers, the recorder and the machine keep going (§18.2) —
+      `crates/ono-cli/tests/temporal_view.rs`, case 253-rewind-pause.
+- [ ] **Stepping backward moves the topology to the previous significant event.** `[` and `]`
+      step through events relevant to the visible horizon, not every provider sample (§18.4) —
+      `crates/ono-cli/tests/temporal_view.rs`, case 254-rewind-stepping.
+- [ ] **Stepping into a coverage gap shows the gap.** No last state with a silently advancing
+      timestamp (§18.6) — `crates/ono-temporal-render/tests/gap_frame.rs`,
+      `crates/ono-cli/tests/temporal_view.rs`, case 255-rewind-gap.
+- [ ] **Enter on a past map node enters that historical place.** The session's coordinate follows
+      the cursor (§18.3) — `crates/ono-cli/tests/temporal_view.rs`, case 254-rewind-stepping.
+- [ ] **`N` returns to now and summarises what changed.** The summary uses the canonical
+      `changes` engine (§18.7) — `crates/ono-cli/tests/temporal_view.rs`, case 256-return-to-now.
+- [ ] **Terminal resize during the temporal view changes no semantic time or place.**
+      `crates/ono-cli/tests/temporal_view.rs`, case 256-return-to-now.
+- [ ] **The full-screen timeline opens, navigates and exits cleanly.** `timeline --view` and `T`
+      from a map; the keys of §19.3; the terminal is restored on every exit path including
+      Ctrl-C — `crates/ono-cli/tests/temporal_view.rs`, case 253-rewind-pause.
+- [ ] **Dense event sets are grouped with their hidden counts and time spans preserved.**
+      Grouping never hides an object or relation lifecycle change (§19.4, §43.3) —
+      `crates/ono-temporal-render/tests/grouping.rs`, case 255-rewind-gap.
+- [ ] **No frame is interpolated between unsupported states.** Semantic state changes only at
+      evidence-supported positions (§18.5) — `crates/ono-temporal-render/tests/gap_frame.rs`.
+
+#### 4.11.8 Recorder, storage, privacy (§10, §30, §31, §43, §44, §48.7 scenarios 34–39)
+
+- [ ] **The recorder is disabled by default.** A fresh installation retains nothing and creates
+      no store (§10.2) — `crates/ono-cli/tests/recorder.rs`, case 257-recorder-is-opt-in.
+- [ ] **`start recorder` creates a private ledger with the specified permissions.** `0700` on the
+      directory and `0600` on the database (§30.2) —
+      `crates/ono-temporal-ledger/tests/permissions.rs`, case 258-recorder-privacy.
+- [ ] **Events survive a shell restart.** Appended before, queryable after (§56.6) —
+      `crates/ono-temporal-ledger/tests/persistence.rs`, case 259-recorder-persistence.
+- [ ] **A recorder restart marks its downtime as a gap.** Never as continuity (§44.1, §55.5) —
+      `crates/ono-recorder/tests/downtime.rs`, case 260-recorder-gap.
+- [ ] **Retention expires old data and leaves no dangling reference.** Age and size bounds, and
+      no orphaned evidence, checkpoint or causal link (§31.8) —
+      `crates/ono-temporal-ledger/tests/retention.rs`, case 261-retention-and-corruption.
+- [ ] **A secret never appears in the ledger's bytes.** A byte scan of the database file after a
+      command carrying a secret (§30.3, §17.5) — `crates/ono-temporal-ledger/tests/privacy.rs`,
+      case 258-recorder-privacy.
+- [ ] **Process argv is not persisted by default.** `temporal.record.process_argv` is `false` and
+      the stored process record carries executable and identity without raw argv (§30.4) —
+      `crates/ono-recorder/tests/redaction.rs`, case 258-recorder-privacy.
+- [ ] **A corrupted ledger disables the affected history and leaves the shell working.** The
+      affected segment is named, the interval becomes a gap, and no command outside the temporal
+      layer fails (§31.7) — `crates/ono-temporal-ledger/tests/corruption.rs`,
+      case 261-retention-and-corruption.
+- [ ] **The store migrates, and every shipped version's fixture is tested.** Migration preserves
+      `EventId`, `EvidenceId`, `ActionId` and causal references (§31.6) —
+      `crates/ono-temporal-ledger/tests/migration.rs`, case 259-recorder-persistence.
+- [ ] **The recorder gains no visibility the user does not already have.** No setuid, no sudo, no
+      privileged daemon (§10.5) — `crates/ono-recorder/tests/privilege.rs`,
+      case 257-recorder-is-opt-in.
+- [ ] **Every ingestion path is bounded and an overflow becomes a gap.** No unbounded channel
+      exists (`xtask` refuses one), and a source exceeding its capacity produces an explicit
+      coverage gap rather than pretended continuity (§43.1, §43.2) —
+      `crates/ono-recorder/tests/backpressure.rs`,
+      `xtask/src/scan.rs::check_bounded_channels`, case 260-recorder-gap.
+- [ ] **`remove temporal-history` clears the local store under destructive-operation policy.**
+      (§30.8) — `crates/ono-cli/tests/recorder.rs`, case 261-retention-and-corruption.
+- [ ] **The in-memory session ledger is bounded and its eviction is visible.** 100 000 events by
+      default, oldest first, and the boundary recorded rather than silent (§10.7) —
+      `crates/ono-temporal-core/tests/session_ledger.rs`.
+
+#### 4.11.9 Remote and distributed time (§24, §25, §26, §48.8 scenarios 40–43)
+
+- [ ] **Remote source time and local ingest time stay distinct.** The local ledger never
+      overwrites one with the other (§24.2) — `crates/ono-remote/tests/temporal.rs`,
+      case 262-remote-clocks.
+- [ ] **Clock skew alone never creates a causal edge.** Two hosts whose wall clocks differ
+      produce a partial order, and `happens_before` answers `Concurrent` (§24.3, §26.3) —
+      `crates/ono-temporal-core/tests/ordering.rs`, `crates/ono-remote/tests/temporal.rs`,
+      case 262-remote-clocks.
+- [ ] **Explicit cross-host transaction evidence may create a causal chain.** A shared connection
+      identity or transaction id crosses the boundary; proximity does not (§26.4) —
+      `crates/ono-temporal-query/tests/cross_host.rs`, case 263-remote-causality.
+- [ ] **A remote host with no history says so.** It does not present current state as past state
+      (§24.5) — `crates/ono-remote/tests/temporal.rs`, case 264-remote-no-history.
+- [ ] **Temporal capability negotiation reports what the peer has.** An absent temporal capability
+      degrades the link rather than failing it (§24.1) —
+      `crates/ono-protocol/tests/handshake_temporal.rs`, case 264-remote-no-history.
+- [ ] **Clock uncertainty is rendered where it matters.** The uncertainty travels with the event
+      and the renderer shows it rather than implying precision (§24.4) —
+      `crates/ono-temporal-render/tests/clocks.rs`, case 262-remote-clocks.
+- [ ] **A remote mutation from historical context is refused at the agent.** The refusal names the
+      deciding boundary (§4.7) — `crates/ono-remote/tests/temporal.rs`,
+      case 232-temporal-past-is-read-only.
+
+#### 4.11.10 KUANG/11 temporal extensions (§30.7, §37, §48.9 scenarios 44–47)
+
+- [ ] **A plugin without `temporal.read.history` cannot query retained history.** Current object
+      read does not imply historical access (§30.7) —
+      `crates/ono-kuang-sdk/tests/conformance.rs`, case 265-kuang-temporal-permissions.
+- [ ] **A plugin without `temporal.contribute.causality` cannot add a causal link.**
+      `crates/ono-kuang-sdk/tests/conformance.rs`, case 265-kuang-temporal-permissions.
+- [ ] **A plugin's correlation remains correlation in core rendering.** Plugin causal strength
+      does not exceed `asserted` unless the host contract trusts that source as authoritative
+      (§37.4) — `crates/ono-kuang-supervisor/tests/temporal.rs`,
+      case 268-kuang-causality-is-bounded.
+- [ ] **A contributed event outside the permitted spatial scope is rejected.** A plugin cannot
+      assert that an object exists outside what it can resolve through permitted providers
+      (§37.3) — `crates/ono-kuang-supervisor/tests/temporal.rs`,
+      case 266-kuang-event-contribution.
+- [ ] **Contributed events are validated for schema, identity, timestamps, size and rate.**
+      (§37.3) — `crates/ono-kuang-supervisor/tests/temporal.rs`,
+      case 266-kuang-event-contribution.
+- [ ] **A contributed historical provider maps into canonical objects with coverage and
+      provenance.** (§37.5) — `crates/ono-kuang-testhost/tests/temporal_package.rs`,
+      case 267-kuang-history-provider.
+- [ ] **A malformed plugin temporal payload is refused without destabilising the host.**
+      `fuzz/src/targets.rs` covers the decoder — `fuzz/tests/corpus.rs`,
+      case 266-kuang-event-contribution.
+
+#### 4.11.11 Performance and scale (§32, §49)
+
+- [ ] **A deterministic fixture ledger of the declared cardinality exists and builds.** At least
+      1 000 000 events, 100 000 objects and lifetimes, 500 000 relation changes and 10 000 action
+      records (§49) — `crates/ono-testkit/src/temporal.rs`,
+      `crates/ono-temporal-ledger/tests/scale.rs`, case 269-temporal-scale.
+- [ ] **Startup with temporal persistence disabled is measured and within budget.** Under 5 ms
+      p95 added to interactive startup, with storage initialization lazy (§32.1) —
+      `cargo run -p xtask -- perf`, `docs/contracts/hardening/performance_baseline.json`,
+      case 270-temporal-performance-budgets.
+- [ ] **Recorder idle overhead is measured.** (§32.4) — `cargo run -p xtask -- perf`,
+      case 270-temporal-performance-budgets.
+- [ ] **The eight measurements of §49 are recorded against the fixture.** Startup, recorder idle
+      overhead, a 15-minute timeline, a 1-hour changes query, a recent reconstruction, a
+      historical L1 map, a `why`, and retention cleanup under load —
+      `docs/contracts/hardening/performance_baseline.json`, `xtask/tests/perf.rs`.
+- [ ] **v0.4's current-state budgets do not regress.** (§32.2) — `cargo run -p xtask -- perf
+      --compare`, case `060-performance-budgets`, case `100-spatial-performance-budgets`.
+- [ ] **A long historical query is cancellable and Ctrl-C leaves no lock held.** (§32.6) —
+      `crates/ono-cli/tests/temporal_cancellation.rs`, case 271-temporal-cancellation.
+- [ ] **Retention cleanup runs as bounded background work.** It does not block the prompt
+      (§31.8, §31.9) — `crates/ono-recorder/tests/retention_load.rs`, case 272-retention-load.
+
+#### 4.11.12 The twenty core invariants (§2)
+
+- [ ] **Time is explicit.** Ono can always report whether a query was evaluated at `now` or at a
+      historical coordinate — `crates/ono-cli/tests/temporal_context.rs`.
+- [ ] **The past is read-only**, across native, KUANG/11 and remote mutations —
+      `crates/ono-cli/tests/temporal_read_only.rs`.
+- [ ] **History requires evidence.** No historical fact is presented without provenance or a
+      documented reconstruction rule — `crates/ono-temporal-reconstruct/tests/provenance.rs`.
+- [ ] **Absence is not default knowledge** — `crates/ono-temporal-reconstruct/tests/absence.rs`.
+- [ ] **Coverage is first-class** — `crates/ono-temporal-core/tests/coverage.rs`.
+- [ ] **Gaps remain gaps.** No interpolation across an unobserved interval —
+      `crates/ono-temporal-reconstruct/tests/reconstruction.rs`.
+- [ ] **Causation is stricter than correlation** —
+      `crates/ono-temporal-query/tests/correlation.rs`.
+- [ ] **Ordering is not causation** — `crates/ono-temporal-query/tests/correlation.rs`.
+- [ ] **Clock uncertainty is visible** — `crates/ono-temporal-core/tests/ordering.rs`.
+- [ ] **Provenance survives reconstruction** —
+      `crates/ono-temporal-reconstruct/tests/provenance.rs`.
+- [ ] **Live and historical views share one truth.** Pausing a live map uses the same canonical
+      event and state model as a textual temporal query —
+      `crates/ono-cli/tests/temporal_view.rs`.
+- [ ] **System history and shell history are distinct** —
+      `crates/ono-cli/tests/temporal_context.rs`.
+- [ ] **Ono actions are traceable** — `crates/ono-cli/tests/action_causality.rs`.
+- [ ] **External commands remain honest.** Ono claims process creation and no downstream effect
+      an adapter or provider did not report (§17.6) —
+      `crates/ono-cli/tests/action_causality.rs`.
+- [ ] **Retention is bounded** — `crates/ono-temporal-ledger/tests/retention.rs`.
+- [ ] **Recording is opt-in** — `crates/ono-cli/tests/recorder.rs`.
+- [ ] **Recording does not escalate privilege** — `crates/ono-recorder/tests/privilege.rs`.
+- [ ] **Secrets stay out of history** — `crates/ono-temporal-ledger/tests/privacy.rs`.
+- [ ] **Machine-readable semantics precede rendering.** A renderer consumes canonical query
+      output and reaches no provider, ledger or network —
+      `xtask/src/architecture.rs`, `crates/ono-temporal-render/tests/`.
+- [ ] **No fake rewind** — `crates/ono-temporal-render/tests/gap_frame.rs`.
+
+#### 4.11.13 Release criteria (§56) and delivery
+
+- [ ] **Every normative temporal command is machine-registered.** `at`, `now`, `present`,
+      `timeline`, `changes`, `why`, `find event`, `inspect event`, `get`/`start`/`stop recorder`
+      and `remove temporal-history` are in `docs/contracts/commands/temporal.yaml`, bound, and
+      answer `help`, completion, `explain` and `inspect` from the registry —
+      `xtask/src/bindings.rs`, `crates/ono-cli/tests/temporal_discoverability.rs`,
+      case 231-temporal-configuration.
+- [ ] **The shell is unchanged when temporal persistence is disabled.** v0.2–v0.4 behaviour is
+      green: typed pipelines, external programs, v0.3 adapters, spatial navigation, maps, live
+      maps, remote links, KUANG/11, prompt and PTY behaviour — the existing suite and the
+      existing acceptance cases, unmodified.
+- [ ] **`ono-cli` is not the temporal engine.** The crate layering forbids it and the module
+      inventory records the temporal modules — `xtask/src/architecture.rs`,
+      `docs/contracts/hardening/module_architecture.yaml`.
+- [ ] **The temporal documentation of §46 exists.** Evidence-backed time, recorder privacy and
+      retention, `at`/`now`, timeline, historical maps, causal explanation, causation versus
+      correlation, the provider capability matrix, remote clock uncertainty, storage management,
+      troubleshooting gaps and corrupted history, and the KUANG/11 temporal extension guide —
+      `docs/reference/`, `xtask/src/reference.rs`.
+- [ ] **The fuzz targets of §47.3 exist and run.** Temporal store decoders, event payloads, time
+      selectors, historical adapter input, KUANG/11 temporal contributions, causal rule candidate
+      input, and corrupted ledger and migration boundaries — `fuzz/src/targets.rs`,
+      `fuzz/tests/corpus.rs`.
+- [ ] **The acceptance container enables the recorder for the temporal cases.** In a private
+      writable home, as the unprivileged user, with no network — `docker/acceptance/cases/`,
+      `docker/Dockerfile`.
+- [ ] **`scripts/release-check.sh` is green.**
+
 ## 5. Stopping rule
 
 An agent stops when `scripts/release-check.sh` prints `release-check: the shell is
@@ -2612,7 +3033,8 @@ specification: sections 4.1–4.5 are the v0.2 shell, section 4.6 is the v0.3 Ex
 Adaptation Layer, section 4.7 is the v0.4 Spatial Systems Interface, and section 4.8 is the v0.4.1
 Hardening, Trust & Release Integrity tranche, section 4.9 is the KUANG/11 plugin
 installation, resolution and permission layer, and section 4.10 its acquisition and
-system-distribution addendum. Section 4.11 is reserved for v0.5. A tranche whose
+system-distribution addendum, and section 4.11 is the v0.5 Temporal & Causal Systems
+Interface. A tranche whose
 subsection still holds an unticked box
 is an unfinished product, however green the gate and the acceptance suite are on their own, and
 the run continues into it.

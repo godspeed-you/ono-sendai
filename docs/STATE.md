@@ -151,7 +151,8 @@ infix after all, and `docs/specs/spec.sha256` follows the new path. The widened 
 made the document visible in the first place, and the next one may arrive misnamed too. **The
 v0.5 tranche has no `docs/ACCEPTANCE.md` checklist yet, and it is not the next tranche**: v0.4.1
 (above) precedes it in build order and claims §4.8, so v0.5's checklist — written from v0.5 §48
-and §56, the way §4.7 was written from v0.4 — becomes **§4.9** once its tranche starts.
+and §56, the way §4.7 was written from v0.4 — became **§4.11** when its tranche started on
+2026-09-08, §4.9 and §4.10 having gone to K11P and K11A in the meantime.
 
 **v0.6 arrived on `main` the same day** (`9c49bb9`) as
 `docs/specs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md` — Prospective Change,
@@ -315,12 +316,35 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-*Empty.*
+- [lead `v05` | 2026-09-08] **The v0.5 Temporal & Causal Systems Interface**, the whole tranche,
+  built by parallel agents under one lead. Ownership is by crate and by contract file, and the
+  interface every package compiles against is fixed before the packages start.
+  - lead — `docs/ACCEPTANCE.md` §4.11, `docs/releases/v0.5.0.md`, `docs/STATE.md`,
+    `crates/ono-core/src/error.rs`, the workspace manifest, `docs/adr/ADR-0610`…`ADR-0619`,
+    integration and the gate.
+  - `A1` — `crates/ono-temporal-core/**`, `docs/contracts/schemas/temporal-*.v1.yaml` and the
+    other v0.5 schemas, the `CONTRACTS` list of `crates/ono-value/src/builtin.rs`.
+  - `A2` — `docs/contracts/temporal/**`, `docs/contracts/capabilities.yaml`,
+    `docs/contracts/kuang/capabilities.v1.yaml`, `crates/ono-kuang-protocol/src/capability.rs`
+    and `permission.rs`, `crates/ono-cli/src/settings.rs`, `xtask/src/temporal.rs`.
+  - `J0` — `crates/ono-provider-api/**`, `crates/ono-provider-systemd/**`, the procfs half of
+    `crates/ono-provider-linux`, `docs/contracts/providers/*.yaml`.
+
+  Further packages follow as their dependencies land: the ledger, the recorder, reconstruction,
+  the query layer, causality, the historical spatial world, the CLI and session integration, the
+  temporal renderers and TUI, the remaining Linux sources, remote and KUANG/11, and the
+  performance, fuzzing, privacy and documentation work of T12.
 
 
 ## What is left, and why
 
-*Empty.* The v0.4.1 tranche is delivered and released. **All 118 boxes of `docs/ACCEPTANCE.md`
+**The v0.5 Temporal & Causal Systems Interface**, the whole of it. `docs/ACCEPTANCE.md` §4.11 is
+its definition of done — 123 boxes derived from the specification's forty-seven acceptance
+scenarios, its performance evidence, its twenty core invariants and its twenty-three release
+criteria — and every one of them is open. `docs/releases/v0.5.0.md` enumerates them, which is
+what `xtask::scan::check_release_notes` requires of an in-progress tranche.
+
+The v0.4.1 tranche before it is delivered and released. **All 118 boxes of `docs/ACCEPTANCE.md`
 §4.8 are ticked**, each by a named automated proof that `xtask/tests/hardening_evidence.rs`
 resolves on every gate run (ADR-0575). The workspace declares `0.4.1`, `docs/releases/v0.4.1.md`
 is written and held against the checklist by `xtask::scan::check_release_notes` (ADR-0577), and no
