@@ -1,0 +1,23 @@
+[package]
+name = "ono-temporal-core"
+description = "The canonical temporal vocabulary of Ono-Sendai: event, evidence, coverage, gap, causal link, time selector and temporal context types (spec v0.5 §3, §39)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-value.workspace = true
+ono-spatial-core.workspace = true
+jiff.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+serde_yaml_ng.workspace = true
+
+[lints]
+workspace = true

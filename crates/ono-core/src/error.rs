@@ -304,6 +304,40 @@ error_codes! {
     PluginSourceRootRejected => "Ono-Sendai-E1607", "plugin.source_root_rejected", Safety,
         "A system source root is not read-only to ordinary users and was not searched.";
 
+    // --- temporal, v0.5 §34: the family a shell owes a user who is standing in the past, and
+    // the one that says why a history cannot be read. v0.5 §34 numbers them E1101–E1114, which
+    // v0.4.1 §21.4 had already spent on the resource family; ADR-0610 keeps every name §34 fixes
+    // and opens E13, the lowest free block, so a reader adds two hundred to the section's table.
+    // Unknown cause is deliberately not a code: §16.7 makes it a successful explanation.
+    TemporalInvalidTime => "Ono-Sendai-E1301", "temporal.invalid_time", Parse,
+        "Time selector cannot resolve unambiguously.";
+    TemporalNotRecorded => "Ono-Sendai-E1302", "temporal.not_recorded", Resolution,
+        "No evidence source covers the requested time or scope.";
+    TemporalOutOfRetention => "Ono-Sendai-E1303", "temporal.out_of_retention", Resolution,
+        "Requested history is known to have expired.";
+    TemporalReadOnly => "Ono-Sendai-E1304", "temporal.read_only", Safety,
+        "Mutation attempted while the session observes historical state.";
+    TemporalPresentOnly => "Ono-Sendai-E1305", "temporal.present_only", Safety,
+        "An operation bound to the present was attempted in historical context.";
+    TemporalAmbiguousEvent => "Ono-Sendai-E1306", "temporal.ambiguous_event", Resolution,
+        "A query resolves to more than one equally valid event.";
+    TemporalStoreUnavailable => "Ono-Sendai-E1307", "temporal.store_unavailable", Io,
+        "The persistent temporal store cannot be accessed.";
+    TemporalStoreCorrupt => "Ono-Sendai-E1308", "temporal.store_corrupt", Io,
+        "Ledger integrity failure detected.";
+    TemporalPermissionDenied => "Ono-Sendai-E1309", "temporal.permission_denied", Permission,
+        "History or evidence exists and is not accessible to this session.";
+    TemporalUnsupportedSource => "Ono-Sendai-E1310", "temporal.unsupported_source", Provider,
+        "The source cannot provide the requested temporal capability.";
+    TemporalCoverageGap => "Ono-Sendai-E1311", "temporal.coverage_gap", Provider,
+        "The operation requires an interval with a material unsupported gap.";
+    TemporalClockUncertain => "Ono-Sendai-E1312", "temporal.clock_uncertain", Provider,
+        "The requested strict ordering cannot be established from the evidence.";
+    TemporalRecorderNotRunning => "Ono-Sendai-E1313", "temporal.recorder_not_running", Conflict,
+        "The operation requires a running recorder.";
+    TemporalRecorderAlreadyRunning => "Ono-Sendai-E1314", "temporal.recorder_already_running", Conflict,
+        "A start was requested while the recorder is already active.";
+
     // --- KUANG/11, spec §31.79: the K11 family of docs/contracts/kuang/errors.v1.yaml, folded into
     // the global model (ADR-0108). Numbering follows §31.79's families.
     KuangPackageInvalid => "Ono-Sendai-K11001", "package.invalid", Parse,

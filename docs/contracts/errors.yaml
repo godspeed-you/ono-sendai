@@ -642,6 +642,132 @@ errors:
       16.1); a root writable by its group or by everyone, or owned by another user, could hold
       anything and is set aside with this warning rather than searched.
 
+  # --- temporal (v0.5 §34, ADR-0610) --------------------------------------------------------
+  #
+  # v0.5 §34 numbers this family E1101–E1114. Those three lowest numbers are the resource family
+  # of v0.4.1 §21.4, shipped and matched on by scripts, and the taxonomy above forbids
+  # re-pointing a code. ADR-0610 keeps every name §34 fixes and opens E13, the lowest free
+  # block: a reader holding §34 open adds two hundred to each row.
+  #
+  # Unknown cause has no code. §16.7 makes `cause: null` a successful explanation carrying its
+  # evidence, its correlations and its gaps, and an error would turn honesty into a failure.
+  - code: Ono-Sendai-E1301
+    name: temporal.invalid_time
+    kind: parse
+    summary: Time selector cannot resolve unambiguously.
+    help: >-
+      A selector is an instant (`2026-08-31T12:17:00+02:00`), a local date and time, a time
+      today, a relative past duration (`-10m`) or an event (`event @e42`) — v0.5 §4.4. A future
+      instant is not a historical coordinate. A local wall time inside a daylight-saving fold
+      exists twice and needs the offset that picks one; the metadata names both instants.
+  - code: Ono-Sendai-E1302
+    name: temporal.not_recorded
+    kind: resolution
+    summary: No evidence source covers the requested time or scope.
+    help: >-
+      History is what a source observed, never what the question implies (v0.5 §1.3). The
+      metadata lists every source that was asked and how far back each reaches, so the answer
+      says what would have to change. `start recorder` begins retaining local history; it does
+      not create history that was never observed.
+  - code: Ono-Sendai-E1303
+    name: temporal.out_of_retention
+    kind: resolution
+    summary: Requested history is known to have expired.
+    help: >-
+      This is a stronger statement than `temporal.not_recorded`: the ledger held this interval
+      and retention removed it (v0.5 §10.4). The metadata names the earliest instant still
+      retained. Raising `temporal.retention.max_age` bounds future history and resurrects none.
+  - code: Ono-Sendai-E1304
+    name: temporal.read_only
+    kind: safety
+    summary: Mutation attempted while the session observes historical state.
+    help: >-
+      The past is read-only (v0.5 §2, §4.7), and that covers native mutations, KUANG/11 mutation
+      tools and remote mutations alike. Nothing was changed. `now` returns to the present, where
+      the command is available again.
+  - code: Ono-Sendai-E1305
+    name: temporal.present_only
+    kind: safety
+    summary: An operation bound to the present was attempted in historical context.
+    help: >-
+      An arbitrary external program executes against the machine as it is now, whatever the
+      session's temporal coordinate says, so it does not run by accident from the past (v0.5
+      §4.8). `present <command...>` runs it in the real current environment and leaves the
+      historical coordinate where it was.
+  - code: Ono-Sendai-E1306
+    name: temporal.ambiguous_event
+    kind: resolution
+    summary: A query resolves to more than one equally valid event.
+    help: >-
+      The metadata lists every candidate as an event reference. Name one — `why event @e42` —
+      rather than letting an order nobody chose decide (v0.5 §16.3). A script never gets a
+      picker.
+  - code: Ono-Sendai-E1307
+    name: temporal.store_unavailable
+    kind: io
+    summary: The persistent temporal store cannot be accessed.
+    help: >-
+      The shell keeps working: the store holds retained history, and nothing else depends on it
+      (v0.5 §31.7). The metadata names the path and the reason. Session-lifetime temporal
+      features continue from the in-memory ledger.
+  - code: Ono-Sendai-E1308
+    name: temporal.store_corrupt
+    kind: io
+    summary: Ledger integrity failure detected.
+    help: >-
+      Affected history is refused rather than presented as valid, and the interval it covered
+      becomes a visible coverage gap (v0.5 §31.7). The metadata names the segment. `remove
+      temporal-history` discards the store deliberately; the shell needs no repair to run.
+  - code: Ono-Sendai-E1309
+    name: temporal.permission_denied
+    kind: permission
+    summary: History or evidence exists and is not accessible to this session.
+    help: >-
+      Recording never raises privilege (v0.5 §2, §10.5), so a history this user could not have
+      observed is one they cannot read either. This is distinct from `temporal.not_recorded`:
+      the evidence is there and the answer is no.
+  - code: Ono-Sendai-E1310
+    name: temporal.unsupported_source
+    kind: provider
+    summary: The source cannot provide the requested temporal capability.
+    help: >-
+      A provider advertises what it can answer about the past (v0.5 §21.1), and a snapshot
+      source is not a historical one. `inspect provider <id>` lists the temporal capabilities it
+      declares.
+  - code: Ono-Sendai-E1311
+    name: temporal.coverage_gap
+    kind: provider
+    summary: The operation requires an interval with a material unsupported gap.
+    help: >-
+      Partial coverage is normally a successful answer that says how partial it is (v0.5 §34);
+      this code is raised only where the operation asked for completeness it cannot have. The
+      metadata names the gap, its interval and why it exists.
+  - code: Ono-Sendai-E1312
+    name: temporal.clock_uncertain
+    kind: provider
+    summary: The requested strict ordering cannot be established from the evidence.
+    help: >-
+      Two events in different clock domains are ordered by shared sequence, transaction or
+      causal evidence, never by wall clocks that differ by milliseconds (v0.5 §24.3, §26). They
+      remain potentially concurrent, and the timeline may still display them in a stable order
+      that claims nothing.
+  - code: Ono-Sendai-E1313
+    name: temporal.recorder_not_running
+    kind: conflict
+    summary: The operation requires a running recorder.
+    help: >-
+      Persistent recording is opt-in and off by default (v0.5 §2, §10.2). `start recorder`
+      begins it; `get recorder` reports its state, its retention and where it writes.
+  - code: Ono-Sendai-E1314
+    name: temporal.recorder_already_running
+    kind: conflict
+    summary: A start was requested while the recorder is already active.
+    help: >-
+      `start recorder` is idempotent and answers with the running recorder (v0.5 §10.8); this
+      code is raised only where the request carried settings the running recorder is not using,
+      so that a silently ignored change is impossible. `stop recorder` then `start recorder`
+      applies them.
+
   # --- KUANG/11, spec §31.79 (folded into the global model by ADR-0108) ---------------------
   - code: Ono-Sendai-K11001
     name: package.invalid

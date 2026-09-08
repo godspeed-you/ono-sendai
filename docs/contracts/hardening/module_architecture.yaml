@@ -198,6 +198,7 @@ layering:
         - ono-kuang-protocol
         - ono-model-broker
         - ono-spatial-render
+        - ono-temporal-render
     - layer: capability
       of: what the shell can observe and act on, and the boundaries around it
       crates:
@@ -210,6 +211,10 @@ layering:
         - ono-spatial-index
         - ono-spatial-query
         - ono-spatial-events
+        - ono-temporal-core
+        - ono-temporal-ledger
+        - ono-temporal-reconstruct
+        - ono-temporal-query
     - layer: surface
       of: the concrete providers, the command contract and the remote link
       crates:
@@ -222,6 +227,7 @@ layering:
         - ono-provider-netlink
         - ono-provider-systemd
         - ono-provider-container
+        - ono-recorder
     - layer: composition
       of: the binary that wires the rest together
       crates: [ono-cli]

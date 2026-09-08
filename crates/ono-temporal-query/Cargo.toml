@@ -1,0 +1,25 @@
+[package]
+name = "ono-temporal-query"
+description = "Temporal query planning for Ono-Sendai: timeline, changes, event search, causal graph planning and relevance ranking (spec v0.5 §11, §13, §16, §39)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-value.workspace = true
+ono-spatial-core.workspace = true
+ono-temporal-core.workspace = true
+ono-temporal-ledger.workspace = true
+ono-temporal-reconstruct.workspace = true
+jiff.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+serde_yaml_ng.workspace = true
+
+[lints]
+workspace = true

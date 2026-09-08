@@ -1,0 +1,18 @@
+[package]
+name = "ono-temporal-render"
+description = "Temporal presentation for Ono-Sendai: timeline text, causal explanation, coverage gaps, the temporal HUD and the full-screen timeline (spec v0.5 §11.5, §16.5, §19, §39)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-value.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+
+[lints]
+workspace = true

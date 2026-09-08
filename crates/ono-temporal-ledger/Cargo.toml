@@ -1,0 +1,25 @@
+[package]
+name = "ono-temporal-ledger"
+description = "The Ono-Sendai temporal ledger: the bounded in-memory ledger and the SQLite WAL store, with migrations, retention, integrity and source-sequence continuity (spec v0.5 §31, §39)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-value.workspace = true
+ono-spatial-core.workspace = true
+ono-temporal-core.workspace = true
+ciborium.workspace = true
+jiff.workspace = true
+rusqlite.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

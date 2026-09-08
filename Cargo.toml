@@ -46,6 +46,12 @@ ono-spatial-index = { path = "crates/ono-spatial-index", version = "0.4.4" }
 ono-spatial-query = { path = "crates/ono-spatial-query", version = "0.4.4" }
 ono-spatial-render = { path = "crates/ono-spatial-render", version = "0.4.4" }
 ono-testkit = { path = "crates/ono-testkit", version = "0.4.4" }
+ono-temporal-core = { path = "crates/ono-temporal-core", version = "0.4.4" }
+ono-temporal-ledger = { path = "crates/ono-temporal-ledger", version = "0.4.4" }
+ono-temporal-reconstruct = { path = "crates/ono-temporal-reconstruct", version = "0.4.4" }
+ono-temporal-query = { path = "crates/ono-temporal-query", version = "0.4.4" }
+ono-temporal-render = { path = "crates/ono-temporal-render", version = "0.4.4" }
+ono-recorder = { path = "crates/ono-recorder", version = "0.4.4" }
 
 # Third-party. Choices and rationale: ADR-0005.
 async-trait = "0.1"
@@ -53,6 +59,10 @@ wasmtime = { version = "47", default-features = false, features = ["runtime", "c
 wasmtime-wasi = { version = "47", default-features = false, features = ["p2"] }
 bytes = "1"
 crossterm = "0.29"
+# The versioned binary payload of a persisted temporal event (spec v0.5 §31.4). CBOR keeps a
+# typed value compact beside the relational scalars the ledger indexes, and reads back a document
+# whose unknown fields survive a schema evolution instead of failing the row.
+ciborium = "0.2"
 csv = "1"
 # The one asymmetric primitive in the workspace: package signatures (spec §31.36, ADR-0311).
 ed25519-dalek = "3"
@@ -69,6 +79,12 @@ regex = "1"
 # than the default one, so the agent builds with the toolchain a Rust build already needs;
 # `rcgen` writes the self-signed certificate that *is* a host's pinned identity.
 rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
+# The reference temporal store of spec v0.5 §31.1, which names SQLite in WAL mode normatively so
+# that recovery, migration and corruption behaviour are the same everywhere they are tested. The
+# amalgamation is compiled in rather than linked from the host: the store's format, its WAL
+# semantics and its integrity check are inputs to the acceptance suite, and a distribution's
+# SQLite is not the same input twice.
+rusqlite = { version = "0.38", features = ["bundled"] }
 rustix = { version = "1", features = ["process"] }
 # The keyless package signature of ADR-0609 verifies a Fulcio certificate chain and an ECDSA
 # signature offline. `ring` and `rustls-webpki` are already in the graph through `rustls`;
