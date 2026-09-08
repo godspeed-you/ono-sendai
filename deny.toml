@@ -51,6 +51,13 @@ allow = [
     # beyond what distributing an MIT binary already permits.
     "Apache-2.0 WITH LLVM-exception",
     "Zlib",         # `foldhash-0.2.0`, a leaf of the component runtime; attribution only, like MIT
+    # `webpki-roots`, the Mozilla CA root store `ureq` verifies a plugin artifact's TLS
+    # connection against (ADR-0607). What the crate carries is *data* rather than code, and the
+    # agreement is permissive in the shape MIT already is: use, modify and share freely (§1.1),
+    # with the agreement's own text made available alongside the data that is shared (§2.1), and
+    # — §3.1, "No Restrictions on Results" — no obligation whatever on what is computed from it.
+    # Nothing it asks of a redistributor is beyond what shipping an MIT binary already asks.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.93
 

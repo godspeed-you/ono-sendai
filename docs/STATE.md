@@ -2235,6 +2235,24 @@ the provider samples — and no assertion changed.
 
 ## Found, not yet filed
 
+- **The packages ship no third-party licence notices.** `crates/ono-cli/Cargo.toml` installs this
+  project's own `LICENSE` and nothing else, while the graph carries licences that ask for their
+  text to travel with what is distributed: Apache-2.0 §4, and now `webpki-roots`'
+  CDLA-Permissive-2.0 §2.1 (the Mozilla root store `ureq` verifies against, ADR-0607). The
+  obligation predates the fetcher — Apache-2.0 dependencies have been in the graph for a long
+  time — and the fetcher makes it one licence wider. What closes it: a generated
+  `THIRD-PARTY-LICENSES` file, produced from the resolved graph in the same step that builds the
+  packages, installed beside `LICENSE`, and held to the lockfile by a test so it cannot fall
+  behind a dependency change.
+
+- **A plugin artifact behind a private certificate authority cannot be fetched.**
+  `ureq` verifies against the Mozilla root store `webpki-roots` embeds (ADR-0607 §4), so an
+  enterprise HTTPS artifact server presenting an internally issued certificate is refused —
+  exactly the operator K11A §2.5 has in mind, whose path today is the system package or a local
+  copy rather than a catalog fetch. What closes it: an operator-configured additional root, or
+  the platform verifier, decided in an ADR that weighs it against ADR-0607's reason for a root
+  set that is the same on every host.
+
 - **Two tests read the machine's namespace support and fail where the kernel withholds it.**
   `crates/ono-cli/tests/adapters.rs::should_compose_a_familiar_command_with_ono_semantics`
   retries `lsns` five times and it exits 2 every time on a kernel answering `Unsupported ioctl
