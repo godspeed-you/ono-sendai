@@ -33,7 +33,7 @@ use std::process::ExitCode;
 
 use ono_kuang_protocol::{
     KuangError, Manifest, PackageSignature, SIGNATURE_FILE, SecretKey, SignedPackage,
-    artifact_files, content_digest,
+    artifact_files, content_digest, packed_files,
 };
 
 fn main() -> ExitCode {
@@ -197,14 +197,11 @@ fn pack(words: &[&str]) -> Result<(), KuangError> {
         .map_err(|error| failed(format!("cannot write {}: {error}", out.display())))?;
     let mut archive = tar::Builder::new(file);
     archive.mode(tar::HeaderMode::Deterministic);
-    let files = artifact_files(&directory);
-    // The signature travels with the payload: it is not one of the files it covers, and a
-    // fetched package without it would install under local-development semantics rather than
-    // as the signed release it is.
-    let mut names: Vec<String> = files.iter().map(|entry| entry.path.clone()).collect();
-    if directory.join(SIGNATURE_FILE).is_file() {
-        names.push(SIGNATURE_FILE.to_owned());
-    }
+    // The artifact plus whichever signatures the package carries: a signature is not one of the
+    // files it covers, and a fetched package without it would install under local-development
+    // semantics rather than as the signed release it is. Which names those are is decided beside
+    // the walk they must agree with (ADR-0609).
+    let names = packed_files(&directory);
     for name in &names {
         let path = directory.join(name);
         let mut source = std::fs::File::open(&path)
@@ -221,7 +218,7 @@ fn pack(words: &[&str]) -> Result<(), KuangError> {
         manifest.package.id,
         manifest.package.version,
         out.display(),
-        files.len(),
+        names.len(),
         content_digest(&directory)
     );
     Ok(())

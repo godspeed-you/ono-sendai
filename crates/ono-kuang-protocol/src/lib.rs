@@ -40,7 +40,7 @@ mod permission;
 mod signature;
 mod version;
 
-pub use artifact::{BUNDLE_FILE, artifact_files};
+pub use artifact::{BUNDLE_FILE, artifact_files, packed_files};
 pub use audit::{AuditEvent, AuditResult};
 pub use capability::{
     Capability, Decision, DeclarationClass, Elevation, Enforcement, GrantDuration, Lease, Risk,

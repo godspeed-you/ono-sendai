@@ -35,6 +35,30 @@ pub fn artifact_files(directory: &Path) -> Vec<FileDigest> {
     files
 }
 
+/// Every file that travels in a `.kuang` archive: the artifact, plus whichever signatures the
+/// package carries.
+///
+/// A signature is not one of the files it covers, so `artifact_files` leaves both out — and an
+/// archive built from that list alone would arrive without the very statement that makes it a
+/// signed release, installing under local-development semantics instead. The two lists differ by
+/// exactly the signatures, and they are written next to each other so they cannot drift: the
+/// keyless bundle went missing from `.kuang` archives for the length of one release because the
+/// packer knew about `signature.yaml` and nothing told it about the second form (ADR-0609).
+#[must_use]
+pub fn packed_files(directory: &Path) -> Vec<String> {
+    let mut names: Vec<String> = artifact_files(directory)
+        .into_iter()
+        .map(|entry| entry.path)
+        .collect();
+    names.extend(
+        [SIGNATURE_FILE, BUNDLE_FILE]
+            .into_iter()
+            .filter(|name| directory.join(name).is_file())
+            .map(str::to_owned),
+    );
+    names
+}
+
 /// Walks `directory`, adding one entry per regular file and per symbolic link.
 ///
 /// A symbolic link is recorded by its target rather than by what it points at: following it
