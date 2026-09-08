@@ -78,6 +78,9 @@ maintainer-scripts = "packaging/deb"
 assets = [
     ["target/release/ono", "usr/bin/", "755"],
     ["../../README.md", "usr/share/doc/ono/README.md", "644"],
+    # What the licences of the crates in the binary ask to travel with it (ADR-0608), generated
+    # from `Cargo.lock` and held to it by `spec-check`.
+    ["../../THIRD-PARTY-LICENSES", "usr/share/doc/ono/THIRD-PARTY-LICENSES", "644"],
     ["../../docs/reference/*.md", "usr/share/doc/ono/reference/", "644"],
     ["../../docs/reference/adapters/*.md", "usr/share/doc/ono/reference/adapters/", "644"],
 ]
@@ -91,6 +94,7 @@ assets = [
     { source = "target/release/ono", dest = "/usr/bin/ono", mode = "755" },
     { source = "../../LICENSE", dest = "/usr/share/licenses/ono/LICENSE", mode = "644", doc = true },
     { source = "../../README.md", dest = "/usr/share/doc/ono/README.md", mode = "644", doc = true },
+    { source = "../../THIRD-PARTY-LICENSES", dest = "/usr/share/licenses/ono/THIRD-PARTY-LICENSES", mode = "644", doc = true },
     { source = "../../docs/reference/*.md", dest = "/usr/share/doc/ono/reference/", mode = "644", doc = true },
     { source = "../../docs/reference/adapters/*.md", dest = "/usr/share/doc/ono/reference/adapters/", mode = "644", doc = true },
 ]

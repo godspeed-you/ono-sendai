@@ -13,6 +13,7 @@ pub mod conformance;
 pub mod contracts;
 pub mod metrics;
 pub mod narrative;
+pub mod notices;
 pub mod perf;
 pub mod provenance;
 pub mod reference;

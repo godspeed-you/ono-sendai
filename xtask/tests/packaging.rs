@@ -112,6 +112,8 @@ fn should_build_a_deb_that_installs_ono_as_a_registered_login_shell() {
     for path in [
         "./usr/bin/ono",
         "./usr/share/doc/ono/copyright",
+        // The notices the crates in the binary ask to travel with it (ADR-0608).
+        "./usr/share/doc/ono/THIRD-PARTY-LICENSES",
         "./usr/share/doc/ono/README.md",
         "./usr/share/doc/ono/reference/commands.md",
         "./usr/share/doc/ono/reference/adapters/README.md",
@@ -187,6 +189,7 @@ fn should_build_an_rpm_that_installs_ono_as_a_registered_login_shell() {
     for path in [
         "/usr/bin/ono",
         "/usr/share/licenses/ono/LICENSE",
+        "/usr/share/licenses/ono/THIRD-PARTY-LICENSES",
         "/usr/share/doc/ono/README.md",
         "/usr/share/doc/ono/reference/commands.md",
         "/usr/share/doc/ono/reference/adapters/README.md",

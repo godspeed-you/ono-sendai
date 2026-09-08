@@ -8,7 +8,8 @@ use std::process::{Command, ExitCode};
 
 use xtask::{
     architecture, baseline, bindings, conformance, contracts, metrics as repo_metrics, narrative,
-    perf, provenance, reference, reproducibility, scan, supply_chain, terminology, verification,
+    notices, perf, provenance, reference, reproducibility, scan, supply_chain, terminology,
+    verification,
 };
 
 fn main() -> ExitCode {
@@ -30,6 +31,7 @@ fn main() -> ExitCode {
         Some("perf") => perf(&rest),
         Some("baseline") => frozen_baseline(&rest),
         Some("docs") => generate_docs(),
+        Some("licenses") => licenses(&rest),
         Some("conformance") => generate_conformance(),
         Some("release-check") => run_script("release-check.sh", &rest),
         Some(other) => {
@@ -588,6 +590,41 @@ fn generate_docs() -> ExitCode {
     }
 }
 
+/// Regenerates the third-party licence notices from the lockfile (ADR-0608).
+fn licenses(arguments: &[String]) -> ExitCode {
+    let root = repo_root();
+    let write = match arguments.first().map(String::as_str) {
+        None => false,
+        Some("--write") => true,
+        Some(other) => return usage_error(&format!("licenses: unknown argument `{other}`")),
+    };
+    if !write {
+        let problems = notices::check_committed(&root);
+        for problem in &problems {
+            eprintln!("licenses: {} — {}", problem.location, problem.detail);
+        }
+        if problems.is_empty() {
+            println!("licenses: {} agrees with Cargo.lock", notices::NOTICES_FILE);
+            return ExitCode::SUCCESS;
+        }
+        return ExitCode::FAILURE;
+    }
+    match notices::write(&root) {
+        Ok(true) => {
+            println!("licenses: wrote {}", notices::NOTICES_FILE);
+            ExitCode::SUCCESS
+        }
+        Ok(false) => {
+            println!("licenses: {} is already current", notices::NOTICES_FILE);
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("licenses: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// Regenerates the provider conformance suite from the registries (spec section 35.3).
 fn generate_conformance() -> ExitCode {
     match conformance::write(&repo_root()) {
@@ -655,6 +692,7 @@ fn spec_check() -> ExitCode {
             .chain(supply_chain::check_dependency_justifications(&root))
             .chain(supply_chain::check_tool_versions(&root))
             .chain(supply_chain::check_locked_builds(&root))
+            .chain(notices::check_committed(&root))
             .chain(provenance::check_manifest_is_emitted(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );

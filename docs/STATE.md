@@ -855,6 +855,14 @@ Two specifications the user placed under `docs/specs/kuang11/`, implemented end 
   wrappers placing the signed payload under the system root with no maintainer script
   (ADR-0071 there; `scripts/package.sh --key …`).
 
+**The notices the binary owes are generated and shipped** (ADR-0608). `deny.toml` decided which
+licences may be shipped; nothing discharged what they ask for once the binary is somewhere else —
+MIT's permission notice, Apache-2.0 §4's text, and CDLA-Permissive-2.0 §2.1's, which arrived with
+`webpki-roots` and made the gap visible. `THIRD-PARTY-LICENSES` is written by `cargo run -p xtask
+-- licenses --write` from `Cargo.lock`, regenerated and compared by `spec-check`, and installed by
+both packages beside `LICENSE`: 311 crates, 173 distinct documents each reproduced once, and the
+twenty crates that ship none named rather than passed over.
+
 Proven by `crates/ono-cli/tests/{permissions,acquisition}.rs`, `crates/ono-kuang-protocol/tests/{permissions,catalog}.rs`,
 `crates/ono-kuang-sdk/tests/consent.rs`, the updated plugin and spatial suites, acceptance cases
 `220`–`228` (green in the container), the harvester `xtask/tests/permission_evidence.rs`, and in
@@ -2234,16 +2242,6 @@ the provider samples — and no assertion changed.
 
 
 ## Found, not yet filed
-
-- **The packages ship no third-party licence notices.** `crates/ono-cli/Cargo.toml` installs this
-  project's own `LICENSE` and nothing else, while the graph carries licences that ask for their
-  text to travel with what is distributed: Apache-2.0 §4, and now `webpki-roots`'
-  CDLA-Permissive-2.0 §2.1 (the Mozilla root store `ureq` verifies against, ADR-0607). The
-  obligation predates the fetcher — Apache-2.0 dependencies have been in the graph for a long
-  time — and the fetcher makes it one licence wider. What closes it: a generated
-  `THIRD-PARTY-LICENSES` file, produced from the resolved graph in the same step that builds the
-  packages, installed beside `LICENSE`, and held to the lockfile by a test so it cannot fall
-  behind a dependency change.
 
 - **A plugin artifact behind a private certificate authority cannot be fetched.**
   `ureq` verifies against the Mozilla root store `webpki-roots` embeds (ADR-0607 §4), so an
