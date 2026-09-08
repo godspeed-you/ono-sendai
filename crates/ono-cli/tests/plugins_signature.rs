@@ -453,8 +453,7 @@ fn should_report_a_trust_store_it_cannot_read_rather_than_treating_its_keys_as_a
 /// The Sigstore bundle this project's own `v0.4.3` release published over its `SHA256SUMS`: a
 /// real certificate, a real transparency-log entry and a real signature — over bytes that are
 /// not this package's description.
-const RELEASE_BUNDLE: &str =
-    include_str!("fixtures/release-SHA256SUMS.sigstore.json");
+const RELEASE_BUNDLE: &str = include_str!("fixtures/release-SHA256SUMS.sigstore.json");
 
 #[test]
 fn should_refuse_a_keyless_signature_that_vouches_for_other_bytes() {
