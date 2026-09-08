@@ -327,6 +327,18 @@ pub fn install(session: &mut Session, reference: &str, options: &InstallOptions)
             "warning: `{name}` is an unsigned native plugin; it runs as your user account and \
              this execution tier is not complete filesystem or network isolation (K11P §27.1)"
         );
+    } else if trust.signature == "valid"
+        && !matches!(trust.standing, Trust::SystemTrusted | Trust::UserTrusted)
+        && located.origin.source_kind() == Some(ono_kuang_protocol::SourceKind::SystemPackage)
+    {
+        // K11A §11.1: a system package is provenance, not publisher trust, and the difference is
+        // said at the one moment it is decided.
+        eprintln!(
+            "warning: `{name}` is signed by a key no trust store enrols ({}); it came from a \
+             system package, which is provenance and not publisher trust (K11A §11.1) — enrol \
+             the key in `<config>/kuang/trust.yaml` to make it trusted",
+            trust.key
+        );
     }
 
     // 6. The transaction (K11P §12.4, Gate U).
@@ -494,8 +506,14 @@ fn unattended(
     // A signed native package whose key no store enrols is the first-trust decision of K11P
     // §13.3, and a flag does not make it. An unsigned package has no publisher identity to
     // enrol: it installs under the local-development semantics of §13.4, with the warning.
+    // A payload a system package supplied is the operator's own provenance (K11A §2.5, §13):
+    // it installs unattended like a local package, with its trust stated as what it is —
+    // unknown until the key is enrolled — and never as more (§11.1).
+    let from_system =
+        located.origin.source_kind() == Some(ono_kuang_protocol::SourceKind::SystemPackage);
     if native
         && located.catalog.is_some()
+        && !from_system
         && trust.signature == "valid"
         && !matches!(trust.standing, Trust::SystemTrusted | Trust::UserTrusted)
     {

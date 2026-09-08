@@ -835,3 +835,58 @@ fn should_remove_onos_copy_and_leave_the_system_source_where_the_package_manager
         again.output()
     );
 }
+
+#[test]
+fn should_install_a_signed_system_payload_unattended_and_state_its_trust_as_unknown() {
+    // K11A §2.5, §11.1, §13: the operator's package manager is the provenance a fleet relies on,
+    // so a signed payload from a system package installs unattended even when no trust store
+    // enrols its key — and the trust facts stay what they are: signature valid, publisher
+    // unknown, never "trusted because root installed it".
+    let home = world();
+    let built = staged(&home, "0.1.0");
+    sign(&built, &key(7));
+    let versions = home.path().join("system-sources").join(ECHO);
+    std::fs::create_dir_all(&versions).expect("the id directory");
+    std::fs::rename(&built, versions.join("0.1.0")).expect("the payload moves under its version");
+    std::fs::write(
+        versions.join("0.1.0.origin.yaml"),
+        "format: kuang-system-origin/1\npackage: ono-plugin-echo\nmanager: apt/dpkg\n",
+    )
+    .expect("the sidecar");
+    // The bootstrap-style situation: a catalog names the package too, with a local artifact.
+    catalog(
+        &home,
+        "official",
+        "official",
+        &[(
+            ECHO,
+            "echo",
+            "0.1.0",
+            "git:https://example.invalid/echo#v0.1.0",
+        )],
+    );
+
+    let installed = ono(
+        &home,
+        "install plugin echo --confirm | select status | to json; verify plugin echo | select signature trust | to json",
+    );
+    installed.assert_success();
+    assert!(
+        installed.stdout().contains("{\"status\":\"success\"}")
+            && installed
+                .stdout()
+                .contains("{\"signature\":\"valid\",\"trust\":\"unknown\"}"),
+        "{:?}",
+        installed.output()
+    );
+    assert!(
+        installed.stderr().contains("no trust store enrols")
+            && installed.stderr().contains("system package"),
+        "the unknown trust is said, and root is not trust: {:?}",
+        installed.stderr()
+    );
+    assert_eq!(
+        text_of(&acquisition(&home), "source_kind"),
+        "system-package"
+    );
+}

@@ -83,6 +83,12 @@ holds that version, or null for a network artifact this host does not probe (§1
 install prompt and the plan show `Source:` as one more fact beside signature, trust and runtime,
 and never in place of the permission plan (§11.1, §12).
 
+**Unattended, from a system package.** ADR-0602 §4 refuses an unattended install of a signed
+native package from a catalog whose key no trust store enrols. A payload a system package supplied
+is the operator's own provenance (K11A §2.5, §13) and installs unattended like a local package,
+with its trust stated as what it is — signature valid, publisher unknown until the key is
+enrolled — and a warning saying so; root installing it is never publisher trust (§11.1).
+
 ### 5. Removal removes Ono's copy, and says what remains
 
 `remove plugin` removes the installed copy, its grants and its decisions as ADR-0604 decided, runs
