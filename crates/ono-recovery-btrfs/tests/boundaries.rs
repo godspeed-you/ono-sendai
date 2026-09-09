@@ -115,6 +115,7 @@ fn should_require_a_separate_asset_for_a_target_inside_a_nested_subvolume() {
 
 #[test]
 fn should_offer_no_parent_snapshot_as_cover_for_a_nested_target() {
+    // Appendix G.2 truth test: btrfs-nested-subvolume.
     let provider = provider(vec![fixture("subvol-list-root")]);
     let required = provider
         .required_protection(

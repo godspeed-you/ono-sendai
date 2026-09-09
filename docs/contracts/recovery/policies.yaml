@@ -7,8 +7,11 @@
 #
 # Appendix H.5 is the rule that keeps profiles from being a back door: a plan may impose stricter
 # requirements than a profile, and a profile MUST NOT weaken a provider-declared safety
-# constraint. `xtask/src/change.rs::check_policies` checks that every profile's settings are a
-# tightening of the defaults rather than a loosening of them.
+# constraint. `xtask/src/change.rs::check_policies` compares every profile against the settings
+# `ono_change_protection::policy::Profile` expands it to, checks that its mode, retention and
+# free-space floor are a tightening of §53's defaults rather than a loosening, and drives
+# `effective_mode` over all sixteen mode pairs to check §53's closing line directly. The
+# `authority` and `auto_recovery` blocks are checked beside them (ADR-0815).
 #
 # Decisions: ADR-0800, ADR-0810.
 
@@ -137,13 +140,9 @@ auto_recovery:
     declaration MUST be rejected at seal time, which is what keeps it from being discovered at the
     moment it would have run.
 
-# §38.3's limits on automatic protection.
-cost_limits:
-  - {key: estimated_size, spec: "§38.3"}
-  - {key: target_scope, spec: "§38.3"}
-  - {key: quiesce_duration, spec: "§38.3, §18.4"}
-  - {key: snapshot_count, spec: "§38.3, recovery.max_auto_snapshot_count"}
-  - {key: filesystem_free_floor, spec: "§38.3, Appendix D.3, recovery.min_filesystem_free"}
+# §38.3's limits on automatic protection are declared once, in `assets.yaml`'s `limits`, and read
+# from there by `ono_change_protection::policy::CostLimits`. They were declared here too under a
+# second spelling, which is a drift surface rather than a contract.
 
 # §44's six rules about recovery data that may hold credentials, private keys, database files,
 # shell configuration or application secrets. Each names the mechanism that answers it, because a

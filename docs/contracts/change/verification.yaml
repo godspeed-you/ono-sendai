@@ -6,8 +6,12 @@
 # as a failure mode, and this registry is what makes the alternative checkable.
 #
 # `xtask/src/change.rs::check_verification` holds each list against
-# `ono_change_core::{VerificationClass, VerificationStatus, EquivalenceDomain}::ALL` in both
-# directions, and asserts that no contract can be built without a timeout.
+# `ono_change_core::{VerificationClass, VerificationStatus, Verdict, EquivalenceDomain,
+# EquivalenceState}::ALL` in both directions; drives `VerificationSet::verdict` to check every
+# class's `on_failure` and `on_unknown` and every status's `counts_as_pass`; and compares
+# `timeouts.default` against the timeout a freshly built contract carries. That contract's timeout
+# has no absent form — it is a `Duration`, not an `Option<Duration>` — and the binding in the check
+# is what would stop compiling if it grew one.
 #
 # Decisions: ADR-0800.
 

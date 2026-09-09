@@ -47,10 +47,11 @@ const REGISTRIES: [&str; 11] = [
 ];
 
 /// Everything else `change::check` reads while it cross-references the eleven.
-const NEIGHBOURS: [&str; 4] = [
+const NEIGHBOURS: [&str; 5] = [
     "docs/contracts/commands/change.yaml",
     "docs/contracts/verbs.yaml",
     "docs/contracts/errors.yaml",
+    "docs/contracts/capabilities.yaml",
     "docs/contracts/hardening/registries.yaml",
 ];
 
@@ -84,8 +85,45 @@ fn copied() -> Scratch {
     {
         std::fs::create_dir_all(tree.path().join("crates").join(entry.file_name()))
             .expect("a scratch crate directory");
+        // §39.2 and §12.1 are checked against what a provider's source says, and Appendix G.2
+        // against what its tests say, so those crates come across whole rather than as an empty
+        // directory.
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with("ono-recovery-") {
+            copy_source(&entry.path().join("src"), &tree, &format!("{name}/src"));
+        }
+        if name.starts_with("ono-recovery-") || name == "ono-change-protection" {
+            copy_source(&entry.path().join("tests"), &tree, &format!("{name}/tests"));
+        }
     }
     tree
+}
+
+/// Every `.rs` file under `source`, written into the scratch tree under `crates/{destination}`.
+fn copy_source(source: &std::path::Path, tree: &Scratch, destination: &str) {
+    let mut stack = vec![source.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
+                continue;
+            }
+            let relative = path
+                .strip_prefix(source)
+                .expect("the walk started at `source`")
+                .to_string_lossy()
+                .into_owned();
+            let body = std::fs::read_to_string(&path).expect("a source file the repository ships");
+            tree.write(format!("crates/{destination}/{relative}"), body);
+        }
+    }
 }
 
 /// Every refusal `change::check` reports about a tree, as the lines a failing assertion prints.
@@ -1022,4 +1060,357 @@ fn should_reject_a_privacy_rule_that_names_no_mechanism() {
         &tree,
         "privacy rule `store-is-private` states no `mechanism`",
     );
+}
+
+// --- §53's configuration --------------------------------------------------------------------
+
+#[test]
+fn should_reject_a_default_that_is_not_the_one_the_shell_uses() {
+    // §53's closing line — configuration MUST NOT silently weaken explicit plan requirements —
+    // is unverifiable if the documented defaults and the real ones are different documents.
+    let tree = broken(
+        "docs/contracts/change/plans.yaml",
+        "{key: change.default_protection, type: string, default: prefer",
+        "{key: change.default_protection, type: string, default: require",
+    );
+    assert_refuses(
+        &tree,
+        "the declared defaults do not produce the shell's own defaults",
+    );
+}
+
+#[test]
+fn should_reject_a_settings_key_the_shell_does_not_read() {
+    let tree = broken(
+        "docs/contracts/change/plans.yaml",
+        "{key: recovery.retention,",
+        "{key: recovery.retention_window,",
+    );
+    assert_refuses(&tree, "`settings` lists");
+}
+
+#[test]
+fn should_reject_a_default_whose_declared_type_it_is_not() {
+    let tree = broken(
+        "docs/contracts/change/plans.yaml",
+        "{key: change.bulk.warn_targets, type: int, default: 10",
+        "{key: change.bulk.warn_targets, type: int, default: ten",
+    );
+    assert_refuses(&tree, "which do not go together");
+}
+
+// --- §23's verification model ---------------------------------------------------------------
+
+#[test]
+fn should_reject_a_class_whose_declared_failure_is_not_the_verdict_the_shell_reaches() {
+    let tree = broken(
+        "docs/contracts/change/verification.yaml",
+        "{id: required, on_failure: failed",
+        "{id: required, on_failure: degraded",
+    );
+    assert_refuses(&tree, "class `required` declares `on_failure: degraded`");
+}
+
+#[test]
+fn should_reject_a_registry_that_counts_an_unanswered_check_as_a_pass() {
+    // §23.5's specific prohibition: a timeout is not a success. This row is what would authorise
+    // treating one as a success, so breaking it must be the thing the gate names.
+    let tree = broken(
+        "docs/contracts/change/verification.yaml",
+        "{id: unknown, counts_as_pass: false",
+        "{id: unknown, counts_as_pass: true",
+    );
+    assert_refuses(&tree, "status `unknown` declares `counts_as_pass: true`");
+}
+
+#[test]
+fn should_reject_a_verification_registry_that_permits_waiting_forever() {
+    let tree = broken(
+        "docs/contracts/change/verification.yaml",
+        "  unbounded_permitted: false",
+        "  unbounded_permitted: true",
+    );
+    assert_refuses(&tree, "`timeouts.unbounded_permitted` is not `false`");
+}
+
+#[test]
+fn should_reject_a_declared_timeout_default_that_is_not_the_one_a_contract_gets() {
+    let tree = broken(
+        "docs/contracts/change/verification.yaml",
+        "  default: 30s",
+        "  default: 5m",
+    );
+    assert_refuses(&tree, "`timeouts.default` is `5m`");
+}
+
+#[test]
+fn should_reject_an_equivalence_domain_the_shell_cannot_report_on() {
+    // §25.3 forbids "rollback successful" without a scope, and these are the scopes. A registry
+    // that invents a fourth would be promising a scope no verification can produce.
+    let tree = broken(
+        "docs/contracts/change/verification.yaml",
+        "  - {id: external-side-effect,",
+        "  - {id: cloud-side-effect, doc: \"invented\"}\n  - {id: external-side-effect,",
+    );
+    assert_refuses(
+        &tree,
+        "`equivalence_domains` declares the equivalence domain",
+    );
+}
+
+// --- Appendix H's profiles ------------------------------------------------------------------
+
+#[test]
+fn should_reject_a_profile_that_expands_to_settings_the_shell_does_not_apply() {
+    let tree = broken(
+        "docs/contracts/recovery/policies.yaml",
+        "  - id: cautious\n    protection: require",
+        "  - id: cautious\n    protection: prefer",
+    );
+    assert_refuses(&tree, "profile `cautious` declares `protection: prefer`");
+}
+
+#[test]
+fn should_reject_a_profile_that_permits_opaque_actions() {
+    // §6.2 keeps an arbitrary external command unplannable by default, and Appendix H.5 forbids a
+    // profile weakening a safety constraint. A profile is the one place both could be undone at
+    // once, for every plan run under it.
+    let tree = broken(
+        "docs/contracts/recovery/policies.yaml",
+        "  - id: fleet\n    protection: prefer\n    risk_gate: high+\n    strategy: canary 1 then batch 10%\n    remote_unknown: stop-new-batches\n    retention: 24h\n    opaque_actions: false",
+        "  - id: fleet\n    protection: prefer\n    risk_gate: high+\n    strategy: canary 1 then batch 10%\n    remote_unknown: stop-new-batches\n    retention: 24h\n    opaque_actions: true",
+    );
+    assert_refuses(
+        &tree,
+        "profile `fleet` does not declare `opaque_actions: false`",
+    );
+}
+
+#[test]
+fn should_reject_an_authority_block_that_lets_configuration_weaken_a_plan() {
+    let tree = broken(
+        "docs/contracts/recovery/policies.yaml",
+        "  configuration_may_weaken_plan: false",
+        "  configuration_may_weaken_plan: true",
+    );
+    assert_refuses(&tree, "`authority.configuration_may_weaken_plan` is not");
+}
+
+#[test]
+fn should_reject_an_auto_recovery_policy_that_is_on_by_default() {
+    let tree = broken(
+        "docs/contracts/recovery/policies.yaml",
+        "auto_recovery:\n  default: off",
+        "auto_recovery:\n  default: on",
+    );
+    assert_refuses(&tree, "`auto_recovery.default` is not `off`");
+}
+
+#[test]
+fn should_reject_an_auto_recovery_policy_missing_one_of_its_six_conditions() {
+    // §26.3's conditions are conjunctive, so a list one short is a declaration that would be
+    // accepted where the specification rejects it.
+    let tree = broken(
+        "docs/contracts/recovery/policies.yaml",
+        "    - \"recovery verification exists\"\n",
+        "",
+    );
+    assert_refuses(&tree, "lists 5 entries and §26.3 names six");
+}
+
+#[test]
+fn should_reject_an_auto_recovery_declaration_rejected_later_than_seal() {
+    let tree = broken(
+        "docs/contracts/recovery/policies.yaml",
+        "  rejected_at: seal",
+        "  rejected_at: apply",
+    );
+    assert_refuses(&tree, "`auto_recovery.rejected_at` is not `seal`");
+}
+
+// --- §11.4, §37 and §38: what an asset costs and how long it lives ---------------------------
+
+#[test]
+fn should_reject_a_validation_check_nothing_records() {
+    let tree = broken(
+        "docs/contracts/recovery/assets.yaml",
+        "  - {id: permissions-present,",
+        "  - {id: quota-available, doc: \"invented\"}\n  - {id: permissions-present,",
+    );
+    assert_refuses(&tree, "`validation_checks` declares the validation check");
+}
+
+#[test]
+fn should_reject_a_cost_dimension_the_model_cannot_carry() {
+    // §38.1 names six. A registry that names a seventh promises a figure no asset can hold, and
+    // one that drops one hides a cost §38.2 forbids showing as free.
+    let tree = broken(
+        "docs/contracts/recovery/assets.yaml",
+        "dimensions: [initial-latency, retained-storage-growth, io-overhead,",
+        "dimensions: [initial-latency, retained-storage-growth,",
+    );
+    assert_refuses(&tree, "`cost.dimensions` omits the cost dimension");
+}
+
+#[test]
+fn should_reject_a_registry_that_permits_calling_a_snapshot_free() {
+    let tree = broken(
+        "docs/contracts/recovery/assets.yaml",
+        "  free_permitted: false",
+        "  free_permitted: true",
+    );
+    assert_refuses(&tree, "`cost.free_permitted` is not `false`");
+}
+
+#[test]
+fn should_reject_a_retention_default_that_is_not_the_one_an_asset_gets() {
+    let tree = broken(
+        "docs/contracts/recovery/assets.yaml",
+        "retention:\n  default: 24h",
+        "retention:\n  default: 48h",
+    );
+    assert_refuses(&tree, "`retention.default` is `48h`");
+}
+
+#[test]
+fn should_reject_a_failure_state_that_ordinary_retention_would_still_delete() {
+    // §37.2: the assets of a failed plan are exactly the ones somebody may still need. A state
+    // missing from this list is a state whose assets the 24-hour rule quietly reclaims.
+    let tree = broken(
+        "docs/contracts/recovery/assets.yaml",
+        "failure_states_exempt: [failed, degraded, apply-failed, prepare-failed, recovery-failed]",
+        "failure_states_exempt: [failed, degraded, apply-failed, prepare-failed]",
+    );
+    assert_refuses(
+        &tree,
+        "`retention.failure_states_exempt` omits the plan state",
+    );
+}
+
+#[test]
+fn should_reject_a_policy_limit_the_shell_cannot_apply() {
+    let tree = broken(
+        "docs/contracts/recovery/assets.yaml",
+        "  - {key: snapshot-count,",
+        "  - {key: snapshot-quota, doc: \"invented\"}\n  - {key: snapshot-count,",
+    );
+    assert_refuses(&tree, "`limits` declares the policy limit `snapshot-quota`");
+}
+
+// --- §39.2 and §12.1: which provider may claim what -------------------------------------------
+
+#[test]
+fn should_reject_a_storage_provider_that_claims_application_consistency() {
+    // §39.2's own example: a filesystem snapshot of a running database is crash-consistent, and a
+    // storage provider labelling it application-consistent is asserting a guarantee on the
+    // database's behalf. This is the check that catches it in the source rather than in review.
+    let tree = copied();
+    edit(
+        &tree,
+        "crates/ono-recovery-zfs/src/provider.rs",
+        ".at_consistency(ConsistencyClass::FilesystemConsistent)",
+        ".at_consistency(ConsistencyClass::ApplicationConsistent)",
+    );
+    assert_refuses(&tree, "claims `application-consistent` consistency");
+}
+
+#[test]
+fn should_reject_a_provider_row_that_states_no_role() {
+    let tree = broken(
+        "docs/contracts/recovery/providers.yaml",
+        "  - id: ono.recovery.btrfs\n    role: storage-provider\n",
+        "  - id: ono.recovery.btrfs\n",
+    );
+    assert_refuses(&tree, "provider `ono.recovery.btrfs` declares no `role`");
+}
+
+#[test]
+fn should_reject_a_provider_row_whose_identity_no_crate_declares() {
+    let tree = broken(
+        "docs/contracts/recovery/providers.yaml",
+        "  - id: ono.recovery.file-copy",
+        "  - id: ono.recovery.file-archive",
+    );
+    assert_refuses(&tree, "`providers` declares the recovery provider");
+}
+
+#[test]
+fn should_reject_a_provider_capability_the_broker_does_not_know() {
+    // §48.3's names are a boundary only where the capability broker knows them. One that is not in
+    // `capabilities.yaml` cannot be granted or denied, so a provider running under it runs under
+    // nothing. The break is on the broker's side, because that is the side that goes missing: the
+    // vocabulary check already catches a capability the shell does not implement.
+    let tree = broken(
+        "docs/contracts/capabilities.yaml",
+        "id: recovery.discover",
+        "id: recovery.enumerate",
+    );
+    assert_refuses(
+        &tree,
+        "`capabilities` declares `recovery.discover`, which \
+         `docs/contracts/capabilities.yaml` does not define",
+    );
+}
+
+#[test]
+fn should_reject_a_provider_that_executes_semantics_it_has_not_validated() {
+    let tree = broken(
+        "docs/contracts/recovery/providers.yaml",
+        "version_variance:\n  degrade_to: unsupported",
+        "version_variance:\n  degrade_to: best-effort",
+    );
+    assert_refuses(&tree, "`version_variance.degrade_to` is not `unsupported`");
+}
+
+#[test]
+fn should_reject_a_truth_test_no_test_presents() {
+    // Appendix G.2 calls its eight layouts examples, so the list stays open and what is held is
+    // that each row names a test that exists. A row nobody tests is a provider trusted for
+    // nothing.
+    let tree = broken(
+        "docs/contracts/recovery/providers.yaml",
+        "  - {id: read-only-filesystem,",
+        "  - {id: read-only-filesystem-renamed-away,",
+    );
+    assert_refuses(
+        &tree,
+        "`truth_tests` declares `read-only-filesystem-renamed-away` and no test carries the marker",
+    );
+}
+
+#[test]
+fn should_reject_a_truth_test_set_smaller_than_appendix_g_two_names() {
+    let tree = broken(
+        "docs/contracts/recovery/providers.yaml",
+        "  - {id: read-only-filesystem, doc: \"A read-only filesystem that prevents a restore. §11.4.\"}\n",
+        "",
+    );
+    assert_refuses(&tree, "`truth_tests` lists 7 entries");
+}
+
+// --- §39.3's quiesce protocol -----------------------------------------------------------------
+
+#[test]
+fn should_reject_a_quiesce_protocol_that_does_not_have_to_resume_the_application() {
+    // §18.4 makes a failure to resume its own critical error, because a still-paused application
+    // is a different fact from a snapshot that did not happen.
+    let tree = broken(
+        "docs/contracts/recovery/consistency.yaml",
+        "  resume_on_failure_required: true",
+        "  resume_on_failure_required: false",
+    );
+    assert_refuses(
+        &tree,
+        "`quiesce_protocol.resume_on_failure_required` is not `true`",
+    );
+}
+
+#[test]
+fn should_reject_a_quiesce_protocol_missing_one_of_its_five_steps() {
+    let tree = broken(
+        "docs/contracts/recovery/consistency.yaml",
+        "  steps: [prepare_quiesce, verify_quiesced, create_storage_asset, resume, verify_resumed]",
+        "  steps: [prepare_quiesce, create_storage_asset, resume, verify_resumed]",
+    );
+    assert_refuses(&tree, "lists 4 steps and §39.3 names five");
 }

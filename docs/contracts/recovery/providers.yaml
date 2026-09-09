@@ -2,10 +2,11 @@
 # conformance version a provider advertises.
 #
 # `xtask/src/change.rs::check_providers` holds this file against
-# `ono_change_core::RecoveryCapability::ALL`, against the capability registry in
-# `docs/contracts/capabilities.yaml`, and against the providers the shell actually registers, in
-# both directions. A provider that ships without a row here fails the gate, and a row here naming
-# a provider nothing registers fails it too.
+# `ono_change_core::RecoveryCapability::ALL`; `check_provider_capabilities` holds the two capability
+# lists against `docs/contracts/capabilities.yaml`, so a capability the broker cannot grant or deny
+# fails the gate; and `check_shipped_providers` compares the rows against the `PROVIDER_ID` every
+# `ono-recovery-*` crate declares, in both directions. A provider that ships without a row here
+# fails the gate, and a row here naming a provider nothing ships fails it too.
 #
 # §12.3 is the constraint that shapes every first-party provider in the table: a provider MUST use
 # direct process APIs, libraries, DBus, ioctls or other structured interfaces, and MUST NOT
@@ -42,8 +43,14 @@ change_capabilities:
 
 # The first-party providers. §0.4 lists the mechanisms v0.6 treats as first-class; these three are
 # the ones this release ships, and the rest arrive through KUANG/11 (§16, §48).
+#
+# `role` is §39.2 made checkable. `consistency.yaml` says which role owns each class, and
+# `check_consistency` reads every `at_consistency(ConsistencyClass::…)` in each provider's crate
+# and refuses a claim the provider's role does not own. A storage provider that wrote
+# `ApplicationConsistent` would fail the gate rather than reach an operator.
 providers:
   - id: ono.recovery.zfs
+    role: storage-provider
     crate: ono-recovery-zfs
     spec: "§13, Appendix D.1–D.5, §56.1"
     asset_types: [zfs-snapshot]
@@ -56,6 +63,7 @@ providers:
       exists to refuse: rollback that would destroy newer snapshots, bookmarks or clones is
       enumerated and gated, never silently forced.
   - id: ono.recovery.btrfs
+    role: storage-provider
     crate: ono-recovery-btrfs
     spec: "§14, Appendix D.6–D.9, §56.2"
     asset_types: [btrfs-snapshot]
@@ -68,6 +76,7 @@ providers:
       nested subvolume was. §14.4 forbids presenting a generic in-place rollback primitive that
       Btrfs does not have.
   - id: ono.recovery.file-copy
+    role: file-provider
     crate: ono-recovery-files
     spec: "§15, §44, Appendix C.6–C.7"
     asset_types: [file-archive, configuration-backup]
@@ -90,7 +99,8 @@ version_variance:
     same choice for a single unestablished fact: block rather than guess.
 
 # Appendix G.1's fixture set. Every provider owes a scenario for each of these, and
-# `xtask/src/change.rs::check_provider_fixtures` checks that each first-party provider has one.
+# `xtask/src/change.rs::check_providers` holds the list to G.1's eleven entries. Which provider
+# covers which one is decided by the provider's own conformance suite rather than by this file.
 required_fixtures:
   - resource-discovery
   - scope-boundaries
@@ -105,7 +115,9 @@ required_fixtures:
   - capacity-failure
 
 # Appendix G.2's truth tests: layouts designed to mislead, where the provider must refuse false
-# coverage. These are the tests that decide whether a provider can be trusted at all.
+# coverage. These are the tests that decide whether a provider can be trusted at all. G.2 calls its
+# eight "examples", so the list stays open; what `check_shipped_providers` holds is that every row
+# names a test that exists, by the `Appendix G.2 truth test: <id>` marker the test carries.
 truth_tests:
   - {id: zfs-child-dataset, doc: "A path under a ZFS mount that is actually in a separate child dataset. §13.4."}
   - {id: btrfs-nested-subvolume, doc: "A nested Btrfs subvolume beneath a snapshotted parent. §14.3."}

@@ -139,8 +139,10 @@ schemas:
 
 # ---------------------------------------------------------------------------------------------
 # §53's reference configuration, at the defaults §53 writes. `xtask/src/change.rs::check_settings`
-# compares each default against the shell's own, because §53's closing line — configuration MUST
-# NOT silently weaken explicit plan requirements — is only checkable if the defaults agree.
+# feeds every default below through `ChangeSettings::from_settings` — the reader the shell itself
+# uses — and requires the result to equal `ChangeSettings::defaults()` exactly, because §53's
+# closing line, configuration MUST NOT silently weaken explicit plan requirements, is only
+# checkable if the two lists of defaults are the same list. The key order is the shell's `KEYS`.
 # ---------------------------------------------------------------------------------------------
 settings:
   - {key: change.default_protection, type: string, default: prefer, doc: "§17.1: the interactive default. `off`, `prefer`, `require` or `maximize`."}
@@ -159,4 +161,4 @@ settings:
   - {key: recovery.zfs.allow_destructive_rollback, type: bool, default: false, doc: "§13.6: Ono never silently adds flags that destroy newer history."}
   - {key: recovery.btrfs.enabled, type: bool, default: true, doc: "§53."}
   - {key: recovery.btrfs.prefer_read_only_snapshots, type: bool, default: true, doc: "§14.5."}
-  - {key: recovery.btrfs.root_recovery, type: string, default: next-boot, doc: "§14.6 and Appendix D.9: `online`, `offline` or `next-boot`."}
+  - {key: recovery.btrfs.root_recovery, type: string, default: next-boot, doc: "§14.6 and Appendix D.9: `online-selective`, `offline-replacement` or `next-boot`."}

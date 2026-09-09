@@ -52,6 +52,7 @@ fn should_reach_ready_only_when_every_check_of_section_eleven_four_passed() {
 
 #[test]
 fn should_report_a_vanished_snapshot_as_not_existing() {
+    // Appendix G.2 truth test: vanished-snapshot.
     let validation = validated_with(ToolOutput::ok(""), out("get-mounted"), &asset());
     assert_eq!(
         validation.failures(),
@@ -114,6 +115,7 @@ fn should_report_no_restore_path_when_the_dataset_is_not_mounted() {
 
 #[test]
 fn should_report_no_restore_path_when_the_dataset_is_read_only() {
+    // Appendix G.2 truth test: read-only-filesystem.
     let read_only = ToolOutput::ok(
         "rpool/ROOT/debian\tmounted\tyes\nrpool/ROOT/debian\tmountpoint\t/altroot/debian\n\
          rpool/ROOT/debian\treadonly\ton\n",

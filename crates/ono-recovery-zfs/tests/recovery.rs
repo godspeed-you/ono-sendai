@@ -261,6 +261,7 @@ fn should_name_each_destruction_as_an_action_of_its_own_rather_than_a_flag() {
 
 #[test]
 fn should_report_a_clone_that_stands_in_the_way_of_a_rollback() {
+    // Appendix G.2 truth test: zfs-clone-blocks-rollback.
     let tools = data_script().runner();
     let fragment = provider(&tools)
         .plan_recovery(&data_asset(), None, RecoveryGoal::RestoreDomain)

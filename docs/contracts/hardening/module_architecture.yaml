@@ -130,6 +130,7 @@ composition_root:
   spec: "§56.3, §30.4"
   modules:
     - builtin.rs
+    - change
     - complete.rs
     - config.rs
     - context.rs
@@ -175,6 +176,15 @@ composition_root:
   # because the rule that forbids it is the one rule here that is not a proxy. The reason has to
   # say what the module holds instead of that domain.
   named_for_a_lower_crate:
+    - module: change
+      crate: ono-change-core
+      reason: >-
+        It holds the thirteen v0.6 commands of §46 and the session wiring that gives them a plan
+        store, a provider registry and the §53 settings — the composition §56.3 puts here. Every
+        decision they report is taken a layer down: the plan is built by `ono-change-plan`, the
+        impact by `ono-change-impact`, the coverage by `ono-change-protection`, the recovery by
+        `ono-change-recovery`, the apply by `ono-change-executor` and the rendering by
+        `ono-change-render`. §66.4's own box says `ono-cli` is not the change engine.
     - module: remote.rs
       crate: ono-remote
       reason: >-

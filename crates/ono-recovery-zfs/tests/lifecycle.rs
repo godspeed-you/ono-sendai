@@ -13,12 +13,12 @@ use ono_change_core::{
     ProtectionMode, RecoveryAsset, RecoveryAssetType, RecoveryExclusion, RecoveryGoal,
     RecoveryProvider, RecoveryScope, RestoreMethod, ToolOutput,
 };
-use ono_recovery_zfs::{GUID_FINGERPRINT, ZFS, ZPOOL, render_asset};
+use ono_recovery_zfs::{ZFS, ZPOOL, render_asset};
 use ono_value::ByteSize;
 
 use support::{
-    CLONE, PARENT_DATASET, RECURSIVE_SNAPSHOT, ROOT_DATASET, ROOT_SNAPSHOT, ROOT_SNAPSHOT_GUID,
-    Script, asset, code, instant, out, provider, runner,
+    CLONE, PARENT_DATASET, RECURSIVE_SNAPSHOT, ROOT_DATASET, ROOT_SNAPSHOT, Script, asset, code,
+    instant, out, provider, runner,
 };
 
 #[test]

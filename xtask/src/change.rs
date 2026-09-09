@@ -31,10 +31,16 @@ use std::path::Path;
 
 use ono_change_core::{
     ActionRole, ActionStatus, ChangeCapability, ConsistencyClass, EffectConfidence, EffectDomain,
-    EffectKind, Idempotency, ImpactClass, LifecycleEvent, PlanState, PreconditionKind,
-    ProtectionLevel, ProtectionMode, RecoveryAssetType, RecoveryCapability, RecoveryObjective,
-    RestoreMethod, RiskClass, RiskDimension, StrategyKind, VerificationClass, VerificationStatus,
+    EffectKind, EquivalenceDomain, EquivalenceState, Idempotency, ImpactClass, LifecycleEvent,
+    PlanId, PlanState, PreconditionKind, ProtectionLevel, ProtectionMode, RecoveryAssetType,
+    RecoveryCapability, RecoveryCost, RecoveryObjective, RecoveryValidation, RestoreMethod,
+    RiskClass, RiskDimension, StrategyKind, Verdict, VerificationClass, VerificationContract,
+    VerificationResult, VerificationSet, VerificationStatus,
 };
+use ono_change_protection::policy::{
+    CostLimits, FreeSpaceFloor, Profile, effective_mode, mode_rank,
+};
+use ono_change_protection::settings::{self, ChangeSettings};
 use serde_yaml_ng::Value as Yaml;
 
 pub use crate::scan::Problem;
@@ -133,6 +139,8 @@ pub fn check(root: &Path) -> Vec<Problem> {
     problems.extend(check_restore_methods(&registries));
     problems.extend(check_asset_types(&registries));
     problems.extend(check_consistency(&registries));
+    problems.extend(check_consistency_ownership(root, &registries));
+    problems.extend(check_quiesce(&registries));
     problems.extend(check_capabilities(&registries));
     problems.extend(check_command_inventory(root, &registries));
     problems.extend(check_schemas(root, &registries));
@@ -141,6 +149,12 @@ pub fn check(root: &Path) -> Vec<Problem> {
     problems.extend(check_strategies(&registries));
     problems.extend(check_privacy(&registries));
     problems.extend(check_providers(root, &registries));
+    problems.extend(check_provider_capabilities(root, &registries));
+    problems.extend(check_shipped_providers(root, &registries));
+    problems.extend(check_settings(&registries));
+    problems.extend(check_verification(&registries));
+    problems.extend(check_policies(&registries));
+    problems.extend(check_assets(&registries));
     problems.extend(check_inventory(root));
     problems
 }
@@ -1541,4 +1555,1058 @@ fn check_inventory(root: &Path) -> Vec<Problem> {
         }
     }
     problems
+}
+
+/// §53's reference configuration, against the settings the shell actually defaults to.
+///
+/// §53 ends with the sentence the whole file serves — configuration MUST NOT silently weaken
+/// explicit plan requirements — and that is only checkable if the two lists of defaults agree.
+/// So the registry's own defaults are fed through the reader the shell uses, and the result must
+/// be [`ChangeSettings::defaults`] exactly. A registry that documents `require` where the shell
+/// defaults to `prefer` would otherwise promise protection nobody gets.
+fn check_settings(registries: &Registries) -> Vec<Problem> {
+    let location = "docs/contracts/change/plans.yaml";
+    if registries.get("plans.yaml").is_none() {
+        return Vec::new();
+    }
+    let mut problems = Vec::new();
+    let rows = registries.entries("plans.yaml", "settings");
+    let declared: Vec<&str> = rows
+        .iter()
+        .filter_map(|row| row.get("key").and_then(Yaml::as_str))
+        .collect();
+    if declared != settings::KEYS {
+        problems.push(Problem::new(
+            location,
+            format!(
+                "`settings` lists {declared:?}; §53 defines {:?}, in that order. A key the shell \
+                 reads and the registry omits is a setting nobody can discover",
+                settings::KEYS
+            ),
+        ));
+        return problems;
+    }
+
+    let mut values: BTreeMap<String, ono_value::Value> = BTreeMap::new();
+    for row in &rows {
+        let key = row.get("key").and_then(Yaml::as_str).unwrap_or_default();
+        let kind = row.get("type").and_then(Yaml::as_str).unwrap_or_default();
+        let Some(default) = row.get("default") else {
+            problems.push(Problem::new(
+                location,
+                format!("`{key}` states no default, and §53 gives one for every key"),
+            ));
+            continue;
+        };
+        match setting_value(kind, default) {
+            Some(value) => {
+                values.insert(key.to_owned(), value);
+            }
+            None => problems.push(Problem::new(
+                location,
+                format!(
+                    "`{key}` declares the type `{kind}` and the default `{default:?}`, which do \
+                     not go together. A default the shell cannot read is a default it will not use"
+                ),
+            )),
+        }
+    }
+
+    match ChangeSettings::from_settings(&|key| values.get(key).cloned()) {
+        Err(error) => problems.push(Problem::new(
+            location,
+            format!(
+                "the declared defaults are not readable by the shell: {}",
+                error.message()
+            ),
+        )),
+        Ok(read) if read != ChangeSettings::defaults() => problems.push(Problem::new(
+            location,
+            "the declared defaults do not produce the shell's own defaults. §53 prints one \
+             reference configuration, and a registry that documents a different one makes every \
+             promise in it unverifiable",
+        )),
+        Ok(_) => {}
+    }
+    problems
+}
+
+/// One registry default read as the type the row declares.
+fn setting_value(kind: &str, default: &Yaml) -> Option<ono_value::Value> {
+    match (kind, default) {
+        ("bool", Yaml::Bool(flag)) => Some(ono_value::Value::Bool(*flag)),
+        ("int", Yaml::Number(number)) => number
+            .as_i64()
+            .map(|count| ono_value::Value::Int(i128::from(count))),
+        ("string" | "duration", Yaml::String(text)) => Some(ono_value::Value::string(text)),
+        _ => None,
+    }
+}
+
+/// §23's verification model, against the code that decides what a check means.
+///
+/// §2.14 is the invariant: verification is separate from execution success. The registry says
+/// which outcome each class produces and which outcomes count as a pass, and those are answers
+/// [`VerificationSet::verdict`] gives — so they are asked of it here rather than trusted.
+fn check_verification(registries: &Registries) -> Vec<Problem> {
+    let location = "docs/contracts/change/verification.yaml";
+    if registries.get("verification.yaml").is_none() {
+        return Vec::new();
+    }
+    let mut problems = Vec::new();
+    for (key, implemented, noun) in [
+        (
+            "verdicts",
+            spellings(Verdict::ALL, Verdict::as_str),
+            "verdict",
+        ),
+        (
+            "equivalence_domains",
+            spellings(EquivalenceDomain::ALL, EquivalenceDomain::as_str),
+            "equivalence domain",
+        ),
+        (
+            "equivalence_states",
+            spellings(EquivalenceState::ALL, EquivalenceState::as_str),
+            "equivalence state",
+        ),
+    ] {
+        let declared = registries.ids("verification.yaml", key);
+        problems.extend(compare(location, key, &declared, &implemented, noun));
+    }
+
+    // §23.2: what a failing or unanswered check of each class does to the plan.
+    for entry in registries.entries("verification.yaml", "classes") {
+        let Some(id) = entry.get("id").and_then(Yaml::as_str) else {
+            continue;
+        };
+        let Some(class) = VerificationClass::from_name(id) else {
+            continue;
+        };
+        for (field, status) in [
+            ("on_failure", VerificationStatus::Failed),
+            ("on_unknown", VerificationStatus::Unknown),
+        ] {
+            let Some(declared) = entry.get(field).and_then(Yaml::as_str) else {
+                problems.push(Problem::new(
+                    location,
+                    format!("class `{id}` does not say what `{field}` means for the plan (§23.2)"),
+                ));
+                continue;
+            };
+            let produced = verdict_of(class, status);
+            if declared != produced.as_str() {
+                problems.push(Problem::new(
+                    location,
+                    format!(
+                        "class `{id}` declares `{field}: {declared}` and the shell produces \
+                         `{produced}`. §23.2 fixes this mapping, and a registry that disagrees \
+                         with it describes a plan outcome nobody will see"
+                    ),
+                ));
+            }
+        }
+    }
+
+    // §23.3 and §2.4: a check that was not answered has not passed.
+    for entry in registries.entries("verification.yaml", "statuses") {
+        let Some(id) = entry.get("id").and_then(Yaml::as_str) else {
+            continue;
+        };
+        let Some(status) = VerificationStatus::from_name(id) else {
+            continue;
+        };
+        let declared = entry
+            .get("counts_as_pass")
+            .and_then(Yaml::as_bool)
+            .unwrap_or(false);
+        let passes = verdict_of(VerificationClass::Required, status) == Verdict::Verified;
+        if declared != passes {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "status `{id}` declares `counts_as_pass: {declared}` and a required check in \
+                     that status composes to `{}`. §23.5 forbids treating a timeout as success, \
+                     and this is the row that would authorise it",
+                    verdict_of(VerificationClass::Required, status)
+                ),
+            ));
+        }
+    }
+
+    problems.extend(check_timeouts(registries, location));
+    problems
+}
+
+/// The verdict one result of this class and status composes to (§23.2, §4.8).
+fn verdict_of(class: VerificationClass, status: VerificationStatus) -> Verdict {
+    let plan = PlanId::of("xtask", "verification", "0");
+    let contract = VerificationContract::new(&plan, class, "subject", "expression");
+    let result = VerificationResult::new(plan, &contract, status, jiff::Timestamp::UNIX_EPOCH);
+    VerificationSet::verdict(std::slice::from_ref(&result))
+}
+
+/// §23.5's rule: verification contracts have explicit timeout semantics and never wait forever.
+fn check_timeouts(registries: &Registries, location: &str) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let Some(timeouts) = registries
+        .get("verification.yaml")
+        .and_then(|document| document.get("timeouts"))
+    else {
+        problems.push(Problem::new(
+            location,
+            "declares no `timeouts`. §23.5 requires explicit timeout semantics, and a registry \
+             silent about them cannot be held to it",
+        ));
+        return problems;
+    };
+    for (field, wanted) in [("required", true), ("unbounded_permitted", false)] {
+        if timeouts.get(field).and_then(Yaml::as_bool) != Some(wanted) {
+            problems.push(Problem::new(
+                location,
+                format!("`timeouts.{field}` is not `{wanted}`. §23.5 forbids infinite waiting"),
+            ));
+        }
+    }
+
+    // The contract type has no absent timeout: this binding fails to compile if it grows one, and
+    // that is the checkable form of "no contract can be built without a timeout".
+    let plan = PlanId::of("xtask", "verification", "0");
+    let contract =
+        VerificationContract::new(&plan, VerificationClass::Required, "subject", "expression");
+    let timeout: std::time::Duration = contract.timeout();
+    let declared = timeouts.get("default").and_then(Yaml::as_str).unwrap_or("");
+    if declared != compact_seconds(timeout) {
+        problems.push(Problem::new(
+            location,
+            format!(
+                "`timeouts.default` is `{declared}` and a contract built without one gets {}. \
+                 §23.5's default is the timeout an operator inherits by saying nothing",
+                compact_seconds(timeout)
+            ),
+        ));
+    }
+    if timeout.is_zero() {
+        problems.push(Problem::new(
+            "crates/ono-change-core/src/verification.rs",
+            "the default verification timeout is zero, so every check times out before it runs",
+        ));
+    }
+
+    // §23.1: a plan that mutates and cannot be verified never seals.
+    if let Some(minimum) = registries
+        .get("verification.yaml")
+        .and_then(|document| document.get("minimum"))
+    {
+        let declared = minimum.get("error").and_then(Yaml::as_str).unwrap_or("");
+        if ono_core::ErrorCode::from_name(declared).is_none() {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "`minimum.error` is `{declared}`, which is not an error the shell can raise. \
+                     §23.1's refusal has to exist for the rule to be enforceable"
+                ),
+            ));
+        }
+    }
+    problems
+}
+
+/// A duration in the `30s` form §53 and §23.5 write.
+fn compact_seconds(duration: std::time::Duration) -> String {
+    let seconds = duration.as_secs();
+    if seconds > 0 && seconds.is_multiple_of(3600) {
+        format!("{}h", seconds / 3600)
+    } else if seconds > 0 && seconds.is_multiple_of(60) {
+        format!("{}m", seconds / 60)
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+/// Appendix H's profiles, against the presets the shell expands them to.
+///
+/// Appendix H.5 is the rule that keeps a profile from being a back door: a plan may impose
+/// stricter requirements than a profile, and a profile MUST NOT weaken a provider-declared safety
+/// constraint. So every profile is compared against §53's defaults in the direction that matters —
+/// a profile may tighten and may not loosen — and the expansion the shell shows an operator must
+/// be the one the registry documents.
+fn check_policies(registries: &Registries) -> Vec<Problem> {
+    let location = "docs/contracts/recovery/policies.yaml";
+    if registries.get("policies.yaml").is_none() {
+        return Vec::new();
+    }
+    let mut problems = Vec::new();
+    let declared: BTreeSet<String> = registries.ids("policies.yaml", "profiles");
+    let implemented: BTreeSet<String> = spellings(Profile::ALL, Profile::as_str);
+    problems.extend(compare(
+        location,
+        "profiles",
+        &declared,
+        &implemented,
+        "protection profile",
+    ));
+
+    let defaults = ChangeSettings::defaults();
+    for entry in registries.entries("policies.yaml", "profiles") {
+        let Some(id) = entry.get("id").and_then(Yaml::as_str) else {
+            continue;
+        };
+        let Some(profile) = Profile::from_name(id) else {
+            continue;
+        };
+        let expansion: BTreeMap<&str, String> = profile.settings().into_iter().collect();
+
+        // Appendix H: a profile expands to inspectable settings, and these are the settings.
+        for (field, shown) in [
+            ("protection", "protection"),
+            ("risk_gate", "risk gate"),
+            ("strategy", "strategy"),
+        ] {
+            let Some(declared) = entry.get(field).and_then(Yaml::as_str) else {
+                continue;
+            };
+            if expansion.get(shown).map(String::as_str) != Some(declared) {
+                problems.push(Problem::new(
+                    location,
+                    format!(
+                        "profile `{id}` declares `{field}: {declared}` and expands to `{}`. \
+                         Appendix H forbids a profile hiding semantics, which is what a documented \
+                         expansion nobody applies amounts to",
+                        expansion.get(shown).map_or("nothing", String::as_str)
+                    ),
+                ));
+            }
+        }
+        if entry.get("prompts").and_then(Yaml::as_bool) == Some(false) && profile.prompts() {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "profile `{id}` declares `prompts: false` and the shell still prompts under \
+                     it. §17.4 and §40.3: a non-interactive run MUST NOT stop for a question"
+                ),
+            ));
+        }
+
+        // Appendix H.5, in the only direction that is safe: tighter, never looser.
+        if mode_rank(profile.mode()) < mode_rank(defaults.default_protection()) {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "profile `{id}` protects at `{}` and §53 defaults to `{}`. Appendix H.5 lets a \
+                     profile tighten and never loosen",
+                    profile.mode(),
+                    defaults.default_protection()
+                ),
+            ));
+        }
+        if profile.retention() < defaults.retention() {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "profile `{id}` retains assets for less time than §53's default. §37.1's \
+                     retention is what makes a plan recoverable, and shortening it is a loosening"
+                ),
+            ));
+        }
+        if !floor_is_at_least(
+            profile.limits().min_filesystem_free(),
+            defaults.min_filesystem_free(),
+        ) {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "profile `{id}` sets a lower free-space floor than §53's default. \
+                     Appendix D.3 fails closed below the floor, so lowering it is a loosening"
+                ),
+            ));
+        }
+        if entry.get("opaque_actions").and_then(Yaml::as_bool) != Some(false) {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "profile `{id}` does not declare `opaque_actions: false`. §6.2 keeps an \
+                     arbitrary external command unplannable unless an operator says otherwise, and \
+                     no profile may say it for them"
+                ),
+            ));
+        }
+    }
+
+    problems.extend(check_authority(registries, location, &defaults));
+    problems.extend(check_auto_recovery(registries, location));
+    problems
+}
+
+/// Whether `floor` is at least as strict as `least`.
+fn floor_is_at_least(floor: FreeSpaceFloor, least: FreeSpaceFloor) -> bool {
+    floor.stricter_of(least) == floor
+}
+
+/// Appendix H.5 and §53's closing line: the strictest requirement in force is the one that applies.
+fn check_authority(
+    registries: &Registries,
+    location: &str,
+    defaults: &ChangeSettings,
+) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let Some(authority) = registries
+        .get("policies.yaml")
+        .and_then(|document| document.get("authority"))
+    else {
+        problems.push(Problem::new(
+            location,
+            "declares no `authority`. Appendix H.5 and §53 both say a stricter requirement wins, \
+             and a registry silent about it cannot be held to either",
+        ));
+        return problems;
+    };
+    for (field, wanted) in [
+        ("profile_may_weaken_provider_constraint", false),
+        ("plan_may_be_stricter_than_profile", true),
+        ("configuration_may_weaken_plan", false),
+    ] {
+        if authority.get(field).and_then(Yaml::as_bool) != Some(wanted) {
+            problems.push(Problem::new(
+                location,
+                format!("`authority.{field}` is not `{wanted}` (Appendix H.5, §53)"),
+            ));
+        }
+    }
+
+    // §53's closing sentence, asked of the function that answers it: a plan that required more
+    // than the configuration allows keeps its requirement.
+    for configured in ProtectionMode::ALL {
+        for requested in ProtectionMode::ALL {
+            let effective = effective_mode(*configured, Some(*requested));
+            if mode_rank(effective) < mode_rank(*requested) {
+                problems.push(Problem::new(
+                    "crates/ono-change-protection/src/policy.rs",
+                    format!(
+                        "a plan requiring `{requested}` under a `{configured}` configuration runs \
+                         at `{effective}`. §53: configuration MUST NOT silently weaken explicit \
+                         plan requirements"
+                    ),
+                ));
+            }
+        }
+    }
+    if effective_mode(defaults.default_protection(), None) != defaults.default_protection() {
+        problems.push(Problem::new(
+            "crates/ono-change-protection/src/policy.rs",
+            "a plan that requires nothing does not run at the configured default (§17.1)",
+        ));
+    }
+    problems
+}
+
+/// §26's auto-recovery policy: off by default, and rejected at seal when its conditions fail.
+fn check_auto_recovery(registries: &Registries, location: &str) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let Some(auto) = registries
+        .get("policies.yaml")
+        .and_then(|document| document.get("auto_recovery"))
+    else {
+        problems.push(Problem::new(
+            location,
+            "declares no `auto_recovery`. §26.1 makes it off by default, which is a default \
+             somebody has to be able to read",
+        ));
+        return problems;
+    };
+    // YAML reads a bare `off` as false, and either spelling means the same thing here.
+    let default_is_off = matches!(auto.get("default"), Some(Yaml::Bool(false)))
+        || auto.get("default").and_then(Yaml::as_str) == Some("off");
+    if !default_is_off {
+        problems.push(Problem::new(
+            location,
+            "`auto_recovery.default` is not `off`. §26.1: automatic recovery after a failed \
+             verification is off by default, and §26.2 says why",
+        ));
+    }
+    let conditions = auto
+        .get("conditions")
+        .and_then(Yaml::as_sequence)
+        .map_or(0, Vec::len);
+    if conditions != 6 {
+        problems.push(Problem::new(
+            location,
+            format!(
+                "`auto_recovery.conditions` lists {conditions} entries and §26.3 names six. They \
+                 are conjunctive, so a missing one is a declaration that would be accepted"
+            ),
+        ));
+    }
+    if auto.get("rejected_at").and_then(Yaml::as_str) != Some("seal") {
+        problems.push(Problem::new(
+            location,
+            "`auto_recovery.rejected_at` is not `seal`. §26.3: a declaration whose conditions do \
+             not hold MUST be rejected at seal time, not at the moment it would have run",
+        ));
+    }
+    let error = auto.get("error").and_then(Yaml::as_str).unwrap_or("");
+    if ono_core::ErrorCode::from_name(error).is_none() {
+        problems.push(Problem::new(
+            location,
+            format!("`auto_recovery.error` is `{error}`, which is not an error the shell raises"),
+        ));
+    }
+    problems
+}
+
+/// §11.4's validation, §37's retention, §38's cost model and §38.3's limits.
+///
+/// The blocks in `assets.yaml` are the ones a renderer and a provider read instead of remembering
+/// a rule. Each is therefore held against the type that answers it, so a block nobody implements
+/// cannot go on describing behaviour the shell does not have.
+fn check_assets(registries: &Registries) -> Vec<Problem> {
+    let location = "docs/contracts/recovery/assets.yaml";
+    if registries.get("assets.yaml").is_none() {
+        return Vec::new();
+    }
+    let mut problems = Vec::new();
+
+    // §11.4: five checks, and each one really gates readiness.
+    let declared: BTreeSet<String> = registries.ids("assets.yaml", "validation_checks");
+    let implemented: BTreeSet<String> = RecoveryValidation::CHECKS
+        .iter()
+        .map(|check| (*check).to_owned())
+        .collect();
+    problems.extend(compare(
+        location,
+        "validation_checks",
+        &declared,
+        &implemented,
+        "validation check",
+    ));
+    let at = jiff::Timestamp::UNIX_EPOCH;
+    for check in &declared {
+        let passed = RecoveryValidation::complete(at, "xtask").passed(check);
+        let failed = RecoveryValidation::none(at, "xtask").passed(check);
+        if passed != Some(true) || failed != Some(false) {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "`{check}` is declared a §11.4 check and the shell does not record it. An \
+                     asset reaches `ready` through a validation, and a check nobody makes is a \
+                     check that always passes"
+                ),
+            ));
+        }
+    }
+
+    // §38.1: six dimensions, and the cost model can carry every one of them.
+    let dimensions: BTreeSet<String> = registries
+        .get("assets.yaml")
+        .and_then(|document| document.get("cost"))
+        .and_then(|cost| cost.get("dimensions"))
+        .and_then(Yaml::as_sequence)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Yaml::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let carried: BTreeSet<String> = RecoveryCost::DIMENSIONS
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect();
+    problems.extend(compare(
+        location,
+        "cost.dimensions",
+        &dimensions,
+        &carried,
+        "cost dimension",
+    ));
+    if registries
+        .get("assets.yaml")
+        .and_then(|document| document.get("cost"))
+        .and_then(|cost| cost.get("free_permitted"))
+        .and_then(Yaml::as_bool)
+        != Some(false)
+    {
+        problems.push(Problem::new(
+            location,
+            "`cost.free_permitted` is not `false`. §38.2: Ono MUST NOT display \"free\" for a \
+             copy-on-write snapshot",
+        ));
+    }
+
+    // §38.3: five bounds, each of which the policy type can actually apply.
+    let limits: BTreeSet<String> = registries
+        .entries("assets.yaml", "limits")
+        .into_iter()
+        .filter_map(|entry| entry.get("key").and_then(Yaml::as_str).map(str::to_owned))
+        .collect();
+    let bounds: BTreeSet<String> = CostLimits::KEYS
+        .iter()
+        .map(|key| (*key).to_owned())
+        .collect();
+    problems.extend(compare(
+        location,
+        "limits",
+        &limits,
+        &bounds,
+        "policy limit",
+    ));
+
+    problems.extend(check_retention(registries, location));
+    problems
+}
+
+/// §37's retention rules, against the states that carry them.
+fn check_retention(registries: &Registries, location: &str) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let Some(retention) = registries
+        .get("assets.yaml")
+        .and_then(|document| document.get("retention"))
+    else {
+        problems.push(Problem::new(
+            location,
+            "declares no `retention`. §37.1 fixes a default and §37.2 exempts the states that \
+             need it most; neither is checkable without it",
+        ));
+        return problems;
+    };
+    let declared = retention
+        .get("default")
+        .and_then(Yaml::as_str)
+        .unwrap_or("");
+    if declared != compact_seconds(ono_change_core::DEFAULT_RETENTION) {
+        problems.push(Problem::new(
+            location,
+            format!(
+                "`retention.default` is `{declared}` and the shell retains for {}. §37.1's \
+                 twenty-four hours is what an operator inherits by saying nothing",
+                compact_seconds(ono_change_core::DEFAULT_RETENTION)
+            ),
+        ));
+    }
+    if retention.get("after").and_then(Yaml::as_str) != Some("successful-verification") {
+        problems.push(Problem::new(
+            location,
+            "`retention.after` is not `successful-verification`. §37.1 starts the clock there, \
+             and starting it earlier deletes an asset a plan may still need",
+        ));
+    }
+
+    // §37.2: the states ordinary success retention may not touch.
+    let exempt: BTreeSet<String> = retention
+        .get("failure_states_exempt")
+        .and_then(Yaml::as_sequence)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Yaml::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let held: BTreeSet<String> = PlanState::ALL
+        .iter()
+        .filter(|state| state.retains_assets_indefinitely())
+        .map(|state| state.as_str().to_owned())
+        .collect();
+    problems.extend(compare(
+        location,
+        "retention.failure_states_exempt",
+        &exempt,
+        &held,
+        "plan state",
+    ));
+
+    if retention
+        .get("cleanup_preview_required_when")
+        .and_then(Yaml::as_str)
+        .is_none_or(str::is_empty)
+    {
+        problems.push(Problem::new(
+            location,
+            "`retention.cleanup_preview_required_when` is empty. §37.3 requires the preview \
+             before deleting an asset whose removal changes recovery capability, and §2.15 makes \
+             it a refusal",
+        ));
+    }
+    problems
+}
+
+/// §39.2: a provider may only claim a consistency class its role owns.
+///
+/// The claim sites are read out of each first-party provider's own source, because that is where
+/// the claim is made. §39.2's example is the whole point — a filesystem snapshot containing
+/// PostgreSQL files is crash-consistent, and a storage provider writing
+/// `ConsistencyClass::ApplicationConsistent` would be labelling it a guarantee it cannot give.
+fn check_consistency_ownership(root: &Path, registries: &Registries) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    if registries.get("consistency.yaml").is_none() || registries.get("providers.yaml").is_none() {
+        return problems;
+    }
+    let owners: BTreeMap<String, String> = registries
+        .entries("consistency.yaml", "classes")
+        .into_iter()
+        .filter_map(|entry| {
+            let id = entry.get("id").and_then(Yaml::as_str)?;
+            let owner = entry.get("owned_by").and_then(Yaml::as_str)?;
+            Some((id.to_owned(), owner.to_owned()))
+        })
+        .collect();
+
+    for entry in registries.entries("providers.yaml", "providers") {
+        let id = entry.get("id").and_then(Yaml::as_str).unwrap_or("");
+        let Some(role) = entry.get("role").and_then(Yaml::as_str) else {
+            problems.push(Problem::new(
+                "docs/contracts/recovery/providers.yaml",
+                format!(
+                    "provider `{id}` declares no `role`, so §39.2 cannot be applied to it: \
+                     nothing says which consistency claims it is entitled to make"
+                ),
+            ));
+            continue;
+        };
+        let Some(name) = entry.get("crate").and_then(Yaml::as_str) else {
+            continue;
+        };
+        let source = root.join("crates").join(name).join("src");
+        for (file, class) in consistency_claims(&source) {
+            let owner = owners.get(&class).map(String::as_str).unwrap_or("nobody");
+            if owner != role && owner != "nobody" {
+                problems.push(Problem::new(
+                    file,
+                    format!(
+                        "claims `{class}` consistency, which `consistency.yaml` gives to \
+                         `{owner}`. Provider `{id}` is a `{role}`, and §39.2 forbids it asserting \
+                         a guarantee on another layer's behalf"
+                    ),
+                ));
+            }
+        }
+    }
+    problems
+}
+
+/// Every `at_consistency(ConsistencyClass::…)` under `source`, with the file it is written in.
+fn consistency_claims(source: &Path) -> Vec<(String, String)> {
+    let mut claims = Vec::new();
+    let mut stack = vec![source.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let location = path.to_string_lossy().into_owned();
+            for line in text.lines() {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("//") {
+                    continue;
+                }
+                let Some(rest) = line.split_once("at_consistency(ConsistencyClass::") else {
+                    continue;
+                };
+                let variant: String = rest
+                    .1
+                    .chars()
+                    .take_while(char::is_ascii_alphanumeric)
+                    .collect();
+                if let Some(class) = ConsistencyClass::ALL
+                    .iter()
+                    .find(|class| variant_name(class.as_str()) == variant)
+                {
+                    claims.push((location.clone(), class.as_str().to_owned()));
+                }
+            }
+        }
+    }
+    claims
+}
+
+/// The Rust variant spelling of a kebab-case vocabulary word.
+fn variant_name(spelling: &str) -> String {
+    spelling
+        .split('-')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+            }
+        })
+        .collect()
+}
+
+/// §39.3's quiesce protocol, and the rule that keeps it from being claimed by nobody.
+///
+/// No first-party provider implements it: §39.3 is a MAY for a provider that can make an
+/// application-consistent claim, and none of ZFS, Btrfs or the file store can. So the check is
+/// that none of them declares `recovery.quiesce` either — a capability declared without the
+/// protocol behind it is exactly the overstatement §39.1 forbids.
+fn check_quiesce(registries: &Registries) -> Vec<Problem> {
+    let location = "docs/contracts/recovery/consistency.yaml";
+    let Some(protocol) = registries
+        .get("consistency.yaml")
+        .and_then(|document| document.get("quiesce_protocol"))
+    else {
+        return Vec::new();
+    };
+    let mut problems = Vec::new();
+    let steps = protocol
+        .get("steps")
+        .and_then(Yaml::as_sequence)
+        .map_or(0, Vec::len);
+    if steps != 5 {
+        problems.push(Problem::new(
+            location,
+            format!("`quiesce_protocol.steps` lists {steps} steps and §39.3 names five"),
+        ));
+    }
+    for field in [
+        "bounded_window_required",
+        "resume_on_failure_required",
+        "resume_failure_is_critical",
+    ] {
+        if protocol.get(field).and_then(Yaml::as_bool) != Some(true) {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "`quiesce_protocol.{field}` is not `true`. §18.4 bounds the window, resumes \
+                     the application when creation fails, and makes a failure to resume its own \
+                     critical error"
+                ),
+            ));
+        }
+    }
+    // §18.4's two refusals are two because a still-paused application is a different fact from a
+    // snapshot that did not happen.
+    for code in ["recovery.quiesce_failed", "recovery.resume_failed"] {
+        if ono_core::ErrorCode::from_name(code).is_none() {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "`{code}` is named here and the shell cannot raise it. §18.4 needs both, and \
+                     needs them separate"
+                ),
+            ));
+        }
+    }
+    problems
+}
+
+/// §48's capabilities, against the capability registry the broker enforces.
+///
+/// §48.3's names are only a boundary if the broker knows them. A capability declared here and
+/// absent from `docs/contracts/capabilities.yaml` is a permission nobody can grant or deny, and a
+/// recovery provider running under it would be running outside the capability system entirely.
+fn check_provider_capabilities(root: &Path, registries: &Registries) -> Vec<Problem> {
+    let location = "docs/contracts/recovery/providers.yaml";
+    if registries.get("providers.yaml").is_none() {
+        return Vec::new();
+    }
+    let path = root
+        .join("docs")
+        .join("contracts")
+        .join("capabilities.yaml");
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+        return Vec::new();
+    };
+    let mut known: BTreeSet<String> = BTreeSet::new();
+    for key in [
+        "provider_capabilities",
+        "kuang_capabilities",
+        "capabilities",
+    ] {
+        if let Some(items) = document.get(key).and_then(Yaml::as_sequence) {
+            known.extend(
+                items
+                    .iter()
+                    .filter_map(|entry| entry.get("id").and_then(Yaml::as_str))
+                    .map(str::to_owned),
+            );
+        }
+    }
+    if known.is_empty() {
+        return Vec::new();
+    }
+
+    let mut problems = Vec::new();
+    for key in ["capabilities", "change_capabilities"] {
+        for id in registries.ids("providers.yaml", key) {
+            if !known.contains(&id) {
+                problems.push(Problem::new(
+                    location,
+                    format!(
+                        "`{key}` declares `{id}`, which `docs/contracts/capabilities.yaml` does \
+                         not define. §48.3's names are a boundary only where the broker knows \
+                         them, and a provider running under an unknown one runs under none"
+                    ),
+                ));
+            }
+        }
+    }
+    problems
+}
+
+/// The providers this release ships, against the rows that claim them.
+///
+/// A row here naming a provider nothing registers is a mechanism an operator would look for and
+/// not find, and a provider crate that ships without a row is a mechanism nothing holds to
+/// Appendix G's fixture set. The identity compared is each crate's own `PROVIDER_ID`, because that
+/// is the string the registry keys on at runtime.
+fn check_shipped_providers(root: &Path, registries: &Registries) -> Vec<Problem> {
+    let location = "docs/contracts/recovery/providers.yaml";
+    if registries.get("providers.yaml").is_none() {
+        return Vec::new();
+    }
+    let mut problems = Vec::new();
+    let declared: BTreeSet<String> = registries.ids("providers.yaml", "providers");
+    let mut shipped: BTreeSet<String> = BTreeSet::new();
+    let crates = root.join("crates");
+    let crates = crates.as_path();
+    let Ok(entries) = std::fs::read_dir(crates) else {
+        return problems;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with("ono-recovery-") {
+            continue;
+        }
+        match provider_id_of(&entry.path().join("src")) {
+            None => problems.push(Problem::new(
+                location,
+                format!(
+                    "the crate `{name}` ships a recovery provider and declares no `PROVIDER_ID`, \
+                     so nothing can tell which row of this registry describes it"
+                ),
+            )),
+            Some(id) => {
+                shipped.insert(id);
+            }
+        }
+    }
+    problems.extend(compare(
+        location,
+        "providers",
+        &declared,
+        &shipped,
+        "recovery provider",
+    ));
+
+    // Appendix G.4: a provider degrades rather than executing semantics it has not validated.
+    if registries
+        .get("providers.yaml")
+        .and_then(|document| document.get("version_variance"))
+        .and_then(|variance| variance.get("degrade_to"))
+        .and_then(Yaml::as_str)
+        != Some("unsupported")
+    {
+        problems.push(Problem::new(
+            location,
+            "`version_variance.degrade_to` is not `unsupported`. Appendix G.4 and §56.3 both \
+             choose blocking over guessing when a fact could not be established",
+        ));
+    }
+
+    // Appendix G.2's truth tests: the layouts a provider must refuse false coverage on. The list
+    // is open — G.2 calls its eight "examples" — so what is checked is that every id declared here
+    // names a test that exists, by the `Appendix G.2 truth test: <id>` marker the test carries.
+    let truth = registries.ids("providers.yaml", "truth_tests");
+    if truth.len() < 8 {
+        problems.push(Problem::new(
+            location,
+            format!(
+                "`truth_tests` lists {} entries; Appendix G.2 names eight misleading layouts, and \
+                 they are the tests that decide whether a provider can be trusted at all",
+                truth.len()
+            ),
+        ));
+    }
+    let markers = truth_test_markers(crates);
+    for id in &truth {
+        if !markers.contains(id) {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "`truth_tests` declares `{id}` and no test carries the marker \
+                     `Appendix G.2 truth test: {id}`. G.2 requires the misleading layout to be \
+                     presented and the false coverage refused, and a row nobody tests is a claim \
+                     that a provider was trusted for nothing"
+                ),
+            ));
+        }
+    }
+    problems
+}
+
+/// Every `Appendix G.2 truth test: <id>` marker under the workspace's test directories.
+fn truth_test_markers(crates: &Path) -> BTreeSet<String> {
+    const MARKER: &str = "Appendix G.2 truth test: ";
+    let mut found = BTreeSet::new();
+    let Ok(entries) = std::fs::read_dir(crates) else {
+        return found;
+    };
+    let mut stack: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path().join("tests"))
+        .collect();
+    while let Some(directory) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            for line in text.lines() {
+                if let Some((_, rest)) = line.split_once(MARKER) {
+                    found.insert(rest.trim_end_matches('.').trim().to_owned());
+                }
+            }
+        }
+    }
+    found
+}
+
+/// The `PROVIDER_ID` a provider crate declares, if it declares one.
+fn provider_id_of(source: &Path) -> Option<String> {
+    let mut stack = vec![source.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        let entries = std::fs::read_dir(&directory).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            for line in text.lines() {
+                if let Some(rest) = line.split_once("pub const PROVIDER_ID: &str = \"")
+                    && let Some((id, _)) = rest.1.split_once('"')
+                {
+                    return Some(id.to_owned());
+                }
+            }
+        }
+    }
+    None
 }

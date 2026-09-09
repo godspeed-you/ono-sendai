@@ -135,6 +135,7 @@ fn should_offer_a_candidate_over_the_dataset_that_actually_holds_the_target() {
 
 #[test]
 fn should_not_offer_the_parent_dataset_as_covering_a_file_in_a_child_dataset() {
+    // Appendix G.2 truth test: zfs-child-dataset.
     let parent = discovered(PARENT_FILE);
     for candidate in &parent {
         assert!(

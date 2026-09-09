@@ -97,6 +97,7 @@ fn should_trace_a_bind_mount_to_the_dataset_that_holds_it() {
 
 #[test]
 fn should_trace_a_bind_mount_that_crosses_to_another_filesystem_to_that_filesystem() {
+    // Appendix G.2 truth test: bind-mount-crossing.
     let domain = ext4().resolve(Path::new("/etc/app-config/app.toml"));
     assert_eq!(
         domain.object(),
@@ -113,6 +114,7 @@ fn should_trace_a_bind_mount_that_crosses_to_another_filesystem_to_that_filesyst
 
 #[test]
 fn should_resolve_an_overlay_to_its_writable_upper_layer_when_that_layer_is_persistent() {
+    // Appendix G.2 truth test: container-bind-mount.
     let domain = ext4().resolve(Path::new(
         "/var/lib/docker/overlay2/9f3a/merged/etc/app.conf",
     ));
@@ -176,6 +178,7 @@ fn should_refuse_a_network_filesystem_so_no_local_provider_claims_it() {
 
 #[test]
 fn should_refuse_an_nfs_mount_beneath_a_snapshotted_dataset() {
+    // Appendix G.2 truth test: nfs-below-snapshotted-root.
     let table = zfs();
     let parent = table.resolve(Path::new("/var/lib/app/state.db"));
     let nfs = table.resolve(Path::new("/var/lib/nfs-data/customers.csv"));

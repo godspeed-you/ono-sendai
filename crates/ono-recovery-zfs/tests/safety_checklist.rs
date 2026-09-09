@@ -18,10 +18,7 @@ mod support;
 
 use std::sync::Arc;
 
-use ono_change_core::{
-    RecoveryAsset, RecoveryAssetType, RecoveryGoal, RecoveryProvider, RecoveryScope, ToolOutput,
-    ToolRunner,
-};
+use ono_change_core::{RecoveryGoal, RecoveryProvider, ToolOutput, ToolRunner};
 use ono_recovery_zfs::{GUID_FINGERPRINT, MountTable, SafetyChecklist, ZFS, ZfsFact, ZfsProvider};
 use ono_value::ErrorValue;
 

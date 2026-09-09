@@ -8,8 +8,11 @@
 #
 # `owned_by` is that rule written down. A class whose owner is `storage-provider` may be claimed by
 # a filesystem provider; a class whose owner is `application-provider` may not, whatever the
-# filesystem did. `xtask/src/change.rs::check_consistency` checks that no first-party storage
-# provider declares a class it does not own.
+# filesystem did. `xtask/src/change.rs::check_consistency` holds the classes against
+# `ono_change_core::ConsistencyClass::ALL` and checks that the declared ranks reproduce the
+# shell's own `weakest_of`; `check_consistency_ownership` reads every
+# `at_consistency(ConsistencyClass::…)` in each first-party provider's source and refuses a claim
+# the provider's declared `role` does not own.
 #
 # Decisions: ADR-0800, ADR-0809.
 
@@ -60,6 +63,13 @@ lattice:
     its members, and there is no operation that could produce anything else.
 
 # §39.3's quiesce protocol, for a provider that can make an application-consistent claim.
+#
+# No first-party provider implements it, and none may: §39.3 is a MAY for a provider that owns the
+# application's own consistency semantics, and ZFS, Btrfs and the file store own none. The protocol
+# is declared here because §16's application-aware providers arrive through KUANG/11 (ADR-0812) and
+# this is the contract they will be held to. `xtask/src/change.rs::check_quiesce` checks the five
+# steps, the three properties §18.4 fixes, and that both of §18.4's refusals exist as separate
+# error codes.
 quiesce_protocol:
   steps: [prepare_quiesce, verify_quiesced, create_storage_asset, resume, verify_resumed]
   bounded_window_required: true

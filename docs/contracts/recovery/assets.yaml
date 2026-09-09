@@ -42,6 +42,9 @@ states:
 
 # §11.4's checks. Creating an asset is not sufficient; a provider that skips one of these has not
 # validated anything, and the coverage algorithm finds no validated path for the domain.
+# `xtask/src/change.rs::check_assets` holds this list against `RecoveryValidation::CHECKS` and
+# asks each id of a complete and an empty validation, so a check declared here and recorded nowhere
+# — one that would therefore always pass — fails the gate.
 validation_checks:
   - {id: exists, doc: "§11.4: the asset exists."}
   - {id: identity-matches, doc: "§11.4: its identity matches the planned source."}
@@ -96,7 +99,10 @@ cost:
     §38.2: Ono MUST NOT display "free" for a copy-on-write snapshot. The four lines above are what
     it displays instead, and they are the specification's own words rather than a paraphrase.
 
-# §38.3's policy limits on automatic protection.
+# §38.3's policy limits on automatic protection, held against
+# `ono_change_protection::policy::CostLimits::KEYS`. This is the only place they are declared:
+# `policies.yaml` used to repeat them under a second spelling, which is a drift surface rather than
+# a contract.
 limits:
   - {key: estimated-size, doc: "§38.3: bound automatic protection by the size it would occupy."}
   - {key: target-scope, doc: "§38.3: bound it by how much the asset would cover."}

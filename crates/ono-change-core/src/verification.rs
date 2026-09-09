@@ -439,15 +439,13 @@ impl VerificationSet {
     }
 }
 
-/// The plan-level outcome of verification (§4.8).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Verdict {
-    /// Every required postcondition held (§4.8).
-    Verified,
-    /// The primary state exists and some expectation is violated or unknown (§4.8).
-    Degraded,
-    /// A required postcondition failed (§4.8).
-    Failed,
+vocabulary! {
+    /// The plan-level outcome of verification (§4.8).
+    Verdict {
+        Verified => "verified", "§4.8: every required postcondition held.";
+        Degraded => "degraded", "§4.8: the primary state exists and some expectation is violated or unknown.";
+        Failed => "failed", "§4.8: a required postcondition failed.";
+    }
 }
 
 impl Verdict {

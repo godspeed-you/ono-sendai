@@ -24,6 +24,7 @@ ono-cli.workspace = true
 ono-core.workspace = true
 ono-change-core.workspace = true
 ono-change-impact.workspace = true
+ono-change-protection.workspace = true
 ono-kuang-protocol.workspace = true
 ono-value.workspace = true
 ono-parser.workspace = true
