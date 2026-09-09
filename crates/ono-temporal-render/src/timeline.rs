@@ -357,8 +357,26 @@ fn groups_with(previous: Option<&Value>, event: &Value) -> bool {
     groupable(event)
         && groupable(previous)
         && text(previous, "kind") == text(event, "kind")
-        && subject_label(previous) == subject_label(event)
+        && same_subject(previous, event)
         && changed_names(previous) == changed_names(event)
+}
+
+/// Whether two events are about the same object.
+///
+/// §19.4 groups "the same object and the same field in a short interval", and the *same object*
+/// is the one with the same identity. Keying on the label folds two `nginx` processes into one
+/// row and states a hidden count for a group whose members are two different things — a grouping
+/// that hides an object rather than a repetition, which is what §19.4's last sentence forbids.
+/// Where neither event carries a resolved identity the label is all there is, and two rows that
+/// name the same unresolved thing are as close to the same thing as the record can say.
+fn same_subject(left: &Value, right: &Value) -> bool {
+    let identity =
+        |event: &Value| field(event, "subject").and_then(|subject| text(subject, "spatial_id"));
+    match (identity(left), identity(right)) {
+        (Some(one), Some(other)) => one == other,
+        (None, None) => subject_label(left) == subject_label(right),
+        _ => false,
+    }
 }
 
 /// The names of the fields an event changed, which is what makes two rows the same row.

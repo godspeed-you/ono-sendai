@@ -904,6 +904,34 @@ fn check_rule_row(
 ) -> Vec<Problem> {
     let mut problems = Vec::new();
 
+    // §15.8 requires every rule that emits a causal relation to be inspectable, and a row saying
+    // `declared` about a rule the engine runs is inspectable and wrong. The word is checked
+    // against the engine's own list, which is what `check_causality` compares the ids against.
+    let implemented = BUILTIN_CAUSAL_RULES.contains(&id) || BUILTIN_CORRELATION_RULES.contains(&id);
+    match string_at(row, "status").as_deref() {
+        Some("implemented") if implemented => {}
+        Some("declared") if !implemented => {}
+        Some("implemented") => problems.push(Problem::new(
+            location,
+            format!("`{id}` says `status: implemented` and the causal engine runs no such rule"),
+        )),
+        Some("declared") => problems.push(Problem::new(
+            location,
+            format!(
+                "`{id}` says `status: declared` and the causal engine runs it. A registry that \
+                 misdescribes the code is §15.8's inspectability with the inspection removed"
+            ),
+        )),
+        Some(other) => problems.push(Problem::new(
+            location,
+            format!("`{id}` says `status: {other}`; the word is `declared` or `implemented`"),
+        )),
+        None => problems.push(Problem::new(
+            location,
+            format!("`{id}` states no `status`, so nothing says whether the engine runs it"),
+        )),
+    }
+
     for field in [
         "input_event_kinds",
         "required_evidence_strengths",

@@ -518,3 +518,18 @@ fn should_reject_a_temporal_registry_the_hardening_inventory_does_not_index() {
     .expect("write");
     assert_reports(&problems(&repo), "docs/contracts/temporal/sources.yaml");
 }
+
+#[test]
+fn should_reject_a_rule_the_registry_calls_declared_and_the_engine_runs() {
+    // §15.8 asks for a registry a reader can audit the engine against. A row saying `declared`
+    // about a rule the engine runs is auditable and wrong, and nothing checked the word until a
+    // review pointed out that all ten rows said `declared` while all ten were implemented.
+    let repo = copied();
+    edit(
+        &repo,
+        "causality.yaml",
+        "  - rule_id: ono.systemd-job-result\n    status: implemented",
+        "  - rule_id: ono.systemd-job-result\n    status: declared",
+    );
+    assert_reports(&problems(&repo), "the causal engine runs it");
+}

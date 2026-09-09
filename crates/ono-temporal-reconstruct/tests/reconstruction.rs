@@ -12,7 +12,6 @@ mod common;
 use ono_spatial_core::SpatialType;
 use ono_temporal_core::{
     EventKind, EvidenceStrength, LedgerWrite, SessionLedger, TemporalCompleteness,
-    value::temporal_metadata,
 };
 use ono_temporal_reconstruct::{
     FieldKnowledge, Presence, ReconstructionRequest, Reconstructor, capability,
@@ -339,15 +338,41 @@ fn should_carry_the_temporal_metadata_of_the_specification_when_an_object_is_rec
         .expect("the reconstruction answers");
     let object = world.object(&id).expect("the process is reconstructed");
 
-    let expected = temporal_metadata(
-        world.as_of(),
-        object.coverage(),
-        true,
-        &object.sources().cloned().collect::<Vec<_>>(),
-        object.gaps(),
-    )
-    .expect("the metadata builds");
-    assert_eq!(object.temporal_metadata().expect("the metadata"), expected);
+    // §9.4 names five members and this asserts each one's *value*. Comparing the accessor against
+    // `temporal_metadata` applied to the same accessors would hold for any implementation of
+    // either, which is a test that cannot fail (ADR-0773).
+    let metadata = object.temporal_metadata().expect("the metadata");
+    let map = metadata.as_map().expect("§9.4's metadata is a sub-record");
+
+    assert_eq!(
+        map.get("as_of"),
+        Some(&Value::Timestamp(instant("2026-08-31T12:00:00Z"))),
+        "§9.4: `as_of` is the instant the object is a statement about"
+    );
+    assert_eq!(
+        map.get("reconstructed"),
+        Some(&Value::Bool(true)),
+        "§9.4: an object replayed out of the ledger says it was reconstructed"
+    );
+    let sources = map
+        .get("sources")
+        .and_then(|value| value.as_list().ok())
+        .expect("§9.4: the sources behind the object");
+    assert!(
+        sources
+            .iter()
+            .filter_map(|value| value.as_str().ok())
+            .any(|source| source == recorder().as_str()),
+        "the source that observed it is named, got {sources:?}"
+    );
+    assert!(
+        map.get("coverage").is_some(),
+        "§9.4: the coverage that supports it travels with it"
+    );
+    assert!(
+        map.get("gaps").is_some(),
+        "§9.4: and so do the gaps beside it, even when there are none"
+    );
 }
 
 #[test]

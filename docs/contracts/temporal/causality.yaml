@@ -78,12 +78,14 @@ relation_classes:
 #   output_relation               the class above that the rule emits.
 #   provider_source_constraints   which sources of `sources.yaml` may supply the inputs.
 #
-# The implementations land with the causal engine; declaring them first is the contract-first
+# The implementations landed with the causal engine; declaring them first was the contract-first
 # order AGENTS.md §7 requires, and `status` says which of the two states a rule is in.
+# `xtask/src/temporal.rs` holds every `implemented` row against a rule the engine actually runs,
+# in both directions, so the word cannot go stale the way it had before the check existed.
 # ---------------------------------------------------------------------------------------------
 rules:
   - rule_id: ono.action-to-transaction
-    status: declared
+    status: implemented
     input_event_kinds: [action.executed, provider.event, object.changed]
     required_evidence_strengths:
       action.executed: authoritative
@@ -106,7 +108,7 @@ rules:
     spec: "§15.2, §15.3, §17.3, §17.4"
 
   - rule_id: ono.systemd-job-result
-    status: declared
+    status: implemented
     input_event_kinds: [provider.event, object.changed]
     required_evidence_strengths:
       provider.event: authoritative
@@ -126,7 +128,7 @@ rules:
     spec: "§15.2, §22.2"
 
   - rule_id: ono.systemd-job-to-unit-state
-    status: declared
+    status: implemented
     input_event_kinds: [provider.event, object.changed]
     required_evidence_strengths:
       provider.event: authoritative
@@ -146,7 +148,7 @@ rules:
     spec: "§15.2, §22.2"
 
   - rule_id: ono.process-parent
-    status: declared
+    status: implemented
     input_event_kinds: [object.appeared]
     required_evidence_strengths:
       object.appeared: authoritative
@@ -167,7 +169,7 @@ rules:
     spec: "§15.2, §22.1"
 
   - rule_id: ono.service-controls-process
-    status: declared
+    status: implemented
     input_event_kinds: [object.appeared, object.disappeared]
     required_evidence_strengths:
       object.appeared: derived
@@ -190,7 +192,7 @@ rules:
     spec: "§15.2, §22.2, §6.3"
 
   - rule_id: ono.action-launched-process
-    status: declared
+    status: implemented
     input_event_kinds: [action.executed, object.appeared]
     required_evidence_strengths:
       action.executed: authoritative
@@ -210,7 +212,7 @@ rules:
     spec: "§17.6, §15.2"
 
   - rule_id: ono.provider-causal-token
-    status: declared
+    status: implemented
     input_event_kinds: [provider.event, object.changed, object.appeared, object.disappeared]
     required_evidence_strengths:
       provider.event: asserted
@@ -240,7 +242,7 @@ rules:
 # ---------------------------------------------------------------------------------------------
 correlation_rules:
   - rule_id: ono.change-before-failure
-    status: declared
+    status: implemented
     input_event_kinds: [object.changed, action.failed]
     required_evidence_strengths:
       object.changed: observational
@@ -264,7 +266,7 @@ correlation_rules:
     spec: "§15.5"
 
   - rule_id: ono.resource-pressure-overlap
-    status: declared
+    status: implemented
     input_event_kinds: [object.changed, action.failed]
     required_evidence_strengths:
       object.changed: observational
@@ -284,7 +286,7 @@ correlation_rules:
     spec: "§15.5, §22.6"
 
   - rule_id: ono.remote-endpoint-retry-spike
-    status: declared
+    status: implemented
     input_event_kinds: [object.disappeared, object.changed]
     required_evidence_strengths:
       object.disappeared: asserted

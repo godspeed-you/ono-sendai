@@ -449,7 +449,7 @@ canonical CI environment expects to.
 ```text
 crates=37
 workspace_members=39
-tests=4454
+tests=4456
 tests_that_can_skip=90
 expected_ci_skips=3
 acceptance_cases=187

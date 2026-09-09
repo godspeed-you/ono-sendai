@@ -428,3 +428,16 @@ pub fn recorder(running: bool, store: Option<&str>, extra: &[(&str, Value)]) -> 
     }
     record("ono.recorder-status", &fields)
 }
+
+/// A subject with a stated identity, so a test can give two objects one label.
+#[must_use]
+pub fn subject_with_id(label: &str, spatial_id: &str) -> Value {
+    map(&[
+        ("resolved", Value::Bool(true)),
+        ("label", Value::string(label)),
+        ("spatial_id", Value::string(spatial_id)),
+        ("object_type", Value::string("process")),
+        ("source", Value::Null),
+        ("described", Value::Null),
+    ])
+}

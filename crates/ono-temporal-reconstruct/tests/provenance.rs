@@ -167,6 +167,18 @@ fn should_use_the_declared_field_when_the_objects_schema_carries_one_named_tempo
 
 #[test]
 fn should_keep_the_weaker_strength_when_a_provider_answer_merges_with_a_replayed_value() {
+    // Run at two strengths, because the point is that neither moves. With one strength in the
+    // whole fixture a raise has nothing to be visible against, and the assertion holds for any
+    // implementation of `strength()` at all (ADR-0773).
+    for declared in [
+        EvidenceStrength::Observational,
+        EvidenceStrength::Authoritative,
+    ] {
+        check_declared_strength(declared);
+    }
+}
+
+fn check_declared_strength(declared: EvidenceStrength) {
     let record = service_record("nginx.service", "active", None);
     let id = common::identity_of(&record, SpatialType::Service, "2026-08-31T12:00:00Z");
     let ledger = SessionLedger::new();
@@ -199,7 +211,7 @@ fn should_keep_the_weaker_strength_when_a_provider_answer_merges_with_a_replayed
             instant("2026-08-31T12:00:00Z"),
             procfs(),
         )
-        .with_strength(EvidenceStrength::Observational)
+        .with_strength(declared)
         .valid_over(
             Some(instant("2026-08-31T11:55:00Z")),
             Some(instant("2026-08-31T12:05:00Z")),
@@ -221,8 +233,8 @@ fn should_keep_the_weaker_strength_when_a_provider_answer_merges_with_a_replayed
 
     assert_eq!(
         field.strength(),
-        EvidenceStrength::Observational,
-        "§7.2: no API raises an evidence strength",
+        declared,
+        "§7.2: a source's own strength is what the field reports, neither raised nor lowered",
     );
     assert_eq!(field.value(), Some(&Value::string("reloading")));
     assert_eq!(field.valid_from(), Some(instant("2026-08-31T11:55:00Z")));

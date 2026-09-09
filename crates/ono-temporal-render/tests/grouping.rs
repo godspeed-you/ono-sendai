@@ -286,3 +286,47 @@ fn should_expand_a_producers_group_to_its_members_when_the_view_asked() {
         );
     }
 }
+
+#[test]
+fn should_keep_two_objects_apart_when_they_share_a_label() {
+    // §19.4 groups "the same object and the same field in a short interval", and grouping keyed
+    // on the label folds two processes both called `nginx` into one row — stating a hidden count
+    // for a group whose members are two different things. That hides an object rather than a
+    // repetition, which §19.4's last sentence forbids.
+    let first = support::event(
+        "e00000000000000000000001",
+        "object.changed",
+        "12:00:00.000",
+        "nginx",
+        &[(
+            "subject",
+            support::subject_with_id("nginx", "ono:lifetime:1111111111111111"),
+        )],
+    );
+    let second = support::event(
+        "e00000000000000000000002",
+        "object.changed",
+        "12:00:01.000",
+        "nginx",
+        &[(
+            "subject",
+            support::subject_with_id("nginx", "ono:lifetime:2222222222222222"),
+        )],
+    );
+    let view = support::timeline_record(vec![first, second], Vec::new());
+
+    let lines = ono_temporal_render::timeline_view(
+        &view,
+        120,
+        &RenderOptions {
+            group_repeats: true,
+            ..RenderOptions::default()
+        },
+    );
+
+    let rendered = lines.join("\n");
+    assert!(
+        !rendered.contains("x2"),
+        "two different processes sharing a name are two rows, not one group of two: {rendered}"
+    );
+}
