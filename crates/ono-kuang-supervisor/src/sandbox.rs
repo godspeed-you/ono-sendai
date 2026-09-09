@@ -443,6 +443,66 @@ pub fn allocated_bytes(pid: u32) -> Option<u64> {
     None
 }
 
+/// The most memory an instance ever had resident, in bytes, as the kernel accounted it.
+///
+/// Read from the *exited but not yet reaped* child, which is what makes it evidence rather than
+/// a sample: `waitid` with `WNOWAIT` blocks until the process has ended, fills in its accumulated
+/// `rusage`, and leaves the zombie for the ordinary reap, so the figure is the kernel's own
+/// high-water mark and not whatever the host's 100 ms sampler happened to see last. Spec §31.34
+/// needs exactly that to tell a resource-limit death from a crash on a machine under load.
+///
+/// It measures *resident* pages, where [`Sandbox::memory_max`] bounds the data segment, so it is
+/// a lower bound on what the instance had allocated: pages an instance never touched are not
+/// counted, and the host under-claims rather than over-claims the ceiling.
+///
+/// `None` when the child is gone, was already reaped, or the kernel refuses the call; an unknown
+/// is never a zero (spec §35.3).
+#[cfg(target_os = "linux")]
+#[allow(
+    unsafe_code,
+    reason = "no safe wrapper passes `rusage` out of `waitid`, and `wait4` rejects `WNOWAIT`"
+)]
+#[must_use]
+pub fn resident_peak_at_exit(pid: u32) -> Option<u64> {
+    let pid = libc::pid_t::try_from(pid).ok()?;
+    // SAFETY: both are plain C structs the kernel fills in; all-zero is a valid initial value
+    // for each, and neither carries a pointer or an invariant the zero pattern would break.
+    let (mut info, mut usage): (libc::siginfo_t, libc::rusage) =
+        unsafe { (std::mem::zeroed(), std::mem::zeroed()) };
+    loop {
+        // SAFETY: `SYS_waitid` writes at most one `siginfo_t` and one `rusage` through the two
+        // pointers, both of which are live, exclusively borrowed and correctly sized here. The
+        // call reaps nothing (`WNOWAIT`), so the child stays the caller's to wait for.
+        let answer = unsafe {
+            libc::syscall(
+                libc::SYS_waitid,
+                libc::P_PID,
+                pid,
+                std::ptr::from_mut(&mut info),
+                libc::WEXITED | libc::WNOWAIT,
+                std::ptr::from_mut(&mut usage),
+            )
+        };
+        if answer == 0 {
+            break;
+        }
+        // A signal the host handles — tokio's own `SIGCHLD` among them — interrupts the wait
+        // without ending it.
+        if std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
+            return None;
+        }
+    }
+    // `ru_maxrss` is in kibibytes on Linux.
+    u64::try_from(usage.ru_maxrss).ok()?.checked_mul(1024)
+}
+
+/// The most memory an instance ever had resident, where the kernel does not account for it.
+#[cfg(not(target_os = "linux"))]
+#[must_use]
+pub fn resident_peak_at_exit(_pid: u32) -> Option<u64> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(

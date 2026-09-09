@@ -37,8 +37,10 @@ use ono_kuang_protocol::ExecutionTier;
 ///
 /// It is never *at or above* it: `RLIMIT_DATA` refuses the allocation that would cross the
 /// ceiling, so an instance that ran out of room sits just below it and then fails on its next
-/// request. The host therefore reads "at its ceiling" as *within a sixteenth of it*, which is the
-/// span between the last observation and the refusal.
+/// request. The figure the host has is a lower bound for a second reason too — the kernel's
+/// `ru_maxrss` counts the pages the instance touched, where the ceiling bounds the ones it
+/// asked for. The host therefore reads "at its ceiling" as *within a sixteenth of it*, which is
+/// the span those two effects can open between the measurement and the refusal (ADR-0787).
 ///
 /// This is an inference from an observation, and it is stated as one rather than hidden: the
 /// failure message carries the ceiling and the observed figure either way, so an operator can see
@@ -511,6 +513,7 @@ impl Supervisor {
             consents: 0,
             exec_arguments: Vec::new(),
             temporal: temporal_surface(&contract, &hello, &package_id, authoritative),
+            declared_memory_max: manifest.runtime.as_ref().map(|runtime| runtime.memory_max),
         };
         tokio::spawn(actor.run());
         Ok(LoadedPlugin {
@@ -751,6 +754,24 @@ enum Ended {
 }
 
 impl Runtime {
+    /// The kernel's own high-water mark for the instance, read once it has ended and before it
+    /// is reaped (spec §31.34). `None` for a component, whose memory the runtime accounts
+    /// itself, and whenever the kernel has nothing to say.
+    async fn resident_peak(&mut self) -> Option<u64> {
+        match self {
+            Runtime::Native(child) => {
+                let pid = child.id()?;
+                // The call blocks until the instance has ended — exactly as long as the `wait`
+                // that follows it would have — so it belongs on a blocking thread.
+                tokio::task::spawn_blocking(move || crate::sandbox::resident_peak_at_exit(pid))
+                    .await
+                    .ok()
+                    .flatten()
+            }
+            Runtime::Wasm(_) => None,
+        }
+    }
+
     async fn kill(&mut self) {
         match self {
             Runtime::Native(child) => {
@@ -1612,6 +1633,10 @@ struct Actor {
     /// contribution call is checked against the same answer and a rate window survives across
     /// calls.
     temporal: crate::temporal::Contribution,
+    /// The ceiling the package's manifest declared, beside the effective one in `sandbox`.
+    /// `None` when the manifest declares no runtime at all (spec §31.15's "host policy has final
+    /// authority", errors.v1.yaml K11203).
+    declared_memory_max: Option<u64>,
 }
 
 enum LoopStep {
@@ -1751,13 +1776,23 @@ impl Actor {
     /// The classification is evidence, never a guess. A signal the kernel raises for a resource
     /// limit names that limit exactly. Memory is the case with no signal of its own:
     /// `RLIMIT_DATA` makes an over-large allocation *fail*, and what the package does then is the
-    /// package's business — a Rust artifact aborts, a C one may carry on. So the host reports
-    /// `runtime.memory_limit` when it observed the instance at its ceiling, and otherwise names
-    /// the signal, the ceiling that was in force and the high-water mark it did observe, so the
-    /// operator sees the relationship between them instead of being told a story about it.
+    /// package's business — a Rust artifact aborts, a C one may carry on. So an instance that
+    /// ended with its memory at its ceiling ended *because of* the ceiling and is reported as
+    /// `runtime.memory_limit`; one that ended anywhere else is named by its signal, beside the
+    /// ceiling that was in force and the high-water mark the host has, so the operator sees the
+    /// relationship between them instead of being told a story about it.
+    ///
+    /// The high-water mark is the larger of two figures, because either alone can be the smaller
+    /// truth: the host's own periodic sample of `VmData` — the memory `RLIMIT_DATA` bounds, but
+    /// only as recently as the sampler last looked — and the kernel's `ru_maxrss` for the ended
+    /// process, which is exact and independent of load but counts only pages the instance
+    /// actually touched (ADR-0787).
     async fn death(&mut self) -> KuangError {
+        // Before the wait, which reaps: a reaped process has no accounting left to read.
+        let resident = self.child.resident_peak().await;
         let ended = self.child.wait().await;
-        let peak = lock(&self.shared).peak_memory;
+        let sampled = lock(&self.shared).peak_memory;
+        let peak = [sampled, resident].into_iter().flatten().max();
         let status = match ended {
             Ended::Native(status) => status,
             Ended::Wasm(exit) => return self.component_death(exit, peak),
@@ -1789,21 +1824,7 @@ impl Actor {
                 ),
             )
             .with_metadata("resource_class", json!("file_size")),
-            _ if at_ceiling => KuangError::new(
-                KuangErrorCode::RuntimeMemoryLimit,
-                format!(
-                    "the plugin instance reached its memory ceiling of {} bytes and ended",
-                    self.sandbox.memory_max
-                ),
-            )
-            // v0.4.1 §18.3: the error identifies the enforced resource class rather than
-            // reporting "plugin exited", so a caller can tell a limit from a defect without
-            // reading the sentence.
-            .with_metadata("resource_class", json!("memory"))
-            .with_help(
-                "`runtime.memory_max` in the package's manifest declares the ceiling; the host \
-                 caps it and never raises it",
-            ),
+            _ if at_ceiling => self.memory_limit("the plugin instance", peak),
             Some(number) => KuangError::new(
                 KuangErrorCode::RuntimeTrap,
                 format!(
@@ -1824,6 +1845,38 @@ impl Actor {
                     "the plugin instance exited unexpectedly",
                 ),
             },
+        }
+    }
+
+    /// The resource-limit failure of spec §31.34, for an instance that ended at its ceiling.
+    ///
+    /// `errors.v1.yaml` promises K11203 readers "the declared and effective ceilings […] in the
+    /// error metadata; the effective one is the smaller of the package's declaration and host
+    /// policy", so both travel with the error together with the figure the host read.
+    fn memory_limit(&self, subject: &str, peak: Option<u64>) -> KuangError {
+        let error = KuangError::new(
+            KuangErrorCode::RuntimeMemoryLimit,
+            format!(
+                "{subject} reached its memory ceiling of {} bytes and ended",
+                self.sandbox.memory_max
+            ),
+        )
+        // v0.4.1 §18.3: the error identifies the enforced resource class rather than
+        // reporting "plugin exited", so a caller can tell a limit from a defect without
+        // reading the sentence.
+        .with_metadata("resource_class", json!("memory"))
+        .with_metadata(
+            "declared_memory_max",
+            self.declared_memory_max.map_or(Json::Null, Json::from),
+        )
+        .with_metadata("effective_memory_max", json!(self.sandbox.memory_max))
+        .with_help(
+            "`runtime.memory_max` in the package's manifest declares the ceiling; the host \
+             caps it and never raises it",
+        );
+        match peak {
+            Some(peak) => error.with_metadata("observed_memory_peak", json!(peak)),
+            None => error,
         }
     }
 
@@ -1849,18 +1902,7 @@ impl Actor {
     fn component_death(&self, exit: crate::wasm::Exit, peak: Option<u64>) -> KuangError {
         let at_ceiling = peak.is_some_and(|peak| at_memory_ceiling(peak, self.sandbox.memory_max));
         match exit {
-            _ if at_ceiling => KuangError::new(
-                KuangErrorCode::RuntimeMemoryLimit,
-                format!(
-                    "the component reached its memory ceiling of {} bytes and ended",
-                    self.sandbox.memory_max
-                ),
-            )
-            .with_metadata("resource_class", json!("memory"))
-            .with_help(
-                "`runtime.memory_max` in the package's manifest declares the ceiling; the host \
-                 caps it and never raises it",
-            ),
+            _ if at_ceiling => self.memory_limit("the component", peak),
             crate::wasm::Exit::Trapped(trap) => KuangError::new(
                 KuangErrorCode::RuntimeTrap,
                 format!(

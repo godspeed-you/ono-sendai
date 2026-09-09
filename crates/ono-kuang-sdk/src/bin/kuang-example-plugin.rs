@@ -647,15 +647,13 @@ fn honest_at_most(at_once: u32) -> Plugin {
             // it allocates in steps and touches every page, so the kernel really has to give it
             // the memory rather than promising it.
             //
-            // **It paces itself, and the pace is the point.** The host samples an instance's
-            // allocated memory every 100 ms, and §31.34's resource-limit class is claimed only
-            // when the last *observed* peak is at the ceiling — an honest rule, because a host
-            // that guessed would report a package that called `abort()` as one that ran out of
-            // memory. An unpaced allocator climbs from well under the ceiling to aborted inside
-            // one sampling interval, so on a loaded machine the host truthfully reports
-            // `runtime.trap` and the fixture proves nothing about the ceiling. Pausing after
-            // each mebibyte puts several samples inside the last few, which is what makes the
-            // classification a fact about the run rather than about the machine's load.
+            // **It paces itself, and `--pace-ms 0` turns the pacing off.** The host samples an
+            // instance's allocated memory every 100 ms, and an unpaced allocator climbs from
+            // well under the ceiling to aborted inside one such interval — so the two paces are
+            // the two things a suite needs to ask for: a climb the host's sampler sees, and one
+            // it cannot. Since ADR-0787 the classification no longer depends on which it gets:
+            // the host reads the kernel's own high-water mark for the ended process, so a death
+            // at the ceiling is named as one under either pace and under any load.
             let mib = int_argument(ctx, "mib", 512).clamp(1, 8192) as usize;
             let pace = std::time::Duration::from_millis(
                 int_argument(ctx, "pace-ms", 20).clamp(0, 1000) as u64,

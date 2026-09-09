@@ -24,6 +24,8 @@
     reason = "a failed precondition in a test should abort the test loudly"
 )]
 
+mod support;
+
 use std::sync::Arc;
 
 use ono_kuang_protocol::{Capability, Control, KuangErrorCode, PluginState};
@@ -33,36 +35,6 @@ use serde_json::{Map as JsonMap, Value as Json};
 
 const PLUGIN: &str = env!("CARGO_BIN_EXE_kuang-example-plugin");
 const PACKAGE: &str = "dev.example.echo";
-
-fn manifest() -> String {
-    r#"
-format: kuang-package/1
-package:
-  id: dev.example.echo
-  name: echo
-  version: 0.1.0
-  description: Emits what it is asked to emit.
-  publisher: dev.example
-  license: MIT
-compatibility:
-  kuang_api: ">=11.1 <12"
-  ono_language: ">=0.2"
-  platforms: [linux-amd64, linux-arm64]
-runtime:
-  kind: native-process
-  entry: runtime/echo
-  memory_max: 64MiB
-  cpu_budget: interactive
-  startup: lazy
-roles: [provider]
-capabilities:
-  optional:
-    - clock.read
-network:
-  outbound: none
-"#
-    .to_owned()
-}
 
 /// The injectable platform layer of §59.7: everything the host installs, except one refusal.
 struct Refuses(Control);
@@ -81,7 +53,7 @@ fn refusing(control: Control) -> Arc<dyn ConfinementPlatform> {
 }
 
 fn host() -> TestHost {
-    TestHost::new(PLUGIN, &manifest()).grant(Capability::ClockRead)
+    TestHost::new(PLUGIN, &support::example_manifest()).grant(Capability::ClockRead)
 }
 
 #[tokio::test]
@@ -109,7 +81,7 @@ async fn should_distinguish_a_launch_failure_from_a_quarantine_a_resource_kill_a
     );
 
     // --- §18.2 protocol violation -------------------------------------------------------------
-    let violator = TestHost::new(PLUGIN, &manifest())
+    let violator = TestHost::new(PLUGIN, &support::example_manifest())
         .args(&["--misbehave=garbage"])
         .load()
         .await
@@ -163,7 +135,7 @@ async fn should_distinguish_a_launch_failure_from_a_quarantine_a_resource_kill_a
     );
 
     // --- §18.4 crash --------------------------------------------------------------------------
-    let crasher = TestHost::new(PLUGIN, &manifest())
+    let crasher = TestHost::new(PLUGIN, &support::example_manifest())
         .args(&["--misbehave=die"])
         .load()
         .await
@@ -200,7 +172,7 @@ async fn should_keep_the_shell_and_the_other_plugins_running_when_one_plugin_cra
     // §18.4: "Plugin failure MUST not corrupt the shell's provider registry or leave partially
     // registered capabilities visible as healthy."
     let survivor = host().load().await.expect("the honest package loads");
-    let crasher = TestHost::new(PLUGIN, &manifest())
+    let crasher = TestHost::new(PLUGIN, &support::example_manifest())
         .args(&["--misbehave=die"])
         .load()
         .await
