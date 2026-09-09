@@ -20,8 +20,7 @@ use std::sync::Arc;
 
 use jiff::Timestamp;
 use ono_change_core::{
-    ActionId, ActionStatus, ChangePlan, DriftFinding, Idempotency, LifecycleEvent, PlanAction,
-    PlanState, error,
+    ActionId, ActionStatus, ChangePlan, DriftFinding, Idempotency, PlanAction, PlanState, error,
 };
 use ono_change_plan::PlanStore;
 use ono_value::{ErrorValue, Value};
@@ -326,18 +325,29 @@ const fn refusal_reason(status: ActionStatus, idempotency: Idempotency) -> &'sta
 
 /// §41.3's refusal: a new recovery or rebase decision is required instead of a resume.
 ///
-/// The code is `change.plan_state_invalid` because that is exactly what §41.3 is saying — the
-/// plan is where it is and continuing is not an edge §4.1 draws from there. The reasons travel in
-/// the metadata, one per action, so a script can tell "nothing may be rerun" from "one action
-/// may not".
+/// `change.resume_refused` is its own code because the answer an operator needs is not "the plan
+/// is in the wrong state" — the plan is in exactly the state the interruption left it in. What is
+/// refused is continuing *these* actions, and the reasons travel one per action so a script can
+/// tell "nothing may be rerun" from "one action may not". The state travels too, because §41.2
+/// keeps the plan inspectable either way.
 fn blocked_refusal(plan: &ChangePlan, state: PlanState, blocked: &[BlockedAction]) -> ErrorValue {
-    error::invalid_transition(plan.id(), state, LifecycleEvent::BeginApply)
+    let reasons: Vec<(String, String)> = blocked
+        .iter()
+        .map(|action| {
+            (
+                action.action().as_str().to_owned(),
+                format!("{}: {}", action.summary(), action.reason()),
+            )
+        })
+        .collect();
+    error::resume_refused(plan.id(), &reasons)
         .with_help(
             "v0.6 §41.3: resume may continue only actions whose prior status and idempotency \
              permit it. Otherwise a new recovery or rebase decision is required, and §41.2 \
              forbids blindly rerunning an unknown or non-idempotent action"
                 .to_owned(),
         )
+        .with_metadata("state", Value::string(state.as_str()))
         .with_metadata(
             "blocked_actions",
             Value::list(
@@ -345,11 +355,5 @@ fn blocked_refusal(plan: &ChangePlan, state: PlanState, blocked: &[BlockedAction
                     .iter()
                     .map(|action| Value::string(action.action().as_str())),
             ),
-        )
-        .with_metadata(
-            "reasons",
-            Value::list(blocked.iter().map(|action| {
-                Value::string(&format!("{}: {}", action.summary(), action.reason()))
-            })),
         )
 }

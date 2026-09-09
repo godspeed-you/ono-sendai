@@ -978,6 +978,24 @@ errors:
       v0.6 §43.3 and §43.4: the plan shows which actions require privilege and when elevation
       occurs, and recovery may need more than the mutation did. The metadata names the action, the
       privilege and whether it is needed to change or to recover.
+  - code: Ono-Sendai-E1728
+    name: change.capability_missing
+    kind: permission
+    summary: The session does not hold the capability an action or its recovery needs.
+    help: >-
+      v0.6 §43.2 splits the change capabilities from the recovery ones, and §48.3 names both sets.
+      A missing capability is a different fact from missing operating-system privilege
+      (`change.privilege_required`): elevation cannot supply it, and only a grant can. The metadata
+      names the capability and whether it is needed to change or to recover.
+  - code: Ono-Sendai-E1729
+    name: change.resume_refused
+    kind: safety
+    summary: An interrupted plan cannot be resumed in the state it was left in.
+    help: >-
+      v0.6 §41.3: resuming re-establishes the preconditions of the actions that have not run, and
+      refuses where an action already ran, where its outcome could not be established, or where the
+      world moved underneath it. The metadata names the actions and the reason for each. §41.2
+      keeps the plan inspectable either way.
   - code: Ono-Sendai-E1801
     name: recovery.provider_unavailable
     kind: provider

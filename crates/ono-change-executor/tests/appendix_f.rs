@@ -170,7 +170,9 @@ fn should_refuse_before_preparing_anything_when_the_session_cannot_execute_actio
             .error()
             .map(|error| error.code().name().to_owned())
             .unwrap_or_default(),
-        "change.privilege_required"
+        "change.capability_missing",
+        "§43.2: a session without `change.action.execute` was never granted it, and elevation \
+         cannot supply a capability"
     );
 }
 

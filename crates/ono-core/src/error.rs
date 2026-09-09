@@ -397,6 +397,10 @@ error_codes! {
         "The plan declares automatic recovery under conditions v0.6 does not permit.";
     ChangePrivilegeRequired => "Ono-Sendai-E1727", "change.privilege_required", Permission,
         "An action or its recovery needs privilege this session does not hold.";
+    ChangeCapabilityMissing => "Ono-Sendai-E1728", "change.capability_missing", Permission,
+        "The session does not hold the capability an action or its recovery needs.";
+    ChangeResumeRefused => "Ono-Sendai-E1729", "change.resume_refused", Safety,
+        "An interrupted plan cannot be resumed in the state it was left in.";
 
     // --- recovery, v0.6 §45: what a recovery provider, an asset or a restore could not do.
     RecoveryProviderUnavailable => "Ono-Sendai-E1801", "recovery.provider_unavailable", Provider,

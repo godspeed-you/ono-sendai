@@ -586,6 +586,65 @@ pub fn privilege_required(subject: &str, privilege: &str, for_recovery: bool) ->
     .with_metadata("for_recovery", Value::Bool(for_recovery))
 }
 
+/// The session does not hold the capability an action or its recovery needs (§43.2, §48.3).
+///
+/// This is not [`privilege_required`], and the difference is the whole reason both exist: raising
+/// operating-system privilege cannot supply a capability. §48.4's boundary is a grant, and a
+/// session that was not given one is refused whatever it is running as.
+#[must_use]
+pub fn capability_missing(subject: &str, capability: &str, for_recovery: bool) -> ErrorValue {
+    let purpose = if for_recovery {
+        "recovering it"
+    } else {
+        "changing it"
+    };
+    ErrorValue::new(
+        ErrorCode::ChangeCapabilityMissing,
+        format!("{purpose} needs the `{capability}` capability, which this session was not granted"),
+    )
+    .with_help(
+        "v0.6 §43.2 and §48.3: change capabilities and recovery capabilities are granted          separately, and elevation does not supply either. Nothing was changed"
+            .to_owned(),
+    )
+    .with_metadata("subject", Value::string(subject))
+    .with_metadata("capability", Value::string(capability))
+    .with_metadata("for_recovery", Value::Bool(for_recovery))
+}
+
+/// An interrupted plan cannot be resumed in the state it was left in (§41.3).
+///
+/// `blocked` names one action and the reason resuming it is refused. §41.3 re-establishes the
+/// preconditions of what has not run, and an action whose outcome could not be established is not
+/// an action to run again — Appendix F.2's uncertainty is exactly what this refusal preserves.
+#[must_use]
+pub fn resume_refused(plan: &PlanId, blocked: &[(String, String)]) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::ChangeResumeRefused,
+        format!(
+            "plan {} cannot be resumed: {} of its actions cannot be re-established",
+            plan.short(),
+            blocked.len()
+        ),
+    )
+    .with_help(
+        "v0.6 §41.3: resuming re-checks the preconditions of the actions that have not run, and          refuses where one already ran, where its outcome is unknown, or where the world moved.          The plan stays inspectable (§41.2)"
+            .to_owned(),
+    )
+    .with_metadata("plan", Value::string(&plan.to_string()))
+    .with_metadata(
+        "blocked",
+        Value::list(blocked.iter().map(|(action, _)| Value::string(action))),
+    )
+    .with_metadata(
+        "reasons",
+        Value::list(
+            blocked
+                .iter()
+                .map(|(action, reason)| Value::string(&format!("{action}: {reason}"))),
+        ),
+    )
+}
+
 /// A recovery provider cannot run here (§12.2, Appendix G.4).
 #[must_use]
 pub fn provider_unavailable(provider: &str, reason: &str) -> ErrorValue {

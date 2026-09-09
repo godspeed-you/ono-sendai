@@ -190,7 +190,11 @@ fn should_say_that_a_new_recovery_or_rebase_decision_is_required() {
     let outcome = resume(&plan, &store, now);
     let refusal = outcome.refusal().expect("§41.3 refuses");
 
-    assert_eq!(refusal.code().name(), "change.plan_state_invalid");
+    assert_eq!(
+        refusal.code().name(),
+        "change.resume_refused",
+        "§41.3: what is refused is continuing these actions, not the plan's state"
+    );
     assert!(
         refusal
             .help()

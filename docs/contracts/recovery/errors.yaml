@@ -68,9 +68,13 @@ groups:
       - {code: Ono-Sendai-E1810, name: recovery.destructive_history_not_accepted, nothing_changed: true, flag: "--accept-newer-state-loss"}
 
   - id: privilege
-    doc: "§43.3 and §43.4: the authority a change or its recovery needs."
+    doc: >-
+      §43.2, §43.3 and §43.4: the authority a change or its recovery needs. The two are separate
+      because elevation cannot supply a capability — a session that was not granted
+      `change.action.execute` is refused whatever it is running as.
     errors:
       - {code: Ono-Sendai-E1727, name: change.privilege_required, nothing_changed: true}
+      - {code: Ono-Sendai-E1728, name: change.capability_missing, nothing_changed: true}
 
   - id: preparation
     doc: >-
@@ -96,6 +100,13 @@ groups:
       - {code: Ono-Sendai-E1725, name: change.remote_state_unknown, nothing_changed: false}
       - {code: Ono-Sendai-E1813, name: recovery.apply_failed, nothing_changed: false}
       - {code: Ono-Sendai-E1819, name: recovery.resume_failed, nothing_changed: false}
+
+  - id: interruption
+    doc: >-
+      §41: the shell stopped in the middle. `nothing_changed: false` is the honest answer — what
+      ran, ran, and the refusal is about what may not be rerun.
+    errors:
+      - {code: Ono-Sendai-E1729, name: change.resume_refused, nothing_changed: false}
 
   - id: verification
     doc: "§2.14: what the world says, after the fact, independently of any exit status."

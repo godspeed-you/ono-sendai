@@ -1216,7 +1216,7 @@ fn check_authority(
     protection: &[ProtectionAction],
 ) -> Option<ErrorValue> {
     if plan.mutates() && !authority.has_change(ChangeCapability::ActionExecute) {
-        return Some(error::privilege_required(
+        return Some(error::capability_missing(
             plan.id().as_str(),
             ChangeCapability::ActionExecute.as_str(),
             plan.kind() == PlanKind::Recovery,
@@ -1237,7 +1237,7 @@ fn check_authority(
     if protection.iter().any(ProtectionAction::is_required)
         && !authority.has_recovery(RecoveryCapability::Prepare)
     {
-        return Some(error::privilege_required(
+        return Some(error::capability_missing(
             plan.id().as_str(),
             RecoveryCapability::Prepare.as_str(),
             false,
