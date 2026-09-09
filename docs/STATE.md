@@ -316,33 +316,32 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [lead `v05` | 2026-09-08] **The v0.5 Temporal & Causal Systems Interface**, the whole tranche,
-  built by parallel agents under one lead. Ownership is by crate and by contract file, and the
-  interface every package compiles against is fixed before the packages start.
-  - lead — `docs/ACCEPTANCE.md` §4.11, `docs/releases/v0.5.0.md`, `docs/STATE.md`,
-    `crates/ono-core/src/error.rs`, the workspace manifest, `docs/adr/ADR-0610`…`ADR-0619`,
-    integration and the gate.
-  - `A1` — `crates/ono-temporal-core/**`, `docs/contracts/schemas/temporal-*.v1.yaml` and the
-    other v0.5 schemas, the `CONTRACTS` list of `crates/ono-value/src/builtin.rs`.
-  - `A2` — `docs/contracts/temporal/**`, `docs/contracts/capabilities.yaml`,
-    `docs/contracts/kuang/capabilities.v1.yaml`, `crates/ono-kuang-protocol/src/capability.rs`
-    and `permission.rs`, `crates/ono-cli/src/settings.rs`, `xtask/src/temporal.rs`.
-  - `J0` — `crates/ono-provider-api/**`, `crates/ono-provider-systemd/**`, the procfs half of
-    `crates/ono-provider-linux`, `docs/contracts/providers/*.yaml`.
-
-  Further packages follow as their dependencies land: the ledger, the recorder, reconstruction,
-  the query layer, causality, the historical spatial world, the CLI and session integration, the
-  temporal renderers and TUI, the remaining Linux sources, remote and KUANG/11, and the
-  performance, fuzzing, privacy and documentation work of T12.
-
+- [lead `v05` | 2026-09-09] **The v0.5 Temporal & Causal Systems Interface**, in its release
+  loop. The implementation is delivered and every engine crate is green; what remains is the
+  acceptance evidence and the checklist that names it.
+  - Done: the vocabulary and its contracts (T1), the canonical event bridge and the session
+    coordinate (T2, T3), the persistent ledger and the recorder (T4), checkpoints and
+    reconstruction (T5), timeline and changes (T6), the historical spatial world (T7), the causal
+    engine (T8), the temporal TUI (T9), the Linux history sources (T10), remote and KUANG/11
+    (T11), and the fuzzing, documentation and review passes of T12.
+  - Open: the container's verdict on the v0.5 cases, and the §4.11 boxes those cases close. Two
+    reviews have run and their findings are fixed; a third pass over the shell integration has
+    not.
 
 ## What is left, and why
 
-**The v0.5 Temporal & Causal Systems Interface**, the whole of it. `docs/ACCEPTANCE.md` §4.11 is
-its definition of done — 123 boxes derived from the specification's forty-seven acceptance
-scenarios, its performance evidence, its twenty core invariants and its twenty-three release
-criteria — and every one of them is open. `docs/releases/v0.5.0.md` enumerates them, which is
-what `xtask::scan::check_release_notes` requires of an in-progress tranche.
+**The v0.5 Temporal & Causal Systems Interface's acceptance evidence.** The implementation is
+delivered: six crates, the machine-readable registries and their drift gate, the ledger, the
+recorder, reconstruction, the query and causal engines, the renderers, the Linux sources, remote
+and KUANG/11, and the shell integration that makes `at`, `now`, `present`, `timeline`, `changes`,
+`why` and `find event` real commands.
+
+What is left is the part only the container can settle. `docs/ACCEPTANCE.md` §4.11 holds the
+definition of done — boxes derived from the specification's forty-seven acceptance scenarios, its
+performance evidence, its twenty core invariants and its twenty-three release criteria — and a box
+is ticked when a case or a test that runs in the gate proves it, never before.
+`docs/releases/v0.5.0.md` enumerates every open one, which is what
+`xtask::scan::check_release_notes` requires of an in-progress tranche.
 
 The v0.4.1 tranche before it is delivered and released. **All 118 boxes of `docs/ACCEPTANCE.md`
 §4.8 are ticked**, each by a named automated proof that `xtask/tests/hardening_evidence.rs`
