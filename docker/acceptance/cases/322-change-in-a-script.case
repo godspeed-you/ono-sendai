@@ -1,0 +1,78 @@
+# v0.6 §50 phase P13 — §17.4 and §40.3: a non-interactive script MUST never stop for a yes/no
+# question. Every acknowledgement §19.4 requires has a flag, and a policy that cannot be satisfied
+# fails with a structured error rather than blocking.
+#
+# The failure this guards against does not look like a bug in a test: it looks like a CI job that
+# hangs, at three in the morning, holding a lock on a plan. §40.3 is the rule and a timeout is the
+# only honest way to prove it.
+case: every change command is deterministic and non-blocking in a script
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  mkdir -p "$HOME/etc"
+  printf 'worker_processes 4;\n' > "$HOME/etc/nginx.conf"
+  printf 'worker_processes 8;\n' > "$HOME/etc/nginx.conf.new"
+
+  echo '== §40.3: nothing waits for a prompt with stdin closed =='
+  for spelling in \
+    "plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new" \
+    "get plan" \
+    "get recovery" ; do
+    if timeout 30 ono -c "$spelling" < /dev/null > /dev/null 2>&1 || [ $? -ne 124 ]; then
+      printf 'PROVED s1-%s: `%s` returns without waiting (§40.3)\n' "$(echo "$spelling" | tr ' /$' '---' | cut -c1-16)" "$spelling"
+    else
+      printf 'FAILED s1: `%s` did not return within 30s\n' "$spelling"
+    fi
+  done
+
+  echo '== §12.3 and §33.5: every answer is a value a pipeline can read =='
+  prove s2a "\`plan\` serialises" \
+    "timeout 30 ono -c 'plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new | to json' < /dev/null 2>&1 | grep -qE '^\{'"
+  prove s2b "\`get plan\` serialises as a stream (§12.3)" \
+    "timeout 30 ono -c 'get plan | to json' < /dev/null 2>&1 | grep -qE '^\['"
+  prove s2c "\`get recovery\` serialises as a stream" \
+    "timeout 30 ono -c 'get recovery | to json' < /dev/null 2>&1 | grep -qE '^\['"
+  prove s2d "and a plan can be filtered like any other value (§28.1 of v0.5, §12.3)" \
+    "timeout 30 ono -c 'get plan | where state == \"sealed\" | count | to json' < /dev/null 2>&1 | grep -qE '^[0-9]+$'"
+
+  echo '== §40.3: a gate that is not satisfied fails, and names the flag that would satisfy it =='
+  prove s3a "a refusal names a flag rather than asking a question (§40.2, §40.3)" \
+    "! timeout 30 ono -c 'remove recovery r-nothing-here' < /dev/null 2>&1 | grep -qiE 'are you sure|\\[y/n\\]|continue\\?'"
+
+  echo '== §45: every refusal carries a stable code =='
+  for spelling in \
+    "apply nothing-here-1a2b" \
+    "impact nothing-here-1a2b" \
+    "recover nothing-here-1a2b" \
+    "inspect plan nothing-here-1a2b" \
+    "inspect recovery nothing-here-1a2b" ; do
+    if timeout 30 ono -c "$spelling" < /dev/null 2>&1 | grep -qE 'Ono-Sendai-E1[789]'; then
+      printf 'PROVED s4-%s: `%s` refuses with a v0.6 code\n' "$(echo "$spelling" | cut -d' ' -f1-2 | tr ' ' '-')" "$spelling"
+    else
+      printf 'FAILED s4: `%s` did not carry a v0.6 code\n' "$spelling"
+    fi
+  done
+
+  echo 'change-in-a-script: done'
+exit: 0
+stdout-contains: PROVED s2a
+stdout-contains: PROVED s2b
+stdout-contains: PROVED s2c
+stdout-contains: PROVED s2d
+stdout-contains: PROVED s3a
+stdout-contains: PROVED s4-apply-nothing-here-1a2b
+stdout-contains: PROVED s4-impact-nothing-here-1a2b
+stdout-contains: PROVED s4-recover-nothing-here-1a2b
+stdout-contains: change-in-a-script: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

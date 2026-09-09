@@ -367,6 +367,14 @@ fn change_provider(flaw: Option<&str>) -> Plugin {
             emits: "high".to_owned(),
             summary: "Restoring a database interrupts every session connected to it.".to_owned(),
         })
+        // A second rule, in a second dimension, with a ceiling of its own: §19.2's classes are
+        // per-rule claims, so a package that can find a CRITICAL risk says which rule finds it.
+        .contribute_risk_rule(RiskRuleContribution {
+            rule_id: format!("{PACKAGE}.risk.replica-loss"),
+            dimension: "irreversibility".to_owned(),
+            emits: "critical".to_owned(),
+            summary: "A failed restore leaves the replica set without a primary.".to_owned(),
+        })
         .contribute_change_view(ChangeViewContribution {
             id: format!("{PACKAGE}.change-view.database-plan"),
             summary: "Shows a database plan beside what it would cost to undo.".to_owned(),
@@ -393,12 +401,13 @@ fn change_provider(flaw: Option<&str>) -> Plugin {
             "plan-contribute",
             "Contribute an effect and a risk finding to a plan.",
             &["change.plan.contribute"],
-            &["plan", "class", "rule"],
+            &["plan", "class", "rule", "dimension"],
         ))
         .command(&format!("{PACKAGE}.command.plan-contribute"), |ctx| {
             let plan = text_argument(ctx, "plan", "plan-1");
             let class = text_argument(ctx, "class", "low");
             let rule = text_argument(ctx, "rule", &format!("{PACKAGE}.risk.database-restart"));
+            let dimension = text_argument(ctx, "dimension", "downtime");
             let params = json!({
                 "plan": plan,
                 "actions": [],
@@ -412,7 +421,7 @@ fn change_provider(flaw: Option<&str>) -> Plugin {
                 }],
                 "impact": [],
                 "risk_findings": [{
-                    "dimension": "downtime",
+                    "dimension": dimension,
                     "class": class,
                     "rule": rule,
                     "reason": "one database, and its sessions are re-established afterwards",

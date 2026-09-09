@@ -3142,7 +3142,7 @@ Conventions this subsection relies on:
 
 - [ ] **`plan restart service nginx` creates no mutation.** §55.1 case 1 and §2.1: the service is
       untouched, its generation is unchanged, and the plan says `PLAN NOT EXECUTED` —
-      case 280-plan-creates-nothing.
+      case `280-plan-creates-nothing`.
 - [ ] **A plan block describes actions and is not a workflow language.** §5.2: loops, functions,
       background jobs and unbounded control flow are each refused —
       `crates/ono-change-plan/tests/builder.rs`, case 281-plan-block.
@@ -3158,13 +3158,13 @@ Conventions this subsection relies on:
 - [ ] **A historical context cannot create an executable plan.** §55.1 case 4 and §6.4: the refusal
       is `change.historical_context_read_only`, it names `now` as the way back, and the historical
       coordinate is unchanged — `crates/ono-cli/tests/change_planning.rs`,
-      case 283-plan-refuses-the-past.
+      case `283-plan-refuses-the-past`.
 - [ ] **Opaque external mutation is rejected by default.** §55.1 case 5 and §6.2:
       `plan sh -c 'rm -rf /somewhere'` answers `change.opaque_action_forbidden` —
-      `crates/ono-cli/tests/change_planning.rs`, case 284-opaque-actions.
+      `crates/ono-cli/tests/change_planning.rs`, case `284-opaque-actions`.
 - [ ] **§6.3's explicit escape classifies impact and reversibility as unknown.** An opaque action
       admitted deliberately caps the plan at partially protected however much of the filesystem is
-      snapshotted — `crates/ono-change-protection/tests/coverage.rs`, case 284-opaque-actions.
+      snapshotted — `crates/ono-change-protection/tests/coverage.rs`, case `284-opaque-actions`.
 - [ ] **A plan that changes the system cannot be sealed without a verification contract.** §23.1 —
       `crates/ono-change-core/src/plan.rs`, `crates/ono-change-plan/tests/seal.rs`.
 - [ ] **Plan creation stays inside §52.1's budget.** A single-host single-service plan seals in
@@ -3334,10 +3334,10 @@ Conventions this subsection relies on:
 
 - [ ] **A filesystem-protected plan with a SIGKILL stays unprotected for process runtime.**
       §55.6 case 27, §33.1 and §59.4: even on ZFS —
-      `crates/ono-change-protection/tests/coverage.rs`, case 293-protection-is-a-matrix.
+      `crates/ono-change-protection/tests/coverage.rs`, case `293-protection-is-a-matrix`.
 - [ ] **A local snapshot beside an HTTP POST leaves the external effect irreversible.** §55.6
       case 28 and §35.2, and the webhook stays in the plan's `not recoverable` block —
-      `crates/ono-change-protection/tests/coverage.rs`, case 293-protection-is-a-matrix.
+      `crates/ono-change-protection/tests/coverage.rs`, case `293-protection-is-a-matrix`.
 - [ ] **Unknown provider recovery semantics remain unknown.** §55.6 case 29: a candidate whose
       consistency could not be established leaves the domain `UNKNOWN` rather than `UNPROTECTED`,
       and the two are different answers — `crates/ono-change-protection/tests/coverage.rs`.
@@ -3357,7 +3357,7 @@ Conventions this subsection relies on:
       `crates/ono-change-protection/tests/coverage.rs`.
 - [ ] **The plan-level summary never hides the matrix.** §10.3 and §62.6: a protected plan renders
       its exclusions, and there is no rendering path that emits a protection indicator without them
-      — `crates/ono-change-render/tests/protection.rs`, case 293-protection-is-a-matrix.
+      — `crates/ono-change-render/tests/protection.rs`, case `293-protection-is-a-matrix`.
 - [ ] **There is no green shield.** Appendix E.8: no single glyph or badge means safe —
       `crates/ono-change-render/tests/symbols.rs`.
 - [ ] **`maximize` does not snapshot the host.** §17.2 and §62.7: protection follows the planned
@@ -3403,7 +3403,7 @@ Conventions this subsection relies on:
       normal path stays usable — `crates/ono-cli/tests/change_gates.rs`, case 295-apply-and-verify.
 - [ ] **A script never waits for a prompt.** §17.4 and §40.3: every acknowledgement has a flag,
       and a policy that cannot be satisfied fails with a structured error —
-      `crates/ono-cli/tests/change_scripting.rs`, case 322-change-in-a-script.
+      `crates/ono-cli/tests/change_scripting.rs`, case `322-change-in-a-script`.
 - [ ] **The apply progress preserves lifecycle boundaries.** Appendix E.4: PREPARE, APPLY and
       VERIFY are separately visible, and no single bar hides whether protection completed —
       `crates/ono-change-render/tests/progress.rs`, case 295-apply-and-verify.
@@ -3574,9 +3574,9 @@ Conventions this subsection relies on:
 
 - [ ] **1. Planning is side-effect free.** `ono-change-core` performs no I/O and depends on nothing
       that does; a plan's assets are `PROPOSED` until apply —
-      `crates/ono-change-core/tests/value_records.rs`, case 280-plan-creates-nothing.
+      `crates/ono-change-core/tests/value_records.rs`, case `280-plan-creates-nothing`.
 - [ ] **2. Protection is explicit in the plan.** PREPARE actions are visible before execution —
-      `crates/ono-change-render/tests/plan.rs`, case 293-protection-is-a-matrix.
+      `crates/ono-change-render/tests/plan.rs`, case `293-protection-is-a-matrix`.
 - [ ] **3. Protection happens before mutation.** There is no lifecycle edge from `prepare-failed`
       to `applying`, checked directly — `crates/ono-change-core/src/state.rs`,
       `xtask/tests/change_contracts.rs`, case 294-prepare-before-mutate.
@@ -3584,13 +3584,13 @@ Conventions this subsection relies on:
       or a coverage — `crates/ono-change-core/src/effect.rs`,
       `crates/ono-change-core/src/protection.rs`.
 - [ ] **5. Historical context remains read-only.** §6.4's refusal —
-      `crates/ono-cli/tests/change_planning.rs`, case 283-plan-refuses-the-past.
+      `crates/ono-cli/tests/change_planning.rs`, case `283-plan-refuses-the-past`.
 - [ ] **6. Targets are frozen at plan sealing.** —
       `crates/ono-change-plan/tests/freeze.rs`, case 282-plan-from-a-pipeline.
 - [ ] **7. Preconditions are revalidated at apply time.** —
       `crates/ono-change-plan/tests/drift.rs`, case 285-drift-stops-apply.
 - [ ] **8. Provider claims are scoped.** A filesystem snapshot protects filesystem state —
-      `crates/ono-change-protection/tests/coverage.rs`, case 293-protection-is-a-matrix.
+      `crates/ono-change-protection/tests/coverage.rs`, case `293-protection-is-a-matrix`.
 - [ ] **9. A snapshot is not a backup.** `shares_failure_domain` travels with the mechanism —
       `crates/ono-change-core/src/asset.rs`, `xtask/tests/change_contracts.rs`.
 - [ ] **10. Rollback is not a universal verb.** `recover` is the cross-domain word, and nothing
@@ -3600,7 +3600,7 @@ Conventions this subsection relies on:
 - [ ] **12. Recovery is itself a change.** It is planned, impact-checked and verified —
       `crates/ono-cli/tests/change_recovery.rs`, case 302-recovery-verification.
 - [ ] **13. Irreversible effects remain visible after protection.** —
-      `crates/ono-change-protection/tests/coverage.rs`, case 293-protection-is-a-matrix.
+      `crates/ono-change-protection/tests/coverage.rs`, case `293-protection-is-a-matrix`.
 - [ ] **14. Verification is separate from execution success.** —
       `crates/ono-change-executor/tests/verify.rs`, case 295-apply-and-verify.
 - [ ] **15. Cleanup never outruns recovery policy.** —
@@ -3614,7 +3614,7 @@ Conventions this subsection relies on:
 
 #### 4.12.15 Release criteria (§63) and delivery
 
-- [ ] **Plan creation is demonstrably side-effect free.** §63.1 — case 280-plan-creates-nothing.
+- [ ] **Plan creation is demonstrably side-effect free.** §63.1 — case `280-plan-creates-nothing`.
 - [ ] **Sealed plans are immutable and digest-verified.** §63.2 —
       `crates/ono-change-core/src/plan.rs`, `crates/ono-change-plan/tests/seal.rs`.
 - [ ] **Target freezing and drift detection work under race tests.** §63.3 —
@@ -3632,7 +3632,7 @@ Conventions this subsection relies on:
       Appendix G.2's eight truth tests — `crates/ono-change-protection/tests/coverage.rs`,
       `crates/ono-recovery-zfs/tests/boundaries.rs`,
       `crates/ono-recovery-btrfs/tests/boundaries.rs`, case 320-truth-tests.
-- [ ] **Irreversible and unknown effects remain visible.** §63.11 — case 293-protection-is-a-matrix.
+- [ ] **Irreversible and unknown effects remain visible.** §63.11 — case `293-protection-is-a-matrix`.
 - [ ] **Destructive recovery of newer state requires explicit acceptance.** §63.12 —
       case 299-destructive-rollback-is-gated.
 - [ ] **Recovery verification reports domain-specific equivalence.** §63.13 —
@@ -3655,7 +3655,7 @@ Conventions this subsection relies on:
       case 323-change-discoverability.
 - [ ] **Machine-readable output is suitable for scripting.** Every v0.6 command's output is a typed
       value a pipeline can filter and `to json` can serialise —
-      `crates/ono-cli/tests/change_scripting.rs`, case 322-change-in-a-script.
+      `crates/ono-cli/tests/change_scripting.rs`, case `322-change-in-a-script`.
 - [ ] **The shell is unchanged where v0.6 is not used.** v0.2–v0.5 behaviour is green with the
       tranche in the tree: typed pipelines, external programs, adapters, spatial navigation, maps,
       remote links, KUANG/11, the temporal coordinate, prompt and PTY behaviour — proven by the

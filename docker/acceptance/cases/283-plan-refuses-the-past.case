@@ -1,0 +1,68 @@
+# v0.6 §50 phase P2 — §6.4 and §55.1 case 4: a plan intended for application MUST be resolved
+# against present state, and a historical context MUST fail with a structured error explaining that
+# historical state can be inspected but not used as the executable target base.
+#
+# §2.5 is the invariant, and the reason it has its own error rather than reusing v0.5 §4.7's is
+# that the two say different things. `temporal.read_only` says the command changes the system;
+# `change.historical_context_read_only` says the command changes nothing and still cannot be
+# resolved from here, because what it would freeze is a world that no longer exists (ADR-0803).
+case: a plan cannot be resolved from the past, and says why
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  mkdir -p "$HOME/etc"
+  printf 'worker_processes 4;\n' > "$HOME/etc/nginx.conf"
+  printf 'worker_processes 8;\n' > "$HOME/etc/nginx.conf.new"
+
+  echo '== §6.4: planning from a historical coordinate refuses =='
+  ono -c "at -1m
+  plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new" > /tmp/p4.txt 2>&1
+  prove p4a "the refusal carries a code a script can match on (§45)" \
+    'grep -qE "Ono-Sendai-E1715|change\.historical_context_read_only" /tmp/p4.txt'
+  prove p4b "and it names \`now\` as the way back (§6.4)" \
+    'grep -qi "now" /tmp/p4.txt'
+  prove p4c "no plan was produced" \
+    '! grep -q "PLAN NOT EXECUTED" /tmp/p4.txt'
+
+  echo '== §6.4: the coordinate is unchanged by the refusal (v0.5 §12.1) =='
+  ono -c "at -1m
+  plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new
+  look" > /tmp/p4b.txt 2>&1
+  prove p4d "the session is still in the past after the refusal" \
+    'grep -q "PAST" /tmp/p4b.txt'
+
+  echo '== §6.4: `now` makes it work again =='
+  ono -c "at -1m
+  now
+  plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new" > /tmp/p4c.txt 2>&1
+  prove p4e "returning to the present resolves the plan (§6.4)" \
+    'grep -q "PLAN NOT EXECUTED" /tmp/p4c.txt'
+
+  echo '== §6.4: inspecting an existing plan from the past is still allowed =='
+  ono -c "plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new | to json" > /tmp/p4d.json 2>&1
+  prove p4f "a plan made in the present can be listed from the past — history is readable (§6.4)" \
+    'ono -c "at -1m
+  get plan | count | to json" 2>&1 | grep -qE "^[0-9]+$|^\{|^\["'
+
+  echo 'plan-refuses-the-past: done'
+exit: 0
+stdout-contains: PROVED p4a
+stdout-contains: PROVED p4b
+stdout-contains: PROVED p4c
+stdout-contains: PROVED p4d
+stdout-contains: PROVED p4e
+stdout-contains: PROVED p4f
+stdout-contains: plan-refuses-the-past: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

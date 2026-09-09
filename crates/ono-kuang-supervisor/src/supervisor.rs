@@ -4244,6 +4244,18 @@ impl Actor {
                     ),
                 ));
             }
+            // §19.1 gives a rule one dimension. A finding in another one is a rule reporting
+            // about something it never said it looks at, and `explain` would name a rule whose
+            // registered description does not describe the finding beside it.
+            if finding.dimension != rule.dimension {
+                return Err(WireError::from_core(
+                    ono_core::ErrorCode::KuangCapabilityDenied,
+                    format!(
+                        "rule `{}` emits into `{}` and found `{}`",
+                        rule.rule_id, rule.dimension, finding.dimension
+                    ),
+                ));
+            }
             // The declared ceiling, applied the only way §19.2 allows one to be applied: a
             // finding above what the rule said it emits is refused, and a finding below it is
             // taken and composed as a maximum like any other.

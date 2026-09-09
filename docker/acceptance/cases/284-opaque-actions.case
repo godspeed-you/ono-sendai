@@ -1,0 +1,56 @@
+# v0.6 §50 phase P2 — §6.2, §6.3 and §55.1 case 5: an arbitrary external command is not plannable
+# by default, and §6.3's explicit escape classifies impact and reversibility as unknown.
+#
+# §6.3's last sentence is the one this case exists for: "Opaque actions MUST NOT receive a
+# PROTECTED status merely because a filesystem snapshot exists somewhere on the host." An opaque
+# action beside a protected filesystem is exactly the case where a plausible implementation says
+# PROTECTED and is wrong, and Appendix A.7 is the rule that stops it.
+case: an opaque command is not plannable, and its escape earns no protection
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== §6.2: Ono cannot reason about an arbitrary command, so it does not pretend to =='
+  ono -c "plan sh -c 'rm -rf /somewhere'" > /tmp/p5.txt 2>&1
+  prove p5a "the refusal carries a code (§45)" \
+    'grep -qE "Ono-Sendai-E1714|change\.opaque_action_forbidden|Ono-Sendai-E1713|change\.action_not_plannable" /tmp/p5.txt'
+  prove p5b "and no plan was produced" \
+    '! grep -q "PLAN NOT EXECUTED" /tmp/p5.txt'
+
+  echo '== §6.2: the refusal says what a plannable operation would have to declare (§6.1) =='
+  prove p5c "the refusal explains rather than only refusing (§45, §16.4 of v0.2)" \
+    'grep -qiE "contract|declare|scope|side effect" /tmp/p5.txt'
+
+  echo '== §53: the escape is off by default =='
+  ono -c "plan --opaque sh -c 'true'" > /tmp/p5b.txt 2>&1
+  prove p5d "\`--opaque\` alone does not enable it: \`change.allow_opaque_actions\` is false (§53)" \
+    'grep -qE "Ono-Sendai-E17|change\." /tmp/p5b.txt'
+
+  echo '== §6.3 and Appendix A.7: where the escape is enabled, the plan is capped =='
+  ono -c "set config change.allow_opaque_actions true
+  plan --opaque sh -c 'true' | to json" > /tmp/p5c.json 2>&1
+  prove p5e "an opaque plan does not claim to be protected (§6.3, Appendix A.7)" \
+    '! grep -q "\"protection_level\": *\"protected\"" /tmp/p5c.json'
+  prove p5f "and its effects are unknown rather than absent (§8.1, §2.4)" \
+    'grep -qE "unknown" /tmp/p5c.json || grep -qE "Ono-Sendai-E17" /tmp/p5c.json'
+
+  echo 'opaque-actions: done'
+exit: 0
+stdout-contains: PROVED p5a
+stdout-contains: PROVED p5b
+stdout-contains: PROVED p5c
+stdout-contains: PROVED p5d
+stdout-contains: PROVED p5e
+stdout-contains: PROVED p5f
+stdout-contains: opaque-actions: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

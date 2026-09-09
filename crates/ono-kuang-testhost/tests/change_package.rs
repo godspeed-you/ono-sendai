@@ -134,7 +134,11 @@ fn should_report_every_contribution_type_when_the_package_declares_all_five() {
     // are documents. A package contributing all of them is readable without being run (§31.68).
     let scratch = package(Some(RECOVERY), CAPABILITIES);
     let report = check_change_package(scratch.path());
-    assert!(report.problems.is_empty(), "problems: {:?}", report.problems);
+    assert!(
+        report.problems.is_empty(),
+        "problems: {:?}",
+        report.problems
+    );
     assert_eq!(
         report.recovery_providers,
         vec!["dev.example.pg.recovery-provider.database".to_owned()]
@@ -208,13 +212,21 @@ fn should_report_the_consistency_a_provider_can_actually_own_when_it_cannot_quie
     // The ceiling reflects §39.2 rather than the package's ambition: a provider without quiesce
     // may claim `crash-consistent`, which PostgreSQL's own WAL semantics can recover from
     // (§39.2), and the report says so instead of the class the document asked for.
-    let document = RECOVERY
-        .replace(", recovery.quiesce", "")
-        .replace("consistency: application-consistent", "consistency: crash-consistent");
+    let document = RECOVERY.replace(", recovery.quiesce", "").replace(
+        "consistency: application-consistent",
+        "consistency: crash-consistent",
+    );
     let scratch = package(Some(&document), CAPABILITIES);
     let report = check_change_package(scratch.path());
-    assert!(report.problems.is_empty(), "problems: {:?}", report.problems);
-    assert_eq!(report.consistency_ceiling.as_deref(), Some("crash-consistent"));
+    assert!(
+        report.problems.is_empty(),
+        "problems: {:?}",
+        report.problems
+    );
+    assert_eq!(
+        report.consistency_ceiling.as_deref(),
+        Some("crash-consistent")
+    );
 }
 
 #[test]
@@ -262,7 +274,10 @@ fn should_refuse_a_provider_id_outside_the_package_namespace() {
     let scratch = package(Some(&document), CAPABILITIES);
     let report = check_change_package(scratch.path());
     assert!(
-        report.problems.iter().any(|problem| problem.contains("31.5")),
+        report
+            .problems
+            .iter()
+            .any(|problem| problem.contains("31.5")),
         "spec §31.5: `ono.*` belongs to the project, got {:?}",
         report.problems
     );
@@ -289,7 +304,10 @@ fn should_refuse_a_restore_method_outside_appendix_c1() {
     let scratch = package(Some(&document), CAPABILITIES);
     let report = check_change_package(scratch.path());
     assert!(
-        report.problems.iter().any(|problem| problem.contains("wave-a-wand")),
+        report
+            .problems
+            .iter()
+            .any(|problem| problem.contains("wave-a-wand")),
         "Appendix C.1 is the list of methods, got {:?}",
         report.problems
     );
@@ -321,7 +339,10 @@ fn should_refuse_a_risk_rule_outside_the_package_namespace() {
     );
     let report = check_change_package(scratch.path());
     assert!(
-        report.problems.iter().any(|problem| problem.contains("namespaced")),
+        report
+            .problems
+            .iter()
+            .any(|problem| problem.contains("namespaced")),
         "got {:?}",
         report.problems
     );
@@ -332,11 +353,16 @@ fn should_refuse_a_risk_rule_naming_a_dimension_v0_6_does_not_define() {
     let scratch = package(Some(RECOVERY), CAPABILITIES);
     scratch.write(
         "contributions/rules.yaml",
-        RULES.replace("dimension: downtime", "dimension: vibes").as_str(),
+        RULES
+            .replace("dimension: downtime", "dimension: vibes")
+            .as_str(),
     );
     let report = check_change_package(scratch.path());
     assert!(
-        report.problems.iter().any(|problem| problem.contains("vibes")),
+        report
+            .problems
+            .iter()
+            .any(|problem| problem.contains("vibes")),
         "§19.1 lists ten dimensions, got {:?}",
         report.problems
     );
@@ -355,7 +381,10 @@ fn should_refuse_a_verification_check_naming_an_equivalence_domain_outside_secti
     );
     let report = check_change_package(scratch.path());
     assert!(
-        report.problems.iter().any(|problem| problem.contains("25.1")),
+        report
+            .problems
+            .iter()
+            .any(|problem| problem.contains("25.1")),
         "got {:?}",
         report.problems
     );
@@ -372,7 +401,10 @@ fn should_refuse_an_impact_provider_relating_a_type_nothing_carries() {
     );
     let report = check_change_package(scratch.path());
     assert!(
-        report.problems.iter().any(|problem| problem.contains("phantom")),
+        report
+            .problems
+            .iter()
+            .any(|problem| problem.contains("phantom")),
         "an impact provider that names a type nothing carries cannot draw an edge to it, got {:?}",
         report.problems
     );
@@ -383,12 +415,19 @@ fn should_refuse_a_change_view_for_a_state_a_plan_cannot_be_in() {
     let scratch = package(Some(RECOVERY), CAPABILITIES);
     scratch.write(
         "contributions/views.yaml",
-        VIEWS.replace("plan_states: [sealed, recovery-planned]", "plan_states: [almost-done]")
+        VIEWS
+            .replace(
+                "plan_states: [sealed, recovery-planned]",
+                "plan_states: [almost-done]",
+            )
             .as_str(),
     );
     let report = check_change_package(scratch.path());
     assert!(
-        report.problems.iter().any(|problem| problem.contains("almost-done")),
+        report
+            .problems
+            .iter()
+            .any(|problem| problem.contains("almost-done")),
         "§4.1's states are the ones a plan can be in, got {:?}",
         report.problems
     );

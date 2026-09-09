@@ -26,6 +26,26 @@ pub fn read(relative: &str) -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{relative} is readable: {error}"))
 }
 
+/// The passage a heading owns in a document, or `None` when the document carries no such heading.
+///
+/// A checklist harvester reads one subsection and neither its neighbour above nor the stopping
+/// rule below, so the passage runs from the heading to the earliest of the markers that end it —
+/// the earliest rather than the first that matches, because a subsection followed by both a
+/// successor and the stopping rule ends at the successor.
+///
+/// The document is a parameter rather than a path because every suite that reads a checklist reads
+/// two of them: the repository's own `docs/ACCEPTANCE.md`, and a scratch copy mutated to carry the
+/// defect the rule is supposed to report.
+pub fn section(document: &str, heading: &str, ends: &[&str]) -> Option<String> {
+    let start = document.find(heading)?;
+    let end = ends
+        .iter()
+        .filter_map(|marker| document[start..].find(marker))
+        .min()
+        .map_or(document.len(), |offset| start + offset);
+    Some(document[start..end].to_owned())
+}
+
 /// Every `` `file.rs::test_name` `` a passage names, with the file each one belongs to.
 ///
 /// The checklist writes a file once and then lists several of its tests as bare `::name`, the

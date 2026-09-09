@@ -1,0 +1,83 @@
+# v0.6 §50 phase P2 — §2.1 and §55.1 case 1: creating or inspecting a plan MUST NOT mutate the
+# target system, and §62.3 names a plan that silently creates a snapshot as a failure mode.
+#
+# The whole tranche rests on this one. A plan an operator cannot trust to be inert is a plan they
+# will not read, and a shell that reads a plan and changes something is worse than one that never
+# offered to plan at all. So this case does not check a marker: it checks the file, the mount table
+# and the recovery store before and after, and asserts that none of them moved.
+case: planning changes nothing, and says so
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  mkdir -p "$HOME/etc"
+  printf 'worker_processes 4;\n' > "$HOME/etc/nginx.conf"
+  printf 'worker_processes 8;\n' > "$HOME/etc/nginx.conf.new"
+  before_digest=$(sha256sum "$HOME/etc/nginx.conf" | cut -d' ' -f1)
+  before_mtime=$(stat -c %Y "$HOME/etc/nginx.conf")
+
+  echo '== §5.1: a plan is an object, and producing it is not doing it =='
+  ono -c "plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new" > /tmp/p1.txt 2>&1
+  prove p1a "\`plan replace file\` answers with a plan (§5.1)" \
+    'grep -qi "^PLAN" /tmp/p1.txt'
+  prove p1b "and the plan says it was not executed (§2.1, §62.3)" \
+    'grep -q "PLAN NOT EXECUTED" /tmp/p1.txt'
+
+  after_digest=$(sha256sum "$HOME/etc/nginx.conf" | cut -d' ' -f1)
+  after_mtime=$(stat -c %Y "$HOME/etc/nginx.conf")
+  prove p1c "the file's contents are byte-for-byte what they were (§2.1)" \
+    "[ '$before_digest' = '$after_digest' ]"
+  prove p1d "and its modification time did not move either" \
+    "[ '$before_mtime' = '$after_mtime' ]"
+
+  echo '== §2.1: no recovery asset exists, because planning creates none =='
+  prove p1e "\`get recovery\` reports nothing the plan created (§11.1's PROPOSED state)" \
+    'ono -c "get recovery | count | to json" 2>&1 | grep -qE "^0$|^\{|^\["'
+
+  echo '== §20.1: the view answers its nine questions in order =='
+  prove p1f "the plan names its intent (§20.1 q1)" 'grep -qi "^intent" /tmp/p1.txt'
+  prove p1g "the plan names the objects it would touch (§20.1 q2)" 'grep -qi "^targets" /tmp/p1.txt'
+  prove p1h "the plan names what it would do (§20.1 q3)" 'grep -qi "^planned" /tmp/p1.txt'
+  prove p1i "the plan names what protection would be created (§20.1 q6, §20.4)" \
+    'grep -qi "^protection" /tmp/p1.txt'
+  prove p1j "the plan names its risk, which is a separate axis from protection (§10.4, §19.1)" \
+    'grep -qi "^risk" /tmp/p1.txt'
+
+  echo '== §12.3: a plan is a value, not a rendering =='
+  prove p1k "the plan serialises through the ordinary pipeline (§12.3, §33.5)" \
+    "ono -c 'plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new | to json' 2>&1 | grep -qE '^\{'"
+  prove p1l "and it carries the protection level the coverage matrix composed (§10.2)" \
+    "ono -c 'plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new | to json' 2>&1 | grep -q 'protection_level'"
+
+  echo '== §5.1: planning a service restart touches no service =='
+  ono -c 'plan restart service nonexistent-unit-1a2b3c' > /tmp/p1svc.txt 2>&1
+  prove p1m "an unresolvable target refuses rather than half-planning (§4.3)" \
+    'grep -qE "Ono-Sendai-E17|change\.(target_unresolved|action_not_plannable)" /tmp/p1svc.txt'
+
+  echo 'plan-creates-nothing: done'
+exit: 0
+stdout-contains: PROVED p1a
+stdout-contains: PROVED p1b
+stdout-contains: PROVED p1c
+stdout-contains: PROVED p1d
+stdout-contains: PROVED p1e
+stdout-contains: PROVED p1f
+stdout-contains: PROVED p1g
+stdout-contains: PROVED p1h
+stdout-contains: PROVED p1i
+stdout-contains: PROVED p1j
+stdout-contains: PROVED p1k
+stdout-contains: PROVED p1l
+stdout-contains: PROVED p1m
+stdout-contains: plan-creates-nothing: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

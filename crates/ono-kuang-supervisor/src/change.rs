@@ -25,7 +25,7 @@ use ono_kuang_protocol::{
 ///
 /// The five contribution types beside `ActionProvider`, kept together so a host that integrates
 /// the package into the change registries reads one table rather than five fields of `Hello` it
-/// has to re-validate. Everything in here has already passed [`validate`].
+/// has to re-validate. Everything in here has already passed the load-time validation.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ChangeContributions {
     /// The recovery providers the package registered (§48.2, §12.1).
@@ -41,7 +41,7 @@ pub struct ChangeContributions {
 }
 
 impl ChangeContributions {
-    /// Everything the package's `Hello` carried, after [`validate`] accepted it.
+    /// Everything the package's `Hello` carried, after the load-time validation accepted it.
     #[must_use]
     pub fn of(hello: &Hello) -> Self {
         Self {

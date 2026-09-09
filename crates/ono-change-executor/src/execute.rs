@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use jiff::Timestamp;
 use ono_change_core::{
-    ActionId, ActionRole, ActionStatus, ChangeCapability, ChangePlan, DriftFinding, DriftVerdict,
+    ActionId, ActionStatus, ChangeCapability, ChangePlan, DriftFinding, DriftVerdict,
     LifecycleEvent, PlanAction, PlanKind, PlanState, ProtectionAction, ProtectionLevel,
     RecoveryAsset, RecoveryAssetId, RecoveryCapability, RecoveryValidation, Verdict,
     VerificationClass, VerificationContract, VerificationResult, VerificationStatus, error,
@@ -39,7 +39,7 @@ use ono_change_plan::PlanStore;
 use ono_change_protection::ProviderRegistry;
 use ono_value::{ErrorValue, Value};
 
-use crate::strategy::{StrategyRun, TargetResult, run_waves};
+use crate::strategy::{TargetResult, run_waves};
 
 /// What executing one action established (§4.7, Appendix F.2).
 ///
@@ -885,6 +885,11 @@ impl<'a> ApplyRequest<'a> {
     /// `revalidate`, `execute` and `observe` are the whole of the outside world: §7.3's recheck,
     /// §4.7's mutation and §23's observation. Nothing else in this crate reaches past them, which
     /// is what makes §54.5's injected failures a scripted answer rather than a broken machine.
+    ///
+    /// The nine arguments are nine facts the executor is forbidden to obtain for itself: §39.2
+    /// keeps the clock a parameter, §50.1 keeps providers out of the core, and §54.5 needs every
+    /// one of them replaceable by a scripted answer.
+    #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new(
         plan: &'a ChangePlan,

@@ -42,8 +42,8 @@ fn should_carry_every_recovery_scope_field_from_the_wire_into_the_domain_type() 
         wire.domain.as_str(),
         wire.host.as_str(),
     )
-        .covering(wire.covers[0].clone())
-        .covering(wire.covers[1].clone());
+    .covering(wire.covers[0].clone())
+    .covering(wire.covers[1].clone());
     assert_eq!(domain.domain(), "tank/var");
     assert_eq!(domain.domain_kind(), "zfs-dataset");
     assert_eq!(domain.host(), "deck-01");
@@ -266,7 +266,10 @@ fn should_keep_the_model_and_recovery_host_calls_behind_different_capabilities()
     // nothing in the recovery domain — and the recovery families are not read-risk families a
     // model grant could be confused with.
     use ono_kuang_protocol::Capability;
-    assert_eq!(Capability::ModelInfer.risk(), ono_kuang_protocol::Risk::Mutate);
+    assert_eq!(
+        Capability::ModelInfer.risk(),
+        ono_kuang_protocol::Risk::Mutate
+    );
     for recovery in [
         Capability::RecoveryDiscover,
         Capability::RecoveryPrepare,
@@ -280,7 +283,10 @@ fn should_keep_the_model_and_recovery_host_calls_behind_different_capabilities()
         );
         assert!(
             !Capability::ModelInfer.scope_keys().iter().any(|key| {
-                recovery.scope_keys().iter().any(|other| other.name == key.name)
+                recovery
+                    .scope_keys()
+                    .iter()
+                    .any(|other| other.name == key.name)
             }),
             "a `model.infer` scope key that also scoped `{}` would make one grant read as the \
              other",

@@ -1941,10 +1941,7 @@ impl ono_kuang_supervisor::HostServices for FakeHost {
 
     // --- the change and recovery domain of v0.6 §48 -------------------------------------------
 
-    async fn change_plan_read(
-        &self,
-        plan: &str,
-    ) -> Result<Json, ono_kuang_supervisor::HostError> {
+    async fn change_plan_read(&self, plan: &str) -> Result<Json, ono_kuang_supervisor::HostError> {
         if plan != "plan-1" {
             return Err(ono_kuang_supervisor::HostError::not_found(format!(
                 "no plan {plan}"
@@ -1977,9 +1974,7 @@ impl ono_kuang_supervisor::HostServices for FakeHost {
                             ono_change_core::RiskDimension::from_name(
                                 finding.get("dimension")?.as_str()?,
                             )?,
-                            ono_change_core::RiskClass::from_name(
-                                finding.get("class")?.as_str()?,
-                            )?,
+                            ono_change_core::RiskClass::from_name(finding.get("class")?.as_str()?)?,
                             finding.get("rule")?.as_str()?,
                             finding.get("reason")?.as_str()?,
                         ))
@@ -1987,10 +1982,8 @@ impl ono_kuang_supervisor::HostServices for FakeHost {
                     .collect()
             })
             .unwrap_or_default();
-        let composed = ono_kuang_supervisor::compose_risk(
-            ono_change_core::RiskClass::High,
-            &contributed,
-        );
+        let composed =
+            ono_kuang_supervisor::compose_risk(ono_change_core::RiskClass::High, &contributed);
         self.plan_contributions
             .lock()
             .expect("the fake host's lock")
@@ -3372,6 +3365,25 @@ fn manifest_with_change() -> String {
     )
 }
 
+/// The command that makes one `recovery.*` or `verification.observe` call.
+///
+/// Each declares only the capability its own call costs, so a partial grant refuses exactly the
+/// call it does not cover rather than the whole surface (§12.2, §48.4).
+fn recovery_command(call: &str) -> String {
+    format!("dev.example.echo.command.{}", call.replace(['.', '_'], "-"))
+}
+
+/// How one invocation was refused, whichever layer refused it.
+async fn refusal(plugin: &LoadedPlugin, command: &str) -> String {
+    match plugin.invoke(command, args(&[])).await {
+        Err(error) => error.name,
+        Ok(invocation) => {
+            let (_, result) = invocation.collect().await;
+            result.error.expect("a structured refusal").name
+        }
+    }
+}
+
 /// A host that records plan contributions, recovery reports and verification results.
 fn change_host() -> std::sync::Arc<FakeHost> {
     std::sync::Arc::new(FakeHost::default())
@@ -3415,7 +3427,11 @@ async fn should_register_all_five_new_contribution_types_when_a_change_package_l
     );
     assert_eq!(change.impact_providers.len(), 1);
     assert_eq!(change.verification_providers.len(), 1);
-    assert_eq!(change.risk_rules.len(), 1);
+    assert_eq!(
+        change.risk_rules.len(),
+        2,
+        "§19.2: both contributed rules are registered"
+    );
     assert_eq!(change.change_views.len(), 1);
     plugin
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
@@ -3569,9 +3585,14 @@ async fn should_refuse_a_plan_action_to_a_package_that_can_only_describe_and_con
         .invoke("dev.example.echo.command.plan-execute", args(&[]))
         .await
         .expect_err("§48.4: describing impact is not permission to execute");
-    assert_eq!(error.name, "capability.denied");
-    assert!(
-        error.message.contains("change.action.execute"),
+    assert_eq!(
+        error.name, "permission.denied",
+        "K11P §20.3: a package installed without the authority is refused with a remedy, got \
+         {error:?}"
+    );
+    assert_eq!(
+        error.metadata.get("capability"),
+        Some(&json!(["change.action.execute"])),
         "the denial names the capability that was missing, got {error:?}"
     );
     let audited = plugin.audit().iter().any(|event| {
@@ -3640,7 +3661,12 @@ async fn should_raise_the_composed_risk_class_when_a_contributed_rule_finds_a_hi
     let invocation = plugin
         .invoke(
             "dev.example.echo.command.plan-contribute",
-            args(&[("plan", json!("plan-1")), ("class", json!("critical"))]),
+            args(&[
+                ("plan", json!("plan-1")),
+                ("class", json!("critical")),
+                ("rule", json!("dev.example.echo.risk.replica-loss")),
+                ("dimension", json!("irreversibility")),
+            ]),
         )
         .await
         .expect("starts");
@@ -3817,7 +3843,9 @@ async fn should_answer_every_recovery_and_verification_call_the_protocol_contrac
         .iter()
         .filter_map(|call| call.get("id").and_then(serde_yaml_ng::Value::as_str))
         .filter(|id| {
-            id.starts_with("recovery.") || id.starts_with("change.") || *id == "verification.observe"
+            id.starts_with("recovery.")
+                || id.starts_with("change.")
+                || *id == "verification.observe"
         })
         .map(str::to_owned)
         .collect();
@@ -3833,10 +3861,7 @@ async fn should_answer_every_recovery_and_verification_call_the_protocol_contrac
             continue;
         }
         let invocation = plugin
-            .invoke(
-                &recovery_command(call),
-                args(&[]),
-            )
+            .invoke(&recovery_command(call), args(&[]))
             .await
             .expect("starts");
         let (_, result) = invocation.collect().await;
@@ -3864,10 +3889,7 @@ async fn should_record_every_recovery_report_with_the_call_it_came_from() {
     let plugin = change_plugin(host.clone()).await;
     for call in ["recovery.discover", "recovery.prepare", "recovery.restore"] {
         let invocation = plugin
-            .invoke(
-                &recovery_command(call),
-                args(&[]),
-            )
+            .invoke(&recovery_command(call), args(&[]))
             .await
             .expect("starts");
         let (_, result) = invocation.collect().await;
@@ -3905,13 +3927,18 @@ async fn should_deny_a_restore_to_a_package_that_holds_only_the_read_recovery_ca
         .load()
         .await
         .expect("loads");
-    let invocation = plugin
+    let error = plugin
         .invoke(&recovery_command("recovery.restore"), args(&[]))
         .await
-        .expect("starts");
-    let (_, result) = invocation.collect().await;
-    let error = result.error.expect("a structured refusal");
-    assert_eq!(error.name, "capability.denied");
+        .expect_err("§12.2: holding the read capabilities buys nothing of the destructive one");
+    assert_eq!(
+        error.name, "permission.denied",
+        "K11P §20.3: the refusal carries a remedy, got {error:?}"
+    );
+    assert_eq!(
+        error.metadata.get("capability"),
+        Some(&json!(["recovery.restore"]))
+    );
     let audited = plugin
         .audit()
         .iter()
@@ -3962,10 +3989,7 @@ async fn should_serve_resume_under_the_capability_that_quiesced() {
         .expect("loads");
     for call in ["recovery.quiesce", "recovery.resume"] {
         let invocation = plugin
-            .invoke(
-                &recovery_command(call),
-                args(&[]),
-            )
+            .invoke(&recovery_command(call), args(&[]))
             .await
             .expect("starts");
         let (_, result) = invocation.collect().await;
@@ -4000,7 +4024,10 @@ async fn should_audit_a_quiesce_under_the_advisory_application_scope() {
     let recorded = plugin.audit().iter().any(|event| {
         event.capability == "recovery.quiesce" && event.result == AuditResult::Success
     });
-    assert!(recorded, "§31.37: the use is audited whatever the scope can prove");
+    assert!(
+        recorded,
+        "§31.37: the use is audited whatever the scope can prove"
+    );
     plugin
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
         .await;
@@ -4039,29 +4066,32 @@ async fn should_deny_a_recovery_call_to_a_package_holding_no_recovery_capability
         .load()
         .await
         .expect("loads degraded");
+    // The two layers answer differently, and both are refusals. An observation-class family is
+    // decided at install, so an ungranted call reaches the broker and is `capability.denied`; a
+    // class D or E family is decided explicitly, so the permission layer refuses first and hands
+    // back a remedy (K11P §7, §20.3). What §48.4 needs is that neither is served.
     for call in [
         "recovery.discover",
+        "recovery.estimate_cost",
+        "verification.observe",
+    ] {
+        assert_eq!(
+            refusal(&plugin, &recovery_command(call)).await,
+            "capability.denied",
+            "{call}: deny by default (§31.19)"
+        );
+    }
+    for call in [
         "recovery.prepare",
         "recovery.restore",
         "recovery.cleanup",
-        "recovery.estimate_cost",
         "recovery.quiesce",
-        "verification.observe",
     ] {
-        let refused = match plugin
-            .invoke(
-                &recovery_command(call),
-                args(&[]),
-            )
-            .await
-        {
-            Err(error) => error.name,
-            Ok(invocation) => {
-                let (_, result) = invocation.collect().await;
-                result.error.expect("a structured refusal").name
-            }
-        };
-        assert_eq!(refused, "capability.denied", "{call}: deny by default (§31.19)");
+        assert_eq!(
+            refusal(&plugin, &recovery_command(call)).await,
+            "permission.denied",
+            "{call}: nothing is granted by being declared (K11P §20.3)"
+        );
     }
     plugin
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
@@ -4119,18 +4149,12 @@ async fn should_leave_recovery_coverage_untouched_when_a_model_calls_a_change_re
         "§31.43: the inference is audited"
     );
     assert!(
-        host.recovery_reports
-            .lock()
-            .expect("the lock")
-            .is_empty(),
+        host.recovery_reports.lock().expect("the lock").is_empty(),
         "§49.3: a model answer produced no recovery fact, because there is no path by which it \
          could"
     );
     assert!(
-        host.plan_contributions
-            .lock()
-            .expect("the lock")
-            .is_empty(),
+        host.plan_contributions.lock().expect("the lock").is_empty(),
         "§49.3: and no plan contribution either"
     );
     plugin

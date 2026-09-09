@@ -137,3 +137,14 @@ Two vocabularies that are not the same thing. A **provider capability** is what 
 | `temporal.contribute.events` | mutate | none | Contribute canonical temporal events of the granted kinds. |
 | `temporal.contribute.causality` | mutate | none | Register namespaced causal rules and contribute the causal links they produce. |
 | `temporal.recorder.manage` | mutate | none | Start and stop the persistent history recorder. |
+| `change.plan.read` | read | none | Read change plans, their actions and their computed impact. |
+| `change.plan.contribute` | observe | none | Contribute actions, effects, impact edges and risk findings to a plan being resolved. |
+| `change.action.execute` | mutate | conditional | Carry out a mutating plan action. |
+| `verification.observe` | read | none | Observe a verification contract and report the result. |
+| `recovery.discover` | read | none | Find candidate protection for a target. |
+| `recovery.prepare` | mutate | conditional | Create a recovery asset, which mutates the storage or control plane. |
+| `recovery.restore` | destructive | required | Use a recovery asset to put state back. |
+| `recovery.cleanup` | mutate | conditional | Remove a recovery asset. |
+| `recovery.estimate-cost` | read | none | Report what a recovery asset costs to create and to keep. |
+| `recovery.quiesce` | mutate | conditional | Pause an application so a capture is application-consistent. |
+| `recovery.transaction` | mutate | conditional | Begin, prepare, commit and roll back inside the provider's own boundary. |
