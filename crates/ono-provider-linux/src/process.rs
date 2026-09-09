@@ -832,11 +832,21 @@ fn link(path: &Path, sources: &mut Vec<String>) -> Value {
 ///
 /// v0.4 §10.2 makes the pid namespace part of a process's spatial identity: the same pid number
 /// means different processes in different namespaces, so a container's pid 1 and the host's pid 1
-/// must not reduce to one identity. A link nobody can read is null — never the root namespace,
-/// which would be a guess (spec §35.3).
+/// must not reduce to one identity. The namespace is never guessed at (spec §35.3) — but not
+/// knowing it has two causes, and §35.2 keeps them apart: a kernel that has no namespace to name
+/// is an absence, and a kernel that will not name the one it has is a refusal. Only the first is
+/// null; the second is the provider's own error, so the exit built from this field can say
+/// `permission_denied` rather than `empty` (§42.4, ADR-0784).
 fn namespace_inode(dir: &Path, kind: &str, sources: &mut Vec<String>) -> Value {
     let path = dir.join("ns").join(kind);
     match fs::read_link(&path) {
+        // A link the caller may not look through is refused rather than answered, and kernels
+        // differ in how: some fail the `readlink` with EACCES, some let it succeed and disclose
+        // nothing. An empty name is not a name in a shape this shell does not model — a namespace
+        // link always reads `<kind>:[<inode>]` where it reads at all — so it is the second form
+        // of that refusal, and reporting it as an absent namespace would be the false empty
+        // collection §42.4 forbids.
+        Ok(target) if target.as_os_str().is_empty() => withheld(&path, kind).into_value(),
         Ok(target) => {
             let text = target.to_string_lossy();
             let inode = text
@@ -852,14 +862,35 @@ fn namespace_inode(dir: &Path, kind: &str, sources: &mut Vec<String>) -> Value {
                 None => Value::Null,
             }
         }
+        // A kernel built without namespaces has none to name; that is an absence and reads as one.
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Value::Null,
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
             io_error(&error, &path).into_value()
         }
-        // `readlink` on a namespace link fails with EACCES for another user's process on some
-        // kernels and with ENOENT on a kernel built without namespaces; neither is an inode.
+        // Anything else is a link this reader could not resolve, and it is not an inode either.
         Err(_) => Value::Null,
     }
+}
+
+/// The refusal a kernel states by answering `readlink` on a namespace link with nothing.
+///
+/// There is no `io::Error` to translate, because the syscall succeeded; what failed is the
+/// disclosure. §35.1 is the reason it is a permission condition and not an unknown: the caller
+/// could not legitimately query the namespace, so the spatial layer must say so in the one word
+/// §35.2 reserves for it.
+fn withheld(path: &Path, kind: &str) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::IoPermissionDenied,
+        format!(
+            "{}: the kernel named no {kind} namespace for this process",
+            path.display()
+        ),
+    )
+    .with_target(ValueRef::path(path))
+    .with_help(
+        "a namespace link is readable for a process this user may inspect; pid 1 and other \
+         users' processes are not",
+    )
 }
 
 /// The signal an action names, defaulting to what the verb means.

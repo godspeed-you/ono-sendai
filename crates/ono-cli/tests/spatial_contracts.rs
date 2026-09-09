@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use ono_testkit::ono;
-use ono_testkit::{Scratch, Shell, scratch};
+use ono_testkit::{Scratch, Shell, SkipReason, require, scratch};
 use serde_yaml_ng::Value;
 
 mod support;
@@ -665,6 +665,75 @@ fn should_serve_every_relation_it_declares_and_declare_every_relation_it_serves(
              name was understood.)"
         );
     }
+}
+
+#[test]
+fn should_report_an_exit_the_kernel_refuses_as_denied_rather_than_as_empty() {
+    // §35.2 keeps `empty` and `permission_denied` apart on purpose, and "These states MUST remain
+    // distinct": `empty` says the group was read and held nothing, `permission_denied` says it was
+    // not read. §42.4 says what that costs — "Denied information must produce `permission_denied`
+    // or `unknown`, never false empty collections" — and §35.3 is the rule underneath it, that an
+    // unknown is never fabricated. A refusal presented as an absence is a fabricated fact about
+    // the system: it tells the reader the process has no namespace, which nobody established.
+    //
+    // The situation is a property of the host rather than of the code, so the test decides at
+    // runtime instead of being ignored (v0.4.1 §38.1): pid 1 belongs to root, and an ordinary user
+    // is told nothing about `/proc/1/ns/`. A run that may read it — as root, or on a kernel that
+    // grants it — has no refused exit to observe and skips, rather than reporting coverage it did
+    // not have.
+    let withheld = match std::fs::read_link("/proc/1/ns/pid") {
+        // Where the kernel will not disclose the namespace it answers `readlink` with nothing at
+        // all on some kernels and with `EACCES` on others. Either way the name was not given.
+        Ok(target) => target.as_os_str().is_empty(),
+        Err(error) => error.kind() == std::io::ErrorKind::PermissionDenied,
+    };
+    if require(
+        withheld,
+        SkipReason::MissingPrivilege,
+        "this run may read `/proc/1/ns/pid`, so `process/1` has no exit the kernel refuses",
+    )
+    .unmet()
+    {
+        return;
+    }
+
+    let run = ono("enter process/1; look --json");
+    let view = document(
+        &run,
+        "§24.2: `look --json` returns the place and the exits it has",
+    );
+    let groups = list_at(
+        &view,
+        "groups",
+        "§24.2: `look` presents a place's exits as groups",
+    );
+    let namespaces = groups
+        .iter()
+        .find(|group| field(group, "label").as_str() == Some("namespaces"))
+        .unwrap_or_else(|| {
+            panic!(
+                "§12: a process place lists its namespaces among its exits, got {:?}",
+                run.stdout()
+            )
+        });
+    assert_eq!(
+        field(namespaces, "state").as_str(),
+        Some("permission_denied"),
+        "§35.2/§42.4: this user is told nothing about `/proc/1/ns/`, so the `namespaces` group was \
+         not read. `empty` would claim it was read and held nothing — the false empty collection \
+         §42.4 forbids, and the fabricated unknown of §35.3. Got {namespaces:?}"
+    );
+
+    let probe = ono("enter process/1; try { follow namespace } catch e { $e | to json }");
+    let refusal = caught(&probe, "§40: a spatial refusal is a structured error");
+    assert_eq!(
+        field(&refusal, "name").as_str(),
+        Some("spatial.permission_denied"),
+        "§40/§41.2: `namespace` is a relation the registry declares and this place has, so the \
+         refusal must be the one that happened — the kernel would not say. `spatial.no_relation` \
+         is reserved for a relation name the shell does not know, and answering it here presents \
+         a refusal as an absence. Got {refusal:?}"
+    );
 }
 
 // --- §42 provider conformance for spatial objects ----------------------------------------------

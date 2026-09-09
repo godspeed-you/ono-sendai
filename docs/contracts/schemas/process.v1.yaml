@@ -91,7 +91,9 @@ fields:
     doc: >-
       The inode of the pid namespace the `pid` was read in, from `/proc/<pid>/ns/pid`. Two
       processes in different namespaces can carry the same pid number, so the spatial layer
-      needs this to tell a container's pid 1 from the host's (spec v0.4 §10.2). Null when the
-      link is not readable — never the root namespace, which would be a guess.
+      needs this to tell a container's pid 1 from the host's (spec v0.4 §10.2). Never the root
+      namespace, which would be a guess: null on a kernel that has no namespace to name, and an
+      error value when the kernel will not name the one it has — a refusal is not an absence
+      (spec v0.4 §35.2).
 default_view:
   columns: [pid, name, cpu, memory, user]
