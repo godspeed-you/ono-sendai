@@ -121,6 +121,14 @@ fields:
     doc: >-
       How long creating the asset took, or is expected to take (§38.1's initial latency). Null
       where nobody measured it, which is not zero (spec v0.2 §35.3).
+  io_overhead:
+    type: percent
+    nullable: true
+    doc: >-
+      The I/O overhead retaining the asset imposes, as a share (§38.1). Null wherever no provider
+      measured it, which is every first-party snapshot provider: the copy-on-write cost of a
+      retained snapshot depends on the writes that follow it. Null is unknown, not zero, and §38.2
+      forbids reading it as free.
   quiesce_duration:
     type: duration
     nullable: true
@@ -136,6 +144,13 @@ fields:
     type: bool
     required: true
     doc: Whether restoring from it needs the filesystem unmounted or the system offline (§13.7).
+  cleanup_latency:
+    type: duration
+    nullable: true
+    doc: >-
+      How long removing the asset is expected to take (§38.1's cleanup cost). Null where the
+      provider does not state it. §37.3's preview shows it where it is known, because a cleanup
+      that takes an hour is a different decision from one that takes a second.
   shares_failure_domain:
     type: bool
     required: true

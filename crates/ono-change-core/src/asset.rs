@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use jiff::Timestamp;
-use ono_value::ByteSize;
+use ono_value::{ByteSize, Percent};
 
 use crate::id::{PlanId, RecoveryAssetId};
 use crate::protection::ConsistencyClass;
@@ -225,6 +225,32 @@ pub struct RecoveryValidation {
 }
 
 impl RecoveryValidation {
+    /// §11.4's five checks, in the order the specification lists them.
+    pub const CHECKS: &'static [&'static str] = &[
+        "exists",
+        "identity-matches",
+        "scope-matches",
+        "restore-available",
+        "permissions-present",
+    ];
+
+    /// Whether one of [`RecoveryValidation::CHECKS`] passed, or `None` for a name that is not one.
+    ///
+    /// §11.4 makes creating an asset insufficient on its own, so a caller that wants to say which
+    /// check answered what asks by name rather than reading five accessors and hoping the list is
+    /// still five long.
+    #[must_use]
+    pub const fn passed(&self, check: &str) -> Option<bool> {
+        match check.as_bytes() {
+            b"exists" => Some(self.exists),
+            b"identity-matches" => Some(self.identity_matches),
+            b"scope-matches" => Some(self.scope_matches),
+            b"restore-available" => Some(self.restore_available),
+            b"permissions-present" => Some(self.permissions_present),
+            _ => None,
+        }
+    }
+
     /// Records a validation in which every §11.4 check was made and passed.
     #[must_use]
     pub fn complete(at: Timestamp, detail: impl Into<Arc<str>>) -> Self {
@@ -368,18 +394,35 @@ impl RecoveryValidation {
 /// Every figure is optional and every figure is labelled estimated by
 /// [`RecoveryCost::is_estimated`], because §37.5 requires it wherever filesystem accounting is not
 /// exact, and §38.2 forbids displaying "free" for a copy-on-write snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+///
+/// §38.1 names six dimensions and this type carries all six, including the two no first-party
+/// snapshot provider can measure. A dimension a provider cannot answer stays `None` and renders as
+/// unknown (§35.3), which is a different statement from zero — and the reason the field exists at
+/// all is that a KUANG/11 provider that *can* answer it needs somewhere to put the answer.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct RecoveryCost {
     initial_bytes: Option<ByteSize>,
     retained_bytes: Option<ByteSize>,
     estimated: bool,
     creation_latency: Option<std::time::Duration>,
+    io_overhead: Option<Percent>,
     quiesce: Option<std::time::Duration>,
     requires_reboot: bool,
     requires_offline: bool,
+    cleanup_latency: Option<std::time::Duration>,
 }
 
 impl RecoveryCost {
+    /// §38.1's six dimensions, in the order the specification lists them.
+    pub const DIMENSIONS: &'static [&'static str] = &[
+        "initial-latency",
+        "retained-storage-growth",
+        "io-overhead",
+        "quiesce-duration",
+        "reboot-downtime-requirement",
+        "cleanup-cost",
+    ];
+
     /// A cost nobody has measured yet.
     #[must_use]
     pub const fn unknown() -> Self {
@@ -388,9 +431,30 @@ impl RecoveryCost {
             retained_bytes: None,
             estimated: true,
             creation_latency: None,
+            io_overhead: None,
             quiesce: None,
             requires_reboot: false,
             requires_offline: false,
+            cleanup_latency: None,
+        }
+    }
+
+    /// Whether this cost states a figure for one of [`RecoveryCost::DIMENSIONS`].
+    ///
+    /// `None` for a name that is not a dimension. §38.2 is why a renderer asks rather than
+    /// assuming: a dimension nobody measured is shown as unknown, never as free.
+    #[must_use]
+    pub fn states(&self, dimension: &str) -> Option<bool> {
+        match dimension {
+            "initial-latency" => Some(self.creation_latency.is_some()),
+            "retained-storage-growth" => {
+                Some(self.retained_bytes.is_some() || self.initial_bytes.is_some())
+            }
+            "io-overhead" => Some(self.io_overhead.is_some()),
+            "quiesce-duration" => Some(self.quiesce.is_some()),
+            "reboot-downtime-requirement" => Some(self.requires_reboot || self.requires_offline),
+            "cleanup-cost" => Some(self.cleanup_latency.is_some()),
+            _ => None,
         }
     }
 
@@ -415,10 +479,29 @@ impl RecoveryCost {
         self
     }
 
+    /// Records the I/O overhead retaining this asset imposes, as a share (§38.1).
+    ///
+    /// Neither first-party snapshot provider measures it: the copy-on-write cost of a retained
+    /// snapshot depends on the write pattern that follows, which is not knowable at creation. A
+    /// provider that instruments its own storage states it here rather than leaving an operator to
+    /// infer it from the retained size.
+    #[must_use]
+    pub const fn with_io_overhead(mut self, overhead: Percent) -> Self {
+        self.io_overhead = Some(overhead);
+        self
+    }
+
     /// Records how long an application must be quiesced for this asset (§18.4, §38.1).
     #[must_use]
     pub const fn with_quiesce(mut self, quiesce: std::time::Duration) -> Self {
         self.quiesce = Some(quiesce);
+        self
+    }
+
+    /// Records how long removing this asset is expected to take (§38.1, §37.3).
+    #[must_use]
+    pub const fn with_cleanup_latency(mut self, latency: std::time::Duration) -> Self {
+        self.cleanup_latency = Some(latency);
         self
     }
 
@@ -460,10 +543,22 @@ impl RecoveryCost {
         self.creation_latency
     }
 
+    /// The I/O overhead retaining the asset imposes, where a provider measured it (§38.1).
+    #[must_use]
+    pub const fn io_overhead(&self) -> Option<Percent> {
+        self.io_overhead
+    }
+
     /// How long an application must be quiesced.
     #[must_use]
     pub const fn quiesce(&self) -> Option<std::time::Duration> {
         self.quiesce
+    }
+
+    /// How long removing the asset is expected to take, where a provider stated it (§38.1).
+    #[must_use]
+    pub const fn cleanup_latency(&self) -> Option<std::time::Duration> {
+        self.cleanup_latency
     }
 
     /// Whether restoring needs a reboot.

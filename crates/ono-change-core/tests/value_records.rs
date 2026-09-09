@@ -34,7 +34,7 @@ use ono_change_core::{
     RiskFinding, Strategy, UnknownBoundary, UnrecoverableEffect, VerificationClass,
     VerificationContract, VerificationResult, VerificationSet, VerificationStatus,
 };
-use ono_value::{ByteSize, RecordValue, Value};
+use ono_value::{ByteSize, Percent, RecordValue, Value};
 
 // ---------------------------------------------------------------------------------------------
 // Fixtures
@@ -1619,6 +1619,36 @@ fn should_keep_the_measured_cost_of_an_asset_when_it_is_read_back() {
 }
 
 #[test]
+fn should_keep_every_dimension_the_cost_model_names_when_an_asset_is_read_back() {
+    // §38.1 names six dimensions. A provider that measured I/O overhead or cleanup cost has said
+    // something an operator uses to decide whether to keep an asset, and a store that dropped it
+    // would make the asset look cheaper to retain than it is.
+    let costed = asset().costing(
+        RecoveryCost::unknown()
+            .with_io_overhead(Percent::new(3.5))
+            .with_cleanup_latency(Duration::from_secs(90)),
+    );
+    let record = asset_record(&costed).expect("contract");
+    let read = asset_from_record(&record).expect("round trip");
+    assert_eq!(
+        read.cost().io_overhead(),
+        Some(Percent::new(3.5)),
+        "§38.1: I/O overhead is a cost dimension, and a stored asset keeps it"
+    );
+    assert_eq!(
+        read.cost().cleanup_latency(),
+        Some(Duration::from_secs(90)),
+        "§38.1: cleanup cost is a cost dimension, and §37.3's preview is where it is read"
+    );
+    for dimension in RecoveryCost::DIMENSIONS {
+        assert!(
+            read.cost().states(dimension).is_some(),
+            "§38.1 names `{dimension}`, so the cost model must be able to answer for it"
+        );
+    }
+}
+
+#[test]
 fn should_report_an_unmeasured_cost_as_unknown_rather_than_as_zero() {
     let record = asset_record(&asset()).expect("contract");
     let read = asset_from_record(&record).expect("round trip");
@@ -1628,6 +1658,19 @@ fn should_report_an_unmeasured_cost_as_unknown_rather_than_as_zero() {
         "spec v0.2 §35.3: unknown data is null, never fabricated or zero"
     );
     assert_eq!(read.cost().quiesce(), None);
+    assert_eq!(
+        read.cost().io_overhead(),
+        None,
+        "§38.2: an unmeasured overhead is unknown, and reading it as zero is reading it as free"
+    );
+    assert_eq!(read.cost().cleanup_latency(), None);
+    for dimension in RecoveryCost::DIMENSIONS {
+        assert_eq!(
+            read.cost().states(dimension),
+            asset().cost().states(dimension),
+            "a round trip may not add a figure to `{dimension}` that nobody measured"
+        );
+    }
 }
 
 #[test]

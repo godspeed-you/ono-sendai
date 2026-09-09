@@ -42,8 +42,8 @@ use std::sync::Arc;
 use jiff::Timestamp;
 use ono_core::ErrorCode;
 use ono_value::{
-    ByteSize, ErrorValue, MapValue, Provenance, RecordBuilder, RecordValue, Schema, SchemaId,
-    Value, builtin_schemas,
+    ByteSize, ErrorValue, MapValue, Percent, Provenance, RecordBuilder, RecordValue, Schema,
+    SchemaId, Value, builtin_schemas,
 };
 
 use crate::action::{ActionRole, ActionStatus, Execution, Idempotency, PlanAction};
@@ -423,6 +423,11 @@ pub fn asset_record(asset: &RecoveryAsset) -> Result<RecordValue, ErrorValue> {
     );
     let builder = put(
         builder,
+        "io_overhead",
+        cost.io_overhead().map_or(Value::Null, Value::Percent),
+    );
+    let builder = put(
+        builder,
         "quiesce_duration",
         cost.quiesce()
             .map_or(Value::Null, crate::verification::duration_value),
@@ -436,6 +441,12 @@ pub fn asset_record(asset: &RecoveryAsset) -> Result<RecordValue, ErrorValue> {
         builder,
         "requires_offline",
         Value::Bool(cost.requires_offline()),
+    );
+    let builder = put(
+        builder,
+        "cleanup_latency",
+        cost.cleanup_latency()
+            .map_or(Value::Null, crate::verification::duration_value),
     );
     let builder = put(
         builder,
@@ -1524,8 +1535,14 @@ pub fn asset_from_record(record: &RecordValue) -> Result<RecoveryAsset, ErrorVal
     if let Some(latency) = optional_span(record.get("creation_latency"), "creation_latency")? {
         cost = cost.with_latency(latency);
     }
+    if let Some(overhead) = optional_percent(record.get("io_overhead"), "io_overhead")? {
+        cost = cost.with_io_overhead(overhead);
+    }
     if let Some(quiesce) = optional_span(record.get("quiesce_duration"), "quiesce_duration")? {
         cost = cost.with_quiesce(quiesce);
+    }
+    if let Some(latency) = optional_span(record.get("cleanup_latency"), "cleanup_latency")? {
+        cost = cost.with_cleanup_latency(latency);
     }
     if flag(record.get("requires_reboot"), "requires_reboot")? {
         cost = cost.needing_reboot();
@@ -2299,6 +2316,15 @@ fn optional_span(
     match source {
         None | Some(Value::Null) => Ok(None),
         Some(_) => span(source, field).map(Some),
+    }
+}
+
+/// A percent field that may be null.
+fn optional_percent(source: Option<&Value>, field: &str) -> Result<Option<Percent>, ErrorValue> {
+    match source {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Percent(share)) => Ok(Some(*share)),
+        Some(_) => Err(malformed(field, "is not a percent")),
     }
 }
 
