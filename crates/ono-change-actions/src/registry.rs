@@ -116,6 +116,7 @@ impl RebootRequirement {
 /// One expected direct effect of an operation, as §8.2 shapes it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EffectSpec {
+    object: Option<Arc<str>>,
     domain: EffectDomain,
     kind: EffectKind,
     confidence: EffectConfidence,
@@ -125,6 +126,59 @@ pub struct EffectSpec {
 }
 
 impl EffectSpec {
+    /// Declares one effect, for an adapter stating its own contract (§6.2's second sentence).
+    ///
+    /// `irreversible` starts as [`EffectKind::is_inherently_irreversible`], so an `emit` is
+    /// irreversible without anybody remembering to say so (§35.1).
+    #[must_use]
+    pub fn new(
+        domain: EffectDomain,
+        kind: EffectKind,
+        confidence: EffectConfidence,
+        explanation: impl Into<Arc<str>>,
+    ) -> Self {
+        Self {
+            object: None,
+            domain,
+            kind,
+            confidence,
+            irreversible: kind.is_inherently_irreversible(),
+            compensation: None,
+            explanation: explanation.into(),
+        }
+    }
+
+    /// Names the selector whose value the effect lands on, where it is not the action's target.
+    ///
+    /// `copy file <source> to <destination>` acts on the source and creates the destination, and
+    /// §8.2's `object` is the thing that changed. Without this the plan would show the effect
+    /// against the file it read.
+    #[must_use]
+    pub fn on_selector(mut self, selector: impl Into<Arc<str>>) -> Self {
+        self.object = Some(selector.into());
+        self
+    }
+
+    /// The selector whose value the effect lands on, where the row names one.
+    #[must_use]
+    pub fn object_selector(&self) -> Option<&str> {
+        self.object.as_deref()
+    }
+
+    /// Marks the effect as one no recovery asset undoes (§2.13).
+    #[must_use]
+    pub const fn irreversible(mut self) -> Self {
+        self.irreversible = true;
+        self
+    }
+
+    /// Names the inverse action that restores an acceptable semantic state (§27.4).
+    #[must_use]
+    pub fn compensated_by(mut self, action: impl Into<Arc<str>>) -> Self {
+        self.compensation = Some(action.into());
+        self
+    }
+
     /// The domain the effect acts in (Appendix A.1).
     #[must_use]
     pub const fn domain(&self) -> EffectDomain {
@@ -171,6 +225,20 @@ pub struct VerificationSpec {
 }
 
 impl VerificationSpec {
+    /// Declares one contract, for an adapter stating its own verification options (§6.1).
+    #[must_use]
+    pub fn new(
+        class: VerificationClass,
+        subject: impl Into<Arc<str>>,
+        expression: impl Into<Arc<str>>,
+    ) -> Self {
+        Self {
+            class,
+            subject: subject.into(),
+            expression: expression.into(),
+        }
+    }
+
     /// How much a failure says about the plan (§23.2).
     #[must_use]
     pub const fn class(&self) -> VerificationClass {
@@ -411,10 +479,7 @@ impl OperationRegistry {
             }
             operations.push(operation);
         }
-        Ok(Self {
-            operations,
-            by_id,
-        })
+        Ok(Self { operations, by_id })
     }
 
     /// Every operation, in declaration order.
@@ -504,6 +569,8 @@ struct RawTolerance {
 
 #[derive(Debug, Deserialize)]
 struct RawEffect {
+    #[serde(default)]
+    object: Option<String>,
     domain: String,
     kind: String,
     confidence: String,
@@ -548,7 +615,12 @@ impl RawOperation {
                 ),
             ));
         }
-        let idempotency = word(&id, "idempotency", &self.idempotency, Idempotency::from_name)?;
+        let idempotency = word(
+            &id,
+            "idempotency",
+            &self.idempotency,
+            Idempotency::from_name,
+        )?;
         let reboot = match self.reboot.as_deref() {
             None => RebootDimension::None,
             Some("provider-reported") => RebootDimension::ProviderReported,
@@ -567,17 +639,28 @@ impl RawOperation {
             idempotency_when.push(IdempotencyOverride {
                 option: Arc::from(raw.option.as_str()),
                 value: raw.value,
-                idempotency: word(&id, "idempotency_when", &raw.idempotency, Idempotency::from_name)?,
+                idempotency: word(
+                    &id,
+                    "idempotency_when",
+                    &raw.idempotency,
+                    Idempotency::from_name,
+                )?,
                 doc: Arc::from(raw.doc.as_str()),
             });
         }
         let mut preconditions = Vec::with_capacity(self.preconditions.len());
         for name in &self.preconditions {
-            preconditions.push(word(&id, "preconditions", name, PreconditionKind::from_name)?);
+            preconditions.push(word(
+                &id,
+                "preconditions",
+                name,
+                PreconditionKind::from_name,
+            )?);
         }
         let mut effects = Vec::with_capacity(self.effects.len());
         for raw in self.effects {
             effects.push(EffectSpec {
+                object: raw.object.map(|name| Arc::from(name.as_str())),
                 domain: word(&id, "effects.domain", &raw.domain, EffectDomain::from_name)?,
                 kind: word(&id, "effects.kind", &raw.kind, EffectKind::from_name)?,
                 confidence: word(

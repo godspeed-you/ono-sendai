@@ -14,7 +14,7 @@
 //!   to create a user that does not exist yet is therefore a plan whose precondition holds, and
 //!   one that someone else created in the meantime is material drift.
 //! - **An unobservable fact is not a passing one.** [`Observer::fact`] answers `None` when it
-//!   could not look, and [`Precondition::check`] turns that into [`DriftVerdict::Unknown`], which
+//!   could not look, and [`Precondition::check`] turns that into [`ono_change_core::DriftVerdict::Unknown`], which
 //!   blocks the apply. A precondition nobody could check has not held.
 //!
 //! §7.4's tolerances live here too. A service's CPU usage moving does not invalidate a restart
@@ -93,9 +93,7 @@ const fn detail_of(kind: PreconditionKind) -> &'static str {
             "§7.2: the recovery provider the plan depends on is no longer available, so the way \
              back the plan showed is not there"
         }
-        PreconditionKind::Capability => {
-            "§43.2: the capability this action needs is no longer held"
-        }
+        PreconditionKind::Capability => "§43.2: the capability this action needs is no longer held",
         PreconditionKind::Field => "§7.2: a declared field no longer holds its resolved value",
     }
 }
@@ -116,13 +114,10 @@ pub fn for_target(
     let mut declared = Vec::with_capacity(operation.preconditions().len());
     for kind in operation.preconditions() {
         declared.push(match kind {
-            PreconditionKind::ProviderAvailable => Precondition::new(
-                *kind,
-                provider,
-                field_of(*kind),
-                Value::Bool(true),
-            )
-            .explained(detail_of(*kind)),
+            PreconditionKind::ProviderAvailable => {
+                Precondition::new(*kind, provider, field_of(*kind), Value::Bool(true))
+                    .explained(detail_of(*kind))
+            }
             PreconditionKind::Capability => {
                 let held = capability.map_or(Value::Null, Value::string);
                 Precondition::new(*kind, provider, field_of(*kind), held)
@@ -132,8 +127,12 @@ pub fn for_target(
                 let field = field_of(*kind);
                 let observed = observer.fact(target.identity(), *kind, field);
                 let unobserved = observed.is_none();
-                let precondition =
-                    Precondition::new(*kind, target.identity(), field, observed.unwrap_or_default());
+                let precondition = Precondition::new(
+                    *kind,
+                    target.identity(),
+                    field,
+                    observed.unwrap_or_default(),
+                );
                 if unobserved {
                     precondition.explained(format!(
                         "{}. This fact could not be observed when the plan was resolved, so \
@@ -148,7 +147,11 @@ pub fn for_target(
     }
     for tolerance in operation.tolerances() {
         let observed = observer
-            .fact(target.identity(), PreconditionKind::Field, tolerance.field())
+            .fact(
+                target.identity(),
+                PreconditionKind::Field,
+                tolerance.field(),
+            )
             .unwrap_or_default();
         declared.push(
             Precondition::new(
@@ -164,22 +167,48 @@ pub fn for_target(
     declared
 }
 
+/// What the mechanism a plan depends on says about itself (§7.2, §43.2).
+///
+/// Two of §7.2's facts are about the provider rather than about the object — "recovery provider
+/// still available", and §43.2's capability — and an [`Observer`] of the world is the wrong thing
+/// to ask. The provider is asked instead, and it answers for itself.
+pub trait Mechanism {
+    /// Whether `provider` can still run here (§7.2, Appendix G.4).
+    fn is_available(&self, provider: &str) -> bool;
+
+    /// Whether `provider` still holds `capability` (§43.2).
+    fn holds(&self, provider: &str, capability: &str) -> bool;
+}
+
 /// Rechecks every precondition of `action` against the world (§7.3).
 ///
-/// Returns one finding per precondition that did not come back [`DriftVerdict::Unchanged`], so a
+/// Returns one finding per precondition that did not come back [`ono_change_core::DriftVerdict::Unchanged`], so a
 /// tolerated move is reported and does not block: §7.4 makes the difference the contract's to
 /// declare, and [`ono_change_core::DriftVerdict::blocks_apply`] the caller's to read.
 #[must_use]
-pub fn revalidate(action: &PlanAction, observer: &dyn Observer) -> Vec<DriftFinding> {
+pub fn revalidate(
+    action: &PlanAction,
+    observer: &dyn Observer,
+    mechanism: &dyn Mechanism,
+) -> Vec<DriftFinding> {
     action
         .preconditions()
         .iter()
         .filter_map(|precondition| {
-            let observed = observer.fact(
-                precondition.subject(),
-                precondition.kind(),
-                precondition.field(),
-            );
+            let subject = precondition.subject();
+            let observed = match precondition.kind() {
+                PreconditionKind::ProviderAvailable => {
+                    Some(Value::Bool(mechanism.is_available(subject)))
+                }
+                PreconditionKind::Capability => precondition.expected().as_str().ok().map(|name| {
+                    if mechanism.holds(subject, name) {
+                        Value::string(name)
+                    } else {
+                        Value::Null
+                    }
+                }),
+                kind => observer.fact(subject, kind, precondition.field()),
+            };
             let verdict = precondition.check(observed.as_ref());
             (verdict != ono_change_core::DriftVerdict::Unchanged)
                 .then(|| DriftFinding::new(precondition, verdict, observed))

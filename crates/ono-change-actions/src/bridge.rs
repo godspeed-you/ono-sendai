@@ -30,8 +30,7 @@ pub trait Bridge: Send + Sync + std::fmt::Debug {
     /// Whatever the provider could not answer. A per-object failure on the stream's error
     /// channel is returned as an error too: a verification that saw half the answer has not
     /// observed the object, and §23.5 forbids reading a partial answer as a pass.
-    fn snapshot(&self, provider: &dyn Provider, query: &Query)
-    -> Result<Vec<Value>, ErrorValue>;
+    fn snapshot(&self, provider: &dyn Provider, query: &Query) -> Result<Vec<Value>, ErrorValue>;
 }
 
 /// The bridge `ono-cli` supplies: a Tokio runtime handle, blocked on (§51).
@@ -57,11 +56,7 @@ impl Bridge for RuntimeBridge {
         self.handle.block_on(provider.act(action))
     }
 
-    fn snapshot(
-        &self,
-        provider: &dyn Provider,
-        query: &Query,
-    ) -> Result<Vec<Value>, ErrorValue> {
+    fn snapshot(&self, provider: &dyn Provider, query: &Query) -> Result<Vec<Value>, ErrorValue> {
         let stream = self.handle.block_on(async { provider.snapshot(query) })?;
         self.handle.block_on(drain(stream))
     }

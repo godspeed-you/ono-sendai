@@ -144,7 +144,7 @@ plannable_operations:
       a mount or nested subvolume beneath the path is a separate recovery scope and is not
       covered by an asset taken for this one. Appendix B.7 and §32.4: a path on a pseudo- or
       volatile filesystem is never protected merely because its mountpoint sits beneath `/`.
-    preconditions: [content-digest, persistence-domain, provider-available]
+    preconditions: [content-digest, persistence-domain, provider-available, capability]
     tolerances: []
     effects:
       - {domain: filesystem-persistent, kind: modify, confidence: guaranteed, irreversible: false,
@@ -162,11 +162,11 @@ plannable_operations:
       is compensation rather than rollback. A destination that was overwritten comes back only
       from a recovery asset (§32.1), and §32.3 keeps a mounted child beneath either path out of
       that asset's scope.
-    preconditions: [existence, content-digest, persistence-domain, provider-available]
+    preconditions: [existence, content-digest, persistence-domain, provider-available, capability]
     tolerances: []
     effects:
       - {domain: filesystem-persistent, kind: create, confidence: guaranteed, irreversible: false,
-         compensation: "remove the copy",
+         object: destination, compensation: "remove the copy",
          explanation: "the destination holds the source's content, and its metadata where `--preserve` was given"}
     verification:
       - {class: required, subject: "the file", expression: "exists"}
@@ -181,13 +181,14 @@ plannable_operations:
       either way. §7.2's persistence-domain precondition is the one that matters here: a target
       that moved filesystems moved recovery domains, and an asset taken for the source covers
       nothing at the destination.
-    preconditions: [existence, content-digest, persistence-domain, provider-available]
+    preconditions: [existence, content-digest, persistence-domain, provider-available, capability]
     tolerances: []
     effects:
       - {domain: filesystem-persistent, kind: remove, confidence: guaranteed, irreversible: false,
-         compensation: "move it back",
+         object: source, compensation: "move it back",
          explanation: "the source path no longer names the object"}
       - {domain: filesystem-persistent, kind: create, confidence: guaranteed, irreversible: false,
+         object: destination,
          explanation: "the destination path names the object"}
     verification:
       - {class: required, subject: "the file", expression: "exists"}
@@ -201,7 +202,7 @@ plannable_operations:
       inverse action — deletion has no compensation, only restoration. §32.3: a mounted child or
       nested subvolume beneath the path is a separate recovery scope. Appendix B.7 and §32.4: a
       path on a pseudo- or volatile filesystem earns no protection from a snapshot of `/`.
-    preconditions: [existence, content-digest, persistence-domain, provider-available]
+    preconditions: [existence, content-digest, persistence-domain, provider-available, capability]
     tolerances: []
     effects:
       - {domain: filesystem-persistent, kind: remove, confidence: guaranteed, irreversible: false,
@@ -219,7 +220,7 @@ plannable_operations:
       path. §32.3: mounted filesystems and nested subvolumes beneath the directory MUST NOT be
       assumed to belong to the same recovery scope; each is its own, and one asset does not cover
       them all. There is no inverse action.
-    preconditions: [existence, persistence-domain, provider-available]
+    preconditions: [existence, persistence-domain, provider-available, capability]
     tolerances: []
     effects:
       - {domain: filesystem-persistent, kind: remove, confidence: guaranteed, irreversible: false,
@@ -237,7 +238,7 @@ plannable_operations:
       §27.4: setting the previous mode, owner and group back is the inverse action. Appendix C.7
       is the caveat that matters — a recovery asset that restores content and not metadata does
       not restore this, and the gap MUST stay visible rather than being read as coverage.
-    preconditions: [existence, persistence-domain, provider-available]
+    preconditions: [existence, persistence-domain, provider-available, capability]
     tolerances: []
     effects:
       - {domain: filesystem-persistent, kind: modify, confidence: guaranteed, irreversible: false,
@@ -256,7 +257,7 @@ plannable_operations:
       §27.4: setting the previous mode, owner and group back is the inverse action. With
       `--recursive` the inverse is only as good as the record of what every entry held before,
       which a plan does not keep; restoration is then a recovery asset's job (Appendix C.7).
-    preconditions: [existence, persistence-domain, provider-available]
+    preconditions: [existence, persistence-domain, provider-available, capability]
     tolerances: []
     effects:
       - {domain: filesystem-persistent, kind: modify, confidence: guaranteed, irreversible: false,
@@ -275,7 +276,7 @@ plannable_operations:
     recovery_semantics: >-
       §33.2: stopping the service again is the inverse action, and it does not restore the state
       the machine had before the service ran. Compensation, never rollback (§27.4).
-    preconditions: [existence, generation, provider-available]
+    preconditions: [existence, generation, provider-available, capability]
     tolerances:
       - {field: cpu, doc: "§7.4: a service's CPU usage moving while the plan is open does not invalidate it."}
       - {field: memory, doc: "§7.4: resident memory moves continuously and says nothing about the plan's validity."}
@@ -294,7 +295,7 @@ plannable_operations:
       §33.2: starting the service again is the inverse action, and it does not restore process
       identity, in-memory state or connections. Compensation, never rollback (§27.4). §33.1
       keeps the runtime state itself unrecoverable, whatever the filesystem offers.
-    preconditions: [existence, generation, provider-available]
+    preconditions: [existence, generation, provider-available, capability]
     tolerances:
       - {field: cpu, doc: "§7.4: a service's CPU usage moving while the plan is open does not invalidate it."}
       - {field: memory, doc: "§7.4: resident memory moves continuously and says nothing about the plan's validity."}
@@ -314,7 +315,7 @@ plannable_operations:
     recovery_semantics: >-
       §33.2: stopping and starting a service again restores the service, and does not restore
       process identity, in-memory state or connections. Compensation, never rollback (§27.4).
-    preconditions: [existence, generation, provider-available]
+    preconditions: [existence, generation, provider-available, capability]
     tolerances:
       - {field: cpu, doc: "§7.4's own example: CPU usage moving while a service restart is planned does not invalidate the plan."}
       - {field: memory, doc: "§7.4: resident memory moves continuously and says nothing about the plan's validity."}
@@ -357,7 +358,7 @@ plannable_operations:
       §33.1: runtime state is generally not recoverable, and a filesystem snapshot does not
       change that classification. A signal has no inverse action; a service manager may start a
       replacement, and §33.2 makes that a different process rather than this one restored.
-    preconditions: [existence, provider-available]
+    preconditions: [existence, provider-available, capability]
     tolerances:
       - {field: cpu, doc: "§7.4: the process's CPU usage moving does not invalidate a plan to stop it."}
       - {field: memory, doc: "§7.4: resident memory moves continuously and does not invalidate the plan."}
@@ -379,7 +380,7 @@ plannable_operations:
       §33.1: signals, especially SIGKILL, are normally irreversible in v0.6, and a filesystem
       snapshot does not change that classification. There is no inverse action and no recovery
       asset that holds what the process had in memory.
-    preconditions: [existence, provider-available]
+    preconditions: [existence, provider-available, capability]
     tolerances:
       - {field: cpu, doc: "§7.4: the process's CPU usage moving does not invalidate a plan to signal it."}
       - {field: memory, doc: "§7.4: resident memory moves continuously and does not invalidate the plan."}
@@ -401,7 +402,7 @@ plannable_operations:
       §27.4: setting the previous priority back is the inverse action. On Linux lowering a
       process's niceness needs privilege the caller may not get back, so the inverse is
       compensation that may itself refuse.
-    preconditions: [existence, provider-available]
+    preconditions: [existence, provider-available, capability]
     tolerances:
       - {field: cpu, doc: "§7.4: CPU usage moving is what a priority change is about, and it does not invalidate the plan."}
     effects:
@@ -419,7 +420,7 @@ plannable_operations:
       §33.1: runtime state is generally not recoverable. What an arbitrary signal does is the
       receiving process's decision, so there is no inverse action to name and §6.1's recovery
       semantics are an explicit lack of them.
-    preconditions: [existence, provider-available]
+    preconditions: [existence, provider-available, capability]
     tolerances: []
     effects:
       - {domain: process-runtime, kind: unknown, confidence: unknown, irreversible: true,
@@ -972,7 +973,7 @@ plannable_operations:
     recovery_semantics: >-
       §33.2 applied to a container: stopping it again is the inverse action, and it does not
       restore the state the machine had before it ran (§27.4).
-    preconditions: [existence, generation, provider-available]
+    preconditions: [existence, generation, provider-available, capability]
     tolerances:
       - {field: cpu, doc: "§7.4: a container's CPU usage moving does not invalidate a plan to start it."}
     effects:
@@ -990,7 +991,7 @@ plannable_operations:
       §33.2: starting it again is the inverse action, and it does not restore process identity,
       in-memory state or connections. Appendix B.5: what the container wrote to its own writable
       layer is not held by a host filesystem snapshot.
-    preconditions: [existence, generation, provider-available]
+    preconditions: [existence, generation, provider-available, capability]
     tolerances:
       - {field: cpu, doc: "§7.4: a container's CPU usage moving does not invalidate a plan to stop it."}
     effects:
@@ -1009,7 +1010,7 @@ plannable_operations:
     recovery_semantics: >-
       §33.2: the container comes back and process identity, in-memory state and connections do
       not. Compensation, never rollback (§27.4).
-    preconditions: [existence, generation, provider-available]
+    preconditions: [existence, generation, provider-available, capability]
     tolerances:
       - {field: cpu, doc: "§7.4: a container's CPU usage moving does not invalidate a plan to restart it."}
     effects:
@@ -1030,7 +1031,7 @@ plannable_operations:
       container. Appendix B.5: the writable layer that goes with it is `container-ephemeral`
       state, which a host filesystem snapshot does not hold, so §2.13 keeps the loss visible after
       protection has been arranged for everything else.
-    preconditions: [existence, generation, provider-available]
+    preconditions: [existence, generation, provider-available, capability]
     tolerances: []
     effects:
       - {domain: application-persistent, kind: remove, confidence: guaranteed, irreversible: true,
@@ -1047,7 +1048,7 @@ plannable_operations:
     recovery_semantics: >-
       §27.4: setting the previous configuration back is the inverse action, where the runtime
       still accepts the values that were there before.
-    preconditions: [existence, generation, provider-available]
+    preconditions: [existence, generation, provider-available, capability]
     tolerances: []
     effects:
       - {domain: application-persistent, kind: modify, confidence: guaranteed, irreversible: false,
