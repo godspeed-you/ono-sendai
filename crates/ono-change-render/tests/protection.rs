@@ -6,10 +6,10 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_value::{RecordValue, Value};
 use ono_change_render::{
     Charset, collapsed_plan, coverage_matrix, plan_view, protection_block, recovery_asset_block,
 };
+use ono_value::{RecordValue, Value};
 
 mod support;
 use support::{

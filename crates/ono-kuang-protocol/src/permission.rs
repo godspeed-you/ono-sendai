@@ -550,6 +550,11 @@ pub fn consent_class(capability: Capability, scope: Option<&ScopeTemplate>) -> C
         | C::TemporalReadCurrent
         | C::TemporalReadHistory
         | C::TemporalReadEvidence
+        | C::ChangePlanRead
+        | C::ChangePlanContribute
+        | C::VerificationObserve
+        | C::RecoveryDiscover
+        | C::RecoveryEstimateCost
         | C::SecretUse => ConsentClass::Observation,
         C::ProcessExec | C::ContainerExec => ConsentClass::Conditional,
         C::ProviderMutate
@@ -561,8 +566,17 @@ pub fn consent_class(capability: Capability, scope: Option<&ScopeTemplate>) -> C
         | C::TemporalContributeEvents
         | C::TemporalContributeCausality
         | C::TemporalRecorderManage
+        | C::ChangeActionExecute
+        | C::RecoveryPrepare
+        | C::RecoveryCleanup
+        | C::RecoveryQuiesce
+        | C::RecoveryTransaction
         | C::ModelInfer => ConsentClass::Explicit,
-        C::FilesystemWrite => ConsentClass::Destructive,
+        // §43.4 lets recovery need stronger privilege than the mutation it undoes, and §13.6
+        // and §14.6 make restoring the operation that can lose the most: newer snapshots,
+        // clones and everything written since. Class E is the class K11P §7.5 reserves for
+        // authority that no unattended acceptance may enable, which is where §48.4 puts it.
+        C::RecoveryRestore | C::FilesystemWrite => ConsentClass::Destructive,
     }
 }
 
@@ -573,7 +587,7 @@ pub fn minimum_risk(capability: Capability, scope: Option<&ScopeTemplate>) -> Pe
     match capability {
         C::FilesystemRead | C::SecretUse | C::TemporalReadHistory => PermissionRisk::SensitiveRead,
         C::ProcessExec | C::ContainerExec => PermissionRisk::Execute,
-        C::FilesystemWrite => PermissionRisk::Destructive,
+        C::FilesystemWrite | C::RecoveryRestore => PermissionRisk::Destructive,
         _ => match consent_class(capability, scope) {
             ConsentClass::ExtensionLocal => PermissionRisk::Local,
             ConsentClass::Observation => PermissionRisk::Observe,
@@ -590,7 +604,11 @@ pub fn default_kind(capability: Capability, scope: Option<&ScopeTemplate>) -> Pe
     use Capability as C;
     match capability {
         C::NetworkConnect => PermissionKind::ExternalObserve,
-        C::ProviderMutate => PermissionKind::ExternalChange,
+        // §16.4 and §39.3: quiescing and transacting reach into an application the package
+        // fronts, which is the same authority `provider.mutate` names and not Ono's own state.
+        C::ProviderMutate | C::RecoveryQuiesce | C::RecoveryTransaction => {
+            PermissionKind::ExternalChange
+        }
         C::FilesystemRead | C::FilesystemWatch => PermissionKind::FilesystemRead,
         C::FilesystemWrite => PermissionKind::FilesystemWrite,
         C::ProcessExec | C::ContainerExec => PermissionKind::ExecuteHelper,
@@ -617,7 +635,14 @@ pub fn default_kind(capability: Capability, scope: Option<&ScopeTemplate>) -> Pe
         | C::HistoryRead
         | C::TemporalReadCurrent
         | C::TemporalReadHistory
-        | C::TemporalReadEvidence => PermissionKind::HostObserve,
+        | C::TemporalReadEvidence
+        | C::ChangePlanRead
+        | C::VerificationObserve
+        | C::RecoveryDiscover
+        | C::RecoveryEstimateCost => PermissionKind::HostObserve,
+        // §48.3: contributing to a plan adds to Ono's own registries within the package's
+        // declarations, which is what `local-contribution` names.
+        C::ChangePlanContribute => PermissionKind::LocalContribution,
         C::ProcessSignal
         | C::ServiceMutate
         | C::NetworkListen
@@ -625,6 +650,10 @@ pub fn default_kind(capability: Capability, scope: Option<&ScopeTemplate>) -> Pe
         | C::TemporalContributeEvents
         | C::TemporalContributeCausality
         | C::TemporalRecorderManage
+        | C::ChangeActionExecute
+        | C::RecoveryPrepare
+        | C::RecoveryRestore
+        | C::RecoveryCleanup
         | C::PluginInvoke => PermissionKind::HostChange,
     }
 }
@@ -670,6 +699,17 @@ pub const fn family_title(capability: Capability) -> &'static str {
         C::TemporalContributeEvents => "Add events to Ono's temporal record",
         C::TemporalContributeCausality => "Add causal explanations to Ono",
         C::TemporalRecorderManage => "Start and stop the history recorder",
+        C::ChangePlanRead => "Read change plans and their impact",
+        C::ChangePlanContribute => "Contribute to change plans",
+        C::ChangeActionExecute => "Carry out changes a plan describes",
+        C::VerificationObserve => "Observe whether a change achieved what it intended",
+        C::RecoveryDiscover => "Find what could protect a change",
+        C::RecoveryPrepare => "Create recovery points",
+        C::RecoveryRestore => "Restore state from a recovery point",
+        C::RecoveryCleanup => "Remove recovery points",
+        C::RecoveryEstimateCost => "Report what recovery points cost",
+        C::RecoveryQuiesce => "Pause an application to capture consistent state",
+        C::RecoveryTransaction => "Run transactions inside its own provider boundary",
     }
 }
 

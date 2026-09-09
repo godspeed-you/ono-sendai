@@ -163,7 +163,11 @@ fn should_claim_only_the_persistent_scope_it_verified() {
 
 #[test]
 fn should_deny_the_persistent_claim_when_something_did_not_come_back() {
-    let results = vec![equivalence("persistent-state", "nginx.conf", "not-restored")];
+    let results = vec![equivalence(
+        "persistent-state",
+        "nginx.conf",
+        "not-restored",
+    )];
     let lines = recovery_verification(&results, 80);
     assert!(
         contains(&lines, "PERSISTENT STATE NOT VERIFIED"),
@@ -205,10 +209,7 @@ fn should_never_invent_an_expected_difference_for_a_result_nobody_classified() {
             ("subject", support::s("worker PIDs")),
             ("expression", support::s("")),
             ("status", support::s("passed")),
-            (
-                "equivalence_domain",
-                support::s("runtime-state"),
-            ),
+            ("equivalence_domain", support::s("runtime-state")),
         ],
     );
     results.push(unclassified);

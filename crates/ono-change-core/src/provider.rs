@@ -21,7 +21,9 @@ use crate::domain::PersistenceDomain;
 use crate::effect::EffectDomain;
 use crate::plan::{ChangePlan, Intent};
 use crate::protection::{ConsistencyClass, ProtectionMode, RecoveryObjective};
-use crate::recovery::{MetadataCoverage, NewerStateImpact, UnrecoverableEffect};
+use crate::recovery::{
+    DirectoryRestorePolicy, MetadataCoverage, NewerStateImpact, UnrecoverableEffect,
+};
 use crate::target::{FrozenTarget, Precondition};
 use crate::verification::{VerificationContract, VerificationResult};
 use crate::vocab::vocabulary;
@@ -437,6 +439,7 @@ pub struct RecoveryPlanFragment {
     unrecoverable: Vec<UnrecoverableEffect>,
     verification: Vec<VerificationContract>,
     metadata: MetadataCoverage,
+    directory_policy: DirectoryRestorePolicy,
     requires_reboot: bool,
     requires_offline: bool,
 }
@@ -453,6 +456,7 @@ impl RecoveryPlanFragment {
             unrecoverable: Vec::new(),
             verification: Vec::new(),
             metadata: MetadataCoverage::none(),
+            directory_policy: DirectoryRestorePolicy::KeepExtraFiles,
             requires_reboot: false,
             requires_offline: false,
         }
@@ -498,6 +502,17 @@ impl RecoveryPlanFragment {
         self
     }
 
+    /// Records what this provider's restore does with files the asset never held (Appendix C.6).
+    ///
+    /// The default keeps them, and Appendix C.6 is explicit that deleting newer extra files is a
+    /// choice the objective has to require rather than a default a directory restore falls into.
+    /// The provider states it because the provider is what will do it.
+    #[must_use]
+    pub const fn restoring_directories(mut self, policy: DirectoryRestorePolicy) -> Self {
+        self.directory_policy = policy;
+        self
+    }
+
     /// Records that the recovery needs a reboot (§13.7, §14.6).
     #[must_use]
     pub const fn needing_reboot(mut self) -> Self {
@@ -516,6 +531,12 @@ impl RecoveryPlanFragment {
     #[must_use]
     pub const fn metadata(&self) -> MetadataCoverage {
         self.metadata
+    }
+
+    /// What this provider's restore does with files the asset never held (Appendix C.6).
+    #[must_use]
+    pub const fn directory_policy(&self) -> DirectoryRestorePolicy {
+        self.directory_policy
     }
 
     /// The provider that contributed it.

@@ -6,8 +6,8 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_value::Value;
 use ono_change_render::{Charset, apply_failure, apply_progress, next_steps};
+use ono_value::Value;
 
 mod support;
 use support::{
@@ -93,7 +93,10 @@ fn should_count_verification_by_the_contracts_when_the_plan_has_no_verify_action
 
 #[test]
 fn should_distinguish_a_prepare_failure_from_an_apply_failure() {
-    let plan = nginx_plan_in("prepare-failed", &["failed", "pending", "pending", "pending", "pending"]);
+    let plan = nginx_plan_in(
+        "prepare-failed",
+        &["failed", "pending", "pending", "pending", "pending"],
+    );
     let lines = apply_failure(&plan, &[], 80, Charset::Ascii);
     assert_eq!(
         lines.first().map(String::as_str),

@@ -6,7 +6,7 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_change_render::{BINDINGS, Binding, InspectorAction, binding_for, key_help};
+use ono_change_render::{BINDINGS, InspectorAction, binding_for, key_help};
 
 #[test]
 fn should_carry_every_binding_appendix_e_three_lists() {

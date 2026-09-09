@@ -12,7 +12,7 @@
 //!   there.
 //! - **Recursive creation is not recursive recovery (§13.3).** One `zfs snapshot -r` may make
 //!   several snapshots; Appendix D.1 wants one concrete reference per dataset, so
-//!   [`ZfsProvider::plan_protection`] emits one protection action per dataset and recovery
+//!   [`RecoveryProvider::plan_protection`](ono_change_core::RecoveryProvider::plan_protection) emits one protection action per dataset and recovery
 //!   planning reasons about each dataset separately.
 //! - **No flag is ever added silently (§13.6).** No argument vector this crate builds contains
 //!   `-R`, and the only `-r` it emits is §13.3's recursive *creation*. Where a rollback would

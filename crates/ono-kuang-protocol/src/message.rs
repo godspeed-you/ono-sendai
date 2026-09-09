@@ -135,6 +135,37 @@ pub mod method {
     pub const TEMPORAL_CONTRIBUTE_CAUSALITY: &str = "temporal.contribute.causality";
     /// Plugin → host: start or stop the persistent history recorder (v0.5 §10.3, §30.7).
     pub const TEMPORAL_RECORDER: &str = "temporal.recorder";
+
+    /// Plugin → host: read a change plan, its actions and its computed impact (v0.6 §48.3).
+    ///
+    /// §48.4 is the reason this is its own call behind its own capability: a package that can
+    /// describe impact reads here and executes nowhere.
+    pub const CHANGE_PLAN_READ: &str = "change.plan.read";
+    /// Plugin → host: contribute actions, effects, impact edges and risk findings to a plan
+    /// being resolved (v0.6 §48.2, §48.3).
+    pub const CHANGE_PLAN_CONTRIBUTE: &str = "change.plan.contribute";
+    /// Plugin → host: report the recovery candidates this package found (v0.6 §12.1, §48.5).
+    pub const RECOVERY_DISCOVER: &str = "recovery.discover";
+    /// Plugin → host: create the asset a protection action proposed (v0.6 §4.5, §12.1).
+    pub const RECOVERY_PREPARE: &str = "recovery.prepare";
+    /// Plugin → host: report what checking an asset against §11.4's list found.
+    pub const RECOVERY_VALIDATE: &str = "recovery.validate";
+    /// Plugin → host: put state back from an asset (v0.6 §12.1, §24).
+    pub const RECOVERY_RESTORE: &str = "recovery.restore";
+    /// Plugin → host: remove a recovery asset (v0.6 §37).
+    pub const RECOVERY_CLEANUP: &str = "recovery.cleanup";
+    /// Plugin → host: what an asset costs to create and to keep (v0.6 §38).
+    pub const RECOVERY_ESTIMATE_COST: &str = "recovery.estimate_cost";
+    /// Plugin → host: pause an application so a capture is application-consistent (v0.6 §39.3).
+    pub const RECOVERY_QUIESCE: &str = "recovery.quiesce";
+    /// Plugin → host: release a quiesce window (v0.6 §18.4, §39.3).
+    ///
+    /// The other half of [`RECOVERY_QUIESCE`] and behind the same capability: §18.4 requires the
+    /// application to be resumed when creation fails, so a package that can pause can always
+    /// resume, whatever else a policy decided afterwards.
+    pub const RECOVERY_RESUME: &str = "recovery.resume";
+    /// Plugin → host: the result of observing one verification contract (v0.6 §23, §25.1).
+    pub const VERIFICATION_OBSERVE: &str = "verification.observe";
 }
 
 /// One frame's payload: the opening hello, a call, or an answer.
@@ -206,6 +237,21 @@ pub struct ContributionSet {
     /// Contributed causal and correlation rules (v0.5 §37.2, §37.4).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub causal_rules: Vec<CausalRuleContribution>,
+    /// Contributed recovery providers (v0.6 §48.2's `RecoveryProvider`, §12.1, §48.5).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recovery_providers: Vec<RecoveryProviderContribution>,
+    /// Contributed impact providers (v0.6 §48.2's `ImpactProvider`, §9.4).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub impact_providers: Vec<ImpactProviderContribution>,
+    /// Contributed verification providers (v0.6 §48.2's `VerificationProvider`, §25.1).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub verification_providers: Vec<VerificationProviderContribution>,
+    /// Contributed risk rules (v0.6 §48.2's `RiskRule`, §19.1, §19.2).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub risk_rules: Vec<RiskRuleContribution>,
+    /// Contributed plan views (v0.6 §48.2's `ChangeView`, §45).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub change_views: Vec<ChangeViewContribution>,
 }
 
 /// A contributed temporal source: an event source, or a provider of historical state (§37.5).
@@ -349,8 +395,57 @@ pub struct ActionContribution {
     pub verification: Option<String>,
     /// The classes of prospective effect the action may have (§22.2): what a plan of it should
     /// warn about — `restarts-workload`, `deletes-data`, `changes-routing`.
+    ///
+    /// A loose vocabulary, kept working unchanged: v0.6 §0.1 leaves earlier specifications
+    /// authoritative for what they define, so a package written against the provider contract
+    /// alone still says what it always said. What it cannot do is enter v0.6's coverage
+    /// algorithm, which is what [`ActionContribution::effect_classes`] is for.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<String>,
+    /// The same effects in the shape v0.6's coverage algorithm reads (§8.1, §8.2, Appendix A.1).
+    ///
+    /// Appendix A.5 computes protection per domain and §8.1 makes confidence a lattice with no
+    /// operation that strengthens, so an effect that names neither cannot be placed in the
+    /// coverage matrix at all — it can only be printed. Declaring the richer form is what lets a
+    /// contributed action's consequences be counted rather than merely displayed.
+    ///
+    /// Optional, and empty by default: a package that declares only [`ActionContribution::effects`]
+    /// loads exactly as it did before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effect_classes: Vec<EffectClassContribution>,
+}
+
+/// One prospective effect of a contributed action, in v0.6's own vocabulary (§8.1, §8.2,
+/// Appendix A.1).
+///
+/// §10.1 forbids a plan carrying a single `reversible: true/false` flag, and Appendix A.5 builds
+/// the answer per domain instead. That is only possible when each effect says which domain it
+/// acts in and how strongly Ono may assert it, which is what this shape is: the five facts the
+/// coverage algorithm needs, declared before any package code runs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EffectClassContribution {
+    /// The mutation domain, from Appendix A.1 — `filesystem-persistent`, `process-runtime`,
+    /// `external-side-effect`. Appendix A.7 caps a plan at partially protected while an
+    /// `unknown` domain is present, so naming one honestly costs the package nothing it had.
+    pub domain: String,
+    /// What the effect does to its object, from §8.2 — `create`, `modify`, `remove`, `replace`,
+    /// `interrupt`, `emit`, `unknown`.
+    pub kind: String,
+    /// How strongly Ono may assert the effect will occur, from §8.1 — `guaranteed`, `expected`,
+    /// `possible`, `unknown`. §2.4 forbids promoting `unknown` silently, and there is no host
+    /// operation that raises a declared confidence (§8.1).
+    pub confidence: String,
+    /// Why the package believes it, in one sentence a reader can weigh. §9.5 makes an impact
+    /// claim that cannot be explained an impact claim that should not be shown.
+    pub explanation: String,
+    /// Whether nothing can undo it (§2.13, §35.2). An emitted outward call is irreversible on
+    /// its own terms whatever a recovery asset holds.
+    #[serde(default)]
+    pub irreversible: bool,
+    /// The inverse action that restores an acceptable semantic state, where one exists (§27.4).
+    /// §27.4 forbids calling this rollback, and `None` means the package offers none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compensation: Option<String>,
 }
 
 /// What repeating a provider action does (`docs/architecture/external-system-provider.md` §19.4,
@@ -538,6 +633,321 @@ impl CausalRuleDocument {
             )
         })
     }
+}
+
+/// A contributed recovery provider (v0.6 §48.2, §12.1, §48.5).
+///
+/// §48.5's PostgreSQL example is the shape this is written around. A database package
+/// contributes restart semantics as impact, a checkpoint or quiesce action, an
+/// application-consistency claim, recovery verification and a transaction-local rollback — and
+/// every one of those is a claim about state a person may later need back. §12.2 fixes the
+/// capabilities that carry each claim, and §48.4 makes them the boundary: the declaration is
+/// read at load, before any package code runs, so a provider that says it can restore and holds
+/// nothing destructive is refused rather than believed.
+///
+/// §39.2 is the sentence the `consistency` field exists to enforce: a filesystem snapshot of
+/// PostgreSQL's files may be crash-consistent, and Ono MUST NOT label it `APPLICATION_CONSISTENT`
+/// unless a PostgreSQL-aware provider asserts that guarantee. A package that claims it and
+/// cannot quiesce cannot own the claim, and is refused at load.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecoveryProviderContribution {
+    /// `<package.id>.recovery-provider.<kebab-name>`.
+    pub id: String,
+    /// One line, for `get recovery-provider` and `help`.
+    pub summary: String,
+    /// The persistence domain kinds it covers, as `RecoveryScope` names them — `zfs-dataset`,
+    /// `postgres-database`. Appendix B.1 requires a path to be mapped to a domain before
+    /// protection is claimed, and this is the set of domains this provider claims to map.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub domain_kinds: Vec<String>,
+    /// The asset type it creates, from `docs/contracts/recovery/assets.yaml` — `zfs-snapshot`,
+    /// `file-archive`. §11.1 makes the asset the thing a person inspects, so it is named before
+    /// one exists.
+    pub asset_type: String,
+    /// The strongest consistency it can claim, from §11.3. `application-consistent` requires
+    /// `recovery.quiesce`: §39.2 says the provider must own the claim, and a provider that
+    /// cannot pause the application cannot own it.
+    pub consistency: String,
+    /// The restore methods it offers, from Appendix C.1. A provider that offers none cannot
+    /// restore, and §62.1 calls a candidate nobody can use snapshot theatre.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub restore_methods: Vec<String>,
+    /// Whether its assets sit in the same failure domain as the state they protect (§11.5).
+    ///
+    /// A ZFS snapshot lives in the pool it protects; a file archive on another disk does not.
+    /// §11.5 requires the answer to be visible beside the protection, because a snapshot that
+    /// dies with its pool is not a backup, and a package that stays silent about it would leave
+    /// the reader to assume the safer answer.
+    #[serde(default)]
+    pub shares_failure_domain: bool,
+    /// The `recovery.*` capabilities the provider declares (§12.2, §48.3). Each is checked
+    /// against the registry at load, and the ones that authorise a mutation are checked against
+    /// the risk the package actually holds (§48.4).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
+    /// The atomicity the provider states over its own resource scope (§27.1), or `None`.
+    ///
+    /// §27.3 makes generic distributed two-phase commit an explicit non-goal, so a declaration
+    /// reaching beyond what this provider covers is refused at load rather than honoured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction: Option<TransactionContribution>,
+}
+
+/// The atomicity one provider states over its own resource scope (v0.6 §27.1, §27.3).
+///
+/// §27.1 lets a provider expose `begin`, `prepare`, `commit` and `rollback` and declare atomicity
+/// **over its own resource scope**. §27.2 forbids the word `transaction` once a second boundary
+/// is involved, and §27.3 makes generic distributed two-phase commit a non-goal: a plugin may
+/// implement a domain-specific distributed transaction and then the plugin owns the guarantee,
+/// which is not something a manifest can claim on Ono's behalf.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TransactionContribution {
+    /// The domain kinds the atomicity covers. Every one must be a domain kind this provider
+    /// itself declares; a boundary it does not own is `package.invalid` at load (§27.2, §27.3).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<String>,
+    /// What the guarantee is, in prose the package stands behind. §27.1 puts the guarantee with
+    /// the provider, so this is the sentence a reader holds it to.
+    pub guarantee: String,
+}
+
+/// A contributed impact provider (v0.6 §48.2, §9.4).
+///
+/// §9.4 lets a package relate object types Ono's own graph does not reach — a database to the
+/// service that fronts it, a config file to the workload that reads it. What it may add is
+/// edges. What it may not do is raise a confidence: §49.3 and §8.1 both put that beyond anything
+/// that is not a provider proving a fact, and the confidence lattice has no operation that
+/// strengthens (`EffectConfidence::weakest_of` is the only combiner v0.6 defines).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImpactProviderContribution {
+    /// `<package.id>.impact-provider.<kebab-name>`.
+    pub id: String,
+    /// One line, for `get impact-provider` and `help`.
+    pub summary: String,
+    /// The schema ids of the object types it can relate. Each resolves at load like a target's
+    /// schema, so an impact provider that names a type nothing carries is refused before it can
+    /// draw an edge to it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub object_types: Vec<String>,
+    /// The relation labels it contributes, e.g. `reads-configuration-from`. §15.8's rule for
+    /// causal language applies to impact too: a label a reader meets is one they can look up.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relations: Vec<String>,
+    /// The highest confidence any edge it contributes may carry, from §8.1. The host takes the
+    /// weaker of this and whatever the edge claims and never the stronger, so a declaration here
+    /// is a ceiling the package accepts rather than an authority it gains (§49.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_ceiling: Option<String>,
+}
+
+/// A contributed verification provider (v0.6 §48.2, §25.1).
+///
+/// §25.3 forbids the sentence "rollback successful" without a scope, and §25.1 names the scopes:
+/// persistent state, runtime state, external side effects. A verification provider therefore
+/// declares which equivalence domain each of its check kinds speaks to, because a check that
+/// proves the bytes came back proves nothing about what left the machine.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VerificationProviderContribution {
+    /// `<package.id>.verification-provider.<kebab-name>`.
+    pub id: String,
+    /// One line, for `get verification-provider` and `help`.
+    pub summary: String,
+    /// The check kinds it can observe, paired with the equivalence domain each speaks to.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<VerificationCheckContribution>,
+}
+
+/// One check kind a verification provider offers, and what it is evidence about (v0.6 §25.1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VerificationCheckContribution {
+    /// The check kind, e.g. `postgres-accepts-connections`.
+    pub kind: String,
+    /// The equivalence domain of §25.1 it is evidence about — `persistent-state`,
+    /// `runtime-state` or `external-side-effect`.
+    pub equivalence: String,
+    /// One line, what the check observes and what it does not.
+    pub summary: String,
+}
+
+/// A contributed risk rule (v0.6 §48.2, §19.1, §19.2).
+///
+/// §19.2 makes risk rule-based rather than AI-generated, and a contributed rule is still a rule:
+/// it is registered under a namespaced id, it is inspectable exactly as a built-in one is, and
+/// the class it emits is folded into the plan's class by the one operation §19.2 defines —
+/// `RiskAssessment::classify`, a maximum. There is no minimum, so a contributed rule can raise
+/// a plan's class and can never reduce it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RiskRuleContribution {
+    /// The rule id, namespaced to the package — `dev.example.postgres.risk.replica-lag`.
+    pub rule_id: String,
+    /// The §19.1 dimension it emits into — `downtime`, `irreversibility`, `bulk-count`.
+    pub dimension: String,
+    /// The highest §19.2 class it may emit — `low`, `moderate`, `high`, `critical`, `unknown`.
+    /// A finding above it is refused; a finding below it composes as a maximum like any other.
+    pub emits: String,
+    /// One line, what the rule finds and why it matters. §40.2 shows this instead of "Are you
+    /// sure?", so a rule that cannot say why it is gating teaches the flag rather than the risk.
+    pub summary: String,
+}
+
+/// A contributed plan view (v0.6 §48.2, §45).
+///
+/// The `ChangeView` of §48.2, in the shape [`ViewContribution`] already uses for every other
+/// contributed view — a package that renders a plan renders it through the same view lifecycle
+/// as everything else (spec §31.27), and the only extra fact is which plan states it is for.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChangeViewContribution {
+    /// `<package.id>.change-view.<kebab-name>`.
+    pub id: String,
+    /// One line, for `help` and the view picker.
+    pub summary: String,
+    /// `interactive` or `static`, as [`ViewContribution::mode`] spells it.
+    pub mode: String,
+    /// The plan states it can render, from `docs/contracts/change/plans.yaml` — `sealed`,
+    /// `recovery-planned`. A view offered for a state a plan cannot be in is a view nobody
+    /// reaches, and the host settles the words at load.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plan_states: Vec<String>,
+    /// The deterministic non-interactive output for a redirected stdout (spec §31.28, §50).
+    pub fallback: String,
+}
+
+/// The document a `contributions.recovery_providers` path names (v0.6 §48.2, §31.68).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryProviderDocument {
+    /// The recovery providers the document declares.
+    pub recovery_providers: Vec<RecoveryProviderContribution>,
+}
+
+impl RecoveryProviderDocument {
+    /// Reads a declaration document.
+    ///
+    /// # Errors
+    ///
+    /// `package.invalid` when the document is not the shape
+    /// `docs/contracts/kuang/contributions.v1.yaml` describes.
+    pub fn parse(text: &str) -> Result<Self, KuangError> {
+        parse_document(
+            text,
+            "recovery provider",
+            "recovery_providers",
+            "recovery_provider",
+        )
+    }
+}
+
+/// The document a `contributions.impact_providers` path names (v0.6 §48.2, §9.4).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImpactProviderDocument {
+    /// The impact providers the document declares.
+    pub impact_providers: Vec<ImpactProviderContribution>,
+}
+
+impl ImpactProviderDocument {
+    /// Reads a declaration document.
+    ///
+    /// # Errors
+    ///
+    /// `package.invalid` when the document is not the shape
+    /// `docs/contracts/kuang/contributions.v1.yaml` describes.
+    pub fn parse(text: &str) -> Result<Self, KuangError> {
+        parse_document(
+            text,
+            "impact provider",
+            "impact_providers",
+            "impact_provider",
+        )
+    }
+}
+
+/// The document a `contributions.verification_providers` path names (v0.6 §48.2, §25.1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerificationProviderDocument {
+    /// The verification providers the document declares.
+    pub verification_providers: Vec<VerificationProviderContribution>,
+}
+
+impl VerificationProviderDocument {
+    /// Reads a declaration document.
+    ///
+    /// # Errors
+    ///
+    /// `package.invalid` when the document is not the shape
+    /// `docs/contracts/kuang/contributions.v1.yaml` describes.
+    pub fn parse(text: &str) -> Result<Self, KuangError> {
+        parse_document(
+            text,
+            "verification provider",
+            "verification_providers",
+            "verification_provider",
+        )
+    }
+}
+
+/// The document a `contributions.risk_rules` path names (v0.6 §48.2, §19.2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RiskRuleDocument {
+    /// The risk rules the document declares.
+    pub risk_rules: Vec<RiskRuleContribution>,
+}
+
+impl RiskRuleDocument {
+    /// Reads a declaration document.
+    ///
+    /// # Errors
+    ///
+    /// `package.invalid` when the document is not the shape
+    /// `docs/contracts/kuang/contributions.v1.yaml` describes.
+    pub fn parse(text: &str) -> Result<Self, KuangError> {
+        parse_document(text, "risk rule", "risk_rules", "risk_rule")
+    }
+}
+
+/// The document a `contributions.change_views` path names (v0.6 §48.2, §45).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChangeViewDocument {
+    /// The plan views the document declares.
+    pub change_views: Vec<ChangeViewContribution>,
+}
+
+impl ChangeViewDocument {
+    /// Reads a declaration document.
+    ///
+    /// # Errors
+    ///
+    /// `package.invalid` when the document is not the shape
+    /// `docs/contracts/kuang/contributions.v1.yaml` describes.
+    pub fn parse(text: &str) -> Result<Self, KuangError> {
+        parse_document(text, "change view", "change_views", "change_view")
+    }
+}
+
+/// Reads one on-disk contribution document, refusing anything that is not the declared shape.
+///
+/// Spec §31.68 wants a package's contributions readable **without running it**, so every one of
+/// these documents is parsed by the host before the runtime exists. `deny_unknown_fields` on each
+/// document is what makes a typo a refusal rather than a silently dropped declaration.
+fn parse_document<T: serde::de::DeserializeOwned>(
+    text: &str,
+    what: &str,
+    key: &str,
+    shape: &str,
+) -> Result<T, KuangError> {
+    serde_yaml_ng::from_str(text).map_err(|error| {
+        KuangError::new(
+            KuangErrorCode::PackageInvalid,
+            format!("a contributed {what} document does not read: {error}"),
+        )
+        .with_help(format!(
+            "the document is a `{key}:` list of the `{shape}` shape of \
+             `docs/contracts/kuang/contributions.v1.yaml`"
+        ))
+    })
 }
 
 /// A contributed target (spec §31.23).
@@ -1117,6 +1527,274 @@ pub struct SchemaListParams {
     /// Restrict to ids under a namespace. Absent lists every registered schema.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix: Option<String>,
+}
+
+// --- the change and recovery domain of v0.6 §48 ------------------------------------------------
+//
+// The wire shapes mirror `ono-change-core`'s domain types field for field, and this crate depends
+// on that crate for none of them. §31.61's boundary is JSON, the protocol crate stays free of the
+// domain, and the testhost holds the two together with a round-trip test — so a field renamed on
+// one side is a failing test rather than a value that silently stops arriving.
+
+/// `change.plan.read`: which plan to read (v0.6 §48.3, §5.1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlanReadParams {
+    /// The plan id, as `ono.change-plan/1` carries it.
+    pub plan: String,
+}
+
+/// `change.plan.contribute`: what one package adds to a plan being resolved (v0.6 §48.2, §48.3).
+///
+/// `deny_unknown_fields` is load-bearing rather than tidy. §19.2 makes the plan's risk class the
+/// fold of its findings and nothing else, so there is deliberately no field here by which a
+/// package could state the class directly; a package that invents one is a protocol violation
+/// rather than a package whose extra key is ignored.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlanContributeParams {
+    /// The plan being contributed to.
+    pub plan: String,
+    /// Plan actions the package resolved, as `ono.plan-action/1` records.
+    #[serde(default)]
+    pub actions: Vec<Json>,
+    /// Prospective effects, in the shape Appendix A.5's coverage algorithm reads.
+    #[serde(default)]
+    pub effects: Vec<EffectClassContribution>,
+    /// Impact edges, as `ono.graph-edge/1` records. §49.3 and §9.4: edges, never a confidence
+    /// the host did not already have a provider for.
+    #[serde(default)]
+    pub impact: Vec<Json>,
+    /// Risk findings from rules the package declared (§19.2).
+    #[serde(default)]
+    pub risk_findings: Vec<RiskFindingContribution>,
+}
+
+/// One risk finding a contributed rule produced (v0.6 §19.2).
+///
+/// It carries a class, and carrying a class is not deciding one: the host folds every finding
+/// with `RiskAssessment::classify`, which is a maximum. §19.2 defines no minimum, so there is no
+/// path from a finding to a lower plan class however low the finding is.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RiskFindingContribution {
+    /// The §19.1 dimension, mirroring `RiskFinding::dimension`.
+    pub dimension: String,
+    /// The §19.2 class, mirroring `RiskFinding::class`.
+    pub class: String,
+    /// The rule that found it, mirroring `RiskFinding::rule`. It must be a rule this package
+    /// declared in its `risk_rules` contribution.
+    pub rule: String,
+    /// The sentence §40.2 shows instead of "Are you sure?", mirroring `RiskFinding::reason`.
+    pub reason: String,
+}
+
+/// The scope one recovery asset covers, mirroring `RecoveryScope` (v0.6 §11.1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryScopeWire {
+    /// The resolved persistence object, e.g. `tank/var`.
+    pub domain: String,
+    /// What kind of object that is, e.g. `zfs-dataset`. The value the broker checks a
+    /// `domain_kinds` scope against.
+    pub domain_kind: String,
+    /// The objects the scope actually covers. §13.4 and §14.3 turn on this being the truth
+    /// rather than the paths a person hoped were included.
+    #[serde(default)]
+    pub covers: Vec<String>,
+    /// The host the domain is on.
+    pub host: String,
+}
+
+/// What a recovery asset costs, mirroring `RecoveryCost` (v0.6 §38).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryCostWire {
+    /// The space it takes at creation, as a typed `ByteSize` value.
+    #[serde(default)]
+    pub initial_bytes: Option<Json>,
+    /// The space it takes now.
+    #[serde(default)]
+    pub retained_bytes: Option<Json>,
+    /// Whether the figures are estimates (§37.5). Absent means estimated, which is the honest
+    /// default for a figure nobody measured.
+    #[serde(default = "estimated_by_default")]
+    pub estimated: bool,
+    /// How long creation takes, as a typed `Duration` value.
+    #[serde(default)]
+    pub creation_latency: Option<Json>,
+    /// How long the application is paused for (§18.4).
+    #[serde(default)]
+    pub quiesce: Option<Json>,
+    /// Whether using it needs a reboot (§13.7, §14.6).
+    #[serde(default)]
+    pub requires_reboot: bool,
+    /// Whether using it needs the filesystem offline.
+    #[serde(default)]
+    pub requires_offline: bool,
+}
+
+const fn estimated_by_default() -> bool {
+    true
+}
+
+/// Something an asset does not cover, mirroring `RecoveryExclusion` (v0.6 §11.1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryExclusionWire {
+    /// What is outside the asset.
+    pub subject: String,
+    /// Why it is outside it.
+    pub reason: String,
+}
+
+/// A protection opportunity, mirroring `RecoveryCandidate` (v0.6 Appendix A.3).
+///
+/// §2.1 keeps a candidate a description: nothing exists yet, and creating it is a PREPARE action
+/// the plan shows first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryCandidateWire {
+    /// The provider that offered it.
+    pub provider: String,
+    /// What it would protect.
+    pub scope: RecoveryScopeWire,
+    /// The Appendix A.1 domain it covers.
+    pub domain: String,
+    /// The Appendix A.2 objective it would satisfy.
+    pub objective: String,
+    /// The §11.3 consistency it would achieve.
+    pub consistency: String,
+    /// The Appendix C.1 method it would be restored by.
+    pub restore_method: String,
+    /// What creating it costs.
+    #[serde(default)]
+    pub cost: RecoveryCostWire,
+    /// What it would not cover.
+    #[serde(default)]
+    pub exclusions: Vec<RecoveryExclusionWire>,
+    /// What creating it needs — a capability, free space, a quiesce window.
+    #[serde(default)]
+    pub creation_requirements: Vec<String>,
+    /// What restoring from it needs — a reboot, an unmount, a stronger privilege (§43.4).
+    #[serde(default)]
+    pub restore_requirements: Vec<String>,
+    /// The sentence the plan view shows.
+    pub detail: String,
+}
+
+/// `recovery.discover`: the candidates a provider found for one domain (v0.6 §12.1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryDiscoverParams {
+    /// The persistence domain kind the candidates are about. The broker checks it against the
+    /// granted `domain_kinds` before the host is asked to record anything.
+    pub domain_kind: String,
+    /// The candidates. An empty list means "nothing here", which §55.6 case 29 keeps distinct
+    /// from "this provider could not answer".
+    #[serde(default)]
+    pub candidates: Vec<RecoveryCandidateWire>,
+}
+
+/// `recovery.prepare`: the asset a protection action produced (v0.6 §4.5, §12.1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryPrepareParams {
+    /// The scope the asset covers.
+    pub scope: RecoveryScopeWire,
+    /// The asset, as an `ono.recovery-asset/1` record.
+    pub asset: Json,
+}
+
+/// `recovery.validate`: what checking an asset against §11.4's list found.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryValidateParams {
+    /// The scope the asset covers.
+    pub scope: RecoveryScopeWire,
+    /// The asset id being checked.
+    pub asset: String,
+    /// The findings, as `ono.recovery-asset/1`'s validation record shapes them. An asset that
+    /// was not checked is not a valid asset (§11.4), so an empty list is a validation that found
+    /// nothing rather than one that did not run.
+    #[serde(default)]
+    pub findings: Vec<Json>,
+}
+
+/// `recovery.restore`: one restore step and what it did (v0.6 §12.1, §24).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryRestoreParams {
+    /// The scope being restored.
+    pub scope: RecoveryScopeWire,
+    /// The asset being restored from.
+    pub asset: String,
+    /// The Appendix C.1 method used. §13.6 and §14.4 make the method the fact a person needs
+    /// most: a dataset rollback and a selective file restore lose entirely different things.
+    pub method: String,
+    /// What the restore could not put back, as `ono.recovery-plan/1` records the unrecoverable
+    /// effects (§25.3 forbids a scopeless claim of success).
+    #[serde(default)]
+    pub unrecoverable: Vec<Json>,
+}
+
+/// `recovery.cleanup`: an asset the provider removed (v0.6 §37).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryCleanupParams {
+    /// The scope the asset covered.
+    pub scope: RecoveryScopeWire,
+    /// The asset id.
+    pub asset: String,
+}
+
+/// `recovery.estimate_cost`: what an asset costs now (v0.6 §38).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryEstimateCostParams {
+    /// The persistence domain kind the asset belongs to.
+    pub domain_kind: String,
+    /// The asset id.
+    pub asset: String,
+    /// The measured or estimated cost.
+    pub cost: RecoveryCostWire,
+}
+
+/// `recovery.quiesce` and `recovery.resume`: one step of §39.3's five (v0.6 §16.4, §18.4).
+///
+/// §39.3 names `prepare_quiesce`, `verify_quiesced`, `create_storage_asset`, `resume` and
+/// `verify_resumed`, and requires compensation rules for a failure at each step. The step is on
+/// the wire so a failure is attributable to one of them rather than to "quiescing".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryQuiesceParams {
+    /// The application the package paused or released. The host cannot resolve this name, so
+    /// the `applications` scope over it is advisory and is labelled as such wherever it shows.
+    pub application: String,
+    /// The §39.3 step this reports — `prepare_quiesce`, `verify_quiesced`,
+    /// `create_storage_asset`, `resume` or `verify_resumed`.
+    pub step: String,
+    /// What the package will do if the step fails (§39.3's compensation rules), or `None` when
+    /// the step is the compensation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compensation: Option<String>,
+}
+
+/// `verification.observe`: the result of observing one verification contract (v0.6 §23, §25.1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerificationObserveParams {
+    /// The check id, as `ono.change-verification/1` carries it.
+    pub check: String,
+    /// The §23.3 status — `passed`, `failed`, `unknown` or `skipped`. §23.5 forbids treating
+    /// `unknown` as success, so there is no default and a package must say which it means.
+    pub status: String,
+    /// The §25.1 equivalence domain the observation is evidence about, where it is a recovery
+    /// verification. §25.3 forbids the scopeless claim, so a recovery check names its scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equivalence: Option<String>,
+    /// What was observed, in one line.
+    pub detail: String,
 }
 
 /// A contributed view (spec §31.27; `contributions.v1.yaml` → `view.declaration`).

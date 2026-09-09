@@ -103,6 +103,18 @@ fields:
     doc: >-
       What happens to files that exist now and did not then (Appendix C.6). The default keeps
       them; deleting newer extra files is a choice the objective has to require.
+  state:
+    type: enum
+    required: true
+    values:
+      [draft, resolved, sealed, expired, preparing, prepare-failed, protected, applying,
+       apply-failed, verifying, verified, degraded, failed, closed, recovery-planned, recovering,
+       recovered, recovery-failed, recovery-verified]
+    doc: >-
+      Where the recovery plan is in §4.1. §2.12 puts recovery through the same lifecycle as any
+      other change, so this is the same machine — and a reader needs it for the same reason:
+      `recovery-planned` means nothing has been restored, and `recovery-failed` means the
+      remaining assets and the exact partial state are preserved (Appendix F).
   risk:
     type: enum
     required: true

@@ -1,5 +1,7 @@
-//! The KUANG/11 capability model: the thirty families — spec §31.16's twenty-nine and ADR-0594's `provider.mutate` — their scope shapes, and the shapes
-//! of a grant, a lease and a revocation (spec §31.16–§31.19, §31.49).
+//! The KUANG/11 capability model: the forty-seven families — spec §31.16's twenty-nine,
+//! ADR-0594's `provider.mutate`, v0.5 §30.7's six temporal families and v0.6 §48.3's eleven
+//! change and recovery families — their scope shapes, and the shapes of a grant, a lease and a
+//! revocation (spec §31.16–§31.19, §31.49; v0.6 §48.3, §48.4).
 //!
 //! The authoritative family list is `kuang_capabilities` in `docs/contracts/capabilities.yaml`;
 //! `docs/contracts/kuang/capabilities.v1.yaml` adds the scope shapes and enforcement levels this
@@ -93,10 +95,22 @@ const fn broker(name: &'static str, kind: ScopeKind) -> ScopeKey {
     }
 }
 
+/// A scope key the host records and cannot check, because the value it names is resolved by the
+/// package rather than by the broker (spec §31.16's "a scope that cannot be enforced reliably
+/// MUST NOT be offered as if it were a security boundary").
+const fn advisory(name: &'static str, kind: ScopeKind) -> ScopeKey {
+    ScopeKey {
+        name,
+        kind,
+        enforcement: Enforcement::Advisory,
+    }
+}
+
 macro_rules! capabilities {
     ($( $variant:ident => $id:literal, $risk:ident, $elevation:ident, [$($key:expr),*], $doc:literal; )*) => {
-        /// One of the thirty capability families: spec §31.16's twenty-nine, and
-        /// `provider.mutate` (ADR-0594).
+        /// One of the forty-seven capability families: spec §31.16's twenty-nine,
+        /// `provider.mutate` (ADR-0594), v0.5 §30.7's six temporal families (ADR-0626) and
+        /// v0.6 §48.3's eleven change and recovery families.
         ///
         /// ```
         /// use ono_kuang_protocol::{Capability, Risk};
@@ -258,6 +272,39 @@ capabilities! {
         "Registering namespaced causal rules and contributing the causal links they produce (v0.5 §37.4).";
     TemporalRecorderManage => "temporal.recorder.manage", Mutate, None, [],
         "Starting and stopping the persistent history recorder (v0.5 §10.3, §30.7).";
+    ChangePlanRead => "change.plan.read", Read, None,
+        [broker("plans", ScopeKind::IdList), broker("schemas", ScopeKind::IdList)],
+        "Reading change plans, their actions and their computed impact (v0.6 §48.3). §48.4: it is no route to execution.";
+    ChangePlanContribute => "change.plan.contribute", Observe, None,
+        [broker("schemas", ScopeKind::IdList)],
+        "Contributing actions, effects, impact edges and risk findings to a plan being resolved (v0.6 §48.3). Still not permission to run anything.";
+    ChangeActionExecute => "change.action.execute", Mutate, Conditional,
+        [broker("schemas", ScopeKind::IdList), broker("plans", ScopeKind::IdList)],
+        "Carrying out a mutating plan action (v0.6 §48.3). The only change family that authorises a change.";
+    VerificationObserve => "verification.observe", Read, None,
+        [broker("schemas", ScopeKind::IdList)],
+        "Observing a verification contract and reporting the result (v0.6 §48.3, §25.1).";
+    RecoveryDiscover => "recovery.discover", Read, None,
+        [broker("domain_kinds", ScopeKind::NameList)],
+        "Finding candidate protection for a target (v0.6 §12.2, §48.3). Read-only.";
+    RecoveryPrepare => "recovery.prepare", Mutate, Conditional,
+        [broker("domain_kinds", ScopeKind::NameList), broker("scopes", ScopeKind::IdList)],
+        "Creating a recovery asset, which mutates the storage or control plane (v0.6 §5.5, §12.2).";
+    RecoveryRestore => "recovery.restore", Destructive, Required,
+        [broker("domain_kinds", ScopeKind::NameList), broker("scopes", ScopeKind::IdList)],
+        "Using an asset to put state back (v0.6 §12.2). Destructive and elevation-required: §43.4 lets recovery need stronger privilege than the mutation it undoes, and §13.6 and §14.6 make restoring the operation that can lose the most.";
+    RecoveryCleanup => "recovery.cleanup", Mutate, Conditional,
+        [broker("domain_kinds", ScopeKind::NameList), broker("scopes", ScopeKind::IdList)],
+        "Removing a recovery asset (v0.6 §12.2, §37).";
+    RecoveryEstimateCost => "recovery.estimate-cost", Read, None,
+        [broker("domain_kinds", ScopeKind::NameList)],
+        "Reporting what an asset costs to create and to keep (v0.6 §12.2, §38).";
+    RecoveryQuiesce => "recovery.quiesce", Mutate, Conditional,
+        [advisory("applications", ScopeKind::NameList)],
+        "Pausing an application so a snapshot is application-consistent (v0.6 §16.4, §39.3). The application name is the package's own word for something the host cannot resolve, so the scope is advisory.";
+    RecoveryTransaction => "recovery.transaction", Mutate, Conditional,
+        [advisory("applications", ScopeKind::NameList)],
+        "Beginning, preparing, committing and rolling back inside the provider's own boundary (v0.6 §27.1). §27.2 forbids the word once a second boundary is involved, and §27.3 makes generic two-phase commit a non-goal.";
 }
 
 impl Capability {
@@ -363,17 +410,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn should_carry_all_36_families_of_the_registry_when_enumerated() {
-        // §31.16's twenty-nine, `provider.mutate` (ADR-0594), and v0.5 §30.7's six temporal
-        // families (ADR-0626).
-        assert_eq!(Capability::ALL.len(), 36);
+    fn should_carry_all_47_families_of_the_registry_when_enumerated() {
+        // §31.16's twenty-nine, `provider.mutate` (ADR-0594), v0.5 §30.7's six temporal
+        // families (ADR-0626), and v0.6 §48.3's eleven change and recovery families.
+        assert_eq!(Capability::ALL.len(), 47);
     }
 
     #[test]
     fn should_mark_only_the_declared_advisory_scope_keys_as_advisory_when_scopes_are_listed() {
         // ADR-0022 §3 put exactly one advisory scope key in the model; ADR-0594 added the three
-        // of `provider.mutate`, whose wire the host does not parse. Every other key is a boundary
-        // the broker enforces, and a key that quietly became advisory would fail here.
+        // of `provider.mutate`, whose wire the host does not parse; v0.6 §48.3 adds the two
+        // application names a recovery plugin resolves inside its own system, which the host has
+        // no way to compare a call against. Every other key is a boundary the broker enforces,
+        // and a key that quietly became advisory would fail here.
         let advisory: Vec<(&str, &str)> = Capability::ALL
             .iter()
             .flat_map(|family| {
@@ -391,6 +440,8 @@ mod tests {
                 ("provider.mutate", "instances"),
                 ("provider.mutate", "resources"),
                 ("provider.mutate", "actions"),
+                ("recovery.quiesce", "applications"),
+                ("recovery.transaction", "applications"),
             ]
         );
     }

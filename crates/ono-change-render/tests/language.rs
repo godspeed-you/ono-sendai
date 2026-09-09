@@ -11,18 +11,33 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_change_core::{EquivalenceDomain, EquivalenceState, RecoveryOutcome};
 use ono_change_render::{
     Charset, collapsed_plan, coverage_matrix, plan_view, protection_block, recovery_asset_block,
     recovery_verification, recovery_view, verification_view,
 };
+use ono_value::{RecordValue, Value};
 
 mod support;
 use support::{
-    contains, nginx_results, protected_summary, ready_asset, rollback_recovery, sealed_nginx_plan,
-    selective_recovery, summary_without_exclusions, unanalysed_recovery, unprotected_summary,
-    zfs_asset,
+    contains, nginx_results, protected_exclusions, protected_rows, ready_asset, record,
+    recovery_results, rollback_recovery, s, sealed_nginx_plan, selective_recovery,
+    unanalysed_recovery, unprotected_rows, zfs_asset,
 };
+
+/// A plan carrying exactly a protection matrix, its level and its exclusions (§10.3).
+fn plan_with(level: &str, rows: Value, exclusions: Value) -> RecordValue {
+    record(
+        "ono.change-plan",
+        &[
+            ("id", s("a82f1c0d9e4b7a63")),
+            ("state", s("sealed")),
+            ("intent", s("replace nginx configuration")),
+            ("protection", rows),
+            ("protection_level", s(level)),
+            ("coverage_exclusions", exclusions),
+        ],
+    )
+}
 
 /// The words §25.3 and §62.2 forbid: each of them claims a scope nothing established.
 const FORBIDDEN: [&str; 4] = [
@@ -70,32 +85,25 @@ fn should_never_carry_a_sentence_claiming_a_scope_it_did_not_verify() {
 #[test]
 fn should_never_emit_a_forbidden_sentence_from_any_view() {
     let plan = sealed_nginx_plan();
-    let outcome = RecoveryOutcome::empty()
-        .recording(
-            EquivalenceDomain::PersistentState,
-            "nginx.conf",
-            EquivalenceState::Restored,
-        )
-        .recording(
-            EquivalenceDomain::RuntimeState,
-            "worker PIDs",
-            EquivalenceState::DifferentAsExpected,
-        );
     let mut emitted: Vec<String> = Vec::new();
     emitted.extend(plan_view(&plan, &[zfs_asset()], 80, Charset::Ascii));
     emitted.extend(collapsed_plan(&plan, 80, Charset::Ascii));
     emitted.extend(recovery_view(&selective_recovery(), 80, Charset::Ascii));
     emitted.extend(recovery_view(&rollback_recovery(), 80, Charset::Ascii));
     emitted.extend(recovery_view(&unanalysed_recovery(), 80, Charset::Ascii));
-    emitted.extend(recovery_verification(&outcome, 80));
-    emitted.extend(verification_view(plan.id(), &nginx_results(&plan), 80));
+    emitted.extend(recovery_verification(&recovery_results(), 80));
+    emitted.extend(verification_view(&plan, &nginx_results(), 80));
     emitted.extend(protection_block(
-        &protected_summary(),
+        &plan_with("protected", protected_rows(), protected_exclusions()),
         &[ready_asset()],
         80,
         Charset::Ascii,
     ));
-    emitted.extend(coverage_matrix(&unprotected_summary(), 80, Charset::Ascii));
+    emitted.extend(coverage_matrix(
+        &plan_with("unprotected", unprotected_rows(), Value::list([])),
+        80,
+        Charset::Ascii,
+    ));
     emitted.extend(recovery_asset_block(&zfs_asset(), 80, Charset::Ascii));
     let rendered = emitted.join("\n").to_lowercase();
     for phrase in FORBIDDEN {
@@ -108,12 +116,7 @@ fn should_never_emit_a_forbidden_sentence_from_any_view() {
 
 #[test]
 fn should_close_a_recovery_verification_with_the_scope_it_did_not_claim() {
-    let outcome = RecoveryOutcome::empty().recording(
-        EquivalenceDomain::PersistentState,
-        "nginx.conf",
-        EquivalenceState::Restored,
-    );
-    let lines = recovery_verification(&outcome, 80);
+    let lines = recovery_verification(&recovery_results(), 80);
     assert!(
         contains(&lines, "FULL WORLD EQUIVALENCE NOT CLAIMED"),
         "§25.2's result block is what replaces the sentence §25.3 forbids"
@@ -122,12 +125,15 @@ fn should_close_a_recovery_verification_with_the_scope_it_did_not_claim() {
 
 #[test]
 fn should_never_state_a_protection_level_without_the_exclusions_that_bound_it() {
+    let protected = plan_with("protected", protected_rows(), protected_exclusions());
+    let bare = plan_with("protected", protected_rows(), Value::list([]));
+    let unprotected = plan_with("unprotected", unprotected_rows(), Value::list([]));
     let renderings = [
-        protection_block(&protected_summary(), &[zfs_asset()], 80, Charset::Ascii),
-        protection_block(&summary_without_exclusions(), &[], 80, Charset::Ascii),
-        protection_block(&unprotected_summary(), &[], 80, Charset::Ascii),
-        coverage_matrix(&protected_summary(), 80, Charset::Ascii),
-        coverage_matrix(&summary_without_exclusions(), 80, Charset::Ascii),
+        protection_block(&protected, &[zfs_asset()], 80, Charset::Ascii),
+        protection_block(&bare, &[], 80, Charset::Ascii),
+        protection_block(&unprotected, &[], 80, Charset::Ascii),
+        coverage_matrix(&protected, 80, Charset::Ascii),
+        coverage_matrix(&bare, 80, Charset::Ascii),
         plan_view(&sealed_nginx_plan(), &[zfs_asset()], 80, Charset::Ascii),
         collapsed_plan(&sealed_nginx_plan(), 80, Charset::Ascii),
     ];
@@ -173,7 +179,7 @@ fn should_have_no_public_function_that_renders_a_protection_level_alone() {
         "Appendix E.8: a caller that wants to print PROTECTED and stop must have nothing to call"
     );
     assert_eq!(
-        source.matches("level_line(summary").count(),
+        source.matches("level_line(plan, charset").count(),
         3,
         "the three callers are the block, the matrix and the compact summary, and each emits exclusions"
     );

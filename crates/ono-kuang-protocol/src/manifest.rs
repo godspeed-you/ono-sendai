@@ -228,6 +228,17 @@ pub struct ContributionPaths {
     pub temporal_sources: Option<Vec<String>>,
     /// Causal and correlation rules, namespaced to the publisher (v0.5 §37.2, §37.4).
     pub causal_rules: Option<Vec<String>>,
+    /// Recovery providers (v0.6 §48.2, §12.1). Declared on disk so §31.68 can answer "what
+    /// could this package protect, and what could it restore?" without running it.
+    pub recovery_providers: Option<Vec<String>>,
+    /// Impact providers (v0.6 §48.2, §9.4).
+    pub impact_providers: Option<Vec<String>>,
+    /// Verification providers (v0.6 §48.2, §25.1).
+    pub verification_providers: Option<Vec<String>>,
+    /// Risk rules, namespaced to the package (v0.6 §48.2, §19.2).
+    pub risk_rules: Option<Vec<String>>,
+    /// Plan views (v0.6 §48.2, §45).
+    pub change_views: Option<Vec<String>>,
 }
 
 /// The `dependencies` section (spec §31.30). Composition stays protocol-mediated.
@@ -436,6 +447,11 @@ impl Manifest {
                 adapters: raw.adapters,
                 temporal_sources: raw.temporal_sources,
                 causal_rules: raw.causal_rules,
+                recovery_providers: raw.recovery_providers,
+                impact_providers: raw.impact_providers,
+                verification_providers: raw.verification_providers,
+                risk_rules: raw.risk_rules,
+                change_views: raw.change_views,
             }),
             dependencies: raw.dependencies.map(|raw| Dependencies {
                 packages: raw.packages,
@@ -649,6 +665,16 @@ struct RawContributions {
     temporal_sources: Option<Vec<String>>,
     #[serde(default)]
     causal_rules: Option<Vec<String>>,
+    #[serde(default)]
+    recovery_providers: Option<Vec<String>>,
+    #[serde(default)]
+    impact_providers: Option<Vec<String>>,
+    #[serde(default)]
+    verification_providers: Option<Vec<String>>,
+    #[serde(default)]
+    risk_rules: Option<Vec<String>>,
+    #[serde(default)]
+    change_views: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]

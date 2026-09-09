@@ -17,9 +17,7 @@ use ono_change_core::{
 use ono_recovery_zfs::{GUID_FINGERPRINT, ZFS, ZPOOL};
 use ono_value::ByteSize;
 
-use support::{
-    CHILD_DATASET, PARENT_DATASET, Script, code, out, provider, runner,
-};
+use support::{CHILD_DATASET, PARENT_DATASET, Script, code, out, provider, runner};
 
 fn bare(path: &str) -> PersistenceDomain {
     PersistenceDomain::refused(
@@ -103,8 +101,16 @@ fn should_record_each_dataset_of_one_recursive_creation_individually() {
         2,
         "§13.3 and Appendix D.1: one concrete snapshot reference per dataset covered, got {references:?}"
     );
-    assert!(references.iter().any(|reference| reference.starts_with(&format!("{PARENT_DATASET}@"))));
-    assert!(references.iter().any(|reference| reference.starts_with(&format!("{CHILD_DATASET}@"))));
+    assert!(
+        references
+            .iter()
+            .any(|reference| reference.starts_with(&format!("{PARENT_DATASET}@")))
+    );
+    assert!(
+        references
+            .iter()
+            .any(|reference| reference.starts_with(&format!("{CHILD_DATASET}@")))
+    );
 }
 
 #[test]
@@ -143,7 +149,10 @@ fn should_leave_a_planned_asset_proposed_until_something_creates_it() {
 fn should_carry_the_candidates_exclusions_onto_the_asset_it_would_create() {
     let tools = runner(vec![(ZPOOL, out("zpool-list"))]);
     let actions = provider(&tools)
-        .plan_protection(&[candidates_for("/tank/data/notes.txt")[0].clone()], ProtectionMode::Prefer)
+        .plan_protection(
+            &[candidates_for("/tank/data/notes.txt")[0].clone()],
+            ProtectionMode::Prefer,
+        )
         .expect("the recorded pool has room");
     let asset = actions.first().expect("one action").proposed_asset();
     assert!(
@@ -188,7 +197,9 @@ fn created() -> (
         candidate,
         asset,
     );
-    let created = provider.create(&action).expect("the recorded pool creates it");
+    let created = provider
+        .create(&action)
+        .expect("the recorded pool creates it");
     (tools, created)
 }
 
@@ -209,7 +220,9 @@ fn should_run_zfs_snapshot_with_the_exact_name_and_nothing_else() {
     let call = tools
         .calls()
         .into_iter()
-        .find(|(program, argv)| program == ZFS && argv.first().is_some_and(|word| word == "snapshot"))
+        .find(|(program, argv)| {
+            program == ZFS && argv.first().is_some_and(|word| word == "snapshot")
+        })
         .expect("create ran `zfs snapshot`");
     assert_eq!(
         call.1,

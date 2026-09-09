@@ -311,6 +311,30 @@ declared:
   - id: "crates/ono-provider-systemd/tests/journal_history.rs::should_leave_an_open_end_open_rather_than_reading_a_clock_to_close_it"
     category: external_tool_unavailable
     prerequisite: "a `journalctl` on PATH, so a half-open window can be asked at all"
+  # v0.6 §54.4 asks for real ZFS where the environment permits, and Appendix G.3 forbids using a
+  # production filesystem for a destructive test. So the real-pool suite builds its own pool on a
+  # loop file and destroys it, which needs root and the ZFS tools, and it runs only when
+  # `ONO_ZFS_TESTS=1` says the operator meant it. The deterministic suite beside it replays
+  # recorded output of the same real tools, so nothing here is coverage that only exists in an
+  # environment nobody has (ADR-0805).
+  - id: "crates/ono-recovery-zfs/tests/real_zfs.rs::should_resolve_a_file_in_a_child_dataset_to_the_child_on_a_live_pool"
+    category: fixture_not_applicable
+    prerequisite: "a root session with `zfs` and `zpool`, and `ONO_ZFS_TESTS=1`, so the suite may build its own disposable pool on a loop file and destroy it afterwards (v0.6 Appendix G.3)"
+  - id: "crates/ono-recovery-zfs/tests/real_zfs.rs::should_not_offer_the_parent_dataset_as_covering_a_child_dataset_on_a_live_pool"
+    category: fixture_not_applicable
+    prerequisite: "a root session with `zfs` and `zpool`, and `ONO_ZFS_TESTS=1`, so the suite may build its own disposable pool on a loop file and destroy it afterwards (v0.6 Appendix G.3)"
+  - id: "crates/ono-recovery-zfs/tests/real_zfs.rs::should_create_validate_and_remove_a_snapshot_on_a_live_pool"
+    category: fixture_not_applicable
+    prerequisite: "a root session with `zfs` and `zpool`, and `ONO_ZFS_TESTS=1`, so the suite may build its own disposable pool on a loop file and destroy it afterwards (v0.6 Appendix G.3)"
+  - id: "crates/ono-recovery-zfs/tests/real_zfs.rs::should_recover_one_changed_file_without_reverting_unrelated_state_on_a_live_pool"
+    category: fixture_not_applicable
+    prerequisite: "a root session with `zfs` and `zpool`, and `ONO_ZFS_TESTS=1`, so the suite may build its own disposable pool on a loop file and destroy it afterwards (v0.6 Appendix G.3)"
+  - id: "crates/ono-recovery-zfs/tests/real_zfs.rs::should_block_a_full_rollback_that_would_destroy_a_newer_snapshot_on_a_live_pool"
+    category: fixture_not_applicable
+    prerequisite: "a root session with `zfs` and `zpool`, and `ONO_ZFS_TESTS=1`, so the suite may build its own disposable pool on a loop file and destroy it afterwards (v0.6 Appendix G.3)"
+  - id: "crates/ono-recovery-zfs/tests/real_zfs.rs::should_record_each_dataset_of_a_recursive_creation_individually_on_a_live_pool"
+    category: fixture_not_applicable
+    prerequisite: "a root session with `zfs` and `zpool`, and `ONO_ZFS_TESTS=1`, so the suite may build its own disposable pool on a loop file and destroy it afterwards (v0.6 Appendix G.3)"
 
 canonical_ci:
   # The `ubuntu-latest` GitHub runner that `.github/workflows/ci.yml` runs the gate on: an
@@ -337,6 +361,15 @@ canonical_ci:
     # The re-exec entry point the PTY tests drive. `cargo test` runs it once with no role in the
     # environment, and that run has nothing to act as.
     - "crates/ono-process/tests/terminal_control.rs::acts_as_the_shell_when_a_role_is_requested"
+    # The v0.6 real-filesystem suites. The runner is unprivileged and `ONO_ZFS_TESTS` is unset, so
+    # each announces its skip rather than passing silently; the deterministic suite that replays
+    # recorded output of the same tools runs in full.
+    - "crates/ono-recovery-zfs/tests/real_zfs.rs::should_resolve_a_file_in_a_child_dataset_to_the_child_on_a_live_pool"
+    - "crates/ono-recovery-zfs/tests/real_zfs.rs::should_not_offer_the_parent_dataset_as_covering_a_child_dataset_on_a_live_pool"
+    - "crates/ono-recovery-zfs/tests/real_zfs.rs::should_create_validate_and_remove_a_snapshot_on_a_live_pool"
+    - "crates/ono-recovery-zfs/tests/real_zfs.rs::should_recover_one_changed_file_without_reverting_unrelated_state_on_a_live_pool"
+    - "crates/ono-recovery-zfs/tests/real_zfs.rs::should_block_a_full_rollback_that_would_destroy_a_newer_snapshot_on_a_live_pool"
+    - "crates/ono-recovery-zfs/tests/real_zfs.rs::should_record_each_dataset_of_a_recursive_creation_individually_on_a_live_pool"
 
   # Skips whose outcome is a property of the host rather than of this repository, each with the
   # condition that decides it. `skip-check` neither requires nor forbids these — it would be a

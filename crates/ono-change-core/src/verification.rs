@@ -199,6 +199,7 @@ pub struct VerificationResult {
     evidence: Vec<Arc<str>>,
     detail: Option<Arc<str>>,
     equivalence: Option<EquivalenceDomain>,
+    equivalence_state: Option<crate::recovery::EquivalenceState>,
     at: Timestamp,
 }
 
@@ -223,8 +224,22 @@ impl VerificationResult {
             evidence: Vec::new(),
             detail: None,
             equivalence: contract.equivalence(),
+            equivalence_state: None,
             at,
         }
+    }
+
+    /// Records what happened to this subject, for a recovery verification (§25.2).
+    ///
+    /// It is a different fact from [`VerificationResult::status`]. A restarted service's worker
+    /// PIDs differ, and §25.2 reports that as `DIFFERENT / EXPECTED` rather than as a failure,
+    /// because recovery never claimed to restore them — and no §23.3 status carries the
+    /// difference between "did not come back" and "was never going to". A renderer without this
+    /// would have to decide which one it was, which §25.3 is the sentence forbidding.
+    #[must_use]
+    pub const fn equivalent(mut self, state: crate::recovery::EquivalenceState) -> Self {
+        self.equivalence_state = Some(state);
+        self
     }
 
     /// Records what was actually seen.
@@ -315,6 +330,12 @@ impl VerificationResult {
     #[must_use]
     pub const fn equivalence(&self) -> Option<EquivalenceDomain> {
         self.equivalence
+    }
+
+    /// What happened to this subject, for a recovery verification (§25.2).
+    #[must_use]
+    pub const fn equivalence_state(&self) -> Option<crate::recovery::EquivalenceState> {
+        self.equivalence_state
     }
 
     /// When it was observed.

@@ -16,9 +16,8 @@ use ono_change_core::{
 use ono_recovery_zfs::{CP, GUID_FINGERPRINT, ZFS, ZfsProvider};
 
 use support::{
-    CHILD_DATASET, CLONE, NEWER_BOOKMARK, NEWER_SNAPSHOT, PARENT_DATASET, ROOT_DATASET,
-    ROOT_SNAPSHOT, ROOT_SNAPSHOT_GUID, RECURSIVE_SNAPSHOT, Script, Slot, code, instant, out,
-    provider,
+    CHILD_DATASET, CLONE, NEWER_BOOKMARK, NEWER_SNAPSHOT, PARENT_DATASET, RECURSIVE_SNAPSHOT,
+    ROOT_DATASET, ROOT_SNAPSHOT, ROOT_SNAPSHOT_GUID, Script, Slot, code, instant, out, provider,
 };
 
 const NGINX_CONF: &str = "/altroot/debian/etc/nginx/nginx.conf";
@@ -93,7 +92,9 @@ fn should_read_the_file_out_of_the_snapshot_directory_of_its_own_dataset() {
         "§13.5: the file comes out of the dataset's own `.zfs/snapshot`, got {argv:?}"
     );
     assert!(
-        !argv.iter().any(|argument| argument.starts_with("/altroot/.zfs/")),
+        !argv
+            .iter()
+            .any(|argument| argument.starts_with("/altroot/.zfs/")),
         "§13.4: the parent dataset's snapshot directory does not hold the child's files, which is \
          exactly what `snapshot-file.txt` recorded"
     );
@@ -250,7 +251,11 @@ fn should_name_each_destruction_as_an_action_of_its_own_rather_than_a_flag() {
         "§13.6: the newer snapshot and the bookmark are each destroyed by name, got {destroys:?}"
     );
     for argv in &destroys {
-        assert_eq!(argv.len(), 2, "`destroy` and one name, with no flag: {argv:?}");
+        assert_eq!(
+            argv.len(),
+            2,
+            "`destroy` and one name, with no flag: {argv:?}"
+        );
     }
 }
 
@@ -393,7 +398,11 @@ fn should_offer_clone_and_copy_when_the_dataset_cannot_be_read_through_its_mount
         .map(program_argv)
         .find(|argv| argv.first().is_some_and(|word| word == "clone"))
         .expect("the clone is materialised first");
-    assert!(clone.iter().any(|argument| argument.starts_with("mountpoint=")));
+    assert!(
+        clone
+            .iter()
+            .any(|argument| argument.starts_with("mountpoint="))
+    );
 }
 
 #[test]
@@ -449,7 +458,9 @@ fn should_refuse_a_boot_environment_rollback_even_once_the_history_was_accepted(
     let error = provider(&tools)
         .with_accepted_history_destruction()
         .restore(&action, &root_asset())
-        .expect_err("§13.7: acceptance of history loss is not acceptance of an online root rollback");
+        .expect_err(
+            "§13.7: acceptance of history loss is not acceptance of an online root rollback",
+        );
     assert_eq!(code(&error), "recovery.requires_reboot");
 }
 
@@ -476,7 +487,9 @@ fn should_surface_the_refusal_zfs_gives_rather_than_adding_the_flag_it_suggests(
     assert_eq!(code(&error), "recovery.destructive_history_not_accepted");
     for (_, argv) in tools.calls() {
         assert!(
-            !argv.iter().any(|argument| argument == "-r" || argument == "-R"),
+            !argv
+                .iter()
+                .any(|argument| argument == "-r" || argument == "-R"),
             "§13.6: Ono never adds the flag ZFS suggests, got {argv:?}"
         );
     }

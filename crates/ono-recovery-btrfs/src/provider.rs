@@ -870,7 +870,7 @@ impl BtrfsProvider {
                 format!(
                     "the read-only flag of {} could not be read: {}",
                     snapshot_path.display(),
-                    error.message()
+                    diagnosis(&error)
                 ),
             ),
         }
@@ -926,7 +926,7 @@ impl BtrfsProvider {
                     "the default subvolume of {} could not be read, so the boot impact of this \
                      recovery is unknown: {}",
                     query_mount.display(),
-                    error.message()
+                    diagnosis(&error)
                 ),
             ),
         }
@@ -998,7 +998,7 @@ impl BtrfsProvider {
                     format!(
                         "the filesystem at {} could not be identified: {}",
                         query_mount.display(),
-                        error.message()
+                        diagnosis(&error)
                     ),
                 );
                 return Ok(None);
@@ -1066,7 +1066,7 @@ impl BtrfsProvider {
                          is unknown: {}",
                         query_mount.display(),
                         reference.tree_path(),
-                        error.message()
+                        diagnosis(&error)
                     ),
                 );
                 return None;
@@ -1305,7 +1305,7 @@ impl BtrfsProvider {
                             format!(
                                 "the snapshot's copy of {} could not be read: {}",
                                 object.display(),
-                                error.message()
+                                diagnosis(&error)
                             ),
                         );
                         return NewerStateImpact::unanalysed();
@@ -1319,7 +1319,7 @@ impl BtrfsProvider {
                             format!(
                                 "the live {} could not be read: {}",
                                 object.display(),
-                                error.message()
+                                diagnosis(&error)
                             ),
                         );
                         return NewerStateImpact::unanalysed();
@@ -2052,6 +2052,18 @@ pub fn nested_exclusion(boundary: &SubvolumeBoundary) -> RecoveryExclusion {
          recorded `nested-live.txt` and `nested-in-snapshot.txt` pair shows — so protecting it \
          needs a snapshot of its own",
     )
+}
+
+/// What a tool refusal said, message and remediation together.
+///
+/// The code is on the error and the sentence a person acts on is in its help, so a checklist
+/// reason that carried only the message would drop `Operation not permitted` — the one word that
+/// tells an operator the recovery is blocked on privilege rather than on the filesystem.
+fn diagnosis(error: &ErrorValue) -> String {
+    match error.help() {
+        Some(help) => format!("{} ({help})", error.message()),
+        None => error.message().to_owned(),
+    }
 }
 
 /// §56.3's refusal, from a checklist with something outstanding.

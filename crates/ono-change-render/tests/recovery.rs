@@ -207,7 +207,13 @@ fn should_lay_the_recovery_view_out_at_the_width_it_was_given() {
 fn should_drop_recovery_not_executed_once_the_recovery_has_begun() {
     let mut fields: Vec<(&str, ono_value::Value)> = Vec::new();
     let planned = rollback_recovery();
-    for name in ["id", "method", "target_state", "newer_state_analysed", "risk"] {
+    for name in [
+        "id",
+        "method",
+        "target_state",
+        "newer_state_analysed",
+        "risk",
+    ] {
         if let Some(value) = planned.get(name) {
             fields.push((name, value.clone()));
         }

@@ -105,7 +105,9 @@ fn should_report_no_restore_path_when_the_dataset_is_not_mounted() {
     );
     let validation = validated_with(out("list-snapshots"), unmounted, &asset());
     assert!(
-        validation.failures().contains(&"no restore path is available"),
+        validation
+            .failures()
+            .contains(&"no restore path is available"),
         "§11.4: a snapshot whose dataset is not mounted has no `.zfs/snapshot` to read from"
     );
 }
@@ -118,7 +120,9 @@ fn should_report_no_restore_path_when_the_dataset_is_read_only() {
     );
     let validation = validated_with(out("list-snapshots"), read_only, &asset());
     assert!(
-        validation.failures().contains(&"no restore path is available"),
+        validation
+            .failures()
+            .contains(&"no restore path is available"),
         "Appendix G.2: a read-only filesystem preventing restore is a truth test"
     );
 }

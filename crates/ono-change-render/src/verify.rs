@@ -40,11 +40,7 @@ const SUBJECT: usize = 24;
 /// advisory one may make it `DEGRADED`, and an observation never changes the state at all.
 /// Folding them into one list would make the reader do the classification §23.2 already did.
 #[must_use]
-pub fn verification_view(
-    plan: &RecordValue,
-    results: &[RecordValue],
-    width: usize,
-) -> Vec<String> {
+pub fn verification_view(plan: &RecordValue, results: &[RecordValue], width: usize) -> Vec<String> {
     let mut lines = vec![fit(
         &format!("VERIFY / plan {}", crate::plan::short(plan, "id")),
         width,

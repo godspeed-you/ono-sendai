@@ -10,6 +10,11 @@ authors.workspace = true
 
 [dependencies]
 ono-adapter.workspace = true
+# The change and recovery vocabulary of v0.6 §8, §11.3, §19 and §25.1: a contributed recovery
+# provider names a `ConsistencyClass` and a `RestoreMethod`, a contributed risk rule a
+# `RiskDimension` and a `RiskClass`, and the host settles each against the one definition rather
+# than a copy (§48.4 refuses at load, so the words must be resolvable at load).
+ono-change-core.workspace = true
 ono-core.workspace = true
 ono-kuang-protocol.workspace = true
 ono-model-broker.workspace = true

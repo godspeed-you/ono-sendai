@@ -67,6 +67,17 @@ fields:
     doc: >-
       For a recovery verification, which of §25.1's domains this result speaks about. §25.3
       forbids a global claim, so a recovery result without a domain claims nothing.
+  equivalence_state:
+    type: enum
+    nullable: true
+    values: [restored, different-as-expected, not-recoverable, not-restored, unknown]
+    doc: >-
+      For a recovery verification, what happened to this subject (§25.2). It is a different fact
+      from `status`: a restarted service's worker PIDs differ, and §25.2 shows that as
+      `DIFFERENT / EXPECTED` rather than as a failure, because recovery never claimed to restore
+      them. No §23.3 status carries that, so a renderer without this field would have to invent
+      it — and §25.3 is exactly the sentence forbidding a renderer to invent a recovery claim.
+      Null for an ordinary plan verification, which speaks about no equivalence domain.
   detail:
     type: string
     nullable: true

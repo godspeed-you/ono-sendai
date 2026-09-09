@@ -40,7 +40,11 @@ fn should_remove_exactly_the_snapshot_the_asset_names() {
     provider(&tools)
         .cleanup(&asset())
         .expect("the recorded pool removes it");
-    let call = tools.calls().into_iter().next().expect("cleanup ran a command");
+    let call = tools
+        .calls()
+        .into_iter()
+        .next()
+        .expect("cleanup ran a command");
     assert_eq!(
         call.1,
         vec!["destroy".to_owned(), ROOT_SNAPSHOT.to_owned()],
@@ -151,7 +155,11 @@ fn should_ask_zfs_for_the_three_properties_the_cost_model_rests_on() {
         (ZFS, out("list-snapshots")),
     ]);
     let _ = provider(&tools).estimate_cost(&asset());
-    let call = tools.calls().into_iter().next().expect("a property query ran");
+    let call = tools
+        .calls()
+        .into_iter()
+        .next()
+        .expect("a property query ran");
     assert!(
         call.1.contains(&"used,written,usedbysnapshots".to_owned()),
         "§38.1: the dimensions come from ZFS's own accounting, got {:?}",
@@ -174,7 +182,10 @@ fn should_render_the_recovery_asset_block_section_thirteen_eight_prints() {
         &asset()
             .restored_by(RestoreMethod::SelectiveFileRestore)
             .excluding(RecoveryExclusion::new("tank/home", "separate dataset"))
-            .excluding(RecoveryExclusion::new("process state", "runtime, not persistence")),
+            .excluding(RecoveryExclusion::new(
+                "process state",
+                "runtime, not persistence",
+            )),
     );
     assert!(rendered.contains("RECOVERY ASSET"));
     assert!(rendered.contains("type          ZFS snapshot"));

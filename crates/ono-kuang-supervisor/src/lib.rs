@@ -24,6 +24,7 @@
 //! shell's integration step.
 
 mod adapters;
+mod change;
 mod consent;
 mod context;
 mod host;
@@ -40,6 +41,7 @@ mod view;
 mod wasm;
 
 pub use adapters::{AdapterPackageError, declared_executables, validate_package};
+pub use change::{ChangeContributions, compose_risk, validate_effect_class};
 pub use consent::{
     ConsentAnswer, ConsentDuration, ConsentRequest, ConsentSource, NoConsent, ScriptedConsent,
     scope_words,

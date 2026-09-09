@@ -9,7 +9,6 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-ono-core.workspace = true
 ono-value.workspace = true
 ono-render.workspace = true
 jiff.workspace = true

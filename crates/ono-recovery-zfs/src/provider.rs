@@ -8,7 +8,7 @@
 //!   `tank/data/customer`, and [`Layout::dataset_of_path`] resolves through mount metadata so a
 //!   directory *named* like a dataset never becomes one (Appendix B.8).
 //! - §13.3: one `zfs snapshot -r` may create several snapshots, and Appendix D.1 still wants one
-//!   concrete reference per dataset. [`ZfsProvider::plan_protection`] emits one protection action
+//!   concrete reference per dataset. [`RecoveryProvider::plan_protection`] emits one protection action
 //!   per dataset, so a recursive creation produces a list of assets rather than a single entry
 //!   that quietly stands for several.
 //! - §13.6: rollback can require destroying newer snapshots, bookmarks and clones, and Ono MUST
@@ -346,6 +346,7 @@ impl ZfsProvider {
                         referenced: None,
                         origin,
                         canmount: Arc::from("-"),
+                        listed: false,
                     }),
                 }
             }
@@ -667,8 +668,13 @@ impl ZfsProvider {
                 ZfsFact::DatasetIdentity,
                 dataset
                     .as_ref()
-                    .filter(|_| status.filesystems)
-                    .map(|found| format!("ZFS reports the dataset `{}`", found.name)),
+                    .filter(|found| status.filesystems && found.listed)
+                    .map(|found| {
+                        format!(
+                            "`zfs list -t filesystem` reports the dataset `{}` at `{}`",
+                            found.name, found.mountpoint
+                        )
+                    }),
                 "ZFS did not report a dataset of this name",
             )
             .establishing(

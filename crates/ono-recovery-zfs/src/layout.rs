@@ -39,6 +39,13 @@ pub struct Dataset {
     pub origin: Option<Arc<str>>,
     /// The `canmount` property, which decides whether a restore can reach it through a mount.
     pub canmount: Arc<str>,
+    /// Whether `zfs list -t filesystem` itself reported the dataset, with its mount metadata.
+    ///
+    /// A dataset named only by another listing — the `origin` of a clone, say — is evidence that
+    /// it exists and no evidence at all about where it is placed. §56.1's "exact dataset
+    /// identity" is the stronger of the two, so the difference travels rather than being
+    /// flattened into a row with `-` in every column.
+    pub listed: bool,
 }
 
 impl Dataset {
@@ -484,6 +491,7 @@ pub fn datasets(program: &str, text: &str) -> Result<Vec<Dataset>, ErrorValue> {
                 referenced: number(field(6)),
                 origin: (field(7) != "-").then(|| Arc::from(field(7))),
                 canmount: Arc::from(field(8)),
+                listed: true,
             })
         })
         .collect()

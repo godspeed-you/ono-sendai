@@ -49,7 +49,9 @@ pub fn i(number: usize) -> Value {
 /// A duration of `seconds`.
 #[must_use]
 pub fn seconds(seconds: i64) -> Value {
-    Value::Duration(Duration::from_nanoseconds(i128::from(seconds) * 1_000_000_000))
+    Value::Duration(Duration::from_nanoseconds(
+        i128::from(seconds) * 1_000_000_000,
+    ))
 }
 
 /// A list of string values.
@@ -73,7 +75,7 @@ pub fn map(fields: &[(&str, Value)]) -> Value {
 pub fn record(schema_id: &str, fields: &[(&str, Value)]) -> RecordValue {
     let mut builder = Schema::builder(SchemaId::new(schema_id, 1), schema_id);
     for (name, _) in fields {
-        builder = builder.field(FieldDef::new(*name, FieldType::Any));
+        builder = builder.field(FieldDef::new(name, FieldType::Any));
     }
     let schema = Arc::new(builder.build().expect("a well-formed schema"));
     let mut record = RecordValue::builder(
@@ -260,7 +262,10 @@ pub fn nginx_plan_in(state: &str, statuses: &[&str]) -> RecordValue {
             ("revision", i(3)),
             ("kind", s("change")),
             ("state", s(state)),
-            ("intent", s("replace nginx configuration and restart service")),
+            (
+                "intent",
+                s("replace nginx configuration and restart service"),
+            ),
             ("source", s("plan { replace file /etc/nginx/nginx.conf }")),
             ("session", s("session-1")),
             ("created_at", Value::Timestamp(instant())),
@@ -575,7 +580,10 @@ pub fn ready_asset() -> RecordValue {
             ("restore_available", Value::Bool(true)),
             ("permissions_present", Value::Bool(true)),
             ("at", Value::Timestamp(instant())),
-            ("detail", s("the snapshot exists and a restore path was confirmed")),
+            (
+                "detail",
+                s("the snapshot exists and a restore path was confirmed"),
+            ),
         ]),
         Some(ByteSize::from_bytes(327_155_712)),
         false,
@@ -760,12 +768,18 @@ pub fn selective_recovery() -> RecordValue {
                     map(&[
                         ("object", s("/etc/ssh/sshd_config")),
                         ("class", s("preserved-by-method")),
-                        ("detail", s("changed after the plan, outside the restore set")),
+                        (
+                            "detail",
+                            s("changed after the plan, outside the restore set"),
+                        ),
                     ]),
                     map(&[
                         ("object", s("/etc/hosts")),
                         ("class", s("preserved-by-method")),
-                        ("detail", s("changed after the plan, outside the restore set")),
+                        (
+                            "detail",
+                            s("changed after the plan, outside the restore set"),
+                        ),
                     ]),
                 ]),
             ),
@@ -781,7 +795,10 @@ pub fn selective_recovery() -> RecordValue {
                     ("compensation", s("clients reconnect")),
                 ])]),
             ),
-            ("metadata_restored", list(&["content", "mode", "owner/group"])),
+            (
+                "metadata_restored",
+                list(&["content", "mode", "owner/group"]),
+            ),
             (
                 "metadata_gaps",
                 list(&[
@@ -935,7 +952,11 @@ pub fn recovery_results() -> Vec<RecordValue> {
         equivalence("runtime-state", "service state", "restored"),
         equivalence("runtime-state", "worker PIDs", "different-as-expected"),
         equivalence("runtime-state", "TCP connections", "not-recoverable"),
-        equivalence("external-side-effect", "1 webhook request", "not-recoverable"),
+        equivalence(
+            "external-side-effect",
+            "1 webhook request",
+            "not-recoverable",
+        ),
     ]
 }
 

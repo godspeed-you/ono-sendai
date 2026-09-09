@@ -502,6 +502,14 @@ pub fn recovery_plan_record(plan: &RecoveryPlan) -> Result<RecordValue, ErrorVal
                 .map(|id| Value::string(id.as_str())),
         ),
     );
+    // §2.12 puts recovery through the same lifecycle as any other change, so the state travels:
+    // `recovery-planned` means nothing has been restored, and `recovery-failed` means the
+    // remaining assets and the exact partial state are preserved (Appendix F).
+    let builder = put(
+        builder,
+        "state",
+        Value::string(plan.plan().state().as_str()),
+    );
     let builder = put(builder, "goal", Value::string(plan.goal().as_str()));
     let builder = put(builder, "method", Value::string(plan.method().as_str()));
     let builder = put(builder, "target_state", Value::string(plan.target_state()));
@@ -634,6 +642,13 @@ pub fn verification_record(
         result
             .equivalence()
             .map_or(Value::Null, |domain| Value::string(domain.as_str())),
+    );
+    let builder = put(
+        builder,
+        "equivalence_state",
+        result
+            .equivalence_state()
+            .map_or(Value::Null, |state| Value::string(state.as_str())),
     );
     let builder = put(builder, "detail", optional_text(result.detail()));
     let builder = put(builder, "timestamp", Value::Timestamp(result.at()));
@@ -1207,22 +1222,65 @@ pub fn boundary_map(boundary: &UnknownBoundary) -> Value {
 /// The `impact_summary` record of `ono.change-plan/1` — §9.5's blast radius.
 ///
 /// Keys: `direct_targets`, `direct_effects`, `dependents`, `transitive`, `external`,
-/// `boundaries`, `hosts`, `complete`, `truncated_reason`. The boundary count sits beside the
-/// object counts rather than under them, because a summary that hides a boundary is the summary
-/// §9.6 forbids.
+/// `boundary_count`, `hosts`, `complete`, `truncated_reason`, and the four label lists
+/// `direct_labels`, `dependent_labels`, `possible_labels` and `boundary_labels`.
+///
+/// The key is `boundary_count` and not `boundaries`, so it is spelled the same here and on
+/// `ono.impact-graph/1`: a renderer that had to know two names for one number would eventually
+/// read the wrong one, and §9.6's whole point is that the boundary count is never lost.
+///
+/// The label lists are what §20.2's plan view names. `impact` returns the full
+/// `ono.impact-graph/1`; a plan carries the summary, and a summary that could only count would
+/// force the default view to print `2 direct dependents` where §20.2 prints `4 worker processes,
+/// :80, :443`. They are bounded — a plan over five thousand targets is a plan whose labels are a
+/// count — and the bound is stated in `truncated_reason` when it bites.
 #[must_use]
 pub fn impact_summary_map(graph: &ImpactGraph) -> Value {
+    /// How many labels one summary row carries before it becomes a count.
+    const LABEL_BUDGET: usize = 12;
+
     let radius = graph.blast_radius();
+    let labels = |class: crate::ImpactClass| {
+        Value::list(
+            graph
+                .of_class(class)
+                .into_iter()
+                .take(LABEL_BUDGET)
+                .map(|node| Value::string(node.label())),
+        )
+    };
     let mut map = MapValue::new();
     map.insert("direct_targets".into(), count_value(radius.direct_targets));
     map.insert("direct_effects".into(), count_value(radius.direct_effects));
     map.insert("dependents".into(), count_value(radius.dependents));
     map.insert("transitive".into(), count_value(radius.transitive));
     map.insert("external".into(), count_value(radius.external));
-    map.insert("boundaries".into(), count_value(radius.boundaries));
+    map.insert("boundary_count".into(), count_value(radius.boundaries));
     map.insert("hosts".into(), count_value(radius.hosts));
     map.insert("complete".into(), Value::Bool(graph.is_complete()));
     map.insert("truncated_reason".into(), optional_text(graph.truncation()));
+    map.insert(
+        "direct_labels".into(),
+        labels(crate::ImpactClass::DirectTarget),
+    );
+    map.insert(
+        "dependent_labels".into(),
+        labels(crate::ImpactClass::Dependent),
+    );
+    map.insert(
+        "possible_labels".into(),
+        labels(crate::ImpactClass::TransitiveRelated),
+    );
+    map.insert(
+        "boundary_labels".into(),
+        Value::list(
+            graph
+                .boundaries()
+                .iter()
+                .take(LABEL_BUDGET)
+                .map(|boundary| Value::string(boundary.beyond())),
+        ),
+    );
     Value::Map(Arc::new(map))
 }
 

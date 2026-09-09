@@ -44,7 +44,7 @@ pub enum Symbol {
     Modification,
     /// §20.3 and §8.1: an effect Ono has no justified model for. §2.4 forbids promoting it.
     Unknown,
-    /// §20.3 and Appendix E.7: risk, or the boundary past which nothing can be undone (§2.13).
+    /// §20.3 and Appendix E.7: risk, or the boundary past which nothing can be reversed (§2.13).
     Risk,
     /// §20.3 and Appendix E.7: a validated restore asset covers this.
     RecoveryAvailable,

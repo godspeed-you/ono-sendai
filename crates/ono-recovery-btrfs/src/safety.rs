@@ -114,6 +114,7 @@ impl SafetyFact {
 pub struct SafetyChecklist {
     established: Vec<(SafetyFact, Arc<str>)>,
     outstanding: Vec<(SafetyFact, Arc<str>)>,
+    examined: Vec<SafetyFact>,
 }
 
 impl SafetyChecklist {
@@ -129,11 +130,13 @@ impl SafetyChecklist {
                 .into_iter()
                 .map(|fact| (fact, Arc::from("nothing has established this yet")))
                 .collect(),
+            examined: Vec::new(),
         }
     }
 
     /// Records that `fact` was established, and what established it.
     pub fn establish(&mut self, fact: SafetyFact, evidence: impl Into<Arc<str>>) {
+        self.examined.retain(|examined| *examined != fact);
         self.outstanding.retain(|(pending, _)| *pending != fact);
         self.established.retain(|(known, _)| *known != fact);
         self.established.push((fact, evidence.into()));
@@ -141,6 +144,9 @@ impl SafetyChecklist {
 
     /// Records that `fact` could not be established, and why (§56.3).
     pub fn block(&mut self, fact: SafetyFact, reason: impl Into<Arc<str>>) {
+        if !self.examined.contains(&fact) {
+            self.examined.push(fact);
+        }
         self.established.retain(|(known, _)| *known != fact);
         self.outstanding.retain(|(pending, _)| *pending != fact);
         self.outstanding.push((fact, reason.into()));
@@ -180,19 +186,36 @@ impl SafetyChecklist {
         self.outstanding.is_empty()
     }
 
+    /// Whether a query looked at `fact` and could not establish it (§56.3).
+    ///
+    /// A fact nothing looked at blocks just as hard, and the difference matters only to the
+    /// wording of the refusal: naming the fact a query actually failed on is more use to a person
+    /// than naming the first one in the list that a short-circuit never reached.
+    #[must_use]
+    pub fn was_examined(&self, fact: SafetyFact) -> bool {
+        self.examined.contains(&fact)
+    }
+
     /// The refusal §56.3 requires when a fact is outstanding.
     ///
-    /// The first outstanding fact in §56.2's own order is named, because a refusal that lists ten
-    /// things is one a person reads as "something went wrong" rather than as "this specific fact
-    /// is unknown". The rest travel in the message.
+    /// One fact is named, because a refusal that lists ten things is one a person reads as
+    /// "something went wrong" rather than as "this specific fact is unknown". It is the first, in
+    /// §56.2's own order, that a query looked at and could not establish; where a short-circuit
+    /// meant no query ran at all, it is the first outstanding one. The rest travel in the message.
     #[must_use]
     pub fn refusal(&self) -> Option<ErrorValue> {
-        let first = SafetyFact::ALL.into_iter().find_map(|fact| {
-            self.outstanding
-                .iter()
-                .find(|(pending, _)| *pending == fact)
-                .map(|(pending, reason)| (*pending, Arc::clone(reason)))
-        })?;
+        let pick = |wanted_examined: bool| {
+            SafetyFact::ALL.into_iter().find_map(|fact| {
+                if self.examined.contains(&fact) != wanted_examined {
+                    return None;
+                }
+                self.outstanding
+                    .iter()
+                    .find(|(pending, _)| *pending == fact)
+                    .map(|(pending, reason)| (*pending, Arc::clone(reason)))
+            })
+        };
+        let first = pick(true).or_else(|| pick(false))?;
         let (fact, reason) = first;
         let others: Vec<&str> = SafetyFact::ALL
             .into_iter()

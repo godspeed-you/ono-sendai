@@ -12,8 +12,9 @@
 //!   are checked before allocation.
 //! - **The lifecycle** ([`Lifecycle`], [`PluginState`]): spec §31.8's six states with legal
 //!   transitions enforced in the type.
-//! - **The capability model** ([`Capability`], [`Lease`], [`Decision`]): the thirty
-//!   families with their scope shapes and enforcement levels (spec §31.16–§31.19, §31.49).
+//! - **The capability model** ([`Capability`], [`Lease`], [`Decision`]): the forty-seven
+//!   families with their scope shapes and enforcement levels (spec §31.16–§31.19, §31.49,
+//!   v0.6 §48.3).
 //! - **The negotiated contract** ([`PluginContract`]): what a load produces and
 //!   `lifecycle.init` delivers (spec §31.63).
 //! - **The audit record** ([`AuditEvent`]): spec §31.37's `PluginAction`, in the shape of
@@ -64,14 +65,22 @@ pub use manifest::{
 };
 pub use message::{
     ActionContribution, Answer, AuditLogParams, CancelParams, CancelReason, CausalRuleContribution,
-    CausalRuleDocument, CheckAnswer, CheckParams, ClockNowResult, CloseParams, CommandContribution,
-    CommandDocument, ContributionSet, DemandParams, EmitParams, EmitResult, Envelope,
-    FilesystemReadParams, FilesystemReadResult, HealthState, Hello, Idempotency, InitParams,
-    InitResult, InvokeParams, InvokeResult, InvokeStatus, NextParams, NextResult,
-    ParameterContribution, ProbeResult, QueryParams, RequestOnceParams, SchemaContribution,
-    SchemaFieldContribution, SchemaGetParams, SchemaListParams, ShutdownParams, ShutdownReason,
-    StateGetResult, StateKeyParams, StateSetParams, StreamHandleParams, TargetContribution,
-    TargetDocument, TemporalSourceContribution, TemporalSourceDocument, VIEW_COMPONENTS,
+    CausalRuleDocument, ChangeViewContribution, ChangeViewDocument, CheckAnswer, CheckParams,
+    ClockNowResult, CloseParams, CommandContribution, CommandDocument, ContributionSet,
+    DemandParams, EffectClassContribution, EmitParams, EmitResult, Envelope, FilesystemReadParams,
+    FilesystemReadResult, HealthState, Hello, Idempotency, ImpactProviderContribution,
+    ImpactProviderDocument, InitParams, InitResult, InvokeParams, InvokeResult, InvokeStatus,
+    NextParams, NextResult, ParameterContribution, PlanContributeParams, PlanReadParams,
+    ProbeResult, QueryParams, RecoveryCandidateWire, RecoveryCleanupParams, RecoveryCostWire,
+    RecoveryDiscoverParams, RecoveryEstimateCostParams, RecoveryExclusionWire,
+    RecoveryPrepareParams, RecoveryProviderContribution, RecoveryProviderDocument,
+    RecoveryQuiesceParams, RecoveryRestoreParams, RecoveryScopeWire, RecoveryValidateParams,
+    RequestOnceParams, RiskFindingContribution, RiskRuleContribution, RiskRuleDocument,
+    SchemaContribution, SchemaFieldContribution, SchemaGetParams, SchemaListParams, ShutdownParams,
+    ShutdownReason, StateGetResult, StateKeyParams, StateSetParams, StreamHandleParams,
+    TargetContribution, TargetDocument, TemporalSourceContribution, TemporalSourceDocument,
+    TransactionContribution, VIEW_COMPONENTS, VerificationCheckContribution,
+    VerificationObserveParams, VerificationProviderContribution, VerificationProviderDocument,
     ViewContribution, ViewEvent, ViewEventParams, ViewHandleParams, ViewMountParams,
     ViewOpenParams, ViewOpenResult, ViewSize, ViewSubmitParams, method, parse_type_name,
 };

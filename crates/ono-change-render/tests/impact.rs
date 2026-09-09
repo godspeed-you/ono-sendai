@@ -9,9 +9,7 @@
 use ono_change_render::{Charset, blast_radius, boundaries, impact_block};
 
 mod support;
-use support::{
-    bounded_impact, contains, empty_impact, i, index_of, map, nginx_impact, record, s,
-};
+use support::{bounded_impact, contains, empty_impact, i, index_of, map, nginx_impact, record, s};
 
 #[test]
 fn should_count_the_blast_radius_the_graph_holds() {

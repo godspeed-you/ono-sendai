@@ -6,8 +6,8 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_value::RecordValue;
 use ono_change_render::recovery_assets;
+use ono_value::RecordValue;
 
 mod support;
 use support::{

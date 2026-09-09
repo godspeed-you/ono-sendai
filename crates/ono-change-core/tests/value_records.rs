@@ -808,7 +808,7 @@ fn should_count_the_boundaries_beside_the_objects_when_impact_is_summarised() {
         panic!("§9.5's blast radius is a sub-record");
     };
     assert_eq!(
-        summary.get("boundaries"),
+        summary.get("boundary_count"),
         Some(&Value::Int(1)),
         "§9.6: a summary that hides a boundary is the summary the spec forbids"
     );

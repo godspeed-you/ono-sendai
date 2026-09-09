@@ -89,9 +89,12 @@ fields:
     type: record
     required: true
     doc: >-
-      §9.5's blast radius — counts by class, the number of hosts and the number of places the
-      graph stops. `impact <plan>` returns the full `ono.impact-graph/1`; this is the summary that
-      never hides a boundary.
+      §9.5's blast radius — `direct_targets`, `direct_effects`, `dependents`, `transitive`,
+      `external`, `boundary_count`, `hosts`, `complete`, `truncated_reason`, and the bounded label
+      lists `direct_labels`, `dependent_labels`, `possible_labels` and `boundary_labels` that
+      §20.2's plan view names its rows from. `impact <plan>` returns the full
+      `ono.impact-graph/1`; this is the summary, and §9.6 is why it counts boundaries beside
+      objects rather than under them.
   protection:
     type: list<ono.protection-coverage/1>
     required: true
