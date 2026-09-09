@@ -1648,6 +1648,12 @@ struct FakeHost {
     temporal: std::sync::Mutex<Vec<(String, Json)>>,
     /// Contributed causal links, as they reached the host after §37.4's ceiling.
     links: std::sync::Mutex<Vec<(String, Json)>>,
+    /// What packages contributed to a plan (v0.6 §48.2, §48.3).
+    plan_contributions: std::sync::Mutex<Vec<(String, Json)>>,
+    /// What recovery providers reported, with the call each came from (v0.6 §12.1).
+    recovery_reports: std::sync::Mutex<Vec<(String, String, Json)>>,
+    /// Verification results the package observed (v0.6 §23, §25.1).
+    verifications: std::sync::Mutex<Vec<(String, Json)>>,
 }
 
 fn item(seq: i64, label: &str) -> Json {
@@ -1931,6 +1937,94 @@ impl ono_kuang_supervisor::HostServices for FakeHost {
         action: String,
     ) -> Result<Json, ono_kuang_supervisor::HostError> {
         Ok(json!({"state": if action == "start" { "running" } else { "stopped" }}))
+    }
+
+    // --- the change and recovery domain of v0.6 §48 -------------------------------------------
+
+    async fn change_plan_read(
+        &self,
+        plan: &str,
+    ) -> Result<Json, ono_kuang_supervisor::HostError> {
+        if plan != "plan-1" {
+            return Err(ono_kuang_supervisor::HostError::not_found(format!(
+                "no plan {plan}"
+            )));
+        }
+        Ok(json!({
+            "schema": "ono.change-plan/1",
+            "id": "plan-1",
+            "state": "sealed",
+            "risk": "high",
+        }))
+    }
+
+    async fn change_plan_contribute(
+        &self,
+        package: &str,
+        contribution: Json,
+    ) -> Result<Json, ono_kuang_supervisor::HostError> {
+        // The plan already carries a HIGH finding from a built-in rule: §19.3's own example,
+        // a change that interrupts a service. The contributed findings are folded in through
+        // the one operation §19.2 defines, `RiskAssessment::classify`, which is a maximum.
+        let contributed: Vec<ono_change_core::RiskFinding> = contribution
+            .get("risk_findings")
+            .and_then(Json::as_array)
+            .map(|findings| {
+                findings
+                    .iter()
+                    .filter_map(|finding| {
+                        Some(ono_change_core::RiskFinding::new(
+                            ono_change_core::RiskDimension::from_name(
+                                finding.get("dimension")?.as_str()?,
+                            )?,
+                            ono_change_core::RiskClass::from_name(
+                                finding.get("class")?.as_str()?,
+                            )?,
+                            finding.get("rule")?.as_str()?,
+                            finding.get("reason")?.as_str()?,
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let composed = ono_kuang_supervisor::compose_risk(
+            ono_change_core::RiskClass::High,
+            &contributed,
+        );
+        self.plan_contributions
+            .lock()
+            .expect("the fake host's lock")
+            .push((package.to_owned(), contribution.clone()));
+        Ok(json!({
+            "risk_class": composed.as_str(),
+            "effects": contribution.get("effects").and_then(Json::as_array).map_or(0, Vec::len),
+            "findings": contributed.len(),
+        }))
+    }
+
+    async fn recovery_report(
+        &self,
+        package: &str,
+        call: &str,
+        report: Json,
+    ) -> Result<Json, ono_kuang_supervisor::HostError> {
+        self.recovery_reports
+            .lock()
+            .expect("the fake host's lock")
+            .push((package.to_owned(), call.to_owned(), report));
+        Ok(json!({"recorded": call}))
+    }
+
+    async fn verification_observe(
+        &self,
+        package: &str,
+        result: Json,
+    ) -> Result<Json, ono_kuang_supervisor::HostError> {
+        self.verifications
+            .lock()
+            .expect("the fake host's lock")
+            .push((package.to_owned(), result.clone()));
+        Ok(json!({"recorded": result.get("check").cloned().unwrap_or(Json::Null)}))
     }
 }
 
