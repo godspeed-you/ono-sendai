@@ -316,6 +316,12 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [v06 | 2026-09-09] **The v0.6 tranche — Prospective Change, Protection & Recovery.** Ten crates
+  under `crates/ono-change-*` and `crates/ono-recovery-*`, the eleven registries of §47 under
+  `docs/contracts/change/` and `docs/contracts/recovery/`, `docs/contracts/commands/change.yaml`,
+  the E17/E18/E19 error families, the ten schemas of §46, `xtask/src/change.rs`, and the shell
+  integration in `crates/ono-cli`. ADR-0800 onward.
+
 ## What is left, and why
 
 **The v0.5 Temporal & Causal Systems Interface is delivered.** Six crates, the machine-readable

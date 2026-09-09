@@ -71,7 +71,12 @@ impl FileRecoveryStore {
         path.starts_with(&self.root)
     }
 
-    /// The directory an asset's archive lives in.
+    /// The directory an asset's archive lives in, which becomes the asset's reference (§11.1).
+    ///
+    /// Every later operation reads the asset's own reference rather than deriving this again. An
+    /// asset's identity may legitimately be re-derived by the layer above — attributing it to a
+    /// plan changes it (§11.1's `source_plan`) — and a store that recomputed its path from the id
+    /// would then look in a directory that does not exist.
     #[must_use]
     pub fn asset_directory(&self, asset: &RecoveryAssetId) -> PathBuf {
         self.root.join(asset.as_str())
@@ -126,15 +131,30 @@ impl FileRecoveryStore {
     /// looked like an asset would be worse than none.
     pub fn write_archive(
         &self,
-        asset: &RecoveryAssetId,
+        directory: &Path,
         manifest: &Manifest,
         contents: &[(String, Vec<u8>)],
-    ) -> Result<PathBuf, ErrorValue> {
-        let directory = self.asset_directory(asset);
+    ) -> Result<(), ErrorValue> {
         let scope = manifest.root().display().to_string();
-        let result = self.write_archive_inner(&directory, manifest, contents);
+        self.inside(directory)?;
+        // The directory is claimed first, and only what this call created is ever removed: a
+        // failure here must not take away a copy that was already in the store (§62.3).
+        DirBuilder::new()
+            .mode(DIRECTORY_MODE)
+            .create(directory)
+            .map_err(|error| {
+                asset_create_failed(
+                    PROVIDER_ID,
+                    &scope,
+                    &format!(
+                        "the recovery store already holds `{}` or could not take it: {error}",
+                        directory.display()
+                    ),
+                )
+            })?;
+        let result = self.write_archive_inner(directory, manifest, contents);
         if result.is_err() {
-            let _ = std::fs::remove_dir_all(&directory);
+            let _ = std::fs::remove_dir_all(directory);
         }
         result.map_err(|error| {
             asset_create_failed(
@@ -142,8 +162,7 @@ impl FileRecoveryStore {
                 &scope,
                 &format!("the recovery store could not take the copy: {error}"),
             )
-        })?;
-        Ok(directory)
+        })
     }
 
     fn write_archive_inner(
@@ -152,7 +171,6 @@ impl FileRecoveryStore {
         manifest: &Manifest,
         contents: &[(String, Vec<u8>)],
     ) -> Result<(), std::io::Error> {
-        DirBuilder::new().mode(DIRECTORY_MODE).create(directory)?;
         let objects = directory.join(OBJECTS_DIRECTORY);
         DirBuilder::new().mode(DIRECTORY_MODE).create(&objects)?;
         for (name, bytes) in contents {
@@ -167,10 +185,11 @@ impl FileRecoveryStore {
     ///
     /// `recovery.asset_not_found` when the archive is not in the store, and `change.store_corrupt`
     /// when it is there and unreadable.
-    pub fn read_manifest(&self, asset: &RecoveryAssetId) -> Result<Manifest, ErrorValue> {
-        let path = self.asset_directory(asset).join(MANIFEST_NAME);
-        let text =
-            std::fs::read_to_string(&path).map_err(|_| asset_not_found(&asset.to_string()))?;
+    pub fn read_manifest(&self, directory: &Path) -> Result<Manifest, ErrorValue> {
+        self.inside(directory)?;
+        let path = directory.join(MANIFEST_NAME);
+        let text = std::fs::read_to_string(&path)
+            .map_err(|_| asset_not_found(&directory.display().to_string()))?;
         Manifest::decode(&text)
     }
 
@@ -179,9 +198,11 @@ impl FileRecoveryStore {
     /// # Errors
     ///
     /// `recovery.asset_not_found` when the archive is not in the store.
-    pub fn manifest_fingerprint(&self, asset: &RecoveryAssetId) -> Result<String, ErrorValue> {
-        let path = self.asset_directory(asset).join(MANIFEST_NAME);
-        let bytes = std::fs::read(&path).map_err(|_| asset_not_found(&asset.to_string()))?;
+    pub fn manifest_fingerprint(&self, directory: &Path) -> Result<String, ErrorValue> {
+        self.inside(directory)?;
+        let path = directory.join(MANIFEST_NAME);
+        let bytes =
+            std::fs::read(&path).map_err(|_| asset_not_found(&directory.display().to_string()))?;
         Ok(crate::manifest::digest_of(&bytes))
     }
 
@@ -191,14 +212,13 @@ impl FileRecoveryStore {
     ///
     /// `recovery.asset_not_found` when the blob is missing, which is an asset that no longer holds
     /// what its manifest says it holds.
-    pub fn read_blob(&self, asset: &RecoveryAssetId, blob: &str) -> Result<Vec<u8>, ErrorValue> {
-        let path = self
-            .asset_directory(asset)
-            .join(OBJECTS_DIRECTORY)
-            .join(blob);
+    pub fn read_blob(&self, directory: &Path, blob: &str) -> Result<Vec<u8>, ErrorValue> {
+        self.inside(directory)?;
+        let path = directory.join(OBJECTS_DIRECTORY).join(blob);
         std::fs::read(&path).map_err(|error| {
             asset_not_found(&format!(
-                "{asset}: the stored copy `{blob}` could not be read: {error}"
+                "the stored copy `{}` could not be read: {error}",
+                path.display()
             ))
         })
     }
@@ -212,12 +232,12 @@ impl FileRecoveryStore {
     /// # Errors
     ///
     /// `change.store_unavailable` when the directory is there and cannot be removed.
-    pub fn remove_archive(&self, asset: &RecoveryAssetId) -> Result<(), ErrorValue> {
-        let directory = self.asset_directory(asset);
+    pub fn remove_archive(&self, directory: &Path) -> Result<(), ErrorValue> {
+        self.inside(directory)?;
         if !directory.exists() {
             return Ok(());
         }
-        std::fs::remove_dir_all(&directory).map_err(|error| {
+        std::fs::remove_dir_all(directory).map_err(|error| {
             store_unavailable(&format!(
                 "the recovery copy at `{}` could not be removed: {error}",
                 directory.display()
@@ -230,12 +250,28 @@ impl FileRecoveryStore {
     /// # Errors
     ///
     /// `recovery.asset_not_found` when the archive is not in the store.
-    pub fn occupied_bytes(&self, asset: &RecoveryAssetId) -> Result<u64, ErrorValue> {
-        let directory = self.asset_directory(asset);
+    pub fn occupied_bytes(&self, directory: &Path) -> Result<u64, ErrorValue> {
+        self.inside(directory)?;
         if !directory.is_dir() {
-            return Err(asset_not_found(&asset.to_string()));
+            return Err(asset_not_found(&directory.display().to_string()));
         }
-        Ok(directory_bytes(&directory))
+        Ok(directory_bytes(directory))
+    }
+
+    /// Refuses a path outside the store (§43.2, §48.3).
+    ///
+    /// An asset arrives from a plan store, and a plan store is a file. A reference pointing
+    /// anywhere else would make this provider read and remove paths its own configuration never
+    /// named, which is the authority escalation §48.4 forbids a contribution from gaining.
+    fn inside(&self, directory: &Path) -> Result<(), ErrorValue> {
+        if self.contains(directory) && directory != self.root {
+            return Ok(());
+        }
+        Err(asset_not_found(&format!(
+            "`{}` is not a recovery copy inside `{}`",
+            directory.display(),
+            self.root.display()
+        )))
     }
 }
 

@@ -7,18 +7,18 @@
 //!
 //! [`action_groups`] is the collapsed model itself rather than a private step of the drawing.
 //! Appendix E.2 says the lines are expandable and Appendix E.3 gives `Space` to expand them, so
-//! the inspector needs the group *and* the actions inside it; a renderer that folded them into
-//! text would make expansion a second, disagreeing traversal.
+//! the inspector needs the group *and* the action identities inside it; a renderer that folded
+//! them into text would make expansion a second, disagreeing traversal.
 //!
 //! Appendix E.8 reaches the footer too. The `protection` line is a coverage summary, and a
 //! coverage summary shows its exclusions — so the footer's protection entry is two lines, not
 //! one, and it comes from the same `pub(crate)` function the full plan view uses.
 
-use ono_change_core::{ActionId, ActionStatus, ChangePlan};
+use ono_value::RecordValue;
 
 use crate::progress::Phase;
 use crate::symbols::Charset;
-use crate::{column_pair, counted, display_width, fit, heading, safe};
+use crate::{column_pair, counted, display_width, fit, heading, items, list_len, text};
 
 /// How wide the footer's label column is (Appendix E.2's alignment).
 const LABEL: usize = 12;
@@ -28,7 +28,7 @@ const LABEL: usize = 12;
 pub struct ActionGroup {
     phase: Phase,
     summary: String,
-    actions: Vec<ActionId>,
+    actions: Vec<String>,
     status: Option<String>,
 }
 
@@ -51,9 +51,9 @@ impl ActionGroup {
         self.actions.len()
     }
 
-    /// The actions themselves, so Appendix E.3's `Space` can expand the line.
+    /// The identities of the actions themselves, so Appendix E.3's `Space` can expand the line.
     #[must_use]
-    pub fn actions(&self) -> &[ActionId] {
+    pub fn actions(&self) -> &[String] {
         &self.actions
     }
 
@@ -71,37 +71,39 @@ impl ActionGroup {
 
 /// The plan's actions, collapsed as Appendix E.2 collapses them.
 ///
-/// Grouping is by phase and by summary, in the order the plan holds them, so the view never
+/// Grouping is by phase and by summary, in the order the record holds them, so the view never
 /// reorders what the planner decided. Two actions with the same summary in different phases stay
 /// apart: `restart service` as a mutation and `restart service` as a recovery step are not the
 /// same line.
 #[must_use]
-pub fn action_groups(plan: &ChangePlan) -> Vec<ActionGroup> {
+pub fn action_groups(plan: &RecordValue) -> Vec<ActionGroup> {
     let mut groups: Vec<ActionGroup> = Vec::new();
-    let mut statuses: Vec<Vec<ActionStatus>> = Vec::new();
-    for action in plan.actions() {
-        let phase = Phase::of(action.role());
-        let summary = safe(action.summary());
+    let mut statuses: Vec<Vec<String>> = Vec::new();
+    for action in items(plan, "actions") {
+        let phase = Phase::of(text(&action, "role").as_deref().unwrap_or("mutate"));
+        let summary = text(&action, "summary").unwrap_or_else(|| "unnamed action".to_owned());
+        let id = text(&action, "id").unwrap_or_default();
+        let status = text(&action, "status").unwrap_or_else(|| "pending".to_owned());
         match groups
             .iter()
             .position(|group| group.phase == phase && group.summary == summary)
         {
             Some(index) => {
                 if let Some(group) = groups.get_mut(index) {
-                    group.actions.push(action.id().clone());
+                    group.actions.push(id);
                 }
                 if let Some(seen) = statuses.get_mut(index) {
-                    seen.push(action.status());
+                    seen.push(status);
                 }
             }
             None => {
                 groups.push(ActionGroup {
                     phase,
                     summary,
-                    actions: vec![action.id().clone()],
+                    actions: vec![id],
                     status: None,
                 });
-                statuses.push(vec![action.status()]);
+                statuses.push(vec![status]);
             }
         }
     }
@@ -117,13 +119,13 @@ pub fn action_groups(plan: &ChangePlan) -> Vec<ActionGroup> {
 /// contracts rather than as verify actions, because a plan that verifies must show that it does
 /// (§23.1) and an empty heading would say the opposite.
 #[must_use]
-pub fn collapsed_plan(plan: &ChangePlan, width: usize, charset: Charset) -> Vec<String> {
+pub fn collapsed_plan(plan: &RecordValue, width: usize, charset: Charset) -> Vec<String> {
     let groups = action_groups(plan);
     let mut lines = vec![fit(
         &format!(
             "PLAN {} / {}",
-            plan.id().short(),
-            counted(plan.actions().len(), "action", "actions")
+            crate::plan::short(plan, "id"),
+            counted(list_len(plan, "actions"), "action", "actions")
         ),
         width,
     )];
@@ -133,16 +135,13 @@ pub fn collapsed_plan(plan: &ChangePlan, width: usize, charset: Charset) -> Vec<
             .filter(|group| group.phase == *phase)
             .collect();
         if of_phase.is_empty() {
-            if *phase == Phase::Verify && !plan.verification().contracts().is_empty() {
+            let contracts = list_len(plan, "verification_contracts");
+            if *phase == Phase::Verify && contracts > 0 {
                 heading(&mut lines, phase.heading());
                 lines.push(fit(
                     &format!(
                         "  {}",
-                        counted(
-                            plan.verification().contracts().len(),
-                            "verification contract",
-                            "verification contracts"
-                        )
+                        counted(contracts, "verification contract", "verification contracts")
                     ),
                     width,
                 ));
@@ -159,19 +158,22 @@ pub fn collapsed_plan(plan: &ChangePlan, width: usize, charset: Charset) -> Vec<
     lines.push(fit(
         &column_pair(
             "risk",
-            &plan.risk().classify().as_str().to_uppercase(),
+            &text(plan, "risk")
+                .unwrap_or_else(|| "unknown".to_owned())
+                .to_uppercase(),
             LABEL,
         ),
         width,
     ));
     lines.extend(crate::protection::coverage_summary(
-        plan.protection(),
-        LABEL,
-        width,
-        charset,
+        plan, LABEL, width, charset,
     ));
     lines.push(fit(
-        &column_pair("strategy", &plan.strategy().to_string(), LABEL),
+        &column_pair(
+            "strategy",
+            &text(plan, "strategy").unwrap_or_else(|| "unknown".to_owned()),
+            LABEL,
+        ),
         width,
     ));
     lines
@@ -198,17 +200,20 @@ fn group_line(group: &ActionGroup, width: usize) -> String {
 }
 
 /// The word a group of actions in one phase carries, where they agree (Appendix E.2).
-fn group_status(phase: Phase, statuses: &[ActionStatus]) -> Option<String> {
-    let first = *statuses.first()?;
-    if statuses.iter().all(|status| *status == first) {
-        return match (phase, first) {
+fn group_status(phase: Phase, statuses: &[String]) -> Option<String> {
+    let first = statuses.first()?;
+    if statuses.iter().all(|status| status == first) {
+        return match (phase, first.as_str()) {
             // §2.1: a prepare action nobody has run has *described* a recovery asset. Appendix
             // E.2 spells that state `ready-to-create`, which says both halves of it.
-            (Phase::Prepare, ActionStatus::Pending) => Some("ready-to-create".to_owned()),
-            (_, ActionStatus::Pending) => None,
-            (_, status) => Some(status.as_str().to_owned()),
+            (Phase::Prepare, "pending") => Some("ready-to-create".to_owned()),
+            (_, "pending") => None,
+            (_, status) => Some(status.to_owned()),
         };
     }
-    let settled = statuses.iter().filter(|status| status.is_settled()).count();
+    let settled = statuses
+        .iter()
+        .filter(|status| crate::progress::is_settled(status))
+        .count();
     Some(format!("{settled}/{}", statuses.len()))
 }

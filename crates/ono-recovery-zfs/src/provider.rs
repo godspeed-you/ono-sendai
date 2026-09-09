@@ -23,15 +23,15 @@ use std::sync::Arc;
 
 use jiff::Timestamp;
 use ono_change_core::error::{
-    asset_create_failed, destructive_history_not_accepted, privilege_required, provider_unavailable,
-    recovery_apply_failed, recovery_plan_incomplete, requires_offline, requires_reboot,
-    storage_pressure, target_unresolved, tool_failed,
+    asset_create_failed, destructive_history_not_accepted, privilege_required,
+    provider_unavailable, recovery_apply_failed, recovery_plan_incomplete, requires_offline,
+    requires_reboot, storage_pressure, target_unresolved, tool_failed,
 };
 use ono_change_core::{
-    ActionRole, ChangeCapability, ChangePlan, ConsistencyClass, EffectDomain, Execution,
-    Idempotency, MetadataCoverage, NewerStateClass, NewerStateImpact, NewerStateItem,
-    PersistenceDomain, PlanAction, PlanId, Precondition, PreconditionKind, ProtectionAction,
-    ProtectionMode, ProviderAvailability, ProviderCapabilities, RecoveryAsset, RecoveryAssetType,
+    ActionRole, ChangePlan, ConsistencyClass, EffectDomain, Execution, Idempotency,
+    MetadataCoverage, NewerStateClass, NewerStateImpact, NewerStateItem, PersistenceDomain,
+    PlanAction, PlanId, Precondition, PreconditionKind, ProtectionAction, ProtectionMode,
+    ProviderAvailability, ProviderCapabilities, RecoveryAsset, RecoveryAssetType,
     RecoveryCandidate, RecoveryCapability, RecoveryCost, RecoveryExclusion, RecoveryGoal,
     RecoveryObjective, RecoveryPlanFragment, RecoveryProvider, RecoveryScope, RecoveryValidation,
     RestoreMethod, ToolOutput, ToolRunner, UnrecoverableEffect, VerificationClass,
@@ -280,10 +280,25 @@ impl ZfsProvider {
             "name,creation,used,referenced,guid,defer_destroy",
         ])?;
         let order = self.zfs(&[
-            "list", "-H", "-p", "-t", "snapshot", "-o", "name,creation", "-s", "creation",
+            "list",
+            "-H",
+            "-p",
+            "-t",
+            "snapshot",
+            "-o",
+            "name,creation",
+            "-s",
+            "creation",
         ])?;
-        let bookmarks =
-            self.zfs(&["list", "-H", "-p", "-t", "bookmark", "-o", "name,creation,guid"])?;
+        let bookmarks = self.zfs(&[
+            "list",
+            "-H",
+            "-p",
+            "-t",
+            "bookmark",
+            "-o",
+            "name,creation,guid",
+        ])?;
         let origins = self.zfs(&["list", "-H", "-p", "-t", "filesystem", "-o", "name,origin"])?;
         let listed = self.zpool(&[
             "list",
@@ -301,8 +316,21 @@ impl ZfsProvider {
         };
         if origins.succeeded() {
             for (name, origin) in crate::layout::origins(ZFS, origins.stdout())? {
-                if let Some(dataset) = datasets.iter_mut().find(|dataset| dataset.name == name) {
-                    dataset.origin = origin;
+                match datasets.iter_mut().find(|dataset| dataset.name == name) {
+                    Some(dataset) => dataset.origin = origin,
+                    // A dataset the origin listing knows and the filesystem listing did not is
+                    // still a dataset, and where it is a clone §13.6 needs it visible. Its mount
+                    // metadata stays unknown rather than being invented (§56.3).
+                    None => datasets.push(Dataset {
+                        name,
+                        mountpoint: Arc::from("-"),
+                        mounted: false,
+                        used: None,
+                        available: None,
+                        referenced: None,
+                        origin,
+                        canmount: Arc::from("-"),
+                    }),
                 }
             }
         }
@@ -477,6 +505,27 @@ impl ZfsProvider {
         })
     }
 
+    /// §13.4's worked example for `path`, built from a reading of the pool.
+    ///
+    /// The `NOT PROTECTED BY` list is what makes the block worth printing: it names the snapshots
+    /// that exist under the same name on other datasets, which are exactly the ones an operator
+    /// would otherwise assume covered the target.
+    ///
+    /// # Errors
+    ///
+    /// A structured error when the pool could not be read (§13.1).
+    pub fn boundary_report(
+        &self,
+        path: &str,
+        snapshot_part: &str,
+    ) -> Result<Option<crate::render::BoundaryReport>, ErrorValue> {
+        Ok(crate::render::BoundaryReport::of(
+            &self.survey()?,
+            path,
+            snapshot_part,
+        ))
+    }
+
     /// Proves §56.1's twelve facts about `asset`, or records which of them it could not.
     ///
     /// # Errors
@@ -492,9 +541,10 @@ impl ZfsProvider {
     fn examine(&self, asset: &RecoveryAsset) -> Result<Examination, ErrorValue> {
         self.require_tools()?;
         let reference = asset.reference().to_owned();
-        let dataset_name = reference
-            .split_once('@')
-            .map_or_else(|| asset.scope().domain().to_owned(), |(head, _)| head.to_owned());
+        let dataset_name = reference.split_once('@').map_or_else(
+            || asset.scope().domain().to_owned(),
+            |(head, _)| head.to_owned(),
+        );
 
         let layout = self.survey()?;
         let clones = self.zfs(&[
@@ -541,7 +591,7 @@ impl ZfsProvider {
             .as_ref()
             .map_or_else(|| Arc::from(""), |found| Arc::clone(&found.short));
 
-        let clone_names: Option<Vec<Arc<str>>> = clones.succeeded().then(|| ()).and_then(|()| {
+        let clone_names: Option<Vec<Arc<str>>> = clones.succeeded().then_some(()).and_then(|()| {
             let listed = parse::properties(ZFS, clones.stdout()).ok()?;
             let entry = parse::property_of(&listed, &reference, "clones")?;
             Some(if entry.is_absent() {
@@ -555,11 +605,11 @@ impl ZfsProvider {
                     .collect()
             })
         });
-        let written_bytes = written.succeeded().then(|| ()).and_then(|()| {
+        let written_bytes = written.succeeded().then_some(()).and_then(|()| {
             let listed = parse::properties(ZFS, written.stdout()).ok()?;
             parse::number(&parse::property_of(&listed, &dataset_name, "written")?.value)
         });
-        let used_by_snapshots = space.succeeded().then(|| ()).and_then(|()| {
+        let used_by_snapshots = space.succeeded().then_some(()).and_then(|()| {
             let listed = parse::properties(ZFS, space.stdout()).ok()?;
             parse::number(&parse::property_of(&listed, &dataset_name, "usedbysnapshots")?.value)
         });
@@ -767,7 +817,6 @@ impl ZfsProvider {
         };
 
         Ok(Examination {
-            layout,
             reference: Arc::from(reference.as_str()),
             dataset_name: Arc::from(dataset_name.as_str()),
             dataset,
@@ -789,7 +838,6 @@ impl ZfsProvider {
 /// Everything one recovery plan rests on, read at one instant.
 #[derive(Debug, Clone)]
 struct Examination {
-    layout: Layout,
     reference: Arc<str>,
     dataset_name: Arc<str>,
     dataset: Option<Dataset>,
@@ -818,7 +866,10 @@ impl Examination {
 
     /// Whether a selective file restore can reach into the snapshot at all (§13.5).
     fn selective_is_possible(&self) -> bool {
-        self.mount.mounted == Some(true)
+        self.dataset
+            .as_ref()
+            .is_some_and(Dataset::has_placed_mountpoint)
+            && self.mount.mounted == Some(true)
             && self.mount.read_only != Some(true)
             && self
                 .mount
@@ -949,9 +1000,10 @@ impl RecoveryProvider for ZfsProvider {
         // boundary (§27.1 reserves the word for a provider that can state atomicity guarantees).
         RecoveryCapability::REQUIRED
             .iter()
-            .fold(ProviderCapabilities::new(PROVIDER_ID), |carry, capability| {
-                carry.recovering(*capability)
-            })
+            .fold(
+                ProviderCapabilities::new(PROVIDER_ID),
+                |carry, capability| carry.recovering(*capability),
+            )
             .tested_against("zfs", VALIDATED_VERSIONS.join(", "))
     }
 
@@ -1033,10 +1085,7 @@ impl RecoveryProvider for ZfsProvider {
             return Err(target_unresolved(path, &refusal));
         }
         let datasets = crate::layout::datasets(ZFS, listed.stdout())?;
-        let Some(dataset) = datasets
-            .iter()
-            .find(|dataset| dataset.name == mount.source)
-        else {
+        let Some(dataset) = datasets.iter().find(|dataset| dataset.name == mount.source) else {
             return Err(target_unresolved(
                 path,
                 &format!(
@@ -1106,9 +1155,13 @@ impl RecoveryProvider for ZfsProvider {
         let mut candidates = Vec::new();
         let mut exact = RecoveryCandidate::new(
             PROVIDER_ID,
-            RecoveryScope::new("zfs-dataset", Arc::clone(&dataset.name), Arc::clone(&self.host))
-                .covering(Arc::clone(&dataset.name))
-                .covering(path),
+            RecoveryScope::new(
+                "zfs-dataset",
+                Arc::clone(&dataset.name),
+                Arc::clone(&self.host),
+            )
+            .covering(Arc::clone(&dataset.name))
+            .covering(path),
             EffectDomain::FilesystemPersistent,
             objective,
             format!("snapshot {}@{part}", dataset.name),
@@ -1227,12 +1280,9 @@ impl RecoveryProvider for ZfsProvider {
                 }
                 let reference = full_name(dataset, &part);
                 let recursive = datasets.len() > 1 && top.as_deref() == Some(dataset.as_ref());
-                let mut scope = RecoveryScope::new(
-                    "zfs-dataset",
-                    Arc::clone(dataset),
-                    Arc::clone(&self.host),
-                )
-                .covering(Arc::clone(dataset));
+                let mut scope =
+                    RecoveryScope::new("zfs-dataset", Arc::clone(dataset), Arc::clone(&self.host))
+                        .covering(Arc::clone(dataset));
                 if dataset.as_ref() == candidate.scope().domain() {
                     for path in &paths {
                         scope = scope.covering(Arc::clone(path));
@@ -1263,8 +1313,7 @@ impl RecoveryProvider for ZfsProvider {
                 } else {
                     format!("zfs snapshot {reference}")
                 };
-                let action =
-                    ProtectionAction::new(PROVIDER_ID, summary, candidate.clone(), asset);
+                let action = ProtectionAction::new(PROVIDER_ID, summary, candidate.clone(), asset);
                 actions.push(if matches!(mode, ProtectionMode::Maximize) {
                     action.optional()
                 } else {
@@ -1280,7 +1329,12 @@ impl RecoveryProvider for ZfsProvider {
         let asset = action.proposed_asset();
         let dataset = asset.scope().domain().to_owned();
         let reference = asset.reference().to_owned();
-        if !crate::naming::is_valid_snapshot_name(&reference) {
+        // §43.6 governs the half of the name this provider generates. The dataset half comes
+        // from ZFS's own listing, so it is passed through as one argument and ZFS refuses it if
+        // it is impossible; the snapshot half is checked here, because a caller that hand-built
+        // a protection action must not be able to route an unsanitised name through `create`.
+        let generated = reference.rsplit_once('@').map(|(_, part)| part);
+        if !generated.is_some_and(crate::naming::is_valid_snapshot_part) {
             return Err(asset_create_failed(
                 PROVIDER_ID,
                 &dataset,
@@ -1351,22 +1405,21 @@ impl RecoveryProvider for ZfsProvider {
             .clone()
             .creating()
             .capturing(format!("{GUID_FINGERPRINT}{}", found.guid))
-            .costing(
-                RecoveryCost::unknown().with_space(
-                    chargeable(found.used),
-                    chargeable(found.used),
-                    true,
-                ),
-            ))
+            .costing(RecoveryCost::unknown().with_space(
+                chargeable(found.used),
+                chargeable(found.used),
+                true,
+            )))
     }
 
     fn validate(&self, asset: &RecoveryAsset) -> Result<RecoveryValidation, ErrorValue> {
         self.require_tools()?;
         let now = self.now();
         let reference = asset.reference().to_owned();
-        let dataset = reference
-            .split_once('@')
-            .map_or_else(|| asset.scope().domain().to_owned(), |(head, _)| head.to_owned());
+        let dataset = reference.split_once('@').map_or_else(
+            || asset.scope().domain().to_owned(),
+            |(head, _)| head.to_owned(),
+        );
 
         let listed = self.zfs(&[
             "list",
@@ -1396,9 +1449,8 @@ impl RecoveryProvider for ZfsProvider {
         let recorded = asset
             .captured_state()
             .and_then(|fingerprint| fingerprint.strip_prefix(GUID_FINGERPRINT));
-        let identity = found.is_some_and(|snapshot| {
-            recorded.is_none_or(|guid| snapshot.guid.as_ref() == guid)
-        });
+        let identity = found
+            .is_some_and(|snapshot| recorded.is_none_or(|guid| snapshot.guid.as_ref() == guid));
         let scope_matches =
             found.is_some_and(|snapshot| snapshot.dataset.as_ref() == asset.scope().domain());
 
@@ -1487,7 +1539,11 @@ impl RecoveryProvider for ZfsProvider {
         let plan_id = source.map_or_else(
             || {
                 self.plan.clone().unwrap_or_else(|| {
-                    PlanId::of(PROVIDER_ID, &asset.created_at().to_string(), &examination.reference)
+                    PlanId::of(
+                        PROVIDER_ID,
+                        &asset.created_at().to_string(),
+                        &examination.reference,
+                    )
                 })
             },
             |plan| plan.id().clone(),
@@ -1793,9 +1849,10 @@ impl RecoveryProvider for ZfsProvider {
     fn estimate_cost(&self, asset: &RecoveryAsset) -> Result<RecoveryCost, ErrorValue> {
         self.require_tools()?;
         let reference = asset.reference().to_owned();
-        let dataset = reference
-            .split_once('@')
-            .map_or_else(|| asset.scope().domain().to_owned(), |(head, _)| head.to_owned());
+        let dataset = reference.split_once('@').map_or_else(
+            || asset.scope().domain().to_owned(),
+            |(head, _)| head.to_owned(),
+        );
         let properties = self.zfs(&[
             "get",
             "-H",
@@ -1835,7 +1892,10 @@ impl RecoveryProvider for ZfsProvider {
         // `used` for a snapshot is the space no other snapshot shares, which is not the space
         // deleting it would free, so the number is an estimate even when ZFS is exact about it.
         Ok(RecoveryCost::unknown().with_space(
-            asset.cost().initial_bytes().or_else(|| chargeable(snapshot_used)),
+            asset
+                .cost()
+                .initial_bytes()
+                .or_else(|| chargeable(snapshot_used)),
             chargeable(snapshot_used).or_else(|| chargeable(by_snapshots)),
             true,
         ))

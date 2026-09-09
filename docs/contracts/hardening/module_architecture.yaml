@@ -228,7 +228,6 @@ layering:
         - ono-change-core
         - ono-change-plan
         - ono-change-impact
-        - ono-change-recovery
     - layer: surface
       of: the concrete providers, the command contract and the remote link
       crates:
@@ -243,6 +242,7 @@ layering:
         - ono-provider-container
         - ono-recorder
         - ono-change-protection
+        - ono-change-recovery
         - ono-change-executor
         - ono-recovery-files
         - ono-recovery-zfs

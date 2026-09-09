@@ -76,6 +76,7 @@ impl RestoreReport {
 pub fn restore_objects(
     store: &FileRecoveryStore,
     asset: &RecoveryAssetId,
+    directory: &Path,
     manifest: &Manifest,
     selection: Option<&Path>,
     policy: DirectoryRestorePolicy,
@@ -99,7 +100,7 @@ pub fn restore_objects(
         match entry.kind() {
             ObjectKind::Directory => restore_directory(&destination, entry, &mut report)?,
             ObjectKind::Symlink => restore_symlink(&destination, entry, &mut report)?,
-            _ => restore_file(store, asset, &destination, entry, &mut report)?,
+            _ => restore_file(store, directory, &destination, entry, &mut report)?,
         }
     }
     reconcile_extras(manifest, &entries, policy, &mut report)?;
@@ -217,13 +218,13 @@ fn restore_symlink(
 /// Writes the copy beside the live file, flushes it, and renames it over (§15.4).
 fn restore_file(
     store: &FileRecoveryStore,
-    asset: &RecoveryAssetId,
+    directory: &Path,
     destination: &Path,
     entry: &ArchiveEntry,
     report: &mut RestoreReport,
 ) -> Result<(), ErrorValue> {
     let blob = entry.blob().unwrap_or_default();
-    let bytes = store.read_blob(asset, blob)?;
+    let bytes = store.read_blob(directory, blob)?;
     if digest_of(&bytes) != entry.digest() {
         return Err(recovery_apply_failed(
             &destination.display().to_string(),

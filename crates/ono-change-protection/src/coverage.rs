@@ -36,9 +36,8 @@ use std::sync::Arc;
 
 use ono_change_core::{
     ConsistencyClass, CoverageExclusion, DomainCoverage, DomainProtection, EffectDomain,
-    EffectKind, PersistenceDomain, ProposedEffect, ProtectionAction, ProtectionLevel,
-    ProtectionMode, ProtectionSummary, RecoveryAssetId, RecoveryCandidate, RecoveryCost,
-    RecoveryObjective,
+    EffectKind, PersistenceDomain, PlanAction, ProposedEffect, ProtectionAction, ProtectionLevel,
+    ProtectionMode, ProtectionSummary, RecoveryCandidate, RecoveryCost, RecoveryObjective,
 };
 
 use crate::cost;
@@ -163,6 +162,75 @@ pub const fn objective_for(domain: EffectDomain, kind: EffectKind) -> RecoveryOb
         }
         EffectDomain::RemoteSystem => RecoveryObjective::Compensate,
         EffectDomain::Unknown => RecoveryObjective::Unknown,
+    }
+}
+
+/// Every mutation domain a plan's actions declare (Appendix A.1).
+///
+/// Appendix A.1 is normative and short: *"For each MUTATE action, Ono MUST derive one or more
+/// `MutationDomain` records."* The domains come from the effects the provider declared, which is
+/// what makes Appendix A.1's own two worked examples fall out rather than being special-cased.
+/// `restart service nginx` touches `process-runtime` and `network-runtime` and no persistent
+/// domain, because a restart declares no persistent effect; the same plan with a configuration
+/// replacement touches `filesystem-persistent`, because that action does.
+///
+/// A mutating action that declares no effect at all yields one [`EffectDomain::Unknown`] record.
+/// That is deliberate, and it is Appendix A.7's hook: an action nobody could describe caps the
+/// plan's protection, so §6.3's opaque action cannot inherit safety from a snapshot taken for
+/// something else.
+#[must_use]
+pub fn mutation_domains(actions: &[PlanAction]) -> Vec<MutationDomain> {
+    let mut domains: Vec<MutationDomain> = Vec::new();
+    for action in actions
+        .iter()
+        .filter(|action| action.role().mutates_target())
+    {
+        if action.effects().is_empty() {
+            push_unique(
+                &mut domains,
+                MutationDomain::new(
+                    EffectDomain::Unknown,
+                    EffectKind::Unknown,
+                    action.target().unwrap_or_else(|| action.summary()),
+                    format!(
+                        "`{}` declares no effect, so what it changes could not be established",
+                        action.summary()
+                    ),
+                ),
+            );
+            continue;
+        }
+        for effect in action.effects() {
+            push_unique(&mut domains, MutationDomain::from_effect(effect));
+        }
+    }
+    // Appendix A.1 lists the domains in a fixed order, and §4.4 seals the plan: two derivations of
+    // one plan must compare equal, so the answer is ordered rather than merely observed.
+    domains.sort_by_key(|mutation| {
+        (
+            EffectDomain::ALL
+                .iter()
+                .position(|domain| *domain == mutation.domain())
+                .unwrap_or(usize::MAX),
+            mutation.subject().to_owned(),
+        )
+    });
+    domains
+}
+
+/// Records one mutation domain unless an identical one is already there.
+///
+/// A plan that touches one object twice in one domain has one coverage answer for it, and two
+/// rows saying the same thing would be two rows an operator has to reconcile. Two *different*
+/// objects in one domain stay separate rows, and §13.4 is why: `/etc/nginx/nginx.conf` on the root
+/// dataset and `/data/customer.db` on `tank/data` are both `filesystem-persistent`, and merging
+/// them into one row is exactly the claim that appendix forbids.
+fn push_unique(domains: &mut Vec<MutationDomain>, mutation: MutationDomain) {
+    let duplicate = domains.iter().any(|existing| {
+        existing.domain() == mutation.domain() && existing.subject() == mutation.subject()
+    });
+    if !duplicate {
+        domains.push(mutation);
     }
 }
 
@@ -900,13 +968,4 @@ fn reject(
         reason,
         detail: detail.into(),
     });
-}
-
-/// The asset ids a coverage row rests on (§11.4).
-#[must_use]
-pub fn asset_ids(actions: &[ProtectionAction]) -> Vec<RecoveryAssetId> {
-    actions
-        .iter()
-        .map(|action| action.proposed_asset().id().clone())
-        .collect()
 }

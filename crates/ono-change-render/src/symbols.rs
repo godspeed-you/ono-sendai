@@ -16,8 +16,6 @@
 //! [`crate::protection::protection_block`], which cannot emit it without the exclusions beside
 //! it. Nothing here maps a protection level to a badge on its own.
 
-use ono_change_core::{EffectKind, ProtectionLevel};
-
 /// Which characters the terminal can be promised (§20.3: "ASCII fallback MUST exist").
 ///
 /// The two variants mirror `ono_spatial_render::Charset`, because a session that chose ASCII for
@@ -126,37 +124,36 @@ impl Symbol {
         }
     }
 
-    /// The mark §20.3 gives an effect of this kind.
+    /// The mark §20.3 gives an effect of the `kind` an `ono.proposed-effect/1` declares.
     ///
-    /// `Emit` is a risk mark rather than an addition: §35.1's outward call has already happened by
-    /// the time anything could reconsider it, which is what
-    /// [`EffectKind::is_inherently_irreversible`] says and what `!` means.
+    /// `emit` is a risk mark rather than an addition: §35.1's outward call has already happened by
+    /// the time anything could reconsider it, and `!` is what that boundary is drawn with. A kind
+    /// this build does not know is `?` — §2.4 forbids promoting an unknown, and guessing a mark
+    /// for an unrecognised word is exactly that.
     #[must_use]
-    pub const fn for_effect(kind: EffectKind) -> Self {
+    pub fn for_effect(kind: &str) -> Self {
         match kind {
-            EffectKind::Create => Symbol::Addition,
-            EffectKind::Remove => Symbol::Removal,
-            EffectKind::Modify | EffectKind::Replace => Symbol::Modification,
-            EffectKind::Interrupt | EffectKind::Emit => Symbol::Risk,
-            EffectKind::Unknown => Symbol::Unknown,
+            "create" => Symbol::Addition,
+            "remove" => Symbol::Removal,
+            "modify" | "replace" => Symbol::Modification,
+            "interrupt" | "emit" => Symbol::Risk,
+            _ => Symbol::Unknown,
         }
     }
 
-    /// The mark §20.3 gives a protection level.
+    /// The mark §20.3 gives a `protection_level`, as §10.2 spells it on the wire.
     ///
-    /// The mapping is [`ProtectionLevel::symbol`]'s, read rather than restated: §50.1 forbids a
-    /// renderer from computing a fact, and which mark a level carries is a fact of the level. The
-    /// crate's tests hold the two spellings together so a change in core cannot drift past here.
+    /// The words are §10.2's closed list. A level this build does not know draws `?` rather than
+    /// the most reassuring mark that nearly fits: §2.4 forbids promoting an unknown, and
+    /// Appendix E.8 forbids a mark that could be read as a clean bill of health.
     #[must_use]
-    pub const fn for_protection(level: ProtectionLevel) -> Self {
+    pub fn for_protection(level: &str) -> Self {
         match level {
-            ProtectionLevel::Protected | ProtectionLevel::Transactional => {
-                Symbol::RecoveryAvailable
-            }
-            ProtectionLevel::PartiallyProtected => Symbol::PartialCoverage,
-            ProtectionLevel::Compensatable => Symbol::CompensationOnly,
-            ProtectionLevel::Unprotected => Symbol::Risk,
-            ProtectionLevel::Unknown => Symbol::Unknown,
+            "protected" | "transactional" => Symbol::RecoveryAvailable,
+            "partially-protected" => Symbol::PartialCoverage,
+            "compensatable" => Symbol::CompensationOnly,
+            "unprotected" => Symbol::Risk,
+            _ => Symbol::Unknown,
         }
     }
 }

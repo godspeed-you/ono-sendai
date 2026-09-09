@@ -60,6 +60,17 @@ pub trait FileStore: Send + Sync + std::fmt::Debug {
     /// A structured error when the copy failed. Appendix F then preserves the partial state and
     /// the evidence rather than retrying blind.
     fn copy(&self, from: &Path, to: &Path) -> Result<(), ErrorValue>;
+
+    /// Moves `from` to `to`, which is how a subvolume is put in another's place (§14.4).
+    ///
+    /// Replacement is a rename rather than a copy, and the subvolume being displaced is renamed
+    /// aside rather than removed: §2.15 and Appendix F both prefer keeping the state a step
+    /// displaced over a tidy tree.
+    ///
+    /// # Errors
+    ///
+    /// A structured error when the move failed.
+    fn rename(&self, from: &Path, to: &Path) -> Result<(), ErrorValue>;
 }
 
 /// The real filesystem (§54.4).
@@ -86,6 +97,10 @@ impl FileStore for SystemFiles {
             .map(|_| ())
             .map_err(|error| io_error(to, &error, "could not be written"))
     }
+
+    fn rename(&self, from: &Path, to: &Path) -> Result<(), ErrorValue> {
+        std::fs::rename(from, to).map_err(|error| io_error(from, &error, "could not be moved"))
+    }
 }
 
 /// A store that replays recorded content, for tests (§54.4).
@@ -97,6 +112,7 @@ impl FileStore for SystemFiles {
 pub struct RecordedFiles {
     contents: Vec<(Arc<str>, Vec<u8>)>,
     copies: Mutex<Vec<(String, String)>>,
+    renames: Mutex<Vec<(String, String)>>,
 }
 
 impl RecordedFiles {
@@ -121,6 +137,15 @@ impl RecordedFiles {
             .map(|copies| copies.clone())
             .unwrap_or_default()
     }
+
+    /// Every move that was performed, in order.
+    #[must_use]
+    pub fn renames(&self) -> Vec<(String, String)> {
+        self.renames
+            .lock()
+            .map(|renames| renames.clone())
+            .unwrap_or_default()
+    }
 }
 
 impl FileStore for RecordedFiles {
@@ -143,6 +168,16 @@ impl FileStore for RecordedFiles {
         }
         if let Ok(mut copies) = self.copies.lock() {
             copies.push((
+                from.to_string_lossy().into_owned(),
+                to.to_string_lossy().into_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn rename(&self, from: &Path, to: &Path) -> Result<(), ErrorValue> {
+        if let Ok(mut renames) = self.renames.lock() {
+            renames.push((
                 from.to_string_lossy().into_owned(),
                 to.to_string_lossy().into_owned(),
             ));

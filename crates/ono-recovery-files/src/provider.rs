@@ -171,15 +171,22 @@ impl FileRecoveryProvider {
                 &["the asset is not in a state recovery may use (§11.4)"],
             ));
         }
-        let manifest = self.store.read_manifest(asset.id())?;
+        let directory = Self::archive_of(asset);
+        let manifest = self.store.read_manifest(&directory)?;
         let selection = action.target().map(Path::new);
         restore_objects(
             &self.store,
             asset.id(),
+            &directory,
             &manifest,
             selection,
             self.directory_policy,
         )
+    }
+
+    /// Where an asset's copy actually lives: its own reference (§11.1).
+    fn archive_of(asset: &RecoveryAsset) -> PathBuf {
+        PathBuf::from(asset.reference())
     }
 
     /// Refuses an asset another provider owns (§12.1).
@@ -255,7 +262,7 @@ impl FileRecoveryProvider {
 
     /// The five §11.4 checks, each answered against the filesystem rather than assumed.
     fn check(&self, asset: &RecoveryAsset) -> Result<RecoveryValidation, ErrorValue> {
-        let Ok(manifest) = self.store.read_manifest(asset.id()) else {
+        let Ok(manifest) = self.store.read_manifest(&Self::archive_of(asset)) else {
             return Ok(RecoveryValidation::none(
                 self.now,
                 format!(
@@ -298,7 +305,7 @@ impl FileRecoveryProvider {
         manifest: &Manifest,
         notes: &mut Vec<String>,
     ) -> bool {
-        let Ok(fingerprint) = self.store.manifest_fingerprint(asset.id()) else {
+        let Ok(fingerprint) = self.store.manifest_fingerprint(&Self::archive_of(asset)) else {
             notes.push("the manifest could not be read back".to_owned());
             return false;
         };
@@ -313,7 +320,7 @@ impl FileRecoveryProvider {
             let Some(blob) = entry.blob() else {
                 continue;
             };
-            match self.store.read_blob(asset.id(), blob) {
+            match self.store.read_blob(&Self::archive_of(asset), blob) {
                 Ok(bytes) if digest_of(&bytes) == entry.digest() => {}
                 Ok(_) => {
                     notes.push(format!(
@@ -646,14 +653,10 @@ impl RecoveryProvider for FileRecoveryProvider {
                 &covered.join(", "),
             ));
         }
-        self.store.write_archive(
-            action.proposed_asset().id(),
-            capture.manifest(),
-            capture.contents(),
-        )?;
-        let fingerprint = self
-            .store
-            .manifest_fingerprint(action.proposed_asset().id())?;
+        let directory = Self::archive_of(action.proposed_asset());
+        self.store
+            .write_archive(&directory, capture.manifest(), capture.contents())?;
+        let fingerprint = self.store.manifest_fingerprint(&directory)?;
         let asset = action
             .proposed_asset()
             .clone()
@@ -665,7 +668,7 @@ impl RecoveryProvider for FileRecoveryProvider {
         let failures = validation.failures();
         if !failures.is_empty() {
             let error = asset_invalid(asset.id(), &failures);
-            let _ = self.store.remove_archive(asset.id());
+            let _ = self.store.remove_archive(&directory);
             return Err(error);
         }
         Ok(asset.validated(validation))
@@ -701,7 +704,7 @@ impl RecoveryProvider for FileRecoveryProvider {
                 ),
             ));
         }
-        let manifest = self.store.read_manifest(asset.id())?;
+        let manifest = self.store.read_manifest(&Self::archive_of(asset))?;
         let root = manifest.root();
         let selected = restore_set(&manifest, source);
         if selected.is_empty() {
@@ -772,13 +775,14 @@ impl RecoveryProvider for FileRecoveryProvider {
                     .map_or_else(|| "the plan that created it".to_owned(), PlanId::to_string)],
             ));
         }
-        self.store.remove_archive(asset.id())
+        self.store.remove_archive(&Self::archive_of(asset))
     }
 
     fn estimate_cost(&self, asset: &RecoveryAsset) -> Result<RecoveryCost, ErrorValue> {
         self.owns(asset)?;
-        let retained = self.store.occupied_bytes(asset.id())?;
-        let manifest = self.store.read_manifest(asset.id())?;
+        let directory = Self::archive_of(asset);
+        let retained = self.store.occupied_bytes(&directory)?;
+        let manifest = self.store.read_manifest(&directory)?;
         Ok(RecoveryCost::unknown().with_space(
             Some(ByteSize::from_bytes(u128::from(manifest.total_bytes()))),
             Some(ByteSize::from_bytes(u128::from(retained))),

@@ -11,20 +11,20 @@
 //! suggest recovery as the only correct next step"*. [`next_steps`] therefore offers every step
 //! that is genuinely available, and recovery is one of them rather than the whole list.
 //!
-//! Appendix F.2 shapes the failure display too: an action whose outcome could not be established
-//! is neither completed nor failed, and it gets its own block. Folding it into either one is the
-//! reading that loses data.
+//! Appendix F.2 shapes the failure display too: an action whose `status` is `unknown` is neither
+//! completed nor failed, and it gets its own block. Folding it into either one is the reading
+//! that loses data.
 
-use ono_change_core::{
-    ActionRole, ActionStatus, ChangePlan, PlanAction, PlanState, ProtectionLevel, RecoveryAsset,
-    VerificationResult,
-};
+use ono_value::RecordValue;
 
 use crate::symbols::{Charset, Symbol};
-use crate::{column_pair, counted, fit, heading, safe};
+use crate::{Item, column_pair, count, counted, fit, flag, heading, items, list_len, text};
 
 /// How wide the phase label column is.
 const LABEL: usize = 9;
+
+/// The §3.3 roles, in the order §46.2 lists them.
+const ROLES: [&str; 5] = ["prepare", "mutate", "verify", "recover", "cleanup"];
 
 /// One boundary of the plan lifecycle, as Appendix E.4 shows it.
 ///
@@ -63,42 +63,51 @@ impl Phase {
     }
 
     /// The phase an action of `role` belongs to (§3.3, §4.5, §4.7, §4.8).
+    ///
+    /// A role this build does not know is an applying one. §4.7's reading of an unrecognised
+    /// action is the one that assumes it may change the system, which is the safe direction.
     #[must_use]
-    pub const fn of(role: ActionRole) -> Self {
+    pub fn of(role: &str) -> Self {
         match role {
-            ActionRole::Prepare => Phase::Prepare,
-            ActionRole::Mutate | ActionRole::Recover => Phase::Apply,
-            ActionRole::Verify => Phase::Verify,
-            ActionRole::Cleanup => Phase::Cleanup,
+            "prepare" => Phase::Prepare,
+            "verify" => Phase::Verify,
+            "cleanup" => Phase::Cleanup,
+            _ => Phase::Apply,
         }
     }
 }
 
+/// Whether an action `status` is finished, whatever the outcome was (§4.7, Appendix F.2).
+pub(crate) fn is_settled(status: &str) -> bool {
+    matches!(status, "succeeded" | "failed" | "skipped" | "unknown")
+}
+
 /// Appendix E.4's progress: one line per lifecycle phase, always all three.
 ///
-/// `results` are the verification results observed so far. §23's contracts and §3.3's verify
-/// actions are two ways of expressing the same phase, so the VERIFY line counts whichever the
-/// plan actually carries — the actions when it has them, the contracts otherwise. Neither is
-/// invented: a plan with neither renders `none`, which is a different fact from `0/0`.
+/// `plan` is an `ono.change-plan/1`; `results` are the `ono.change-verification/1` records
+/// observed so far. §23's contracts and §3.3's verify actions are two ways of expressing the same
+/// phase, so the VERIFY line counts whichever the plan actually carries — the actions when it has
+/// them, the contracts otherwise. Neither is invented: a plan with neither renders `none`, which
+/// is a different fact from `0/0`.
 #[must_use]
-pub fn apply_progress(
-    plan: &ChangePlan,
-    results: &[VerificationResult],
-    width: usize,
-) -> Vec<String> {
+pub fn apply_progress(plan: &RecordValue, results: &[RecordValue], width: usize) -> Vec<String> {
+    let actions = items(plan, "actions");
     let mut lines = Vec::new();
     for phase in Phase::LIFECYCLE {
         lines.push(fit(
-            &column_pair(phase.heading(), &tally(plan, *phase, results), LABEL),
+            &column_pair(
+                phase.heading(),
+                &tally(plan, &actions, *phase, results),
+                LABEL,
+            ),
             width,
         ));
     }
-    let cleanup = actions_of(plan, Phase::Cleanup);
-    if !cleanup.is_empty() {
+    if !of_phase(&actions, Phase::Cleanup).is_empty() {
         lines.push(fit(
             &column_pair(
                 Phase::Cleanup.heading(),
-                &tally(plan, Phase::Cleanup, results),
+                &tally(plan, &actions, Phase::Cleanup, results),
                 LABEL,
             ),
             width,
@@ -114,15 +123,17 @@ pub fn apply_progress(
 /// still exists. The `next` block is [`next_steps`], which never offers recovery alone.
 #[must_use]
 pub fn apply_failure(
-    plan: &ChangePlan,
-    assets: &[RecoveryAsset],
+    plan: &RecordValue,
+    assets: &[RecordValue],
     width: usize,
     charset: Charset,
 ) -> Vec<String> {
-    let mut lines = vec![fit(failure_title(plan.state()), width)];
+    let actions = items(plan, "actions");
+    let state = text(plan, "state").unwrap_or_else(|| "apply-failed".to_owned());
+    let mut lines = vec![fit(failure_title(&state), width)];
 
     heading(&mut lines, "completed");
-    let completed = completed_by_role(plan);
+    let completed = completed_by_role(&actions);
     if completed.is_empty() {
         lines.push(fit("  no action completed", width));
     }
@@ -131,7 +142,7 @@ pub fn apply_failure(
     }
 
     heading(&mut lines, "failed");
-    let failed: Vec<&PlanAction> = with_status(plan, ActionStatus::Failed);
+    let failed = with_status(&actions, "failed");
     if failed.is_empty() {
         lines.push(fit("  no action reported failure", width));
     }
@@ -148,7 +159,7 @@ pub fn apply_failure(
 
     // Appendix F.2: an outcome nobody could establish is not a failure and not a success, and
     // recovery planning has to see it as its own uncertainty boundary.
-    let unknown: Vec<&PlanAction> = with_status(plan, ActionStatus::Unknown);
+    let unknown = with_status(&actions, "unknown");
     if !unknown.is_empty() {
         heading(&mut lines, "outcome unknown");
         for action in unknown {
@@ -164,13 +175,12 @@ pub fn apply_failure(
     }
 
     heading(&mut lines, "not executed");
-    let pending = plan
-        .actions()
+    let pending = actions
         .iter()
         .filter(|action| {
             matches!(
-                action.status(),
-                ActionStatus::Pending | ActionStatus::Skipped
+                text(*action, "status").as_deref(),
+                Some("pending" | "skipped") | None
             )
         })
         .count();
@@ -180,10 +190,7 @@ pub fn apply_failure(
     ));
 
     heading(&mut lines, "protection");
-    lines.push(fit(
-        &format!("  {}", retention(plan.state(), assets)),
-        width,
-    ));
+    lines.push(fit(&format!("  {}", retention(&state, assets)), width));
 
     heading(&mut lines, "next");
     for step in next_steps(plan) {
@@ -195,104 +202,135 @@ pub fn apply_failure(
 /// The steps an operator may take after a failed apply (Appendix E.5).
 ///
 /// Appendix E.5 forbids presenting recovery as the only correct next step, so every step that is
-/// actually available is offered and each one is gated on a fact of the plan rather than on
-/// habit: `resume` on §41.3's per-action answer, `recover` on §24.1's recoverable states and on
-/// there being something to recover with, `rebase` on there being work left to re-plan.
-/// `inspect` is unconditional, because reading is always available and §40.2 would rather the
-/// operator read than type a flag.
+/// actually available is offered and each one is gated on a fact of the record rather than on
+/// habit: `resume` on there being an action §41.3 permits rerunning, `recover` on §24.1's
+/// recoverable states and on there being something to recover with, `rebase` on there being work
+/// left to re-plan. `inspect` is unconditional, because reading is always available and §40.2
+/// would rather the operator read than type a flag.
 #[must_use]
-pub fn next_steps(plan: &ChangePlan) -> Vec<String> {
-    let reference = format!("plan/{}", plan.id().short());
+pub fn next_steps(plan: &RecordValue) -> Vec<String> {
+    let reference = format!("plan/{}", crate::plan::short(plan, "id"));
+    let actions = items(plan, "actions");
     let mut steps = vec![format!("inspect {reference}")];
-    if plan.actions().iter().any(PlanAction::may_resume) {
+    if actions.iter().any(may_resume) {
         steps.push(format!("resume {reference}"));
     }
-    if plan.state().is_recoverable() && plan.protection().level() != ProtectionLevel::Unprotected {
+    let recoverable = matches!(
+        text(plan, "state").as_deref(),
+        Some(
+            "verified"
+                | "degraded"
+                | "failed"
+                | "apply-failed"
+                | "closed"
+                | "recovery-planned"
+                | "recovery-failed"
+        )
+    );
+    let covers_something = !matches!(
+        text(plan, "protection_level").as_deref(),
+        Some("unprotected") | None
+    );
+    if recoverable && covers_something {
         steps.push(format!("recover {reference}"));
     }
-    if plan
-        .actions()
+    if actions
         .iter()
-        .any(|action| !action.status().is_settled())
+        .any(|action| !is_settled(text(action, "status").as_deref().unwrap_or("pending")))
     {
         steps.push(format!("rebase {reference}"));
     }
     steps
 }
 
+/// Whether resume may rerun an action, given its status and its §41.1 idempotency class.
+///
+/// §41.2 forbids blindly rerunning an unknown or non-idempotent action after a crash, so `unknown`
+/// is not a soft `idempotent` and a missing class is read the same way.
+fn may_resume(action: &Item) -> bool {
+    let idempotency = text(action, "idempotency").unwrap_or_else(|| "unknown".to_owned());
+    match text(action, "status").as_deref().unwrap_or("pending") {
+        "pending" | "skipped" => true,
+        "running" | "unknown" => idempotency == "idempotent",
+        "failed" => matches!(idempotency.as_str(), "idempotent" | "retry-safe-with-token"),
+        _ => false,
+    }
+}
+
 /// `PLAN APPLY FAILED` and the three other headlines §4 distinguishes.
 ///
-/// §4.5 makes `PREPARE_FAILED` reachable without passing through `APPLYING`, and Appendix F turns
+/// §4.5 makes `prepare-failed` reachable without passing through `applying`, and Appendix F turns
 /// on the operator being told which of the two happened: one means nothing was changed, the other
 /// means something was.
-const fn failure_title(state: PlanState) -> &'static str {
-    match state {
-        PlanState::PrepareFailed => "PLAN PREPARE FAILED",
-        PlanState::Failed | PlanState::Degraded => "PLAN VERIFICATION FAILED",
-        PlanState::RecoveryFailed => "RECOVERY FAILED",
+const fn failure_title(state: &str) -> &'static str {
+    match state.as_bytes() {
+        b"prepare-failed" => "PLAN PREPARE FAILED",
+        b"failed" | b"degraded" => "PLAN VERIFICATION FAILED",
+        b"recovery-failed" => "RECOVERY FAILED",
         _ => "PLAN APPLY FAILED",
     }
 }
 
 /// `4/4`, `pending`, or `none` — how far one phase has come (Appendix E.4).
-fn tally(plan: &ChangePlan, phase: Phase, results: &[VerificationResult]) -> String {
-    let actions = actions_of(plan, phase);
-    let (done, total) = if phase == Phase::Verify && actions.is_empty() {
-        (results.len(), plan.verification().contracts().len())
+fn tally(plan: &RecordValue, actions: &[Item], phase: Phase, results: &[RecordValue]) -> String {
+    let of_phase = of_phase(actions, phase);
+    let (done, total) = if phase == Phase::Verify && of_phase.is_empty() {
+        (results.len(), list_len(plan, "verification_contracts"))
     } else {
         (
-            actions
+            of_phase
                 .iter()
-                .filter(|action| action.status().is_settled())
+                .filter(|action| {
+                    is_settled(text(**action, "status").as_deref().unwrap_or("pending"))
+                })
                 .count(),
-            actions.len(),
+            of_phase.len(),
         )
     };
     if total == 0 {
         return "none".to_owned();
     }
-    let running = actions
+    let running = of_phase
         .iter()
-        .any(|action| action.status() == ActionStatus::Running);
+        .any(|action| text(*action, "status").as_deref() == Some("running"));
     if done == 0 && !running {
         return "pending".to_owned();
     }
     format!("{done}/{total}")
 }
 
-/// The plan's actions in one phase, in plan order.
-fn actions_of(plan: &ChangePlan, phase: Phase) -> Vec<&PlanAction> {
-    plan.actions()
+/// The actions in one phase, in the order the record holds them.
+fn of_phase(actions: &[Item], phase: Phase) -> Vec<&Item> {
+    actions
         .iter()
-        .filter(|action| Phase::of(action.role()) == phase)
+        .filter(|action| Phase::of(text(*action, "role").as_deref().unwrap_or("mutate")) == phase)
         .collect()
 }
 
-/// The plan's actions in one status, in plan order.
-fn with_status(plan: &ChangePlan, status: ActionStatus) -> Vec<&PlanAction> {
-    plan.actions()
+/// The actions in one status, in the order the record holds them.
+fn with_status<'a>(actions: &'a [Item], status: &str) -> Vec<&'a Item> {
+    actions
         .iter()
-        .filter(|action| action.status() == status)
+        .filter(|action| text(*action, "status").as_deref() == Some(status))
         .collect()
 }
 
 /// `6 mutate actions` — what completed, counted per role (Appendix E.5).
-fn completed_by_role(plan: &ChangePlan) -> Vec<String> {
-    ActionRole::ALL
+fn completed_by_role(actions: &[Item]) -> Vec<String> {
+    ROLES
         .iter()
         .filter_map(|role| {
-            let count = plan
-                .actions()
+            let number = actions
                 .iter()
                 .filter(|action| {
-                    action.role() == *role && action.status() == ActionStatus::Succeeded
+                    text(*action, "role").as_deref() == Some(*role)
+                        && text(*action, "status").as_deref() == Some("succeeded")
                 })
                 .count();
-            (count > 0).then(|| {
+            (number > 0).then(|| {
                 format!(
-                    "{count} {} {}",
-                    role.as_str(),
-                    if count == 1 { "action" } else { "actions" }
+                    "{number} {role} {}",
+                    if number == 1 { "action" } else { "actions" }
                 )
             })
         })
@@ -300,29 +338,39 @@ fn completed_by_role(plan: &ChangePlan) -> Vec<String> {
 }
 
 /// `action 7: restart service api-04` (Appendix E.5).
-fn action_reference(action: &PlanAction) -> String {
-    let summary = safe(action.summary());
-    let mut line = format!("action {}: {summary}", action.ordinal());
-    // A summary that already names its target — `restart nginx.service` — is not improved by
-    // the target after it, and repeating it reads as two different objects.
-    if let Some(target) = action.target().map(safe)
-        && !summary.contains(&target)
-    {
+fn action_reference(action: &Item) -> String {
+    let ordinal = count(action, "ordinal").unwrap_or_default();
+    let summary = text(action, "summary").unwrap_or_else(|| "unnamed action".to_owned());
+    let mut line = format!("action {ordinal}: {summary}");
+    // A summary that already names its target — `restart nginx.service` — is not improved by the
+    // target after it, and repeating it reads as two different objects.
+    if let Some(target) = text(action, "target").filter(|target| !summary.contains(target)) {
         line.push_str(&format!(" {target}"));
     }
     line
 }
 
 /// What happens to the assets the failed apply created (§37.2).
-fn retention(state: PlanState, assets: &[RecoveryAsset]) -> String {
+fn retention(state: &str, assets: &[RecordValue]) -> String {
     let created = assets
         .iter()
-        .filter(|asset| asset.state().occupies_storage())
+        .filter(|asset| {
+            matches!(
+                text(*asset, "state").as_deref(),
+                Some("creating" | "ready" | "invalid" | "expired")
+            )
+        })
         .count();
     if created == 0 {
         return "no recovery asset was created".to_owned();
     }
-    if state.retains_assets_indefinitely() {
+    let held = assets.iter().any(|asset| flag(asset, "held"));
+    let retains = held
+        || matches!(
+            state,
+            "failed" | "degraded" | "apply-failed" | "prepare-failed" | "recovery-failed"
+        );
+    if retains {
         format!(
             "{} retained until an operator releases them",
             counted(created, "created asset", "created assets")

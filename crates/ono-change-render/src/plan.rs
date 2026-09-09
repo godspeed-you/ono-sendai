@@ -22,12 +22,10 @@
 //! unknown is never an empty string applies to a block as much as to a cell: a missing `targets`
 //! section is indistinguishable from a plan with no targets, and one of those readings is wrong.
 
-use ono_change_core::{
-    ChangePlan, PlanAction, RecoveryAsset, RequiredAcknowledgement, VerificationClass,
-};
+use ono_value::RecordValue;
 
 use crate::symbols::{Charset, Symbol};
-use crate::{fit, heading, labelled, safe};
+use crate::{Fields, Item, count, fit, flag, heading, items, labelled, text};
 
 /// The line §2.1 and §62.3 both turn on: nothing has happened yet.
 ///
@@ -133,17 +131,17 @@ impl Section {
 
 /// The default plan view of §20.2 and §64, laid out at `width` columns.
 ///
-/// `assets` are the recovery assets the plan proposes; they are passed in rather than reached for
-/// because §50.1 forbids this crate from asking a provider anything, and §2.1 means a proposed
-/// asset does not exist yet in any case.
+/// `plan` is an `ono.change-plan/1`; `assets` are the `ono.recovery-asset/1` records the plan
+/// proposes. They are passed in rather than reached for, because §50.1 forbids this crate from
+/// asking a provider anything and §2.1 means a proposed asset does not exist yet in any case.
 ///
 /// Appendix E.1 asks for a calm engineering instrument: the structure carries the meaning, colour
 /// is secondary, and nothing here is a warning dialog. The one raised voice is the closing
 /// [`PLAN_NOT_EXECUTED`].
 #[must_use]
 pub fn plan_view(
-    plan: &ChangePlan,
-    assets: &[RecoveryAsset],
+    plan: &RecordValue,
+    assets: &[RecordValue],
     width: usize,
     charset: Charset,
 ) -> Vec<String> {
@@ -153,54 +151,98 @@ pub fn plan_view(
         lines.extend(body(*section, plan, assets, width, charset));
     }
     // Appendix F: everything before the first mutation is told as "nothing happened", and
-    // everything at or after it is not. The predicate is the plan's, never this view's guess.
-    if !plan.state().has_mutated() {
+    // everything at or after it is not. The state is §4.1's, read off the record.
+    if !has_mutated(plan) {
         lines.push(String::new());
         lines.push(PLAN_NOT_EXECUTED.to_owned());
     }
     lines
 }
 
+/// The §4.1 states at or after which something may have changed (Appendix F).
+///
+/// The list is §4.1's own, spelled as the `state` field spells it. Everything before `applying`
+/// means nothing ran; everything from it on means what ran, ran. `prepare-failed` is deliberately
+/// on the safe side of the line — §4.5 makes it reachable without any mutating action.
+pub(crate) const MUTATED_STATES: [&str; 11] = [
+    "applying",
+    "apply-failed",
+    "verifying",
+    "verified",
+    "degraded",
+    "failed",
+    "closed",
+    "recovery-planned",
+    "recovering",
+    "recovered",
+    "recovery-failed",
+];
+
+/// Whether the plan has begun changing the system (§4.7, Appendix F).
+pub(crate) fn has_mutated(plan: &RecordValue) -> bool {
+    text(plan, "state").is_some_and(|state| {
+        MUTATED_STATES.contains(&state.as_str()) || state == "recovery-verified"
+    })
+}
+
 /// `PLAN / a82f  rev 3  sealed` — the identity §36.4 lets an operator type back (§20.2).
-fn title(plan: &ChangePlan) -> String {
-    format!(
-        "PLAN / {}  rev {}  {}",
-        plan.id().short(),
-        plan.revision(),
-        plan.state().as_str()
-    )
+///
+/// The identity is shortened to the prefix §36.4's examples use. A store resolves a reference on
+/// an unambiguous prefix, and a full sixteen-character digest in a heading is a reference nobody
+/// types.
+fn title(plan: &RecordValue) -> String {
+    let mut line = format!("PLAN / {}", short(plan, "id"));
+    if let Some(revision) = count(plan, "revision") {
+        line.push_str(&format!("  rev {revision}"));
+    }
+    if let Some(state) = text(plan, "state") {
+        line.push_str(&format!("  {state}"));
+    }
+    line
+}
+
+/// The short reference §36.4 prints for an identity field.
+pub(crate) fn short(source: &dyn Fields, field: &str) -> String {
+    let full = text(source, field).unwrap_or_else(|| "unknown".to_owned());
+    let body = full.rsplit('/').next().unwrap_or(&full);
+    body.chars().take(crate::SHORT).collect()
 }
 
 /// The body of one section, always non-empty (§10.5: silence is not an answer).
 fn body(
     section: Section,
-    plan: &ChangePlan,
-    assets: &[RecoveryAsset],
+    plan: &RecordValue,
+    assets: &[RecordValue],
     width: usize,
     charset: Charset,
 ) -> Vec<String> {
     match section {
-        Section::Intent => vec![fit(&format!("  {}", safe(plan.intent().text())), width)],
+        Section::Intent => vec![fit(
+            &format!(
+                "  {}",
+                text(plan, "intent").unwrap_or_else(|| "no intent was recorded".to_owned())
+            ),
+            width,
+        )],
         Section::Targets => or_else(
-            plan.targets()
+            items(plan, "targets")
                 .iter()
-                .map(|target| fit(&format!("  {}", safe(target.label())), width))
+                .filter_map(|target| text(target, "label").or_else(|| text(target, "identity")))
+                .map(|label| fit(&format!("  {label}"), width))
                 .collect(),
             "no selector has been resolved to an object yet",
             width,
         ),
         Section::Planned => or_else(
-            plan.actions()
+            items(plan, "actions")
                 .iter()
                 .map(|action| fit(&action_line(action, charset), width))
                 .collect(),
             "the plan carries no action",
             width,
         ),
-        Section::Impact => crate::impact::impact_rows(plan.impact(), width, charset),
-        Section::Protection => {
-            crate::protection::protection_block(plan.protection(), assets, width, charset)
-        }
+        Section::Impact => crate::impact::impact_rows(plan, width, charset),
+        Section::Protection => crate::protection::protection_block(plan, assets, width, charset),
         Section::NotRecoverable => or_else(
             unrecoverable(plan, width, charset),
             "nothing was recorded as irreversible",
@@ -209,28 +251,17 @@ fn body(
         Section::Risk => risk_lines(plan, width),
         Section::Reboot => vec![fit(&format!("  {}", reboot(plan, assets)), width)],
         Section::Verification => or_else(
-            plan.verification()
-                .contracts()
+            items(plan, "verification_contracts")
                 .iter()
-                .map(|contract| {
-                    let mut line = format!(
-                        "  {} {}",
-                        safe(contract.subject()),
-                        safe(contract.expression())
-                    );
-                    if contract.class() != VerificationClass::Required {
-                        line.push_str(&format!("  ({})", contract.class().as_str()));
-                    }
-                    fit(&line, width)
-                })
+                .map(|contract| fit(&contract_line(contract), width))
                 .collect(),
             "no verification contract is attached",
             width,
         ),
         Section::Approval => or_else(
-            plan.outstanding_acknowledgements()
+            approvals(plan)
                 .into_iter()
-                .map(|acknowledgement| fit(&approval_line(acknowledgement), width))
+                .map(|line| fit(&line, width))
                 .collect(),
             "none required",
             width,
@@ -238,22 +269,70 @@ fn body(
     }
 }
 
+/// `  nginx.service == running  (advisory)` — a contract and what a failure of it would mean.
+fn contract_line(contract: &Item) -> String {
+    let subject = text(contract, "subject").unwrap_or_else(|| "unnamed".to_owned());
+    let mut line = match text(contract, "expression") {
+        Some(expression) => format!("  {subject} {expression}"),
+        None => format!("  {subject}"),
+    };
+    // §23.2: an advisory expectation means something different from a required one, and a reader
+    // who cannot tell them apart cannot tell DEGRADED from FAILED either.
+    match text(contract, "class").as_deref() {
+        Some("required") | None => {}
+        Some(class) => line.push_str(&format!("  ({class})")),
+    }
+    line
+}
+
+/// §19.4's outstanding acknowledgements, as `accepted_risk_overrides` and `risk` leave them.
+///
+/// The record stores what the operator has already accepted; what remains is what §19.4 requires
+/// and the plan does not yet carry. A `high` or `critical` class needs `--accept-risk`, and any
+/// irreversible finding needs `--accept-irreversible` (§40.3).
+fn approvals(plan: &RecordValue) -> Vec<String> {
+    let accepted = crate::strings(plan, "accepted_risk_overrides");
+    let class = text(plan, "risk").unwrap_or_else(|| "unknown".to_owned());
+    let irreversible = items(plan, "risk_findings")
+        .iter()
+        .any(|finding| text(finding, "dimension").as_deref() == Some("irreversibility"))
+        || items(plan, "coverage_exclusions")
+            .iter()
+            .any(|exclusion| flag(exclusion, "irreversible"));
+    let mut lines = Vec::new();
+    if matches!(class.as_str(), "high" | "critical")
+        && !accepted.iter().any(|flag| flag == "--accept-risk")
+    {
+        lines.push(labelled("--accept-risk", &format!("{class} risk"), 24));
+    }
+    if irreversible && !accepted.iter().any(|flag| flag == "--accept-irreversible") {
+        lines.push(labelled(
+            "--accept-irreversible",
+            "irreversible actions",
+            24,
+        ));
+    }
+    lines
+}
+
 /// `  1  ~ replace nginx.conf` — the ordinal, §20.3's mark, and what the action does (§20.2).
 ///
 /// The mark is the one §20.3 gives the action's first declared effect. An action that declares no
 /// effect gets no mark rather than a guessed one: §1.3 forbids inventing the future, and a `~`
 /// beside an action nobody described would be exactly that.
-fn action_line(action: &PlanAction, charset: Charset) -> String {
-    let mark = action.effects().first().map_or(" ", |effect| {
-        Symbol::for_effect(effect.kind()).glyph(charset)
-    });
-    let mut line = format!(
-        "  {:>2}  {mark} {}",
-        action.ordinal(),
-        safe(action.summary())
-    );
-    if let Some(target) = action.target() {
-        line.push_str(&format!("  {}", safe(target)));
+fn action_line(action: &Item, charset: Charset) -> String {
+    let mark = items(action, "proposed_effects")
+        .first()
+        .and_then(|effect| text(effect, "kind"))
+        .map_or_else(
+            || " ".to_owned(),
+            |kind| Symbol::for_effect(&kind).glyph(charset).to_owned(),
+        );
+    let ordinal = count(action, "ordinal").unwrap_or_default();
+    let summary = text(action, "summary").unwrap_or_else(|| "unnamed action".to_owned());
+    let mut line = format!("  {ordinal:>2}  {mark} {summary}");
+    if let Some(target) = text(action, "target").filter(|target| !summary.contains(target)) {
+        line.push_str(&format!("  {target}"));
     }
     line
 }
@@ -263,51 +342,49 @@ fn action_line(action: &PlanAction, charset: Charset) -> String {
 /// Two sources say it and both are read rather than derived — an exclusion the protection matrix
 /// marked irreversible, and an effect the provider declared irreversible. A subject named by both
 /// appears once, because a reader counting the list would otherwise read one loss as two.
-fn unrecoverable(plan: &ChangePlan, width: usize, charset: Charset) -> Vec<String> {
+fn unrecoverable(plan: &RecordValue, width: usize, charset: Charset) -> Vec<String> {
     let mark = Symbol::Risk.glyph(charset);
-    let mut subjects: Vec<String> = Vec::new();
-    for exclusion in plan.protection().exclusions() {
-        if exclusion.is_irreversible() {
-            subjects.push(safe(exclusion.subject()));
-        }
-    }
-    for effect in plan.effects() {
-        if effect.is_irreversible() {
-            subjects.push(
-                effect
-                    .object()
-                    .map_or_else(|| safe(effect.explanation()), safe),
-            );
-        }
-    }
-    subjects.dedup();
     let mut seen: Vec<String> = Vec::new();
-    for subject in subjects {
-        if !seen.contains(&subject) {
+    for exclusion in items(plan, "coverage_exclusions") {
+        if flag(&exclusion, "irreversible")
+            && let Some(subject) = text(&exclusion, "subject")
+        {
             seen.push(subject);
         }
     }
-    seen.into_iter()
+    for effect in items(plan, "effects") {
+        if flag(&effect, "irreversible")
+            && let Some(subject) = text(&effect, "object").or_else(|| text(&effect, "explanation"))
+        {
+            seen.push(subject);
+        }
+    }
+    let mut unique: Vec<String> = Vec::new();
+    for subject in seen {
+        if !unique.contains(&subject) {
+            unique.push(subject);
+        }
+    }
+    unique
+        .into_iter()
         .map(|subject| fit(&format!("  {mark} {subject}"), width))
         .collect()
 }
 
 /// §19.2's class and the findings that produced it, which §40.2 shows instead of "Are you sure?".
-fn risk_lines(plan: &ChangePlan, width: usize) -> Vec<String> {
-    let assessment = plan.risk();
-    let mut lines = vec![fit(
-        &format!("  {}", assessment.classify().as_str().to_uppercase()),
-        width,
-    )];
-    for finding in assessment.leading() {
-        lines.push(fit(
-            &format!(
-                "    {} - {}",
-                finding.dimension().as_str(),
-                safe(finding.reason())
-            ),
-            width,
-        ));
+fn risk_lines(plan: &RecordValue, width: usize) -> Vec<String> {
+    let class = text(plan, "risk").unwrap_or_else(|| "unknown".to_owned());
+    let mut lines = vec![fit(&format!("  {}", class.to_uppercase()), width)];
+    for finding in items(plan, "risk_findings") {
+        // §40.2 shows the findings at the plan's own class rather than every rule that ran: a
+        // gate that recites ten reasons teaches the operator to skip all ten.
+        if text(&finding, "class").as_deref() != Some(class.as_str()) {
+            continue;
+        }
+        let dimension = text(&finding, "dimension").unwrap_or_else(|| "unknown".to_owned());
+        let reason =
+            text(&finding, "reason").unwrap_or_else(|| "no reason was recorded".to_owned());
+        lines.push(fit(&format!("    {dimension} - {reason}"), width));
     }
     lines
 }
@@ -317,18 +394,12 @@ fn risk_lines(plan: &ChangePlan, width: usize) -> Vec<String> {
 /// Two independent facts say yes and either is enough: a rule raised the reboot dimension, or an
 /// asset's own cost says restoring from it needs one. §10.4 is why the line exists at all — a
 /// strongly protected plan whose way back is a reboot is not a cheap plan.
-fn reboot(plan: &ChangePlan, assets: &[RecoveryAsset]) -> &'static str {
-    let by_rule =
-        plan.risk().findings().iter().any(|finding| {
-            finding.dimension() == ono_change_core::RiskDimension::RebootRequirement
-        });
-    let by_asset = assets.iter().any(|asset| asset.cost().requires_reboot());
+fn reboot(plan: &RecordValue, assets: &[RecordValue]) -> &'static str {
+    let by_rule = items(plan, "risk_findings")
+        .iter()
+        .any(|finding| text(finding, "dimension").as_deref() == Some("reboot-requirement"));
+    let by_asset = assets.iter().any(|asset| flag(asset, "requires_reboot"));
     if by_rule || by_asset { "yes" } else { "no" }
-}
-
-/// `  --accept-risk        high risk` — the flag §40.3 takes and what it acknowledges.
-fn approval_line(acknowledgement: RequiredAcknowledgement) -> String {
-    labelled(acknowledgement.flag(), &acknowledgement.to_string(), 24)
 }
 
 /// `lines`, or one line saying in words that there were none (§10.5).

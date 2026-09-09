@@ -39,14 +39,12 @@
 #![forbid(unsafe_code)]
 
 pub mod derive;
-pub mod mutation;
 pub mod risk;
 
 pub use derive::{
     DEFAULT_DEPTH, DEFAULT_NODE_BUDGET, HistoricalRelevance, ImpactDerivation, ImpactRequest,
     Prominence, derive, derive_in_detail, derive_within_budget, estimate,
 };
-pub use mutation::{MutationDomain, mutation_domains, objective_for};
 pub use risk::{
     ActiveLink, BulkThresholds, REBOOT_REQUIRED, REBOOT_SUGGESTED, RiskRequest, RiskRuleSpec,
     assess, rule, rules,

@@ -1,9 +1,16 @@
 //! The prospective-change projections of Ono-Sendai v0.6 (spec §20, §24, §25, §37.5, Appendix E).
 //!
-//! §50.1 gives this crate one job and forbids it a second: it turns the values of
-//! [`ono_change_core`] into lines, and it *never computes a fact*. There is no protection level
-//! recomputed here, no blast radius counted here, no verdict decided here — every one of those is
-//! read off the value that owns it, so a view cannot disagree with the plan it draws.
+//! §50.1 gives this crate one job and forbids it a second: it turns the records of §46 into
+//! lines, and it *never computes a fact*. There is no protection level recomputed here, no blast
+//! radius counted here, no verdict decided here — every one of those is read off the record that
+//! carries it, so a view cannot disagree with the plan it draws.
+//!
+//! The layering makes that structural rather than editorial. This crate cannot see the change
+//! vocabulary at all: it depends on `ono-value` and `ono-render` and nothing above them, exactly
+//! as `ono-spatial-render` and `ono-temporal-render` do. A crate that cannot name a `ChangePlan`
+//! cannot mutate one, and a crate that reads `protection_level` off a record cannot recompute it.
+//! Every entry point therefore takes a [`ono_value::RecordValue`] of a schema §46 names, a width
+//! to lay out at, and — where it renders an age — the instant to measure from.
 //!
 //! Three of the specification's rules shape almost every function below:
 //!
@@ -29,6 +36,13 @@
 
 use unicode_width::UnicodeWidthStr;
 
+pub(crate) use field::{
+    Fields, Item, byte_size, count, duration_seconds, flag, items, list_len, nested, strings, text,
+    timestamp,
+};
+
+mod field;
+
 pub mod assets;
 pub mod collapsed;
 pub mod impact;
@@ -50,6 +64,12 @@ pub use protection::{coverage_matrix, protection_block, recovery_asset_block};
 pub use recovery::{NEWER_STATE_AT_RISK, RECOVERY_NOT_EXECUTED, recovery_view};
 pub use symbols::{Charset, Symbol, legend};
 pub use verify::{NO_FULL_EQUIVALENCE, recovery_verification, verification_view};
+
+/// How many characters of an identity a printed reference carries (§36.4).
+///
+/// A store resolves a reference on an unambiguous prefix, so a heading prints the prefix and not
+/// the whole digest: a reference nobody can type is a reference nobody uses.
+pub(crate) const SHORT: usize = 4;
 
 /// The narrowest layout any view is laid out at.
 ///
@@ -87,16 +107,6 @@ pub(crate) fn fit(line: &str, width: usize) -> String {
         used += cell;
     }
     kept.trim_end().to_owned()
-}
-
-/// A string from the machine, with its control characters neutralised (ADR-0015 T1).
-///
-/// A plan's targets are paths, a provider's name came off a package, an impact node's label came
-/// out of a process table. v0.2 §49 assumes all of it is hostile: an `ESC` here retitles a
-/// terminal window and a newline forges a section heading in a plan view. This crate hands lines
-/// straight to a sink, so it is the last place either can be stopped.
-pub(crate) fn safe(text: &str) -> String {
-    ono_render::sanitise(text)
 }
 
 /// `  label      value` — the indented two-column shape §20.2 uses inside a block.

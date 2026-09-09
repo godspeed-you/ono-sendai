@@ -44,8 +44,7 @@ pub const NO_PLAN: &str = "manual";
 /// shell metacharacter — is refused here rather than passed to ZFS to refuse later.
 #[must_use]
 pub const fn is_permitted(character: char) -> bool {
-    character.is_ascii_alphanumeric()
-        || matches!(character, '_' | '-' | ':' | '.')
+    character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | ':' | '.')
 }
 
 /// Reduces `text` to the characters ZFS accepts, collapsing every run of the rest to one `_`.

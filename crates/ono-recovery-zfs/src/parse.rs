@@ -257,7 +257,11 @@ mod tests {
 
     #[test]
     fn should_read_zfs_absence_as_absence_rather_than_as_zero() {
-        assert_eq!(number("-"), None, "§38.2: `-` is unknown, and zero is a claim");
+        assert_eq!(
+            number("-"),
+            None,
+            "§38.2: `-` is unknown, and zero is a claim"
+        );
         assert_eq!(number("24576"), Some(24576));
     }
 }

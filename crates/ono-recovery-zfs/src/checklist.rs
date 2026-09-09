@@ -235,7 +235,8 @@ impl SafetyChecklist {
     /// Whether `fact` was established.
     #[must_use]
     pub fn is_established(&self, fact: ZfsFact) -> bool {
-        self.evidence(fact).is_some_and(FactEvidence::is_established)
+        self.evidence(fact)
+            .is_some_and(FactEvidence::is_established)
     }
 
     /// The facts that were not established, in §56.1's order.
