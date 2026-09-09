@@ -276,13 +276,13 @@ capabilities! {
         [broker("plans", ScopeKind::IdList), broker("schemas", ScopeKind::IdList)],
         "Reading change plans, their actions and their computed impact (v0.6 §48.3). §48.4: it is no route to execution.";
     ChangePlanContribute => "change.plan.contribute", Observe, None,
-        [broker("schemas", ScopeKind::IdList)],
+        [advisory("schemas", ScopeKind::IdList)],
         "Contributing actions, effects, impact edges and risk findings to a plan being resolved (v0.6 §48.3). Still not permission to run anything.";
     ChangeActionExecute => "change.action.execute", Mutate, Conditional,
-        [broker("schemas", ScopeKind::IdList), broker("plans", ScopeKind::IdList)],
+        [advisory("schemas", ScopeKind::IdList), advisory("plans", ScopeKind::IdList)],
         "Carrying out a mutating plan action (v0.6 §48.3). The only change family that authorises a change.";
     VerificationObserve => "verification.observe", Read, None,
-        [broker("schemas", ScopeKind::IdList)],
+        [advisory("schemas", ScopeKind::IdList)],
         "Observing a verification contract and reporting the result (v0.6 §48.3, §25.1).";
     RecoveryDiscover => "recovery.discover", Read, None,
         [broker("domain_kinds", ScopeKind::NameList)],
@@ -419,10 +419,18 @@ mod tests {
     #[test]
     fn should_mark_only_the_declared_advisory_scope_keys_as_advisory_when_scopes_are_listed() {
         // ADR-0022 §3 put exactly one advisory scope key in the model; ADR-0594 added the three
-        // of `provider.mutate`, whose wire the host does not parse; v0.6 §48.3 adds the two
-        // application names a recovery plugin resolves inside its own system, which the host has
-        // no way to compare a call against. Every other key is a boundary the broker enforces,
-        // and a key that quietly became advisory would fail here.
+        // of `provider.mutate`, whose wire the host does not parse; v0.6 §48.3 adds six.
+        //
+        // Four of the six are the change family's `schemas` and `plans`: the call that spends
+        // those capabilities names a plan, a check or a command, and the target schema behind it
+        // is a property of the plan the host resolved rather than a value in the call. The other
+        // two are application names a recovery plugin resolves inside its own system, which the
+        // host never sees resolved. `change.plan.read.schemas` is deliberately not among them:
+        // the host holds the plan before it discloses it, so the schemas in its `targets` are
+        // compared against the grant while there is still something to refuse.
+        //
+        // Every other key is a boundary the broker enforces, and a key that quietly became
+        // advisory would fail here.
         let advisory: Vec<(&str, &str)> = Capability::ALL
             .iter()
             .flat_map(|family| {
@@ -440,6 +448,10 @@ mod tests {
                 ("provider.mutate", "instances"),
                 ("provider.mutate", "resources"),
                 ("provider.mutate", "actions"),
+                ("change.plan.contribute", "schemas"),
+                ("change.action.execute", "schemas"),
+                ("change.action.execute", "plans"),
+                ("verification.observe", "schemas"),
                 ("recovery.quiesce", "applications"),
                 ("recovery.transaction", "applications"),
             ]

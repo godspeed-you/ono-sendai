@@ -4148,6 +4148,35 @@ impl Actor {
         }
         let host = Arc::clone(&self.host);
         let outcome = host.change_plan_read(&params.plan).await;
+        // The `schemas` scope, checked against the values the operation will actually use: the
+        // schemas of the plan's frozen targets (`ono.change-plan/1.targets[].schema`, §4.3). The
+        // host holds the plan and the package does not, so there is still something to refuse —
+        // a plan reaching outside the grant is `capability.scope_violation` rather than a plan
+        // handed over with its inconvenient targets quietly removed.
+        if let Ok(plan) = &outcome {
+            let uses: Vec<ScopeUse> = plan
+                .get("targets")
+                .and_then(Json::as_array)
+                .map(|targets| {
+                    targets
+                        .iter()
+                        .filter_map(|frozen| frozen.get("schema").and_then(Json::as_str))
+                        .map(|schema| ScopeUse::Name {
+                            key: "schemas",
+                            value: schema.to_owned(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !uses.is_empty()
+                && let Err(error) = self
+                    .broker_check(capability, method::CHANGE_PLAN_READ, &uses, Some(target.clone()))
+                    .await
+            {
+                self.reply_err(seq, error.into()).await;
+                return Ok(());
+            }
+        }
         self.reply_service(
             seq,
             capability,

@@ -1621,9 +1621,12 @@ dependencies = [
  "ono-change-core",
  "ono-command",
  "ono-core",
+ "ono-pipeline",
  "ono-provider-api",
- "ono-testkit",
  "ono-value",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
  "tokio",
 ]
 

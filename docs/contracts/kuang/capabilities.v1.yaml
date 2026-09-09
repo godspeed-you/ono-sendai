@@ -588,7 +588,16 @@ families:
     scopable: true
     scope:
       plans: {type: id-list, enforcement: broker, doc: "Plan ids the package may read, or `*`. The value arrives in the call and is compared before the plan is fetched."}
-      schemas: {type: id-list, enforcement: broker, doc: "The target schemas whose plans the package may read, e.g. `[dev.example.db.database/1]`."}
+      schemas:
+        type: id-list
+        enforcement: broker
+        doc: >-
+          The target schemas whose plans the package may read, e.g.
+          `[dev.example.db.database/1]`. Enforceable, and enforced: the host holds the plan
+          before it discloses it, so every `targets[].schema` of `ono.change-plan/1` (§4.3) is
+          compared against the grant while there is still something to refuse. A plan reaching
+          outside the grant is `capability.scope_violation`, never a plan handed over with its
+          inconvenient targets quietly removed.
 
   - id: change.plan.contribute
     risk: observe
@@ -604,7 +613,18 @@ families:
       never reduce it.
     scopable: true
     scope:
-      schemas: {type: id-list, enforcement: broker, doc: "The target schemas the package may contribute about."}
+      schemas:
+        type: id-list
+        enforcement: advisory
+        doc: >-
+          The target schemas the package may contribute about. **Advisory, and shown as
+          advisory.** A contribution carries effects, edges and findings; the schema a plan
+          action targets is a property of the plan the host resolved rather than a value in the
+          call, so the broker records this and cannot compare it. §31.16: a scope that cannot be
+          enforced reliably MUST NOT be offered as if it were a security boundary. What is
+          enforced instead is stronger than a name match: every effect is settled against
+          Appendix A.1 and §8.1, and every risk finding must name a rule the package declared and
+          a class and dimension that rule said it emits.
 
   - id: change.action.execute
     risk: mutate
@@ -616,8 +636,21 @@ families:
       and the denial is audited (§48.4, §43.7).
     scopable: true
     scope:
-      schemas: {type: id-list, enforcement: broker, doc: "The target schemas whose actions the package may carry out."}
-      plans: {type: id-list, enforcement: broker, doc: "The plan ids it may execute actions from."}
+      schemas:
+        type: id-list
+        enforcement: advisory
+        doc: >-
+          The target schemas whose actions the package may carry out. **Advisory, and shown as
+          advisory.** No host call spends this capability: the authority is checked when a
+          contributed command that declares it is invoked, and at that moment there is no plan
+          and no schema value to compare. The family itself is the boundary — a package without
+          the grant executes nothing (§48.4) — and the scope is the operator's recorded intent
+          beside it.
+        caveat: The same caveat as `plans`.
+      plans:
+        type: id-list
+        enforcement: advisory
+        doc: "The plan ids it may execute actions from. The same caveat as `schemas`."
 
   - id: verification.observe
     risk: read
@@ -629,7 +662,15 @@ families:
       outside §23.3's four, so an unanswerable check stays `unknown` rather than becoming a pass.
     scopable: true
     scope:
-      schemas: {type: id-list, enforcement: broker, doc: "The target schemas the package may report verification results about."}
+      schemas:
+        type: id-list
+        enforcement: advisory
+        doc: >-
+          The target schemas the package may report verification results about. **Advisory, and
+          shown as advisory.** The call names a check id; which schema that check is about is the
+          host's to know, and the broker cannot compare it on every call. What is enforced is the
+          vocabulary: a status outside §23.3's four and an equivalence domain outside §25.1's
+          three are refused and audited.
 
   - id: recovery.discover
     risk: read

@@ -474,11 +474,10 @@ fn should_find_every_proof_a_ticked_box_of_the_v06_checklist_names() {
     );
     let ticked = progress(&passage).ticked;
     println!("docs/ACCEPTANCE.md §4.12 — {ticked} ticked boxes resolved against the tree");
-    let problems = check_ticked_proofs(&repo(), &passage);
+    let problems = ticked_proofs(&repo(), &passage);
     assert!(
         problems.is_empty(),
-        "§4.12 ticks boxes whose proofs the tree does not carry:\n{}",
-        report(&problems)
+        "§4.12 ticks boxes whose proofs the tree does not carry:\n{problems}"
     );
 }
 
@@ -494,8 +493,8 @@ fn should_report_a_box_of_the_real_checklist_ticked_on_a_proof_nobody_wrote() {
          `crates/ono-change-plan/tests/a_suite_nobody_will_ever_write.rs`.\n",
         tranche()
     );
-    assert_reports(
-        &check_ticked_proofs(&repo(), &mutant),
+    assert_names(
+        &ticked_proofs(&repo(), &mutant),
         "a_suite_nobody_will_ever_write.rs",
     );
 }
@@ -507,11 +506,10 @@ fn should_resolve_every_kind_of_proof_when_the_tree_carries_them_all() {
     // this, a harvester that reported everything and one that reported nothing would both look
     // green while §4.12 held no ticked box.
     let tree = resolved();
-    let problems = check_ticked_proofs(tree.path(), &passage(&tree));
+    let problems = ticked_proofs(tree.path(), &passage(&tree));
     assert!(
         problems.is_empty(),
-        "every proof the scratch checklist ticks is in its tree:\n{}",
-        report(&problems)
+        "every proof the scratch checklist ticks is in its tree:\n{problems}"
     );
 }
 
@@ -524,10 +522,7 @@ fn should_report_a_ticked_box_whose_proof_is_ignored() {
         "xtask/tests/change_contracts.rs",
         "#[test]\n#[ignore = \"needs a pool\"]\nfn should_reject_an_edge_from_prepare_failed_to_applying() {}\n",
     );
-    assert_reports(
-        &check_ticked_proofs(tree.path(), &passage(&tree)),
-        "`#[ignore]`d",
-    );
+    assert_names(&ticked_proofs(tree.path(), &passage(&tree)), "`#[ignore]`d");
 }
 
 #[test]
@@ -535,8 +530,8 @@ fn should_report_a_ticked_box_whose_acceptance_case_the_referee_does_not_collect
     // §2: a capability without a passing acceptance case is not delivered. A box ticked on a case
     // name no file answers to claims a referee's verdict nobody obtained.
     let tree = mutated("`280-plan-creates-nothing`", "`280-plan-creates-none`");
-    assert_reports(
-        &check_ticked_proofs(tree.path(), &passage(&tree)),
+    assert_names(
+        &ticked_proofs(tree.path(), &passage(&tree)),
         "280-plan-creates-none",
     );
 }
@@ -550,8 +545,8 @@ fn should_report_a_ticked_box_whose_command_names_a_task_xtask_does_not_have() {
         "cargo run -p xtask -- perf",
         "cargo run -p xtask -- measure",
     );
-    assert_reports(
-        &check_ticked_proofs(tree.path(), &passage(&tree)),
+    assert_names(
+        &ticked_proofs(tree.path(), &passage(&tree)),
         "dispatches no `measure` task",
     );
 }
@@ -564,8 +559,8 @@ fn should_report_a_ticked_box_that_names_no_proof_at_all() {
         "— `cargo run -p xtask -- perf`.",
         "— the team reviewed it and agreed.",
     );
-    assert_reports(
-        &check_ticked_proofs(tree.path(), &passage(&tree)),
+    assert_names(
+        &ticked_proofs(tree.path(), &passage(&tree)),
         "names no automated proof",
     );
 }
@@ -582,10 +577,7 @@ fn should_leave_an_open_box_alone_when_its_proofs_do_not_exist_yet() {
         passage.contains("nothing_yet.rs"),
         "the scratch checklist keeps an open box naming a file nobody wrote"
     );
-    assert_silent(
-        &check_ticked_proofs(tree.path(), &passage),
-        "nothing_yet.rs",
-    );
+    assert_silent(&ticked_proofs(tree.path(), &passage), "nothing_yet.rs");
 }
 
 // --- the shape of the subsection -----------------------------------------------------------------
@@ -599,8 +591,7 @@ fn should_keep_every_box_of_the_v06_checklist_in_the_shape_the_release_check_rea
     let problems = check_shape(&tranche());
     assert!(
         problems.is_empty(),
-        "§4.12 has lost the shape a script can read:\n{}",
-        report(&problems)
+        "§4.12 has lost the shape a script can read:\n{problems}"
     );
 }
 
@@ -610,7 +601,7 @@ fn should_report_a_box_indented_out_of_the_release_checks_sight() {
         "- [x] **Startup stays inside its budget.**",
         "  - [x] **Startup stays inside its budget.**",
     );
-    assert_reports(&check_shape(&passage(&tree)), "left margin");
+    assert_names(&check_shape(&passage(&tree)), "left margin");
 }
 
 #[test]
@@ -619,7 +610,7 @@ fn should_report_a_box_without_a_bolded_title() {
         "- [x] **Startup stays inside its budget.**",
         "- [x] Startup stays inside its budget.",
     );
-    assert_reports(&check_shape(&passage(&tree)), "no bolded title");
+    assert_names(&check_shape(&passage(&tree)), "no bolded title");
 }
 
 #[test]
@@ -628,7 +619,7 @@ fn should_report_a_box_written_with_a_marker_no_script_reads() {
         "- [x] **Startup stays inside its budget.**",
         "- [X] **Startup stays inside its budget.**",
     );
-    assert_reports(&check_shape(&passage(&tree)), "- [X]");
+    assert_names(&check_shape(&passage(&tree)), "- [X]");
 }
 
 #[test]
@@ -659,7 +650,7 @@ fn should_keep_the_subsubsection_headings_in_order_and_numbered_without_a_gap() 
 #[test]
 fn should_report_a_subsubsection_heading_out_of_order() {
     let tree = mutated("#### 4.12.2 Planning", "#### 4.12.4 Planning");
-    assert_reports(&check_shape(&passage(&tree)), "4.12.4");
+    assert_names(&check_shape(&passage(&tree)), "4.12.4");
 }
 
 // --- the case-number block -----------------------------------------------------------------------
@@ -686,8 +677,7 @@ fn should_keep_the_case_numbers_of_the_v06_checklist_inside_its_own_block() {
     let problems = check_case_block(&repo(), &passage);
     assert!(
         problems.is_empty(),
-        "§4.12 and `{CASES}/` disagree about the 280–329 block:\n{}",
-        report(&problems)
+        "§4.12 and `{CASES}/` disagree about the 280–329 block:\n{problems}"
     );
 }
 
@@ -698,7 +688,7 @@ fn should_report_a_case_in_the_block_that_the_checklist_never_names() {
         "docker/acceptance/cases/295-apply-and-verify.case",
         "name: apply and verify\ntimeout: 30\n",
     );
-    assert_reports(
+    assert_names(
         &check_case_block(tree.path(), &passage(&tree)),
         "295-apply-and-verify",
     );
@@ -707,7 +697,7 @@ fn should_report_a_case_in_the_block_that_the_checklist_never_names() {
 #[test]
 fn should_report_a_case_the_checklist_owes_outside_its_block() {
     let tree = mutated("case 281-plan-block", "case 381-plan-block");
-    assert_reports(
+    assert_names(
         &check_case_block(tree.path(), &passage(&tree)),
         "owes case 381-plan-block",
     );
@@ -724,13 +714,13 @@ fn should_report_a_case_recorded_absent_that_the_referee_already_collects() {
         "docker/acceptance/cases/281-plan-block.case",
         "name: plan block\ntimeout: 30\n",
     );
-    assert_reports(&check_case_block(tree.path(), &passage(&tree)), "backticks");
+    assert_names(&check_case_block(tree.path(), &passage(&tree)), "backticks");
 }
 
 #[test]
 fn should_report_two_different_cases_sharing_one_number() {
     let tree = mutated("case 281-plan-block", "case 280-plan-settings");
-    assert_reports(
+    assert_names(
         &check_case_block(tree.path(), &passage(&tree)),
         "names two cases under the number 280",
     );
@@ -815,7 +805,7 @@ fn should_report_how_far_the_v06_tranche_has_come() {
         progress.total(),
         progress.open
     );
-    println!("{}", report(&check_ticked_proofs(&repo(), &passage)));
+    println!("{}", ticked_proofs(&repo(), &passage));
     assert!(
         progress.total() >= 150,
         "§4.12 is the definition of done for a whole tranche and the harvester counted {} boxes — \

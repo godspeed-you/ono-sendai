@@ -159,7 +159,7 @@ pub fn resolve(path: &Path, mounts: &[MountInfo], namespace: Option<&str>) -> Pe
         Some(target) => resolve_at(&subject, &target, mounts, namespace, 0),
         None => PersistenceDomain::refused(
             subject,
-            placeholder_mount(namespace),
+            no_mount(namespace),
             NonPersistentReason::Unresolved,
             "a relative path has no namespace-visible mount, and Appendix B.1 resolves from a \
              mount rather than from a name",
@@ -178,7 +178,7 @@ fn resolve_at(
     let Some(index) = deepest(lookup, mounts) else {
         return PersistenceDomain::refused(
             subject,
-            placeholder_mount(namespace),
+            no_mount(namespace),
             NonPersistentReason::Unresolved,
             format!("no mount in this namespace contains {lookup}"),
         );
@@ -397,8 +397,12 @@ fn resolved_mount(info: &MountInfo, namespace: Option<&str>) -> ResolvedMount {
     }
 }
 
-/// A mount to hang a refusal on when no mount was found at all.
-fn placeholder_mount(namespace: Option<&str>) -> ResolvedMount {
+/// The empty mount a refusal is hung on when Appendix B.1's pipeline found none at all.
+///
+/// A refusal still has to name where it was looking, and `PersistenceDomain::refused` takes a
+/// mount because every other refusal has one. This is the honest answer for the two cases that do
+/// not — a relative path, and a path no mount in the namespace contains.
+fn no_mount(namespace: Option<&str>) -> ResolvedMount {
     let mount = ResolvedMount::new("0:0", "", "", "", "/");
     match namespace {
         Some(namespace) => mount.in_namespace(namespace),

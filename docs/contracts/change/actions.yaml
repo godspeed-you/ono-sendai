@@ -91,3 +91,967 @@ precondition_kinds:
   - {id: provider-available, doc: "§7.2: the recovery provider is still available."}
   - {id: capability, doc: "§43.2: the capability the action needs is still held."}
   - {id: field, doc: "§7.2: some other declared field still holds its resolved value."}
+
+# The operations v0.6 can plan (§6.1), one row per command id in `docs/contracts/commands/`.
+#
+# §6.1 makes an operation plannable only where Ono can resolve it to a provider contract that
+# declares nine things. Six of them already exist: the command contract declares the target
+# schema, the required provider capability, the privilege and the arguments; `verbs.yaml` says
+# which verbs mutate; `ono_provider_api::Provider::act` is the execution method. The three that
+# cannot be derived from any of those are here, because they are facts about the operation rather
+# than about its spelling: the expected direct effects, the idempotency class, and the recovery
+# semantics.
+#
+# An operation with no row is not plannable. That is the answer §6.2 wants for an arbitrary
+# command, and it is the same answer for a mutating command nobody has written a contract for
+# yet — silence is never a claim that a change is safe.
+#
+# Two fields carry the weight:
+#
+# - `confidence` is §8.1's four classes and nothing else. The effect on the object the operation
+#   names is `guaranteed` where the provider contract makes it so; the effect on anything else is
+#   `expected` at best. §8.3 forbids a probability anywhere, so there is no field to put one in.
+# - `irreversible` is §2.13's flag, and it is what keeps a protected plan honest. A SIGKILL, a
+#   removed user's UID and an outbound repository fetch are each `true`, and each stays visible
+#   after protection has been arranged for everything else.
+#
+# `reboot: provider-reported` marks the operations of §30.5, where the provider distinguishes a
+# reboot *requirement* from a *recommendation*. A provider that cannot say answers `unknown`,
+# which is a statement; `null` here means the operation has no reboot dimension at all.
+#
+# `preconditions` is §7.2's list of facts sufficient to detect material drift, and `tolerances` is
+# §7.4's counterpart: a field whose movement leaves the plan valid, declared rather than guessed.
+#
+# Decisions: ADR-0800, ADR-0805.
+plannable_operations:
+
+  # --- files (§31, §32) -----------------------------------------------------------------------
+  # Every file operation is `filesystem-persistent` and `guaranteed` for the object it names: the
+  # provider contract of `write file` is that the bytes on disk become the bytes written. §32.3's
+  # mounted children are recovery semantics rather than an effect — a nested mount beneath the
+  # path is a different recovery scope, which changes what a way back covers rather than what the
+  # operation does.
+  - id: ono.file.write
+    role: mutate
+    idempotency: idempotent
+    idempotency_when:
+      - {option: append, value: true, idempotency: non-idempotent,
+         doc: "§41.1: appending twice is not appending once, so resume MUST NOT rerun it blindly (§41.2)."}
+    reboot: null
+    recovery_semantics: >-
+      §32.1: the previous content and metadata come back from a filesystem recovery asset where
+      the path resolves to a snapshot-capable persistence domain, and from nowhere else. §32.3:
+      a mount or nested subvolume beneath the path is a separate recovery scope and is not
+      covered by an asset taken for this one. Appendix B.7 and §32.4: a path on a pseudo- or
+      volatile filesystem is never protected merely because its mountpoint sits beneath `/`.
+    preconditions: [content-digest, persistence-domain, provider-available]
+    tolerances: []
+    effects:
+      - {domain: filesystem-persistent, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "write the previous content back from a recovery asset",
+         explanation: "the file's bytes, size and modification time become the ones written"}
+    verification:
+      - {class: required, subject: "the file", expression: "exists"}
+
+  - id: ono.file.copy
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: removing the copy is the inverse action where the destination did not exist, which
+      is compensation rather than rollback. A destination that was overwritten comes back only
+      from a recovery asset (§32.1), and §32.3 keeps a mounted child beneath either path out of
+      that asset's scope.
+    preconditions: [existence, content-digest, persistence-domain, provider-available]
+    tolerances: []
+    effects:
+      - {domain: filesystem-persistent, kind: create, confidence: guaranteed, irreversible: false,
+         compensation: "remove the copy",
+         explanation: "the destination holds the source's content, and its metadata where `--preserve` was given"}
+    verification:
+      - {class: required, subject: "the file", expression: "exists"}
+
+  - id: ono.file.move
+    role: mutate
+    idempotency: non-idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: moving it back is the inverse action, and it restores the path rather than the
+      inode — a move across filesystems copies and unlinks, so the identity §7.1 froze is gone
+      either way. §7.2's persistence-domain precondition is the one that matters here: a target
+      that moved filesystems moved recovery domains, and an asset taken for the source covers
+      nothing at the destination.
+    preconditions: [existence, content-digest, persistence-domain, provider-available]
+    tolerances: []
+    effects:
+      - {domain: filesystem-persistent, kind: remove, confidence: guaranteed, irreversible: false,
+         compensation: "move it back",
+         explanation: "the source path no longer names the object"}
+      - {domain: filesystem-persistent, kind: create, confidence: guaranteed, irreversible: false,
+         explanation: "the destination path names the object"}
+    verification:
+      - {class: required, subject: "the file", expression: "exists"}
+
+  - id: ono.file.remove
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §32.1: content and metadata come back from a filesystem recovery asset, and there is no
+      inverse action — deletion has no compensation, only restoration. §32.3: a mounted child or
+      nested subvolume beneath the path is a separate recovery scope. Appendix B.7 and §32.4: a
+      path on a pseudo- or volatile filesystem earns no protection from a snapshot of `/`.
+    preconditions: [existence, content-digest, persistence-domain, provider-available]
+    tolerances: []
+    effects:
+      - {domain: filesystem-persistent, kind: remove, confidence: guaranteed, irreversible: false,
+         explanation: "the path no longer names the object, and its content and metadata go with it"}
+    verification:
+      - {class: required, subject: "the file", expression: "exists == false"}
+
+  - id: ono.dir.remove
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §32.2: a recursive deletion's persistence boundaries and size MUST be calculated before the
+      plan is sealed, because the answer to "what comes back" is per boundary rather than per
+      path. §32.3: mounted filesystems and nested subvolumes beneath the directory MUST NOT be
+      assumed to belong to the same recovery scope; each is its own, and one asset does not cover
+      them all. There is no inverse action.
+    preconditions: [existence, persistence-domain, provider-available]
+    tolerances: []
+    effects:
+      - {domain: filesystem-persistent, kind: remove, confidence: guaranteed, irreversible: false,
+         explanation: "the directory and the entries beneath it no longer exist"}
+      - {domain: application-persistent, kind: remove, confidence: possible, irreversible: false,
+         explanation: "a mounted child or nested subvolume beneath the directory is a separate recovery scope and may hold application data (§32.3)"}
+    verification:
+      - {class: required, subject: "the directory", expression: "exists == false"}
+
+  - id: ono.file.set
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: setting the previous mode, owner and group back is the inverse action. Appendix C.7
+      is the caveat that matters — a recovery asset that restores content and not metadata does
+      not restore this, and the gap MUST stay visible rather than being read as coverage.
+    preconditions: [existence, persistence-domain, provider-available]
+    tolerances: []
+    effects:
+      - {domain: filesystem-persistent, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "set the previous mode, owner and group back",
+         explanation: "the file's mode, ownership and timestamps take the values given"}
+      - {domain: identity-security-state, kind: modify, confidence: expected, irreversible: false,
+         explanation: "who may read and write the object changes with its mode and ownership"}
+    verification:
+      - {class: required, subject: "the file", expression: "exists"}
+
+  - id: ono.dir.set
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: setting the previous mode, owner and group back is the inverse action. With
+      `--recursive` the inverse is only as good as the record of what every entry held before,
+      which a plan does not keep; restoration is then a recovery asset's job (Appendix C.7).
+    preconditions: [existence, persistence-domain, provider-available]
+    tolerances: []
+    effects:
+      - {domain: filesystem-persistent, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "set the previous mode, owner and group back",
+         explanation: "the directory's mode, ownership and timestamps take the values given"}
+      - {domain: identity-security-state, kind: modify, confidence: expected, irreversible: false,
+         explanation: "who may traverse and write the directory changes with its mode and ownership"}
+    verification:
+      - {class: required, subject: "the directory", expression: "exists"}
+
+  # --- services (§31, §33.2) ------------------------------------------------------------------
+  - id: ono.service.start
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §33.2: stopping the service again is the inverse action, and it does not restore the state
+      the machine had before the service ran. Compensation, never rollback (§27.4).
+    preconditions: [existence, generation, provider-available]
+    tolerances:
+      - {field: cpu, doc: "§7.4: a service's CPU usage moving while the plan is open does not invalidate it."}
+      - {field: memory, doc: "§7.4: resident memory moves continuously and says nothing about the plan's validity."}
+    effects:
+      - {domain: process-runtime, kind: create, confidence: expected, irreversible: false,
+         compensation: "stop the service again",
+         explanation: "a new process set is started for the unit; §8.1 keeps this EXPECTED because external system behaviour can still intervene"}
+    verification:
+      - {class: required, subject: "the service", expression: "state == running"}
+
+  - id: ono.service.stop
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §33.2: starting the service again is the inverse action, and it does not restore process
+      identity, in-memory state or connections. Compensation, never rollback (§27.4). §33.1
+      keeps the runtime state itself unrecoverable, whatever the filesystem offers.
+    preconditions: [existence, generation, provider-available]
+    tolerances:
+      - {field: cpu, doc: "§7.4: a service's CPU usage moving while the plan is open does not invalidate it."}
+      - {field: memory, doc: "§7.4: resident memory moves continuously and says nothing about the plan's validity."}
+    effects:
+      - {domain: process-runtime, kind: remove, confidence: expected, irreversible: false,
+         compensation: "start the service again",
+         explanation: "the running process set exits and its in-memory state goes with it"}
+      - {domain: network-runtime, kind: interrupt, confidence: possible, irreversible: false,
+         explanation: "connections the service was serving are cut, and its listeners stop accepting"}
+    verification:
+      - {class: required, subject: "the service", expression: "state == stopped"}
+
+  - id: ono.service.restart
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §33.2: stopping and starting a service again restores the service, and does not restore
+      process identity, in-memory state or connections. Compensation, never rollback (§27.4).
+    preconditions: [existence, generation, provider-available]
+    tolerances:
+      - {field: cpu, doc: "§7.4's own example: CPU usage moving while a service restart is planned does not invalidate the plan."}
+      - {field: memory, doc: "§7.4: resident memory moves continuously and says nothing about the plan's validity."}
+    effects:
+      - {domain: process-runtime, kind: replace, confidence: expected, irreversible: false,
+         compensation: "start the service again",
+         explanation: "the running worker set is replaced by a new one"}
+      - {domain: network-runtime, kind: interrupt, confidence: possible, irreversible: false,
+         explanation: "connections being served may be cut"}
+    verification:
+      - {class: required, subject: "the service", expression: "state == running"}
+
+  - id: ono.service.set
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: setting the previous enablement back is the inverse action. What it changes is where
+      the service manager records enablement, so a filesystem recovery asset over that location
+      restores it and one taken elsewhere does not.
+    preconditions: [existence, generation, provider-available, capability]
+    tolerances:
+      - {field: cpu, doc: "§7.4: CPU usage is not part of what enablement means."}
+    effects:
+      - {domain: filesystem-persistent, kind: modify, confidence: expected, irreversible: false,
+         compensation: "set the previous enablement back",
+         explanation: "the unit's enablement is recorded where the service manager keeps it, which is on disk for systemd"}
+    verification:
+      - {class: required, subject: "the service", expression: "exists"}
+
+  # --- processes (§33) ------------------------------------------------------------------------
+  # §33.1 is the section that decides these rows: signals are normally irreversible, and a
+  # filesystem snapshot does not change that classification. There is no inverse action for a
+  # signal — a service manager that starts a replacement has started a different process (§33.2).
+  - id: ono.process.stop
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §33.1: runtime state is generally not recoverable, and a filesystem snapshot does not
+      change that classification. A signal has no inverse action; a service manager may start a
+      replacement, and §33.2 makes that a different process rather than this one restored.
+    preconditions: [existence, provider-available]
+    tolerances:
+      - {field: cpu, doc: "§7.4: the process's CPU usage moving does not invalidate a plan to stop it."}
+      - {field: memory, doc: "§7.4: resident memory moves continuously and does not invalidate the plan."}
+    effects:
+      - {domain: process-runtime, kind: remove, confidence: expected, irreversible: true,
+         explanation: "the process exits and its identity and in-memory state go with it; §33.1: a filesystem snapshot does not change this"}
+      - {domain: network-runtime, kind: interrupt, confidence: possible, irreversible: true,
+         explanation: "connections the process was serving are cut, and a cut connection does not come back"}
+      - {domain: application-persistent, kind: modify, confidence: possible, irreversible: false,
+         explanation: "SIGTERM is catchable, so an application that flushes on shutdown writes what it was holding"}
+    verification:
+      - {class: required, subject: "the process", expression: "exists == false"}
+
+  - id: ono.process.kill
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §33.1: signals, especially SIGKILL, are normally irreversible in v0.6, and a filesystem
+      snapshot does not change that classification. There is no inverse action and no recovery
+      asset that holds what the process had in memory.
+    preconditions: [existence, provider-available]
+    tolerances:
+      - {field: cpu, doc: "§7.4: the process's CPU usage moving does not invalidate a plan to signal it."}
+      - {field: memory, doc: "§7.4: resident memory moves continuously and does not invalidate the plan."}
+    effects:
+      - {domain: process-runtime, kind: remove, confidence: expected, irreversible: true,
+         explanation: "SIGKILL cannot be caught, blocked or ignored: the process ends without running any shutdown path, and §33.1 makes the runtime state unrecoverable"}
+      - {domain: network-runtime, kind: interrupt, confidence: possible, irreversible: true,
+         explanation: "open connections are cut without a close being sent"}
+      - {domain: application-persistent, kind: modify, confidence: possible, irreversible: true,
+         explanation: "temporary data held only in memory is lost, and no local recovery asset holds it"}
+    verification:
+      - {class: required, subject: "the process", expression: "exists == false"}
+
+  - id: ono.process.set
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: setting the previous priority back is the inverse action. On Linux lowering a
+      process's niceness needs privilege the caller may not get back, so the inverse is
+      compensation that may itself refuse.
+    preconditions: [existence, provider-available]
+    tolerances:
+      - {field: cpu, doc: "§7.4: CPU usage moving is what a priority change is about, and it does not invalidate the plan."}
+    effects:
+      - {domain: process-runtime, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "set the previous priority back",
+         explanation: "the scheduler treats the process at the priority given"}
+    verification:
+      - {class: required, subject: "the process", expression: "exists"}
+
+  - id: ono.signal.send
+    role: mutate
+    idempotency: unknown
+    reboot: null
+    recovery_semantics: >-
+      §33.1: runtime state is generally not recoverable. What an arbitrary signal does is the
+      receiving process's decision, so there is no inverse action to name and §6.1's recovery
+      semantics are an explicit lack of them.
+    preconditions: [existence, provider-available]
+    tolerances: []
+    effects:
+      - {domain: process-runtime, kind: unknown, confidence: unknown, irreversible: true,
+         explanation: "what an arbitrary signal does depends on the receiving process's handler, and Ono has no justified model of it (§8.1). §33.1 keeps the runtime state unrecoverable either way"}
+    verification:
+      - {class: observational, subject: "the process", expression: "exists"}
+
+  # --- packages (§30) -------------------------------------------------------------------------
+  # §30.5: `reboot: provider-reported` is what makes a requirement distinguishable from a
+  # recommendation. A provider that cannot say answers `unknown`, which is a statement about the
+  # provider; `null` would be a statement about the world it has not earned.
+  #
+  # §30.4 fixes the verification: installed version, package-manager consistency, and affected
+  # service state where known. The first two are here; the third is per plan rather than per
+  # operation, and the impact layer contributes it.
+  - id: ono.package.add
+    role: mutate
+    idempotency: idempotent
+    reboot: provider-reported
+    recovery_semantics: >-
+      §30.2: on a snapshot-capable root the plan proposes filesystem protection, and §30.3
+      requires the dataset and subvolume layout to be shown with it — a root snapshot may sweep
+      in application data nobody asked to protect. Removing the package is compensation and does
+      not restore configuration a maintainer script rewrote (§27.4). §35.2: the repository fetch
+      has already left the machine and no local asset touches it.
+    preconditions: [version, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: filesystem-persistent, kind: create, confidence: guaranteed, irreversible: false,
+         compensation: "remove the package",
+         explanation: "the package's files are placed on the filesystem and the package database records the installed version"}
+      - {domain: process-runtime, kind: modify, confidence: possible, irreversible: false,
+         explanation: "the package's maintainer scripts may start or restart services"}
+      - {domain: external-side-effect, kind: emit, confidence: expected, irreversible: true,
+         explanation: "§35.1: the package manager fetches from a remote repository, and a request that has been served cannot be taken back"}
+    verification:
+      - {class: required, subject: "the package", expression: "installed == true"}
+      - {class: advisory, subject: "the package", expression: "version == {option:version}"}
+      - {class: advisory, subject: "the package", expression: "consistent"}
+
+  - id: ono.package.remove
+    role: mutate
+    idempotency: idempotent
+    reboot: provider-reported
+    recovery_semantics: >-
+      §30.2: on a snapshot-capable root the plan proposes filesystem protection, and §30.3
+      requires the layout it would cover to be shown. Installing the package again is
+      compensation and does not restore the configuration `--purge` deleted (§27.4); that comes
+      back from a recovery asset or from nowhere.
+    preconditions: [version, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: filesystem-persistent, kind: remove, confidence: guaranteed, irreversible: false,
+         compensation: "install the package again",
+         explanation: "the package's files are removed and the package database no longer records it as installed"}
+      - {domain: process-runtime, kind: remove, confidence: possible, irreversible: false,
+         explanation: "services the package provided stop when their unit files go"}
+    verification:
+      - {class: required, subject: "the package", expression: "installed == false"}
+      - {class: advisory, subject: "the package", expression: "consistent"}
+
+  - id: ono.package.set
+    role: mutate
+    idempotency: idempotent
+    reboot: provider-reported
+    recovery_semantics: >-
+      §30.2 and §30.3 as for any package change. A version transition back is compensation where
+      the provider still has the old version to offer, and §27.4 keeps that short of rollback:
+      the files come back, the migrations a package ran on application data do not.
+    preconditions: [version, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: filesystem-persistent, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "transition the package back to the previous version",
+         explanation: "the package's files are replaced and the package database records the new version"}
+      - {domain: application-persistent, kind: modify, confidence: possible, irreversible: true,
+         explanation: "a maintainer script may migrate the application's own data, and a migration is not undone by installing the old version"}
+      - {domain: process-runtime, kind: replace, confidence: possible, irreversible: false,
+         explanation: "the package's maintainer scripts may restart services"}
+      - {domain: external-side-effect, kind: emit, confidence: expected, irreversible: true,
+         explanation: "§35.1: the package manager fetches from a remote repository, and a request that has been served cannot be taken back"}
+    verification:
+      - {class: required, subject: "the package", expression: "installed == true"}
+      - {class: advisory, subject: "the package", expression: "version == {option:version}"}
+      - {class: advisory, subject: "the package", expression: "consistent"}
+
+  - id: ono.package-source.refresh
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      The local index is a cache: refreshing it again is the only inverse there is, and it moves
+      forward rather than back. §27.4 makes this compensatable at best, and nothing about the
+      repository's contents is Ono's to restore.
+    preconditions: [existence, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: filesystem-persistent, kind: modify, confidence: guaranteed, irreversible: false,
+         explanation: "the package manager's local index for this repository is rewritten"}
+      - {domain: external-side-effect, kind: emit, confidence: expected, irreversible: true,
+         explanation: "§35.1: the index is fetched from a remote repository, and the request has left the machine"}
+    verification:
+      - {class: required, subject: "the repository", expression: "exists"}
+
+  # --- network (§34) --------------------------------------------------------------------------
+  # §34.1: providers may expose inverse actions, and network changes often carry remote-management
+  # lockout risk. The inverse goes in `compensation`; the lockout is a risk landmark §34.2 makes
+  # CRITICAL, and the risk layer raises it from these effects rather than from a second list here.
+  - id: ono.route.add
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §34.1: removing the route again is the provider's inverse action, which makes this
+      compensatable rather than reversible (§27.4). §34.2: where the route displaces the path the
+      active remote Ono link uses, the inverse action needs a link that may no longer be there —
+      §34.3's timed or leased rollback is the mechanism for that, and it is a recovery asset only
+      when it is concrete and validated.
+    preconditions: [existence, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: network-runtime, kind: create, confidence: guaranteed, irreversible: false,
+         compensation: "remove the route",
+         explanation: "the routing table holds the route, and traffic matching it takes the new path"}
+      - {domain: remote-system, kind: interrupt, confidence: possible, irreversible: false,
+         explanation: "§34.2: a route change can displace the path the active remote management link uses"}
+    verification:
+      - {class: required, subject: "the route", expression: "exists"}
+
+  - id: ono.route.remove
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §34.1: adding the route back is the provider's inverse action, and §27.4 keeps it
+      compensation — the sessions that failed while the route was gone do not come back with it.
+      §34.2 makes removing the path the active remote link uses a CRITICAL risk landmark, because
+      the inverse action then needs the link it just removed.
+    preconditions: [existence, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: network-runtime, kind: remove, confidence: guaranteed, irreversible: false,
+         compensation: "add the route back",
+         explanation: "the routing table no longer holds the route, and traffic that matched it takes another path or none"}
+      - {domain: remote-system, kind: interrupt, confidence: possible, irreversible: false,
+         explanation: "§34.2: removing the path the active remote management link uses cuts the link that would undo it"}
+    verification:
+      - {class: required, subject: "the route", expression: "exists == false"}
+
+  - id: ono.route.set
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §34.1: setting the previous gateway and metric back is the provider's inverse action, which
+      §27.4 makes compensation. §34.2 applies unchanged where the route carries the active remote
+      link.
+    preconditions: [existence, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: network-runtime, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "set the previous gateway and metric back",
+         explanation: "the route's gateway or metric takes the value given, and traffic matching it takes the new path"}
+      - {domain: remote-system, kind: interrupt, confidence: possible, irreversible: false,
+         explanation: "§34.2: a route change can displace the path the active remote management link uses"}
+    verification:
+      - {class: required, subject: "the route", expression: "exists"}
+
+  - id: ono.interface.start
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §34.1: stopping the interface again is the provider's inverse action, and §27.4 makes it
+      compensation — the addresses and routes the kernel or a daemon attaches while the interface
+      is up are not part of what stopping it puts back.
+    preconditions: [existence, generation, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: network-runtime, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "stop the interface again",
+         explanation: "the interface's administrative state becomes up and its configured routes become reachable"}
+    verification:
+      - {class: required, subject: "the interface", expression: "state == up"}
+
+  - id: ono.interface.stop
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §34.1: starting the interface again is the provider's inverse action, and it does not
+      restore the routes and addresses that were withdrawn with it, nor the sessions that were
+      carried over it (§27.4). §34.2: stopping the interface the active remote Ono link runs over
+      is a CRITICAL risk landmark, because nothing is left to run the inverse action over.
+    preconditions: [existence, generation, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: network-runtime, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "start the interface again",
+         explanation: "the interface's administrative state becomes down, and the routes through it are withdrawn"}
+      - {domain: network-runtime, kind: interrupt, confidence: expected, irreversible: true,
+         explanation: "every session carried over the interface is cut, and a cut session does not come back when the interface does"}
+      - {domain: remote-system, kind: interrupt, confidence: possible, irreversible: false,
+         explanation: "§34.2: where the active remote management link runs over this interface, the link that would undo the change goes with it"}
+    verification:
+      - {class: required, subject: "the interface", expression: "state == down"}
+
+  - id: ono.interface.set
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §34.1: setting the previous MTU and administrative state back is the provider's inverse
+      action, which §27.4 makes compensation rather than rollback. §34.2 applies where the
+      interface carries the active remote link.
+    preconditions: [existence, generation, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: network-runtime, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "set the previous MTU and administrative state back",
+         explanation: "the interface's MTU or administrative state takes the value given"}
+      - {domain: remote-system, kind: interrupt, confidence: possible, irreversible: false,
+         explanation: "§34.2: an MTU or state change on the interface carrying the active remote link can cut it"}
+    verification:
+      - {class: required, subject: "the interface", expression: "exists"}
+
+  - id: ono.interface.add
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §34.1: removing the address or the interface again is the provider's inverse action
+      (§27.4). An address added here is runtime state: it survives no reboot of its own accord,
+      and a filesystem recovery asset says nothing about it.
+    preconditions: [existence, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: network-runtime, kind: create, confidence: guaranteed, irreversible: false,
+         compensation: "remove the address or the interface again",
+         explanation: "the interface exists, or holds the address given, and traffic for it is accepted"}
+    verification:
+      - {class: required, subject: "the interface", expression: "exists"}
+
+  - id: ono.interface.remove
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §34.1: adding the address or the interface back is the provider's inverse action (§27.4).
+      §34.2: removing the address the active remote link is reached on is a CRITICAL risk
+      landmark — the inverse action needs the link it removed.
+    preconditions: [existence, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: network-runtime, kind: remove, confidence: guaranteed, irreversible: false,
+         compensation: "add the address or the interface back",
+         explanation: "the interface, or the address on it, no longer exists and traffic for it is no longer accepted"}
+      - {domain: network-runtime, kind: interrupt, confidence: expected, irreversible: true,
+         explanation: "sessions bound to the address are cut, and a cut session does not come back with the address"}
+      - {domain: remote-system, kind: interrupt, confidence: possible, irreversible: false,
+         explanation: "§34.2: where the active remote management link is reached on this address, the link goes with it"}
+    verification:
+      - {class: required, subject: "the interface", expression: "exists"}
+
+  - id: ono.socket.stop
+    role: mutate
+    idempotency: non-idempotent
+    reboot: null
+    recovery_semantics: >-
+      §33.1 for a socket: a closed connection is runtime state and there is no way back to it.
+      The peer may reconnect, which is a new connection rather than this one restored, and no
+      recovery asset holds what was in flight.
+    preconditions: [existence, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: network-runtime, kind: remove, confidence: expected, irreversible: true,
+         explanation: "the socket is closed and whatever was in flight over it is gone"}
+      - {domain: remote-system, kind: interrupt, confidence: possible, irreversible: true,
+         explanation: "§34.2: closing the socket the active remote Ono link runs over ends the session that asked for it"}
+    verification:
+      - {class: required, subject: "the socket", expression: "exists == false"}
+
+  # --- mounts (§32.3) -------------------------------------------------------------------------
+  - id: ono.filesystem.mount
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: unmounting again is the inverse action. §32.3 is the reason it matters here: a mount
+      changes which recovery scope a path belongs to, so an asset taken over the mountpoint before
+      the mount covers the directory underneath rather than what is now visible at that path.
+    preconditions: [existence, persistence-domain, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: filesystem-persistent, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "unmount it again",
+         explanation: "the mountpoint resolves to the mounted filesystem, and the directory previously at that path is hidden beneath it"}
+      - {domain: kernel-runtime, kind: create, confidence: guaranteed, irreversible: false,
+         explanation: "the kernel's mount table holds the new mount, which is runtime state and does not survive a reboot of its own accord"}
+    verification:
+      - {class: required, subject: "the mount", expression: "exists"}
+
+  - id: ono.filesystem.unmount
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: mounting it again is the inverse action, and it restores the mount rather than
+      whatever a process held open across it. §32.3: the filesystem being unmounted is its own
+      recovery scope, and an asset taken over the parent path never covered it. `--force` and
+      `--lazy` leave writes that had not reached the device unaccounted for, and no local asset
+      holds them.
+    preconditions: [existence, persistence-domain, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: filesystem-persistent, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "mount it again",
+         explanation: "the mountpoint no longer resolves to the filesystem, and whatever the directory held before the mount is visible again"}
+      - {domain: kernel-runtime, kind: remove, confidence: guaranteed, irreversible: false,
+         explanation: "the kernel's mount table no longer holds the mount"}
+      - {domain: application-persistent, kind: modify, confidence: possible, irreversible: true,
+         explanation: "with `--force` or `--lazy`, writes a process had not yet flushed to the device are lost and no local recovery asset holds them"}
+    verification:
+      - {class: required, subject: "the mount", expression: "exists == false"}
+
+  - id: ono.mount.add
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: removing the mount again is the inverse action. §32.3: the mounted filesystem is its
+      own recovery scope from the moment it is mounted, and an asset over the mountpoint's parent
+      does not reach into it.
+    preconditions: [existence, persistence-domain, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: filesystem-persistent, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "remove the mount again",
+         explanation: "the mountpoint resolves to the mounted filesystem"}
+      - {domain: kernel-runtime, kind: create, confidence: guaranteed, irreversible: false,
+         explanation: "the kernel's mount table holds the new mount"}
+    verification:
+      - {class: required, subject: "the mount", expression: "exists"}
+
+  - id: ono.mount.remove
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: adding the mount back is the inverse action, and it does not restore the file
+      descriptors processes held across it. §32.3: the filesystem is its own recovery scope.
+    preconditions: [existence, persistence-domain, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: filesystem-persistent, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "add the mount back",
+         explanation: "the mountpoint no longer resolves to the filesystem"}
+      - {domain: kernel-runtime, kind: remove, confidence: guaranteed, irreversible: false,
+         explanation: "the kernel's mount table no longer holds the mount"}
+    verification:
+      - {class: required, subject: "the mount", expression: "exists == false"}
+
+  - id: ono.mount.set
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: setting the previous options back is the inverse action. Remounting read-only while
+      an application is writing is a change to what that application can do rather than to what
+      it has already written, and §32.3's scope rule is unaffected by it.
+    preconditions: [existence, persistence-domain, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: kernel-runtime, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "set the previous mount options back",
+         explanation: "the kernel's mount table records the options given, and `read_only` decides whether writes are accepted"}
+      - {domain: application-persistent, kind: modify, confidence: possible, irreversible: false,
+         explanation: "an application writing beneath the mountpoint begins to fail when the mount becomes read-only"}
+    verification:
+      - {class: required, subject: "the mount", expression: "exists"}
+
+  - id: ono.mount.start
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: stopping the mount again is the inverse action. §32.3: the filesystem becomes its own
+      recovery scope as soon as it is mounted.
+    preconditions: [existence, persistence-domain, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: filesystem-persistent, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "stop the mount again",
+         explanation: "the mountpoint resolves to the filesystem again"}
+      - {domain: kernel-runtime, kind: create, confidence: guaranteed, irreversible: false,
+         explanation: "the kernel's mount table holds the mount"}
+    verification:
+      - {class: required, subject: "the mount", expression: "exists"}
+
+  - id: ono.mount.stop
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: starting the mount again is the inverse action, and it does not restore what
+      processes held open across it. §32.3: the filesystem is its own recovery scope, and an asset
+      over the parent path never covered it.
+    preconditions: [existence, persistence-domain, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: filesystem-persistent, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "start the mount again",
+         explanation: "the mountpoint no longer resolves to the filesystem"}
+      - {domain: kernel-runtime, kind: remove, confidence: guaranteed, irreversible: false,
+         explanation: "the kernel's mount table no longer holds the mount"}
+      - {domain: application-persistent, kind: modify, confidence: possible, irreversible: true,
+         explanation: "writes a process had not yet flushed to the device may be lost, and no local recovery asset holds them"}
+    verification:
+      - {class: required, subject: "the mount", expression: "exists == false"}
+
+  # --- identity -------------------------------------------------------------------------------
+  # §27.4's own example is the recovery semantics here: "create user <-> remove user (often
+  # incomplete)". The inverse action exists and it does not put back what the first one consumed,
+  # which is why the UID effect is `irreversible: true` — it stays visible after protection.
+  - id: ono.user.add
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4's own example: create user <-> remove user, often incomplete. Removing the user again
+      is compensation rather than rollback — it does not reclaim the UID for whatever else was
+      going to have it, it does not unwind the files created under that ownership, and a home
+      directory the provider made is a separate object with its own recovery scope.
+    preconditions: [existence, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: identity-security-state, kind: create, confidence: guaranteed, irreversible: false,
+         compensation: "remove the user again",
+         explanation: "the account database holds the user, and processes may run as it"}
+      - {domain: identity-security-state, kind: modify, confidence: expected, irreversible: true,
+         explanation: "the UID is allocated. Removing the user frees the number and does not undo what was recorded against it, so §2.13 keeps this visible after protection"}
+      - {domain: filesystem-persistent, kind: create, confidence: possible, irreversible: false,
+         explanation: "a home directory the provider creates is a filesystem object with its own recovery scope"}
+    verification:
+      - {class: required, subject: "the user", expression: "exists"}
+
+  - id: ono.user.remove
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: adding the user back is compensation, often incomplete. The account may come back
+      with a different UID, which leaves every file owned by the old number owned by a number
+      rather than by a person; and `--remove-home` deletes a filesystem object whose way back is
+      a recovery asset over its own persistence domain (§32.1), not this action's inverse.
+    preconditions: [existence, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: identity-security-state, kind: remove, confidence: guaranteed, irreversible: true,
+         compensation: "add the user back",
+         explanation: "the account database no longer holds the user. §27.4: adding it back may not restore the same UID, and files owned by the old one keep pointing at a number nobody holds"}
+      - {domain: filesystem-persistent, kind: remove, confidence: possible, irreversible: false,
+         explanation: "with `--remove-home` the home directory and its contents are deleted, which is §32.1's case and needs its own recovery asset"}
+      - {domain: process-runtime, kind: interrupt, confidence: possible, irreversible: true,
+         explanation: "sessions and services running as the user may fail once the account is gone"}
+    verification:
+      - {class: required, subject: "the user", expression: "exists == false"}
+
+  - id: ono.user.set
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: setting the previous shell, home and primary group back is the inverse action. A
+      home directory that was moved with the account is a filesystem object and comes back from
+      its own recovery asset rather than from this inverse.
+    preconditions: [existence, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: identity-security-state, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "set the previous shell, home and primary group back",
+         explanation: "the account database records the values given"}
+      - {domain: filesystem-persistent, kind: modify, confidence: possible, irreversible: false,
+         explanation: "changing the primary group changes what the user's files are group-owned by, where the provider applies it"}
+    verification:
+      - {class: required, subject: "the user", expression: "exists"}
+
+  - id: ono.group.add
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4, as for a user: removing the group again is compensation, and the GID it allocated is
+      not put back where it was.
+    preconditions: [existence, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: identity-security-state, kind: create, confidence: guaranteed, irreversible: false,
+         compensation: "remove the group again",
+         explanation: "the group database holds the group and the members given"}
+      - {domain: identity-security-state, kind: modify, confidence: expected, irreversible: true,
+         explanation: "the GID is allocated, and removing the group frees the number rather than undoing what was recorded against it"}
+    verification:
+      - {class: required, subject: "the group", expression: "exists"}
+
+  - id: ono.group.remove
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: adding the group back is compensation, often incomplete — it may take a different
+      GID, and files group-owned by the old number stay group-owned by a number.
+    preconditions: [existence, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: identity-security-state, kind: remove, confidence: guaranteed, irreversible: true,
+         compensation: "add the group back",
+         explanation: "the group database no longer holds the group. Adding it back may not restore the same GID, so §2.13 keeps this visible after protection"}
+      - {domain: identity-security-state, kind: modify, confidence: expected, irreversible: false,
+         explanation: "members lose whatever access the group granted them"}
+    verification:
+      - {class: required, subject: "the group", expression: "exists == false"}
+
+  - id: ono.group.set
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: setting the previous GID back is the inverse action, and it does not re-own the
+      files that were group-owned by the number in between.
+    preconditions: [existence, provider-available, capability]
+    tolerances: []
+    effects:
+      - {domain: identity-security-state, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "set the previous GID back",
+         explanation: "the group database records the GID given"}
+      - {domain: filesystem-persistent, kind: modify, confidence: possible, irreversible: false,
+         explanation: "files group-owned by the old GID are not re-owned, so they stop belonging to this group"}
+    verification:
+      - {class: required, subject: "the group", expression: "exists"}
+
+  # --- containers -----------------------------------------------------------------------------
+  # A container's writable layer is Appendix B.5's case: the change lands somewhere a host
+  # snapshot does not hold, so `container-ephemeral` is the honest classification and the effects
+  # here say so rather than borrowing the host's filesystem coverage.
+  - id: ono.container.start
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §33.2 applied to a container: stopping it again is the inverse action, and it does not
+      restore the state the machine had before it ran (§27.4).
+    preconditions: [existence, generation, provider-available]
+    tolerances:
+      - {field: cpu, doc: "§7.4: a container's CPU usage moving does not invalidate a plan to start it."}
+    effects:
+      - {domain: process-runtime, kind: create, confidence: expected, irreversible: false,
+         compensation: "stop the container again",
+         explanation: "the container's process set is started"}
+    verification:
+      - {class: required, subject: "the container", expression: "state == running"}
+
+  - id: ono.container.stop
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §33.2: starting it again is the inverse action, and it does not restore process identity,
+      in-memory state or connections. Appendix B.5: what the container wrote to its own writable
+      layer is not held by a host filesystem snapshot.
+    preconditions: [existence, generation, provider-available]
+    tolerances:
+      - {field: cpu, doc: "§7.4: a container's CPU usage moving does not invalidate a plan to stop it."}
+    effects:
+      - {domain: process-runtime, kind: remove, confidence: expected, irreversible: false,
+         compensation: "start the container again",
+         explanation: "the container's process set exits and its in-memory state goes with it"}
+      - {domain: network-runtime, kind: interrupt, confidence: possible, irreversible: false,
+         explanation: "connections the container was serving are cut"}
+    verification:
+      - {class: required, subject: "the container", expression: "state == exited"}
+
+  - id: ono.container.restart
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §33.2: the container comes back and process identity, in-memory state and connections do
+      not. Compensation, never rollback (§27.4).
+    preconditions: [existence, generation, provider-available]
+    tolerances:
+      - {field: cpu, doc: "§7.4: a container's CPU usage moving does not invalidate a plan to restart it."}
+    effects:
+      - {domain: process-runtime, kind: replace, confidence: expected, irreversible: false,
+         compensation: "start the container again",
+         explanation: "the container's process set is replaced by a new one"}
+      - {domain: network-runtime, kind: interrupt, confidence: possible, irreversible: false,
+         explanation: "connections being served may be cut"}
+    verification:
+      - {class: required, subject: "the container", expression: "state == running"}
+
+  - id: ono.container.remove
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      There is no inverse action: creating a container from the same image creates a different
+      container. Appendix B.5: the writable layer that goes with it is `container-ephemeral`
+      state, which a host filesystem snapshot does not hold, so §2.13 keeps the loss visible after
+      protection has been arranged for everything else.
+    preconditions: [existence, generation, provider-available]
+    tolerances: []
+    effects:
+      - {domain: application-persistent, kind: remove, confidence: guaranteed, irreversible: true,
+         explanation: "the container's writable layer is deleted. Appendix B.5: it is not inside what a host snapshot holds, so nothing local brings it back"}
+      - {domain: process-runtime, kind: remove, confidence: expected, irreversible: true,
+         explanation: "a running container is stopped before it is removed, and its runtime state goes with it (§33.1)"}
+    verification:
+      - {class: required, subject: "the container", expression: "exists == false"}
+
+  - id: ono.container.set
+    role: mutate
+    idempotency: idempotent
+    reboot: null
+    recovery_semantics: >-
+      §27.4: setting the previous configuration back is the inverse action, where the runtime
+      still accepts the values that were there before.
+    preconditions: [existence, generation, provider-available]
+    tolerances: []
+    effects:
+      - {domain: application-persistent, kind: modify, confidence: guaranteed, irreversible: false,
+         compensation: "set the previous configuration back",
+         explanation: "the container runtime records the configuration given"}
+    verification:
+      - {class: required, subject: "the container", expression: "exists"}

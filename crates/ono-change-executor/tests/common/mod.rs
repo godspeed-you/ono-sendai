@@ -160,9 +160,9 @@ impl PlanSpec {
     #[must_use]
     pub fn risky(mut self, class: RiskClass, dimension: RiskDimension) -> Self {
         self.risk = RiskAssessment::empty().with(RiskFinding::new(
-            "test.rule",
             dimension,
             class,
+            "test.rule",
             "the whole serving group would restart at once",
         ));
         self
@@ -517,6 +517,20 @@ pub fn protection(
     domain: &str,
     now: Timestamp,
 ) -> ProtectionAction {
+    protection_owned_by(plan.id(), provider, domain, now)
+}
+
+/// One protection action whose proposed asset belongs to `owner`.
+///
+/// Appendix F.1's first condition is that an asset was "created solely for this failed prepare",
+/// and an asset an earlier `protect` made for another plan (§18.2) is the case that fails it.
+#[must_use]
+pub fn protection_owned_by(
+    owner: &PlanId,
+    provider: &str,
+    domain: &str,
+    now: Timestamp,
+) -> ProtectionAction {
     let scope = RecoveryScope::new("zfs-dataset", domain, "localhost").covering(domain);
     let candidate = RecoveryCandidate::new(
         provider,
@@ -534,7 +548,7 @@ pub fn protection(
         scope,
         now,
     )
-    .for_plan(plan.id().clone())
+    .for_plan(owner.clone())
     .at_consistency(ConsistencyClass::FilesystemConsistent);
     ProtectionAction::new(
         provider,
