@@ -412,6 +412,55 @@ sections:
           the links it emits MUST NOT exceed `asserted` unless the host contract explicitly
           trusts the package as authoritative for a domain. Contributing one needs
           `temporal.contribute.causality`.
+      recovery_providers:
+        type: list<path>
+        nullable: true
+        doc: >-
+          Recovery providers (v0.6 §48.2, §12.1). Each document is a `recovery_providers:` list of
+          the `recovery_provider` shape of `contributions.v1.yaml`. Declared on disk so §31.68 can
+          answer "what could this package protect, and what could it restore?" without running it
+          — which is also where §48.4's refusals happen: a provider offering a restore method
+          while holding no capability of destructive risk, or claiming `application-consistent`
+          without `recovery.quiesce`, is `package.invalid` before any code runs. §27.1 lets one
+          state atomicity over its own resource scope, and §27.3 refuses a declaration reaching
+          past it.
+      impact_providers:
+        type: list<path>
+        nullable: true
+        doc: >-
+          Impact providers (v0.6 §48.2, §9.4). Each document is an `impact_providers:` list of the
+          `impact_provider` shape of `contributions.v1.yaml`. What one may add is edges between
+          object types Ono's own graph does not relate; what it may not do is raise a confidence,
+          because §8.1's lattice has no operation that strengthens and §49.3 keeps a statement
+          about the world separate from a provider proving one. Contributing needs
+          `change.plan.contribute`.
+      verification_providers:
+        type: list<path>
+        nullable: true
+        doc: >-
+          Verification providers (v0.6 §48.2, §25.1). Each document is a
+          `verification_providers:` list of the `verification_provider` shape of
+          `contributions.v1.yaml`. Every check kind names the equivalence domain of §25.1 it is
+          evidence about, because §25.3 forbids the sentence "rollback successful" without a
+          scope. Contributing needs `verification.observe`.
+      risk_rules:
+        type: list<path>
+        nullable: true
+        doc: >-
+          Risk rules (v0.6 §48.2, §19.2). Each document is a `risk_rules:` list of the `risk_rule`
+          shape of `contributions.v1.yaml`. §19.2 makes risk rule-based rather than
+          AI-generated, and a contributed rule is still a rule: namespaced to the package,
+          registered, and inspectable exactly as a built-in one is. Findings compose by the
+          maximum of §19.2, so a contributed rule may raise a plan's class and never reduce it.
+          Contributing needs `change.plan.contribute`.
+      change_views:
+        type: list<path>
+        nullable: true
+        doc: >-
+          Plan views (v0.6 §48.2, §45). Each document is a `change_views:` list of the
+          `change_view` shape of `contributions.v1.yaml`. The same view lifecycle as any other
+          contributed view (spec §31.27, §31.28), with the plan states it renders declared; a
+          view for a state a plan cannot be in is refused at load. Contributing needs `ui.view`.
 
   # --- capabilities: the security boundary, spec §31.16–§31.17 -------------------------------
   - name: capabilities

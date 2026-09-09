@@ -530,6 +530,185 @@ host_calls:
       persistent record of the machine is a decision the operator makes, not a side effect of
       loading a package.
 
+  # --- change and recovery, v0.6 §48.3 ---------------------------------------------------------
+  # Eleven calls, eleven capabilities, and that is §48.4's whole mechanism: "A plugin that can
+  # describe impact MUST NOT automatically gain permission to execute the change." Reading a plan
+  # and executing an action are not two arguments to one call, so a grant for one cannot be spent
+  # on the other. §43.7 adds the other half — change and recovery providers require explicit
+  # capabilities and are subject to protocol and audit isolation — which is why every one of them
+  # goes through the same broker check and the same audit record as `filesystem.read`.
+
+  - id: change.plan.read
+    domain: change
+    direction: plugin->host
+    capability: change.plan.read
+    since: "11.4"
+    params:
+      plan: {type: string, required: true, doc: "The plan id, as `ono.change-plan/1` carries it. Checked against the granted `plans` scope before the plan is fetched."}
+    returns: {type: record, doc: "`ono.change-plan/1`: the plan, its actions, its proposed effects and its computed impact."}
+    errors: [resolve.target_not_found]
+    doc: >-
+      Where a package that describes impact stops (§48.4). Nothing this returns is an
+      instruction, and no companion call executes what it describes: carrying out an action is
+      `change.action.execute`, a separate family behind a separate decision.
+
+  - id: change.plan.contribute
+    domain: change
+    direction: plugin->host
+    capability: change.plan.contribute
+    since: "11.4"
+    params:
+      plan: {type: string, required: true, doc: "The plan being contributed to."}
+      actions: {type: list<ono.plan-action/1>, nullable: true, doc: "Plan actions the package resolved."}
+      effects: {type: list<effect_class>, nullable: true, doc: "Prospective effects in the shape Appendix A.5's coverage algorithm reads (`contributions.v1.yaml` → `effect_class`). An effect naming a domain, kind or confidence outside v0.6's vocabulary is refused; §9.5 refuses one with no explanation."}
+      impact: {type: list<ono.graph-edge/1>, nullable: true, doc: "Impact edges. §9.4 and §49.3: edges, never a confidence the host did not already have a provider for."}
+      risk_findings: {type: list<record>, nullable: true, doc: "`{dimension, class, rule, reason}`, mirroring `RiskFinding`. Each names a rule declared in this package's `risk_rules` contribution and a class at or below what that rule said it emits."}
+    returns: {type: record, doc: "What the host composed: the plan's class after the contribution, and how much of it was taken."}
+    errors: [runtime.schema_violation, capability.denied]
+    doc: >-
+      **A contributed rule may raise the composed risk class and never reduce it.** §19.2 makes
+      the class the strongest any rule found, `RiskAssessment::classify` is that maximum, and
+      §19.2 defines no minimum for anything to reach for. The call therefore carries findings and
+      not a class: the parameter shape is closed, so a package that invented a `plan_class` field
+      is a protocol violation rather than a package whose extra key is ignored.
+
+  - id: recovery.discover
+    domain: recovery
+    direction: plugin->host
+    capability: recovery.discover
+    since: "11.4"
+    params:
+      domain_kind: {type: string, required: true, doc: "The persistence domain kind the candidates are about."}
+      candidates: {type: list<ono.recovery-candidate/1>, nullable: true, doc: "The candidates, mirroring `RecoveryCandidate` field for field. An empty list means \"nothing here\", which §55.6 case 29 keeps distinct from a provider that could not answer."}
+    returns: {type: int, doc: "How many candidates were accepted."}
+    errors: [capability.scope_violation]
+    doc: >-
+      Read-only (§2.1): a candidate is a description, and creating one is a PREPARE action the
+      plan shows first. The `domain_kinds` scope is checked against the call's own kind **and**
+      against every candidate's, so a candidate about a domain outside the grant is
+      `capability.scope_violation` rather than a quietly dropped row.
+
+  - id: recovery.prepare
+    domain: recovery
+    direction: plugin->host
+    capability: recovery.prepare
+    since: "11.4"
+    params:
+      scope: {type: record, required: true, doc: "`{domain, domain_kind, covers, host}`, mirroring `RecoveryScope`. `domain_kind` and `domain` are the values the `domain_kinds` and `scopes` scopes are checked against."}
+      asset: {type: ono.recovery-asset/1, required: true, doc: "The asset that was created."}
+    returns: {type: record, doc: "The asset as the host recorded it."}
+    errors: [capability.scope_violation, runtime.schema_violation]
+    doc: "§5.5: creating a recovery asset is a real mutation of the storage or control plane, and it is visible in history as one."
+
+  - id: recovery.validate
+    domain: recovery
+    direction: plugin->host
+    capability: recovery.discover
+    since: "11.4"
+    params:
+      scope: {type: record, required: true, doc: "The scope the asset covers."}
+      asset: {type: string, required: true, doc: "The asset id being checked."}
+      findings: {type: list<record>, nullable: true, doc: "What §11.4's list found."}
+    returns: {type: record, doc: "The validation as the host recorded it."}
+    errors: [capability.scope_violation]
+    doc: >-
+      Behind `recovery.discover` rather than a capability of its own: §12.2 fixes seven recovery
+      capabilities and validation is not one of them, and checking an asset reads it. A capability
+      invented here would be a security boundary the specification does not define.
+
+  - id: recovery.restore
+    domain: recovery
+    direction: plugin->host
+    capability: recovery.restore
+    since: "11.4"
+    params:
+      scope: {type: record, required: true, doc: "The scope being restored."}
+      asset: {type: string, required: true, doc: "The asset being restored from."}
+      method: {type: string, required: true, doc: "The Appendix C.1 method used. §13.6 and §14.4 make this the fact a person needs most: a dataset rollback and a selective file restore lose entirely different things."}
+      unrecoverable: {type: list<record>, nullable: true, doc: "What the restore could not put back. §25.3 forbids a scopeless claim that recovery succeeded."}
+    returns: {type: record, doc: "The outcome as the host recorded it."}
+    errors: [capability.scope_violation]
+    doc: >-
+      The most consequential call v0.6 defines. Its capability is `destructive` at `required`
+      elevation because §43.4 lets recovery need a stronger privilege than the mutation it undoes
+      and §13.6 and §14.6 make restoring the operation that can lose the most; Appendix H's
+      profile rule then keeps it out of every default profile without anything having to name it.
+
+  - id: recovery.cleanup
+    domain: recovery
+    direction: plugin->host
+    capability: recovery.cleanup
+    since: "11.4"
+    params:
+      scope: {type: record, required: true, doc: "The scope the asset covered."}
+      asset: {type: string, required: true, doc: "The asset id."}
+    returns: {type: record, doc: "The removal as the host recorded it."}
+    errors: [capability.scope_violation]
+    doc: "§37: removing an asset. §37.4 surfaces a retained asset rather than forgetting it, so a removal that failed is reported."
+
+  - id: recovery.estimate_cost
+    domain: recovery
+    direction: plugin->host
+    capability: recovery.estimate-cost
+    since: "11.4"
+    params:
+      domain_kind: {type: string, required: true, doc: "The persistence domain kind the asset belongs to."}
+      asset: {type: string, required: true, doc: "The asset id."}
+      cost: {type: record, required: true, doc: "`{initial_bytes, retained_bytes, estimated, creation_latency, quiesce, requires_reboot, requires_offline}`, mirroring `RecoveryCost`. Typed units cross as typed values (invariant `typed-units`)."}
+    returns: {type: record, doc: "The cost as the host recorded it."}
+    errors: [capability.scope_violation]
+    doc: "§38. §37.5 keeps an estimate labelled as one, so `estimated` defaults to true rather than to a measurement nobody took."
+
+  - id: recovery.quiesce
+    domain: recovery
+    direction: plugin->host
+    capability: recovery.quiesce
+    since: "11.4"
+    params:
+      application: {type: string, required: true, doc: "The application the package paused, by the package's own name for it. The `applications` scope over it is **advisory**: the plugin resolves the name inside the system it fronts and the host cannot prove what it resolved to."}
+      step: {type: "enum<prepare_quiesce|verify_quiesced|create_storage_asset|resume|verify_resumed>", required: true, doc: "Which of §39.3's five steps this reports. On the wire so a failure is attributable to one step rather than to \"quiescing\"."}
+      compensation: {type: string, nullable: true, doc: "What the package will do if the step fails. §39.3 requires compensation rules at each step; null is allowed only when the step is itself the compensation."}
+    returns: {type: record, doc: "The step as the host recorded it."}
+    errors: []
+    doc: >-
+      §39.2 makes this the capability that owns an `application-consistent` claim: Ono MUST NOT
+      independently label a filesystem snapshot of a database `APPLICATION_CONSISTENT` unless an
+      application-aware provider asserts the guarantee, and a provider claiming that class while
+      declaring no `recovery.quiesce` is `package.invalid` at load.
+
+  - id: recovery.resume
+    domain: recovery
+    direction: plugin->host
+    capability: recovery.quiesce
+    since: "11.4"
+    params:
+      application: {type: string, required: true, doc: "The application being released."}
+      step: {type: "enum<prepare_quiesce|verify_quiesced|create_storage_asset|resume|verify_resumed>", required: true, doc: "`resume` or `verify_resumed`."}
+      compensation: {type: string, nullable: true, doc: "What follows if the release fails."}
+    returns: {type: record, doc: "The step as the host recorded it."}
+    errors: []
+    doc: >-
+      Behind the capability that paused, and deliberately not one of its own: §18.4 requires the
+      application to be resumed when asset creation fails, so a package able to pause must always
+      be able to let go. A separate grant would let a policy leave an application quiesced.
+
+  - id: verification.observe
+    domain: change
+    direction: plugin->host
+    capability: verification.observe
+    since: "11.4"
+    params:
+      check: {type: string, required: true, doc: "The check id, as `ono.change-verification/1` carries it."}
+      status: {type: "enum<passed|failed|unknown|skipped>", required: true, doc: "The §23.3 status. No default: §23.5 forbids treating an unanswerable check as success, so the package must say which it means."}
+      equivalence: {type: "enum<persistent-state|runtime-state|external-side-effect>", nullable: true, doc: "The §25.1 domain the observation is evidence about, for a recovery verification. §25.3 forbids the scopeless claim."}
+      detail: {type: string, required: true, doc: "What was observed, in one line."}
+    returns: {type: record, doc: "The result as the host recorded it."}
+    errors: [type.mismatch]
+    doc: >-
+      §23.3's `UNKNOWN` is the result of a check that ran and could not answer; an error is a
+      check that did not run, and the two arrive differently. A status or an equivalence domain
+      outside the vocabulary is refused and audited rather than coerced.
+
   # --- filesystem, spec §31.16 ----------------------------------------------------------------
   - id: filesystem.read
     domain: filesystem

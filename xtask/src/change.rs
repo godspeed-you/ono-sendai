@@ -1265,6 +1265,44 @@ fn check_risk_gates(registries: &Registries) -> Vec<Problem> {
             Some(_) => {}
         }
     }
+    // §19.2 and §62.11: risk is rule-based, and the rules are a table. Compared against the
+    // engine's own registry in both directions, so a rule added in Rust without a row fails the
+    // gate and a documented rule nothing implements fails it too. Without this, `risk.yaml` would
+    // be prose with a colon in it.
+    let declared = registries.ids("risk.yaml", "rules");
+    let implemented: BTreeSet<String> = ono_change_impact::rules()
+        .iter()
+        .map(|rule| rule.id().to_owned())
+        .collect();
+    problems.extend(compare(
+        location,
+        "rules",
+        &declared,
+        &implemented,
+        "risk rule",
+    ));
+    for rule in ono_change_impact::rules() {
+        let Some(entry) = registries
+            .entries("risk.yaml", "rules")
+            .into_iter()
+            .find(|entry| entry.get("id").and_then(Yaml::as_str) == Some(rule.id()))
+        else {
+            continue;
+        };
+        let dimension = entry.get("dimension").and_then(Yaml::as_str);
+        if dimension != Some(rule.dimension().as_str()) {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "rule `{}` is registered against the dimension `{}` and the engine emits into                      `{}`. §40.2 shows the dimension a gate is objecting on, so the two must agree",
+                    rule.id(),
+                    dimension.unwrap_or("nothing"),
+                    rule.dimension().as_str()
+                ),
+            ));
+        }
+    }
+
     // Every rule names a dimension the registry declares.
     let dimensions = registries.ids("risk.yaml", "dimensions");
     let classes = registries.ids("risk.yaml", "classes");

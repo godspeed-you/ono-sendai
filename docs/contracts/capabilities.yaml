@@ -426,7 +426,9 @@ provider_capabilities:
     elevation: none
 
 # ---------------------------------------------------------------------------------------------
-# KUANG/11 capabilities — spec §31.16, complete and in the order the spec lists them.
+# KUANG/11 capabilities — spec §31.16, complete and in the order the spec lists them, followed by
+# `provider.mutate` (ADR-0594), v0.5 §30.7's six temporal families and v0.6 §48.3's eleven change
+# and recovery families.
 #
 # A package declares each capability it wants as `required`, `optional` or `runtime_requested`
 # (spec §31.17); the class is a property of the declaration, not of the capability, so it is not
@@ -617,3 +619,70 @@ kuang_capabilities:
     summary: Start and stop the persistent history recorder.
     risk: mutate
     elevation: none
+
+  # The eleven change and recovery families of v0.6 §48.3. §48.4 is the whole reason the list is
+  # split this finely: "A plugin that can describe impact MUST NOT automatically gain permission
+  # to execute the change." Reading a plan, contributing to one and carrying one out are three
+  # decisions, so they are three capabilities; discovering protection, creating it, using it and
+  # removing it are four more, because §12.2 makes each a different consequence.
+  #
+  # `recovery.restore` is the only family outside `filesystem.write` at `destructive` risk with
+  # `required` elevation, and it is deliberate: §43.4 lets recovery need a stronger privilege than
+  # the mutation it undoes, and §13.6 and §14.6 make restoring the operation that can lose the
+  # most — newer snapshots, clones, and everything written since. Appendix H's profile rule then
+  # keeps it out of every default profile without anything having to name it.
+  - id: change.plan.read
+    summary: Read change plans, their actions and their computed impact.
+    risk: read
+    elevation: none
+    scopes: [plans, schemas]
+  - id: change.plan.contribute
+    summary: Contribute actions, effects, impact edges and risk findings to a plan being resolved.
+    risk: observe
+    elevation: none
+    scopes: [schemas]
+  - id: change.action.execute
+    summary: Carry out a mutating plan action.
+    risk: mutate
+    elevation: conditional
+    scopes: [schemas, plans]
+  - id: verification.observe
+    summary: Observe a verification contract and report the result.
+    risk: read
+    elevation: none
+    scopes: [schemas]
+  - id: recovery.discover
+    summary: Find candidate protection for a target.
+    risk: read
+    elevation: none
+    scopes: [domain_kinds]
+  - id: recovery.prepare
+    summary: Create a recovery asset, which mutates the storage or control plane.
+    risk: mutate
+    elevation: conditional
+    scopes: [domain_kinds, scopes]
+  - id: recovery.restore
+    summary: Use a recovery asset to put state back.
+    risk: destructive
+    elevation: required
+    scopes: [domain_kinds, scopes]
+  - id: recovery.cleanup
+    summary: Remove a recovery asset.
+    risk: mutate
+    elevation: conditional
+    scopes: [domain_kinds, scopes]
+  - id: recovery.estimate-cost
+    summary: Report what a recovery asset costs to create and to keep.
+    risk: read
+    elevation: none
+    scopes: [domain_kinds]
+  - id: recovery.quiesce
+    summary: Pause an application so a capture is application-consistent.
+    risk: mutate
+    elevation: conditional
+    scopes: [applications]
+  - id: recovery.transaction
+    summary: Begin, prepare, commit and roll back inside the provider's own boundary.
+    risk: mutate
+    elevation: conditional
+    scopes: [applications]

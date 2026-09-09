@@ -13,7 +13,7 @@
 //! - **Unknown blocks** (§2.4, §7.3). [`drift`] treats a precondition nobody could observe as a
 //!   reason to stop, and an [`ono_change_core::ActionStatus::Unknown`] read back out of the store
 //!   comes back unknown rather than as failure or success (Appendix F.2).
-//! - **A sealed plan is immutable** (§4.4, §7.5). [`rebase`] takes the original by reference and
+//! - **A sealed plan is immutable** (§4.4, §7.5). [`rebase()`] takes the original by reference and
 //!   returns a new revision, so "rebase MUST NOT mutate the sealed original" is a property of the
 //!   signature.
 //! - **Two sessions do not apply one plan** (§42.4). [`store`] hands out an exclusive, leased

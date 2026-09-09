@@ -1549,6 +1549,30 @@ mod tests {
     // ---- §52.1 ------------------------------------------------------------------------------
 
     #[test]
+    fn should_create_a_single_service_plan_well_inside_the_budget() {
+        // §52.1's budget is 150 ms for a typical single-host single-service plan, excluding
+        // explicitly slow provider discovery — which is exactly what this measures, since the
+        // fragment is already in hand.
+        let start = std::time::Instant::now();
+        let builder = builder();
+        let contribution = fragment(builder.plan_id(), &["nginx.service"]);
+        let plan = builder
+            .contributing(&contribution)
+            .expect("a fragment is accepted")
+            .resolve(vec![service("nginx.service")])
+            .expect("one target resolves")
+            .seal(later())
+            .expect("a plan seals");
+        let elapsed = start.elapsed();
+        assert!(plan.digest_holds());
+        assert!(
+            elapsed < std::time::Duration::from_millis(150),
+            "§52.1: single-host single-service plan creation SHOULD complete in less than 150 ms \
+             excluding provider discovery; took {elapsed:?}"
+        );
+    }
+
+    #[test]
     fn should_seal_a_plan_over_thousands_of_targets_within_the_budget() {
         let builder = builder();
         let contribution = fragment(builder.plan_id(), &["a.service"]);

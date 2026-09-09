@@ -145,6 +145,29 @@ families:
   - {id: temporal.contribute.events, class: explicit, risk: mutate, kind: host-change, title: "Add events to Ono's temporal record"}
   - {id: temporal.contribute.causality, class: explicit, risk: mutate, kind: host-change, title: "Add causal explanations to Ono"}
   - {id: temporal.recorder.manage, class: explicit, risk: mutate, kind: host-change, title: "Start and stop the history recorder"}
+  # v0.6 §48.3's eleven change and recovery families. The split follows §48.4 exactly: reading a
+  # plan and contributing to one are `observation`, because neither changes anything an operator
+  # would call state; carrying out an action, creating a recovery point, removing one, quiescing
+  # an application and transacting inside a provider are `explicit`, because each changes host or
+  # external state; and `recovery.restore` is `destructive`, class E, which K11P §7.5 reserves for
+  # authority no unattended acceptance may enable. §43.4, §13.6 and §14.6 are why: recovery may
+  # need a stronger privilege than the mutation it undoes, and restoring is the operation that
+  # can lose the most.
+  #
+  # `change.plan.contribute` takes the `local-contribution` kind rather than `host-change`: what
+  # it adds is bounded to the package's own declared rules and effect vocabulary, and §19.2's
+  # maximum means a contributed finding can raise a plan's risk class and never lower it.
+  - {id: change.plan.read, class: observation, risk: observe, kind: host-observe, title: "Read change plans and their impact"}
+  - {id: change.plan.contribute, class: observation, risk: observe, kind: local-contribution, title: "Contribute to change plans"}
+  - {id: change.action.execute, class: explicit, risk: mutate, kind: host-change, title: "Carry out changes a plan describes"}
+  - {id: verification.observe, class: observation, risk: observe, kind: host-observe, title: "Observe whether a change achieved what it intended"}
+  - {id: recovery.discover, class: observation, risk: observe, kind: host-observe, title: "Find what could protect a change"}
+  - {id: recovery.prepare, class: explicit, risk: mutate, kind: host-change, title: "Create recovery points"}
+  - {id: recovery.restore, class: destructive, risk: destructive, kind: host-change, title: "Restore state from a recovery point"}
+  - {id: recovery.cleanup, class: explicit, risk: mutate, kind: host-change, title: "Remove recovery points"}
+  - {id: recovery.estimate-cost, class: observation, risk: observe, kind: host-observe, title: "Report what recovery points cost"}
+  - {id: recovery.quiesce, class: explicit, risk: mutate, kind: external-change, title: "Pause an application to capture consistent state"}
+  - {id: recovery.transaction, class: explicit, risk: mutate, kind: external-change, title: "Run transactions inside its own provider boundary"}
 
 # ---------------------------------------------------------------------------------------------
 # A permission descriptor, as a `kuang-package/2` manifest declares one under

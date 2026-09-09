@@ -104,10 +104,24 @@ command:
       idempotency: {type: "enum<idempotent|conditionally-idempotent|not-idempotent|unknown>", nullable: true, doc: "What repeating the action does. Default `unknown`, which is not `idempotent` (spec §10.5). A `not-idempotent` or `unknown` action is never retried on the package's behalf (external-system-provider §19.4, §20.3)."}
       result: {type: string, nullable: true, doc: "The result type where it differs from `output`; validated like `output`."}
       verification: {type: string, nullable: true, doc: "How the outcome is verified after the system accepted the action, in prose the package stands behind. Null is §21.6's explicit lack of a verification hook, shown as such — never inferred to be present."}
-      effects: {type: list<string>, nullable: true, doc: "The classes of prospective effect a plan of the action should warn about (§22.2): `restarts-workload`, `deletes-data`, `changes-routing`."}
+      effects: {type: list<string>, nullable: true, doc: "The classes of prospective effect a plan of the action should warn about (§22.2): `restarts-workload`, `deletes-data`, `changes-routing`. A loose vocabulary, and it keeps working unchanged: v0.6 §0.1 leaves earlier specifications authoritative for what they define."}
+      effect_classes: {type: list<effect_class>, nullable: true, doc: "The same effects in the shape v0.6's coverage algorithm reads; see `effect_class` below. Appendix A.5 computes protection per domain and §8.1 makes confidence a lattice, so an effect naming neither cannot enter the coverage matrix at all — it can only be printed. Optional and empty by default, so a package that declares only `effects` loads exactly as it did before."}
     rules:
       - "A command that declares no `action` is not a provider action. A read never declares one (§21.2)."
       - "The declaration is validated at load, not at the first invocation: an action that says it mutates without a risk or without a mutating capability is `package.invalid`."
+      - "Every `effect_classes` entry is settled against v0.6's vocabulary at load: an unknown domain, kind or confidence is `package.invalid`, and an effect with no explanation is too (§9.5)."
+  # One prospective effect in v0.6's own vocabulary (§8.1, §8.2, Appendix A.1). §10.1 forbids a
+  # plan carrying a single `reversible: true/false` flag and Appendix A.5 builds the answer per
+  # domain instead, which is only possible when each effect says which domain it acts in and how
+  # strongly Ono may assert it.
+  effect_class:
+    fields:
+      domain: {type: string, required: true, doc: "The mutation domain, from Appendix A.1 — `filesystem-persistent`, `process-runtime`, `external-side-effect`, `unknown`. Appendix A.7 caps a plan at partially protected while an `unknown` domain is present, so naming one honestly costs the package nothing it had."}
+      kind: {type: "enum<create|modify|remove|replace|interrupt|emit|unknown>", required: true, doc: "What the effect does to its object (§8.2). An `emit` is irreversible on its own terms (§35.2)."}
+      confidence: {type: "enum<guaranteed|expected|possible|unknown>", required: true, doc: "How strongly Ono may assert the effect will occur (§8.1). §2.4 forbids promoting `unknown` silently, and no host operation raises a declared confidence — §8.1's lattice offers only a weakest-of."}
+      explanation: {type: string, required: true, doc: "Why the package believes it, in one sentence. §9.5 makes an impact claim that cannot be explained one that should not be shown."}
+      irreversible: {type: bool, nullable: true, doc: "Whether nothing can undo it (§2.13, §35.2). Default false."}
+      compensation: {type: string, nullable: true, doc: "The inverse action that restores an acceptable semantic state, where one exists. §27.4 forbids calling this rollback; null means the package offers none."}
   vocabulary_rule:
     rule: >-
       A package SHOULD reuse `get`, `inspect`, `trace`, `watch`, `find`, `start`, `stop` and the
@@ -355,6 +369,116 @@ causal_rule:
     - "A plugin's correlation stays correlation in core rendering: a `correlated_with` link is drawn with the non-directional connector and the words §15.6 forbids for a non-causal class are refused, whoever contributed it (§15.5, §45.3)."
     - "The strength of a link is the weakest evidence behind it, then the ceiling (§7.2, §37.4). No path raises one."
     - "A contributed rule identifies its source in every link it emits: `source` is `kuang:<package-id>/<provider-id>`, set by the host."
+
+# ---------------------------------------------------------------------------------------------
+# The change and recovery contributions of v0.6 §48.2. §48.2 lists exactly six types:
+# `ActionProvider`, `ImpactProvider`, `RecoveryProvider`, `VerificationProvider`, `RiskRule` and
+# `ChangeView`. `ActionProvider` is `command.action` above, extended with `effect_classes`; the
+# other five are here.
+#
+# §48.4 is the rule every one of them is held to, and the rule decides *when* rather than what:
+# "A plugin that can describe impact MUST NOT automatically gain permission to execute the
+# change." A rule enforced at the first call is a rule the package has already had a chance to
+# break, so each refusal below happens at load, from the on-disk declaration, before any package
+# code runs — which is also what makes §31.68's registry placeholders possible for them.
+# ---------------------------------------------------------------------------------------------
+recovery_provider:
+  capability: recovery.discover
+  declaration:
+    manifest_field: contributions.recovery_providers
+    document: "{recovery_providers: [<the fields below>]}"
+    read_without_running: true
+  fields:
+    id: {type: string, required: true, doc: "`<package.id>.recovery-provider.<kebab-name>`."}
+    summary: {type: string, required: true, doc: "One line, for `get recovery-provider` and `help`."}
+    domain_kinds: {type: list<string>, nullable: true, doc: "The persistence domain kinds it covers, as `RecoveryScope.domain_kind` names them — `zfs-dataset`, `postgres-database`. Appendix B.1 requires a path to be mapped to a domain before protection is claimed; this is the set of domains this provider claims to map. At least one, or the provider could never be reached."}
+    asset_type: {type: string, required: true, doc: "The asset type it creates, from `docs/contracts/recovery/assets.yaml`. §11.1 makes the asset the thing a person inspects, so it is named before one exists."}
+    consistency: {type: string, required: true, doc: "The strongest class it can claim, from §11.3's six. `application-consistent` requires `recovery.quiesce` in `capabilities`: §39.2 says the provider must own the claim and §16.4 puts the claim with the provider that can pause the application."}
+    restore_methods: {type: list<string>, nullable: true, doc: "The methods it offers, from Appendix C.1. A provider that offers none cannot restore, and §62.1 calls a candidate nobody can use snapshot theatre."}
+    shares_failure_domain: {type: bool, nullable: true, doc: "Whether its assets sit in the same failure domain as the state they protect (§11.5). A ZFS snapshot lives in the pool it protects; a file archive on another disk does not, and §11.5 requires the answer to be visible beside the protection. Default false."}
+    capabilities: {type: list<string>, nullable: true, doc: "The `recovery.*` capabilities of §12.2 it declares. Every id is checked against `kuang_capabilities`, and an id outside §12.2's seven is refused: a recovery provider declaring `filesystem.write` here is describing something the change registries have no place to put."}
+    transaction: {type: transaction, nullable: true, doc: "The atomicity it states over its own resource scope (§27.1); see `transaction` below. Null for a provider that states none, which is the ordinary case."}
+  rules:
+    - "The id is inside the package's namespace and never claims `ono.*` (§31.5)."
+    - "**§48.4 at load:** a provider that offers a restore method, or declares `recovery.restore`, and declares no capability of `destructive` risk is `package.invalid` before any code runs. §43.4 lets recovery need a stronger privilege than the mutation it undoes, and §13.6 and §14.6 make restoring the operation that can lose the most; a candidate an operator relies on and a restore denied at the moment they need it is the failure this refusal prevents."
+    - "**§39.2 at load:** a provider claiming `application-consistent` and declaring no `recovery.quiesce` is `package.invalid`. §39.2 forbids Ono independently labelling state `APPLICATION_CONSISTENT` unless an application-aware provider asserts the guarantee, and a package that cannot quiesce has no mechanism by which the claim could be true. It may claim `crash-consistent`, which it can own."
+    - "**§27.3 at load:** a `transaction` naming a resource outside this provider's own `domain_kinds` is `package.invalid`. §27.1 scopes atomicity to the provider's own resource scope, §27.2 forbids the word once a second boundary is involved, and §27.3 makes generic distributed two-phase commit an explicit non-goal."
+    - "A `transaction` without `recovery.transaction` in `capabilities` is `package.invalid` (§12.2)."
+    - "§48.5's example is the shape: a database plugin contributes restart semantics as impact, a checkpoint or quiesce action, an application-consistency validation, recovery verification and a transaction-local rollback."
+  # §27.1: a provider can expose begin/prepare/commit/rollback and declare atomicity over its own
+  # resource scope. The guarantee belongs to the provider (§27.3), so the declaration is the
+  # sentence the provider is held to rather than something Ono asserts on its behalf.
+  transaction:
+    fields:
+      resources: {type: list<string>, nullable: true, doc: "The domain kinds the atomicity covers. Every one must be a domain kind this provider itself declares."}
+      guarantee: {type: string, required: true, doc: "What the guarantee is, in prose. §27.1 puts the guarantee with the provider, so this sentence is the declaration."}
+
+impact_provider:
+  capability: change.plan.contribute
+  declaration:
+    manifest_field: contributions.impact_providers
+    document: "{impact_providers: [<the fields below>]}"
+    read_without_running: true
+  fields:
+    id: {type: string, required: true, doc: "`<package.id>.impact-provider.<kebab-name>`."}
+    summary: {type: string, required: true, doc: "One line, for `get impact-provider` and `help`."}
+    object_types: {type: list<string>, nullable: true, doc: "The schema ids of the object types it can relate. Each resolves at load like a target's schema, so a provider naming a type nothing carries is refused before it can draw an edge to it (ADR-0591)."}
+    relations: {type: list<string>, nullable: true, doc: "The relation labels it contributes, e.g. `reads-database`. §15.8's rule for causal language applies to impact too: a label a reader meets is one they can look up."}
+    confidence_ceiling: {type: string, nullable: true, doc: "The highest §8.1 confidence any edge it contributes may carry. The host takes the weaker of this and whatever the edge claims and never the stronger, so declaring one is a ceiling the package accepts rather than an authority it gains."}
+  rules:
+    - "**It may add edges and it may not raise a confidence.** §8.1's lattice offers only a weakest-of, and §49.3 keeps a statement about the world separate from a provider proving one: an AI suggestion that a change is reversible MUST NOT change `RecoveryCoverage` unless a real recovery provider proves it, and the same holds for a plugin's assertion."
+    - "§9.4: relating object types Ono's own graph does not reach is the whole point. Relating them with more confidence than the evidence carries is not."
+
+verification_provider:
+  capability: verification.observe
+  declaration:
+    manifest_field: contributions.verification_providers
+    document: "{verification_providers: [<the fields below>]}"
+    read_without_running: true
+  fields:
+    id: {type: string, required: true, doc: "`<package.id>.verification-provider.<kebab-name>`."}
+    summary: {type: string, required: true, doc: "One line, for `get verification-provider` and `help`."}
+    checks: {type: list<check>, nullable: true, doc: "The check kinds it can observe, each with the equivalence domain it speaks to; see `check` below. At least one, or it observes nothing."}
+  check:
+    fields:
+      kind: {type: string, required: true, doc: "The check kind, e.g. `database-accepts-connections`."}
+      equivalence: {type: "enum<persistent-state|runtime-state|external-side-effect>", required: true, doc: "The §25.1 equivalence domain it is evidence about."}
+      summary: {type: string, required: true, doc: "One line: what it observes, and what it does not."}
+  rules:
+    - "§25.3 forbids the sentence \"rollback successful\" without a scope, and §25.1 names the scopes. A check that proves the bytes came back proves nothing about what left the machine, so each kind names exactly one domain."
+    - "A reported status is one of §23.3's four. §23.5 forbids treating `unknown` as success, so the host refuses a status outside the four rather than defaulting one."
+
+risk_rule:
+  capability: change.plan.contribute
+  declaration:
+    manifest_field: contributions.risk_rules
+    document: "{risk_rules: [<the fields below>]}"
+    read_without_running: true
+  fields:
+    rule_id: {type: string, required: true, doc: "The rule id, namespaced to the package — `dev.example.postgres.risk.replica-lag`."}
+    dimension: {type: string, required: true, doc: "The §19.1 dimension it emits into — `downtime`, `irreversibility`, `bulk-count`, and the seven others."}
+    emits: {type: string, required: true, doc: "The highest §19.2 class it may emit. A finding above it is refused at the call; a finding below it composes as a maximum like any other."}
+    summary: {type: string, required: true, doc: "One line, what the rule finds and why it matters. §40.2 shows this instead of \"Are you sure?\", so a rule without one teaches the flag rather than the risk."}
+  rules:
+    - "§19.2 makes risk rule-based rather than AI-generated. A contributed rule is still a rule: registered, namespaced, and inspectable exactly as a built-in one is."
+    - "**A contributed rule may raise the composed class and never reduce it.** `RiskAssessment::classify` takes the maximum over every finding and §19.2 defines no minimum, so there is no path from a finding to a lower plan class however low the finding is."
+    - "A finding naming a rule the package did not declare is refused at the call: a class with no rule behind it is a class nobody can look up."
+    - "`ono.*` is reserved to the project, so a rule id in that namespace is `package.invalid` (§31.5)."
+
+change_view:
+  capability: ui.view
+  declaration:
+    manifest_field: contributions.change_views
+    document: "{change_views: [<the fields below>]}"
+    read_without_running: true
+  fields:
+    id: {type: string, required: true, doc: "`<package.id>.change-view.<kebab-name>`."}
+    summary: {type: string, required: true, doc: "One line, for `help` and the view picker."}
+    mode: {type: "enum<interactive|static>", required: true, doc: "As `view.declaration` spells it."}
+    plan_states: {type: list<string>, nullable: true, doc: "The plan states it renders, from `docs/contracts/change/plans.yaml` → `states`. A view offered for a state a plan cannot be in is a view nobody reaches, so the words are settled at load."}
+    fallback: {type: string, required: true, doc: "The deterministic non-interactive output for a redirected stdout (spec §31.28, §50)."}
+  rules:
+    - "The same view lifecycle as any other contributed view. §48.2 adds a kind of view, not a second view system."
 
 # ---------------------------------------------------------------------------------------------
 # Analyses as pipeline stages — spec §31.29. The most natural KUANG/11 program is a typed

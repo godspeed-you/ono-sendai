@@ -48,7 +48,7 @@ rules:
   - {id: risk.scope.multi-object, dimension: scope, emits: moderate, doc: "More than one object of more than one kind."}
   - {id: risk.bulk.warn-threshold, dimension: bulk-count, emits: moderate, doc: "§28.3: above `change.bulk.warn_targets`."}
   - {id: risk.bulk.high-threshold, dimension: bulk-count, emits: high, doc: "§28.3: above `change.bulk.high_risk_targets`."}
-  - {id: risk.bulk.whole-role, dimension: scope, emits: critical, doc: "§28.3: the topology proves every member of a service group is targeted, so no healthy serving member is excluded. §19.3's forty frontend nodes."}
+  - {id: risk.bulk.whole-role, dimension: downtime, emits: critical, doc: "§28.3: the topology proves every member of a service group is targeted, so no healthy serving member is excluded — which is availability risk, and availability is the downtime dimension rather than the scope one. §19.3's forty frontend nodes."}
   - {id: risk.privilege.elevation, dimension: privilege, emits: moderate, doc: "§43.3: an action requires elevated privilege."}
   - {id: risk.irreversibility.effect, dimension: irreversibility, emits: high, doc: "§2.13: an effect nothing can undo. §19.3's SIGKILL."}
   - {id: risk.external.side-effect, dimension: external-side-effects, emits: high, doc: "§35.1: an effect that leaves the machine and cannot be taken back."}

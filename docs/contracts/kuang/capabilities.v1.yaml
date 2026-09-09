@@ -7,7 +7,8 @@
 #
 # Authority: the *family list* is `kuang_capabilities` in `docs/contracts/capabilities.yaml`, which
 # carries §31.16's twenty-nine families verbatim with their `risk`, `elevation` and scope keys,
-# plus `provider.mutate` (ADR-0594) and v0.5 §30.7's six temporal families (ADR-0626).
+# plus `provider.mutate` (ADR-0594), v0.5 §30.7's six temporal families (ADR-0626) and v0.6
+# §48.3's eleven change and recovery families.
 # This file adds what that registry deliberately leaves out — the shape of each scope, whether
 # the host can actually enforce it, and the lifecycle of a grant. The two files MUST agree on
 # every id, risk, elevation and scope-key list; `cargo xtask spec-check` compares them, and
@@ -561,6 +562,185 @@ families:
       `temporal.read.history`.
     scopable: false
     scope: {}
+
+  # --- the eleven change and recovery families of v0.6 §48.3 -----------------------------------
+  # §48.4: "A plugin that can describe impact MUST NOT automatically gain permission to execute
+  # the change." That is a statement about the shape of the capability list, and this is the
+  # shape it forces: describing, contributing and executing are three families, so a grant for
+  # one cannot be spent on another, and the host call behind each names exactly one of them.
+  #
+  # Every scope key below carries an enforcement level chosen on one question — can the broker
+  # compare the value the operation will use against the grant, before the call? A plan id, a
+  # schema id, a persistence domain kind and a resolved dataset name all arrive in the call's
+  # parameters and are compared there, so they are `broker`. An application name does not: the
+  # package resolves it inside the system it fronts, and the host never sees what it resolved to.
+  # §31.16 is explicit that a scope which cannot be enforced reliably MUST NOT be offered as if
+  # it were a security boundary, so those two are `advisory` and are labelled as such wherever a
+  # grant is shown.
+
+  - id: change.plan.read
+    risk: read
+    elevation: none
+    permits: >-
+      Reading a change plan, its actions, its proposed effects and its computed impact (§48.3).
+      This is where a package that describes impact stops: §48.4 makes it no route to execution,
+      and there is no call behind this family that changes anything.
+    scopable: true
+    scope:
+      plans: {type: id-list, enforcement: broker, doc: "Plan ids the package may read, or `*`. The value arrives in the call and is compared before the plan is fetched."}
+      schemas: {type: id-list, enforcement: broker, doc: "The target schemas whose plans the package may read, e.g. `[dev.example.db.database/1]`."}
+
+  - id: change.plan.contribute
+    risk: observe
+    elevation: none
+    permits: >-
+      Contributing actions, prospective effects, impact edges and risk findings to a plan being
+      resolved (§48.2, §48.3). Two host rules bound it whatever is granted: an effect must name a
+      domain of Appendix A.1 and a confidence of §8.1, so a contribution either enters the
+      coverage matrix or is refused rather than printed; and a risk finding must name a rule the
+      package declared in its `risk_rules` contribution, because §19.2 makes risk rule-based and
+      an unregistered rule is a class with no justification behind it. Contributed findings
+      compose by the maximum of §19.2, so a contribution may raise a plan's risk class and can
+      never reduce it.
+    scopable: true
+    scope:
+      schemas: {type: id-list, enforcement: broker, doc: "The target schemas the package may contribute about."}
+
+  - id: change.action.execute
+    risk: mutate
+    elevation: conditional
+    permits: >-
+      Carrying out a mutating plan action (§48.3). The only family of the four §48.3 lists that
+      authorises a change, and the reason the other three exist separately: a package holding
+      `change.plan.read` and `change.plan.contribute` and attempting this is denied at the call
+      and the denial is audited (§48.4, §43.7).
+    scopable: true
+    scope:
+      schemas: {type: id-list, enforcement: broker, doc: "The target schemas whose actions the package may carry out."}
+      plans: {type: id-list, enforcement: broker, doc: "The plan ids it may execute actions from."}
+
+  - id: verification.observe
+    risk: read
+    elevation: none
+    permits: >-
+      Observing a verification contract and reporting the result (§48.3, §23, §25.1). A recovery
+      verification names the equivalence domain of §25.1 it is evidence about, because §25.3
+      forbids the sentence "rollback successful" without a scope; the host refuses a status
+      outside §23.3's four, so an unanswerable check stays `unknown` rather than becoming a pass.
+    scopable: true
+    scope:
+      schemas: {type: id-list, enforcement: broker, doc: "The target schemas the package may report verification results about."}
+
+  - id: recovery.discover
+    risk: read
+    elevation: none
+    permits: >-
+      Reporting the protection candidates this package found for a persistence domain (§12.2,
+      Appendix A.3). Read-only: §2.1 keeps a candidate a description, and creating one is a
+      PREPARE action the plan shows first.
+    scopable: true
+    scope:
+      domain_kinds:
+        type: name-list
+        enforcement: broker
+        doc: >-
+          The persistence domain kinds the package may answer for — `zfs-dataset`,
+          `postgres-database`, or `*`. The kind is in the call's parameters and in every
+          candidate it carries, and the broker compares each of them: a candidate about a domain
+          kind outside the grant is `capability.scope_violation`, not a quietly dropped row.
+
+  - id: recovery.prepare
+    risk: mutate
+    elevation: conditional
+    permits: >-
+      Creating a recovery asset (§12.2). §5.5 makes this a real mutation of the storage or
+      control plane rather than a bookkeeping step, and it is visible in history as one.
+    scopable: true
+    scope:
+      domain_kinds: {type: name-list, enforcement: broker, doc: "The persistence domain kinds it may create assets for."}
+      scopes:
+        type: id-list
+        enforcement: broker
+        doc: >-
+          The resolved persistence objects it may act on — `tank/var`, `main`. The value the
+          broker compares is `RecoveryScope.domain` as the call carries it, which is the object
+          the provider actually resolved rather than the path a person typed (Appendix B.1).
+
+  - id: recovery.restore
+    risk: destructive
+    elevation: required
+    permits: >-
+      Using a recovery asset to put state back (§12.2). Destructive and elevation-required, and
+      both are deliberate: §43.4 lets recovery need a stronger privilege than the original
+      mutation, and §13.6 and §14.6 make restoring the operation that can lose the most — newer
+      snapshots, clones, bookmarks, and everything written since the asset was taken. A package
+      declaring a restore method or this capability and holding nothing of destructive risk is
+      `package.invalid` at load (§48.4). Appendix H's `profiles.rules` keeps it out of `minimal`,
+      out of `recommended` and out of any descriptor marked `recommended: true`, because a safe
+      default is below `mutate` risk over class A or B capabilities and this is class E.
+    scopable: true
+    scope:
+      domain_kinds: {type: name-list, enforcement: broker, doc: "The persistence domain kinds it may restore."}
+      scopes: {type: id-list, enforcement: broker, doc: "The resolved persistence objects it may restore, compared against the call's `RecoveryScope.domain`."}
+
+  - id: recovery.cleanup
+    risk: mutate
+    elevation: conditional
+    permits: >-
+      Removing a recovery asset (§12.2, §37). §37.4 surfaces a retained asset rather than
+      forgetting it, so a removal that fails is reported rather than assumed.
+    scopable: true
+    scope:
+      domain_kinds: {type: name-list, enforcement: broker, doc: "The persistence domain kinds whose assets it may remove."}
+      scopes: {type: id-list, enforcement: broker, doc: "The resolved persistence objects whose assets it may remove."}
+
+  - id: recovery.estimate-cost
+    risk: read
+    elevation: none
+    permits: >-
+      Reporting what an asset costs to create and to keep (§12.2, §38). §37.5 keeps an estimate
+      labelled as one, so this reads and never implies a measurement it did not take.
+    scopable: true
+    scope:
+      domain_kinds: {type: name-list, enforcement: broker, doc: "The persistence domain kinds it may report costs for."}
+
+  - id: recovery.quiesce
+    risk: mutate
+    elevation: conditional
+    permits: >-
+      Pausing an application so a capture is application-consistent, and releasing it again
+      (§12.2, §16.4, §39.3). It also carries `recovery.resume`, because §18.4 requires the
+      application to be resumed when creation fails: a package able to pause must always be able
+      to let go. §39.2 makes this the capability that owns an `application-consistent` claim — a
+      provider claiming that class without it is `package.invalid` at load.
+    scopable: true
+    scope:
+      applications:
+        type: name-list
+        enforcement: advisory
+        doc: >-
+          The applications the package may pause, by the package's own name for them. **Advisory,
+          and shown as advisory.** The name is resolved by the plugin inside the system it fronts,
+          so the host records what the package said it paused and cannot prove it paused that and
+          nothing else. §31.16: a scope that cannot be enforced reliably MUST NOT be offered as if
+          it were a security boundary. What is enforced is the family itself — a package without
+          the grant pauses nothing.
+
+  - id: recovery.transaction
+    risk: mutate
+    elevation: conditional
+    permits: >-
+      Beginning, preparing, committing and rolling back inside the provider's own boundary
+      (§12.2, §27.1). §27.2 forbids the word once a second boundary is involved and §27.3 makes
+      generic distributed two-phase commit an explicit non-goal, so a package declaring atomicity
+      over a domain kind it does not itself cover is `package.invalid` at load. A plugin MAY
+      implement a domain-specific distributed transaction, and then the plugin owns the guarantee.
+    scopable: true
+    scope:
+      applications:
+        type: name-list
+        enforcement: advisory
+        doc: "The same shape and the same caveat as `recovery.quiesce.applications`: a name only the package can resolve."
 
 # ---------------------------------------------------------------------------------------------
 # Declaration classes — spec §31.17. A property of the package's declaration, not of the
