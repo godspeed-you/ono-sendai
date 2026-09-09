@@ -387,6 +387,7 @@ Inside the shell itself: `help`, `help <command>`, `type <pipeline>`, `inspect` 
 
 | | |
 |---|---|
+| [`docs/guides/temporal.md`](docs/guides/temporal.md) | time as a coordinate: `at`, `now`, timeline, changes, `why`, the recorder, and what Ono refuses to claim |
 | [`docs/reference/`](docs/reference/README.md) | generated reference: every command, verb, target, schema, error, capability |
 | [`docs/specs/ono_sendai_shell_spec_v0.2.md`](docs/specs/ono_sendai_shell_spec_v0.2.md) | the immutable base specification, plus the `docs/specs/ono_sendai_*spec_v*.md` enhancements layered on it |
 | [`docs/contracts/`](docs/contracts/) | machine-readable contracts: commands, schemas, verbs, errors, providers |
