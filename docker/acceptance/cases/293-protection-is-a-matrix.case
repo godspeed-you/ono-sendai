@@ -25,7 +25,7 @@ run: |
   printf 'worker_processes 8;\n' > "$HOME/etc/nginx.conf.new"
 
   echo '== §10.3: the plan carries one row per mutation domain =='
-  ono -c "plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new | to json" > /tmp/m1.json 2>&1
+  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | to json" > /tmp/m1.json 2>&1
   prove m1a "the record carries a protection matrix, not a boolean (§10.1)" \
     'grep -q "\"protection\"" /tmp/m1.json'
   prove m1b "and a level composed from it (§10.2, Appendix A.5)" \
@@ -48,7 +48,7 @@ run: |
   kill $victim 2>/dev/null || true
 
   echo '== §20.4 and Appendix E.8: the rendered view shows the exclusions with the word =='
-  ono -c "plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new" > /tmp/m3.txt 2>&1
+  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite" > /tmp/m3.txt 2>&1
   prove m3a "the plan view carries a protection block (§20.4)" \
     'grep -qi "^protection" /tmp/m3.txt'
   prove m3b "and it names what is not covered beside it (§10.3, §62.6, Appendix E.8)" \

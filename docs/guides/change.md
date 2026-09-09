@@ -71,8 +71,7 @@ touches the target system, and that line is where you can see it.
 plan restart service nginx                              one action
 
 plan {                                                  several, in order
-    replace file /etc/nginx/nginx.conf from ./nginx.conf
-    validate config nginx
+    copy file ./nginx.conf /etc/nginx/nginx.conf --overwrite
     restart service nginx
     verify service nginx state == running
     verify socket :443 exists
@@ -81,7 +80,12 @@ plan {                                                  several, in order
 get service | where state == failed | plan restart service     one plan over the matched set
 ```
 
-The third is worth pausing on. It produces **one** plan whose targets are the services that matched
+A `verify` line is not an action: it becomes a check the plan runs afterwards, which is what §23.1
+asks every plan that mutates to carry. And a line naming an operation no provider contract
+declares — `validate config nginx`, say, which is really nginx's own `nginx -t` — refuses rather
+than being guessed at. ADR-0813 records why.
+
+The third form is worth pausing on. It produces **one** plan whose targets are the services that matched
 *at that moment*. If a fifth service starts failing before you apply, it does not join the plan.
 That is deliberate: a plan you read is a plan you can apply, and a set that grows between reading
 and applying is a set you did not read.

@@ -27,7 +27,7 @@ run: |
 
   echo '== §6.4: planning from a historical coordinate refuses =='
   ono -c "at -1m
-  plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new" > /tmp/p4.txt 2>&1
+  plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite" > /tmp/p4.txt 2>&1
   prove p4a "the refusal carries a code a script can match on (§45)" \
     'grep -qE "Ono-Sendai-E1715|change\.historical_context_read_only" /tmp/p4.txt'
   prove p4b "and it names \`now\` as the way back (§6.4)" \
@@ -37,7 +37,7 @@ run: |
 
   echo '== §6.4: the coordinate is unchanged by the refusal (v0.5 §12.1) =='
   ono -c "at -1m
-  plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new
+  plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite
   look" > /tmp/p4b.txt 2>&1
   prove p4d "the session is still in the past after the refusal" \
     'grep -q "PAST" /tmp/p4b.txt'
@@ -45,12 +45,12 @@ run: |
   echo '== §6.4: `now` makes it work again =='
   ono -c "at -1m
   now
-  plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new" > /tmp/p4c.txt 2>&1
+  plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite" > /tmp/p4c.txt 2>&1
   prove p4e "returning to the present resolves the plan (§6.4)" \
     'grep -q "PLAN NOT EXECUTED" /tmp/p4c.txt'
 
   echo '== §6.4: inspecting an existing plan from the past is still allowed =='
-  ono -c "plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new | to json" > /tmp/p4d.json 2>&1
+  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | to json" > /tmp/p4d.json 2>&1
   prove p4f "a plan made in the present can be listed from the past — history is readable (§6.4)" \
     'ono -c "at -1m
   get plan | count | to json" 2>&1 | grep -qE "^[0-9]+$|^\{|^\["'

@@ -25,7 +25,7 @@ run: |
 
   echo '== §40.3: nothing waits for a prompt with stdin closed =='
   for spelling in \
-    "plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new" \
+    "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite" \
     "get plan" \
     "get recovery" ; do
     if timeout 30 ono -c "$spelling" < /dev/null > /dev/null 2>&1 || [ $? -ne 124 ]; then
@@ -37,7 +37,7 @@ run: |
 
   echo '== §12.3 and §33.5: every answer is a value a pipeline can read =='
   prove s2a "\`plan\` serialises" \
-    "timeout 30 ono -c 'plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new | to json' < /dev/null 2>&1 | grep -qE '^\{'"
+    "timeout 30 ono -c 'plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | to json' < /dev/null 2>&1 | grep -qE '^\{'"
   prove s2b "\`get plan\` serialises as a stream (§12.3)" \
     "timeout 30 ono -c 'get plan | to json' < /dev/null 2>&1 | grep -qE '^\['"
   prove s2c "\`get recovery\` serialises as a stream" \

@@ -26,7 +26,7 @@ run: |
   before_mtime=$(stat -c %Y "$HOME/etc/nginx.conf")
 
   echo '== §5.1: a plan is an object, and producing it is not doing it =='
-  ono -c "plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new" > /tmp/p1.txt 2>&1
+  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite" > /tmp/p1.txt 2>&1
   prove p1a "\`plan replace file\` answers with a plan (§5.1)" \
     'grep -qi "^PLAN" /tmp/p1.txt'
   prove p1b "and the plan says it was not executed (§2.1, §62.3)" \
@@ -54,9 +54,9 @@ run: |
 
   echo '== §12.3: a plan is a value, not a rendering =='
   prove p1k "the plan serialises through the ordinary pipeline (§12.3, §33.5)" \
-    "ono -c 'plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new | to json' 2>&1 | grep -qE '^\{'"
+    "ono -c 'plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | to json' 2>&1 | grep -qE '^\{'"
   prove p1l "and it carries the protection level the coverage matrix composed (§10.2)" \
-    "ono -c 'plan replace file $HOME/etc/nginx.conf from $HOME/etc/nginx.conf.new | to json' 2>&1 | grep -q 'protection_level'"
+    "ono -c 'plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | to json' 2>&1 | grep -q 'protection_level'"
 
   echo '== §5.1: planning a service restart touches no service =='
   ono -c 'plan restart service nonexistent-unit-1a2b3c' > /tmp/p1svc.txt 2>&1
