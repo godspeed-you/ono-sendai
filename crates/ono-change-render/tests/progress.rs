@@ -6,12 +6,13 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_change_core::{ActionStatus, ChangePlan, Intent};
+use ono_value::Value;
 use ono_change_render::{Charset, apply_failure, apply_progress, next_steps};
 
 mod support;
 use support::{
-    contains, failed_plan, instant, nginx_results, ready_asset, sealed_nginx_plan, with_statuses,
+    contains, empty_plan, failed_plan, nginx_plan_in, nginx_results, ready_asset, record, s,
+    sealed_nginx_plan, unprotected_rows,
 };
 
 #[test]
@@ -27,8 +28,7 @@ fn should_keep_the_three_lifecycle_phases_separately_visible() {
 
 #[test]
 fn should_keep_the_phases_visible_even_for_a_plan_that_has_no_actions_in_one() {
-    let empty = ChangePlan::draft(Intent::new("nothing yet", "plan { }"), "s", instant());
-    let lines = apply_progress(&empty, &[], 80);
+    let lines = apply_progress(&empty_plan(), &[], 80);
     assert_eq!(
         lines.len(),
         3,
@@ -42,15 +42,9 @@ fn should_keep_the_phases_visible_even_for_a_plan_that_has_no_actions_in_one() {
 
 #[test]
 fn should_count_a_phase_that_has_begun() {
-    let plan = with_statuses(
-        sealed_nginx_plan(),
-        &[
-            ActionStatus::Succeeded,
-            ActionStatus::Succeeded,
-            ActionStatus::Pending,
-            ActionStatus::Pending,
-            ActionStatus::Pending,
-        ],
+    let plan = nginx_plan_in(
+        "applying",
+        &["succeeded", "succeeded", "pending", "pending", "pending"],
     );
     let lines = apply_progress(&plan, &[], 80);
     assert!(
@@ -74,22 +68,38 @@ fn should_call_a_phase_that_has_not_started_pending() {
 
 #[test]
 fn should_count_verification_by_the_contracts_when_the_plan_has_no_verify_action() {
-    let plan = sealed_nginx_plan();
-    let results = nginx_results(&plan);
-    let no_verify_actions = with_statuses(
-        plan.clone(),
+    let plan = record(
+        "ono.change-plan",
         &[
-            ActionStatus::Succeeded,
-            ActionStatus::Succeeded,
-            ActionStatus::Succeeded,
-            ActionStatus::Succeeded,
-            ActionStatus::Succeeded,
+            ("id", s("a82f1c0d9e4b7a63")),
+            ("state", s("verifying")),
+            ("actions", Value::list([])),
+            (
+                "verification_contracts",
+                Value::list([
+                    support::contract("required", "nginx.service", "== running"),
+                    support::contract("required", "socket :443", "exists"),
+                    support::contract("advisory", "worker count", "== 4"),
+                ]),
+            ),
         ],
     );
-    let lines = apply_progress(&no_verify_actions, &results, 80);
+    let lines = apply_progress(&plan, &nginx_results(), 80);
     assert!(
-        contains(&lines, "VERIFY"),
-        "§23.1: a mutating plan verifies, whichever way it expresses the phase"
+        contains(&lines, "VERIFY   3/3"),
+        "§23.1: a plan that expresses verification as contracts still shows the phase completing"
+    );
+}
+
+#[test]
+fn should_distinguish_a_prepare_failure_from_an_apply_failure() {
+    let plan = nginx_plan_in("prepare-failed", &["failed", "pending", "pending", "pending", "pending"]);
+    let lines = apply_failure(&plan, &[], 80, Charset::Ascii);
+    assert_eq!(
+        lines.first().map(String::as_str),
+        Some("PLAN PREPARE FAILED"),
+        "§4.5 and Appendix F: a prepare failure means no mutating action ran, and the reader has \
+         to be told which of the two happened"
     );
 }
 
@@ -155,15 +165,9 @@ fn should_count_the_actions_that_never_ran() {
 
 #[test]
 fn should_give_an_unestablished_outcome_its_own_block() {
-    let plan = with_statuses(
-        sealed_nginx_plan(),
-        &[
-            ActionStatus::Succeeded,
-            ActionStatus::Succeeded,
-            ActionStatus::Unknown,
-            ActionStatus::Pending,
-            ActionStatus::Pending,
-        ],
+    let plan = nginx_plan_in(
+        "apply-failed",
+        &["succeeded", "succeeded", "unknown", "pending", "pending"],
     );
     let lines = apply_failure(&plan, &[], 80, Charset::Ascii);
     assert!(
@@ -218,16 +222,24 @@ fn should_offer_recovery_as_one_step_among_others_rather_than_as_the_list() {
 
 #[test]
 fn should_not_offer_recovery_for_a_plan_nothing_covers() {
-    let plan = with_statuses(
-        sealed_nginx_plan()
-            .revise()
-            .with_protection(support::unprotected_summary()),
+    let plan = record(
+        "ono.change-plan",
         &[
-            ActionStatus::Succeeded,
-            ActionStatus::Failed,
-            ActionStatus::Pending,
-            ActionStatus::Pending,
-            ActionStatus::Pending,
+            ("id", s("a82f1c0d9e4b7a63")),
+            ("state", s("apply-failed")),
+            (
+                "actions",
+                Value::list([support::action(
+                    1,
+                    "mutate",
+                    "replace nginx.conf",
+                    None,
+                    "failed",
+                    Value::list([]),
+                )]),
+            ),
+            ("protection", unprotected_rows()),
+            ("protection_level", s("unprotected")),
         ],
     );
     let steps = next_steps(&plan);

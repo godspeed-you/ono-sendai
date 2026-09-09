@@ -204,6 +204,24 @@ fn should_lay_the_recovery_view_out_at_the_width_it_was_given() {
 }
 
 #[test]
+fn should_drop_recovery_not_executed_once_the_recovery_has_begun() {
+    let mut fields: Vec<(&str, ono_value::Value)> = Vec::new();
+    let planned = rollback_recovery();
+    for name in ["id", "method", "target_state", "newer_state_analysed", "risk"] {
+        if let Some(value) = planned.get(name) {
+            fields.push((name, value.clone()));
+        }
+    }
+    fields.push(("state", support::s("recovering")));
+    let running = support::record("ono.recovery-plan", &fields);
+    let lines = recovery_view(&running, 80, Charset::Ascii);
+    assert!(
+        !contains(&lines, RECOVERY_NOT_EXECUTED),
+        "§4.1: once recovery is executing, saying it has not been executed is false"
+    );
+}
+
+#[test]
 fn should_render_the_same_bytes_for_the_same_recovery_plan() {
     let recovery = rollback_recovery();
     assert_eq!(

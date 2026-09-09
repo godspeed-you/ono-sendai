@@ -6,13 +6,15 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_change_core::{RecoveryCost, RetentionPolicy};
+use ono_value::RecordValue;
 use ono_change_render::recovery_assets;
 
 mod support;
-use support::{contains, later, ready_asset, unmeasured_asset, zfs_asset};
+use support::{
+    contains, expired_asset, held_asset, later, ready_asset, unmeasured_asset, zfs_asset,
+};
 
-fn table(assets: &[ono_change_core::RecoveryAsset]) -> Vec<String> {
+fn table(assets: &[RecordValue]) -> Vec<String> {
     recovery_assets(assets, later(840), 100)
 }
 
@@ -30,22 +32,28 @@ fn should_carry_the_columns_section_thirty_seven_five_names() {
 
 #[test]
 fn should_reference_the_asset_by_the_short_identity_an_operator_can_type() {
-    let asset = ready_asset();
-    let lines = table(&[asset.clone()]);
+    let lines = table(&[ready_asset()]);
     assert!(
-        contains(&lines, &format!("recovery/{}", asset.id().short())),
-        "§36.4: a printed reference is one the operator can type back"
+        contains(&lines, "recovery/b817"),
+        "§36.4: a printed reference is one the operator can type back, never a full digest"
     );
 }
 
 #[test]
 fn should_name_the_plan_the_asset_belongs_to() {
-    let asset = ready_asset();
-    let plan = asset.source_plan().expect("the fixture names a plan");
-    let lines = table(&[asset.clone()]);
+    let lines = table(&[ready_asset()]);
     assert!(
-        contains(&lines, plan.short()),
+        contains(&lines, "a82f"),
         "§37.5's PLAN column is how an operator gets from an asset back to what created it"
+    );
+}
+
+#[test]
+fn should_say_none_for_an_asset_that_predates_any_plan() {
+    let lines = table(&[unmeasured_asset()]);
+    assert!(
+        contains(&lines, "none"),
+        "§11.1: an asset with no source plan has none, and `unknown` would claim otherwise"
     );
 }
 
@@ -113,8 +121,7 @@ fn should_render_an_asset_with_no_expiry_as_unknown() {
 
 #[test]
 fn should_say_an_asset_under_a_hold_is_held_rather_than_expiring() {
-    let held = ready_asset().retained_for(RetentionPolicy::held());
-    let lines = table(&[held]);
+    let lines = table(&[held_asset()]);
     assert!(
         contains(&lines, "held"),
         "§37.2: a hold is what stops automatic removal, and a countdown beside one would mislead"
@@ -123,8 +130,7 @@ fn should_say_an_asset_under_a_hold_is_held_rather_than_expiring() {
 
 #[test]
 fn should_say_an_asset_past_its_window_has_expired() {
-    let stale = ready_asset().expiring_at(later(60));
-    let lines = table(&[stale]);
+    let lines = table(&[expired_asset()]);
     assert!(
         contains(&lines, "expired"),
         "§37.1: an asset past its retention is no longer a way back, and the table says so"
@@ -171,8 +177,7 @@ fn should_render_an_empty_asset_list_without_inventing_a_row() {
 
 #[test]
 fn should_carry_a_cost_that_was_never_measured_as_unknown_even_when_it_is_estimated() {
-    let asset = zfs_asset().costing(RecoveryCost::unknown());
-    let lines = table(&[asset]);
+    let lines = table(&[unmeasured_asset()]);
     assert!(
         contains(&lines, "unknown") && !contains(&lines, "estimated"),
         "§37.5's label belongs to a figure, and there is no figure to label here"

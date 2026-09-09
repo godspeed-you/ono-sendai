@@ -175,14 +175,25 @@ pub fn recovery_view(recovery: &RecordValue, width: usize, charset: Charset) -> 
         }
     }
 
-    // A recovery plan is a plan (§3.8), so where the record carries §4.1's state the same
-    // Appendix F rule applies. `recover` produces this view and executes nothing, so a record
-    // without a state has not been applied either.
-    if !crate::plan::has_mutated(recovery) {
+    if !has_run(recovery) {
         lines.push(String::new());
         lines.push(RECOVERY_NOT_EXECUTED.to_owned());
     }
     lines
+}
+
+/// Whether the recovery itself has begun changing the system (§4.1's recovery branch).
+///
+/// A recovery plan is a plan (§3.8) and carries the same lifecycle, but the states that mean
+/// "something happened" are not the same ones: `recovery-planned` is §24.1's *planned and not
+/// applied*, which is exactly the state [`RECOVERY_NOT_EXECUTED`] exists to announce. A record
+/// with no state has not been applied either, because `recover` produces this view and executes
+/// nothing (§5.8).
+fn has_run(recovery: &RecordValue) -> bool {
+    matches!(
+        text(recovery, "state").as_deref(),
+        Some("recovering" | "recovered" | "recovery-failed" | "recovery-verified")
+    )
 }
 
 /// Whether recovery would take this newer state away (§24.3, Appendix C.3, C.4).

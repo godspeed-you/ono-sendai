@@ -260,6 +260,15 @@ impl ZfsProvider {
     /// A structured error when a program could not be run at all, or when its output was not in
     /// the machine form this provider validated against (Appendix G.4).
     pub fn survey(&self) -> Result<Layout, ErrorValue> {
+        Ok(self.survey_with_status()?.0)
+    }
+
+    /// The survey, and which of its six questions the tools actually answered.
+    ///
+    /// §56.1 asks the implementation to *prove* a fact, and a query that failed proves nothing —
+    /// so which query failed has to survive into the checklist rather than being flattened into
+    /// an empty list that looks like "there are none".
+    fn survey_with_status(&self) -> Result<(Layout, SurveyStatus), ErrorValue> {
         self.require_tools()?;
         let filesystems = self.zfs(&[
             "list",
@@ -307,8 +316,15 @@ impl ZfsProvider {
             "-o",
             "name,size,alloc,free,capacity,fragmentation,health",
         ])?;
-        let status = self.zpool(&["status"])?;
+        let pool_status = self.zpool(&["status"])?;
 
+        let status = SurveyStatus {
+            filesystems: filesystems.succeeded(),
+            snapshots: snapshots.succeeded(),
+            order: order.succeeded(),
+            bookmarks: bookmarks.succeeded(),
+            origins: origins.succeeded(),
+        };
         let mut datasets = if filesystems.succeeded() {
             crate::layout::datasets(ZFS, filesystems.stdout())?
         } else {
@@ -352,18 +368,21 @@ impl ZfsProvider {
         let pools = if listed.succeeded() {
             with_status(
                 crate::layout::pools(ZPOOL, listed.stdout())?,
-                status.stdout(),
+                pool_status.stdout(),
             )
         } else {
             Vec::new()
         };
-        Ok(Layout::new(
-            datasets,
-            snapshots,
-            order,
-            bookmarks,
-            pools,
-            self.mount_table()?,
+        Ok((
+            Layout::new(
+                datasets,
+                snapshots,
+                order,
+                bookmarks,
+                pools,
+                self.mount_table()?,
+            ),
+            status,
         ))
     }
 
@@ -546,7 +565,7 @@ impl ZfsProvider {
             |(head, _)| head.to_owned(),
         );
 
-        let layout = self.survey()?;
+        let (layout, status) = self.survey_with_status()?;
         let clones = self.zfs(&[
             "get",
             "-H",
@@ -648,6 +667,7 @@ impl ZfsProvider {
                 ZfsFact::DatasetIdentity,
                 dataset
                     .as_ref()
+                    .filter(|_| status.filesystems)
                     .map(|found| format!("ZFS reports the dataset `{}`", found.name)),
                 "ZFS did not report a dataset of this name",
             )
@@ -655,12 +675,13 @@ impl ZfsProvider {
                 ZfsFact::SnapshotExists,
                 snapshot
                     .as_ref()
+                    .filter(|_| status.snapshots)
                     .map(|found| format!("`{}` is present in `zfs list -t snapshot`", found.name)),
                 "the snapshot is not present in the snapshot listing",
             )
             .establishing(
                 ZfsFact::LatestRelevantSnapshot,
-                (layout.has_creation_order() && snapshot.is_some()).then(|| {
+                (status.order && layout.has_creation_order() && snapshot.is_some()).then(|| {
                     if layout.is_latest_snapshot(&reference) {
                         format!("`{reference}` is the newest snapshot its dataset holds")
                     } else {
@@ -674,7 +695,7 @@ impl ZfsProvider {
             )
             .establishing(
                 ZfsFact::ChildDatasetBoundaries,
-                (!layout.datasets().is_empty()).then(|| {
+                status.filesystems.then(|| {
                     format!(
                         "`{dataset_name}` has {} descendant dataset(s), each its own snapshot \
                          boundary",
@@ -726,7 +747,7 @@ impl ZfsProvider {
             )
         };
 
-        checklist = match &clone_names {
+        checklist = match clone_names.as_ref().filter(|_| status.origins) {
             Some(names) if names.is_empty() => checklist.established(
                 ZfsFact::AffectedClones,
                 format!("`zfs get clones {reference}` reports no clone"),
@@ -741,8 +762,11 @@ impl ZfsProvider {
             ),
         };
 
-        let bookmarks_read = layout.has_creation_order() || !layout.bookmarks().is_empty();
-        checklist = if layout.has_creation_order() && bookmarks_read && snapshot.is_some() {
+        checklist = if status.order
+            && status.bookmarks
+            && layout.has_creation_order()
+            && snapshot.is_some()
+        {
             checklist.established(
                 ZfsFact::NewerSnapshotsAndBookmarks,
                 format!(
@@ -833,6 +857,16 @@ impl ZfsProvider {
             checklist,
         })
     }
+}
+
+/// Which of §13.1's six questions the tools answered (§56.1, §56.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SurveyStatus {
+    filesystems: bool,
+    snapshots: bool,
+    order: bool,
+    bookmarks: bool,
+    origins: bool,
 }
 
 /// Everything one recovery plan rests on, read at one instant.

@@ -6,20 +6,50 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_change_core::ProtectionSummary;
+use ono_value::{RecordValue, Value};
 use ono_change_render::{
     Charset, collapsed_plan, coverage_matrix, plan_view, protection_block, recovery_asset_block,
 };
 
 mod support;
 use support::{
-    contains, protected_summary, ready_asset, sealed_nginx_plan, summary_without_exclusions,
-    unprotected_summary, zfs_asset,
+    contains, protected_exclusions, protected_rows, ready_asset, record, s, sealed_nginx_plan,
+    unprotected_rows, zfs_asset,
 };
+
+/// A plan carrying exactly a protection matrix, its level and its exclusions (§10.3).
+fn plan_with(level: &str, rows: Value, exclusions: Value) -> RecordValue {
+    record(
+        "ono.change-plan",
+        &[
+            ("id", s("a82f1c0d9e4b7a63")),
+            ("state", s("sealed")),
+            ("intent", s("replace nginx configuration")),
+            ("protection", rows),
+            ("protection_level", s(level)),
+            ("coverage_exclusions", exclusions),
+        ],
+    )
+}
+
+/// §64's plan: PROTECTED, with the exclusions Appendix A.6 keeps beside the word.
+fn protected_plan() -> RecordValue {
+    plan_with("protected", protected_rows(), protected_exclusions())
+}
+
+/// A plan nothing covers (§10.2's UNPROTECTED).
+fn unprotected_plan() -> RecordValue {
+    plan_with("unprotected", unprotected_rows(), Value::list([]))
+}
+
+/// A plan whose analysis recorded no exclusion at all, which Appendix E.8 still bounds.
+fn plan_without_exclusions() -> RecordValue {
+    plan_with("protected", protected_rows(), Value::list([]))
+}
 
 #[test]
 fn should_show_one_row_per_domain_with_its_objective_and_its_level() {
-    let lines = coverage_matrix(&protected_summary(), 100, Charset::Ascii);
+    let lines = coverage_matrix(&protected_plan(), 100, Charset::Ascii);
     assert!(
         contains(&lines, "filesystem-persistent") && contains(&lines, "preserve-exact"),
         "§10.3: the matrix is per effect domain, and the objective is half of what a row says"
@@ -32,10 +62,10 @@ fn should_show_one_row_per_domain_with_its_objective_and_its_level() {
 
 #[test]
 fn should_never_render_the_level_without_the_exclusions_beside_it() {
-    let summary = protected_summary();
+    let plan = protected_plan();
     for lines in [
-        protection_block(&summary, &[zfs_asset()], 100, Charset::Ascii),
-        coverage_matrix(&summary, 100, Charset::Ascii),
+        protection_block(&plan, &[zfs_asset()], 100, Charset::Ascii),
+        coverage_matrix(&plan, 100, Charset::Ascii),
         plan_view(&sealed_nginx_plan(), &[zfs_asset()], 100, Charset::Ascii),
         collapsed_plan(&sealed_nginx_plan(), 100, Charset::Ascii),
     ] {
@@ -52,7 +82,7 @@ fn should_never_render_the_level_without_the_exclusions_beside_it() {
 
 #[test]
 fn should_render_the_runtime_exclusions_of_a_protected_plan() {
-    let lines = protection_block(&protected_summary(), &[], 100, Charset::Ascii);
+    let lines = protection_block(&protected_plan(), &[], 100, Charset::Ascii);
     for excluded in [
         "process memory",
         "active TCP sessions",
@@ -67,7 +97,7 @@ fn should_render_the_runtime_exclusions_of_a_protected_plan() {
 
 #[test]
 fn should_say_in_words_when_no_exclusion_was_recorded() {
-    let lines = protection_block(&summary_without_exclusions(), &[], 100, Charset::Ascii);
+    let lines = protection_block(&plan_without_exclusions(), &[], 100, Charset::Ascii);
     assert!(
         contains(&lines, "no exclusion was recorded"),
         "§10.5: a blank where the residual risk goes reads as an assurance, and it is not one"
@@ -80,7 +110,7 @@ fn should_say_in_words_when_no_exclusion_was_recorded() {
 
 #[test]
 fn should_mark_an_irreversible_exclusion_with_the_risk_symbol() {
-    let lines = protection_block(&protected_summary(), &[], 100, Charset::Ascii);
+    let lines = protection_block(&protected_plan(), &[], 100, Charset::Ascii);
     let line = lines
         .iter()
         .find(|line| line.contains("active TCP sessions"))
@@ -93,7 +123,7 @@ fn should_mark_an_irreversible_exclusion_with_the_risk_symbol() {
 
 #[test]
 fn should_mark_an_unmet_required_domain_as_risk_rather_than_leaving_it_to_be_noticed() {
-    let lines = coverage_matrix(&unprotected_summary(), 100, Charset::Ascii);
+    let lines = coverage_matrix(&unprotected_plan(), 100, Charset::Ascii);
     let row = lines
         .iter()
         .find(|line| line.contains("filesystem-persistent"))
@@ -106,12 +136,12 @@ fn should_mark_an_unmet_required_domain_as_risk_rather_than_leaving_it_to_be_not
 
 #[test]
 fn should_spell_the_plan_level_word_the_way_section_ten_two_spells_it() {
-    let lines = coverage_matrix(&protected_summary(), 100, Charset::Ascii);
+    let lines = coverage_matrix(&protected_plan(), 100, Charset::Ascii);
     assert!(
         contains(&lines, "PROTECTED <->"),
         "§10.2 fixes the canonical words and §20.3 fixes the mark that goes with them"
     );
-    let partial = coverage_matrix(&unprotected_summary(), 100, Charset::Ascii);
+    let partial = coverage_matrix(&unprotected_plan(), 100, Charset::Ascii);
     assert!(
         contains(&partial, "UNPROTECTED"),
         "§10.2's word for a plan nothing covers is UNPROTECTED"
@@ -120,7 +150,8 @@ fn should_spell_the_plan_level_word_the_way_section_ten_two_spells_it() {
 
 #[test]
 fn should_say_a_matrix_with_no_rows_was_never_analysed() {
-    let lines = coverage_matrix(&ProtectionSummary::empty(), 80, Charset::Ascii);
+    let plan = plan_with("unknown", Value::list([]), Value::list([]));
+    let lines = coverage_matrix(&plan, 80, Charset::Ascii);
     assert!(
         contains(&lines, "no domain was analysed"),
         "§10.5 and §2.4: an unanalysed plan is not an unprotected one, and neither is it a safe one"
@@ -189,7 +220,7 @@ fn should_keep_the_asset_in_the_state_it_is_actually_in() {
 #[test]
 fn should_lay_the_protection_block_out_at_the_width_it_was_given() {
     for width in [40usize, 80, 120] {
-        let lines = protection_block(&protected_summary(), &[zfs_asset()], width, Charset::Ascii);
+        let lines = protection_block(&protected_plan(), &[zfs_asset()], width, Charset::Ascii);
         for line in &lines {
             assert!(
                 line.chars().count() <= width,
@@ -201,7 +232,7 @@ fn should_lay_the_protection_block_out_at_the_width_it_was_given() {
 
 #[test]
 fn should_draw_the_unicode_marks_when_the_session_chose_unicode() {
-    let lines = protection_block(&protected_summary(), &[], 80, Charset::Unicode);
+    let lines = protection_block(&protected_plan(), &[], 80, Charset::Unicode);
     assert!(
         contains(&lines, "\u{2194}"),
         "§20.3 permits a better glyph when terminal support is known"

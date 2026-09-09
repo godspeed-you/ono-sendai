@@ -2283,6 +2283,16 @@ the provider samples — and no assertion changed.
 
 ## Found, not yet filed
 
+- **`ono_testkit::scratch()` falls back to `/tmp` outside a test binary's own crate.** `Scratch`
+  reads `CARGO_TARGET_TMPDIR`, which cargo exports at compile time only, so a helper compiled into
+  `ono-testkit` and called from another crate's suite lands in `/tmp`. On this machine `/tmp` is a
+  quota'd tmpfs, and a tmpfs is precisely what v0.6 §15's file recovery provider refuses to treat
+  as a persistence domain — so a suite that scratches there tests the refusal rather than the
+  feature. `crates/ono-recovery-files/tests/` works around it by building its scratch from
+  `env!("CARGO_TARGET_TMPDIR")` in its own fixture. What closes it: `scratch()` taking the
+  directory from the caller through a macro, so the constant is expanded where the test is.
+
+
 - **A second release run compares a fresh package against the previous release's manifest
   (2026-09-09, found running `release-check.sh` for v0.5.0).** `scripts/package.sh` writes into a
   `dist/` it does not clear, so the v0.4.1 `.deb`, `.rpm` and `SHA256SUMS` of 2026-09-05 were still
