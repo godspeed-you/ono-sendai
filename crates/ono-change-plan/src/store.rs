@@ -223,7 +223,9 @@ impl Claim<'_> {
     /// session took the plan over, and `change.plan_store_unavailable` where the store cannot be
     /// written.
     pub fn renew(&mut self, now: Timestamp) -> Result<(), ErrorValue> {
-        let expires_at = self.store.take_claim(&self.plan, &self.session, now, CLAIM_LEASE)?;
+        let expires_at = self
+            .store
+            .take_claim(&self.plan, &self.session, now, CLAIM_LEASE)?;
         self.expires_at = expires_at;
         Ok(())
     }
@@ -463,7 +465,10 @@ impl PlanStore {
             .optional()
             .map_err(|failure| self.unavailable(&failure))?;
         let Some((encoded, impact)) = stored else {
-            return Err(error::plan_not_found(&render_plan(plan, plan.as_str().len())));
+            return Err(error::plan_not_found(&render_plan(
+                plan,
+                plan.as_str().len(),
+            )));
         };
         let record = self.decode(&encoded, "record")?;
         let statuses = self.action_statuses(plan, revision)?;
@@ -710,8 +715,10 @@ impl PlanStore {
             let status = ActionStatus::from_name(&status).ok_or_else(|| {
                 error::record_malformed(
                     "status",
-                    &format!("`{status}` is not a status §4.7 spells, so the plan cannot be \
-                              reconstructed from it"),
+                    &format!(
+                        "`{status}` is not a status §4.7 spells, so the plan cannot be \
+                              reconstructed from it"
+                    ),
                 )
             })?;
             statuses.insert(id, status);
@@ -778,7 +785,9 @@ impl PlanStore {
             )
             .optional()
             .map_err(|failure| self.unavailable(&failure))?;
-        Ok(held.filter(|(_, expires)| *expires > nanos(now)).map(|(session, _)| Arc::from(session.as_str())))
+        Ok(held
+            .filter(|(_, expires)| *expires > nanos(now))
+            .map(|(session, _)| Arc::from(session.as_str())))
     }
 
     /// Writes the claim row, refusing a live one held by another session (§42.4).
@@ -814,12 +823,7 @@ impl PlanStore {
                  VALUES (?1, ?2, ?3, ?4) ON CONFLICT (plan_id) DO UPDATE SET \
                  session = excluded.session, claimed_nanos = excluded.claimed_nanos, \
                  expires_nanos = excluded.expires_nanos",
-                params![
-                    plan.as_str(),
-                    session,
-                    nanos(now),
-                    nanos(expires_at),
-                ],
+                params![plan.as_str(), session, nanos(now), nanos(expires_at),],
             )
             .map_err(|failure| self.unavailable(&failure))?;
         transaction
@@ -1040,7 +1044,10 @@ impl PlanStore {
     /// Reads one stored record back, refusing a row this build cannot decode (§36.2).
     fn decode(&self, encoded: &str, field: &str) -> Result<RecordValue, ErrorValue> {
         let value = ono_value::from_json_str(encoded, &self.schemas).map_err(|failure| {
-            error::record_malformed(field, &format!("the stored value is not readable: {failure}"))
+            error::record_malformed(
+                field,
+                &format!("the stored value is not readable: {failure}"),
+            )
         })?;
         match value {
             Value::Record(record) => Ok((*record).clone()),
@@ -1167,7 +1174,10 @@ fn nanos(at: Timestamp) -> i64 {
 /// One stored instant, refusing a number that is not one (§36.2).
 fn instant(nanos: i64, field: &str) -> Result<Timestamp, ErrorValue> {
     Timestamp::from_nanosecond(i128::from(nanos)).map_err(|failure| {
-        error::record_malformed(field, &format!("a stored instant is not a timestamp: {failure}"))
+        error::record_malformed(
+            field,
+            &format!("a stored instant is not a timestamp: {failure}"),
+        )
     })
 }
 
@@ -1409,7 +1419,10 @@ mod tests {
             .locked()
             .execute(
                 "UPDATE plans SET record = ?1 WHERE plan_id = ?2",
-                params!["{\"$record\": {\"schema\": \"nonsense\"}}", plan.id().as_str()],
+                params![
+                    "{\"$record\": {\"schema\": \"nonsense\"}}",
+                    plan.id().as_str()
+                ],
             )
             .expect("the row is damaged");
         let refusal = store

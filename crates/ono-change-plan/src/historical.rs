@@ -85,7 +85,11 @@ mod tests {
 
     #[test]
     fn should_refuse_every_command_the_caller_hands_it_while_in_the_past() {
-        for command in ["plan restart service nginx", "apply plan/a82f", "recover plan/a82f"] {
+        for command in [
+            "plan restart service nginx",
+            "apply plan/a82f",
+            "recover plan/a82f",
+        ] {
             assert!(
                 refuse_in_past(command, true).is_err(),
                 "§2.5: a change plan that will be applied MUST be resolved against present state, \

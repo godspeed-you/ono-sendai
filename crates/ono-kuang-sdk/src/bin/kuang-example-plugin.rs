@@ -22,9 +22,8 @@ use ono_kuang_protocol::{
     EffectClassContribution, EmitParams, Envelope, FrameLimits, Hello, Idempotency,
     ImpactProviderContribution, InitResult, InvokeParams, InvokeResult, InvokeStatus,
     PACKAGE_FORMAT, ParameterContribution, RecoveryProviderContribution, RiskRuleContribution,
-    SchemaContribution, SchemaFieldContribution, TargetContribution,
-    TransactionContribution, VerificationCheckContribution, VerificationProviderContribution,
-    ViewContribution, method,
+    SchemaContribution, SchemaFieldContribution, TargetContribution, TransactionContribution,
+    VerificationCheckContribution, VerificationProviderContribution, ViewContribution, method,
 };
 use ono_kuang_sdk::{Ctx, Outcome, Plugin};
 use ono_value::{Provenance, RecordValue, Value};
@@ -353,8 +352,7 @@ fn change_provider(flaw: Option<&str>) -> Plugin {
                 VerificationCheckContribution {
                     kind: "database-accepts-connections".to_owned(),
                     equivalence: "runtime-state".to_owned(),
-                    summary: "The database answers. It says nothing about its contents."
-                        .to_owned(),
+                    summary: "The database answers. It says nothing about its contents.".to_owned(),
                 },
                 VerificationCheckContribution {
                     kind: "table-row-counts-match".to_owned(),
@@ -400,11 +398,7 @@ fn change_provider(flaw: Option<&str>) -> Plugin {
         .command(&format!("{PACKAGE}.command.plan-contribute"), |ctx| {
             let plan = text_argument(ctx, "plan", "plan-1");
             let class = text_argument(ctx, "class", "low");
-            let rule = text_argument(
-                ctx,
-                "rule",
-                &format!("{PACKAGE}.risk.database-restart"),
-            );
+            let rule = text_argument(ctx, "rule", &format!("{PACKAGE}.risk.database-restart"));
             let params = json!({
                 "plan": plan,
                 "actions": [],
@@ -581,7 +575,8 @@ fn text_argument(ctx: &Ctx<'_>, name: &str, fallback: &str) -> String {
 fn emit_text(ctx: &mut Ctx<'_>, text: &str) -> Outcome {
     match ctx.emit(&Value::String(text.into())) {
         Ok(()) => Outcome::Completed,
-        Err(error) => Outcome::Failed(error.into()),
+        // The host cancelled or the stream is gone; neither is a failure of the call.
+        Err(_) => Outcome::Cancelled,
     }
 }
 

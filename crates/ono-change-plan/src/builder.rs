@@ -31,7 +31,7 @@ use ono_change_core::{
     ActionId, ActionRole, ChangePlan, EffectConfidence, EffectDomain, EffectKind, Execution,
     FrozenTarget, Idempotency, ImpactGraph, Intent, PlanAction, PlanFragment, PlanId, PlanKind,
     ProposedEffect, ProtectionMode, ProtectionSummary, ProviderBinding, RiskAssessment, Strategy,
-    VerificationContract, VerificationSet, error,
+    VerificationContract, VerificationSet, VerificationStatus, error,
 };
 use ono_value::ErrorValue;
 
@@ -601,7 +601,11 @@ impl PlanBuilder {
         let actions: Vec<&PlanAction> = self
             .actions
             .iter()
-            .filter(|action| action.target().is_none_or(|named| named == target.identity()))
+            .filter(|action| {
+                action
+                    .target()
+                    .is_none_or(|named| named == target.identity())
+            })
             .collect();
         let mut remap: BTreeMap<ActionId, ActionId> = BTreeMap::new();
         let mut rebound = Vec::with_capacity(actions.len());
@@ -658,6 +662,10 @@ impl PlanBuilder {
                 Some(redacted),
             ))?;
         }
+        let contracts = contracts
+            .iter()
+            .map(|contract| rebind_contract(&id, contract))
+            .collect();
         plan = plan
             .with_impact(self.impact.clone())
             .with_protection(self.protection.clone())
@@ -738,6 +746,33 @@ fn rebind(
     next.with_status(action.status())
 }
 
+/// One verification contract rebuilt against `plan` (§23.1).
+///
+/// A [`ono_change_core::CheckId`] is derived from the plan, the subject and the expression, so a
+/// contract that travelled from one plan to another — a fragment built against the draft, a
+/// per-object plan of §5.3 — carries an identity that belongs to a different plan. §4.4 seals the
+/// verification contracts, and a store reading the plan back derives the identity from the plan it
+/// is in, so a contract that was not rebound would make the seal stop verifying after a round trip.
+fn rebind_contract(plan: &PlanId, contract: &VerificationContract) -> VerificationContract {
+    let mut next = VerificationContract::new(
+        plan,
+        contract.class(),
+        contract.subject(),
+        contract.expression(),
+    )
+    .within(contract.timeout());
+    if contract.timeout_status() == VerificationStatus::Unknown {
+        next = next.timeout_is_unknown();
+    }
+    if let Some(expected) = contract.expected() {
+        next = next.expecting(expected.clone());
+    }
+    if let Some(domain) = contract.equivalence() {
+        next = next.about(domain);
+    }
+    next
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(
@@ -800,8 +835,13 @@ mod tests {
     }
 
     fn contract(plan: &PlanId, subject: &str) -> VerificationContract {
-        VerificationContract::new(plan, VerificationClass::Required, subject, "state == running")
-            .expecting(Value::string("running"))
+        VerificationContract::new(
+            plan,
+            VerificationClass::Required,
+            subject,
+            "state == running",
+        )
+        .expecting(Value::string("running"))
     }
 
     fn fragment(plan: &PlanId, units: &[&str]) -> PlanFragment {
@@ -904,7 +944,8 @@ mod tests {
     #[test]
     fn should_record_an_unknown_version_when_a_provider_declares_none() {
         let builder = builder();
-        let contribution = PlanFragment::empty().acting(restart(builder.plan_id(), 1, "nginx.service"));
+        let contribution =
+            PlanFragment::empty().acting(restart(builder.plan_id(), 1, "nginx.service"));
         let plan = builder
             .contributing(&contribution)
             .expect("a fragment is accepted")
@@ -948,14 +989,13 @@ mod tests {
     #[test]
     fn should_attach_a_fragment_precondition_to_its_first_action() {
         let builder = builder();
-        let contribution = fragment(builder.plan_id(), &["nginx.service"]).requiring(
-            Precondition::new(
+        let contribution =
+            fragment(builder.plan_id(), &["nginx.service"]).requiring(Precondition::new(
                 PreconditionKind::ProviderAvailable,
                 "ono.service.systemd",
                 "available",
                 Value::Bool(true),
-            ),
-        );
+            ));
         let plan = builder
             .contributing(&contribution)
             .expect("a fragment is accepted")
@@ -986,7 +1026,11 @@ mod tests {
             .expect("two targets resolve")
             .seal(later())
             .expect("a plan seals");
-        let ids: Vec<&str> = plan.actions().iter().map(|action| action.id().as_str()).collect();
+        let ids: Vec<&str> = plan
+            .actions()
+            .iter()
+            .map(|action| action.id().as_str())
+            .collect();
         let mut unique = ids.clone();
         unique.sort_unstable();
         unique.dedup();
@@ -1071,7 +1115,11 @@ mod tests {
             .expect("two targets resolve")
             .seal_with(PlanGranularity::PlanPerObject, later())
             .expect("both plans seal");
-        assert_eq!(plans.len(), 2, "§5.3: the explicit request is one per object");
+        assert_eq!(
+            plans.len(),
+            2,
+            "§5.3: the explicit request is one per object"
+        );
         for plan in &plans {
             assert_eq!(
                 plan.targets().len(),
@@ -1177,7 +1225,10 @@ mod tests {
         let refusal = builder()
             .resolve_streaming(vec![
                 Ok(service("a.service")),
-                Err(error::target_unresolved("b", "the object vanished mid-resolution")),
+                Err(error::target_unresolved(
+                    "b",
+                    "the object vanished mid-resolution",
+                )),
             ])
             .expect_err("§4.3 refuses a set it could not freeze");
         assert_eq!(refusal.code(), ErrorCode::ChangeTargetUnresolved);
@@ -1188,7 +1239,10 @@ mod tests {
     #[test]
     fn should_accept_a_block_of_action_descriptions() {
         let block = BlockPlan::of(vec![
-            BlockStatement::action("replace", "replace file /etc/nginx/nginx.conf from ./nginx.conf"),
+            BlockStatement::action(
+                "replace",
+                "replace file /etc/nginx/nginx.conf from ./nginx.conf",
+            ),
             BlockStatement::action("validate", "validate config nginx"),
             BlockStatement::action("restart", "restart service nginx"),
             BlockStatement::action("verify", "verify service nginx state == running"),
@@ -1412,7 +1466,10 @@ mod tests {
             .seal(later())
             .expect("a plan seals");
         assert!(
-            !plan.actions()[0].execution().digest_text().contains("hunter2"),
+            !plan.actions()[0]
+                .execution()
+                .digest_text()
+                .contains("hunter2"),
             "§36.3: the secret leaves the plan before §4.4's digest is taken over it"
         );
         assert!(plan.digest_holds(), "§4.4: the seal describes the plan");
@@ -1447,7 +1504,10 @@ mod tests {
             .seal(later())
             .expect("a plan seals");
         assert!(
-            plan.actions()[0].execution().digest_text().contains("alice"),
+            plan.actions()[0]
+                .execution()
+                .digest_text()
+                .contains("alice"),
             "§36.3 redacts secrets, and the rest of the plan stays readable"
         );
     }
@@ -1478,7 +1538,10 @@ mod tests {
             .seal(later())
             .expect("a plan seals");
         assert!(
-            plan.actions()[0].execution().digest_text().contains("hunter2"),
+            plan.actions()[0]
+                .execution()
+                .digest_text()
+                .contains("hunter2"),
             "§36.3 is driven by a declared set, and a caller that declares nothing gets nothing"
         );
     }
@@ -1489,7 +1552,9 @@ mod tests {
     fn should_seal_a_plan_over_thousands_of_targets_within_the_budget() {
         let builder = builder();
         let contribution = fragment(builder.plan_id(), &["a.service"]);
-        let units: Vec<String> = (0..5_000).map(|index| format!("s{index}.service")).collect();
+        let units: Vec<String> = (0..5_000)
+            .map(|index| format!("s{index}.service"))
+            .collect();
         let start = std::time::Instant::now();
         let plan = builder
             .contributing(&contribution)

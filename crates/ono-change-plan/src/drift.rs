@@ -51,7 +51,10 @@ impl DriftVerdictSummary {
     /// Whether this conclusion stops the plan before anything is prepared (§7.3).
     #[must_use]
     pub const fn blocks_apply(self) -> bool {
-        !matches!(self, DriftVerdictSummary::Clear | DriftVerdictSummary::Tolerated)
+        !matches!(
+            self,
+            DriftVerdictSummary::Clear | DriftVerdictSummary::Tolerated
+        )
     }
 }
 
@@ -234,11 +237,14 @@ fn declared_existence<'plan>(
     plan: &'plan ChangePlan,
     target: &FrozenTarget,
 ) -> Option<&'plan Precondition> {
-    plan.actions().iter().flat_map(|action| action.preconditions()).find(|precondition| {
-        precondition.kind() == PreconditionKind::Existence
-            && (precondition.subject() == target.identity()
-                || precondition.subject() == target.label())
-    })
+    plan.actions()
+        .iter()
+        .flat_map(|action| action.preconditions())
+        .find(|precondition| {
+            precondition.kind() == PreconditionKind::Existence
+                && (precondition.subject() == target.identity()
+                    || precondition.subject() == target.label())
+        })
 }
 
 /// Whether this precondition is the one the target loop already checked.
@@ -365,7 +371,10 @@ mod tests {
     }
 
     /// An observer that answers the target's existence and one named field.
-    fn observer(alive: bool, answers: Vec<(&'static str, Option<Value>)>) -> impl Fn(&Precondition) -> Option<Value> {
+    fn observer(
+        alive: bool,
+        answers: Vec<(&'static str, Option<Value>)>,
+    ) -> impl Fn(&Precondition) -> Option<Value> {
         move |precondition: &Precondition| {
             if precondition.kind() == PreconditionKind::Existence {
                 return Some(Value::Bool(alive));
@@ -455,7 +464,10 @@ mod tests {
             plan, before,
             "§7.3: material drift stops execution before anything is prepared or mutated"
         );
-        assert!(plan.digest_holds(), "§4.4: the seal is untouched by revalidation");
+        assert!(
+            plan.digest_holds(),
+            "§4.4: the seal is untouched by revalidation"
+        );
     }
 
     #[test]
@@ -486,7 +498,10 @@ mod tests {
         .tolerant()
         .explained("cpu usage does not invalidate a restart");
         let plan = plan_with(vec![cpu]);
-        let report = revalidate(&plan, &observer(true, vec![("cpu", Some(Value::Float(41.0)))]));
+        let report = revalidate(
+            &plan,
+            &observer(true, vec![("cpu", Some(Value::Float(41.0)))]),
+        );
         assert_eq!(
             report.verdict(),
             DriftVerdictSummary::Tolerated,
@@ -506,7 +521,10 @@ mod tests {
         )
         .tolerant();
         let plan = plan_with(vec![cpu]);
-        let report = revalidate(&plan, &observer(true, vec![("cpu", Some(Value::Float(41.0)))]));
+        let report = revalidate(
+            &plan,
+            &observer(true, vec![("cpu", Some(Value::Float(41.0)))]),
+        );
         assert_eq!(
             report.findings().len(),
             1,

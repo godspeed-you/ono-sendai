@@ -1,7 +1,7 @@
 # Recorded output of real Btrfs tools
 
 Every file here is the verbatim stdout+stderr of one real command, run against a real Btrfs
-filesystem on `btrfs-progs v6.16` on Linux 7.0. The first line of each file is the command; the
+filesystem on `btrfs-progs v6.17.1` on Linux 7.0. The first line of each file is the command; the
 last is `[exit <status>]`.
 
 They exist because spec v0.6 §54.4 asks for real Btrfs where the environment permits, and because

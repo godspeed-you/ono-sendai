@@ -633,6 +633,11 @@ fn storage_tool_output(data: &[u8]) {
         return;
     };
     let text = String::from_utf8_lossy(rest);
+    // The high bit picks the filesystem, so one corpus reaches both providers' readers.
+    if selector & 0x80 != 0 {
+        btrfs_tool_output(selector & 0x7f, &text);
+        return;
+    }
     let program = "/usr/sbin/zfs";
     match selector % 8 {
         0 => {
@@ -682,6 +687,57 @@ fn storage_tool_output(data: &[u8]) {
             assert!(
                 !part.contains(['/', '@', ' ', ';', '\n', '`', '$', '\'', '"']),
                 "a snapshot part derived from `{text}` carries syntax: `{part}`"
+            );
+        }
+    }
+}
+
+/// The Btrfs readers, over output a tool did not produce (§54.3, §14.1, §43.6).
+///
+/// `btrfs subvolume show` is a key-indented block and `btrfs subvolume list` is a token stream
+/// whose columns shift with its flags, so both are exactly the shape that breaks quietly on a
+/// version bump. Appendix G.4 is the rule that makes that survivable — a version the provider has
+/// not validated degrades to unsupported — and this is what proves the readers reach that answer
+/// rather than a half-parsed one.
+fn btrfs_tool_output(selector: u8, text: &str) {
+    match selector % 8 {
+        0 => {
+            let _ = ono_recovery_btrfs::parse::parse_subvolume_show(text);
+        }
+        1 => {
+            let _ = ono_recovery_btrfs::parse::parse_subvolume_list(text);
+        }
+        2 => {
+            let _ = ono_recovery_btrfs::parse::parse_filesystem_show(text);
+        }
+        3 => {
+            let _ = ono_recovery_btrfs::parse::parse_filesystem_usage(text);
+        }
+        4 => {
+            let _ = ono_recovery_btrfs::parse::parse_get_default(text);
+        }
+        5 => {
+            let _ = ono_recovery_btrfs::parse::parse_read_only_property(text);
+            let _ = ono_recovery_btrfs::parse::parse_deleted_subvolume_id(text);
+        }
+        6 => {
+            let _ = ono_recovery_btrfs::parse::parse_version(text);
+        }
+        _ => {
+            // §43.6 and Appendix D.8: a snapshot lands at a path, so the name has to be one no
+            // path traversal and no shell can reinterpret.
+            let name = ono_recovery_btrfs::config::snapshot_name("a82f", text);
+            assert!(
+                !name.contains(['/', '\\', ' ', ';', '\n', '`', '$', '\'', '"']),
+                "a Btrfs snapshot name derived from `{text}` carries syntax: `{name}`"
+            );
+            assert!(
+                name != "." && name != ".." && !name.contains(".."),
+                "a Btrfs snapshot name derived from `{text}` can leave its namespace: `{name}`"
+            );
+            assert!(
+                !name.is_empty(),
+                "a Btrfs snapshot name derived from `{text}` is empty"
             );
         }
     }

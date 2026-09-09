@@ -1811,6 +1811,7 @@ dependencies = [
  "ono-protocol",
  "ono-provider-linux",
  "ono-provider-netlink",
+ "ono-recovery-btrfs",
  "ono-recovery-zfs",
  "ono-spatial-core",
  "ono-temporal-core",

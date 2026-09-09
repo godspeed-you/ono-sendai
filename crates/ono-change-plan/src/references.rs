@@ -139,12 +139,18 @@ pub fn render_plan(plan: &PlanId, width: usize) -> String {
 /// One recovery-asset reference, rendered at `width` with §37.5's `recovery/` marker.
 #[must_use]
 pub fn render_asset(asset: &RecoveryAssetId, width: usize) -> String {
-    format!("{}{}", RecoveryAssetId::PREFIX, truncate(asset.as_str(), width))
+    format!(
+        "{}{}",
+        RecoveryAssetId::PREFIX,
+        truncate(asset.as_str(), width)
+    )
 }
 
 /// The first `width` characters of `identity`, or all of it when it is shorter.
 fn truncate(identity: &str, width: usize) -> &str {
-    identity.get(..width.min(identity.len())).unwrap_or(identity)
+    identity
+        .get(..width.min(identity.len()))
+        .unwrap_or(identity)
 }
 
 /// The refusal for text that is not an identity at all.

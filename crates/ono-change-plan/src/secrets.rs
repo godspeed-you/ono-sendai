@@ -82,7 +82,10 @@ impl SecretRedaction {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            names: SENSITIVE_ARGUMENTS.iter().map(|name| Arc::from(*name)).collect(),
+            names: SENSITIVE_ARGUMENTS
+                .iter()
+                .map(|name| Arc::from(*name))
+                .collect(),
         }
     }
 
@@ -126,8 +129,9 @@ impl SecretRedaction {
     /// store both apply it without the second pass changing what the first sealed.
     #[must_use]
     pub fn is_handle(text: &str) -> bool {
-        text.strip_prefix(HANDLE_PREFIX)
-            .is_some_and(|body| body.len() == HANDLE_WIDTH && body.bytes().all(|b| b.is_ascii_hexdigit()))
+        text.strip_prefix(HANDLE_PREFIX).is_some_and(|body| {
+            body.len() == HANDLE_WIDTH && body.bytes().all(|b| b.is_ascii_hexdigit())
+        })
     }
 
     /// The opaque handle that stands in for `value` given under `name` (§36.3).
@@ -340,7 +344,8 @@ pub(crate) fn rebuild_record(
     let Some(replacement) = replacement else {
         return Ok(record.clone());
     };
-    let mut builder = RecordValue::builder(Arc::clone(record.schema()), record.provenance().clone());
+    let mut builder =
+        RecordValue::builder(Arc::clone(record.schema()), record.provenance().clone());
     for declared in record.schema().fields() {
         let name = declared.name();
         let value = if name == field {
@@ -437,7 +442,9 @@ mod tests {
         assert!(SecretRedaction::is_handle(&handle));
         assert!(!SecretRedaction::is_handle("hunter2"));
         assert!(!SecretRedaction::is_handle("secret:sha256-"));
-        assert!(!SecretRedaction::is_handle("secret:sha256-zzzzzzzzzzzzzzzz"));
+        assert!(!SecretRedaction::is_handle(
+            "secret:sha256-zzzzzzzzzzzzzzzz"
+        ));
     }
 
     #[test]

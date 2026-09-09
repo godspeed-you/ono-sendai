@@ -281,6 +281,10 @@ mod tests {
             3,
             "§3.2: the revision increases monotonically and never repeats"
         );
-        assert_eq!(second.revision(), 2, "§7.5: the one it came from is untouched");
+        assert_eq!(
+            second.revision(),
+            2,
+            "§7.5: the one it came from is untouched"
+        );
     }
 }

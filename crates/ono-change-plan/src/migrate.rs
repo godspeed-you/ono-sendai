@@ -152,7 +152,9 @@ mod tests {
     #[test]
     fn should_keep_the_steps_in_ascending_order() {
         assert!(
-            STEPS.windows(2).all(|pair| pair[0].version < pair[1].version),
+            STEPS
+                .windows(2)
+                .all(|pair| pair[0].version < pair[1].version),
             "migrations are forward-only and applied in order (§36.2)"
         );
     }

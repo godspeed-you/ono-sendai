@@ -335,6 +335,24 @@ declared:
   - id: "crates/ono-recovery-zfs/tests/real_zfs.rs::should_record_each_dataset_of_a_recursive_creation_individually_on_a_live_pool"
     category: fixture_not_applicable
     prerequisite: "a root session with `zfs` and `zpool`, and `ONO_ZFS_TESTS=1`, so the suite may build its own disposable pool on a loop file and destroy it afterwards (v0.6 Appendix G.3)"
+  - id: "crates/ono-recovery-btrfs/tests/real_btrfs.rs::should_resolve_a_real_subvolume_identity_from_real_metadata"
+    category: fixture_not_applicable
+    prerequisite: "`ONO_BTRFS_TESTS=1`, a validated `btrfs-progs`, and the privilege to make and mount a loop device, so the suite may build its own disposable filesystem and tear it down (v0.6 Appendix G.3)"
+  - id: "crates/ono-recovery-btrfs/tests/real_btrfs.rs::should_find_the_real_nested_subvolume_boundary"
+    category: fixture_not_applicable
+    prerequisite: "`ONO_BTRFS_TESTS=1`, a validated `btrfs-progs`, and the privilege to make and mount a loop device, so the suite may build its own disposable filesystem and tear it down (v0.6 Appendix G.3)"
+  - id: "crates/ono-recovery-btrfs/tests/real_btrfs.rs::should_show_an_empty_directory_where_a_nested_subvolume_was_in_a_real_snapshot"
+    category: fixture_not_applicable
+    prerequisite: "`ONO_BTRFS_TESTS=1`, a validated `btrfs-progs`, and the privilege to make and mount a loop device, so the suite may build its own disposable filesystem and tear it down (v0.6 Appendix G.3)"
+  - id: "crates/ono-recovery-btrfs/tests/real_btrfs.rs::should_create_a_real_read_only_snapshot_and_verify_the_flag"
+    category: fixture_not_applicable
+    prerequisite: "`ONO_BTRFS_TESTS=1`, a validated `btrfs-progs`, and the privilege to make and mount a loop device, so the suite may build its own disposable filesystem and tear it down (v0.6 Appendix G.3)"
+  - id: "crates/ono-recovery-btrfs/tests/real_btrfs.rs::should_restore_one_real_file_out_of_a_real_snapshot"
+    category: fixture_not_applicable
+    prerequisite: "`ONO_BTRFS_TESTS=1`, a validated `btrfs-progs`, and the privilege to make and mount a loop device, so the suite may build its own disposable filesystem and tear it down (v0.6 Appendix G.3)"
+  - id: "crates/ono-recovery-btrfs/tests/real_btrfs.rs::should_report_a_real_cost_that_is_estimated_and_never_zero"
+    category: fixture_not_applicable
+    prerequisite: "`ONO_BTRFS_TESTS=1`, a validated `btrfs-progs`, and the privilege to make and mount a loop device, so the suite may build its own disposable filesystem and tear it down (v0.6 Appendix G.3)"
 
 canonical_ci:
   # The `ubuntu-latest` GitHub runner that `.github/workflows/ci.yml` runs the gate on: an
@@ -370,6 +388,12 @@ canonical_ci:
     - "crates/ono-recovery-zfs/tests/real_zfs.rs::should_recover_one_changed_file_without_reverting_unrelated_state_on_a_live_pool"
     - "crates/ono-recovery-zfs/tests/real_zfs.rs::should_block_a_full_rollback_that_would_destroy_a_newer_snapshot_on_a_live_pool"
     - "crates/ono-recovery-zfs/tests/real_zfs.rs::should_record_each_dataset_of_a_recursive_creation_individually_on_a_live_pool"
+    - "crates/ono-recovery-btrfs/tests/real_btrfs.rs::should_resolve_a_real_subvolume_identity_from_real_metadata"
+    - "crates/ono-recovery-btrfs/tests/real_btrfs.rs::should_find_the_real_nested_subvolume_boundary"
+    - "crates/ono-recovery-btrfs/tests/real_btrfs.rs::should_show_an_empty_directory_where_a_nested_subvolume_was_in_a_real_snapshot"
+    - "crates/ono-recovery-btrfs/tests/real_btrfs.rs::should_create_a_real_read_only_snapshot_and_verify_the_flag"
+    - "crates/ono-recovery-btrfs/tests/real_btrfs.rs::should_restore_one_real_file_out_of_a_real_snapshot"
+    - "crates/ono-recovery-btrfs/tests/real_btrfs.rs::should_report_a_real_cost_that_is_estimated_and_never_zero"
 
   # Skips whose outcome is a property of the host rather than of this repository, each with the
   # condition that decides it. `skip-check` neither requires nor forbids these — it would be a

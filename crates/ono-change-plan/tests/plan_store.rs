@@ -53,8 +53,14 @@ fn service(unit: &str) -> FrozenTarget {
         .expect("a namespaced unit freezes")
 }
 
-/// A plan with a PREPARE, a MUTATE and a VERIFY action, which is what §41.2's resume reasons over.
 fn build(session: &str, intent: &str, units: &[&str]) -> PlanBuilder {
+    contributed(session, intent)
+        .resolve(units.iter().map(|unit| service(unit)).collect())
+        .expect("the targets resolve")
+}
+
+/// A plan with a PREPARE, a MUTATE and a VERIFY action, which is what §41.2's resume reasons over.
+fn contributed(session: &str, intent: &str) -> PlanBuilder {
     let builder = PlanBuilder::for_intent(
         Intent::new(intent.to_owned(), "plan restart service nginx"),
         session.to_owned(),
@@ -134,8 +140,6 @@ fn build(session: &str, intent: &str, units: &[&str]) -> PlanBuilder {
     builder
         .contributing(&fragment)
         .expect("a fragment is accepted")
-        .resolve(units.iter().map(|unit| service(unit)).collect())
-        .expect("the targets resolve")
 }
 
 fn sealed(session: &str, intent: &str, units: &[&str]) -> ChangePlan {
@@ -145,7 +149,11 @@ fn sealed(session: &str, intent: &str, units: &[&str]) -> ChangePlan {
 }
 
 fn plan() -> ChangePlan {
-    sealed("session-1", "restart the failed services", &["nginx.service"])
+    sealed(
+        "session-1",
+        "restart the failed services",
+        &["nginx.service"],
+    )
 }
 
 fn asset(created_at: Timestamp) -> RecoveryAsset {
@@ -213,7 +221,11 @@ fn should_keep_the_frozen_target_identities_across_storage() {
     let identities: Vec<&str> = read.targets().iter().map(FrozenTarget::identity).collect();
     assert_eq!(
         identities,
-        vec!["systemd:a.service", "systemd:b.service", "systemd:c.service"],
+        vec![
+            "systemd:a.service",
+            "systemd:b.service",
+            "systemd:c.service"
+        ],
         "§28.2: membership froze at resolution and storage did not renegotiate it"
     );
 }
@@ -258,13 +270,17 @@ fn should_keep_the_impact_graph_beside_the_plan() {
         "systemd:postgres.service",
         "postgres",
         "ono.service/1",
-        ImpactClass::Indirect,
+        ImpactClass::Dependent,
         1,
     ));
-    let plan = build("session-1", "restart the failed services", &["nginx.service"])
-        .with_impact(graph)
-        .seal(at(60))
-        .expect("a plan seals");
+    let plan = build(
+        "session-1",
+        "restart the failed services",
+        &["nginx.service"],
+    )
+    .with_impact(graph)
+    .seal(at(60))
+    .expect("a plan seals");
     store.put(&plan).expect("a sealed plan is persisted");
     let read = store.get(plan.id()).expect("the plan comes back");
     assert_eq!(
@@ -409,7 +425,9 @@ fn should_widen_a_printed_reference_until_it_names_one_plan() {
     );
     let rendered = store.render_reference(one.id()).expect("the store answers");
     assert_eq!(
-        store.resolve(&rendered).expect("a printed reference resolves"),
+        store
+            .resolve(&rendered)
+            .expect("a printed reference resolves"),
         *one.id(),
         "§36.4: a printed reference must stay unambiguous when it is typed back"
     );
@@ -451,7 +469,9 @@ fn should_list_the_plans_the_store_holds_newest_first() {
         .seal(at(60))
         .expect("a plan seals");
     store.put(&older).expect("a sealed plan is persisted");
-    store.put(&newer).expect("a second sealed plan is persisted");
+    store
+        .put(&newer)
+        .expect("a second sealed plan is persisted");
     let rows = store.list(&PlanFilter::all()).expect("the store answers");
     assert_eq!(rows.len(), 2, "§5.5: `get plan` lists what the store holds");
     assert!(rows.iter().all(|row| row.state == PlanState::Sealed));
@@ -585,7 +605,10 @@ fn should_forget_a_plan_that_was_removed() {
     store.put(&plan).expect("a sealed plan is persisted");
     store.remove(plan.id()).expect("the plan is removed");
     assert!(
-        store.list(&PlanFilter::all()).expect("the store answers").is_empty(),
+        store
+            .list(&PlanFilter::all())
+            .expect("the store answers")
+            .is_empty(),
         "a removed plan is gone from `get plan` too"
     );
 }
@@ -838,7 +861,10 @@ fn should_release_the_claim_when_the_apply_returned_early() {
     };
     assert!(attempt().is_err());
     assert!(
-        store.claim_holder(plan.id(), at(120)).expect("the store answers").is_none(),
+        store
+            .claim_holder(plan.id(), at(120))
+            .expect("the store answers")
+            .is_none(),
         "§42.3: locks MUST be bounded and released on failure"
     );
 }
@@ -883,12 +909,18 @@ fn should_report_no_holder_once_the_lease_has_passed() {
         .expect("the first session takes the claim");
     std::mem::forget(held);
     assert_eq!(
-        store.claim_holder(plan.id(), at(105)).expect("the store answers").as_deref(),
+        store
+            .claim_holder(plan.id(), at(105))
+            .expect("the store answers")
+            .as_deref(),
         Some("session-1"),
         "§42.4: a live claim has a holder"
     );
     assert!(
-        store.claim_holder(plan.id(), at(200)).expect("the store answers").is_none(),
+        store
+            .claim_holder(plan.id(), at(200))
+            .expect("the store answers")
+            .is_none(),
         "§42.3: an expired lease holds nothing"
     );
 }
@@ -902,7 +934,9 @@ fn should_extend_the_lease_while_an_apply_is_still_making_progress() {
         .claim_for(plan.id(), "session-1", at(100), Duration::from_secs(10))
         .expect("the first session takes the claim");
     let first = claim.expires_at();
-    claim.renew(at(105)).expect("§42.3: a lease may be extended");
+    claim
+        .renew(at(105))
+        .expect("§42.3: a lease may be extended");
     assert!(
         claim.expires_at() > first,
         "§42.3: an apply still making progress keeps its lock"
@@ -940,7 +974,10 @@ fn should_leave_a_claim_alone_that_another_session_took_over() {
         // `_first` drops here, and it must not release the claim it no longer holds.
     }
     assert_eq!(
-        store.claim_holder(plan.id(), at(220)).expect("the store answers").as_deref(),
+        store
+            .claim_holder(plan.id(), at(220))
+            .expect("the store answers")
+            .as_deref(),
         Some("session-2"),
         "§42.4: a stale holder releasing somebody else's lock would be worse than not releasing"
     );
@@ -955,7 +992,9 @@ fn should_return_the_same_asset_it_was_given() {
     let (_directory, store) = store();
     let recovery = asset(at(30));
     store.put_asset(&recovery).expect("an asset is persisted");
-    let read = store.get_asset(recovery.id()).expect("the asset comes back");
+    let read = store
+        .get_asset(recovery.id())
+        .expect("the asset comes back");
     assert_eq!(read.reference(), "rpool/etc@ono-a82f");
     assert_eq!(read.scope().domain(), "rpool/etc");
     assert!(
@@ -976,8 +1015,12 @@ fn should_refuse_an_asset_the_store_never_held() {
 #[test]
 fn should_list_every_asset_the_store_holds() {
     let (_directory, store) = store();
-    store.put_asset(&asset(at(30))).expect("an asset is persisted");
-    store.put_asset(&asset(at(40))).expect("a second asset is persisted");
+    store
+        .put_asset(&asset(at(30)))
+        .expect("an asset is persisted");
+    store
+        .put_asset(&asset(at(40)))
+        .expect("a second asset is persisted");
     assert_eq!(
         store.list_assets().expect("the store answers").len(),
         2,
@@ -1210,7 +1253,10 @@ fn should_redact_a_plan_the_store_was_handed_with_a_raw_secret_in_it() {
     store.put(&plan).expect("a sealed plan is persisted");
     let read = store.get(plan.id()).expect("the plan comes back");
     assert!(
-        !read.actions()[0].execution().digest_text().contains("hunter2"),
+        !read.actions()[0]
+            .execution()
+            .digest_text()
+            .contains("hunter2"),
         "§36.3: secrets MUST NOT be persisted in raw form"
     );
 }
@@ -1222,8 +1268,10 @@ fn should_redact_a_plan_the_store_was_handed_with_a_raw_secret_in_it() {
 #[test]
 fn should_round_trip_a_plan_over_thousands_of_targets() {
     let (_directory, store) = store();
-    let units: Vec<String> = (0..5_000).map(|index| format!("s{index}.service")).collect();
-    let plan = build("session-1", "restart the failed services", &[])
+    let units: Vec<String> = (0..5_000)
+        .map(|index| format!("s{index}.service"))
+        .collect();
+    let plan = contributed("session-1", "restart the failed services")
         .resolve_streaming(units.iter().map(|unit| Ok(service(unit))))
         .expect("five thousand targets resolve")
         .seal(at(60))
