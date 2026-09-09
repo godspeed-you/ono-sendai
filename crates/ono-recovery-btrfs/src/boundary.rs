@@ -213,17 +213,33 @@ impl SubvolumeLayout {
             .map(|(_, boundary)| boundary)
     }
 
-    /// Every subvolume nested inside `boundary`, at any depth (§14.3).
+    /// Every subvolume whose contents a snapshot of `boundary` would not hold (§14.3, §59.3).
     ///
-    /// These are exactly the holes in what a snapshot of `boundary` covers. §55.4 case 18 asks
-    /// for the boundary to be detected; naming each one is how the asset can then say what it
-    /// does not hold instead of implying it holds everything beneath the path.
+    /// Two shapes count, and missing the second is how a plan comes to claim that a root snapshot
+    /// covers `/var`:
+    ///
+    /// - a subvolume nested inside this one in the filesystem tree, such as `@var/lib-app` inside
+    ///   `@var`;
+    /// - a subvolume mounted *beneath* this one's mountpoint, such as the separate `@var` mounted
+    ///   at `/var` inside the root subvolume's tree. It is a sibling in the filesystem tree and a
+    ///   hole in the snapshot all the same, because what the snapshot holds at `var/` is the empty
+    ///   directory the mount covers up.
+    ///
+    /// So the comparison is made on visible paths where the mount table gives them, and falls back
+    /// to tree paths where it does not. These are exactly the holes in what a snapshot of
+    /// `boundary` covers, and naming each one is what lets the asset say what it does not hold
+    /// instead of implying it holds everything beneath the path (§55.4 case 18).
     #[must_use]
     pub fn nested_within(&self, boundary: &SubvolumeBoundary) -> Vec<&SubvolumeBoundary> {
+        let outer = self.visible_path(boundary);
         let mut nested: Vec<&SubvolumeBoundary> = self
             .boundaries
             .iter()
-            .filter(|candidate| candidate.is_nested_in(boundary))
+            .filter(|candidate| candidate.id() != boundary.id())
+            .filter(|candidate| match (outer.as_ref(), self.visible_path(candidate)) {
+                (Some(outer), Some(inner)) => inner.starts_with(outer) && inner != *outer,
+                _ => candidate.is_nested_in(boundary),
+            })
             .collect();
         nested.sort_by(|left, right| left.tree_path().cmp(right.tree_path()));
         nested

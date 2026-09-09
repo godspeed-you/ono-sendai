@@ -716,7 +716,17 @@ impl RecoveryProvider for FileRecoveryProvider {
         }
         let plan_id = PlanId::derive(&[PROVIDER_ID, asset.id().as_str(), "recovery"]);
         let mut fragment =
-            RecoveryPlanFragment::new(PROVIDER_ID, RestoreMethod::SelectiveFileRestore);
+            RecoveryPlanFragment::new(PROVIDER_ID, RestoreMethod::SelectiveFileRestore)
+                // Appendix C.7: what this restore actually puts back is measured rather
+                // than assumed, and it travels on the fragment so the recovery plan does
+                // not have to ask the provider a second time.
+                // Appendix C.7 measured against the tree the restore would write into. A probe
+                // that could not be made leaves the coverage unestablished rather than assumed,
+                // and §C.7 makes an unestablished coverage a gap the plan shows.
+                .restoring_metadata(
+                    self.metadata_coverage(root)
+                        .unwrap_or_else(|_| MetadataCoverage::none()),
+                );
         for (ordinal, entry) in selected.iter().enumerate() {
             let destination = entry.destination(root);
             let object = destination.display().to_string();
@@ -793,6 +803,14 @@ impl RecoveryProvider for FileRecoveryProvider {
 
 impl FileRecoveryProvider {
     /// What a selective restore would do to everything written since the copy (Appendix C.3, C.4).
+    ///
+    /// An object inside the restore set whose content differs from the copy is `CONFLICTING`, and
+    /// that is deliberately the answer whether the difference came from the plan's own write or
+    /// from an operator editing the file afterwards. Telling those two apart needs evidence this
+    /// provider does not hold — the ledger knows what the plan wrote, and a file does not — and
+    /// §56.3 makes the direction of the doubt clear: show the conflict, let §24.5's gate ask.
+    /// Appendix C.4's worked example is the case that must never be missed, and it is the same
+    /// comparison.
     fn newer_state(&self, manifest: &Manifest, selected: &[&ArchiveEntry]) -> NewerStateImpact {
         let root = manifest.root();
         let mut items = Vec::new();

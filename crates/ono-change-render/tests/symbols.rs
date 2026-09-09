@@ -6,7 +6,6 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_change_core::{EffectKind, ProtectionLevel};
 use ono_change_render::{Charset, Symbol, legend};
 
 #[test]
@@ -95,27 +94,46 @@ fn should_give_every_symbol_a_meaning_a_reader_can_look_up() {
 }
 
 #[test]
-fn should_agree_with_the_protection_level_symbol_the_core_declares() {
-    for level in ProtectionLevel::ALL {
+fn should_give_every_protection_level_of_section_ten_two_a_mark() {
+    let expected = [
+        ("unprotected", "!"),
+        ("compensatable", "~>"),
+        ("partially-protected", "1/2"),
+        ("protected", "<->"),
+        ("transactional", "<->"),
+        ("unknown", "?"),
+    ];
+    for (level, mark) in expected {
         assert_eq!(
-            Symbol::for_protection(*level).ascii(),
-            level.symbol(),
-            "§50.1: which mark a level carries is a fact of the level, not of the renderer"
+            Symbol::for_protection(level).ascii(),
+            mark,
+            "§10.2's `{level}` carries §20.3's `{mark}`, and a level without a mark is unreadable"
         );
     }
 }
 
 #[test]
+fn should_draw_an_unrecognised_protection_level_as_unknown() {
+    assert_eq!(
+        Symbol::for_protection("very-safe-indeed"),
+        Symbol::Unknown,
+        "§2.4 forbids promoting an unknown, and Appendix E.8 forbids a mark that reads as safety"
+    );
+}
+
+#[test]
 fn should_mark_an_emitted_effect_as_risk_rather_than_as_an_addition() {
     assert_eq!(
-        Symbol::for_effect(EffectKind::Emit),
+        Symbol::for_effect("emit"),
         Symbol::Risk,
         "§35.1: an outward call has already left, which is the boundary `!` marks"
     );
-    assert_eq!(Symbol::for_effect(EffectKind::Create), Symbol::Addition);
-    assert_eq!(Symbol::for_effect(EffectKind::Remove), Symbol::Removal);
-    assert_eq!(Symbol::for_effect(EffectKind::Modify), Symbol::Modification);
-    assert_eq!(Symbol::for_effect(EffectKind::Unknown), Symbol::Unknown);
+    assert_eq!(Symbol::for_effect("create"), Symbol::Addition);
+    assert_eq!(Symbol::for_effect("remove"), Symbol::Removal);
+    assert_eq!(Symbol::for_effect("modify"), Symbol::Modification);
+    assert_eq!(Symbol::for_effect("replace"), Symbol::Modification);
+    assert_eq!(Symbol::for_effect("interrupt"), Symbol::Risk);
+    assert_eq!(Symbol::for_effect("unknown"), Symbol::Unknown);
 }
 
 #[test]

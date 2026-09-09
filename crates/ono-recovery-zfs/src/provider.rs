@@ -1723,7 +1723,9 @@ impl RecoveryProvider for ZfsProvider {
             );
         }
 
-        fragment = fragment.with_newer_state(newer_state_impact(&examination, method));
+        fragment = fragment
+            .with_newer_state(newer_state_impact(&examination, method))
+            .restoring_metadata(Self::metadata_coverage(method));
         if matches!(method, RestoreMethod::OfflineRootRecovery) {
             fragment = fragment.needing_reboot().needing_offline();
         } else if method.discards_newer_state() && examination.mount.mounted == Some(true) {
@@ -1761,6 +1763,18 @@ impl RecoveryProvider for ZfsProvider {
             if let Some(blocked) = examination.checklist.blocking_error(true) {
                 return Err(blocked);
             }
+            // §24.5's gate comes first: an operator is shown everything the recovery would take
+            // away before being told what else it needs. §13.7's requirement is the second
+            // refusal, not a way of never reaching the first.
+            let destroyed = examination.destroyed();
+            if !destroyed.is_empty() && !self.accepted_history_destruction {
+                return Err(destructive_history_not_accepted(
+                    &destroyed
+                        .iter()
+                        .map(|object| object.to_string())
+                        .collect::<Vec<String>>(),
+                ));
+            }
             if argv.first().map(Arc::as_ref) == Some("rollback")
                 && let Some(case) = examination.root_case
             {
@@ -1776,15 +1790,6 @@ impl RecoveryProvider for ZfsProvider {
                         RestoreMethod::OfflineRootRecovery.as_str(),
                     ),
                 });
-            }
-            let destroyed = examination.destroyed();
-            if !destroyed.is_empty() && !self.accepted_history_destruction {
-                return Err(destructive_history_not_accepted(
-                    &destroyed
-                        .iter()
-                        .map(|object| object.to_string())
-                        .collect::<Vec<String>>(),
-                ));
             }
         }
         let arguments: Vec<&str> = argv.iter().map(Arc::as_ref).collect();

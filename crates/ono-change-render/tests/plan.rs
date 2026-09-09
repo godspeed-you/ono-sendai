@@ -6,17 +6,29 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_change_core::{ActionStatus, ChangePlan, LifecycleEvent, PlanState};
+use ono_value::RecordValue;
 use ono_change_render::{Charset, PLAN_NOT_EXECUTED, QUESTIONS, Section, plan_view};
 
 mod support;
 use support::{
-    contains, headings, index_of, instant, nginx_plan, sealed_nginx_plan, with_statuses, zfs_asset,
+    contains, draft_nginx_plan, empty_plan, failed_plan, headings, index_of, nginx_plan_in,
+    sealed_nginx_plan, zfs_asset,
 };
 
-fn view(plan: &ChangePlan) -> Vec<String> {
+fn view(plan: &RecordValue) -> Vec<String> {
     plan_view(plan, &[zfs_asset()], 80, Charset::Ascii)
 }
+
+/// The §4.1 states before the first mutation, which Appendix F makes one class of answer.
+const BEFORE_APPLYING: [&str; 7] = [
+    "draft",
+    "resolved",
+    "sealed",
+    "expired",
+    "preparing",
+    "prepare-failed",
+    "protected",
+];
 
 #[test]
 fn should_answer_the_nine_questions_of_section_twenty_one_in_order() {
@@ -48,12 +60,7 @@ fn should_render_the_sections_in_the_order_section_twenty_two_writes_them() {
 
 #[test]
 fn should_render_every_section_even_when_the_plan_has_nothing_to_say_in_it() {
-    let empty = ChangePlan::draft(
-        ono_change_core::Intent::new("do nothing yet", "plan { }"),
-        "session-3",
-        instant(),
-    );
-    let lines = plan_view(&empty, &[], 80, Charset::Ascii);
+    let lines = plan_view(&empty_plan(), &[], 80, Charset::Ascii);
     for section in Section::ORDER {
         assert!(
             contains(&lines, section.heading()),
@@ -207,8 +214,21 @@ fn should_list_the_verification_contracts_the_plan_carries() {
 }
 
 #[test]
-fn should_say_no_approval_is_required_when_none_is() {
+fn should_name_the_acknowledgement_an_irreversible_plan_still_needs() {
     let lines = view(&sealed_nginx_plan());
+    let index = lines
+        .iter()
+        .position(|line| line == "approval")
+        .expect("§20.1 question 9 is answered");
+    assert!(
+        lines[index + 1].contains("--accept-irreversible"),
+        "§19.4: a plan with an irreversible effect is gated, and §40.3 names the flag that opens it"
+    );
+}
+
+#[test]
+fn should_say_no_approval_is_required_when_none_is() {
+    let lines = plan_view(&empty_plan(), &[], 80, Charset::Ascii);
     let index = lines
         .iter()
         .position(|line| line == "approval")
@@ -221,8 +241,40 @@ fn should_say_no_approval_is_required_when_none_is() {
 }
 
 #[test]
+fn should_stop_asking_for_an_acknowledgement_the_plan_already_carries() {
+    let mut fields: Vec<(&str, ono_value::Value)> = Vec::new();
+    for name in [
+        "id",
+        "revision",
+        "state",
+        "intent",
+        "coverage_exclusions",
+        "risk",
+    ] {
+        if let Some(value) = sealed_nginx_plan().get(name) {
+            fields.push((name, value.clone()));
+        }
+    }
+    fields.push((
+        "accepted_risk_overrides",
+        support::list(&["--accept-irreversible"]),
+    ));
+    let accepted = support::record("ono.change-plan", &fields);
+    let lines = plan_view(&accepted, &[], 80, Charset::Ascii);
+    let index = lines
+        .iter()
+        .position(|line| line == "approval")
+        .expect("§20.1 question 9 is answered");
+    assert_eq!(
+        lines[index + 1].trim(),
+        "none required",
+        "§19.4: an acknowledgement recorded in the sealed revision is not asked for twice"
+    );
+}
+
+#[test]
 fn should_close_with_plan_not_executed_for_a_draft_plan() {
-    let lines = plan_view(&nginx_plan(), &[], 80, Charset::Ascii);
+    let lines = plan_view(&draft_nginx_plan(), &[], 80, Charset::Ascii);
     assert_eq!(
         lines.last().map(String::as_str),
         Some(PLAN_NOT_EXECUTED),
@@ -232,12 +284,8 @@ fn should_close_with_plan_not_executed_for_a_draft_plan() {
 
 #[test]
 fn should_close_with_plan_not_executed_for_every_state_before_applying() {
-    let sealed = sealed_nginx_plan();
-    for state in PlanState::ALL {
-        if state.has_mutated() {
-            continue;
-        }
-        let lines = plan_view(&sealed, &[], 80, Charset::Ascii);
+    for state in BEFORE_APPLYING {
+        let lines = plan_view(&nginx_plan_in(state, &[]), &[], 80, Charset::Ascii);
         assert!(
             contains(&lines, PLAN_NOT_EXECUTED),
             "Appendix F: everything before the first mutation is told as nothing having happened ({state})"
@@ -246,44 +294,32 @@ fn should_close_with_plan_not_executed_for_every_state_before_applying() {
 }
 
 #[test]
-fn should_drop_plan_not_executed_once_something_may_have_happened() {
-    let applying = sealed_nginx_plan()
-        .advance(LifecycleEvent::BeginPrepare)
-        .expect("a sealed plan may prepare")
-        .advance(LifecycleEvent::Protected)
-        .expect("preparation completes")
-        .advance(LifecycleEvent::BeginApply)
-        .expect("a protected plan may apply");
-    assert!(applying.state().has_mutated());
-    let lines = plan_view(&applying, &[], 80, Charset::Ascii);
-    assert!(
-        !contains(&lines, PLAN_NOT_EXECUTED),
-        "Appendix F: at or after APPLYING the operator must be told that something may have happened"
-    );
+fn should_drop_plan_not_executed_for_every_state_from_applying_onwards() {
+    for state in [
+        "applying",
+        "apply-failed",
+        "verifying",
+        "verified",
+        "degraded",
+        "failed",
+        "closed",
+        "recovery-planned",
+        "recovering",
+        "recovered",
+        "recovery-failed",
+        "recovery-verified",
+    ] {
+        let lines = plan_view(&nginx_plan_in(state, &[]), &[], 80, Charset::Ascii);
+        assert!(
+            !contains(&lines, PLAN_NOT_EXECUTED),
+            "Appendix F: at or after APPLYING the operator must be told something may have happened ({state})"
+        );
+    }
 }
 
 #[test]
 fn should_drop_plan_not_executed_from_a_failed_plan() {
-    let failed = with_statuses(
-        sealed_nginx_plan(),
-        &[
-            ActionStatus::Succeeded,
-            ActionStatus::Succeeded,
-            ActionStatus::Succeeded,
-            ActionStatus::Failed,
-            ActionStatus::Pending,
-        ],
-    );
-    let advanced = failed
-        .advance(LifecycleEvent::BeginPrepare)
-        .expect("a sealed plan may prepare")
-        .advance(LifecycleEvent::Protected)
-        .expect("preparation completes")
-        .advance(LifecycleEvent::BeginApply)
-        .expect("a protected plan may apply")
-        .advance(LifecycleEvent::ApplyFailed)
-        .expect("an applying plan may fail");
-    let lines = plan_view(&advanced, &[], 80, Charset::Ascii);
+    let lines = plan_view(&failed_plan(), &[], 80, Charset::Ascii);
     assert!(
         !contains(&lines, PLAN_NOT_EXECUTED),
         "§4.7: what ran, ran, and the view may not say otherwise"
@@ -296,11 +332,11 @@ fn should_carry_the_plan_identity_and_revision_in_the_title() {
     let lines = view(&plan);
     let title = lines.first().expect("a title");
     assert!(
-        title.starts_with("PLAN / ") && title.contains(plan.id().short()),
+        title.starts_with("PLAN / ") && title.contains("a82f"),
         "§20.2 and §36.4: the title carries the reference an operator types back"
     );
     assert!(
-        title.contains(&format!("rev {}", plan.revision())),
+        title.contains("rev 3"),
         "§7.5: the revision is part of the identity a reader cites"
     );
 }
@@ -330,10 +366,13 @@ fn should_render_the_same_bytes_for_the_same_plan() {
 
 #[test]
 fn should_neutralise_control_characters_a_target_label_carries() {
-    let plan = ChangePlan::draft(
-        ono_change_core::Intent::new("replace \u{1b}[2Jthe file", "plan { }"),
-        "session-4",
-        instant(),
+    let plan = support::record(
+        "ono.change-plan",
+        &[
+            ("id", support::s("0102030405060708")),
+            ("state", support::s("draft")),
+            ("intent", support::s("replace \u{1b}[2Jthe file")),
+        ],
     );
     let lines = plan_view(&plan, &[], 80, Charset::Ascii);
     assert!(

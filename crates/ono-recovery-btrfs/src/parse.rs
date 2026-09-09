@@ -274,7 +274,6 @@ pub struct SubvolumeEntry {
     parent_uuid: Option<Arc<str>>,
     received_uuid: Option<Arc<str>>,
     tree_path: Arc<str>,
-    created_at: Option<Timestamp>,
 }
 
 impl SubvolumeEntry {
@@ -326,11 +325,6 @@ impl SubvolumeEntry {
         &self.tree_path
     }
 
-    /// The creation instant, printed only when `-s` asked for snapshots.
-    #[must_use]
-    pub const fn created_at(&self) -> Option<Timestamp> {
-        self.created_at
-    }
 }
 
 /// Parses `btrfs subvolume list` output, whatever combination of flags produced it (§14.3).
@@ -363,7 +357,6 @@ fn parse_list_line(line: &str) -> Result<SubvolumeEntry, ErrorValue> {
         parent_uuid: None,
         received_uuid: None,
         tree_path: Arc::from(""),
-        created_at: None,
     };
     let tokens: Vec<&str> = line.split_whitespace().collect();
     let mut index = 0;
@@ -391,14 +384,11 @@ fn parse_list_line(line: &str) -> Result<SubvolumeEntry, ErrorValue> {
                 entry.top_level = tokens.get(index + 2).and_then(|value| value.parse().ok());
                 index += 3;
             }
-            "otime" => {
-                let civil = tokens
-                    .get(index + 1)
-                    .zip(tokens.get(index + 2))
-                    .map(|(date, time)| format!("{date} {time}"));
-                entry.created_at = civil.as_deref().and_then(parse_instant);
-                index += 3;
-            }
+            // `-s` prints `otime <date> <time>` with no UTC offset, so it names no instant a
+            // reader could place. §35.3 makes unknown data null rather than a guess about which
+            // timezone the machine was in, and the exact creation instant is available with an
+            // offset from `btrfs subvolume show`. The two tokens are stepped over, not read.
+            "otime" => index += 3,
             "uuid" => {
                 entry.uuid = next(&tokens, index).and_then(optional);
                 index += 2;
@@ -512,10 +502,10 @@ pub fn parse_filesystem_show(text: &str) -> Result<FilesystemInfo, ErrorValue> {
             info.bytes_used = rest
                 .split_once("FS bytes used")
                 .and_then(|(_, used)| ByteSize::parse(used.trim()).ok());
-        } else if line.starts_with("devid") {
-            if let Some((_, path)) = line.split_once(" path ") {
-                info.devices.push(Arc::from(path.trim()));
-            }
+        } else if line.starts_with("devid")
+            && let Some((_, path)) = line.split_once(" path ")
+        {
+            info.devices.push(Arc::from(path.trim()));
         }
     }
     if info.uuid.is_empty() {

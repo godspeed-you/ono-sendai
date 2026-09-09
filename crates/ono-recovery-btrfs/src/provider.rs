@@ -467,23 +467,23 @@ impl BtrfsProvider {
     ///
     /// # Errors
     ///
-    /// A [`ProtectionShortfall`] when one of them fails. It carries the snapshots that were
+    /// A boxed [`ProtectionShortfall`] when one of them fails. It carries the snapshots that were
     /// already created, because Appendix F.1 keeps them until a cleanup decision is made — and
     /// §2.3 forbids mutating any plan target either way.
     pub fn create_set(
         &self,
         actions: &[ProtectionAction],
-    ) -> Result<RecoveryAssetSet, ProtectionShortfall> {
+    ) -> Result<RecoveryAssetSet, Box<ProtectionShortfall>> {
         let mut created = Vec::new();
         for action in actions {
             match self.create(action) {
                 Ok(asset) => created.push(asset),
                 Err(error) => {
-                    return Err(ProtectionShortfall::new(
+                    return Err(Box::new(ProtectionShortfall::new(
                         created,
                         action.candidate().scope().domain(),
                         error,
-                    ));
+                    )));
                 }
             }
         }

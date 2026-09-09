@@ -21,7 +21,7 @@ use crate::domain::PersistenceDomain;
 use crate::effect::EffectDomain;
 use crate::plan::{ChangePlan, Intent};
 use crate::protection::{ConsistencyClass, ProtectionMode, RecoveryObjective};
-use crate::recovery::{NewerStateImpact, UnrecoverableEffect};
+use crate::recovery::{MetadataCoverage, NewerStateImpact, UnrecoverableEffect};
 use crate::target::{FrozenTarget, Precondition};
 use crate::verification::{VerificationContract, VerificationResult};
 use crate::vocab::vocabulary;
@@ -436,6 +436,7 @@ pub struct RecoveryPlanFragment {
     newer_state: NewerStateImpact,
     unrecoverable: Vec<UnrecoverableEffect>,
     verification: Vec<VerificationContract>,
+    metadata: MetadataCoverage,
     requires_reboot: bool,
     requires_offline: bool,
 }
@@ -451,6 +452,7 @@ impl RecoveryPlanFragment {
             newer_state: NewerStateImpact::unanalysed(),
             unrecoverable: Vec::new(),
             verification: Vec::new(),
+            metadata: MetadataCoverage::none(),
             requires_reboot: false,
             requires_offline: false,
         }
@@ -484,6 +486,18 @@ impl RecoveryPlanFragment {
         self
     }
 
+    /// Records which file metadata this provider's restore actually puts back (Appendix C.7).
+    ///
+    /// Appendix C.7 requires missing metadata support to be visible, and the provider is the only
+    /// thing that knows: whether ACLs can be restored depends on the filesystem, and whether
+    /// ownership can depends on the privilege the process holds. A fragment that could not carry
+    /// it would leave the recovery plan asserting a coverage nobody measured.
+    #[must_use]
+    pub const fn restoring_metadata(mut self, metadata: MetadataCoverage) -> Self {
+        self.metadata = metadata;
+        self
+    }
+
     /// Records that the recovery needs a reboot (§13.7, §14.6).
     #[must_use]
     pub const fn needing_reboot(mut self) -> Self {
@@ -496,6 +510,12 @@ impl RecoveryPlanFragment {
     pub const fn needing_offline(mut self) -> Self {
         self.requires_offline = true;
         self
+    }
+
+    /// Which metadata this provider's restore returns (Appendix C.7).
+    #[must_use]
+    pub const fn metadata(&self) -> MetadataCoverage {
+        self.metadata
     }
 
     /// The provider that contributed it.
@@ -915,6 +935,23 @@ mod tests {
             capabilities.conformance(),
             RECOVERY_PROVIDER_CONFORMANCE,
             "Appendix G.5: a provider advertises a conformance version"
+        );
+    }
+
+    #[test]
+    fn should_report_no_metadata_coverage_until_a_provider_measures_it() {
+        let fragment =
+            RecoveryPlanFragment::new("ono.recovery.zfs", RestoreMethod::DatasetRollback);
+        assert_eq!(
+            fragment.metadata(),
+            MetadataCoverage::none(),
+            "Appendix C.7: missing metadata support reduces coverage and MUST be visible, so \
+             silence is not a claim that everything comes back"
+        );
+        let measured = fragment.restoring_metadata(MetadataCoverage::content_only());
+        assert!(
+            measured.metadata().gaps().contains(&"owner/group"),
+            "a provider that restores only bytes says so, and the gap travels to the plan"
         );
     }
 

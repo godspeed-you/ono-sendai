@@ -248,9 +248,12 @@ fn read_entry(
                 ScanMode::Measure => metadata.len(),
                 ScanMode::Capture => bytes.len() as u64,
             };
-            if mode == ScanMode::Capture {
-                contents.push((blob.clone(), bytes));
+            // A measuring walk names no blob: nothing was written, and an entry that pointed at a
+            // copy which does not exist would be a manifest that lies about the store.
+            if mode == ScanMode::Measure {
+                return Ok(entry.with_content(size, digest, None));
             }
+            contents.push((blob.clone(), bytes));
             Ok(entry.with_content(size, digest, Some(blob)))
         }
     }

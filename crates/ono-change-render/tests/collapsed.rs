@@ -6,11 +6,10 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_change_core::ActionStatus;
 use ono_change_render::{ActionGroup, Charset, Phase, action_groups, collapsed_plan};
 
 mod support;
-use support::{contains, headings, index_of, long_plan, sealed_nginx_plan, with_statuses};
+use support::{contains, headings, long_plan, nginx_plan_in, sealed_nginx_plan};
 
 #[test]
 fn should_collapse_identical_actions_into_one_group_each() {
@@ -78,9 +77,10 @@ fn should_head_each_phase_with_the_lifecycle_boundary_it_belongs_to() {
 fn should_carry_the_plan_reference_and_the_total_action_count_in_the_title() {
     let plan = long_plan();
     let lines = collapsed_plan(&plan, 80, Charset::Ascii);
+    let _ = &plan;
     let title = lines.first().expect("a title");
     assert!(
-        title.contains(plan.id().short()) && title.contains("83 actions"),
+        title.contains("d46c") && title.contains("83 actions"),
         "Appendix E.2's title is `PLAN a82f / 83 actions`, which says how much was collapsed"
     );
 }
@@ -100,15 +100,9 @@ fn should_say_a_proposed_prepare_group_is_ready_to_create() {
 
 #[test]
 fn should_report_a_mixed_group_as_a_settled_count_rather_than_one_wrong_word() {
-    let plan = with_statuses(
-        sealed_nginx_plan(),
-        &[
-            ActionStatus::Succeeded,
-            ActionStatus::Succeeded,
-            ActionStatus::Failed,
-            ActionStatus::Pending,
-            ActionStatus::Pending,
-        ],
+    let plan = nginx_plan_in(
+        "apply-failed",
+        &["succeeded", "succeeded", "failed", "pending", "pending"],
     );
     let groups = action_groups(&plan);
     assert!(

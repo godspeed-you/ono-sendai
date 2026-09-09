@@ -6,11 +6,12 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_change_core::{ImpactClass, ImpactGraph, ImpactNode, UnknownBoundary};
 use ono_change_render::{Charset, blast_radius, boundaries, impact_block};
 
 mod support;
-use support::{contains, index_of, nginx_impact};
+use support::{
+    bounded_impact, contains, empty_impact, i, index_of, map, nginx_impact, record, s,
+};
 
 #[test]
 fn should_count_the_blast_radius_the_graph_holds() {
@@ -30,14 +31,14 @@ fn should_count_the_blast_radius_the_graph_holds() {
 
 #[test]
 fn should_agree_in_singular_and_plural_with_what_it_counted() {
-    let mut graph = ImpactGraph::empty();
-    graph.add(ImpactNode::new(
-        "nginx.conf",
-        "nginx.conf",
-        "ono.file/1",
-        ImpactClass::DirectTarget,
-        0,
-    ));
+    let graph = record(
+        "ono.impact-graph",
+        &[
+            ("direct_targets", i(1)),
+            ("boundary_count", i(0)),
+            ("complete", ono_value::Value::Bool(true)),
+        ],
+    );
     let lines = blast_radius(&graph, 80, Charset::Ascii);
     assert!(
         contains(&lines, "1 direct target") && !contains(&lines, "1 direct targets"),
@@ -47,8 +48,7 @@ fn should_agree_in_singular_and_plural_with_what_it_counted() {
 
 #[test]
 fn should_say_when_a_bounded_traversal_stopped_at_its_budget() {
-    let bounded = nginx_impact().truncated("the interactive budget was reached");
-    let lines = blast_radius(&bounded, 80, Charset::Ascii);
+    let lines = blast_radius(&bounded_impact(), 80, Charset::Ascii);
     assert!(
         contains(&lines, "traversal stopped early"),
         "§9.5 and §52.2: a graph cut short by a budget is not a graph that ended"
@@ -61,8 +61,7 @@ fn should_say_when_a_bounded_traversal_stopped_at_its_budget() {
 
 #[test]
 fn should_say_that_the_counts_of_a_bounded_traversal_are_a_lower_bound() {
-    let bounded = nginx_impact().truncated("the interactive budget was reached");
-    let lines = blast_radius(&bounded, 80, Charset::Ascii);
+    let lines = blast_radius(&bounded_impact(), 80, Charset::Ascii);
     assert!(
         contains(&lines, "lower bound"),
         "§9.5: a summary that reads as a whole graph when it is a bounded one is a lie"
@@ -72,11 +71,7 @@ fn should_say_that_the_counts_of_a_bounded_traversal_are_a_lower_bound() {
 #[test]
 fn should_never_render_a_bounded_traversal_the_way_it_renders_a_complete_one() {
     let complete = blast_radius(&nginx_impact(), 80, Charset::Ascii);
-    let bounded = blast_radius(
-        &nginx_impact().truncated("the interactive budget was reached"),
-        80,
-        Charset::Ascii,
-    );
+    let bounded = blast_radius(&bounded_impact(), 80, Charset::Ascii);
     assert_ne!(
         complete, bounded,
         "§9.5: the two graphs say different things and the view may not spell them the same way"
@@ -129,7 +124,7 @@ fn should_carry_the_reason_the_graph_could_not_follow_the_edge() {
 
 #[test]
 fn should_render_nothing_for_a_graph_with_no_boundary() {
-    let lines = boundaries(&ImpactGraph::empty(), 80, Charset::Ascii);
+    let lines = boundaries(&empty_impact(), 80, Charset::Ascii);
     assert!(
         lines.is_empty(),
         "§9.6 asks for a boundary to be visible, never for one to be invented"
@@ -166,7 +161,7 @@ fn should_keep_the_provenance_of_a_relation_that_reached_a_node() {
 
 #[test]
 fn should_say_no_object_was_reached_rather_than_printing_an_empty_summary() {
-    let lines = blast_radius(&ImpactGraph::empty(), 80, Charset::Ascii);
+    let lines = blast_radius(&empty_impact(), 80, Charset::Ascii);
     assert!(
         contains(&lines, "no object was reached"),
         "§10.5: an empty block and a plan that reaches nothing must not look the same"
@@ -174,20 +169,28 @@ fn should_say_no_object_was_reached_rather_than_printing_an_empty_summary() {
 }
 
 #[test]
-fn should_count_a_boundary_the_graph_recorded_as_a_node_as_well_as_one_it_recorded_apart() {
-    let mut graph = ImpactGraph::empty();
-    graph.add(ImpactNode::new(
-        "opaque",
-        "an opaque action",
-        "ono.unknown/1",
-        ImpactClass::UnknownBoundary,
-        1,
-    ));
-    graph.add_boundary(UnknownBoundary::new("nginx", "external API", "it leaves"));
+fn should_read_the_boundary_count_the_graph_recorded_rather_than_counting_the_list() {
+    let graph = record(
+        "ono.impact-graph",
+        &[
+            ("direct_targets", i(1)),
+            ("boundary_count", i(2)),
+            (
+                "boundaries",
+                ono_value::Value::list([map(&[
+                    ("at", s("nginx")),
+                    ("beyond", s("external API")),
+                    ("reason", s("it leaves this machine")),
+                ])]),
+            ),
+            ("complete", ono_value::Value::Bool(true)),
+        ],
+    );
     let lines = blast_radius(&graph, 80, Charset::Ascii);
     assert!(
         contains(&lines, "2 external boundaries"),
-        "§9.6: both kinds of boundary are boundaries, and the count is the graph's own"
+        "§50.1 and §9.6: the count is the graph's own, and a renderer that recounted it would \
+         eventually disagree with the graph it draws"
     );
 }
 
