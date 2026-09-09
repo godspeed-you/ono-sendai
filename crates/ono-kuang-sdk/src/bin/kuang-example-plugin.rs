@@ -18,10 +18,13 @@
 use std::io::Write;
 
 use ono_kuang_protocol::{
-    ActionContribution, Answer, CommandContribution, ContributionSet, EmitParams, Envelope,
-    FrameLimits, Hello, Idempotency, InitResult, InvokeParams, InvokeResult, InvokeStatus,
-    PACKAGE_FORMAT, ParameterContribution, SchemaContribution, SchemaFieldContribution,
-    TargetContribution, ViewContribution, method,
+    ActionContribution, Answer, ChangeViewContribution, CommandContribution, ContributionSet,
+    EffectClassContribution, EmitParams, Envelope, FrameLimits, Hello, Idempotency,
+    ImpactProviderContribution, InitResult, InvokeParams, InvokeResult, InvokeStatus,
+    PACKAGE_FORMAT, ParameterContribution, RecoveryProviderContribution, RiskRuleContribution,
+    SchemaContribution, SchemaFieldContribution, TargetContribution,
+    TransactionContribution, VerificationCheckContribution, VerificationProviderContribution,
+    ViewContribution, method,
 };
 use ono_kuang_sdk::{Ctx, Outcome, Plugin};
 use ono_value::{Provenance, RecordValue, Value};
@@ -47,6 +50,12 @@ fn main() {
         // A package written for the old model: it never says its handlers may run beside one
         // another, so the SDK's default of one at a time applies (ADR-0586).
         Some("--serial") => honest_at_most(1).run(),
+        // The v0.6 §48 surface, kept apart from the default so that every existing conformance
+        // assertion about what this package contributes stays exactly as true as it was.
+        Some("--change-provider") => change_provider(None).run(),
+        Some(flag) if flag.starts_with("--change-provider=") => {
+            change_provider(flag.split_once('=').map(|(_, flaw)| flaw)).run();
+        }
         _ => honest().run(),
     }
 }
@@ -272,6 +281,310 @@ fn int_argument(ctx: &Ctx<'_>, name: &str, default: i64) -> i64 {
         .unwrap_or(default)
 }
 
+/// The change and recovery package of v0.6 §48, written around §48.5's PostgreSQL example.
+///
+/// §48.5 lists what a database plugin could contribute: restart semantics as impact, a
+/// checkpoint or quiesce action, application-consistency validation, recovery verification and a
+/// transaction-local rollback. This package contributes one of each, with the declarations §48.4
+/// holds it to.
+///
+/// `flaw` produces a package that is *declaratively* wrong in exactly one way, so the conformance
+/// suite can assert that each refusal happens at load rather than at the first call. Nothing
+/// about the runtime differs: the point of §48.4 is that a package with a bad declaration never
+/// reaches its runtime at all.
+fn change_provider(flaw: Option<&str>) -> Plugin {
+    let application_consistent = flaw == Some("application-consistent-without-quiesce");
+    let mut capabilities = vec![
+        "recovery.discover".to_owned(),
+        "recovery.prepare".to_owned(),
+        "recovery.cleanup".to_owned(),
+        "recovery.estimate-cost".to_owned(),
+        "recovery.quiesce".to_owned(),
+        "recovery.transaction".to_owned(),
+    ];
+    if flaw != Some("restore-without-authority") {
+        capabilities.push("recovery.restore".to_owned());
+    }
+    if application_consistent {
+        // The claim §39.2 reserves for a provider that can quiesce, made by one that cannot.
+        capabilities.retain(|id| id != "recovery.quiesce");
+    }
+    let transaction = Some(TransactionContribution {
+        resources: if flaw == Some("transaction-beyond-scope") {
+            // A second boundary. §27.2 forbids the word `transaction` here and §27.3 makes the
+            // generic distributed case a non-goal, so the declaration is refused at load.
+            vec!["postgres-database".to_owned(), "zfs-dataset".to_owned()]
+        } else {
+            vec!["postgres-database".to_owned()]
+        },
+        guarantee: "statements inside one BEGIN either all commit or all roll back".to_owned(),
+    });
+    honest_at_most(4)
+        .contribute_recovery_provider(RecoveryProviderContribution {
+            id: format!("{PACKAGE}.recovery-provider.database"),
+            summary: "Point-in-time protection for the databases this package fronts.".to_owned(),
+            domain_kinds: vec!["postgres-database".to_owned()],
+            asset_type: "database-dump".to_owned(),
+            consistency: if application_consistent {
+                "application-consistent".to_owned()
+            } else {
+                "crash-consistent".to_owned()
+            },
+            restore_methods: vec!["provider-native-restore".to_owned()],
+            // §11.5: a dump written beside the database it came from dies with the disk that
+            // held both, and a reader has to be told so beside the protection.
+            shares_failure_domain: true,
+            capabilities,
+            transaction,
+        })
+        .contribute_impact_provider(ImpactProviderContribution {
+            id: format!("{PACKAGE}.impact-provider.database"),
+            summary: "Relates a database to the places that read it.".to_owned(),
+            object_types: vec![PLACE_SCHEMA.to_owned()],
+            relations: vec!["reads-database".to_owned()],
+            // A ceiling the package accepts rather than an authority it gains: §8.1's lattice
+            // has no operation that strengthens, so this can only ever lower an edge.
+            confidence_ceiling: Some("possible".to_owned()),
+        })
+        .contribute_verification_provider(VerificationProviderContribution {
+            id: format!("{PACKAGE}.verification-provider.database"),
+            summary: "Checks a database came back, and says which scope that is about.".to_owned(),
+            checks: vec![
+                VerificationCheckContribution {
+                    kind: "database-accepts-connections".to_owned(),
+                    equivalence: "runtime-state".to_owned(),
+                    summary: "The database answers. It says nothing about its contents."
+                        .to_owned(),
+                },
+                VerificationCheckContribution {
+                    kind: "table-row-counts-match".to_owned(),
+                    equivalence: "persistent-state".to_owned(),
+                    summary: "The recorded row counts came back.".to_owned(),
+                },
+            ],
+        })
+        .contribute_risk_rule(RiskRuleContribution {
+            rule_id: format!("{PACKAGE}.risk.database-restart"),
+            dimension: "downtime".to_owned(),
+            emits: "high".to_owned(),
+            summary: "Restoring a database interrupts every session connected to it.".to_owned(),
+        })
+        .contribute_change_view(ChangeViewContribution {
+            id: format!("{PACKAGE}.change-view.database-plan"),
+            summary: "Shows a database plan beside what it would cost to undo.".to_owned(),
+            mode: "static".to_owned(),
+            plan_states: vec!["sealed".to_owned(), "recovery-planned".to_owned()],
+            fallback: "one line per action, with its recovery coverage".to_owned(),
+        })
+        // Reading a plan. §48.4: this is where a package that describes impact stops.
+        .contribute_command(change_command(
+            "plan-read",
+            "Read a change plan the host resolved.",
+            &["change.plan.read"],
+            &["plan"],
+        ))
+        .command(&format!("{PACKAGE}.command.plan-read"), |ctx| {
+            let plan = text_argument(ctx, "plan", "plan-1");
+            match ctx.host_call(method::CHANGE_PLAN_READ, json!({"plan": plan})) {
+                Ok(value) => emit_text(ctx, &value.to_string()),
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        // Contributing to a plan. Still not permission to run anything (§48.3, §48.4).
+        .contribute_command(change_command(
+            "plan-contribute",
+            "Contribute an effect and a risk finding to a plan.",
+            &["change.plan.contribute"],
+            &["plan", "class", "rule"],
+        ))
+        .command(&format!("{PACKAGE}.command.plan-contribute"), |ctx| {
+            let plan = text_argument(ctx, "plan", "plan-1");
+            let class = text_argument(ctx, "class", "low");
+            let rule = text_argument(
+                ctx,
+                "rule",
+                &format!("{PACKAGE}.risk.database-restart"),
+            );
+            let params = json!({
+                "plan": plan,
+                "actions": [],
+                "effects": [{
+                    "domain": "application-persistent",
+                    "kind": "modify",
+                    "confidence": "expected",
+                    "explanation": "the database's own files change when the statement commits",
+                    "irreversible": false,
+                    "compensation": null,
+                }],
+                "impact": [],
+                "risk_findings": [{
+                    "dimension": "downtime",
+                    "class": class,
+                    "rule": rule,
+                    "reason": "one database, and its sessions are re-established afterwards",
+                }],
+            });
+            match ctx.host_call(method::CHANGE_PLAN_CONTRIBUTE, params) {
+                Ok(value) => emit_text(ctx, &value.to_string()),
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        // The authority §48.4 keeps separate. Declared, and refused at invocation without it.
+        .contribute_command(CommandContribution {
+            risk: Some("mutate".to_owned()),
+            action: Some(ActionContribution {
+                targets: vec![PLACE_SCHEMA.to_owned()],
+                mutates: true,
+                idempotency: Idempotency::NotIdempotent,
+                result: None,
+                verification: Some("the database is queried for the new state".to_owned()),
+                effects: Vec::new(),
+                effect_classes: vec![EffectClassContribution {
+                    domain: "application-persistent".to_owned(),
+                    kind: "modify".to_owned(),
+                    confidence: "guaranteed".to_owned(),
+                    explanation: "the statement committed, and the provider contract says so"
+                        .to_owned(),
+                    irreversible: false,
+                    compensation: Some("restore from the dump this plan prepared".to_owned()),
+                }],
+            }),
+            ..change_command(
+                "plan-execute",
+                "Carry out a mutating plan action.",
+                &["change.action.execute"],
+                &["plan"],
+            )
+        })
+        .command(&format!("{PACKAGE}.command.plan-execute"), |ctx| {
+            emit_text(ctx, "executed")
+        })
+        // One command for every `recovery.*` and `verification.observe` call, so the conformance
+        // suite can walk `protocol.v1.yaml`'s host calls and reach each of them.
+        .contribute_command(change_command(
+            "recovery-call",
+            "Make one recovery or verification host call.",
+            &[
+                "recovery.discover",
+                "recovery.prepare",
+                "recovery.restore",
+                "recovery.cleanup",
+                "recovery.estimate-cost",
+                "recovery.quiesce",
+                "verification.observe",
+            ],
+            &["call"],
+        ))
+        .command(&format!("{PACKAGE}.command.recovery-call"), |ctx| {
+            let call = text_argument(ctx, "call", method::RECOVERY_DISCOVER);
+            let params = recovery_params(&call);
+            match ctx.host_call(&call, params) {
+                Ok(value) => emit_text(ctx, &value.to_string()),
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+}
+
+/// The canned parameters for one `recovery.*` or `verification.observe` call.
+///
+/// Every one of them is the shape `protocol.v1.yaml` declares and `ono-change-core` mirrors, so
+/// the call reaches the supervisor's dispatch rather than failing on its own parameters.
+fn recovery_params(call: &str) -> serde_json::Value {
+    let scope = json!({
+        "domain": "main",
+        "domain_kind": "postgres-database",
+        "covers": ["main.public"],
+        "host": "localhost",
+    });
+    match call {
+        method::RECOVERY_PREPARE => json!({"scope": scope, "asset": {"id": "dump-1"}}),
+        method::RECOVERY_VALIDATE => {
+            json!({"scope": scope, "asset": "dump-1", "findings": []})
+        }
+        method::RECOVERY_RESTORE => json!({
+            "scope": scope,
+            "asset": "dump-1",
+            "method": "provider-native-restore",
+            "unrecoverable": [],
+        }),
+        method::RECOVERY_CLEANUP => json!({"scope": scope, "asset": "dump-1"}),
+        method::RECOVERY_ESTIMATE_COST => json!({
+            "domain_kind": "postgres-database",
+            "asset": "dump-1",
+            "cost": {"estimated": true},
+        }),
+        method::RECOVERY_QUIESCE => json!({
+            "application": "main",
+            "step": "prepare_quiesce",
+            "compensation": "resume the application and report the window it was paused for",
+        }),
+        method::RECOVERY_RESUME => json!({"application": "main", "step": "resume"}),
+        method::VERIFICATION_OBSERVE => json!({
+            "check": "check-1",
+            "status": "passed",
+            "equivalence": "persistent-state",
+            "detail": "the recorded row counts came back",
+        }),
+        _ => json!({
+            "domain_kind": "postgres-database",
+            "candidates": [{
+                "provider": "dev.example.echo.recovery-provider.database",
+                "scope": scope,
+                "domain": "application-persistent",
+                "objective": "preserve-exact",
+                "consistency": "crash-consistent",
+                "restore_method": "provider-native-restore",
+                "cost": {"estimated": true},
+                "exclusions": [],
+                "creation_requirements": ["a quiesce window"],
+                "restore_requirements": ["the database offline"],
+                "detail": "a logical dump of the whole database",
+            }],
+        }),
+    }
+}
+
+/// A contributed command with its own declared options, for the v0.6 §48 surface.
+fn change_command(
+    id_suffix: &str,
+    summary: &str,
+    capabilities: &[&str],
+    options: &[&str],
+) -> CommandContribution {
+    CommandContribution {
+        options: options
+            .iter()
+            .map(|name| ParameterContribution {
+                name: (*name).to_owned(),
+                declared_type: "string".to_owned(),
+                doc: format!("The {name} the call is about."),
+                repeatable: false,
+                optional_value: false,
+                default: None,
+            })
+            .collect(),
+        examples: vec![format!("get echo-item --{id_suffix}")],
+        ..command(id_suffix, summary, "stream<string>", capabilities)
+    }
+}
+
+/// One string argument, or a default the handler names.
+fn text_argument(ctx: &Ctx<'_>, name: &str, fallback: &str) -> String {
+    ctx.arguments()
+        .get(name)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(fallback)
+        .to_owned()
+}
+
+/// Emits one line and completes, which is what every v0.6 §48 command here answers with.
+fn emit_text(ctx: &mut Ctx<'_>, text: &str) -> Outcome {
+    match ctx.emit(&Value::String(text.into())) {
+        Ok(()) => Outcome::Completed,
+        Err(error) => Outcome::Failed(error.into()),
+    }
+}
+
 fn honest() -> Plugin {
     // Four at once: every handler here is a closure over nothing, so running one beside another
     // is safe, and the conformance suite needs a package that says so (ADR-0586).
@@ -414,6 +727,17 @@ fn honest_at_most(at_once: u32) -> Plugin {
                 result: None,
                 verification: Some("the place is read back and its state compared".to_owned()),
                 effects: vec!["changes-state".to_owned()],
+                // The same effect in v0.6's own vocabulary, so it can enter Appendix A.5's
+                // coverage matrix instead of only being printed beside it (§8.1, §8.2).
+                effect_classes: vec![EffectClassContribution {
+                    domain: "external-side-effect".to_owned(),
+                    kind: "modify".to_owned(),
+                    confidence: "expected".to_owned(),
+                    explanation: "the external system reports the new state and may reject it"
+                        .to_owned(),
+                    irreversible: false,
+                    compensation: Some("set the place back to its previous state".to_owned()),
+                }],
             }),
             ..command_declaring(
                 "mutate",

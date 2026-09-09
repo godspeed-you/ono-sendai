@@ -336,9 +336,11 @@ fn canonical_text(path: &Path, selector: Option<&str>) -> Result<String, ErrorVa
              happened to be standing.",
         ));
     }
-    if path
-        .components()
-        .any(|component| matches!(component, std::path::Component::CurDir | std::path::Component::ParentDir))
+    // `Path::components` folds `.` away, so the check is over the text the caller actually wrote:
+    // a path carrying `.` or `..` has not been resolved, whatever it would normalise to.
+    if text
+        .split('/')
+        .any(|segment| segment == "." || segment == "..")
     {
         return Err(error::target_unresolved(
             reference,

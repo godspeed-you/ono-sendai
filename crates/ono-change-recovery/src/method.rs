@@ -23,8 +23,8 @@
 use std::sync::Arc;
 
 use ono_change_core::{
-    ChangePlan, MetadataCoverage, RecoveryAsset, RecoveryAssetId, RecoveryGoal, RecoveryPlanFragment,
-    RestoreMethod, choose_method, error,
+    ChangePlan, MetadataCoverage, RecoveryAsset, RecoveryAssetId, RecoveryGoal,
+    RecoveryPlanFragment, RestoreMethod, choose_method, error,
 };
 use ono_change_protection::{ProviderRefusal, ProviderRegistry};
 use ono_value::ErrorValue;
@@ -479,10 +479,7 @@ pub fn select(request: &MethodRequest<'_>) -> Result<MethodSelection, ErrorValue
 
 /// The metadata pieces `required` asks for and `offered` does not restore (Appendix C.7).
 #[must_use]
-pub fn unmet_metadata(
-    required: MetadataCoverage,
-    offered: MetadataCoverage,
-) -> Vec<&'static str> {
+pub fn unmet_metadata(required: MetadataCoverage, offered: MetadataCoverage) -> Vec<&'static str> {
     [
         (required.content, offered.content, "content"),
         (required.mode, offered.mode, "mode"),

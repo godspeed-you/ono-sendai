@@ -1,0 +1,16 @@
+/altroot/debian/etc/nginx/nginx.conf
+7629 7619 8:2 /home/william/git/.v06-work/gen-zfs.sh /gen.sh ro,relatime - ext4 /dev/sda2 rw
+7630 7619 8:2 /home/william/git/.v06-work/fixtures /out rw,relatime - ext4 /dev/sda2 rw
+7631 7619 8:2 /home/william/git/.v06-work/zfstest /pool rw,relatime - ext4 /dev/sda2 rw
+7632 7619 8:2 /var/lib/docker/containers/8cf4a1f140d7ce7cbbb122176f00101b53577ae16f88564d3f809bdb449c32d5/hostname /etc/hostname rw,relatime - ext4 /dev/sda2 rw
+7633 7619 8:2 /var/lib/docker/containers/8cf4a1f140d7ce7cbbb122176f00101b53577ae16f88564d3f809bdb449c32d5/hosts /etc/hosts rw,relatime - ext4 /dev/sda2 rw
+7634 7619 8:2 /var/lib/docker/containers/8cf4a1f140d7ce7cbbb122176f00101b53577ae16f88564d3f809bdb449c32d5/resolv.conf /etc/resolv.conf rw,relatime - ext4 /dev/sda2 rw
+7635 7619 8:2 /usr/lib/modules /usr/lib/modules ro,relatime - ext4 /dev/sda2 rw
+7491 7619 0:87 / /rpool rw,relatime - zfs rpool rw,xattr,noacl,casesensitive
+7492 7619 0:88 / /tank rw,relatime - zfs tank rw,xattr,noacl,casesensitive
+7493 7619 0:92 / /altroot rw,relatime - zfs rpool/ROOT rw,xattr,noacl,casesensitive
+7595 7493 0:93 / /altroot/debian rw,relatime - zfs rpool/ROOT/debian rw,xattr,noacl,casesensitive
+7596 7492 0:94 / /tank/data rw,relatime - zfs tank/data rw,xattr,noacl,casesensitive
+7597 7596 0:96 / /tank/data/customer rw,relatime - zfs tank/data/customer rw,xattr,noacl,casesensitive
+7598 7492 0:99 / /tank/home rw,relatime - zfs tank/home rw,xattr,noacl,casesensitive
+7599 7492 0:100 / /tank/cloned rw,relatime - zfs tank/cloned rw,xattr,noacl,casesensitive

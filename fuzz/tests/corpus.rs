@@ -29,6 +29,11 @@ const AREAS: &[&str] = &[
     "temporal event payloads",
     "time selectors",
     "causal rule candidates",
+    // v0.6 §54.3's list. The block grammar is covered by the `parser` target, which already reads
+    // a `{ ... }` argument; the three below are the surfaces v0.6 adds that nothing else reaches.
+    "plan and recovery asset deserialization",
+    "persistence domain resolution",
+    "storage provider tool output",
 ];
 
 /// The entry points v0.4.1 §41.2 requires the coverage-guided tier to cover, in its own words,
@@ -58,6 +63,12 @@ const GUIDED: &[(&str, &str)] = &[
         "adapter machine-readable decoders with attacker-controlled bytes",
         "adapter-decoders",
     ),
+    // v0.6 §54.3. The plan store is a file on disk that §41.2 reconstructs a mutation's state
+    // from; the mount table is written by the kernel and read as text; and the storage tool
+    // output is produced by a program on `PATH` that a package could replace.
+    ("plan and recovery asset deserialization", "change-records"),
+    ("persistence domain resolution", "persistence-domains"),
+    ("storage provider tool output", "storage-tool-output"),
 ];
 
 #[test]

@@ -79,3 +79,24 @@ path = "fuzz_targets/adapter-decoders.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "change-records"
+path = "fuzz_targets/change-records.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "persistence-domains"
+path = "fuzz_targets/persistence-domains.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "storage-tool-output"
+path = "fuzz_targets/storage-tool-output.rs"
+test = false
+doc = false
+bench = false

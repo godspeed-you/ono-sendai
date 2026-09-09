@@ -13,6 +13,9 @@ publish = false
 bytes.workspace = true
 jiff.workspace = true
 ono-adapter.workspace = true
+ono-change-core.workspace = true
+ono-change-protection.workspace = true
+ono-recovery-zfs.workspace = true
 ono-kuang-protocol.workspace = true
 # The KUANG/11 temporal contribution decoder of v0.5 §37.3 lives with the broker that refuses
 # it, so the target that hammers it has to reach the supervisor.

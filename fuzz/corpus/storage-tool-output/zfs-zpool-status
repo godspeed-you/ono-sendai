@@ -1,0 +1,19 @@
+  pool: rpool
+ state: ONLINE
+config:
+
+	NAME        STATE     READ WRITE CKSUM
+	rpool       ONLINE       0     0     0
+	  loop20    ONLINE       0     0     0
+
+errors: No known data errors
+
+  pool: tank
+ state: ONLINE
+config:
+
+	NAME        STATE     READ WRITE CKSUM
+	tank        ONLINE       0     0     0
+	  loop21    ONLINE       0     0     0
+
+errors: No known data errors

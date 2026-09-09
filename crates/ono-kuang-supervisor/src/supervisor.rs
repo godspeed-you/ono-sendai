@@ -2663,6 +2663,55 @@ impl Actor {
                 self.host_temporal_contribute_causality(seq, params).await
             }
             method::TEMPORAL_RECORDER => self.host_temporal_recorder(seq, params).await,
+            method::CHANGE_PLAN_READ => self.host_change_plan_read(seq, params).await,
+            method::CHANGE_PLAN_CONTRIBUTE => self.host_change_plan_contribute(seq, params).await,
+            method::RECOVERY_DISCOVER => self.host_recovery_discover(seq, params).await,
+            method::RECOVERY_PREPARE => {
+                self.host_recovery_scoped(
+                    seq,
+                    params,
+                    method::RECOVERY_PREPARE,
+                    ono_kuang_protocol::Capability::RecoveryPrepare,
+                )
+                .await
+            }
+            method::RECOVERY_VALIDATE => {
+                self.host_recovery_scoped(
+                    seq,
+                    params,
+                    method::RECOVERY_VALIDATE,
+                    ono_kuang_protocol::Capability::RecoveryDiscover,
+                )
+                .await
+            }
+            method::RECOVERY_RESTORE => {
+                self.host_recovery_scoped(
+                    seq,
+                    params,
+                    method::RECOVERY_RESTORE,
+                    ono_kuang_protocol::Capability::RecoveryRestore,
+                )
+                .await
+            }
+            method::RECOVERY_CLEANUP => {
+                self.host_recovery_scoped(
+                    seq,
+                    params,
+                    method::RECOVERY_CLEANUP,
+                    ono_kuang_protocol::Capability::RecoveryCleanup,
+                )
+                .await
+            }
+            method::RECOVERY_ESTIMATE_COST => self.host_recovery_estimate_cost(seq, params).await,
+            method::RECOVERY_QUIESCE => {
+                self.host_recovery_quiesce(seq, params, method::RECOVERY_QUIESCE)
+                    .await
+            }
+            method::RECOVERY_RESUME => {
+                self.host_recovery_quiesce(seq, params, method::RECOVERY_RESUME)
+                    .await
+            }
+            method::VERIFICATION_OBSERVE => self.host_verification_observe(seq, params).await,
             unknown => Err(protocol_violation(format!(
                 "a call to `{unknown}`, which the negotiated host API does not carry"
             ))),
@@ -4068,6 +4117,391 @@ impl Actor {
         )
         .await;
         Ok(())
+    }
+
+    // --- the change and recovery calls of v0.6 §48.3 ---------------------------------------------
+    //
+    // Eleven calls, eleven capabilities, and that is the whole of §48.4's mechanism: reading a
+    // plan and executing an action are not two arguments to one call, so a grant for one cannot
+    // be spent on the other. The broker checks each against the value the operation will use and
+    // audits the outcome, exactly as it does for every other domain.
+
+    /// `change.plan.read`: one plan, its actions and its computed impact (§48.3).
+    async fn host_change_plan_read(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let params: ono_kuang_protocol::PlanReadParams = Self::parse_params(params)?;
+        let capability = ono_kuang_protocol::Capability::ChangePlanRead;
+        let target = Json::String(params.plan.clone());
+        if let Err(error) = self
+            .broker_check(
+                capability,
+                method::CHANGE_PLAN_READ,
+                &[ScopeUse::Name {
+                    key: "plans",
+                    value: params.plan.clone(),
+                }],
+                Some(target.clone()),
+            )
+            .await
+        {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let outcome = host.change_plan_read(&params.plan).await;
+        self.reply_service(
+            seq,
+            capability,
+            method::CHANGE_PLAN_READ,
+            Some(target),
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `change.plan.contribute`: what one package adds to a plan (§48.2, §48.3, §19.2).
+    ///
+    /// Two validations happen here that nothing downstream can re-derive. Every effect is settled
+    /// against Appendix A.1's domains and §8.1's confidences, so a contribution either enters the
+    /// coverage matrix or is refused rather than printed. And every risk finding must name a rule
+    /// this package declared and a class that rule said it may emit: §19.2 makes risk rule-based,
+    /// and a finding from a rule nobody can look up is a class with no justification behind it.
+    async fn host_change_plan_contribute(
+        &mut self,
+        seq: u64,
+        params: Json,
+    ) -> Result<(), KuangError> {
+        let params: ono_kuang_protocol::PlanContributeParams = Self::parse_params(params)?;
+        let capability = ono_kuang_protocol::Capability::ChangePlanContribute;
+        let target = Json::String(params.plan.clone());
+        if let Err(error) = self
+            .broker_check(
+                capability,
+                method::CHANGE_PLAN_CONTRIBUTE,
+                &[],
+                Some(target.clone()),
+            )
+            .await
+        {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        if let Err(error) = self.check_contribution(&params) {
+            self.audit_denied(capability, method::CHANGE_PLAN_CONTRIBUTE, &error);
+            self.reply_err(seq, error).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let payload = serde_json::to_value(&params).unwrap_or(Json::Null);
+        let outcome = host.change_plan_contribute(&self.package_id, payload).await;
+        self.reply_service(
+            seq,
+            capability,
+            method::CHANGE_PLAN_CONTRIBUTE,
+            Some(target),
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// The vocabulary and rule-registration checks a plan contribution must pass (§19.2, §8.1).
+    fn check_contribution(
+        &self,
+        params: &ono_kuang_protocol::PlanContributeParams,
+    ) -> Result<(), WireError> {
+        for effect in &params.effects {
+            crate::change::validate_effect_class(&self.package_id, effect)
+                .map_err(|error| WireError::from(&error))?;
+        }
+        for finding in &params.risk_findings {
+            let Some(rule) = self.change.risk_rule(&finding.rule) else {
+                return Err(WireError::from_core(
+                    ono_core::ErrorCode::KuangCapabilityDenied,
+                    format!(
+                        "no rule `{}` is declared in this package's `risk_rules` contribution; \
+                         v0.6 §19.2 makes risk rule-based, and a rule that is not registered is \
+                         not inspectable",
+                        finding.rule
+                    ),
+                ));
+            };
+            let Some(class) = ono_change_core::RiskClass::from_name(&finding.class) else {
+                return Err(WireError::from_core(
+                    ono_core::ErrorCode::TypeMismatch,
+                    format!(
+                        "`{}` is not one of the five risk classes of v0.6 §19.2",
+                        finding.class
+                    ),
+                ));
+            };
+            if ono_change_core::RiskDimension::from_name(&finding.dimension).is_none() {
+                return Err(WireError::from_core(
+                    ono_core::ErrorCode::TypeMismatch,
+                    format!(
+                        "`{}` is not one of the ten risk dimensions of v0.6 §19.1",
+                        finding.dimension
+                    ),
+                ));
+            }
+            // The declared ceiling, applied the only way §19.2 allows one to be applied: a
+            // finding above what the rule said it emits is refused, and a finding below it is
+            // taken and composed as a maximum like any other.
+            let Some(ceiling) = ono_change_core::RiskClass::from_name(&rule.emits) else {
+                return Err(WireError::from_core(
+                    ono_core::ErrorCode::TypeMismatch,
+                    format!("rule `{}` declares an unreadable class", rule.rule_id),
+                ));
+            };
+            if class.max_of(ceiling) != ceiling {
+                return Err(WireError::from_core(
+                    ono_core::ErrorCode::KuangCapabilityDenied,
+                    format!(
+                        "rule `{}` declared that it emits `{}` and found `{}`",
+                        rule.rule_id, rule.emits, finding.class
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// `recovery.discover`: the candidates a provider found (§12.1, Appendix A.3).
+    async fn host_recovery_discover(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let params: ono_kuang_protocol::RecoveryDiscoverParams = Self::parse_params(params)?;
+        let capability = ono_kuang_protocol::Capability::RecoveryDiscover;
+        let mut uses = vec![ScopeUse::Name {
+            key: "domain_kinds",
+            value: params.domain_kind.clone(),
+        }];
+        // A candidate about another domain kind is a use of that kind, whatever the call's own
+        // header said: the scope is checked against the values the operation will actually use.
+        for candidate in &params.candidates {
+            uses.push(ScopeUse::Name {
+                key: "domain_kinds",
+                value: candidate.scope.domain_kind.clone(),
+            });
+        }
+        let target = Json::String(params.domain_kind.clone());
+        if let Err(error) = self
+            .broker_check(
+                capability,
+                method::RECOVERY_DISCOVER,
+                &uses,
+                Some(target.clone()),
+            )
+            .await
+        {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        self.report_recovery(seq, capability, method::RECOVERY_DISCOVER, target, &params)
+            .await
+    }
+
+    /// `recovery.prepare`, `recovery.validate`, `recovery.restore` and `recovery.cleanup`: the
+    /// four calls that carry a `RecoveryScope`, each behind its own capability (§12.2).
+    async fn host_recovery_scoped(
+        &mut self,
+        seq: u64,
+        params: Json,
+        call: &str,
+        capability: ono_kuang_protocol::Capability,
+    ) -> Result<(), KuangError> {
+        let scope = params
+            .get("scope")
+            .cloned()
+            .ok_or_else(|| protocol_violation(format!("`{call}` carries no `scope`")))?;
+        let scope: ono_kuang_protocol::RecoveryScopeWire = serde_json::from_value(scope)
+            .map_err(|error| protocol_violation(format!("malformed `scope`: {error}")))?;
+        let uses = vec![
+            ScopeUse::Name {
+                key: "domain_kinds",
+                value: scope.domain_kind.clone(),
+            },
+            ScopeUse::Name {
+                key: "scopes",
+                value: scope.domain.clone(),
+            },
+        ];
+        let target = Json::String(scope.domain.clone());
+        if let Err(error) = self
+            .broker_check(capability, call, &uses, Some(target.clone()))
+            .await
+        {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        self.report_recovery(seq, capability, call, target, &params)
+            .await
+    }
+
+    /// `recovery.estimate_cost`: what an asset costs now (§38).
+    async fn host_recovery_estimate_cost(
+        &mut self,
+        seq: u64,
+        params: Json,
+    ) -> Result<(), KuangError> {
+        let params: ono_kuang_protocol::RecoveryEstimateCostParams = Self::parse_params(params)?;
+        let capability = ono_kuang_protocol::Capability::RecoveryEstimateCost;
+        let target = Json::String(params.asset.clone());
+        if let Err(error) = self
+            .broker_check(
+                capability,
+                method::RECOVERY_ESTIMATE_COST,
+                &[ScopeUse::Name {
+                    key: "domain_kinds",
+                    value: params.domain_kind.clone(),
+                }],
+                Some(target.clone()),
+            )
+            .await
+        {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        self.report_recovery(
+            seq,
+            capability,
+            method::RECOVERY_ESTIMATE_COST,
+            target,
+            &params,
+        )
+        .await
+    }
+
+    /// `recovery.quiesce` and `recovery.resume`: two steps of §39.3's five, one capability.
+    ///
+    /// §18.4 requires the application to be resumed when creation fails, so resuming is behind
+    /// the capability that paused rather than behind one of its own: a package able to pause an
+    /// application must always be able to let it go again.
+    async fn host_recovery_quiesce(
+        &mut self,
+        seq: u64,
+        params: Json,
+        call: &str,
+    ) -> Result<(), KuangError> {
+        let params: ono_kuang_protocol::RecoveryQuiesceParams = Self::parse_params(params)?;
+        let capability = ono_kuang_protocol::Capability::RecoveryQuiesce;
+        let target = Json::String(params.application.clone());
+        if let Err(error) = self
+            .broker_check(
+                capability,
+                call,
+                &[ScopeUse::Name {
+                    key: "applications",
+                    value: params.application.clone(),
+                }],
+                Some(target.clone()),
+            )
+            .await
+        {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        self.report_recovery(seq, capability, call, target, &params)
+            .await
+    }
+
+    /// Hands one recovery report to the host, naming the call it came from.
+    async fn report_recovery<T: serde::Serialize>(
+        &mut self,
+        seq: u64,
+        capability: ono_kuang_protocol::Capability,
+        call: &str,
+        target: Json,
+        report: &T,
+    ) -> Result<(), KuangError> {
+        let host = Arc::clone(&self.host);
+        let payload = serde_json::to_value(report).unwrap_or(Json::Null);
+        let outcome = host.recovery_report(&self.package_id, call, payload).await;
+        self.reply_service(seq, capability, call, Some(target), outcome)
+            .await;
+        Ok(())
+    }
+
+    /// `verification.observe`: the result of observing one contract (§23.3, §25.1).
+    async fn host_verification_observe(
+        &mut self,
+        seq: u64,
+        params: Json,
+    ) -> Result<(), KuangError> {
+        let params: ono_kuang_protocol::VerificationObserveParams = Self::parse_params(params)?;
+        let capability = ono_kuang_protocol::Capability::VerificationObserve;
+        let target = Json::String(params.check.clone());
+        if let Err(error) = self
+            .broker_check(
+                capability,
+                method::VERIFICATION_OBSERVE,
+                &[],
+                Some(target.clone()),
+            )
+            .await
+        {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        // §23.5 forbids treating an unanswerable check as success and §25.3 forbids a scopeless
+        // claim that recovery worked, so both words are settled here rather than downstream.
+        if ono_change_core::VerificationStatus::from_name(&params.status).is_none() {
+            let error = WireError::from_core(
+                ono_core::ErrorCode::TypeMismatch,
+                format!(
+                    "`{}` is not one of the four verification statuses of v0.6 §23.3",
+                    params.status
+                ),
+            );
+            self.audit_denied(capability, method::VERIFICATION_OBSERVE, &error);
+            self.reply_err(seq, error).await;
+            return Ok(());
+        }
+        if let Some(equivalence) = &params.equivalence
+            && ono_change_core::EquivalenceDomain::from_name(equivalence).is_none()
+        {
+            let error = WireError::from_core(
+                ono_core::ErrorCode::TypeMismatch,
+                format!(
+                    "`{equivalence}` is not one of the three equivalence domains of v0.6 §25.1"
+                ),
+            );
+            self.audit_denied(capability, method::VERIFICATION_OBSERVE, &error);
+            self.reply_err(seq, error).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let payload = serde_json::to_value(&params).unwrap_or(Json::Null);
+        let outcome = host.verification_observe(&self.package_id, payload).await;
+        self.reply_service(
+            seq,
+            capability,
+            method::VERIFICATION_OBSERVE,
+            Some(target),
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// Records a refusal the host made after the grant check, as loudly as a denial (§31.37).
+    fn audit_denied(
+        &self,
+        capability: ono_kuang_protocol::Capability,
+        action: &str,
+        error: &WireError,
+    ) {
+        let label = self.invocation_label();
+        self.audit.record(
+            &self.package_id,
+            &label,
+            capability.id(),
+            None,
+            Enforcement::Broker,
+            action,
+            None,
+            self.now(),
+            AuditResult::Denied,
+            Some(error.clone()),
+        );
     }
 
     /// The host clock as an instant, for the temporal validations that need one.

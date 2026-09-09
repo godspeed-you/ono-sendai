@@ -267,11 +267,7 @@ pub trait HostServices: Send + Sync + std::fmt::Debug {
     /// §23.5 forbids treating an unanswerable check as success, and §25.3 forbids a scopeless
     /// claim that recovery worked. Both are properties of what the package reported, which the
     /// supervisor has already settled against the vocabulary before calling this.
-    async fn verification_observe(
-        &self,
-        _package: &str,
-        _result: Json,
-    ) -> Result<Json, HostError> {
+    async fn verification_observe(&self, _package: &str, _result: Json) -> Result<Json, HostError> {
         Err(HostError::unavailable("change verification"))
     }
 }

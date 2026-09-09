@@ -301,7 +301,10 @@ pub fn analyse(request: &ConflictRequest<'_>) -> NewerStateImpact {
 }
 
 /// What one observation means for the recovery, or `None` when it is not newer state.
-fn classify(request: &ConflictRequest<'_>, observation: &ObjectObservation) -> Option<NewerStateItem> {
+fn classify(
+    request: &ConflictRequest<'_>,
+    observation: &ObjectObservation,
+) -> Option<NewerStateItem> {
     let object = observation.object();
     if let ObservedState::Unestablished { reason } = observation.state() {
         return Some(NewerStateItem::new(

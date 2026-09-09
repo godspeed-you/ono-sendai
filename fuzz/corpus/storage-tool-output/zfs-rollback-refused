@@ -1,0 +1,4 @@
+cannot rollback to 'rpool/ROOT/debian@ono-a82f-20260909T194500Z': more recent snapshots or bookmarks exist
+use '-r' to force deletion of the following snapshots and bookmarks:
+rpool/ROOT/debian@later-1
+rpool/ROOT/debian#book-1

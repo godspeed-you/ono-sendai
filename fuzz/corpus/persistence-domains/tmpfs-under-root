@@ -1,0 +1,3 @@
+/run/secret
+26 1 0:22 / /run rw,nosuid,nodev - tmpfs tmpfs rw,size=1G
+25 1 8:2 / / rw,relatime - zfs rpool/ROOT/debian rw

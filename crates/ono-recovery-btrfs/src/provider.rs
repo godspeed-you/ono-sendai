@@ -1821,6 +1821,13 @@ impl RecoveryProvider for BtrfsProvider {
             .creating())
     }
 
+    // §11.4's five checks, in the order they can be answered. Two of them are worth stating
+    // outright. Identity rests on lineage *and* on the read-only flag: a writable snapshot may
+    // still name the subvolume it came from and no longer hold what it captured, so under §14.5's
+    // default it is not the identity the plan recorded. Permissions is `true` on the strength of
+    // the queries having answered at all — reading a subvolume's metadata is itself privileged,
+    // and an unprivileged caller reaches the `Refused` arm above, which is an error rather than a
+    // validation that failed (§56.3).
     fn validate(&self, asset: &RecoveryAsset) -> Result<RecoveryValidation, ErrorValue> {
         let snapshot_path = PathBuf::from(asset.reference());
         let detail_prefix = format!("recovery point {}", asset.reference());

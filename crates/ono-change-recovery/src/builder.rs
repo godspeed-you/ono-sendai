@@ -34,8 +34,8 @@ use ono_change_core::{
     ActionRole, ActionStatus, AssetState, ChangePlan, DirectoryRestorePolicy, EffectDomain,
     EffectKind, EquivalenceDomain, FrozenTarget, Intent, MetadataCoverage, PlanAction,
     ProposedEffect, ProviderBinding, RecoveryAsset, RecoveryGoal, RecoveryPlan, RestoreMethod,
-    RiskAssessment, RiskClass, RiskDimension, RiskFinding, UnrecoverableEffect,
-    VerificationClass, VerificationContract, VerificationSet, error,
+    RiskAssessment, RiskClass, RiskDimension, RiskFinding, UnrecoverableEffect, VerificationClass,
+    VerificationContract, VerificationSet, error,
 };
 use ono_change_protection::ProviderRegistry;
 use ono_value::{ByteSize, ErrorValue, Value};
@@ -238,8 +238,8 @@ pub fn plan_recovery(request: &RecoveryRequest<'_>) -> Result<RecoveryPlan, Erro
         request.source,
         request.goal,
     );
-    let mut selection_request = MethodRequest::new(request.goal, &offers)
-        .requiring_metadata(request.required_metadata);
+    let mut selection_request =
+        MethodRequest::new(request.goal, &offers).requiring_metadata(request.required_metadata);
     for semantic in &request.required_semantics {
         selection_request = selection_request.requiring_semantic(Arc::clone(semantic));
     }
@@ -301,9 +301,10 @@ fn usable(asset: &RecoveryAsset) -> Result<(), ErrorValue> {
         AssetState::Ready => Ok(()),
         AssetState::Expired => Err(error::asset_expired(
             asset.id(),
-            &asset
-                .expires_at()
-                .map_or_else(|| "an instant the store did not record".to_owned(), |at| at.to_string()),
+            &asset.expires_at().map_or_else(
+                || "an instant the store did not record".to_owned(),
+                |at| at.to_string(),
+            ),
         )),
         AssetState::Removed => Err(error::asset_not_found(asset.reference())),
         AssetState::Failed => Err(error::asset_invalid(
@@ -316,9 +317,7 @@ fn usable(asset: &RecoveryAsset) -> Result<(), ErrorValue> {
                 .validation()
                 .map(ono_change_core::RecoveryValidation::failures)
                 .filter(|failures| !failures.is_empty())
-                .unwrap_or_else(|| {
-                    vec!["the asset exists and can no longer satisfy protection"]
-                }),
+                .unwrap_or_else(|| vec!["the asset exists and can no longer satisfy protection"]),
         )),
         AssetState::Proposed | AssetState::Creating => Err(error::asset_invalid(
             asset.id(),
@@ -492,14 +491,14 @@ fn classify_effect(
         });
     }
     match effect.domain() {
-        EffectDomain::ExternalSideEffect | EffectDomain::RemoteSystem => Some(
-            UnrecoverableEffect::new(
+        EffectDomain::ExternalSideEffect | EffectDomain::RemoteSystem => {
+            Some(UnrecoverableEffect::new(
                 subject,
                 effect.domain(),
                 "§35.2: an effect outside this machine is not recoverable through a local \
                  snapshot, and it stays separately visible",
-            ),
-        ),
+            ))
+        }
         EffectDomain::NetworkRuntime => Some(UnrecoverableEffect::new(
             subject,
             effect.domain(),
@@ -575,8 +574,12 @@ fn change_plan(
             restore_set
                 .iter()
                 .map(|object| {
-                    FrozenTarget::new("ono.recovery.object", Arc::clone(object), Arc::clone(object))
-                        .in_domain(selection.chosen().reference())
+                    FrozenTarget::new(
+                        "ono.recovery.object",
+                        Arc::clone(object),
+                        Arc::clone(object),
+                    )
+                    .in_domain(selection.chosen().reference())
                 })
                 .collect(),
         )?;
@@ -682,7 +685,7 @@ fn verification(
         )
         .about(EquivalenceDomain::PersistentState);
         if let Some(digest) = digest {
-            contract = contract.expecting(Value::string(&*digest));
+            contract = contract.expecting(Value::string(&digest));
         }
         set = set.with(contract);
     }

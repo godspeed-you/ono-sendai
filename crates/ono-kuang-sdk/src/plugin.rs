@@ -195,6 +195,73 @@ impl Plugin {
         self
     }
 
+    /// Declares a contributed recovery provider (v0.6 §48.2, §12.1, §48.5).
+    ///
+    /// The declaration is read before the package runs and it is refused there: §48.4 makes a
+    /// provider that offers to restore without holding destructive authority `package.invalid` at
+    /// load, and §39.2 makes an `application-consistent` claim without `recovery.quiesce` the
+    /// same. Declaring honestly is what makes the candidates this provider offers usable.
+    #[must_use]
+    pub fn contribute_recovery_provider(
+        mut self,
+        contribution: ono_kuang_protocol::RecoveryProviderContribution,
+    ) -> Self {
+        self.contributions.recovery_providers.push(contribution);
+        self
+    }
+
+    /// Declares a contributed impact provider (v0.6 §48.2, §9.4).
+    ///
+    /// It may add edges the host's own graph does not reach. It may not raise a confidence:
+    /// §8.1's lattice has no operation that strengthens, and §49.3 keeps a statement about the
+    /// world separate from a provider proving one.
+    #[must_use]
+    pub fn contribute_impact_provider(
+        mut self,
+        contribution: ono_kuang_protocol::ImpactProviderContribution,
+    ) -> Self {
+        self.contributions.impact_providers.push(contribution);
+        self
+    }
+
+    /// Declares a contributed verification provider (v0.6 §48.2, §25.1).
+    ///
+    /// Each check kind names the equivalence domain it speaks to, because §25.3 forbids the
+    /// sentence "rollback successful" without a scope and a check that proves the bytes came
+    /// back proves nothing about what left the machine.
+    #[must_use]
+    pub fn contribute_verification_provider(
+        mut self,
+        contribution: ono_kuang_protocol::VerificationProviderContribution,
+    ) -> Self {
+        self.contributions.verification_providers.push(contribution);
+        self
+    }
+
+    /// Declares a contributed risk rule (v0.6 §48.2, §19.2).
+    ///
+    /// A contributed rule is a rule: registered under a namespaced id, inspectable exactly as a
+    /// built-in one is, and folded into the plan's class by the maximum §19.2 defines. A finding
+    /// naming a rule the package never declared is refused at the call.
+    #[must_use]
+    pub fn contribute_risk_rule(
+        mut self,
+        contribution: ono_kuang_protocol::RiskRuleContribution,
+    ) -> Self {
+        self.contributions.risk_rules.push(contribution);
+        self
+    }
+
+    /// Declares a contributed plan view (v0.6 §48.2, §45).
+    #[must_use]
+    pub fn contribute_change_view(
+        mut self,
+        contribution: ono_kuang_protocol::ChangeViewContribution,
+    ) -> Self {
+        self.contributions.change_views.push(contribution);
+        self
+    }
+
     /// Names a feature that depends on an optional capability. When the negotiated contract
     /// denies the capability, the feature appears in `lifecycle.init`'s `disabled_features` —
     /// the plugin adapts once instead of re-prompting (spec §31.63).

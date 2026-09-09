@@ -1,0 +1,6 @@
+/mnt/root/var/lib-app/state/state.db
+7629 7619 8:2 /home/william/git/.v06-work/gen-btrfs.sh /gen.sh ro,relatime - ext4 /dev/sda2 rw
+7492 7619 0:87 / /mnt/top rw,relatime - btrfs /dev/loop20 rw,discard=async,space_cache=v2,subvolid=5,subvol=/
+7493 7619 0:87 /@ /mnt/root rw,relatime - btrfs /dev/loop20 rw,discard=async,space_cache=v2,subvolid=256,subvol=/@
+7595 7493 0:87 /@home /mnt/root/home rw,relatime - btrfs /dev/loop20 rw,discard=async,space_cache=v2,subvolid=257,subvol=/@home
+7596 7493 0:87 /@var /mnt/root/var rw,relatime - btrfs /dev/loop20 rw,discard=async,space_cache=v2,subvolid=258,subvol=/@var

@@ -70,9 +70,7 @@ impl ChangeContributions {
     /// the rule before it accepts the finding.
     #[must_use]
     pub fn risk_rule(&self, rule_id: &str) -> Option<&RiskRuleContribution> {
-        self.risk_rules
-            .iter()
-            .find(|rule| rule.rule_id == rule_id)
+        self.risk_rules.iter().find(|rule| rule.rule_id == rule_id)
     }
 }
 
@@ -366,10 +364,7 @@ fn validate_verification_provider(
 }
 
 /// §19.1's dimensions and §19.2's classes, settled before a rule is registered.
-fn validate_risk_rule(
-    package_id: &str,
-    rule: &RiskRuleContribution,
-) -> Result<(), KuangError> {
+fn validate_risk_rule(package_id: &str, rule: &RiskRuleContribution) -> Result<(), KuangError> {
     if !rule.rule_id.starts_with(&format!("{package_id}.")) {
         return Err(invalid(format!(
             "risk rule `{}` is not namespaced under `{package_id}`; a contributed rule is a rule, \
@@ -402,10 +397,7 @@ fn validate_risk_rule(
 }
 
 /// §48.2's `ChangeView`, in the view lifecycle every other contributed view uses.
-fn validate_change_view(
-    package_id: &str,
-    view: &ChangeViewContribution,
-) -> Result<(), KuangError> {
+fn validate_change_view(package_id: &str, view: &ChangeViewContribution) -> Result<(), KuangError> {
     contributed_id(package_id, "change-view", &view.id)?;
     if !matches!(view.mode.as_str(), "interactive" | "static") {
         return Err(invalid(format!(

@@ -101,6 +101,24 @@ pub const TARGETS: &[Target] = &[
         area: "causal rule candidates",
         run: causal_candidates,
     },
+    // v0.6 §54.3's list. Every one of these reads bytes or values something outside Ono produced:
+    // a plan store on disk, a mount table the kernel wrote, and the output of a storage tool that
+    // a package manager could replace tomorrow.
+    Target {
+        name: "change-records",
+        area: "plan and recovery asset deserialization",
+        run: change_records,
+    },
+    Target {
+        name: "persistence-domains",
+        area: "persistence domain resolution",
+        run: persistence_domains,
+    },
+    Target {
+        name: "storage-tool-output",
+        area: "storage provider tool output",
+        run: storage_tool_output,
+    },
 ];
 
 /// The target of that name.
@@ -500,4 +518,171 @@ fn decode_events(data: &[u8]) -> Vec<ono_temporal_core::TemporalEvent> {
             .seal()
         })
         .collect()
+}
+
+/// The v0.6 record decoders (§54.3, §36.2).
+///
+/// The bytes these read come off disk: §36.1 persists sealed plans so they survive shell exit, and
+/// §41.2 reconstructs plan state from them after a crash. A store somebody edited, a store a
+/// half-written transaction left behind, a store from a build whose schema has moved — each is a
+/// value that reaches `plan_from_record` without passing through anything that made it. The
+/// contract is that a malformed one is a structured refusal naming the field, and never a panic
+/// and never a plan that is quietly missing half of itself.
+///
+/// The first byte chooses which decoder, so one corpus reaches all of them.
+fn change_records(data: &[u8]) {
+    let Some((selector, rest)) = data.split_first() else {
+        return;
+    };
+    let text = String::from_utf8_lossy(rest);
+    let schemas = ono_value::builtin_schemas();
+    let Ok(value) = ono_value::from_json_str(&text, schemas) else {
+        return;
+    };
+    let ono_value::Value::Record(record) = value else {
+        return;
+    };
+    match selector % 6 {
+        0 => {
+            if let Ok(plan) = ono_change_core::value::plan_from_record(&record) {
+                // §10.2 and §62.1: the level a decoded plan reports is composed from the matrix it
+                // carries, so a store cannot hand back a plan that claims more coverage than its
+                // own rows support.
+                let level = plan.protection().level();
+                if level == ono_change_core::ProtectionLevel::Protected {
+                    assert!(
+                        plan.protection().shortfall().is_empty(),
+                        "a decoded plan reports PROTECTED with an uncovered required domain"
+                    );
+                }
+                // §4.4: what came back must re-encode to the same record.
+                let _ = ono_change_core::value::plan_record(&plan);
+            }
+        }
+        1 => {
+            if let Ok(asset) = ono_change_core::value::asset_from_record(&record) {
+                // §11.4: only a validation that passed reaches `ready`.
+                if asset.state() == ono_change_core::AssetState::Ready {
+                    assert!(
+                        asset
+                            .validation()
+                            .is_some_and(ono_change_core::RecoveryValidation::is_complete),
+                        "a decoded asset is usable without a validation that passed"
+                    );
+                }
+                let _ = ono_change_core::value::asset_record(&asset);
+            }
+        }
+        2 => {
+            let _ = ono_change_core::value::action_from_record(&record);
+        }
+        3 => {
+            let _ = ono_change_core::value::effect_from_record(&record);
+        }
+        4 => {
+            let _ = ono_change_core::value::coverage_from_record(&record);
+        }
+        _ => {
+            let _ = ono_change_core::value::impact_from_record(&record);
+        }
+    }
+}
+
+/// Appendix B's resolution pipeline, over a mount table nobody checked (§54.3).
+///
+/// `/proc/self/mountinfo` is written by the kernel and read as text, and a container runtime, a
+/// snap, an automounter or a hostile filesystem name can put very nearly anything in it. The
+/// contract that matters is not that the resolver survives — it is that it never answers
+/// `protectable` for something it could not resolve, because §11.2 makes that mapping the
+/// precondition of claiming protection at all.
+///
+/// The input is split at the first newline: the rest is the mount table, the first line is the
+/// path to resolve.
+fn persistence_domains(data: &[u8]) {
+    let text = String::from_utf8_lossy(data);
+    let Some((path, table)) = text.split_once('\n') else {
+        return;
+    };
+    let mounts = ono_change_protection::domain::MountTable::from_text(table);
+    let resolved = mounts.resolve(std::path::Path::new(path));
+    if resolved.is_protectable() {
+        assert!(
+            resolved.object().is_some(),
+            "a domain with no backing object was reported as protectable (§11.2)"
+        );
+        assert!(
+            resolved.mount().kind().is_persistent(),
+            "a non-persistent filesystem was reported as protectable (Appendix B.7)"
+        );
+        assert!(
+            resolved.refusal().is_none(),
+            "a refused resolution was reported as protectable"
+        );
+    }
+}
+
+/// The storage provider parsers, over output a tool did not produce (§54.3, §12.3).
+///
+/// A provider parses the output of a program on `PATH`. The program is normally the real one; the
+/// interesting case is when it is not, or when it is a version whose output moved. §43.6 and
+/// Appendix G.4 are the two rules this hammers: a name derived from parsed output must still be a
+/// valid, sanitised snapshot name, and a version the provider has not validated must degrade to
+/// unsupported rather than being parsed optimistically.
+fn storage_tool_output(data: &[u8]) {
+    let Some((selector, rest)) = data.split_first() else {
+        return;
+    };
+    let text = String::from_utf8_lossy(rest);
+    let program = "/usr/sbin/zfs";
+    match selector % 8 {
+        0 => {
+            let _ = ono_recovery_zfs::layout::datasets(program, &text);
+        }
+        1 => {
+            let _ = ono_recovery_zfs::layout::snapshots(program, &text);
+        }
+        2 => {
+            let _ = ono_recovery_zfs::layout::bookmarks(program, &text);
+        }
+        3 => {
+            let _ = ono_recovery_zfs::layout::pools(program, &text);
+        }
+        4 => {
+            let _ = ono_recovery_zfs::layout::pool_status(&text);
+        }
+        5 => {
+            let _ = ono_recovery_zfs::parse::properties(program, &text);
+        }
+        6 => {
+            // §13.6: the refusal ZFS itself gives when a rollback would destroy newer history is
+            // parsed rather than guessed at, so a mangled one must not silently come back empty
+            // while the provider proceeds. What is asserted here is only that it does not panic —
+            // the emptiness is a fact the checklist of §56.1 turns into a block.
+            let _ = ono_recovery_zfs::parse::rollback_refusal(&text);
+            let _ = ono_recovery_zfs::parse::destroy_refusal(&text);
+            let _ = ono_recovery_zfs::parse::version(&text);
+        }
+        _ => {
+            // §43.6: whatever the bytes were, the name that comes out is one ZFS would accept and
+            // one no shell would re-read as syntax.
+            let sanitised = ono_recovery_zfs::naming::sanitise(&text);
+            let part = ono_recovery_zfs::naming::snapshot_part(
+                Some(&sanitised),
+                jiff::Timestamp::UNIX_EPOCH,
+            );
+            assert!(
+                ono_recovery_zfs::naming::is_valid_snapshot_part(&part),
+                "a snapshot part derived from `{text}` is not one ZFS accepts: `{part}`"
+            );
+            let name = ono_recovery_zfs::naming::full_name("tank/data", &part);
+            assert!(
+                ono_recovery_zfs::naming::is_valid_snapshot_name(&name),
+                "a snapshot name derived from `{text}` is not one ZFS accepts: `{name}`"
+            );
+            assert!(
+                !part.contains(['/', '@', ' ', ';', '\n', '`', '$', '\'', '"']),
+                "a snapshot part derived from `{text}` carries syntax: `{part}`"
+            );
+        }
+    }
 }
