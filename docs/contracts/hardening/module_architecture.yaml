@@ -243,6 +243,7 @@ layering:
         - ono-recorder
         - ono-change-protection
         - ono-change-recovery
+        - ono-change-actions
         - ono-change-executor
         - ono-recovery-files
         - ono-recovery-zfs

@@ -53,6 +53,7 @@ ono-temporal-query = { path = "crates/ono-temporal-query", version = "0.5.0" }
 ono-temporal-render = { path = "crates/ono-temporal-render", version = "0.5.0" }
 ono-recorder = { path = "crates/ono-recorder", version = "0.5.0" }
 ono-change-core = { path = "crates/ono-change-core", version = "0.5.0" }
+ono-change-actions = { path = "crates/ono-change-actions", version = "0.5.0" }
 ono-change-plan = { path = "crates/ono-change-plan", version = "0.5.0" }
 ono-change-impact = { path = "crates/ono-change-impact", version = "0.5.0" }
 ono-change-protection = { path = "crates/ono-change-protection", version = "0.5.0" }

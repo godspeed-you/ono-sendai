@@ -318,7 +318,7 @@ fn change_provider(flaw: Option<&str>) -> Plugin {
         },
         guarantee: "statements inside one BEGIN either all commit or all roll back".to_owned(),
     });
-    honest_at_most(4)
+    with_recovery_commands(honest_at_most(4))
         .contribute_recovery_provider(RecoveryProviderContribution {
             id: format!("{PACKAGE}.recovery-provider.database"),
             summary: "Point-in-time protection for the databases this package fronts.".to_owned(),
@@ -453,31 +453,51 @@ fn change_provider(flaw: Option<&str>) -> Plugin {
         .command(&format!("{PACKAGE}.command.plan-execute"), |ctx| {
             emit_text(ctx, "executed")
         })
-        // One command for every `recovery.*` and `verification.observe` call, so the conformance
-        // suite can walk `protocol.v1.yaml`'s host calls and reach each of them.
-        .contribute_command(change_command(
-            "recovery-call",
-            "Make one recovery or verification host call.",
-            &[
-                "recovery.discover",
-                "recovery.prepare",
-                "recovery.restore",
-                "recovery.cleanup",
-                "recovery.estimate-cost",
-                "recovery.quiesce",
-                "verification.observe",
-            ],
-            &["call"],
-        ))
-        .command(&format!("{PACKAGE}.command.recovery-call"), |ctx| {
-            let call = text_argument(ctx, "call", method::RECOVERY_DISCOVER);
-            let params = recovery_params(&call);
-            match ctx.host_call(&call, params) {
-                Ok(value) => emit_text(ctx, &value.to_string()),
-                Err(error) => Outcome::Failed(error),
-            }
+}
+
+/// One command per `recovery.*` and `verification.observe` call, each declaring **only** the
+/// capability its own call costs (v0.6 §12.2, §48.3).
+///
+/// One command declaring all seven would be refused whenever any one of them was ungranted, and
+/// the suite could then never show that discovering and restoring are separate decisions — which
+/// is the whole of §48.4 and §12.2's split. The command id is the call id with its dots turned
+/// into dashes, so a test that walks `protocol.v1.yaml` can find the command for a call.
+fn with_recovery_commands(plugin: Plugin) -> Plugin {
+    RECOVERY_CALLS
+        .iter()
+        .fold(plugin, |carry, (call, capability)| {
+            let id = call.replace(['.', '_'], "-");
+            carry
+                .contribute_command(change_command(
+                    &id,
+                    "Make one recovery or verification host call.",
+                    &[capability],
+                    &[],
+                ))
+                .command(&format!("{PACKAGE}.command.{id}"), move |ctx| {
+                    match ctx.host_call(call, recovery_params(call)) {
+                        Ok(value) => emit_text(ctx, &value.to_string()),
+                        Err(error) => Outcome::Failed(error),
+                    }
+                })
         })
 }
+
+/// The nine calls of v0.6 §48.3 that carry a recovery or verification report, and the capability
+/// each one costs. `recovery.validate` reads an asset, so §12.2 puts it behind `recovery.discover`
+/// rather than inventing an eighth recovery capability; `recovery.resume` sits behind
+/// `recovery.quiesce` because §18.4 requires a paused application to be resumable.
+const RECOVERY_CALLS: &[(&str, &str)] = &[
+    (method::RECOVERY_DISCOVER, "recovery.discover"),
+    (method::RECOVERY_PREPARE, "recovery.prepare"),
+    (method::RECOVERY_VALIDATE, "recovery.discover"),
+    (method::RECOVERY_RESTORE, "recovery.restore"),
+    (method::RECOVERY_CLEANUP, "recovery.cleanup"),
+    (method::RECOVERY_ESTIMATE_COST, "recovery.estimate-cost"),
+    (method::RECOVERY_QUIESCE, "recovery.quiesce"),
+    (method::RECOVERY_RESUME, "recovery.quiesce"),
+    (method::VERIFICATION_OBSERVE, "verification.observe"),
+];
 
 /// The canned parameters for one `recovery.*` or `verification.observe` call.
 ///

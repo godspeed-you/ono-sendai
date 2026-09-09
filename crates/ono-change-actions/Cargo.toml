@@ -1,0 +1,25 @@
+[package]
+name = "ono-change-actions"
+description = "The first-party change providers of Ono-Sendai v0.6: the operations §6.1 makes plannable, and the bridge from an intent to the provider that carries it out (spec §6, §8, §30, §32, §33, §34, §51)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-value.workspace = true
+ono-change-core.workspace = true
+ono-command.workspace = true
+ono-provider-api.workspace = true
+jiff.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

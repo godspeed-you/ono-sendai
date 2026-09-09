@@ -3349,3 +3349,791 @@ async fn should_keep_a_weaker_contributed_claim_weak() {
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
         .await;
 }
+
+// --- the KUANG/11 change and recovery extensions of v0.6 §48 -----------------------------------
+//
+// §48.4 is the section these tests exist for: "A plugin that can describe impact MUST NOT
+// automatically gain permission to execute the change." Three of the four refusals below happen
+// at load, before any package code runs, which is the only place a rule about authority can be
+// enforced without first trusting the package.
+
+/// The example package's manifest, plus the capabilities the v0.6 §48 surface exercises.
+///
+/// Kept apart from [`manifest`] for the reason [`manifest_with_temporal`] is: the shared
+/// fixture's optional set is what `fully_granted` grants, and widening it would make every
+/// "loads undegraded" assertion in this file depend on grants unrelated to what it tests.
+fn manifest_with_change() -> String {
+    manifest().replace(
+        "    - ui.view\n",
+        "    - ui.view\n    - change.plan.read\n    - change.plan.contribute\n    \
+         - change.action.execute\n    - verification.observe\n    - recovery.discover\n    \
+         - recovery.prepare\n    - recovery.restore\n    - recovery.cleanup\n    \
+         - recovery.estimate-cost\n    - recovery.quiesce\n    - recovery.transaction\n",
+    )
+}
+
+/// A host that records plan contributions, recovery reports and verification results.
+fn change_host() -> std::sync::Arc<FakeHost> {
+    std::sync::Arc::new(FakeHost::default())
+}
+
+/// The change-provider package, loaded with every v0.6 capability granted.
+async fn change_plugin(host: std::sync::Arc<FakeHost>) -> LoadedPlugin {
+    let mut test = TestHost::new(PLUGIN, &manifest_with_change())
+        .args(&["--change-provider"])
+        .host(host.clone());
+    for capability in [
+        Capability::ChangePlanRead,
+        Capability::ChangePlanContribute,
+        Capability::ChangeActionExecute,
+        Capability::VerificationObserve,
+        Capability::RecoveryDiscover,
+        Capability::RecoveryPrepare,
+        Capability::RecoveryRestore,
+        Capability::RecoveryCleanup,
+        Capability::RecoveryEstimateCost,
+        Capability::RecoveryQuiesce,
+        Capability::RecoveryTransaction,
+    ] {
+        test = test.grant(capability);
+    }
+    test.load().await.expect("loads")
+}
+
+// --- section 48.2: the six contribution types --------------------------------------------------
+
+#[tokio::test]
+async fn should_register_all_five_new_contribution_types_when_a_change_package_loads() {
+    // §48.2 lists exactly six. `ActionProvider` is a command's own `action` declaration, already
+    // covered above; the other five arrive as contributions the host validates and registers.
+    let plugin = change_plugin(change_host()).await;
+    let change = plugin.change();
+    assert_eq!(
+        change.recovery_providers.len(),
+        1,
+        "§48.2: the package's RecoveryProvider is registered"
+    );
+    assert_eq!(change.impact_providers.len(), 1);
+    assert_eq!(change.verification_providers.len(), 1);
+    assert_eq!(change.risk_rules.len(), 1);
+    assert_eq!(change.change_views.len(), 1);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_carry_the_recovery_providers_declared_shape_through_the_handshake() {
+    // §48.5's example, read back from the loaded package: the host knows what it could protect,
+    // what it would create, what it could claim and whether the asset shares the failure domain
+    // of what it protects (§11.5) — all before anything is asked of it.
+    let plugin = change_plugin(change_host()).await;
+    let provider = &plugin.change().recovery_providers[0];
+    assert_eq!(provider.domain_kinds, vec!["postgres-database".to_owned()]);
+    assert_eq!(provider.asset_type, "database-dump");
+    assert_eq!(provider.consistency, "crash-consistent");
+    assert!(
+        provider.shares_failure_domain,
+        "§11.5: a dump beside the database it came from dies with the disk that held both"
+    );
+    assert!(
+        provider
+            .capabilities
+            .contains(&"recovery.restore".to_owned()),
+        "§12.2: a provider that can restore says so"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_carry_a_contributed_actions_effect_classes_through_the_handshake() {
+    // §8.1's confidence and Appendix A.1's domain, on a contributed action's effect, so that it
+    // can enter Appendix A.5's coverage algorithm rather than only being printed.
+    let plugin = change_plugin(change_host()).await;
+    let command = plugin
+        .commands()
+        .iter()
+        .find(|command| command.contribution.id == "dev.example.echo.command.plan-execute")
+        .expect("the executing command is registered");
+    let effect = &command
+        .contribution
+        .action
+        .as_ref()
+        .expect("the action contract")
+        .effect_classes[0];
+    assert_eq!(effect.domain, "application-persistent");
+    assert_eq!(effect.confidence, "guaranteed");
+    assert!(
+        effect.compensation.is_some(),
+        "§27.4: an inverse action is declared where one exists, and never called rollback"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_leave_a_package_that_contributes_nothing_about_change_with_an_empty_table() {
+    // Compatibility: the default example package declares none of this and loads exactly as it
+    // did, with the v0.6 table empty rather than absent.
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .load()
+        .await
+        .expect("loads");
+    assert!(
+        plugin.change().is_empty(),
+        "a package written before v0.6 contributes nothing about change, and still loads"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+// --- section 48.4: the load-time refusals ------------------------------------------------------
+
+#[tokio::test]
+async fn should_refuse_to_load_a_recovery_provider_that_restores_without_destructive_authority() {
+    // §48.4, at load. §43.4 lets recovery need a stronger privilege than the mutation it undoes,
+    // and §13.6 and §14.6 make restoring the operation that can lose the most. A package that
+    // offers a restore method while declaring nothing of destructive risk would leave an
+    // operator relying on a candidate whose restore is denied at the moment they need it.
+    let error = TestHost::new(PLUGIN, &manifest_with_change())
+        .args(&["--change-provider=restore-without-authority"])
+        .load()
+        .await
+        .expect_err("a provider that cannot be authorised to restore does not load");
+    assert_eq!(error.code(), KuangErrorCode::PackageInvalid);
+    assert!(
+        error.to_string().contains("offers to restore")
+            && error.to_string().contains("destructive"),
+        "§48.4: the refusal names the provider and the missing authority, got {error}"
+    );
+}
+
+#[tokio::test]
+async fn should_refuse_to_load_a_provider_claiming_application_consistency_without_quiesce() {
+    // §39.2: Ono MUST NOT independently label a snapshot `APPLICATION_CONSISTENT` unless an
+    // application-aware provider asserts the guarantee, and §16.4 puts the claim with the
+    // provider. A package that cannot quiesce has no mechanism by which the claim could be true.
+    let error = TestHost::new(PLUGIN, &manifest_with_change())
+        .args(&["--change-provider=application-consistent-without-quiesce"])
+        .load()
+        .await
+        .expect_err("a claim the provider cannot own does not load");
+    assert_eq!(error.code(), KuangErrorCode::PackageInvalid);
+    assert!(
+        error.to_string().contains("application-consistent")
+            && error.to_string().contains("recovery.quiesce"),
+        "§39.2: the refusal says which capability owns the claim, got {error}"
+    );
+}
+
+#[tokio::test]
+async fn should_refuse_to_load_a_transaction_spanning_resources_the_provider_does_not_own() {
+    // §27.1 scopes atomicity to the provider's own resource scope; §27.2 forbids the word once a
+    // second boundary is involved; §27.3 makes generic distributed two-phase commit an explicit
+    // non-goal. A database provider claiming atomicity over a ZFS dataset is all three at once.
+    let error = TestHost::new(PLUGIN, &manifest_with_change())
+        .args(&["--change-provider=transaction-beyond-scope"])
+        .load()
+        .await
+        .expect_err("a transaction beyond the provider's own resources does not load");
+    assert_eq!(error.code(), KuangErrorCode::PackageInvalid);
+    assert!(
+        error.to_string().contains("zfs-dataset") && error.to_string().contains("§27.3"),
+        "§27.3: the refusal names the resource outside the provider's scope, got {error}"
+    );
+}
+
+#[tokio::test]
+async fn should_refuse_a_plan_action_to_a_package_that_can_only_describe_and_contribute() {
+    // §48.4 at the call. The package holds `change.plan.read` and `change.plan.contribute` and
+    // nothing else; its `plan-execute` command declares `change.action.execute`, and the host
+    // refuses before the closure runs. Contributing an impact provider bought it nothing here.
+    let plugin = TestHost::new(PLUGIN, &manifest_with_change())
+        .args(&["--change-provider"])
+        .host(change_host())
+        .grant(Capability::ChangePlanRead)
+        .grant(Capability::ChangePlanContribute)
+        .load()
+        .await
+        .expect("loads");
+    assert_eq!(
+        plugin.change().impact_providers.len(),
+        1,
+        "the package does describe impact"
+    );
+    let error = plugin
+        .invoke("dev.example.echo.command.plan-execute", args(&[]))
+        .await
+        .expect_err("§48.4: describing impact is not permission to execute");
+    assert_eq!(error.name, "capability.denied");
+    assert!(
+        error.message.contains("change.action.execute"),
+        "the denial names the capability that was missing, got {error:?}"
+    );
+    let audited = plugin.audit().iter().any(|event| {
+        event.result == AuditResult::Denied && event.capability == "change.action.execute"
+    });
+    assert!(
+        audited,
+        "§43.7: change providers are subject to protocol and audit isolation, so the refusal is \
+         recorded as loudly as a success"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_run_a_plan_action_when_the_package_holds_the_capability_that_authorises_it() {
+    // The contrast: the same command, granted. §48.4 separates the authorities; it does not
+    // forbid a package from holding one.
+    let plugin = change_plugin(change_host()).await;
+    let invocation = plugin
+        .invoke("dev.example.echo.command.plan-execute", args(&[]))
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed);
+    assert_eq!(strings(&events), vec!["executed".to_owned()]);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+// --- section 19.2: a contributed rule may raise a class and never reduce one --------------------
+
+#[tokio::test]
+async fn should_not_lower_the_composed_risk_class_when_a_contributed_rule_finds_a_lower_one() {
+    // §19.2 makes the plan's class the strongest any rule found, and `RiskAssessment::classify`
+    // is that maximum. The host already holds a HIGH finding; the package contributes a LOW one
+    // through the real host-call path, and the composed class does not drop.
+    let host = change_host();
+    let plugin = change_plugin(host.clone()).await;
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.plan-contribute",
+            args(&[("plan", json!("plan-1")), ("class", json!("low"))]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed);
+    let answer = strings(&events).join("");
+    assert!(
+        answer.contains("\"risk_class\":\"high\""),
+        "§19.2: a contributed rule may raise the composed class and never reduce it, got {answer}"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_raise_the_composed_risk_class_when_a_contributed_rule_finds_a_higher_one() {
+    // The direction a contributed rule may move a class in, so the previous test is about the
+    // maximum rather than about the host ignoring contributions altogether.
+    let plugin = change_plugin(change_host()).await;
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.plan-contribute",
+            args(&[("plan", json!("plan-1")), ("class", json!("critical"))]),
+        )
+        .await
+        .expect("starts");
+    let (events, _) = invocation.collect().await;
+    let answer = strings(&events).join("");
+    assert!(
+        answer.contains("\"risk_class\":\"critical\""),
+        "§19.2: raising is the direction a rule may move a class in, got {answer}"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_a_risk_finding_above_what_the_contributed_rule_declared_it_emits() {
+    // The declared `emits` is a ceiling, applied the only way §19.2 allows: a finding above it
+    // is refused. The example rule declares `high`; `critical` is above it — and that is the
+    // previous test's own case, so the ceiling is raised there and the refusal proved here with
+    // a rule the package never declared at all.
+    let plugin = change_plugin(change_host()).await;
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.plan-contribute",
+            args(&[
+                ("plan", json!("plan-1")),
+                ("class", json!("critical")),
+                ("rule", json!("dev.example.echo.risk.invented-just-now")),
+            ]),
+        )
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Failed);
+    let error = result.error.expect("a structured refusal");
+    assert!(
+        error.message.contains("risk_rules"),
+        "§19.2: a finding from a rule nobody can look up is a class with no justification, got \
+         {error:?}"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_audit_a_refused_risk_contribution_as_loudly_as_a_denial() {
+    // §43.7: change providers are subject to protocol and audit isolation. A refusal after the
+    // grant check is still a refusal, and it is recorded.
+    let plugin = change_plugin(change_host()).await;
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.plan-contribute",
+            args(&[
+                ("plan", json!("plan-1")),
+                ("rule", json!("dev.example.echo.risk.invented-just-now")),
+            ]),
+        )
+        .await
+        .expect("starts");
+    let (_, _) = invocation.collect().await;
+    let audited = plugin.audit().iter().any(|event| {
+        event.result == AuditResult::Denied && event.capability == "change.plan.contribute"
+    });
+    assert!(audited, "§43.7: the refusal is in the trail");
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+// --- the host calls of section 48.3 ------------------------------------------------------------
+
+#[tokio::test]
+async fn should_read_a_plan_when_the_package_holds_change_plan_read() {
+    let host = change_host();
+    let plugin = change_plugin(host.clone()).await;
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.plan-read",
+            args(&[("plan", json!("plan-1"))]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed);
+    assert!(strings(&events).join("").contains("ono.change-plan/1"));
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_to_read_a_plan_outside_the_granted_plan_scope() {
+    // The `plans` scope is a boundary the broker enforces: the value arrives in the call and is
+    // compared before the plan is fetched, so a read outside it is a scope violation rather than
+    // an empty answer.
+    let mut scope = JsonMap::new();
+    scope.insert("plans".to_owned(), json!(["plan-1"]));
+    let plugin = TestHost::new(PLUGIN, &manifest_with_change())
+        .args(&["--change-provider"])
+        .host(change_host())
+        .grant_scoped(Capability::ChangePlanRead, scope)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.plan-read",
+            args(&[("plan", json!("plan-2"))]),
+        )
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+    let error = result.error.expect("a structured refusal");
+    assert_eq!(error.name, "capability.scope_violation");
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_record_a_plan_contribution_with_its_effects_when_the_package_contributes() {
+    let host = change_host();
+    let plugin = change_plugin(host.clone()).await;
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.plan-contribute",
+            args(&[("plan", json!("plan-1"))]),
+        )
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed);
+    let recorded = host
+        .plan_contributions
+        .lock()
+        .expect("the fake host's lock")
+        .clone();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].0, "dev.example.echo");
+    let effects = recorded[0]
+        .1
+        .get("effects")
+        .and_then(Json::as_array)
+        .expect("the effects the package contributed");
+    assert_eq!(
+        effects[0].get("domain").and_then(Json::as_str),
+        Some("application-persistent"),
+        "Appendix A.1: the domain is what makes coverage computable per domain"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_answer_every_recovery_and_verification_call_the_protocol_contract_declares() {
+    // The dispatch is string-keyed and nothing compares it to `protocol.v1.yaml`, so this walks
+    // the contract's own `host_calls` and asserts the supervisor answers each of the v0.6 §48
+    // calls rather than `runtime.protocol_violation`. A call declared and never wired would be a
+    // package following the contract and meeting a violation.
+    let contract: serde_yaml_ng::Value = serde_yaml_ng::from_str(
+        &std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../docs/contracts/kuang/protocol.v1.yaml"),
+        )
+        .expect("the protocol contract is in the tree"),
+    )
+    .expect("it reads as YAML");
+    let declared: Vec<String> = contract
+        .get("host_calls")
+        .and_then(serde_yaml_ng::Value::as_sequence)
+        .expect("host_calls")
+        .iter()
+        .filter_map(|call| call.get("id").and_then(serde_yaml_ng::Value::as_str))
+        .filter(|id| {
+            id.starts_with("recovery.") || id.starts_with("change.") || *id == "verification.observe"
+        })
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(
+        declared.len(),
+        11,
+        "v0.6 §48 adds eleven host calls, and the contract declares {declared:?}"
+    );
+    let plugin = change_plugin(change_host()).await;
+    for call in &declared {
+        if call.starts_with("change.plan") {
+            // Their own commands, above: both take parameters this one cannot supply.
+            continue;
+        }
+        let invocation = plugin
+            .invoke(
+                &recovery_command(call),
+                args(&[]),
+            )
+            .await
+            .expect("starts");
+        let (_, result) = invocation.collect().await;
+        let failure = result.error.map(|error| error.name).unwrap_or_default();
+        assert_ne!(
+            failure, "runtime.protocol_violation",
+            "`{call}` is declared in protocol.v1.yaml and the supervisor does not answer it"
+        );
+        assert_eq!(
+            result.status,
+            InvokeStatus::Completed,
+            "`{call}` was granted and should have been served"
+        );
+    }
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_record_every_recovery_report_with_the_call_it_came_from() {
+    // The host is told which of §12.1's operations reported, because "a provider prepared" and
+    // "a provider restored" are entirely different facts about the same asset.
+    let host = change_host();
+    let plugin = change_plugin(host.clone()).await;
+    for call in ["recovery.discover", "recovery.prepare", "recovery.restore"] {
+        let invocation = plugin
+            .invoke(
+                &recovery_command(call),
+                args(&[]),
+            )
+            .await
+            .expect("starts");
+        let (_, result) = invocation.collect().await;
+        assert_eq!(result.status, InvokeStatus::Completed, "{call}");
+    }
+    let calls: Vec<String> = host
+        .recovery_reports
+        .lock()
+        .expect("the fake host's lock")
+        .iter()
+        .map(|(_, call, _)| call.clone())
+        .collect();
+    assert_eq!(
+        calls,
+        vec![
+            "recovery.discover".to_owned(),
+            "recovery.prepare".to_owned(),
+            "recovery.restore".to_owned()
+        ]
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_deny_a_restore_to_a_package_that_holds_only_the_read_recovery_capabilities() {
+    // §12.2's split, enforced: discovering costs `recovery.discover` and restoring costs
+    // `recovery.restore`, and holding the first buys nothing of the second.
+    let plugin = TestHost::new(PLUGIN, &manifest_with_change())
+        .args(&["--change-provider"])
+        .host(change_host())
+        .grant(Capability::RecoveryDiscover)
+        .grant(Capability::RecoveryEstimateCost)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(&recovery_command("recovery.restore"), args(&[]))
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+    let error = result.error.expect("a structured refusal");
+    assert_eq!(error.name, "capability.denied");
+    let audited = plugin
+        .audit()
+        .iter()
+        .any(|event| event.result == AuditResult::Denied && event.capability == "recovery.restore");
+    assert!(audited, "§43.7: the refused restore is in the trail");
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_a_recovery_call_outside_the_granted_domain_kinds() {
+    let mut scope = JsonMap::new();
+    scope.insert("domain_kinds".to_owned(), json!(["zfs-dataset"]));
+    let plugin = TestHost::new(PLUGIN, &manifest_with_change())
+        .args(&["--change-provider"])
+        .host(change_host())
+        .grant_scoped(Capability::RecoveryDiscover, scope)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(&recovery_command("recovery.discover"), args(&[]))
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+    let error = result.error.expect("a structured refusal");
+    assert_eq!(
+        error.name, "capability.scope_violation",
+        "a candidate about a domain kind outside the grant is refused, not dropped"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_serve_resume_under_the_capability_that_quiesced() {
+    // §18.4 requires the application to be resumed when creation fails, so a package able to
+    // pause must always be able to let go: `recovery.resume` is behind `recovery.quiesce`.
+    let host = change_host();
+    let plugin = TestHost::new(PLUGIN, &manifest_with_change())
+        .args(&["--change-provider"])
+        .host(host.clone())
+        .grant(Capability::RecoveryQuiesce)
+        .load()
+        .await
+        .expect("loads");
+    for call in ["recovery.quiesce", "recovery.resume"] {
+        let invocation = plugin
+            .invoke(
+                &recovery_command(call),
+                args(&[]),
+            )
+            .await
+            .expect("starts");
+        let (_, result) = invocation.collect().await;
+        assert_eq!(
+            result.status,
+            InvokeStatus::Completed,
+            "{call}: §18.4 makes resuming inseparable from pausing"
+        );
+    }
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_audit_a_quiesce_under_the_advisory_application_scope() {
+    // §31.16: an advisory scope is recorded, audited and shown, and never presented as a
+    // boundary. The audit record is where "recorded" becomes checkable.
+    let host = change_host();
+    let plugin = TestHost::new(PLUGIN, &manifest_with_change())
+        .args(&["--change-provider"])
+        .host(host.clone())
+        .grant(Capability::RecoveryQuiesce)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(&recovery_command("recovery.quiesce"), args(&[]))
+        .await
+        .expect("starts");
+    let (_, _) = invocation.collect().await;
+    let recorded = plugin.audit().iter().any(|event| {
+        event.capability == "recovery.quiesce" && event.result == AuditResult::Success
+    });
+    assert!(recorded, "§31.37: the use is audited whatever the scope can prove");
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_record_a_verification_result_with_the_equivalence_domain_it_is_about() {
+    // §25.3 forbids the sentence "rollback successful" without a scope. The scope reaches the
+    // host, so nothing downstream has to guess which of §25.1's three the result speaks to.
+    let host = change_host();
+    let plugin = change_plugin(host.clone()).await;
+    let invocation = plugin
+        .invoke(&recovery_command("verification.observe"), args(&[]))
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed);
+    let recorded = host.verifications.lock().expect("the lock").clone();
+    assert_eq!(
+        recorded[0].1.get("equivalence").and_then(Json::as_str),
+        Some("persistent-state")
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_deny_a_recovery_call_to_a_package_holding_no_recovery_capability_at_all() {
+    // §31.19's deny-by-default floor, for the domain v0.6 adds. Nothing about contributing a
+    // recovery provider grants anything: the declaration says what it could do, and the grant
+    // says what it may.
+    let plugin = TestHost::new(PLUGIN, &manifest_with_change())
+        .args(&["--change-provider"])
+        .host(change_host())
+        .load()
+        .await
+        .expect("loads degraded");
+    for call in [
+        "recovery.discover",
+        "recovery.prepare",
+        "recovery.restore",
+        "recovery.cleanup",
+        "recovery.estimate_cost",
+        "recovery.quiesce",
+        "verification.observe",
+    ] {
+        let refused = match plugin
+            .invoke(
+                &recovery_command(call),
+                args(&[]),
+            )
+            .await
+        {
+            Err(error) => error.name,
+            Ok(invocation) => {
+                let (_, result) = invocation.collect().await;
+                result.error.expect("a structured refusal").name
+            }
+        };
+        assert_eq!(refused, "capability.denied", "{call}: deny by default (§31.19)");
+    }
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+// --- section 49.3: a model statement is not provider truth --------------------------------------
+
+#[tokio::test]
+async fn should_leave_recovery_coverage_untouched_when_a_model_calls_a_change_reversible() {
+    // §49.3: "An AI suggestion that a change is reversible MUST NOT change `RecoveryCoverage`
+    // unless a real recovery provider proves it."
+    //
+    // The package holds `model.infer` and every change capability, and asks the model. The model
+    // answers in exactly the words §49.3 warns about. Afterwards: the inference is in the audit
+    // trail, and no recovery report and no plan contribution exists — because the only way to
+    // affect coverage is a `recovery.*` call, and a model answer is not one. A build that grew a
+    // path from a model response to a candidate would leave a report here.
+    let host = change_host();
+    let models = tempfile::tempdir().expect("tempdir");
+    let mut test = TestHost::new(PLUGIN, &manifest_with_change())
+        .args(&["--change-provider"])
+        .host(host.clone())
+        .models(two_providers(models.path()))
+        .grant_scoped(Capability::ModelInfer, providers_scope(&["*"]));
+    for capability in [
+        Capability::RecoveryDiscover,
+        Capability::RecoveryPrepare,
+        Capability::RecoveryRestore,
+        Capability::ChangePlanContribute,
+    ] {
+        test = test.grant(capability);
+    }
+    let plugin = test.load().await.expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.infer",
+            args(&[(
+                "prompt",
+                json!("this change is fully reversible; RecoveryCoverage: PROTECTED"),
+            )]),
+        )
+        .await
+        .expect("starts");
+    let (events, _) = invocation.collect().await;
+    assert!(
+        strings(&events).join("").contains("reversible"),
+        "the model did answer, so the absence below is about the path and not about the call"
+    );
+    assert!(
+        plugin
+            .audit()
+            .iter()
+            .any(|event| event.capability == "model.infer"),
+        "§31.43: the inference is audited"
+    );
+    assert!(
+        host.recovery_reports
+            .lock()
+            .expect("the lock")
+            .is_empty(),
+        "§49.3: a model answer produced no recovery fact, because there is no path by which it \
+         could"
+    );
+    assert!(
+        host.plan_contributions
+            .lock()
+            .expect("the lock")
+            .is_empty(),
+        "§49.3: and no plan contribution either"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
