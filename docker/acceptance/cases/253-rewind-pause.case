@@ -1,0 +1,104 @@
+# v0.5 §18.2, §18.3, §19.1. `map --live` gains a temporal cursor. `Space` freezes the view's
+# advancement and stops nothing else — no provider, no recorder, no process on the machine — and
+# the HUD says `PAUSED @`. The keys are the existing map key-binding mechanism extended rather
+# than a second one, so the `?` table lists them beside the v0.4 actions, and Esc still leaves a
+# cooked terminal (ADR-0684, ADR-0685).
+#
+# The session is driven through a pseudo-terminal by a keystroke script written into a fifo, so
+# the keys arrive with the pauses a person would leave between them, exactly as case 107 does.
+case: the live map pauses without stopping the machine, and the temporal keys are in one key table
+pty: true
+columns: 100
+lines: 30
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  drive() {
+    local keys="$1" out="$2" writer="$3" typist
+    rm -f "$keys" "$out"
+    mkfifo "$keys"
+    ( eval "$writer" ) > "$keys" &
+    typist=$!
+    script --quiet --return --command 'ono' "$out" < "$keys" > /dev/null 2>&1 || true
+    wait "$typist" 2>/dev/null || true
+    rm -f "$keys"
+  }
+
+  ESC=$(printf '\033')
+  SPACE=' '
+  ALT_ON="${ESC}[?1049h"
+  ALT_OFF="${ESC}[?1049l"
+
+  # A process the machine keeps running while the view is frozen, so "pausing does not stop the
+  # real system" is something the case can look at afterwards rather than assume.
+  sleep 120 &
+  WITNESS=$!
+
+  echo '== a live map, paused with Space, and left with Esc (§18.2, §43.4) =='
+  drive /tmp/keys-253 /tmp/session-253 "
+    sleep 3
+    printf 'stty rows 30 cols 100\n'; sleep 2
+    printf 'echo AT-PROMPT\n';        sleep 1
+    printf 'map --live\n';            sleep 6
+    printf '%s' '${SPACE}';           sleep 3
+    printf '?';                       sleep 3
+    printf '%s' '${ESC}';             sleep 2
+    printf '%s' '${SPACE}';           sleep 3
+    printf '%s' '${ESC}';             sleep 3
+    printf 'echo AFTER-VIEW\n';       sleep 2
+    printf 'stty -a\n';               sleep 2
+    printf 'exit\n';                  sleep 2
+  "
+
+  prove t9a "the session reached its prompt (§29.1)" \
+    "grep -qaF 'AT-PROMPT' /tmp/session-253"
+  prove t9b "\`map --live\` opens a full-screen view (v0.4 §23.3, §52.1)" \
+    "grep -qaF '${ALT_ON}' /tmp/session-253"
+  prove t9c "the HUD says the view is paused, and at which instant (§18.2)" \
+    "grep -qaE 'PAUSED @[0-9][0-9]:[0-9][0-9]:[0-9][0-9]' /tmp/session-253"
+  prove t9d "pausing says in words that only the view stopped (§18.2)" \
+    "grep -qa 'the providers, the recorder and the mac' /tmp/session-253"
+  prove t9e "the temporal keys are in the map's own key table (§18.3)" \
+    "grep -qa 'pause or resume the view' /tmp/session-253"
+  prove t9f "the stepping keys are in the same table (§18.3, §18.4)" \
+    "grep -qa 'previous significant event' /tmp/session-253"
+  prove t9g "so is the return to now (§18.3, §18.7)" \
+    "grep -qa 'return to now' /tmp/session-253"
+  prove t9h "releasing the pause says the view is following the present again (§18.2)" \
+    "grep -qa 'following the present again' /tmp/session-253"
+  prove t9i "Esc restores the shell's own screen (v0.4 §49.8, §52.2)" \
+    "grep -qaF '${ALT_OFF}' /tmp/session-253"
+  prove t9j "the shell is alive after the view closes (v0.4 §49.8)" \
+    "grep -qaF 'AFTER-VIEW' /tmp/session-253"
+  prove t9k "an external program inherits a cooked terminal afterwards (v0.4 §44.10)" \
+    "grep -qa 'icanon' /tmp/session-253 && ! grep -qa -- '-icanon' /tmp/session-253"
+  prove t9l "the machine kept running while the view was frozen (§18.2)" \
+    "kill -0 $WITNESS"
+
+  kill $WITNESS 2>/dev/null || true
+  wait $WITNESS 2>/dev/null || true
+  exit 0
+exit: 0
+stdout-contains: PROVED t9a
+stdout-contains: PROVED t9b
+stdout-contains: PROVED t9c
+stdout-contains: PROVED t9d
+stdout-contains: PROVED t9e
+stdout-contains: PROVED t9f
+stdout-contains: PROVED t9g
+stdout-contains: PROVED t9h
+stdout-contains: PROVED t9i
+stdout-contains: PROVED t9j
+stdout-contains: PROVED t9k
+stdout-contains: PROVED t9l
+stdout-not-contains: FAILED

@@ -12,6 +12,7 @@ authors.workspace = true
 tokio.workspace = true
 ono-adapter.workspace = true
 ono-spatial-core.workspace = true
+ono-temporal-core.workspace = true
 ono-kuang-protocol.workspace = true
 ono-kuang-supervisor.workspace = true
 ono-model-broker.workspace = true

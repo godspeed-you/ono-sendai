@@ -1,0 +1,40 @@
+# v0.5 section 5.2. A PID is not an identity across time: "historical references MUST NOT
+# accidentally resolve a dead process to a later process reusing the same PID". The identity a
+# historical reference resolves to is the lifetime that existed then, or nothing at all.
+case: a historical process reference does not resolve to a later reuse of its pid
+timeout: 180
+env: NO_COLOR=1
+run: |
+  ono --no-config -c 'start recorder' || echo "recorder-refused"
+
+  echo "== two lifetimes, one after the other =="
+  sleep 2 &
+  FIRST=$!
+  ono --no-config -c "get process $FIRST | to json" > /tmp/first.json 2>&1 || true
+  FIRST_ID=$(ono --no-config -c "get process $FIRST | select spatial_id | to json" 2>/dev/null | head -1)
+  wait $FIRST 2>/dev/null || true
+
+  sleep 300 &
+  SECOND=$!
+  SECOND_ID=$(ono --no-config -c "get process $SECOND | select spatial_id | to json" 2>/dev/null | head -1)
+
+  echo "first-id=$FIRST_ID"
+  echo "second-id=$SECOND_ID"
+  if [ -n "$FIRST_ID" ] && [ "$FIRST_ID" = "$SECOND_ID" ]; then
+    echo "WRONG two process lifetimes share one spatial identity"
+  else
+    echo "two-lifetimes-are-two-identities"
+  fi
+
+  echo "== and the identity is keyed on more than the pid (section 5.2) =="
+  ono --no-config -c "get process $SECOND | to json" > /tmp/second.json 2>&1 || true
+  grep -q '"started"' /tmp/second.json && echo "a-process-carries-its-start-identity"
+
+  kill $SECOND 2>/dev/null || true
+  echo done=ok
+exit: 0
+stdout-contains: two-lifetimes-are-two-identities
+stdout-contains: a-process-carries-its-start-identity
+stdout-contains: done=ok
+stdout-not-contains: WRONG
+stdout-not-contains: panicked

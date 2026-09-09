@@ -13,7 +13,7 @@ use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, Diagnostics, PipelineConfig, StreamSink, ValueStream};
 use ono_provider_api::{
     Action, ActionOutcome, Availability, Capability, EventStream, ObjectEvent, ObjectRef, Provider,
-    Query, Risk, Selector,
+    Query, Risk, Selector, TemporalCapabilities,
 };
 use ono_value::{ErrorValue, RecordValue, Schema, Value};
 
@@ -32,6 +32,27 @@ use crate::sys;
 use crate::transport::{
     NetlinkSocket, address_request, inet_diag_request, link_request, neighbour_request,
     route_request, unix_diag_request,
+};
+
+/// What a kernel table this provider subscribes to can say about time (§21.1, §22.4).
+///
+/// The kernel pushes, so `live_events`; a dump is a complete list at the instant it was read, so
+/// `checkpointable`; and nothing here answers about the past, because a table holds only what is
+/// true now — a route deleted an hour ago left nothing to ask about.
+const LIVE_TABLE: TemporalCapabilities = TemporalCapabilities {
+    current_snapshot: true,
+    live_events: true,
+    historical_query: false,
+    exhaustive_events: false,
+    causal_tokens: false,
+    checkpointable: true,
+    retained_history: None,
+};
+
+/// The same, for a kernel table this provider reads and does not subscribe to.
+const SNAPSHOT_TABLE: TemporalCapabilities = TemporalCapabilities {
+    live_events: false,
+    ..LIVE_TABLE
 };
 
 /// Interfaces and their addresses, from `RTM_GETLINK` and `RTM_GETADDR`.
@@ -110,6 +131,14 @@ impl Provider for InterfaceProvider {
         route_availability()
     }
 
+    fn temporal(&self) -> TemporalCapabilities {
+        // §22.4: interface and address changes are live evidence, and this provider subscribes
+        // to `RTMGRP_LINK` and both address groups. §21.5 keeps `exhaustive_events` false: a
+        // netlink socket drops messages when its receive buffer overruns and the kernel says
+        // `ENOBUFS` rather than replaying them, so the sequence cannot carry an absence claim.
+        LIVE_TABLE
+    }
+
     fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
         stream(query.clone(), |_| read_interfaces())
     }
@@ -159,6 +188,11 @@ impl Provider for RouteProvider {
 
     fn availability(&self) -> Availability {
         route_availability()
+    }
+
+    fn temporal(&self) -> TemporalCapabilities {
+        // The route groups of §22.4, subscribed the same way and bounded by the same overrun.
+        LIVE_TABLE
     }
 
     fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
@@ -212,6 +246,13 @@ impl Provider for NeighborProvider {
         route_availability()
     }
 
+    fn temporal(&self) -> TemporalCapabilities {
+        // §22.4 lists neighbour changes among what netlink *can* provide live, and this provider
+        // reads the table without subscribing to `RTMGRP_NEIGH`. A capability the kernel offers
+        // and the code does not use is not a capability (§21.1), so this is a snapshot.
+        SNAPSHOT_TABLE
+    }
+
     fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
         stream(query.clone(), |_| read_neighbors())
     }
@@ -233,6 +274,14 @@ impl Provider for SocketProvider {
 
     fn schemas(&self) -> Vec<Arc<Schema>> {
         vec![socket_schema(), endpoint_schema()]
+    }
+
+    fn temporal(&self) -> TemporalCapabilities {
+        // §22.4's last line, as a claim: "Socket connection history is not automatically
+        // exhaustive merely because netlink is used elsewhere." `sock_diag` dumps the sockets
+        // that exist at the instant of the dump, and a connection that opened and closed between
+        // two dumps was never visible to it. So: a snapshot, and no more.
+        SNAPSHOT_TABLE
     }
 
     fn capabilities(&self) -> Vec<Capability> {
@@ -531,10 +580,15 @@ where
     Ok(EventStream::spawn(
         PipelineConfig::new(),
         move |sink| async move {
-            let (sender, mut receiver) = tokio::sync::mpsc::channel::<()>(8);
+            let (sender, mut receiver) = tokio::sync::mpsc::channel::<jiff::Timestamp>(8);
             std::thread::spawn(move || wait_for_changes(&socket, &sender));
 
-            while receiver.recv().await.is_some() {
+            // The instant the kernel's own notification arrived, kept across the re-dump that
+            // answers it. §3.3 asks for when the change happened as far as the source can say,
+            // and rtnetlink carries no timestamp of its own, so the arrival is the earliest
+            // instant there is evidence for — earlier than the re-dump the shell answers with,
+            // which is a fact about this provider rather than about the interface (ADR-0717).
+            while let Some(announced_at) = receiver.recv().await {
                 let reader = Arc::clone(&read);
                 let Ok(Ok(fresh)) = tokio::task::spawn_blocking(move || reader()).await else {
                     // The table could not be read this time; the next change asks again.
@@ -547,13 +601,20 @@ where
                         Some(previous) if previous == record => continue,
                         Some(previous) => ObjectEvent::changed(record, moved(previous, record)),
                     };
-                    if sink.send(event).await.is_err() {
+                    if sink
+                        .send(event.with_observed_at(announced_at))
+                        .await
+                        .is_err()
+                    {
                         return;
                     }
                 }
                 for (id, record) in &known {
                     if !seen.contains_key(id)
-                        && sink.send(ObjectEvent::removed(record)).await.is_err()
+                        && sink
+                            .send(ObjectEvent::removed(record).with_observed_at(announced_at))
+                            .await
+                            .is_err()
                     {
                         return;
                     }
@@ -587,8 +648,12 @@ fn moved(previous: &RecordValue, current: &RecordValue) -> Vec<String> {
         .collect()
 }
 
-/// Waits on the multicast socket and says so, until nobody is listening any more.
-fn wait_for_changes(socket: &NetlinkSocket, sender: &tokio::sync::mpsc::Sender<()>) {
+/// Waits on the multicast socket and says *when* the kernel spoke, until nobody is listening.
+///
+/// The instant is taken the moment the socket becomes readable, before anything is decoded and
+/// before the re-dump that answers the notification. That is the earliest instant this provider
+/// has evidence for, and it is what the resulting events are dated by (ADR-0717).
+fn wait_for_changes(socket: &NetlinkSocket, sender: &tokio::sync::mpsc::Sender<jiff::Timestamp>) {
     use nix::poll::{PollFd, PollFlags, PollTimeout};
 
     loop {
@@ -602,7 +667,8 @@ fn wait_for_changes(socket: &NetlinkSocket, sender: &tokio::sync::mpsc::Sender<(
             Err(nix::errno::Errno::EINTR) => continue,
             Err(_) => return,
         }
-        if socket.drain() && sender.blocking_send(()).is_err() {
+        let announced_at = jiff::Timestamp::now();
+        if socket.drain() && sender.blocking_send(announced_at).is_err() {
             return;
         }
     }

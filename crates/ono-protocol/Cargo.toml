@@ -12,6 +12,9 @@ authors.workspace = true
 ono-core.workspace = true
 ono-pipeline.workspace = true
 ono-provider-api.workspace = true
+# The clock model of v0.5 §25: `ClockDomain` is the vocabulary a peer's reported boot belongs
+# to, and this crate must not invent a second one (INTERFACES §2.1).
+ono-temporal-core.workspace = true
 ono-value.workspace = true
 async-trait.workspace = true
 bytes.workspace = true

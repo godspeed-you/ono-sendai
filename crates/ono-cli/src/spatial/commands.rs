@@ -15,6 +15,7 @@ use ono_pipeline::ValueStream;
 use ono_provider_api::ProviderRegistry;
 use ono_spatial_core::{Movement, NavigationStep, PermissionState, SpatialType};
 use ono_spatial_query::{NeighborhoodRequest, SelectorContext};
+use ono_temporal_query::changes::{ChangesRequest, TemporalChange};
 use ono_value::{ErrorValue, Provenance, RecordValue, SchemaId, Value, builtin_schemas};
 
 use crate::spatial::session::{SpatialSessionState, spatial_session};
@@ -82,57 +83,54 @@ impl CommandImpl for Look {
             // exits — every group lists the places behind it — rather than dumping the object's
             // properties, which §24.1 reserves for `inspect`.
             let request = NeighborhoodRequest::new().all(all);
-            let (neighborhood, permission, cached, whole) = view::neighborhood_and_whole(
-                ctx.providers(),
-                &mut session,
-                &request,
-                changes.is_some(),
-                now,
-            )
-            .await?;
-            // §10.3: a tombstone shows what took the old object's place. The candidate cannot be
-            // known when the object ends — no source that reached it has been observed since — so
-            // it is asked for when the tombstone is *rendered*, and therefore after the
-            // observation that discovers the place has gone (ADR-0273).
-            let here = session.current_place().clone();
-            if session.tombstone_of(&here, now).is_some() {
-                crate::spatial::relations::resolve_replacement(
+
+            // v0.5 §14.1: `look` evaluates against historical state where evidence permits, and
+            // §55.9 makes that the difference between a temporal mode and a cosmetic one. The
+            // place does not move — the session stands where it stood — and everything drawn
+            // about it comes from the reconstruction rather than from the providers (§14.3).
+            let view = if let Some(active) = crate::spatial::historical::active() {
+                historical_look(&active, &session, &request, all, changes)?
+            } else {
+                let (neighborhood, permission, cached, _) = view::neighborhood_and_whole(
                     ctx.providers(),
                     &mut session,
-                    &here,
+                    &request,
+                    changes.is_some(),
                     now,
                 )
-                .await;
-            }
-            // §25.4: where no event stream answers, a change is the difference between two
-            // observations — and there is one only from the second `look --changes` of a session
-            // onwards. The baseline is taken whether or not the caller asked, so the *next* ask
-            // has something to compare to.
-            let compared = changes.map(|window| {
-                let observed = whole.as_ref().unwrap_or(&neighborhood);
-                let snapshot = ono_spatial_events::PlaceSnapshot::of(session.index(), observed);
+                .await?;
+                // §10.3: a tombstone shows what took the old object's place. The candidate cannot
+                // be known when the object ends — no source that reached it has been observed
+                // since — so it is asked for when the tombstone is *rendered*, and therefore
+                // after the observation that discovers the place has gone (ADR-0273).
                 let here = session.current_place().clone();
-                let before = session.rebase(&here, snapshot.clone());
-                (
-                    window,
-                    before.map(|before| {
-                        ono_spatial_events::compare_places(
-                            &before,
-                            &snapshot,
-                            ono_spatial_events::Freshness::Polled,
-                        )
-                    }),
-                )
-            });
-            let view = place_view(
-                &session,
-                &neighborhood,
-                permission,
-                all,
-                compared,
-                cached,
-                now,
-            )?;
+                if session.tombstone_of(&here, now).is_some() {
+                    crate::spatial::relations::resolve_replacement(
+                        ctx.providers(),
+                        &mut session,
+                        &here,
+                        now,
+                    )
+                    .await;
+                }
+                // v0.5 §13.5: the change section is the canonical `changes` engine, and this
+                // build keeps no second implementation of it. Where a session holds no temporal
+                // evidence there is nothing watching, and §24.3 wants that said rather than
+                // rendered as "nothing changed" (ADR-0682).
+                let changed = match changes {
+                    Some(window) => Some((window, recent_changes(&session, window, now)?)),
+                    None => None,
+                };
+                place_view(
+                    &PlaceWorld::Present(&session),
+                    &neighborhood,
+                    permission,
+                    all,
+                    changed,
+                    cached,
+                    now,
+                )?
+            };
 
             if json {
                 let document = ono_value::to_json_data(&Value::Record(Arc::new(view)));
@@ -156,28 +154,138 @@ impl CommandImpl for Look {
     }
 }
 
-/// The `ono.place-view/1` record of the current place (§6.1, §24.1).
+/// The world a place view is composed from: the present, or one reconstructed instant (§14.1).
+///
+/// `look` has one composition and two worlds. §55.2 forbids "rendering today's graph with an old
+/// timestamp", and the way to be sure of that is for the historical arm to read a different index
+/// rather than the same one under a different label — which is exactly what the two variants are.
+/// The session travels with both because the *place* does not move when the coordinate does
+/// (§14.1): the session still stands where it stood, and the past is what is drawn about it.
+pub(crate) enum PlaceWorld<'a> {
+    /// The live session: what the providers answered for, as of now.
+    Present(&'a SpatialSessionState),
+    /// A reconstructed instant, and the session that is standing in it.
+    Past(&'a crate::spatial::HistoricalWorld, &'a SpatialSessionState),
+}
+
+impl PlaceWorld<'_> {
+    /// Where the session is standing. The coordinate moves; the place does not (§14.1).
+    fn here(&self) -> ono_spatial_core::SpatialId {
+        match self {
+            PlaceWorld::Present(session) | PlaceWorld::Past(_, session) => {
+                session.current_place().clone()
+            }
+        }
+    }
+
+    /// The index the view is read from.
+    fn index(&self) -> &ono_spatial_index::SpatialIndex {
+        match self {
+            PlaceWorld::Present(session) => session.index(),
+            PlaceWorld::Past(world, _) => world.index(),
+        }
+    }
+
+    /// The scope the places belong to.
+    fn scope(&self) -> &ono_spatial_core::SpatialScope {
+        match self {
+            PlaceWorld::Present(session) => session.scope(),
+            PlaceWorld::Past(world, _) => world.scope(),
+        }
+    }
+
+    /// The instant the view is about — now, or the coordinate it was reconstructed for.
+    fn at(&self, now: Timestamp) -> Timestamp {
+        match self {
+            PlaceWorld::Present(_) => now,
+            PlaceWorld::Past(world, _) => world.at(),
+        }
+    }
+
+    /// The host the place belongs to (§21.1's first prompt segment).
+    fn hostname(&self) -> String {
+        match self {
+            PlaceWorld::Present(session) => session.current_scope().host_scope().id().to_owned(),
+            PlaceWorld::Past(world, _) => world.scope().host_scope().id().to_owned(),
+        }
+    }
+
+    /// Whether the reader pinned this place.
+    ///
+    /// A pin is a landmark the user made today. It is not evidence about the past, so a
+    /// historical view carries none: ranking a reconstructed map by a present-day bookmark would
+    /// be exactly the present leaking into the past §14.3 forbids.
+    fn pinned(&self, id: &ono_spatial_core::SpatialId) -> bool {
+        match self {
+            PlaceWorld::Present(session) => session.pins().pins().any(|pin| pin.spatial_id() == id),
+            PlaceWorld::Past(_, _) => false,
+        }
+    }
+
+    /// The record behind the place — what the provider last said, or what the ledger archived.
+    fn record_of(&self, id: &ono_spatial_core::SpatialId) -> Option<&RecordValue> {
+        match self {
+            PlaceWorld::Present(session) => session.record_of(id).map(std::convert::AsRef::as_ref),
+            PlaceWorld::Past(world, _) => world.record_of(id),
+        }
+    }
+
+    /// The tombstone the session holds for the place (§10.3).
+    ///
+    /// A tombstone says a place known to this session is gone *now*. In the past its lifetime is
+    /// what the reconstruction supports, and §5.4 keeps the two apart: historical navigation may
+    /// enter a known lifetime, and `now` never revives a tombstone.
+    fn tombstone_of(
+        &self,
+        id: &ono_spatial_core::SpatialId,
+        now: Timestamp,
+    ) -> Option<&ono_spatial_core::Tombstone> {
+        match self {
+            PlaceWorld::Present(session) => session.tombstone_of(id, now),
+            PlaceWorld::Past(_, _) => None,
+        }
+    }
+
+    /// The mount boundary the place sits on (§15.3), or null where the path tree does not reach.
+    ///
+    /// §14.5 refuses a historical filesystem tree outright, so a reconstructed view carries no
+    /// boundary rather than the one today's mount table happens to have.
+    fn boundary(&self, id: &ono_spatial_core::SpatialId) -> Result<Value, ErrorValue> {
+        match self {
+            PlaceWorld::Present(session) => view::boundary_record(session, id),
+            PlaceWorld::Past(_, _) => Ok(Value::Null),
+        }
+    }
+
+    /// Whether this view was reconstructed rather than read from the present (§9.4).
+    const fn is_reconstructed(&self) -> bool {
+        matches!(self, PlaceWorld::Past(_, _))
+    }
+}
+
+/// The `ono.place-view/1` record of the current place (§6.1, §24.1, v0.5 §14.1).
 fn place_view(
-    session: &SpatialSessionState,
+    world: &PlaceWorld<'_>,
     neighborhood: &ono_spatial_core::Neighborhood,
     permission: PermissionState,
     all: bool,
-    changes: Option<(ono_value::Duration, Option<ono_spatial_events::ChangeSet>)>,
+    changes: Option<(ono_value::Duration, Option<Vec<TemporalChange>>)>,
     cached: bool,
-    now: Timestamp,
+    clock: Timestamp,
 ) -> Result<RecordValue, ErrorValue> {
-    let here = session.current_place().clone();
-    let index = session.index();
-    let scope = session.scope();
-    let pinned = session.pins().pins().any(|pin| pin.spatial_id() == &here);
+    let here = world.here();
+    let index = world.index();
+    let scope = world.scope();
+    let now = world.at(clock);
+    let pinned = world.pinned(&here);
     let place = view::place_record_of(
         index,
         &here,
         scope,
         permission,
         pinned,
-        session.record_of(&here).map(std::convert::AsRef::as_ref),
-        session.tombstone_of(&here, now),
+        world.record_of(&here),
+        world.tombstone_of(&here, clock),
         now,
     )?;
 
@@ -247,17 +355,14 @@ fn place_view(
                 "the `ono.place-view/1` contract is not in this build",
             )
         })?;
-    Ok(RecordValue::builder(
+    let built = RecordValue::builder(
         schema,
         Provenance::local(COMPOSER, SchemaId::new("ono.place-view", 1)),
     )
     .set("id", Value::string(&here.to_string()))?
     .set("type", Value::string(spatial_type.as_str()))?
     .set("label", label)?
-    .set(
-        "hostname",
-        Value::string(session.current_scope().host_scope().id()),
-    )?
+    .set("hostname", Value::string(&world.hostname()))?
     .set("place", Value::Record(Arc::new(place)))?
     .set(
         "freshness",
@@ -276,11 +381,32 @@ fn place_view(
     .set("links", links)?
     .set("landmarks", Value::list(landmarks))?
     .set("neighborhood", Value::Record(Arc::new(neighborhood_record)))?
-    .set("boundary", view::boundary_record(session, &here)?)?
+    .set("boundary", world.boundary(&here)?)?
     .set("system", system)?
-    .set("changed", change_summary(changes, now)?)?
+    .set("changed", change_summary(changes)?)?
     .set("generated_at", Value::Timestamp(now))?
-    .build())
+    .build();
+    // §9.4: a reconstructed object "retains its canonical schema plus temporal metadata", and the
+    // metadata must not collide with a provider field. `ono.place-view/1` declares no `temporal`
+    // field, so it goes under the reserved `ono.temporal` extension key — the one attachment the
+    // reconstruction crate owns, used here rather than repeated.
+    if world.is_reconstructed()
+        && let PlaceWorld::Past(reconstructed, _) = world
+    {
+        let metadata = ono_temporal_core::value::temporal_metadata(
+            reconstructed.at(),
+            reconstructed.coverage(),
+            true,
+            &reconstructed
+                .coverage()
+                .sources()
+                .cloned()
+                .collect::<Vec<_>>(),
+            reconstructed.gaps(),
+        )?;
+        return ono_temporal_reconstruct::attach_temporal(&built, metadata);
+    }
+    Ok(built)
 }
 
 /// How the data behind the place is kept current, in §25.3's vocabulary.
@@ -315,22 +441,23 @@ fn source_freshness(
     if cached { "cached" } else { "polled" }
 }
 
-/// The change section of §24.3, which never invents a change.
+/// The change section of §24.3, backed by the canonical `changes` engine (v0.5 §13.5).
 ///
 /// §24.3: "No fake change summary may be generated when no event source or comparison snapshot
-/// exists." §25.4 names the one source this build has for a still view — the comparison of two
-/// successive observations — and its provenance says so. Three answers are therefore possible and
-/// §2.17 requires all three to stay apart:
+/// exists." v0.5 §13.5 says which engine may answer it — "`look`'s v0.4 `changed` section SHOULD
+/// be backed by the same `TemporalChange` engine when v0.5 evidence exists", and "MUST NOT retain
+/// a separate ad-hoc snapshot comparison implementation once the temporal engine is available".
+/// So there is one implementation, `ono_temporal_query::changes`, and three answers stay apart
+/// (§2.17):
 ///
-/// - **`unknown`** — this session has not looked at this place before, so there is nothing to
-///   compare to. Not "nothing changed".
-/// - **`empty`** — there was a snapshot and nothing differs from it.
-/// - **`available`** — there was a snapshot and these are the differences.
+/// - **`unsupported`** — this session holds no temporal evidence, so nothing was watching. Not
+///   "nothing changed".
+/// - **`empty`** — the ledger was asked and nothing in the window differs.
+/// - **`available`** — the ledger was asked and these are the differences.
 fn change_summary(
-    changes: Option<(ono_value::Duration, Option<ono_spatial_events::ChangeSet>)>,
-    now: Timestamp,
+    changes: Option<(ono_value::Duration, Option<Vec<TemporalChange>>)>,
 ) -> Result<Value, ErrorValue> {
-    let Some((window, compared)) = changes else {
+    let Some((window, answered)) = changes else {
         return Ok(Value::Null);
     };
     let schema = builtin_schemas()
@@ -341,21 +468,17 @@ fn change_summary(
                 "the `ono.change-summary/1` contract is not in this build",
             )
         })?;
-    let (state, source, entries) = match &compared {
-        None => ("unknown", Value::Null, Vec::new()),
-        Some(changes) if changes.is_empty() => (
-            "empty",
-            Value::string(changes.source().as_str()),
-            Vec::new(),
-        ),
-        Some(changes) => {
-            let mut rows = Vec::new();
-            for change in changes.changes() {
-                rows.push(Value::Record(Arc::new(change_record(
-                    change, changes, now,
-                )?)));
+    let (state, source, entries) = match &answered {
+        None => ("unsupported", Value::Null, Vec::new()),
+        Some(changed) if changed.is_empty() => {
+            ("empty", Value::string("ono.temporal-ledger"), Vec::new())
+        }
+        Some(changed) => {
+            let mut rows = Vec::with_capacity(changed.len());
+            for change in changed {
+                rows.push(Value::Record(Arc::new(change.to_record()?)));
             }
-            ("available", Value::string(changes.source().as_str()), rows)
+            ("available", Value::string("ono.temporal-ledger"), rows)
         }
     };
     let record = RecordValue::builder(
@@ -370,42 +493,162 @@ fn change_summary(
     Ok(Value::Record(Arc::new(record)))
 }
 
-/// One `ono.spatial-change/1` of a change section (§24.3, §25.1).
-fn change_record(
-    change: &ono_spatial_events::SpatialChange,
-    changes: &ono_spatial_events::ChangeSet,
+/// What changed around the current place in the last `window`, from the ledger (v0.5 §13.5).
+///
+/// `None` where this session holds no temporal evidence: §24.3 forbids rendering that as
+/// "nothing changed", and [`change_summary`] spells it `unsupported`.
+fn recent_changes(
+    session: &SpatialSessionState,
+    window: ono_value::Duration,
     now: Timestamp,
+) -> Result<Option<Vec<TemporalChange>>, ErrorValue> {
+    let Some(ledger) = crate::spatial::historical::ledger() else {
+        return Ok(None);
+    };
+    let since = now
+        .checked_sub(
+            jiff::Span::new().nanoseconds(i64::try_from(window.nanoseconds()).unwrap_or(i64::MAX)),
+        )
+        .unwrap_or(now);
+    let here = session.current_place().clone();
+    let request = ChangesRequest::new(session.current_scope().clone(), since)
+        .about(subjects_around(session, &here));
+    Ok(Some(ono_temporal_query::changes::changes(
+        ledger.as_ref(),
+        &request,
+        now,
+    )?))
+}
+
+/// The place and the objects directly around it — §24.3's "changes relevant to the current place".
+fn subjects_around(
+    session: &SpatialSessionState,
+    here: &ono_spatial_core::SpatialId,
+) -> Vec<ono_spatial_core::SpatialId> {
+    let mut subjects = vec![here.clone()];
+    if let Some(entry) = session.index().get(here) {
+        for edge in entry.edges() {
+            if let Some(other) = edge.other_end(here) {
+                subjects.push(other.clone());
+            }
+        }
+    }
+    subjects
+}
+
+/// `look` at the session's historical coordinate (v0.5 §14.1, §14.3, §14.5, §9.7).
+///
+/// The four refusals of the historical world come first, because each of them is an answer rather
+/// than a view: a place that was not there (§9.7), a filesystem tree nothing carries (§14.5), and
+/// whatever the ledger itself refused with. Only then is a view composed, and it is composed from
+/// the reconstruction — the session's live index is not read at all, which is what makes §55.2's
+/// prohibited "today's graph with an old timestamp" unreachable from here.
+fn historical_look(
+    active: &crate::spatial::historical::Active,
+    session: &SpatialSessionState,
+    request: &NeighborhoodRequest,
+    all: bool,
+    window: Option<ono_value::Duration>,
 ) -> Result<RecordValue, ErrorValue> {
-    let schema = builtin_schemas()
-        .get(&SchemaId::new("ono.spatial-change", 1))
-        .ok_or_else(|| {
-            ErrorValue::new(
-                ErrorCode::ProviderSchemaViolation,
-                "the `ono.spatial-change/1` contract is not in this build",
-            )
-        })?;
-    let places: Vec<Value> = change
-        .places()
-        .map(|place| Value::string(&place.to_string()))
-        .collect();
-    Ok(RecordValue::builder(
-        schema,
-        Provenance::local(COMPOSER, SchemaId::new("ono.spatial-change", 1)),
+    let world = active.world(session.current_scope())?;
+    let here = session.current_place().clone();
+    let object_type = place_type(session, &here);
+    if let Some(refusal) = world.structure_refusal(object_type) {
+        return Err(refusal);
+    }
+    // §9.7: the refusal reports and navigates nowhere. Returning it rather than a view is what
+    // guarantees the second half — nothing here touches the trail.
+    if let Some(refusal) = world.not_known_here(&here, object_type) {
+        return Err(refusal);
+    }
+    let neighborhood = world.neighborhood(&here, request);
+    let changed = match window {
+        Some(window) => {
+            let since = world
+                .at()
+                .checked_sub(
+                    jiff::Span::new()
+                        .nanoseconds(i64::try_from(window.nanoseconds()).unwrap_or(i64::MAX)),
+                )
+                .unwrap_or_else(|_| world.at());
+            let request = ChangesRequest::new(world.scope().clone(), since);
+            Some((
+                window,
+                Some(ono_temporal_query::changes::changes(
+                    active.ledger(),
+                    &request,
+                    world.at(),
+                )?),
+            ))
+        }
+        None => None,
+    };
+    place_view(
+        &PlaceWorld::Past(&world, session),
+        &neighborhood,
+        PermissionState::Available,
+        all,
+        changed,
+        false,
+        world.at(),
     )
-    .set("kind", Value::string(change.kind().as_str()))?
-    .set("id", Value::string(change.subject()))?
-    .set("observed_at", Value::Timestamp(now))?
-    .set("label", Value::string(change.label()))?
-    .set(
-        "reason",
-        change
-            .kind()
-            .reason()
-            .map_or(Value::Null, |reason| Value::string(reason.as_str())),
-    )?
-    .set("places", Value::list(places))?
-    .set("source", Value::string(changes.source().as_str()))?
-    .build())
+}
+
+/// `near` at the session's historical coordinate (v0.5 §14.1, §14.3).
+///
+/// The members are read from the reconstructed index, so a member that only exists today cannot
+/// be among them and a group whose edge was added after the coordinate has nothing in it.
+fn historical_near(
+    active: &crate::spatial::historical::Active,
+    session: &SpatialSessionState,
+    request: &NeighborhoodRequest,
+    limit: Option<usize>,
+) -> Result<ValueStream, ErrorValue> {
+    let world = active.world(session.current_scope())?;
+    let here = session.current_place().clone();
+    if let Some(refusal) = world.structure_refusal(place_type(session, &here)) {
+        return Err(refusal);
+    }
+    if let Some(refusal) = world.not_known_here(&here, place_type(session, &here)) {
+        return Err(refusal);
+    }
+    let neighborhood = world.neighborhood(&here, request);
+    let index = world.index();
+    let mut rows: Vec<Value> = Vec::new();
+    for group in neighborhood.groups() {
+        for member in group.members() {
+            rows.push(Value::Record(Arc::new(view::neighbor_record(
+                index,
+                &here,
+                group.label(),
+                group.state(),
+                member,
+                world.scope(),
+                false,
+                world.at(),
+            )?)));
+        }
+    }
+    if let Some(limit) = limit {
+        rows.truncate(limit);
+    }
+    Ok(view::stream(rows))
+}
+
+/// What kind of place the session is standing in, as far as anything here knows.
+pub(crate) fn place_type(
+    session: &SpatialSessionState,
+    here: &ono_spatial_core::SpatialId,
+) -> SpatialType {
+    ono_spatial_query::resolve::space_of(here).map_or_else(
+        || {
+            session
+                .index()
+                .get(here)
+                .map_or(SpatialType::System, |entry| entry.object().object_type())
+        },
+        |space| space.object_type,
+    )
 }
 
 /// The window `--changes`/`--changed` names, or the configured default where it names none.
@@ -633,6 +876,14 @@ impl CommandImpl for Near {
                 request = request.changed_within(span_of(window));
             }
             with_pins(&mut session, self.pins.as_ref(), now).await?;
+
+            // v0.5 §14.1 and §14.3: at a historical coordinate `near` answers from the
+            // reconstruction, and an exit it draws corresponds to a relation supported then.
+            // Nothing is asked of a provider, because a provider can only answer about now.
+            if let Some(active) = crate::spatial::historical::active() {
+                return historical_near(&active, &session, &request, limit).map(Outcome::Values);
+            }
+
             let (neighborhood, _, _) =
                 view::neighborhood_here(ctx.providers(), &mut session, &request, now).await?;
 
@@ -908,6 +1159,15 @@ pub async fn resolved_place(
     // is the accidental local/remote merge §43.7 forbids.
     let context = SelectorContext::at(here.clone())
         .on_host(ono_spatial_query::resolve::locality(Some(session.current_scope())).to_owned());
+
+    // v0.5 §14.1: at a historical coordinate a selector names a place that was there, resolved
+    // against the reconstructed index. No provider is asked — a provider answers about now, and
+    // an answer from one would be the present reached through a past selector (§14.3, §55.2).
+    if let Some(active) = crate::spatial::historical::active() {
+        let world = active.world(session.current_scope())?;
+        let found = world.resolve(selector, &context).require(selector)?;
+        return Ok(found.spatial_id().clone());
+    }
     let mut resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
     if matches!(resolution, ono_spatial_query::Resolution::NotFound)
         && let Some(space) = ono_spatial_query::resolve::space_of(here)
@@ -1136,6 +1396,24 @@ impl CommandImpl for Follow {
             with_pins(&mut session, self.pins.as_ref(), now).await?;
             let here = session.current_place().clone();
 
+            // v0.5 §14.1 and §14.3: at a historical coordinate `follow` traverses an edge that
+            // was supported then. Nothing is observed, so an edge added since cannot be walked
+            // and an edge that has since gone still can be.
+            if let Some(active) = crate::spatial::historical::active() {
+                let world = active.world(session.current_scope())?;
+                let there = historical_follow(&world, &here, &relation, wanted.as_deref())?;
+                if here != there {
+                    let mut step = NavigationStep::new(now, here, there.clone(), Movement::Follow)
+                        .spelled(relation.as_str());
+                    if let Some(spec) = ono_spatial_core::relation::spec(&relation) {
+                        step = step.along(spec.relation_type());
+                    }
+                    session.trail_mut().record(step);
+                    session.arrive_at(&there, now);
+                }
+                return Ok(Outcome::Values(ValueStream::from_values(Vec::new())));
+            }
+
             // §11.1: hierarchy is not the graph. A canonical space is reached with `enter`, and
             // saying so is more useful than saying the word is unknown.
             if let Some(space) = ono_spatial_core::space::spaces()
@@ -1334,6 +1612,65 @@ impl CommandImpl for Follow {
             Ok(Outcome::Values(ValueStream::from_values(Vec::new())))
         })
     }
+}
+
+/// `follow <relation>` at the session's historical coordinate (v0.5 §14.1, §14.3).
+///
+/// The exits are the reconstructed ones. The query layer decides which of them a named relation
+/// keeps, exactly as it does in the present, so the direction rules of §6.4 are not restated
+/// here — only the index they are applied to is different.
+fn historical_follow(
+    world: &crate::spatial::HistoricalWorld,
+    here: &ono_spatial_core::SpatialId,
+    relation: &str,
+    wanted: Option<&str>,
+) -> Result<ono_spatial_core::SpatialId, ErrorValue> {
+    if let Some(refusal) = world.not_known_here(here, historical_type(world, here)) {
+        return Err(refusal);
+    }
+    let request = NeighborhoodRequest::new()
+        .all(true)
+        .along(relation.to_owned());
+    let neighborhood = world.neighborhood(here, &request);
+    let members: Vec<ono_spatial_core::SpatialId> = neighborhood
+        .groups()
+        .iter()
+        .flat_map(|group| group.members().iter().cloned())
+        .collect();
+    let candidates = match wanted {
+        None => members,
+        Some(text) => best_matches(world.index(), &members, text),
+    };
+    match candidates.len() {
+        1 => Ok(candidates[0].clone()),
+        0 => Err(ErrorValue::new(
+            ErrorCode::SpatialNoRelation,
+            format!(
+                "this place had no `{relation}` to follow at {}",
+                world.at()
+            ),
+        )
+        .with_help(
+            "an exit shown in historical context corresponds to a relation supported then;              `now` returns to the present (spec v0.5 §14.3, §9.5)",
+        )),
+        _ => Err(ambiguous_edge(world.index(), relation, &candidates)),
+    }
+}
+
+/// What kind of place `here` was, as the reconstruction holds it.
+fn historical_type(
+    world: &crate::spatial::HistoricalWorld,
+    here: &ono_spatial_core::SpatialId,
+) -> SpatialType {
+    ono_spatial_query::resolve::space_of(here).map_or_else(
+        || {
+            world
+                .index()
+                .get(here)
+                .map_or(SpatialType::System, |entry| entry.object().object_type())
+        },
+        |space| space.object_type,
+    )
 }
 
 /// The refusal for a word that names no relation of this kind of place (§40).

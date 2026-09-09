@@ -733,6 +733,53 @@ fn check_causal_rules(registries: &Registries) -> Vec<Problem> {
         }
     }
 
+    // The engine's own list, which is what §36.4 asks the registry to be held against: a rule the
+    // causal engine runs and nobody registered cannot be audited, and a rule the registry
+    // declares and nothing runs is a causal claim Ono cannot make. The specification's list stays
+    // beside it, so a registry that drifts from §15.2 fails whatever the engine does.
+    let implemented_causal: BTreeSet<&str> = ono_temporal_query::causal::BUILTIN_CAUSAL_RULE_IDS
+        .iter()
+        .copied()
+        .collect();
+    let implemented_correlation: BTreeSet<&str> =
+        ono_temporal_query::causal::BUILTIN_CORRELATION_RULE_IDS
+            .iter()
+            .copied()
+            .collect();
+    for (kind, declared, implemented) in [
+        (
+            "causal",
+            BUILTIN_CAUSAL_RULES.as_slice(),
+            &implemented_causal,
+        ),
+        (
+            "correlation",
+            BUILTIN_CORRELATION_RULES.as_slice(),
+            &implemented_correlation,
+        ),
+    ] {
+        for id in declared {
+            if !implemented.contains(id) {
+                problems.push(Problem::new(
+                    location,
+                    format!(
+                        "v0.5 names the built-in {kind} rule `{id}` and the causal engine runs no                          rule by that id"
+                    ),
+                ));
+            }
+        }
+        for id in implemented {
+            if !declared.contains(id) {
+                problems.push(Problem::new(
+                    location,
+                    format!(
+                        "the causal engine runs the {kind} rule `{id}`, which v0.5 §15.8 has no                          row for; every rule that emits a relation must be inspectable"
+                    ),
+                ));
+            }
+        }
+    }
+
     let mut declared_rules = BTreeSet::new();
     for (key, expected, causal_only) in [
         ("rules", BUILTIN_CAUSAL_RULES.as_slice(), true),

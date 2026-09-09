@@ -1,0 +1,69 @@
+# v0.5 §37.3 and §48.9 scenario 47: the host validates a contributed event before it becomes
+# evidence, and the validation that matters most is the scope rule — **a plugin cannot assert
+# that an object exists outside the objects it can resolve through permitted providers.**
+#
+# The package here holds `temporal.contribute.events` and no `object.read`, so it can resolve
+# nothing but its own `dev.example.echo.item/1`. An event about one of those passes validation
+# and reaches a host that keeps no ledger, which is a different refusal in different words; an
+# event about an `ono.process/1` never reaches the host at all. Two refusals with two names is
+# the proof that the scope check runs first and independently.
+#
+# The size, rate and timestamp halves of §37.3's list, and the fuzzing of the decoder, are held
+# by `crates/ono-kuang-supervisor/tests/temporal.rs` and `fuzz/tests/corpus.rs`.
+case: a plugin may not assert an object it could never have seen
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/state/ono"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - object.read
+      - temporal.read.current
+      - temporal.read.history
+      - temporal.contribute.events
+      - temporal.contribute.causality
+  network:
+    outbound: none
+  MANIFEST
+
+  echo "== an event about an object the package cannot resolve is refused as a scope violation =="
+  ono -c 'grant capability temporal.contribute.events --plugin dev.example.echo | count; load plugin dev.example.echo; try { echo:temporal-contribute --subject "ono.process/1" } catch e { $e | select name | to json }' | grep -q 'capability.scope_violation' && echo "outside-scope-refused"
+
+  echo "== an event about the package's own objects gets past the scope rule, and meets a shell that keeps no ledger =="
+  ono -c 'grant capability temporal.contribute.events --plugin dev.example.echo | count; load plugin dev.example.echo; try { echo:temporal-contribute } catch e { $e | select name | to json }' | grep -q 'provider.unavailable' && echo "own-objects-pass-the-scope-rule"
+
+  echo "== an event naming a kind Ono does not have is refused too (§37.1) =="
+  ono -c 'grant capability temporal.contribute.events --plugin dev.example.echo | count; load plugin dev.example.echo; try { echo:temporal-contribute --kind "flow.retransmitted" } catch e { $e | select name message | to json }' | grep -q 'subtype' && echo "unknown-kind-refused"
+
+  echo "== and every attempt is in the trail (§31.37) =="
+  ono -c 'grant capability temporal.contribute.events --plugin dev.example.echo | count; load plugin dev.example.echo; try { echo:temporal-contribute --subject "ono.process/1" } catch e { $e | select name }; get audit --plugin dev.example.echo | where capability == "temporal.contribute.events" | select result | to json' | grep -q '"result":"denied"' && echo "contribution-attempt-is-audited"
+exit: 0
+stdout-contains: outside-scope-refused
+stdout-contains: own-objects-pass-the-scope-rule
+stdout-contains: unknown-kind-refused
+stdout-contains: contribution-attempt-is-audited
+stdout-not-contains: panicked

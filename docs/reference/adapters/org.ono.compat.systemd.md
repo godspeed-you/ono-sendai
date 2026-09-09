@@ -44,9 +44,21 @@ Journal entries as `ono.journal-event/1` records, streamed from `journalctl -o j
 ### Limits
 
 - `-o/--output` is the adapter's to choose; asking for another output format runs raw.
+- The historical plan answers over whatever the journal still retains; an empty answer for a window is not proof that nothing happened in it (spec v0.5 §7.4).
 - `--list-boots`, `--disk-usage`, `--verify` and the maintenance forms are not adapted.
 - Every raw journal key (`_COMM`, `_EXE`, `_CMDLINE`, …) is in the extension map, never dropped (spec v0.3 §1.37).
 - A `MESSAGE` that is not valid UTF-8 arrives as journalctl's byte array and is decoded lossily (U+FFFD for what is not UTF-8); a field an entry carries more than once is its values joined by newlines.
+
+### Historical query plan
+
+| | |
+|---|---|
+| coverage | whatever the tool still retains; an empty answer proves nothing |
+| source timestamp | `timestamp` |
+| identity | `boot_id`, `unit` |
+| deduplication key | `cursor` |
+| asked through | `query` |
+| bounds | `--since=@{seconds}` … `--until=@{seconds}` |
 
 ## systemctl-list-units — `org.ono.compat.systemd.systemctl-list-units`
 

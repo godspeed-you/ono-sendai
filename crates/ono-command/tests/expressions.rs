@@ -477,3 +477,88 @@ fn should_still_reject_a_bare_word_that_names_neither_a_field_nor_a_value_of_the
         .expect_err("`name` is a string, not an enum, so `failed` is a field lookup");
     assert_eq!(error.code(), ErrorCode::TypeUnknownField);
 }
+
+// --- the temporal helpers of v0.5 §28.3 ---------------------------------------------------
+
+#[test]
+fn should_answer_the_span_since_a_timestamp_when_age_is_called() {
+    let scope = Scope::new();
+    let then = Value::Timestamp("2026-08-31T12:00:00Z".parse().expect("an instant"));
+    let ten_minutes_later: jiff::Timestamp = "2026-08-31T12:10:00Z".parse().expect("an instant");
+    let age = evaluate(
+        &expression("age(2026-08-31T12:00:00Z)"),
+        &Value::Null,
+        &scope,
+    )
+    .expect("v0.5 §28.3: `age(timestamp)` is a declared builtin");
+    let Value::Duration(span) = age else {
+        panic!("v0.5 §28.3: `age` returns a duration, got {age:?}");
+    };
+    assert!(
+        span.nanoseconds() > 0,
+        "the age of a past instant is positive, got {span}"
+    );
+    let _ = (then, ten_minutes_later);
+}
+
+#[test]
+fn should_answer_unknown_when_age_is_asked_about_something_that_is_not_an_instant() {
+    assert_eq!(
+        evaluate(&expression("age(cpu)"), &subject(), &Scope::new()).expect("evaluates"),
+        Value::Null,
+        "ADR-0014: an operation over the wrong kind of value is unknown, never a fabricated span"
+    );
+}
+
+#[test]
+fn should_test_whether_an_instant_falls_inside_a_window_when_between_is_called() {
+    let inside = evaluate(
+        &expression(
+            "between(2026-08-31T12:05:00Z, 2026-08-31T12:00:00Z, \
+             2026-08-31T12:10:00Z)",
+        ),
+        &Value::Null,
+        &Scope::new(),
+    )
+    .expect("v0.5 §28.3: `between(timestamp, from, to)` is a declared builtin");
+    assert_eq!(inside, Value::Bool(true));
+
+    let outside = evaluate(
+        &expression(
+            "between(2026-08-31T12:20:00Z, 2026-08-31T12:00:00Z, \
+             2026-08-31T12:10:00Z)",
+        ),
+        &Value::Null,
+        &Scope::new(),
+    )
+    .expect("evaluates");
+    assert_eq!(outside, Value::Bool(false));
+}
+
+#[test]
+fn should_answer_unknown_from_between_when_a_bound_is_unknown() {
+    assert_eq!(
+        evaluate(
+            &expression("between(2026-08-31T12:05:00Z, cpu, 2026-08-31T12:10:00Z)"),
+            &subject(),
+            &Scope::new()
+        )
+        .expect("evaluates"),
+        Value::Null,
+        "ADR-0014: a window with an undecided end decides nothing"
+    );
+}
+
+#[test]
+fn should_name_every_builtin_function_when_an_unknown_one_is_called() {
+    let error = evaluate(&expression("nonsense(1)"), &Value::Null, &Scope::new())
+        .expect_err("there is no function `nonsense`");
+    assert_eq!(error.code(), ErrorCode::ResolveCommandNotFound);
+    let rendered = format!("{error:?}");
+    for name in ["now", "age", "between"] {
+        assert!(
+            rendered.contains(name),
+            "the refusal lists what an expression can call, and `{name}` is missing: {rendered}"
+        );
+    }
+}

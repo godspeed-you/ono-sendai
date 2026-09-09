@@ -69,6 +69,22 @@ adapter:
     invocations:   {type: list<record>, required: true, doc: "At least one; see `invocation`."}
     limits:        {type: list<string>, required: true, doc: "What the adapter does not do, in prose the reference page prints (spec v0.3 §1.68 item 14). May be empty."}
     fixtures:      {type: string, required: true, doc: "Directory under `docs/contracts/adapters/fixtures/`, holding at least one fixture per invocation (see `fixture`)."}
+    temporal:      {type: record, nullable: true, doc: "The historical query plan of spec v0.5 §23.2, where the underlying tool has explicit historical semantics — see `temporal` below. Absent for every adapter over a current-state tool, which §23.3 says is `ps`, ordinary `ss`, `ip address` and `lsblk`."}
+
+# ---------------------------------------------------------------------------------------------
+# The historical query plan (spec v0.5 §23.2). Its presence is the claim: §23.1 lets an adapter
+# contribute temporal evidence only where its manifest declares it, and forbids inferring temporal
+# structure from arbitrary output merely because a command has been adapted for structured output.
+# ---------------------------------------------------------------------------------------------
+temporal:
+  closed: true
+  fields:
+    historical_query:   {type: bool, required: true, doc: "Always `true`. The block is the claim, so a block declaring `false` is a contradiction the validator refuses."}
+    coverage:           {type: "enum[retained-window, complete-range]", required: true, doc: "§23.2's coverage semantics. `retained-window`: the tool answers over whatever its own store still holds and states no bound on it, so an empty answer proves nothing (v0.5 §7.4). `complete-range`: the tool keeps the range it was asked about completely."}
+    source_time:        {type: string, required: true, doc: "§23.2's source timestamp mapping: the canonical field carrying the source's own instant. Must be one of `fields:`."}
+    identity:           {type: list<string>, required: true, doc: "§23.2's identity mapping: the canonical fields an entry is identified by. Each must be one of `fields:`; at least one is required."}
+    deduplication_key:  {type: string, nullable: true, doc: "§23.2's deduplication key, where the tool has one — a handle two reads of the same store agree on exactly (v0.5 §6.8). Must be one of `fields:`."}
+    plan:               {type: record, required: true, doc: "How the bounded question is asked: `invocation`, one of the adapter's own invocation ids; `since` and `until`, argv templates carrying `{seconds}` for the instant. Keeping the flag and the time format in the contract is what stops a caller having to know the tool's spelling."}
 
 executable:
   closed: true

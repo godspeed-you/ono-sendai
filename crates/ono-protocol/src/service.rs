@@ -23,7 +23,9 @@ use crate::audit::{Audit, AuditEvent, AuditKind, NoAudit};
 use crate::authorization::{AuthorizationContext, AuthorizedClients, PeerAuthorization};
 use crate::connection::{FrameReader, FrameSink, spawn_writer};
 use crate::error::unreachable;
-use crate::handshake::{CapabilityDescriptor, Identity, Offer, ProviderDescriptor, negotiate};
+use crate::handshake::{
+    CapabilityDescriptor, Identity, Offer, PeerClock, ProviderDescriptor, negotiate,
+};
 use crate::message::{ActRequest, AdaptRequest, RemoteQuery};
 use crate::{
     Frame, FrameKind, Limits, Message, PROTOCOL_VERSION, ProtocolError, Reject, Transport,
@@ -70,6 +72,7 @@ pub struct ServerConfig {
     action_capabilities: BTreeMap<(String, String), String>,
     audit: Audit,
     source_address: Option<String>,
+    clock: Option<PeerClock>,
 }
 
 impl Default for ServerConfig {
@@ -87,6 +90,7 @@ impl Default for ServerConfig {
             action_capabilities: BTreeMap::new(),
             audit: Arc::new(NoAudit),
             source_address: None,
+            clock: None,
         }
     }
 }
@@ -103,6 +107,23 @@ impl ServerConfig {
     pub fn with_versions<I: IntoIterator<Item = u16>>(mut self, versions: I) -> Self {
         self.versions = versions.into_iter().collect();
         self
+    }
+
+    /// Announces this agent's own clock identity, so the caller can tell which clock domain
+    /// the events it receives belong to (v0.5 §24.2, §25.5).
+    ///
+    /// Self-reported context, never authority: the caller learns which boot of which host the
+    /// monotonic readings came from, and nothing is granted because of it.
+    #[must_use]
+    pub fn with_clock(mut self, clock: PeerClock) -> Self {
+        self.clock = Some(clock);
+        self
+    }
+
+    /// This agent's own clock identity, where one was stated.
+    #[must_use]
+    pub const fn clock(&self) -> Option<&PeerClock> {
+        self.clock.as_ref()
     }
 
     /// Announces one provider, and whether it can answer here.
@@ -259,6 +280,7 @@ impl ServerConfig {
             identity: self.identity.clone(),
             pty: self.pty,
             limits: self.limits.clone(),
+            clock: self.clock.clone(),
         }
     }
 

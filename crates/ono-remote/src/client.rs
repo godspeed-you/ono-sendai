@@ -80,6 +80,7 @@ impl RemoteLink {
                     descriptor,
                     target,
                     negotiated_schemas.clone(),
+                    link.negotiated().peer().clock().cloned(),
                 )));
             }
         }
@@ -164,6 +165,18 @@ impl RemoteLink {
         retag_value(value, &self.host)
     }
 
+    /// The stamp everything arriving over this link carries (v0.5 §24.2).
+    #[must_use]
+    pub fn ingest(&self) -> crate::RemoteIngest {
+        crate::RemoteIngest::new(&self.host, self.link.negotiated().peer().clock().cloned())
+    }
+
+    /// What the far side can answer about time, as §24.1 requires negotiation to report.
+    #[must_use]
+    pub fn temporal(&self) -> ono_protocol::RemoteTemporal {
+        self.link.negotiated().temporal()
+    }
+
     /// The underlying protocol link, for callers that need raw streams.
     #[must_use]
     pub fn protocol(&self) -> &Link {
@@ -185,6 +198,8 @@ pub struct RemoteProvider {
     schemas: Vec<Arc<Schema>>,
     capabilities: Vec<Capability>,
     availability: Availability,
+    temporal: ono_provider_api::TemporalCapabilities,
+    clock: Option<ono_protocol::PeerClock>,
 }
 
 impl RemoteProvider {
@@ -194,6 +209,7 @@ impl RemoteProvider {
         descriptor: &ProviderDescriptor,
         target: &str,
         schemas: Vec<Arc<Schema>>,
+        clock: Option<ono_protocol::PeerClock>,
     ) -> Self {
         let availability = match descriptor.unavailable_reason() {
             None => Availability::Available,
@@ -211,12 +227,24 @@ impl RemoteProvider {
                 .map(ono_protocol::CapabilityDescriptor::to_capability)
                 .collect(),
             availability,
+            temporal: descriptor.temporal(),
+            clock,
         }
     }
 
     /// The one target this instance answers about.
     fn target(&self) -> &'static str {
         self.targets[0]
+    }
+
+    /// The stamp this provider's arriving observations carry (v0.5 §24.2).
+    ///
+    /// The three instants of §3.3 and the clock domain of §25.5, for whoever turns an arriving
+    /// record into a temporal event. The provider itself never writes one: a `ValueStream`
+    /// carries values, and where those values become ledger events is the recorder's business.
+    #[must_use]
+    pub fn ingest(&self) -> crate::RemoteIngest {
+        crate::RemoteIngest::new(&self.host, self.clock.clone())
     }
 }
 
@@ -240,6 +268,63 @@ impl Provider for RemoteProvider {
 
     fn availability(&self) -> Availability {
         self.availability.clone()
+    }
+
+    /// What the far side said it can answer about time, as negotiation reported it (§24.1).
+    ///
+    /// Never widened here. A peer built before v0.5 declared nothing and therefore claims
+    /// nothing, which is the honest reading and the one §24.5 acts on.
+    fn temporal(&self) -> ono_provider_api::TemporalCapabilities {
+        self.temporal
+    }
+
+    /// The objects `query` matched within `window`, asked of the far side (§24.5).
+    ///
+    /// §24.5: "If the local machine has only local history and the remote has none, it MUST say
+    /// so." So a remote that did not declare `historical_query` is refused here, by name and by
+    /// host, rather than being asked a question it would answer with current state.
+    fn history(
+        &self,
+        query: &Query,
+        window: &ono_provider_api::TimeWindow,
+    ) -> Result<ValueStream, ErrorValue> {
+        if !self.temporal.historical_query {
+            return Err(ono_provider_api::unsupported_history(&format!(
+                "{} on {}",
+                self.id, self.host
+            ))
+            .with_metadata("host", Value::string(&self.host))
+            .with_metadata("provider", Value::string(&self.id)));
+        }
+        let remote = self
+            .link
+            .query(&RemoteQuery::from_query(query).over(*window))?;
+        let host = Arc::clone(&self.host);
+        Ok(ValueStream::spawn(
+            PipelineConfig::new(),
+            Boundedness::Bounded,
+            move |sink| async move {
+                let mut remote = remote;
+                loop {
+                    let message = tokio::select! {
+                        biased;
+                        () = sink.cancel_token().cancelled() => break,
+                        message = remote.recv() => message,
+                    };
+                    let delivered = match message {
+                        Some(RemoteMessage::Value(value)) => {
+                            sink.send(retag_value(value, &host)).await
+                        }
+                        Some(RemoteMessage::Failure(error)) => sink.fail(error).await,
+                        Some(RemoteMessage::Event(_)) => Ok(()),
+                        None => break,
+                    };
+                    if delivered.is_err() {
+                        break;
+                    }
+                }
+            },
+        ))
     }
 
     fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {

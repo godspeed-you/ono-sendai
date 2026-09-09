@@ -129,3 +129,57 @@ payloads:
     doc: >-
       One mebibyte. Appendix F.3: "The 1 MiB case may use fewer elements to stay within practical
       test-run memory while still proving the byte budget triggers before the item budget."
+
+# ---------------------------------------------------------------------------------------------
+# v0.5 §49's fixture ledger. Appendix F sizes a *host*; §49 sizes a *history*, and the two are
+# independent axes of the same question — a timeline budget is missed by the number of rows in the
+# store, not by the number of processes on the machine.
+#
+#   "Performance tests SHOULD run against a deterministic fixture ledger with at least:
+#    1,000,000 events / 100,000 objects/lifetimes / 500,000 relation changes / 10,000 action
+#    records."
+#
+# Deterministic is the load-bearing word. The generator is seeded, the instants come from
+# `ono_testkit::temporal::Clock`'s fixed origin, and nothing in the fixture reads a clock, a
+# hostname or a process id — so the same seed produces the same events, with the same `EventId`s,
+# on any machine in any year. The store behind them is a real `ono-temporal-ledger` SQLite
+# database written through `LedgerWrite`, because §32.2's rule holds here too: the production
+# write path and the production indexes are what a measurement is about.
+#
+# Fields of a temporal profile
+#
+#   id                `T` — how a measurement record names it (Appendix F.4).
+#   events            §49's event count. Relation changes are part of it.
+#   objects           §49's distinct object identities/lifetimes the events are about.
+#   relation_changes  how many of `events` are `relation.added`/`relation.removed`.
+#   actions           §49's action records, written through `record_action`.
+#   seed              the generator seed. Part of the declaration because "deterministic" is a
+#                     claim about a specific stream, and a seed chosen at the call site would
+#                     make two runs incomparable.
+#   built_by          `benchmark`: a million events is minutes of writing and hundreds of
+#                     megabytes on disk, which is more than every gate run should pay and well
+#                     inside what `cargo xtask perf` and a developer machine can afford. The
+#                     gate builds the same generator at a small count, which is what proves the
+#                     generator; the size is what `perf` builds.
+#   spec              the section that fixes the numbers.
+#
+# Authority: `ono_testkit::temporal::TEMPORAL_PROFILE_T` declares the same numbers and
+# `xtask/tests/perf.rs` compares the two in both directions, exactly as
+# `crates/ono-spatial-query/tests/profiles.rs` does for Appendix F. Decisions: ADR-0746.
+# ---------------------------------------------------------------------------------------------
+temporal_profiles:
+  - id: T
+    events: 1000000
+    objects: 100000
+    relation_changes: 500000
+    actions: 10000
+    seed: 327753
+    built_by: benchmark
+    spec: "v0.5 §49"
+    doc: >-
+      The deterministic fixture ledger v0.5 §49 requires release evidence to be measured against.
+      Its purpose is stated by §49's last line and is not negotiable downwards: "to catch
+      architectural scaling failures, not to claim production observability scale". A query that
+      answers a fifteen-minute window in 100 ms over twenty thousand events and in eight seconds
+      over a million has an architectural scaling failure, and only the second measurement finds
+      it.

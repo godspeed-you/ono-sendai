@@ -24,6 +24,7 @@ mod rng;
 mod run;
 mod scratch;
 mod skip;
+pub mod temporal;
 
 pub use bounded::{Bounded, run_bounded};
 pub use profile::{

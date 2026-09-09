@@ -1,0 +1,68 @@
+# Canonical TemporalLandmark schema. Source: v0.5 §27.1 (the built-in candidates), §27.2 (a
+# landmark is a navigation anchor and never an incident alert), §27.3 (a landmark retains its
+# event reference so `why event`, `at event` and a map at that event all work) and §43.4 (a
+# recorder falling behind becomes a landmark visible at the root).
+#
+# v0.4's `ono.landmark/1` answers a different question — what makes a *place* worth noticing now,
+# in the closed reason vocabulary of v0.4 §3.7. This one answers what makes a *moment* worth
+# navigating to, and its vocabulary is §27.1's. The two share no word and neither generalises the
+# other, so they are two schemas (ADR-0613).
+#
+# §35 lists eleven schemas and opens with "at least", so this is an addition rather than a
+# departure. It exists because a landmark reaches a reader: the timeline view marks them, the
+# stepper walks them, and §43.4 puts one at the root `look`.
+id: ono.temporal-landmark/1
+name: TemporalLandmark
+summary: A moment worth navigating to, and the event that is it.
+identity: [event, kind]
+fields:
+  kind:
+    type: enum
+    required: true
+    values:
+      - service_failure
+      - service_recovery
+      - restart_loop
+      - mount_change
+      - filesystem_read_only
+      - interface_state
+      - route_change
+      - container_lifecycle
+      - operator_action
+      - coverage_boundary
+      - recorder_gap
+      - remote_link
+    doc: >-
+      Which of §27.1's built-in candidates this is. The list is closed: a rule may not invent a
+      word, for the same reason v0.4 §3.7's list is closed — a vocabulary anybody may extend is
+      one nothing can be filtered on.
+  event:
+    type: ref<ono.temporal-event/1>
+    required: true
+    doc: >-
+      The event this landmark is. §27.3 requires the reference to survive, so that `why event`,
+      `at event` and a map at that event all reach the same moment.
+  at:
+    type: timestamp
+    required: true
+    doc: The instant the landmark orients to — the event's presentation instant.
+  scope:
+    type: string
+    required: true
+    doc: The spatial scope the landmark happened in, so a federated timeline can say whose it is.
+  subject:
+    type: value
+    nullable: true
+    doc: >-
+      The object the landmark is about, where one is identified. Null for a landmark about a
+      source rather than an object — a recorder gap belongs to the recorder, not to anything it
+      failed to observe.
+  detail:
+    type: string
+    required: true
+    doc: >-
+      What the rule observed, in the rule's own words. §27.2 bounds this: it states the
+      transition and claims no operational severity beyond it, because a landmark is an anchor
+      and the shell is not an alerting product.
+default_view:
+  columns: [at, kind, subject, detail]

@@ -1,0 +1,7 @@
+temporal_sources:
+  - id: dev.example.fuzz.temporal-source.things
+    summary: Things, from somewhere.
+    schema: dev.example.fuzz.thing/1
+    kinds: [object.changed]
+    answer: bounded
+    coverage: Whatever there was.

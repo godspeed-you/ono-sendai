@@ -476,3 +476,27 @@ targets:
     schema: null
     phase: planned
     provider_qualified: true
+
+  # --- temporal, v0.5 §11.6, §10.3, §30.8 ---------------------------------------------------
+  # Three targets the temporal interface needs and §8 has no word for. `event` is the canonical
+  # temporal event of §3.3 that `find event` and `inspect event` act on; `recorder` is the
+  # user-level collection service of §10; `temporal-history` is the retained local ledger, and
+  # §30.8 makes that spelling canonical for v0.5.
+  - id: ono.target.event
+    name: event
+    category: system
+    summary: A canonical temporal event — an observation, a change, an action step or a provider report.
+    schema: ono.temporal-event/1
+    phase: T
+  - id: ono.target.recorder
+    name: recorder
+    category: system
+    summary: The user-level temporal recorder, its state, its sources and what it has retained.
+    schema: ono.recorder-status/1
+    phase: T
+  - id: ono.target.temporal-history
+    name: temporal-history
+    category: system
+    summary: The local retained temporal ledger, as a whole, for inspection and for deletion.
+    schema: ono.temporal-history/1
+    phase: T

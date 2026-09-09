@@ -1,0 +1,89 @@
+# v0.5 §18.3, §18.4, §18.5. `[` and `]` step through events relevant to the visible map horizon
+# rather than through every raw provider sample, and the priority order is §18.4's own list, which
+# `ono_temporal_query::relevance::RelevanceClass` encodes. A step with nothing to step to moves
+# nothing and says so — §18.5 forbids a frame between supported states, and §2.17 forbids reading
+# "nothing recorded" as "nothing happened" (ADR-0684).
+case: the map cursor steps significant events, and says so when there is no event to step to
+pty: true
+columns: 100
+lines: 30
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  drive() {
+    local keys="$1" out="$2" writer="$3" typist
+    rm -f "$keys" "$out"
+    mkfifo "$keys"
+    ( eval "$writer" ) > "$keys" &
+    typist=$!
+    script --quiet --return --command 'ono' "$out" < "$keys" > /dev/null 2>&1 || true
+    wait "$typist" 2>/dev/null || true
+    rm -f "$keys"
+  }
+
+  ESC=$(printf '\033')
+  ALT_ON="${ESC}[?1049h"
+  ALT_OFF="${ESC}[?1049l"
+
+  # Something for the stepper to find, started before the view opens.
+  sleep 120 &
+  SUBJECT=$!
+
+  echo '== a map whose cursor is stepped backward and forward (§18.3, §18.4) =='
+  drive /tmp/keys-254 /tmp/session-254 "
+    sleep 3
+    printf 'stty rows 30 cols 100\n'; sleep 2
+    printf 'start recorder\n';        sleep 3
+    printf 'echo AT-PROMPT\n';        sleep 1
+    printf 'enter compute\n';         sleep 2
+    printf 'map\n';                   sleep 6
+    printf '[';                       sleep 3
+    printf ']';                       sleep 3
+    printf '{';                       sleep 3
+    printf '}';                       sleep 3
+    printf '%s' '${ESC}';             sleep 3
+    printf 'echo AFTER-VIEW\n';       sleep 2
+    printf 'now\n';                   sleep 2
+    printf 'look\n';                  sleep 3
+    printf 'exit\n';                  sleep 2
+  "
+
+  prove t9m "the session reached its prompt (§29.1)" \
+    "grep -qaF 'AT-PROMPT' /tmp/session-254"
+  prove t9n "\`map\` opens a full-screen view to step in (v0.4 §23.3)" \
+    "grep -qaF '${ALT_ON}' /tmp/session-254"
+  # §18.4 and §2.17: a step either lands on a significant event and names it, or reports that
+  # there is none to land on. Both are answers; an unmoved view that said nothing is not.
+  prove t9o "a step is answered — an event, an empty window, or no evidence at all (§18.4, §2.17)" \
+    "grep -qaE 'object\.|relation\.|no significant event that way|recorded no events' /tmp/session-254"
+  prove t9p "no state is invented between supported positions (§18.5)" \
+    "! grep -qai 'interpolat' /tmp/session-254"
+  prove t9q "Esc restores the shell's own screen (v0.4 §49.8)" \
+    "grep -qaF '${ALT_OFF}' /tmp/session-254"
+  prove t9r "the shell and the place survive the stepping (§18.2, v0.4 §43.4)" \
+    "grep -qaF 'AFTER-VIEW' /tmp/session-254 && grep -qaF 'local/compute://' /tmp/session-254"
+  prove t9s "nothing panicked while the cursor moved" \
+    "! grep -qai 'panicked' /tmp/session-254"
+
+  kill $SUBJECT 2>/dev/null || true
+  wait $SUBJECT 2>/dev/null || true
+  exit 0
+exit: 0
+stdout-contains: PROVED t9m
+stdout-contains: PROVED t9n
+stdout-contains: PROVED t9o
+stdout-contains: PROVED t9p
+stdout-contains: PROVED t9q
+stdout-contains: PROVED t9r
+stdout-contains: PROVED t9s
+stdout-not-contains: FAILED

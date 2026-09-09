@@ -51,6 +51,7 @@ pub struct AgentConfig {
     action_capabilities: Vec<(String, String, String)>,
     audit: Audit,
     source_address: Option<String>,
+    clock: Option<ono_protocol::PeerClock>,
 }
 
 impl AgentConfig {
@@ -71,6 +72,7 @@ impl AgentConfig {
             action_capabilities: Vec::new(),
             audit: Arc::new(NoAudit),
             source_address: None,
+            clock: None,
         }
     }
 
@@ -129,6 +131,17 @@ impl AgentConfig {
         self
     }
 
+    /// The clock identity this agent announces at the handshake (v0.5 §24.2, §25.5).
+    ///
+    /// Left unset, the agent reports nothing about its clock, and a caller reads that as
+    /// unknown rather than as a zero offset (§35.3). [`crate::clock_identity`] builds the one
+    /// this machine can honestly state.
+    #[must_use]
+    pub fn with_clock(mut self, clock: ono_protocol::PeerClock) -> Self {
+        self.clock = Some(clock);
+        self
+    }
+
     /// The bounds the agent enforces on its caller (ADR-0015 T7).
     #[must_use]
     pub fn with_limits(mut self, limits: Limits) -> Self {
@@ -158,6 +171,9 @@ impl AgentConfig {
         if let Some(address) = &self.source_address {
             config = config.with_source_address(address);
         }
+        if let Some(clock) = &self.clock {
+            config = config.with_clock(clock.clone());
+        }
         for (target, operation, capability) in &self.action_capabilities {
             config = config.with_action_capability(target, operation, capability);
         }
@@ -167,6 +183,10 @@ impl AgentConfig {
             for capability in provider.capabilities() {
                 descriptor = descriptor.with_capability(&capability);
             }
+            // §24.1: negotiation MUST report what the peer can answer about time. The claim is
+            // the provider's own and is never widened here; a provider that says nothing is
+            // announced as claiming nothing (§21.5).
+            descriptor = descriptor.with_temporal(provider.temporal());
             if let Availability::Unavailable(reason) = provider.availability() {
                 descriptor = descriptor.unavailable(reason);
             }
@@ -250,7 +270,14 @@ impl RemoteService for RegistryService {
         // explicit that negotiation filtering "is not sufficient by itself"; two checks on two
         // sides of the crate boundary are what makes a missed one a bug rather than a breach.
         peer.require_observe(&format!("get {}", query.target_name()))?;
-        let mut stream = self.registry.snapshot(&query.to_query())?;
+        // §24.5: a windowed request is a question about the past, and the provider that answers
+        // for the target decides whether it can be answered. A provider that keeps no history
+        // refuses with `temporal.unsupported_source`, which is the far side saying so rather
+        // than the near side presenting current state as past state.
+        let mut stream = match query.window() {
+            Some(window) => self.registry.history(&query.to_query(), &window)?,
+            None => self.registry.snapshot(&query.to_query())?,
+        };
         // The provider may honour the limit or ignore it (its documented liberty); the caller's
         // bound is enforced here either way, so an endless remote target with a limit ends.
         let limit = query.max().unwrap_or(usize::MAX);
@@ -377,6 +404,15 @@ impl RemoteService for RegistryService {
         peer: &PeerAuthorization,
         request: ActRequest,
     ) -> Result<ActionOutcome, ErrorValue> {
+        // §4.7 makes past context read-only and §30.6 requires remote temporal access to respect
+        // the same authorization model as remote provider access. So the refusal is here, at the
+        // boundary that owns the machine being changed, and not only in the caller's own shell:
+        // a client that admits it is standing in the past is refused by the agent even where its
+        // local guard was bypassed.
+        peer.require_present(
+            &format!("{} {}", request.operation(), request.target_name()),
+            request.attempted_from(),
+        )?;
         if matches!(peer, PeerAuthorization::Policy(_)) {
             peer.require_action(
                 self.action_capability(request.target_name(), request.operation()),

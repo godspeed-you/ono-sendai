@@ -710,3 +710,51 @@ async fn should_say_which_provider_cannot_answer_about_a_target_no_provider_clai
         .expect_err("an unclaimed target is a resolution failure, not an empty claim");
     assert_eq!(error.code(), ErrorCode::ResolveTargetNotFound);
 }
+
+#[test]
+fn should_carry_the_transaction_a_source_named_when_an_event_has_one() {
+    // v0.5 §21.6: a provider with `causal_tokens` carries the transaction identifier its source
+    // published, and §15.2 admits that identifier — a systemd job path, a runtime request id —
+    // as evidence for `caused_by`. Temporal proximity is not evidence; a token is, so the
+    // envelope has to be able to carry one all the way to the ledger.
+    let record = RecordValue::builder(
+        fixture_schema(),
+        Provenance::local("test.fixture", SchemaId::new("ono.widget", 1)),
+    )
+    .set("id", Value::string("w1"))
+    .expect("the fixture schema has an id")
+    .build();
+
+    let plain = ono_provider_api::ObjectEvent::changed(&record, ["id"]);
+    assert_eq!(
+        plain.cause(),
+        None,
+        "an event whose source named no transaction claims none"
+    );
+
+    let attributed = ono_provider_api::ObjectEvent::changed(&record, ["id"])
+        .with_cause("systemd:/org/freedesktop/systemd1/job/4821");
+    assert_eq!(
+        attributed.cause(),
+        Some("systemd:/org/freedesktop/systemd1/job/4821")
+    );
+}
+
+#[test]
+fn should_take_the_instant_the_source_announced_a_change_over_the_instant_it_was_re_read() {
+    // v0.5 §22.4 and §3.3: an event's time is when the change happened as far as the source can
+    // say, and a provider that learns of a change from a pushed notification and then re-reads
+    // the object knows an earlier and truer instant than the re-read's. Where it knows one, it
+    // says so rather than letting the re-read's clock stand in for the kernel's.
+    let record = RecordValue::builder(
+        fixture_schema(),
+        Provenance::local("test.fixture", SchemaId::new("ono.widget", 1)),
+    )
+    .set("id", Value::string("w1"))
+    .expect("the fixture schema has an id")
+    .build();
+
+    let announced: jiff::Timestamp = "2026-09-08T12:00:00Z".parse().expect("a fixed instant");
+    let event = ono_provider_api::ObjectEvent::changed(&record, ["id"]).with_observed_at(announced);
+    assert_eq!(event.at(), announced);
+}

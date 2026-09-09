@@ -82,6 +82,17 @@ impl CommandImpl for FindPlace {
             // composition §28.2 requires (ADR-0141, superseded here).
             let mut session = crate::spatial::spatial_session().await;
 
+            // v0.5 §14.4: at a historical coordinate `find place` searches the historical index
+            // for the active time, and where a present-day alias helps it reach a candidate the
+            // answer distinguishes the aid from evidence that the object existed then.
+            if let Some(active) = crate::spatial::historical::active() {
+                let text = arguments
+                    .selector("name")
+                    .and_then(text_of)
+                    .unwrap_or_default();
+                return historical_find(&active, &session, &text, object_type).map(Outcome::Values);
+            }
+
             let fields = root_fields(predicate.iter().flat_map(field_paths));
             let plan = plan_for(
                 ctx.providers(),
@@ -239,6 +250,95 @@ impl CommandImpl for FindPlace {
             Ok(Outcome::Values(ValueStream::from_values(values)))
         })
     }
+}
+
+/// `find place` at the session's historical coordinate (v0.5 §14.4).
+///
+/// The two bases of `ono_temporal_query::search::ResolutionBasis` are what §14.4 makes a MUST,
+/// and they reach the reader as a namespaced extension on each place: `basis` is
+/// `historical_evidence` or `resolution_aid`, `existed_at` is the instant an event places the
+/// object at, and `anchor` is the event reference `at event` and `why event` take. A match that
+/// is only an aid carries neither of the last two, because there is nothing to point at.
+///
+/// # Errors
+///
+/// Whatever §34 refusal the ledger raises, and whatever the place record could not be built from.
+fn historical_find(
+    active: &crate::spatial::historical::Active,
+    session: &crate::spatial::SpatialSessionState,
+    text: &str,
+    object_type: Option<SpatialType>,
+) -> Result<ValueStream, ErrorValue> {
+    let world = active.world(session.current_scope())?;
+    let found = world.find(active.ledger(), text, session.index())?;
+    let scope = local_scope();
+    let mut values: Vec<Value> = Vec::new();
+    for matched in found {
+        if object_type.is_some_and(|wanted| !matched.object_type.is_a(wanted)) {
+            continue;
+        }
+        let record = crate::spatial::view::place_record_of(
+            world.index(),
+            &matched.id,
+            &scope,
+            PermissionState::Available,
+            false,
+            world.record_of(&matched.id),
+            None,
+            world.at(),
+        )?;
+        values.push(Value::Record(Arc::new(with_basis(
+            &record,
+            &matched,
+            world.at(),
+        ))));
+    }
+    Ok(ValueStream::from_values(values))
+}
+
+/// The place record with §14.4's basis beside it, under a reserved namespaced key.
+///
+/// v0.2 §10.4 makes an extension key namespaced and §31.5 reserves `ono.*` to this project, so
+/// `ono.temporal-resolution` cannot collide with a field a provider owns — the same route §9.4's
+/// own metadata takes when a schema declares no `temporal` field (ADR-0683).
+fn with_basis(
+    record: &RecordValue,
+    matched: &ono_temporal_query::search::HistoricalPlaceMatch,
+    at: Timestamp,
+) -> RecordValue {
+    let mut basis = ono_value::MapValue::new();
+    basis.insert("as_of".into(), Value::Timestamp(at));
+    basis.insert("basis".into(), Value::string(matched.basis.as_str()));
+    basis.insert(
+        "is_evidence_of_existence".into(),
+        Value::Bool(matched.is_evidence_of_existence()),
+    );
+    basis.insert(
+        "existed_at".into(),
+        matched.existed_at.map_or(Value::Null, Value::Timestamp),
+    );
+    basis.insert(
+        "anchor".into(),
+        matched
+            .anchor
+            .as_ref()
+            .map_or(Value::Null, |event| Value::string(&event.to_string())),
+    );
+    let mut builder =
+        RecordValue::builder(Arc::clone(record.schema()), record.provenance().clone());
+    for field in record.schema().fields() {
+        if let Some(value) = record.get(field.name())
+            && let Ok(next) = builder.clone().set(field.name(), value.clone())
+        {
+            builder = next;
+        }
+    }
+    for (key, value) in record.extra().iter() {
+        builder = builder.set_extra(key, value.clone());
+    }
+    builder
+        .set_extra("ono.temporal-resolution", Value::Map(Arc::new(basis)))
+        .build()
 }
 
 /// The spatial type a `--type` option names (§3.3, ADR-0124).

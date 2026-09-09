@@ -42,6 +42,7 @@ pub mod session_provider;
 pub mod settings;
 pub mod sink;
 pub mod spatial;
+pub mod temporal;
 pub mod theme;
 pub mod trust;
 pub mod view;

@@ -6089,3 +6089,346 @@ Push a mount onto the context stack.
 ```text
 enter mount /mnt/data
 ```
+
+## temporal
+
+### `at`
+
+Resolve a time selector and evaluate everything that follows at that instant.
+
+| | |
+|---|---|
+| id | `ono.temporal.at` |
+| stability | stable |
+| phase | T |
+| input | `null` |
+| output | `ono.temporal-context/1` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `selector` | `string` | The instant to stand at: an RFC 3339 timestamp, a local date and time, a local time today, a negative relative duration, or `event @e42` (v0.5 §4.4). Written as words so `at event @e42` and `at 2026-08-31 12:17:00` both read as themselves. |
+
+**Examples**
+
+```text
+at -10m
+at 12:17
+at 2026-08-31T12:17:00+02:00
+at event @e42
+```
+
+### `now`
+
+Return the session to the present, keeping the place where it still exists.
+
+| | |
+|---|---|
+| id | `ono.temporal.now` |
+| stability | stable |
+| phase | T |
+| input | `null` |
+| output | `ono.temporal-context/1` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Examples**
+
+```text
+now
+```
+
+### `present`
+
+Run one external command in the real present without leaving historical context.
+
+| | |
+|---|---|
+| id | `ono.temporal.present` |
+| stability | stable |
+| phase | T |
+| input | `null` |
+| output | `stream<ono.action-result/1>` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `command` | `string` | The external program and its arguments, run in the current environment exactly as they would be in the present (v0.5 §4.8). |
+
+**Examples**
+
+```text
+present git status
+present printf ok
+```
+
+### `timeline`
+
+The ordered event view over a scope and a window.
+
+| | |
+|---|---|
+| id | `ono.temporal.timeline` |
+| stability | stable |
+| phase | T |
+| input | `null` |
+| output | `stream<ono.temporal-event/1>` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `target` | `string` | The target word to scope the timeline to — `service`, `process`. Without one, the current place and its directly relevant events answer (v0.5 §11.3). |
+| `name` | `string` | Which object of that target, by name or identifier. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--since` | `string` | The start of the window, as a duration (`30m`) or a time selector. Defaults to `temporal.timeline.default_window` before the coordinate (v0.5 §11.2, §33). |
+| `--until` | `string` | The end of the window. Defaults to the active temporal coordinate, normally now. |
+| `--kind` | `string` | Restrict to one canonical event kind — `object.changed`, `relation.added`, `action.failed` (v0.5 §6.1, §11.2). |
+| `--all` | `bool` | Widen to the whole visible scope rather than the current place, subject to retention and permission (v0.5 §11.3). |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
+
+**Examples**
+
+```text
+timeline
+timeline --since 30m
+timeline service nginx
+timeline --kind object.changed
+timeline --since 1h | where kind == "object.changed"
+```
+
+### `changes`
+
+What is different between two instants, classified and with per-field certainty.
+
+| | |
+|---|---|
+| id | `ono.temporal.changes` |
+| stability | stable |
+| phase | T |
+| input | `null` |
+| output | `stream<ono.temporal-change/1>` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `target` | `string` | The target word to compare — `service`, `process`, `filesystem`. Without one, the current place answers (v0.5 §13.1). |
+| `name` | `string` | Which object of that target, by name or identifier. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--since` | `string` | The earlier instant, as a duration or a time selector. Required: a comparison needs two ends (v0.5 §13.1). |
+| `--until` | `string` | The later instant. Defaults to the active temporal coordinate, normally now. |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
+
+**Examples**
+
+```text
+changes --since 10m
+changes service nginx --since 1h
+changes --since 12:00 --until 12:30
+changes --since 30m | group subject.object_type
+```
+
+### `why`
+
+Explain a state, an event or a field from registered causal rules and their evidence.
+
+| | |
+|---|---|
+| id | `ono.temporal.why` |
+| stability | stable |
+| phase | T |
+| input | `null` |
+| output | `ono.causal-explanation/1` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `subject` | `string` | One of §16.2's three forms: a target and a selector (`service nginx`), `event @e42`, or `field state` about the current place. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--depth` | `int` | How many causal hops the explanation follows. Defaults to `temporal.timeline.default_depth` (v0.5 §16.7, §33). |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
+
+**Examples**
+
+```text
+why service nginx
+why event @e42
+why field state
+```
+
+### `find event`
+
+Search across events when the time something happened is not known.
+
+| | |
+|---|---|
+| id | `ono.event.find` |
+| stability | stable |
+| phase | T |
+| input | `null` |
+| output | `stream<ono.temporal-event/1>` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `predicate` | `string` | An Ono expression over the event, quoted: `'kind == "action.failed"'`. Without one every event in the window answers (v0.5 §20.3). |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--since` | `string` | The start of the window searched. Defaults to what the ledger retains. |
+| `--until` | `string` | The end of the window searched. Defaults to the active temporal coordinate. |
+| `--limit` | `int` | How many events to answer with. The search is bounded by default, because §32.3 budgets it. |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
+
+**Examples**
+
+```text
+find event 'kind == "action.failed"'
+find event --since 1h
+find event 'kind == "object.appeared"' | take 20
+```
+
+### `inspect event`
+
+One event with its times, its subject and the evidence it rests on.
+
+| | |
+|---|---|
+| id | `ono.event.inspect` |
+| stability | stable |
+| phase | T |
+| input | `null` |
+| output | `ono.temporal-event/1` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `reference` | `string` | The event reference a timeline printed, `@e42` — a prefix of the content digest, refused with `temporal.ambiguous_event` where it names more than one (v0.5 §11.6). |
+
+**Examples**
+
+```text
+inspect event @e42
+```
+
+### `get recorder`
+
+The recorder's state, what it is collecting and what it has retained.
+
+| | |
+|---|---|
+| id | `ono.recorder.get` |
+| stability | stable |
+| phase | T |
+| input | `null` |
+| output | `ono.recorder-status/1` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Examples**
+
+```text
+get recorder
+```
+
+### `start recorder`
+
+Start persistent temporal recording for this user.
+
+| | |
+|---|---|
+| id | `ono.recorder.start` |
+| stability | stable |
+| phase | T |
+| input | `null` |
+| output | `ono.recorder-status/1` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Examples**
+
+```text
+start recorder
+```
+
+### `stop recorder`
+
+Flush the temporal ledger and stop recording cleanly.
+
+| | |
+|---|---|
+| id | `ono.recorder.stop` |
+| stability | stable |
+| phase | T |
+| input | `null` |
+| output | `ono.recorder-status/1` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Examples**
+
+```text
+stop recorder
+```
+
+### `remove temporal-history`
+
+Destroy the local retained temporal history.
+
+| | |
+|---|---|
+| id | `ono.temporal-history.remove` |
+| stability | stable |
+| phase | T |
+| input | `null` |
+| output | `stream<ono.action-result/1>` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--confirm` | `bool` | Required: the deletion is irreversible and a script never waits for a prompt (spec §17.4). Without it nothing is removed and the run fails with `safety.confirmation_required`. |
+| `--dry-run` | `bool` | Report what would be destroyed without destroying it: the store, its size and the interval it covers. |
+
+**Examples**
+
+```text
+remove temporal-history --confirm
+remove temporal-history --dry-run
+```

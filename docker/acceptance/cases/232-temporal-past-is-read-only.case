@@ -1,0 +1,82 @@
+# v0.5 §50 phase T2 — §4.7: "All Ono mutations MUST fail while historical context is active."
+#
+# The rule is a safety rule, so this case checks both halves of one: the refusal carries its
+# structured code and names `now` as the way back, and the machine was not changed. The second
+# half is checked against a real process the case starts itself — a refusal that printed the right
+# words while killing the process would pass a weaker test.
+#
+# §4.7 lists four classes. Three are checkable here: a native mutation, a mutation reached through
+# a provider, and a shell-state-changing operation. A KUANG/11 mutation tool and a remote mutation
+# are refused by the same guard at the same seam, and their own cases carry them.
+case: the past is read-only, and the machine is untouched
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== a real process, so a refusal that did not refuse would be visible (§43.6) =='
+  sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo $!' > /tmp/t2ro.pid
+  VICTIM=$(cat /tmp/t2ro.pid)
+  echo "fixture: process $VICTIM"
+  prove t2s "the fixture process is running before anything is attempted" \
+    'test -d /proc/'"$VICTIM"
+
+  echo '== a native mutation in historical context refuses (§4.7) =='
+  ono -c "sleep 1
+  at -1s
+  stop process $VICTIM" > /tmp/t2ro-stop.out 2>&1
+  prove t2t "the refusal is temporal.read_only (§4.7, §34)" \
+    'grep -q "temporal.read_only" /tmp/t2ro-stop.out'
+  prove t2u "it names the command it refused (§4.7)" \
+    'grep -q "stop process" /tmp/t2ro-stop.out'
+  prove t2v "and it names `now` as the way back (§4.7)" \
+    'grep -q "now" /tmp/t2ro-stop.out'
+  prove t2w "nothing was changed: the process is still there (§4.7)" \
+    'test -d /proc/'"$VICTIM"
+
+  echo '== a shell-state-changing mutation refuses under the same rule (§4.7) =='
+  ono -c 'sleep 1
+  at -1s
+  remove temporal-history --confirm' > /tmp/t2ro-remove.out 2>&1
+  prove t2x "a destructive shell operation refuses in the past too (§4.7)" \
+    'grep -q "temporal.read_only" /tmp/t2ro-remove.out'
+
+  echo '== `now` is never in the class it guards, or the rule would be a trap (§4.3, §4.7) =='
+  ono -c "sleep 1
+  at -1s
+  now
+  stop process $VICTIM" > /tmp/t2ro-after.out 2>&1
+  prove t2y "the same mutation runs once the session is back in the present (§4.3, §4.7)" \
+    '! grep -q "temporal.read_only" /tmp/t2ro-after.out'
+  for _ in 1 2 3 4 5 6 7 8 9 10; do [ -d /proc/"$VICTIM" ] || break; sleep 0.3; done
+  prove t2z "and it really acted this time (§4.3)" \
+    '! test -d /proc/'"$VICTIM"
+
+  echo '== a query is exactly what historical context exists for (§4.7) =='
+  prove t2aa "a read-only command is not refused in the past (§4.7)" \
+    'ono -c "sleep 1
+     at -1s
+     get recorder | to json" 2>&1 | grep -q "\"running\""'
+
+  echo 'read-only rule: done'
+exit: 0
+stdout-contains: PROVED t2s
+stdout-contains: PROVED t2t
+stdout-contains: PROVED t2u
+stdout-contains: PROVED t2v
+stdout-contains: PROVED t2w
+stdout-contains: PROVED t2x
+stdout-contains: PROVED t2y
+stdout-contains: PROVED t2z
+stdout-contains: PROVED t2aa
+stdout-contains: read-only rule: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

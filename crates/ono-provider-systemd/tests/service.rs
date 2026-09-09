@@ -26,8 +26,12 @@ use fixture::{
 use jiff::Timestamp;
 use ono_core::ErrorCode;
 use ono_pipeline::Collected;
-use ono_provider_api::{Action, ActionOutcome, ObjectId, Provider, Query, Selector};
-use ono_provider_systemd::{JobKind, PROVIDER_ID, SystemdBus, SystemdProvider, service_schema};
+use ono_provider_api::{
+    Action, ActionOutcome, EventKind, ObjectEvent, ObjectId, Provider, Query, Selector,
+};
+use ono_provider_systemd::{
+    JobKind, JobRef, PROVIDER_ID, SystemdBus, SystemdProvider, UnitSignal, service_schema,
+};
 use ono_testkit::{SkipReason, require, skipped};
 use ono_value::{ActionStatus, ByteSize, FieldAccess, RecordValue, SchemaId, Value};
 
@@ -694,13 +698,17 @@ async fn should_declare_the_target_schema_and_capabilities_the_service_commands_
 }
 
 #[tokio::test]
-async fn should_say_it_cannot_watch_rather_than_poll_without_saying_so() {
-    let provider = provider_over(RecordedSystemd::running()).await;
+async fn should_refuse_to_watch_where_no_service_manager_answers_rather_than_report_nothing() {
+    // The provider subscribes to systemd's own signals since ADR-0715, so the refusal that
+    // remains is the honest one: a machine with no service manager has nothing to subscribe to,
+    // and saying so lets `watch` fall back to polling rather than sit on an empty stream
+    // (spec §18.2, §10.5).
+    let provider = provider_over(RecordedSystemd::absent("no D-Bus system bus socket")).await;
 
     let error = provider
         .subscribe(&Query::target("service"))
-        .expect_err("this provider has no event source yet");
-    assert_eq!(error.code(), ErrorCode::ProviderUnsupported);
+        .expect_err("there is no service manager to subscribe to");
+    assert_eq!(error.code(), ErrorCode::ProviderUnavailable);
 }
 
 #[tokio::test]
@@ -971,5 +979,262 @@ async fn should_report_the_job_a_unit_already_has_in_flight_when_its_properties_
     assert_eq!(
         settled.job, None,
         "a unit with no job in flight must report none rather than a job at the root path"
+    );
+}
+
+// --- live unit transitions (v0.5 §22.2) -------------------------------------------------------
+
+/// A subscribed provider over a recorded service manager, and the manager itself.
+async fn subscribed(bus: Arc<RecordedSystemd>) -> (SystemdProvider, ono_provider_api::EventStream) {
+    let provider = tokio::time::timeout(BUDGET, SystemdProvider::over(bus as Arc<dyn SystemdBus>))
+        .await
+        .expect("probing a recorded systemd must not hang");
+    let events = provider
+        .subscribe(&Query::target("service"))
+        .expect("a recorded service manager offers a subscription");
+    (provider, events)
+}
+
+async fn next_event(events: &mut ono_provider_api::EventStream) -> ObjectEvent {
+    tokio::time::timeout(BUDGET, events.recv())
+        .await
+        .expect("an announced signal must reach the subscriber")
+        .expect("the subscription is still open")
+}
+
+/// Consumes the subscription's opening state, so what follows is a change and not the baseline.
+///
+/// `Provider::subscribe` promises "changes to the objects matching `query`, beginning with a
+/// snapshot of the current state", and until that state has arrived the manager has not yet been
+/// read — so this is also what makes the tests below deterministic rather than a race with it.
+async fn opening_state(events: &mut ono_provider_api::EventStream, units: usize) -> Vec<String> {
+    let mut names = Vec::new();
+    for _ in 0..units {
+        let event = next_event(events).await;
+        assert_eq!(
+            event.kind(),
+            EventKind::Snapshot,
+            "a subscription opens with the current state"
+        );
+        names.push(
+            event
+                .value()
+                .map(|record| text(record, "name"))
+                .unwrap_or_default(),
+        );
+    }
+    names
+}
+
+/// The units [`RecordedSystemd::running`] holds and a subscription therefore opens with.
+const RECORDED_UNITS: usize = 4;
+
+#[tokio::test]
+async fn should_report_the_job_that_caused_a_unit_transition_when_one_was_in_flight() {
+    // v0.5 §22.2: "The systemd D-Bus provider SHOULD contribute live unit state transitions and
+    // job identity where available." §15.2 is why the second half matters — a job path is
+    // evidence strong enough for `caused_by`, and two events happening near each other never is.
+    let bus = Arc::new(RecordedSystemd::running());
+    let announcer = bus.announcer();
+    let (_provider, mut events) = subscribed(Arc::clone(&bus)).await;
+    opening_state(&mut events, RECORDED_UNITS).await;
+
+    announcer
+        .send(UnitSignal::JobNew {
+            job: JobRef::new(FIRST_JOB_PATH),
+            unit: "nginx.service".to_owned(),
+        })
+        .await
+        .expect("the subscriber is listening");
+    bus.move_unit(
+        "nginx.service",
+        "activating",
+        "start",
+        NGINX_STATE_CHANGE_USEC + 5_000_000,
+    );
+    announcer
+        .send(UnitSignal::UnitChanged {
+            unit: "nginx.service".to_owned(),
+            path: None,
+        })
+        .await
+        .expect("the subscriber is listening");
+
+    let event = next_event(&mut events).await;
+    assert_eq!(event.kind(), EventKind::Changed);
+    assert_eq!(
+        event.cause(),
+        Some("systemd:/org/freedesktop/systemd1/job/4821"),
+        "a transition observed while a job is in flight names that job"
+    );
+    assert!(
+        event
+            .changed_fields()
+            .is_some_and(|fields| fields.iter().any(|field| field == "state")),
+        "the transition says which fields moved, got {:?}",
+        event.changed_fields()
+    );
+}
+
+#[tokio::test]
+async fn should_time_a_transition_by_the_instant_systemd_recorded_it_rather_than_the_read_back() {
+    // v0.5 §3.3 and §25.1: an event's time is the source's where the source states one.
+    // `StateChangeTimestamp` is systemd's own record of when the unit moved, so it is the
+    // source time; the instant the provider got round to re-reading the unit is not.
+    let bus = Arc::new(RecordedSystemd::running());
+    let announcer = bus.announcer();
+    let (_provider, mut events) = subscribed(Arc::clone(&bus)).await;
+    opening_state(&mut events, RECORDED_UNITS).await;
+
+    let moved_at = NGINX_STATE_CHANGE_USEC + 7_000_000;
+    bus.move_unit("nginx.service", "inactive", "dead", moved_at);
+    announcer
+        .send(UnitSignal::UnitChanged {
+            unit: "nginx.service".to_owned(),
+            path: None,
+        })
+        .await
+        .expect("the subscriber is listening");
+
+    let event = next_event(&mut events).await;
+    let expected = Timestamp::from_microsecond(i64::try_from(moved_at).expect("a real instant"))
+        .expect("systemd's microseconds are an instant");
+    assert_eq!(event.at(), expected);
+}
+
+#[tokio::test]
+async fn should_not_report_a_unit_the_manager_merely_unloaded_as_having_gone_away() {
+    // `UnitRemoved` is systemd garbage-collecting a unit nothing is asking about; the service is
+    // still installed and still startable. §6.3 forbids manufacturing a disappearance, so the
+    // signal moves the baseline and announces nothing. Observed against a live manager: reading
+    // the unit back on `UnitRemoved` loads it again, which makes the manager announce it again,
+    // which reads it again — the reader becomes a writer (ADR-0715).
+    let bus = Arc::new(RecordedSystemd::running());
+    let announcer = bus.announcer();
+    let (_provider, mut events) = subscribed(Arc::clone(&bus)).await;
+    opening_state(&mut events, RECORDED_UNITS).await;
+
+    announcer
+        .send(UnitSignal::UnitRemoved {
+            unit: "nginx.service".to_owned(),
+            path: None,
+        })
+        .await
+        .expect("the subscriber is listening");
+    // A real transition of another unit follows, so the assertion is about what did *not* arrive
+    // rather than about a stream that happened to be quiet.
+    bus.move_unit(
+        "postgresql.service",
+        "active",
+        "running",
+        POSTGRES_STATE_CHANGE_USEC + 3_000,
+    );
+    announcer
+        .send(UnitSignal::UnitChanged {
+            unit: "postgresql.service".to_owned(),
+            path: None,
+        })
+        .await
+        .expect("the subscriber is listening");
+
+    let event = next_event(&mut events).await;
+    assert_eq!(
+        event.value().map(|record| text(record, "name")),
+        Some("postgresql.service".to_owned()),
+        "the unload announced nothing, so the next event is the next real transition"
+    );
+    assert_ne!(event.kind(), EventKind::Removed);
+}
+
+#[tokio::test]
+async fn should_ignore_a_transition_of_a_unit_the_subscription_did_not_ask_about() {
+    let bus = Arc::new(RecordedSystemd::running());
+    let announcer = bus.announcer();
+    let provider = tokio::time::timeout(
+        BUDGET,
+        SystemdProvider::over(Arc::clone(&bus) as Arc<dyn SystemdBus>),
+    )
+    .await
+    .expect("probing a recorded systemd must not hang");
+    let query =
+        Query::target("service").with(Selector::field("name", Value::string("nginx.service")));
+    let mut events = provider.subscribe(&query).expect("a subscription");
+    assert_eq!(
+        opening_state(&mut events, 1).await,
+        ["nginx.service"],
+        "a narrowed subscription opens with the units it was narrowed to"
+    );
+
+    bus.move_unit(
+        "postgresql.service",
+        "active",
+        "running",
+        POSTGRES_STATE_CHANGE_USEC + 1_000,
+    );
+    announcer
+        .send(UnitSignal::UnitChanged {
+            unit: "postgresql.service".to_owned(),
+            path: None,
+        })
+        .await
+        .expect("the subscriber is listening");
+    bus.move_unit(
+        "nginx.service",
+        "inactive",
+        "dead",
+        NGINX_STATE_CHANGE_USEC + 2_000,
+    );
+    announcer
+        .send(UnitSignal::UnitChanged {
+            unit: "nginx.service".to_owned(),
+            path: None,
+        })
+        .await
+        .expect("the subscriber is listening");
+
+    let event = next_event(&mut events).await;
+    assert_eq!(
+        event.value().map(|record| text(record, "name")),
+        Some("nginx.service".to_owned()),
+        "`watch service nginx` is about nginx; another unit moving is not an answer to it"
+    );
+}
+
+#[tokio::test]
+async fn should_claim_live_events_once_it_subscribes_to_the_managers_own_signals() {
+    // v0.5 §21.3 and §21.1: the claim is about the source pushing, and now it does.
+    let provider = provider_over(RecordedSystemd::running()).await;
+    let claims = provider.temporal();
+    assert!(
+        claims.live_events,
+        "the provider subscribes to systemd's signals"
+    );
+    assert!(claims.causal_tokens);
+    assert!(
+        !claims.exhaustive_events,
+        "§21.5: systemd coalesces `PropertiesChanged`, so the sequence carries no absence claim"
+    );
+    assert!(
+        !claims.historical_query,
+        "§22.2: the manager answers about now"
+    );
+}
+
+#[test]
+fn should_recover_a_unit_name_from_the_object_path_a_signal_arrived_on() {
+    // `PropertiesChanged` names no unit: it arrives on the unit's object path, into which
+    // systemd encoded the name with `sd_bus_path_encode`. A consumer that could not decode it
+    // could not attribute the change to an object.
+    assert_eq!(
+        ono_provider_systemd::unit_name_from_path(
+            "/org/freedesktop/systemd1/unit/dbus_2dbroker_2eservice"
+        )
+        .as_deref(),
+        Some("dbus-broker.service")
+    );
+    assert_eq!(
+        ono_provider_systemd::unit_name_from_path("/org/freedesktop/systemd1/unit/"),
+        None,
+        "a path that names no unit yields no name, rather than an empty one"
     );
 }

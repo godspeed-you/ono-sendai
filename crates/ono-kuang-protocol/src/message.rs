@@ -117,6 +117,24 @@ pub mod method {
     pub const MODELS_LIST: &str = "models.list";
     /// Plugin → host: operator-approved inference through the model broker (spec §31.43).
     pub const MODELS_INFER: &str = "models.infer";
+
+    /// Plugin → host: whether the session is historical, and at which instant (v0.5 §30.7, §4).
+    pub const TEMPORAL_CONTEXT: &str = "temporal.context";
+    /// Plugin → host: recorded events within the granted window (v0.5 §30.7, §11).
+    ///
+    /// A separate call from [`OBJECTS_QUERY`] on purpose: §30.7 is explicit that "a plugin with
+    /// current object read permission does not automatically receive historical access", and two
+    /// calls behind two capabilities is what makes that true rather than asserted.
+    pub const TEMPORAL_QUERY: &str = "temporal.query";
+    /// Plugin → host: the evidence and coverage behind a temporal claim (v0.5 §7.3, §30.7).
+    pub const TEMPORAL_EVIDENCE: &str = "temporal.evidence";
+    /// Plugin → host: canonical temporal events, attributed to the package by the host
+    /// (v0.5 §37.3).
+    pub const TEMPORAL_CONTRIBUTE_EVENTS: &str = "temporal.contribute.events";
+    /// Plugin → host: causal links from a namespaced rule the package registered (v0.5 §37.4).
+    pub const TEMPORAL_CONTRIBUTE_CAUSALITY: &str = "temporal.contribute.causality";
+    /// Plugin → host: start or stop the persistent history recorder (v0.5 §10.3, §30.7).
+    pub const TEMPORAL_RECORDER: &str = "temporal.recorder";
 }
 
 /// One frame's payload: the opening hello, a call, or an answer.
@@ -182,6 +200,78 @@ pub struct ContributionSet {
     /// Contributed schemas (spec §31.23).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub schemas: Vec<SchemaContribution>,
+    /// Contributed temporal event sources and historical query providers (v0.5 §37.2, §37.5).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub temporal_sources: Vec<TemporalSourceContribution>,
+    /// Contributed causal and correlation rules (v0.5 §37.2, §37.4).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub causal_rules: Vec<CausalRuleContribution>,
+}
+
+/// A contributed temporal source: an event source, or a provider of historical state (§37.5).
+///
+/// §37.5 lets a package expose the past of an external system — a metrics backend, a tracing
+/// store, a container runtime archive, an audit log — and requires it to "map data into canonical
+/// Ono objects/events and expose coverage/provenance". Both halves are declared here, before any
+/// package code runs, because a source whose coverage is discovered by reading it is a source
+/// that has already been believed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TemporalSourceContribution {
+    /// `<package.id>.temporal-source.<kebab-name>`.
+    pub id: String,
+    /// One line, for `get temporal-source` and `help`.
+    pub summary: String,
+    /// The schema of the objects the source maps its data into. A source that cannot name one
+    /// has not mapped anything into canonical Ono objects (§37.5).
+    pub schema: String,
+    /// The canonical event kinds it produces, from the closed list of v0.5 §6.1.
+    ///
+    /// A package may refine a kind through an event's `subtype`; the top-level kind is always
+    /// one Ono owns, because §37.1 keeps identity and evidence classes with the host.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kinds: Vec<String>,
+    /// Whether the answer ends by itself (§37.5, ADR-0588).
+    ///
+    /// A historical query provider is [`Answer::Bounded`]; a temporal event source is
+    /// [`Answer::Unbounded`]. The host has to know which before the first record, because a
+    /// bounded answer is collected and an unbounded one becomes a live stream.
+    #[serde(default, skip_serializing_if = "Answer::is_default")]
+    pub answer: Answer,
+    /// What the source covers, in prose the package stands behind (§37.5, §8).
+    pub coverage: String,
+    /// How far back the external system keeps material, where the package states a bound.
+    ///
+    /// `None` means the package does not say, which is not the same as "forever" (§21.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_history: Option<String>,
+}
+
+/// A contributed causal or correlation rule (§37.4, §15.8).
+///
+/// §37.4: "Third-party causal rules MUST be namespaced and MUST identify their source." Both are
+/// structural here — the id carries the publisher's namespace and `ono.*` is refused, and the
+/// host attributes every link the rule emits to the package rather than taking the package's
+/// word for where it came from. The declared `strength` is a ceiling the host lowers and never
+/// raises: §37.4 caps a plugin's causal strength at `asserted` unless the host contract trusts
+/// the package as authoritative for a domain.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CausalRuleContribution {
+    /// The rule id, namespaced to the publisher — `dev.example.packet-eye.retransmit-to-drop`.
+    pub rule_id: String,
+    /// The relation class it emits, from the five of v0.5 §15.1.
+    pub relation: String,
+    /// The evidence strength its links carry, from the five of v0.5 §7.2.
+    pub strength: String,
+    /// One line, what the rule claims and why.
+    pub summary: String,
+    /// The canonical event kinds it reads.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<String>,
+    /// What must be *equal* for the rule to fire, in prose (§15.8).
+    ///
+    /// §15.2: "temporal proximity is insufficient". A rule whose only constraint is a time
+    /// window is a correlation rule, and the host holds it to that.
+    pub identity_constraints: String,
 }
 
 /// A contributed command, in the same metadata shape core commands use
@@ -386,6 +476,64 @@ impl TargetDocument {
             )
             .with_help(
                 "the document is a `targets:` list of the contribution shape of \
+                 `docs/contracts/kuang/contributions.v1.yaml`",
+            )
+        })
+    }
+}
+
+/// The document a `contributions.temporal_sources` path names (v0.5 §37.2, §37.5).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TemporalSourceDocument {
+    /// The temporal sources the document declares.
+    pub temporal_sources: Vec<TemporalSourceContribution>,
+}
+
+impl TemporalSourceDocument {
+    /// Reads a declaration document.
+    ///
+    /// # Errors
+    ///
+    /// `package.invalid` when the document is not the shape
+    /// `docs/contracts/kuang/contributions.v1.yaml` describes.
+    pub fn parse(text: &str) -> Result<Self, KuangError> {
+        serde_yaml_ng::from_str(text).map_err(|error| {
+            KuangError::new(
+                KuangErrorCode::PackageInvalid,
+                format!("a contributed temporal source document does not read: {error}"),
+            )
+            .with_help(
+                "the document is a `temporal_sources:` list of the `temporal_source` shape of \
+                 `docs/contracts/kuang/contributions.v1.yaml`",
+            )
+        })
+    }
+}
+
+/// The document a `contributions.causal_rules` path names (v0.5 §37.2, §37.4).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CausalRuleDocument {
+    /// The causal and correlation rules the document declares.
+    pub causal_rules: Vec<CausalRuleContribution>,
+}
+
+impl CausalRuleDocument {
+    /// Reads a declaration document.
+    ///
+    /// # Errors
+    ///
+    /// `package.invalid` when the document is not the shape
+    /// `docs/contracts/kuang/contributions.v1.yaml` describes.
+    pub fn parse(text: &str) -> Result<Self, KuangError> {
+        serde_yaml_ng::from_str(text).map_err(|error| {
+            KuangError::new(
+                KuangErrorCode::PackageInvalid,
+                format!("a contributed causal rule document does not read: {error}"),
+            )
+            .with_help(
+                "the document is a `causal_rules:` list of the `causal_rule` shape of \
                  `docs/contracts/kuang/contributions.v1.yaml`",
             )
         })
@@ -990,7 +1138,7 @@ pub struct ViewContribution {
 }
 
 /// The components a view tree may be built of (spec §31.27), complete.
-pub const VIEW_COMPONENTS: [&str; 13] = [
+pub const VIEW_COMPONENTS: [&str; 14] = [
     "Text",
     "Table",
     "Tree",
@@ -1004,6 +1152,11 @@ pub const VIEW_COMPONENTS: [&str; 13] = [
     "CommandPalette",
     "ObjectPicker",
     "StatusLine",
+    // v0.5 §37.6: a package may contribute an alternate view over the canonical temporal
+    // schemas. Without a component for it, "consume canonical temporal schemas" would mean
+    // redrawing a timeline out of `Table` rows, and the constraint that a view "cannot create
+    // causality that is absent from its input" would have nowhere to live.
+    "Timeline",
 ];
 
 /// Parameters of [`method::VIEWS_OPEN`].

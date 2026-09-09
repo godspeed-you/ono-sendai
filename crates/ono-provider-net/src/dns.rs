@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
-use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Risk, Selector};
+use ono_provider_api::{
+    Availability, Capability, ObjectRef, Provider, Query, Risk, Selector, TemporalCapabilities,
+};
 use ono_value::{ErrorValue, RecordValue, Schema, Value};
 
 use crate::nameserver;
@@ -309,6 +311,22 @@ impl Provider for DnsProvider {
 
     fn capabilities(&self) -> Vec<Capability> {
         vec![Capability::new("dns.resolve", Risk::Read)]
+    }
+
+    fn temporal(&self) -> TemporalCapabilities {
+        // A resolution is an observation made when it was asked for, and the answer may differ
+        // the next time. There is nothing here to keep, nothing to check against a past instant
+        // and nothing that would survive into a checkpoint as state: a cached answer is a fact
+        // about a cache, not about a name (§21.2, §21.7).
+        TemporalCapabilities {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: false,
+            retained_history: None,
+        }
     }
 
     fn availability(&self) -> Availability {

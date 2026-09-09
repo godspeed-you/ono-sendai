@@ -449,13 +449,13 @@ canonical CI environment expects to.
 ```text
 crates=37
 workspace_members=39
-tests=3974
-tests_that_can_skip=82
+tests=4443
+tests_that_can_skip=90
 expected_ci_skips=3
-acceptance_cases=157
-adrs=449
-command_contract_files=13
-commands=197
+acceptance_cases=187
+adrs=514
+command_contract_files=14
+commands=209
 ```
 
 <!-- end generated -->

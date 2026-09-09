@@ -151,6 +151,66 @@ pub trait HostServices: Send + Sync + std::fmt::Debug {
         name: &str,
         purpose: &str,
     ) -> Result<(), HostError>;
+
+    // --- the temporal domain of v0.5 §37 ------------------------------------------------------
+    //
+    // Defaulted, all six, because a host that keeps no history is a host that answers "I serve
+    // none" rather than one that fails to compile. Every existing implementation keeps working
+    // unchanged, which is what makes `11.3` additive (ADR-0722).
+
+    /// `temporal.context`: `ono.temporal-context/1` — whether the session is historical, and at
+    /// which instant (v0.5 §4, §30.7).
+    async fn temporal_context(&self) -> Result<Json, HostError> {
+        Err(HostError::unavailable("temporal context"))
+    }
+
+    /// `temporal.query`: recorded events within the window the grant allows (v0.5 §11, §30.7).
+    ///
+    /// The window has already been narrowed to the granted scope by the supervisor; a host
+    /// implementation never widens it.
+    async fn temporal_query(&self, _query: Json) -> Result<LiveStream, HostError> {
+        Err(HostError::unavailable("recorded history"))
+    }
+
+    /// `temporal.evidence`: the evidence and coverage behind a temporal claim (v0.5 §7, §30.7).
+    async fn temporal_evidence(
+        &self,
+        _evidence: Vec<String>,
+        _events: Vec<String>,
+    ) -> Result<LiveStream, HostError> {
+        Err(HostError::unavailable("temporal evidence"))
+    }
+
+    /// `temporal.contribute.events`: events the host attributes to the package (v0.5 §37.3).
+    ///
+    /// Everything §37.3 asks the host to validate has already been validated when this is
+    /// called, and `source` names the evidence source the host stamped on them. What is left is
+    /// storing them.
+    async fn temporal_contribute_events(
+        &self,
+        _package: &str,
+        _source: &str,
+        _events: Vec<Json>,
+    ) -> Result<u64, HostError> {
+        Err(HostError::unavailable("a temporal ledger to contribute to"))
+    }
+
+    /// `temporal.contribute.causality`: causal links from a rule the package declared (§37.4).
+    ///
+    /// The strength each link carries has already been lowered to the ceiling of §37.4; a host
+    /// implementation stores what it is given and never re-derives a stronger claim (§7.2).
+    async fn temporal_contribute_causality(
+        &self,
+        _package: &str,
+        _links: Vec<Json>,
+    ) -> Result<u64, HostError> {
+        Err(HostError::unavailable("a causal registry to contribute to"))
+    }
+
+    /// `temporal.recorder`: start, stop or report the persistent recorder (v0.5 §10.3, §30.7).
+    async fn temporal_recorder(&self, _action: String) -> Result<Json, HostError> {
+        Err(HostError::unavailable("a history recorder"))
+    }
 }
 
 /// The services of a host that has none: every call answers `provider.unavailable`, which is

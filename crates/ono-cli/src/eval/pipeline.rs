@@ -147,6 +147,22 @@ pub(super) fn run_stage_list(
         return super::native::run_seeded(session, list, source, values);
     }
 
+    // v0.5 §4.2, §4.3, §4.8: `at`, `now` and `present` are the session's. `at` and `now` move the
+    // temporal coordinate, which lives in this process and which the prompt reads before the next
+    // line is typed; `present` runs one external program through the session's own executor. The
+    // values they produce seed the pipeline after them, exactly as a producer's stream would
+    // (ADR-0690).
+    if !background
+        && let Some(stage) = list.stages.first()
+        && let Some(request) = crate::temporal::claims(stage)
+    {
+        if session.mode() == Mode::Config {
+            return Err(Flow::Failed(config_refusal("this command")));
+        }
+        let values = crate::temporal::answer(session, stage, source, request)?;
+        return super::native::run_seeded(session, list, source, values);
+    }
+
     // The link definitions of spec §21 are the session's too (ADR-0104): `add`, `set`, `rename`,
     // `remove` and `detach link` change the link table and the frame stack, and their
     // ActionResult seeds whatever follows.
@@ -458,6 +474,16 @@ pub(super) fn run_stage_list(
 
     if session.mode() == Mode::Config {
         return Err(Flow::Failed(config_refusal("this command")));
+    }
+
+    // v0.5 §4.8: "Arbitrary external programs execute in the present and may have side effects.
+    // Therefore they MUST NOT run directly while historical context is active." Every earlier
+    // branch has already claimed the pipelines that are the shell's own, so what reaches here is
+    // exactly the arbitrary external program the rule is about. `present <command>` is the
+    // explicit escape hatch, and it runs the same pipeline with the refusal lifted for its own
+    // dynamic extent (§4.8, ADR-0692).
+    if let Some(refusal) = crate::temporal::present_only_refusal(list, source) {
+        return Err(Flow::Failed(refusal));
     }
 
     // A pipeline being captured hands its stdout to the capture rather than the terminal: the

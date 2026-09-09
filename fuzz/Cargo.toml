@@ -11,14 +11,19 @@ publish = false
 
 [dependencies]
 bytes.workspace = true
+jiff.workspace = true
 ono-adapter.workspace = true
 ono-kuang-protocol.workspace = true
+# The KUANG/11 temporal contribution decoder of v0.5 §37.3 lives with the broker that refuses
+# it, so the target that hammers it has to reach the supervisor.
+ono-kuang-supervisor.workspace = true
 ono-parser.workspace = true
 ono-protocol.workspace = true
 ono-provider-linux.workspace = true
 ono-provider-netlink.workspace = true
 ono-testkit.workspace = true
 ono-value.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 
 [lints]

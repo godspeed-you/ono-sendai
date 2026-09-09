@@ -10,11 +10,14 @@ authors.workspace = true
 
 [dependencies]
 ono-core.workspace = true
-ono-value.workspace = true
+ono-history.workspace = true
+ono-process.workspace = true
 ono-provider-api.workspace = true
 ono-spatial-core.workspace = true
 ono-temporal-core.workspace = true
 ono-temporal-ledger.workspace = true
+ono-temporal-reconstruct.workspace = true
+ono-value.workspace = true
 jiff.workspace = true
 tokio.workspace = true
 

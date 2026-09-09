@@ -21,6 +21,14 @@ fields:
     type: string
     nullable: true
     doc: The `ono.temporal-event/1` id being explained. Null where the question named a state.
+  at:
+    type: timestamp
+    nullable: true
+    doc: >-
+      The instant the explained state or change happened. §16.5 renders `failed at 14:03:17.004`
+      and §16.6 renders an association as `11s before failure`; neither is derivable from an
+      event id, and §39.3 forbids a renderer resolving one. So the producer states the instant
+      here. Null where nothing notable was recorded and there is no explained event.
   state_or_change:
     type: string
     required: true

@@ -26,6 +26,7 @@ use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, StreamSink, ValueStream};
 use ono_provider_api::{
     Action, ActionOutcome, Availability, Capability, ObjectRef, Provider, Query, Risk, Selector,
+    TemporalCapabilities,
 };
 use ono_provider_systemd::{JobKind, SystemBus, SystemdBus};
 use ono_value::{ByteSize, ErrorValue, RecordValue, Schema, Uuid, Value};
@@ -626,6 +627,28 @@ impl Provider for StorageProvider {
             Availability::Available
         } else {
             Availability::unavailable(format!("{} is not readable", self.mountinfo.display()))
+        }
+    }
+
+    fn temporal(&self) -> TemporalCapabilities {
+        TemporalCapabilities {
+            current_snapshot: true,
+            // The kernel offers no mount notification this provider uses. `/proc/self/mountinfo`
+            // is pollable — it signals `POLLPRI` on change — and this provider reads it on
+            // demand, so §21.3's claim is false however promptly a poll would notice (§22.6).
+            live_events: false,
+            // A mount that was unmounted left no line to read. Mount history is the recorder's,
+            // derived from comparing snapshots.
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            // §22.6: "Mount state MAY be checkpointed and changes derived from authoritative
+            // mount snapshots." `/proc/self/mountinfo` is such a snapshot — the kernel's complete
+            // list at the instant it was read, with the mount id as identity — which is what
+            // makes a checkpoint of it a thing a later reconstruction can compare against, and
+            // what makes a mount that vanished between two reads derivable at all.
+            checkpointable: true,
+            retained_history: None,
         }
     }
 

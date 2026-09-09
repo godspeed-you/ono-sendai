@@ -17,7 +17,9 @@
 pub mod commands;
 pub mod complete;
 pub mod contributions;
+pub mod cursor;
 pub mod find;
+pub mod historical;
 pub mod interactive;
 pub mod links;
 pub mod live;
@@ -31,7 +33,9 @@ pub mod storage;
 pub mod view;
 
 pub use commands::{Enter, Follow, Home, Look, Near, enter_observed, observe_adapted};
+pub use cursor::TemporalCursor;
 pub use find::{FindPlace, local_scope, spatial_type};
+pub use historical::{Active, HistoricalWorld, TemporalEvidence};
 pub use links::LinkFacts;
 pub use map::{Map, MapLinks};
 pub use movement::{Back, Jump, Trail, Up};

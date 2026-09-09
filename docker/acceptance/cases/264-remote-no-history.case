@@ -1,0 +1,33 @@
+# v0.5 §24.1, §24.5 and §48.8 scenario 43: a linked host that answers nothing about the past is
+# still a linked host.
+#
+# §24.1 requires negotiation to report which of four things a peer is — current snapshots only,
+# live events, persisted history, or no temporal support at all — and `negotiate()` narrows
+# rather than refusing anything but a version mismatch. So a peer that declares no temporal
+# capability *degrades* the link: every provider it does have is still negotiated, the link is
+# still `connected`, and the shell has an honest answer to give instead of presenting current
+# state as past state.
+#
+# The far side here is this machine over `--transport local`, whose providers declare nothing
+# about time. The link therefore comes up with no temporal support at all, which is the case
+# §24.5 is written for.
+case: a link to a host with no history comes up anyway, reduced rather than refused
+timeout: 120
+env: NO_COLOR=1
+run: |
+  echo "== the link is established, not refused =="
+  ono -c 'link host testbox --transport local; get link | select name state | to json' | tail -1
+
+  echo "== and it negotiated its providers all the same =="
+  ono -c 'link host testbox --transport local; get link | select targets | to json' | tail -1
+
+  echo "== the far side answers about now, which is all it ever claimed =="
+  ono -c 'link host testbox --transport local; enter link testbox; get process | where pid == 1 | select pid | to json' | tail -1
+
+  echo "== and the probe reports what was negotiated rather than guessing =="
+  ono -c 'link host testbox --transport local; test host testbox | select reachable protocol_version | to json' | tail -1
+exit: 0
+stdout-contains: [{"name":"testbox","state":"connected"}]
+stdout-contains: [{"pid":1}]
+stdout-contains: "reachable":true
+stdout-not-contains: panicked

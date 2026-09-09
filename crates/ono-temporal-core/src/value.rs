@@ -28,13 +28,31 @@ use crate::event::{FieldChange, SpatialRef, TemporalEvent};
 use crate::evidence::{Evidence, EvidenceClaim};
 use crate::source::{EvidenceSource, TemporalSourceDescription};
 
-/// The `ono.temporal-event/1` record of §35.1.
+/// The `ono.temporal-event/1` record of §35.1, with no session reference on it.
 ///
 /// # Errors
 ///
 /// Returns `ono.provider_schema_violation` where the contract is not in this build, which the
 /// `ono-value` contract test and `cargo xtask spec-check` both prevent from shipping.
 pub fn event_record(event: &TemporalEvent) -> Result<RecordValue, ErrorValue> {
+    event_record_with_reference(event, None)
+}
+
+/// The same record, carrying the short form a session minted for the event (§11.6).
+///
+/// `reference` is the string the session's own resolver accepts — ADR-0660's shortest prefix of
+/// the digest that names one event inside that session — written without the `@` a renderer adds.
+/// `None` for a persisted event and for any record not produced for a session: a reference is one
+/// session's word for an event, and a stored one goes stale the moment another session shortens
+/// it differently.
+///
+/// # Errors
+///
+/// Returns `ono.provider_schema_violation` where the contract is not in this build.
+pub fn event_record_with_reference(
+    event: &TemporalEvent,
+    reference: Option<&str>,
+) -> Result<RecordValue, ErrorValue> {
     let (schema, provenance) = target("ono.temporal-event")?;
     let builder = RecordValue::builder(schema, provenance);
     let related: Vec<Value> = event.related.iter().map(spatial_ref).collect();
@@ -51,6 +69,20 @@ pub fn event_record(event: &TemporalEvent) -> Result<RecordValue, ErrorValue> {
         .collect();
 
     let builder = put(builder, "event_id", Value::string(event.event_id.as_str()));
+    let builder = put(
+        builder,
+        "reference",
+        optional_text(reference.map(str::trim).filter(|text| !text.is_empty())),
+    );
+    // §7.1's list is closed, so the class is read back through `EvidenceSource::parse` rather
+    // than copied: a provider name outside the vocabulary leaves the field null, and §11.5's tag
+    // is then absent instead of wrong (ADR-0709).
+    let builder = put(
+        builder,
+        "source",
+        EvidenceSource::parse(event.provenance.provider())
+            .map_or(Value::Null, |source| Value::string(source.as_str())),
+    );
     let builder = put(builder, "kind", Value::string(event.kind.as_str()));
     let builder = put(builder, "subtype", optional_text(event.subtype.as_deref()));
     let builder = put(builder, "scope", Value::string(&event.scope.to_string()));
@@ -220,6 +252,7 @@ pub fn gap_record(gap: &TemporalGap) -> Result<RecordValue, ErrorValue> {
     let builder = put(builder, "until", Value::Timestamp(gap.until));
     let builder = put(builder, "reason", Value::string(gap.reason.as_str()));
     let builder = put(builder, "source", Value::string(gap.source.as_str()));
+    let builder = put(builder, "detail", optional_text(gap.detail.as_deref()));
     Ok(builder.build())
 }
 

@@ -91,5 +91,15 @@ fields:
     doc: >-
       §43.4's recorder health. `degraded` is what a run of dropped events or a coverage loss
       produces; §21.8 forbids freezing the last known state and calling it current.
+  diagnostic:
+    type: string
+    nullable: true
+    doc: >-
+      Why the recorder is not retaining history, where it is `failed`. §44.3 requires an upgrade
+      whose migration cannot complete safely to leave the shell working with temporal persistence
+      disabled *and an explicit diagnostic*, and §31.7 requires a store that cannot be read to
+      name itself. A health of `failed` with no reason beside it is the shape of both those
+      rules half-kept: the user learns that history stopped and not what to do about it. Null
+      whenever the recorder has nothing to explain.
 default_view:
   columns: [running, events, earliest, latest, health]

@@ -21,8 +21,13 @@ ono-core.workspace = true
 ono-pipeline.workspace = true
 ono-protocol.workspace = true
 ono-provider-api.workspace = true
+# The three clocks and the ordering model of v0.5 §24–§26. This crate supplies the domain an
+# arriving event belongs to; it never invents a second ordering model (INTERFACES §2.1).
+ono-spatial-core.workspace = true
+ono-temporal-core.workspace = true
 ono-value.workspace = true
 async-trait.workspace = true
+jiff.workspace = true
 # The authenticated transport of spec §21.5: TLS 1.3 where the peer's certificate is the pinned
 # host key (ADR-0274 option 1, ADR-0353). Key exchange and record protection are the parts a
 # shell must not write twice, which is why `ono-protocol` left them outside the crate.
@@ -35,7 +40,6 @@ nix = { workspace = true, features = ["signal"] }
 tokio = { workspace = true, features = ["io-std", "net"] }
 
 [dev-dependencies]
-jiff.workspace = true
 # The suites read `docs/contracts/hardening/limits.yaml` directly, so the ceilings this crate enforces
 # are compared against the registry that declares them rather than against a second copy (§52.2).
 serde_yaml_ng.workspace = true

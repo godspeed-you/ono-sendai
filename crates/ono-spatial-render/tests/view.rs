@@ -294,3 +294,77 @@ fn should_move_the_cursor_to_the_match_when_the_map_is_searched() {
         "the cursor is on the node that matched"
     );
 }
+
+#[test]
+fn should_freeze_the_view_cursor_without_leaving_the_view_when_space_is_pressed() {
+    // v0.5 §18.2: Space "pauses temporal advancement of the displayed view", and it stops
+    // nothing else. The view answers with the effect and stays open.
+    let mut view = view();
+    assert_eq!(view.apply(Key::Char(' ')), Effect::PauseCursor);
+}
+
+#[test]
+fn should_step_significant_events_when_the_bracket_keys_are_pressed() {
+    // v0.5 §18.3's normative defaults: `[` and `]` step significant events, and the shifted
+    // spellings a terminal actually delivers nudge the cursor by thirty seconds.
+    let mut view = view();
+    assert_eq!(view.apply(Key::Char('[')), Effect::StepPrevious);
+    assert_eq!(view.apply(Key::Char(']')), Effect::StepNext);
+    assert_eq!(view.apply(Key::Char('{')), Effect::Nudge(-30));
+    assert_eq!(view.apply(Key::Char('}')), Effect::Nudge(30));
+}
+
+#[test]
+fn should_ask_for_now_the_timeline_and_the_change_summary_when_their_keys_are_pressed() {
+    // v0.5 §18.3: `N` jumps to now, `T` opens the timeline at the cursor, `D` asks for the
+    // changes between the cursor and now.
+    let mut view = view();
+    assert_eq!(view.apply(Key::Char('N')), Effect::ReturnToNow);
+    assert_eq!(view.apply(Key::Char('T')), Effect::OpenTimeline);
+    assert_eq!(view.apply(Key::Char('D')), Effect::ChangesToNow);
+}
+
+#[test]
+fn should_show_the_paused_marker_in_the_header_when_the_view_cursor_is_frozen() {
+    // v0.5 §18.2: "The HUD MUST show `PAUSED @14:03:12.410`." The marker is composed by the
+    // shell — this crate depends on `ono-value` only — and drawn here.
+    let mut view = view();
+    view.set_temporal(Some("PAUSED @14:03:12.410".to_owned()));
+    let frame = view.frame();
+    assert!(
+        frame[0].contains("PAUSED @14:03:12.410"),
+        "the header carries the paused marker, got: {}",
+        frame[0]
+    );
+}
+
+#[test]
+fn should_show_the_gap_rather_than_the_last_state_when_the_view_cursor_is_in_a_coverage_gap() {
+    // v0.5 §18.6: "The map MUST NOT continue showing the last state with a silently advancing
+    // timestamp." The gap frame replaces the drawing and no key press reveals what is behind it.
+    let mut view = view();
+    view.set_gap(Some(vec![
+        "HISTORY GAP".to_owned(),
+        "12:40:18 - 12:44:30".to_owned(),
+        "recorder disconnected".to_owned(),
+    ]));
+    let frame = view.frame().join("\n");
+    assert!(frame.contains("HISTORY GAP"), "got:\n{frame}");
+    assert!(
+        !frame.contains("COMPUTE"),
+        "the stale topology is still drawn:\n{frame}"
+    );
+
+    view.apply(Key::Char('j'));
+    let after = view.frame().join("\n");
+    assert!(
+        after.contains("HISTORY GAP") && !after.contains("COMPUTE"),
+        "a key press revealed the state the gap has no evidence for:\n{after}"
+    );
+
+    view.set_gap(None);
+    assert!(
+        view.frame().join("\n").contains("COMPUTE"),
+        "leaving the gap did not restore the drawing"
+    );
+}

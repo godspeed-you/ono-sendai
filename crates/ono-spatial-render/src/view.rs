@@ -172,11 +172,30 @@ pub enum Action {
     Close,
     /// Show the key table (§23.3's `?`).
     Help,
+    /// Freeze or release the view's temporal cursor (v0.5 §18.2).
+    ///
+    /// It pauses the *view*. The providers, the recorder and the machine are untouched, which
+    /// is the whole of §18.2's second paragraph.
+    PauseCursor,
+    /// Step the cursor back to the previous significant event (v0.5 §18.4).
+    StepPrevious,
+    /// Step the cursor on to the next significant event (v0.5 §18.4).
+    StepNext,
+    /// Move the cursor thirty seconds back (v0.5 §18.3).
+    NudgeBack,
+    /// Move the cursor thirty seconds on (v0.5 §18.3).
+    NudgeForward,
+    /// Return the cursor to the present and summarise what changed (v0.5 §18.3, §18.7).
+    ReturnToNow,
+    /// Open the full-screen timeline at the cursor (v0.5 §18.3, §19.1).
+    OpenTimeline,
+    /// Show the changes between the cursor and now (v0.5 §18.3's `D`).
+    ChangesToNow,
 }
 
 impl Action {
-    /// Every action, in the order §23.3's table lists them.
-    pub const ALL: [Action; 21] = [
+    /// Every action, in the order §23.3's table lists them, then §18.3's.
+    pub const ALL: [Action; 29] = [
         Action::FocusNext,
         Action::FocusPrevious,
         Action::FocusPageDown,
@@ -198,6 +217,14 @@ impl Action {
         Action::Pin,
         Action::Close,
         Action::Help,
+        Action::PauseCursor,
+        Action::StepPrevious,
+        Action::StepNext,
+        Action::NudgeBack,
+        Action::NudgeForward,
+        Action::ReturnToNow,
+        Action::OpenTimeline,
+        Action::ChangesToNow,
     ];
 
     /// The name a configuration file uses for the action.
@@ -225,6 +252,14 @@ impl Action {
             Action::Pin => "pin",
             Action::Close => "close",
             Action::Help => "help",
+            Action::PauseCursor => "pause",
+            Action::StepPrevious => "step-previous",
+            Action::StepNext => "step-next",
+            Action::NudgeBack => "nudge-back",
+            Action::NudgeForward => "nudge-forward",
+            Action::ReturnToNow => "now",
+            Action::OpenTimeline => "timeline",
+            Action::ChangesToNow => "changes",
         }
     }
 
@@ -261,9 +296,20 @@ impl Action {
             Action::Pin => "pin or unpin",
             Action::Close => "close, keeping the place",
             Action::Help => "this table",
+            Action::PauseCursor => "pause or resume the view's clock",
+            Action::StepPrevious => "previous significant event",
+            Action::StepNext => "next significant event",
+            Action::NudgeBack => "thirty seconds back",
+            Action::NudgeForward => "thirty seconds on",
+            Action::ReturnToNow => "return to now",
+            Action::OpenTimeline => "the timeline at the cursor",
+            Action::ChangesToNow => "what changed since the cursor",
         }
     }
 }
+
+/// How far [`Action::NudgeBack`] and [`Action::NudgeForward`] move the cursor (v0.5 §18.3).
+pub const NUDGE_SECONDS: i64 = 30;
 
 /// Which key means which action (§23.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -312,6 +358,17 @@ impl Keymap {
             (Key::Esc, Action::Close),
             (Key::Ctrl('c'), Action::Close),
             (Key::Char('?'), Action::Help),
+            // v0.5 §18.3's normative defaults. `Shift-[` and `Shift-]` are the shifted keys a
+            // terminal delivers as `{` and `}` — a terminal reports the character, never the
+            // shift, so the binding is written in the spelling that actually arrives.
+            (Key::Char(' '), Action::PauseCursor),
+            (Key::Char('['), Action::StepPrevious),
+            (Key::Char(']'), Action::StepNext),
+            (Key::Char('{'), Action::NudgeBack),
+            (Key::Char('}'), Action::NudgeForward),
+            (Key::Char('N'), Action::ReturnToNow),
+            (Key::Char('T'), Action::OpenTimeline),
+            (Key::Char('D'), Action::ChangesToNow),
         ];
         Self { bindings }
     }
@@ -414,6 +471,20 @@ pub enum Effect {
     Pin(String),
     /// Leave the view, keeping the current place (§23.3).
     Close,
+    /// Freeze or release the view's temporal cursor (v0.5 §18.2).
+    PauseCursor,
+    /// Move the cursor to the previous significant event (v0.5 §18.4).
+    StepPrevious,
+    /// Move the cursor to the next significant event (v0.5 §18.4).
+    StepNext,
+    /// Move the cursor this many seconds, negative for backwards (v0.5 §18.3).
+    Nudge(i64),
+    /// Return the cursor to the present and summarise what changed (v0.5 §18.3, §18.7).
+    ReturnToNow,
+    /// Open the timeline at the cursor (v0.5 §18.3, §19.1).
+    OpenTimeline,
+    /// Show what changed between the cursor and now (v0.5 §18.3).
+    ChangesToNow,
 }
 
 /// What the view is showing instead of the map, if anything.
@@ -442,6 +513,14 @@ pub struct MapView {
     overlay: Overlay,
     status: Option<String>,
     keymap: Keymap,
+    /// The temporal HUD segment the shell composed — `PAUSED @14:03:12.410`, `@12:17 [PAST]`
+    /// (v0.5 §18.2, §4.6). The shell builds the words, because this crate depends on
+    /// `ono-value` alone and holds no clock and no formatter for one.
+    temporal: Option<String>,
+    /// The gap frame drawn instead of the map while the cursor is inside a coverage gap
+    /// (v0.5 §18.6). It survives key presses: the state behind it has no evidence at the
+    /// cursor's instant, so revealing it would be the silently advancing timestamp §18.6 names.
+    gap: Option<Vec<String>>,
 }
 
 /// How many rows the header and the footer take from the body.
@@ -473,6 +552,8 @@ impl MapView {
             overlay: Overlay::None,
             status: None,
             keymap,
+            temporal: None,
+            gap: None,
         };
         view.absorb(map, charset);
         view.focus = view.first_focusable();
@@ -583,6 +664,35 @@ impl MapView {
     /// Shows `lines` over the map until the next Esc — the answer to `i` (§6.1).
     pub fn show_detail(&mut self, lines: Vec<String>) {
         self.overlay = Overlay::Detail(lines);
+    }
+
+    /// Records the temporal HUD segment the header carries (v0.5 §4.6, §18.2).
+    ///
+    /// `None` in the present, where §4.6 wants no marker at all: a marker that always appeared
+    /// would mark nothing. The shell composes the words — this crate has no clock.
+    pub fn set_temporal(&mut self, marker: Option<String>) {
+        self.temporal = marker;
+    }
+
+    /// The temporal HUD segment in force.
+    #[must_use]
+    pub fn temporal(&self) -> Option<&str> {
+        self.temporal.as_deref()
+    }
+
+    /// Draws `lines` instead of the map while the cursor sits in a coverage gap (v0.5 §18.6).
+    ///
+    /// §18.6: "The map MUST NOT continue showing the last state with a silently advancing
+    /// timestamp." A gap frame is therefore not an overlay a key dismisses — it stands until the
+    /// cursor is moved somewhere evidence supports, and `None` is what says it was.
+    pub fn set_gap(&mut self, lines: Option<Vec<String>>) {
+        self.gap = lines;
+    }
+
+    /// Whether the cursor is inside a coverage gap (v0.5 §18.6).
+    #[must_use]
+    pub const fn in_gap(&self) -> bool {
+        self.gap.is_some()
     }
 
     /// What a key press means here, and what is left for the shell to do.
@@ -705,6 +815,14 @@ impl MapView {
                 self.overlay = Overlay::Help;
                 Effect::Stay
             }
+            Action::PauseCursor => Effect::PauseCursor,
+            Action::StepPrevious => Effect::StepPrevious,
+            Action::StepNext => Effect::StepNext,
+            Action::NudgeBack => Effect::Nudge(-NUDGE_SECONDS),
+            Action::NudgeForward => Effect::Nudge(NUDGE_SECONDS),
+            Action::ReturnToNow => Effect::ReturnToNow,
+            Action::OpenTimeline => Effect::OpenTimeline,
+            Action::ChangesToNow => Effect::ChangesToNow,
         }
     }
 
@@ -715,6 +833,16 @@ impl MapView {
         frame.push(self.header());
 
         let body = self.body_height();
+        // v0.5 §18.6: while the cursor is in a gap, the gap is what the view shows. Nothing of
+        // the last supported topology is drawn beside it, because a reader who can see both is
+        // being shown a state the cursor's instant has no evidence for.
+        if let Some(gap) = &self.gap {
+            for index in 0..body {
+                frame.push(clip(gap.get(index).map_or("", String::as_str), self.width));
+            }
+            frame.push(self.footer());
+            return frame;
+        }
         match &self.overlay {
             Overlay::Help => {
                 let mut help = vec!["  keys — every one of them configurable".to_owned()];
@@ -757,6 +885,12 @@ impl MapView {
             line.push_str("  ");
         }
         line.push_str(&self.heading);
+        // v0.5 §18.2 and §4.6: the temporal coordinate belongs in the HUD, in words, ahead of
+        // the liveness segment — a paused view is not a live one and the marker says which.
+        if let Some(marker) = &self.temporal {
+            line.push_str("  ");
+            line.push_str(marker);
+        }
         if self.live {
             line.push_str("  live");
             if !self.freshness.is_empty() {

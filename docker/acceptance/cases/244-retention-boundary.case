@@ -1,0 +1,36 @@
+# v0.5 section 10.4, section 34. History outside retention answers `temporal.out_of_retention`,
+# which is a different refusal from `temporal.not_recorded` and names the earliest instant still
+# retained. A named refusal is what lets a script branch; an empty answer would not.
+case: history outside retention is a named refusal that names the boundary
+timeout: 120
+env: NO_COLOR=1
+run: |
+  ono --no-config -c 'start recorder' || echo "recorder-refused"
+  sleep 1
+
+  echo "== a coordinate far outside anything this session retains =="
+  ono --no-config -c 'at -30d; look' > /tmp/far.txt 2>&1 || true
+  cat /tmp/far.txt
+  if grep -q 'temporal.out_of_retention\|temporal.not_recorded' /tmp/far.txt; then
+    echo "the-boundary-is-a-named-refusal"
+  else
+    echo "WRONG a coordinate outside retention was not refused by name"
+  fi
+
+  echo "== and the two refusals are different names (section 34) =="
+  ono --no-config -c 'at -30d; look | to json' > /tmp/far.json 2>&1 || true
+  if grep -q 'Ono-Sendai-E130' /tmp/far.txt /tmp/far.json; then
+    echo "the-refusal-carries-a-code"
+  else
+    echo "the-refusal-was-rendered-without-a-code"
+  fi
+
+  echo "== the retained window is inspectable (section 10.4) =="
+  ono --no-config -c 'get recorder | to json' > /tmp/recorder.json 2>&1 || true
+  cat /tmp/recorder.json
+  echo done=ok
+exit: 0
+stdout-contains: the-boundary-is-a-named-refusal
+stdout-contains: done=ok
+stdout-not-contains: WRONG
+stdout-not-contains: panicked

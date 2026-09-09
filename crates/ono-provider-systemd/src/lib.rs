@@ -61,7 +61,10 @@ mod logind;
 mod provider;
 mod record;
 
-pub use bus::{BusError, JobKind, JobRef, SystemdBus, UnitListing, UnitProperties};
+pub use bus::{
+    BusError, JobKind, JobRef, SystemdBus, UnitListing, UnitProperties, UnitSignal, UnitSignals,
+    unit_name_from_path, unit_object_path,
+};
 pub use dbus::SystemBus;
 pub use journal::{JOURNAL_PROVIDER_ID, JournalProvider};
 pub use logind::{

@@ -125,6 +125,19 @@ pub fn read_until(session: &mut PtySession, needle: &str, budget: Duration) -> S
 /// `support::run_bounded`.
 pub use ono_testkit::{Bounded, run_bounded};
 
+/// One `ono -c <script>` with colour off and a generous budget.
+///
+/// The four temporal suites each declared this identically before it moved here. It takes no
+/// home, so it is for scripts that neither record nor read a store; a suite that needs a private
+/// store uses [`ono_at_home`] instead.
+pub fn ono(script: &str) -> ono_testkit::Run {
+    Shell::new()
+        .args(["-c", script])
+        .env("NO_COLOR", "1")
+        .timeout(Duration::from_secs(60))
+        .run()
+}
+
 pub fn ono_at_home(home: &Scratch, script: &str) -> ono_testkit::Run {
     Shell::new()
         .env("HOME", home.path().to_string_lossy().into_owned())

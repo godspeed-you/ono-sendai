@@ -14,6 +14,7 @@ use crate::bind::BoundArguments;
 use crate::contract::CommandContract;
 use crate::expr::Scope;
 use crate::registry::CommandRegistry;
+use ono_temporal_core::TemporalContext;
 
 /// One frame of the shell's context stack, as a command sees it (spec §14.1, ADR-0023).
 ///
@@ -193,6 +194,8 @@ pub struct Invocation<'a> {
     adapters: Option<Arc<ono_adapter::Registry>>,
     resolver: Option<Resolver>,
     displays: bool,
+    temporal: Arc<TemporalContext>,
+    verbs: Option<&'a CommandRegistry>,
 }
 
 /// Resolves a program name to the path the shell would run, for planning (ADR-0056).
@@ -230,6 +233,8 @@ impl<'a> Invocation<'a> {
             adapters: None,
             resolver: None,
             displays: false,
+            temporal: present_context(),
+            verbs: None,
         }
     }
 
@@ -311,6 +316,33 @@ impl<'a> Invocation<'a> {
         self
     }
 
+    /// Puts the session's temporal coordinate and the verb registry behind it on the invocation
+    /// (v0.5 §4.2, §4.7).
+    ///
+    /// The two travel together because the guard of [`CommandTable::run`] needs both: the
+    /// coordinate says whether the session is standing in the past, and the registry says whether
+    /// this command's verb changes anything. A caller that hands over neither is in the present,
+    /// which is what every v0.2–v0.4 caller is.
+    #[must_use]
+    pub fn with_temporal(
+        mut self,
+        temporal: Arc<TemporalContext>,
+        verbs: &'a CommandRegistry,
+    ) -> Self {
+        self.temporal = temporal;
+        self.verbs = Some(verbs);
+        self
+    }
+
+    /// Where in time this command evaluates (v0.5 §3.9, §4).
+    ///
+    /// [`TemporalContext::Present`] unless the shell put the session somewhere else, so an
+    /// implementation reads one thing whether or not the host knows about time at all.
+    #[must_use]
+    pub fn temporal(&self) -> &TemporalContext {
+        &self.temporal
+    }
+
     /// The contract the implementation was registered against.
     #[must_use]
     pub fn contract(&self) -> &'a CommandContract {
@@ -379,6 +411,8 @@ impl<'a> Invocation<'a> {
             adapters: self.adapters.clone(),
             resolver: self.resolver.clone(),
             displays: self.displays,
+            temporal: Arc::clone(&self.temporal),
+            verbs: self.verbs,
         }
     }
 }
@@ -500,6 +534,13 @@ impl CommandTable {
             )
             .with_help("`help` lists what this shell can do; the rest is scheduled, not hidden")
         })?;
+        // v0.5 §4.7: historical context is read-only, and this is the one seam where the
+        // contract, the verb and the session's coordinate are all in hand — so native mutations,
+        // provider mutations, spatial mutations, contributed KUANG/11 commands and commands
+        // dispatched into a remote registry are all covered by one refusal (ADR-0691).
+        if let Some(refusal) = historical_refusal(ctx) {
+            return Err(refusal);
+        }
         // Spec §14.3: the context frames fill in the arguments the user did not type. That
         // happens here, at the one seam every implementation runs through, so a producer, a
         // trace, a watch and a mutation all see the same narrowed arguments (ADR-0076).
@@ -517,6 +558,54 @@ impl CommandTable {
             None => implementation.invoke_async(ctx).await,
         }
     }
+}
+
+/// The present, shared, so an invocation that never hears about time allocates nothing for it.
+fn present_context() -> Arc<TemporalContext> {
+    static PRESENT: std::sync::OnceLock<Arc<TemporalContext>> = std::sync::OnceLock::new();
+    Arc::clone(PRESENT.get_or_init(|| Arc::new(TemporalContext::Present)))
+}
+
+/// The commands that must keep working in historical context however they are classified.
+///
+/// §4.7's fourth class is "shell-state-changing operations whose semantics would be confusing in
+/// a historical world", and returning to the present is the one shell-state change that must
+/// never be in it: a read-only rule that could not be left would be a trap rather than a guard.
+/// `at` and `present` are the same argument — moving the coordinate and the explicit escape hatch
+/// of §4.8 are how a person gets out.
+const ALWAYS_AVAILABLE: &[&str] = &[
+    "ono.temporal.now",
+    "ono.temporal.at",
+    "ono.temporal.present",
+];
+
+/// The refusal §4.7 requires of this command at this coordinate, or `None` where it may run.
+///
+/// Three facts decide it, and all three are on the invocation: the session is historical, the
+/// command's verb is declared mutating in `docs/contracts/verbs.yaml`, and the command is not one
+/// of the few that exist to get back out. A KUANG/11 contribution that declared a mutating risk
+/// about itself is refused on that alone, because a package's own claim is the only statement
+/// there is about what its command does (spec §31.22, ADR-0587).
+fn historical_refusal(ctx: &Invocation<'_>) -> Option<ErrorValue> {
+    if !ctx.temporal().is_historical() {
+        return None;
+    }
+    let contract = ctx.contract();
+    if ALWAYS_AVAILABLE.contains(&contract.id()) {
+        return None;
+    }
+    let mutating = ctx
+        .verbs
+        .and_then(|registry| registry.verb(contract.verb()))
+        .is_some_and(crate::contract::VerbSpec::is_mutating)
+        || matches!(
+            contract.declared_risk(),
+            Some(ono_provider_api::Risk::Destructive | ono_provider_api::Risk::Mutate)
+        );
+    if !mutating {
+        return None;
+    }
+    Some(ono_temporal_core::error::read_only(&contract.spelling()))
 }
 
 impl std::fmt::Debug for CommandTable {

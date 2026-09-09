@@ -19,6 +19,7 @@ rusqlite.workspace = true
 
 [dev-dependencies]
 ono-testkit.workspace = true
+rusqlite.workspace = true
 tempfile.workspace = true
 
 [lints]

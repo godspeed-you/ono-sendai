@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use ono_spatial_core::{SpatialId, SpatialScope, SpatialType};
-use ono_value::{Provenance, Value};
+use ono_spatial_core::{Confidence, SpatialId, SpatialScope, SpatialType};
+use ono_value::{MapValue, Provenance, Value};
 
 use crate::clock::EventTimes;
 use crate::id::{CausalLinkId, EventId, EvidenceId};
@@ -382,6 +382,44 @@ impl EventSeed {
             provenance: self.provenance,
         }
     }
+}
+
+/// The payload key naming which relation a `relation.added` or `relation.removed` event is about.
+pub const RELATION_KEY: &str = "relation";
+
+/// The payload key carrying the edge's confidence (v0.4 §11.5).
+pub const CONFIDENCE_KEY: &str = "confidence";
+
+/// The payload `docs/contracts/temporal/events.yaml` requires of a relation event (§6.4).
+///
+/// §6.4 makes `relation` and `confidence` required fields of both relation kinds, and the two
+/// ends travel as the event's subject and its one related reference. This is where the body is
+/// written and [`relation_of`] is where it is read, so an ingest path and a reconstruction
+/// cannot disagree about the spelling.
+#[must_use]
+pub fn relation_payload(relation: &str, confidence: Confidence) -> Value {
+    let mut map = MapValue::new();
+    map.insert(RELATION_KEY.into(), Value::string(relation));
+    map.insert(CONFIDENCE_KEY.into(), Value::string(confidence.as_str()));
+    Value::Map(Arc::new(map))
+}
+
+/// The relation and confidence a relation event names, or `None` where it names none.
+///
+/// A relation event without both ends and a relation type "is not renderable"
+/// (`docs/contracts/temporal/events.yaml`), so an event that carries no relation contributes no
+/// edge rather than an edge with a guessed type.
+#[must_use]
+pub fn relation_of(event: &TemporalEvent) -> Option<(Arc<str>, Confidence)> {
+    let payload = event.payload.as_ref()?.as_map().ok()?;
+    let Value::String(relation) = payload.get(RELATION_KEY)? else {
+        return None;
+    };
+    let confidence = match payload.get(CONFIDENCE_KEY) {
+        Some(Value::String(name)) => Confidence::from_name(name).unwrap_or(Confidence::Unknown),
+        _ => Confidence::Unknown,
+    };
+    Some((Arc::clone(relation), confidence))
 }
 
 #[cfg(test)]

@@ -111,10 +111,12 @@ pub(crate) fn stream_segment(
         let mut failed_rows = false;
         for (contract, arguments) in &bound {
             let started = std::time::Instant::now();
+            let temporal = crate::temporal::invocation_context(arguments).await?;
             let mut invocation = Invocation::new(contract, arguments, providers)
                 .with_scope(std::sync::Arc::clone(&scope))
                 .with_context(context.clone())
-                .with_adapters(std::sync::Arc::clone(&adapters), resolver.clone());
+                .with_adapters(std::sync::Arc::clone(&adapters), resolver.clone())
+                .with_temporal(temporal, registry);
             if let Some(previous) = stream.take() {
                 invocation = invocation.with_input(previous);
             }

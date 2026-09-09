@@ -140,6 +140,7 @@ impl State {
                         capability: Arc::from(LEDGER_CAPABILITY),
                         reason: GapReason::RetentionExpired,
                         source: EvidenceSource::session(),
+                        detail: Some(Arc::from("evicted from the session ledger")),
                     });
                 }
             }

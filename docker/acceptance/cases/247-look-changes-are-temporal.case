@@ -1,0 +1,51 @@
+# v0.5 §50 phase T6 — §13.5: "`look`'s v0.4 `changed` section SHOULD be backed by the same
+# `TemporalChange` engine when v0.5 evidence exists. It MUST NOT retain a separate ad-hoc snapshot
+# comparison implementation once the temporal engine is available."
+#
+# The observable form of "one engine, not two" is that the two surfaces agree: what `look` reports
+# as recently changed and what `changes` reports over the same window are the same statement about
+# the same machine, and neither claims a comparison it has no source for (§24.3).
+case: the recent-change section and `changes` are one engine
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== a first look has nothing to compare to, and says so rather than "nothing changed" =='
+  ono -c 'home
+  look --json --changes 1m' > /tmp/t6l-first.json 2>&1
+  prove t6aw "the change section states its own state rather than an empty list (v0.4 §24.3)" \
+    'grep -q "\"changed\"" /tmp/t6l-first.json'
+  prove t6ax "and it names the source of the comparison, or `null` where it has none (§25.4)" \
+    'grep -q "\"source\"" /tmp/t6l-first.json'
+
+  echo '== `changes` over the same window is the same statement (§13.5) =='
+  ono -c 'home
+  changes --since 1m | to json' > /tmp/t6l-changes.json 2>&1
+  prove t6ay "`changes` answers over the same window without a second refusal (§13.5)" \
+    'grep -qE "^\[" /tmp/t6l-changes.json'
+  prove t6az "neither surface claims a change it has no evidence for (§24.3, §13.4)" \
+    '! grep -q "\"certainty\":\"observed\"" /tmp/t6l-changes.json || grep -q "\"evidence\"" /tmp/t6l-changes.json'
+
+  echo '== §13.4: an unknown side is unknown, never a fabricated zero (§35.3) =='
+  prove t6ba "no change reports a zero where it means unknown (§13.4, v0.2 §35.3)" \
+    '! grep -qE "\"(from|before)\":0[,}]" /tmp/t6l-changes.json'
+
+  echo 'look changes: done'
+exit: 0
+stdout-contains: PROVED t6aw
+stdout-contains: PROVED t6ax
+stdout-contains: PROVED t6ay
+stdout-contains: PROVED t6az
+stdout-contains: PROVED t6ba
+stdout-contains: look changes: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

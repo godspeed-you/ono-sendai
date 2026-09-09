@@ -35,6 +35,7 @@ const COMMAND_FILES: &[&str] = &[
     include_str!(concat!(env!("OUT_DIR"), "/commands/service.json")),
     include_str!(concat!(env!("OUT_DIR"), "/commands/spatial.json")),
     include_str!(concat!(env!("OUT_DIR"), "/commands/storage.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/commands/temporal.json")),
 ];
 
 const VERB_FILE: &str = include_str!(concat!(env!("OUT_DIR"), "/verbs.json"));

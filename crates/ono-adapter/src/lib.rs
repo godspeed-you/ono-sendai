@@ -23,8 +23,8 @@ mod version;
 
 pub use contract::{
     Adapter, AdapterPack, DecoderKind, DemandKind, Exactness, Fallback, FieldMap, Fixture,
-    Invocation, Match, Plan, Positionals, Problem, Stability, StdinMode, StrategyTier, Tier, Unit,
-    VersionProbe, first_party, validate,
+    HistoricalCoverage, HistoricalInvocation, HistoricalPlan, Invocation, Match, Plan, Positionals,
+    Problem, Stability, StdinMode, StrategyTier, Tier, Unit, VersionProbe, first_party, validate,
 };
 pub use version::{Version, VersionRange};
 

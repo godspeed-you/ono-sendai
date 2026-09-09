@@ -169,8 +169,33 @@ impl CommandImpl for Map {
                 )));
             }
 
-            let map = project_at(ctx.providers(), &mut session, &center, &request, now).await?;
-            let record = record_of(ctx.providers(), &session, &map, None)?;
+            // v0.5 §14.2: "The map shows the reconstructable topology at 12:17, not the current
+            // topology with an old timestamp label." The historical projection reads a different
+            // index and a different instant; nothing about the present reaches it (§55.2).
+            let record = match crate::spatial::historical::active() {
+                Some(active) => {
+                    let world = active.world(session.current_scope())?;
+                    if let Some(refusal) = world
+                        .structure_refusal(crate::spatial::commands::place_type(&session, &center))
+                    {
+                        return Err(refusal);
+                    }
+                    if let Some(refusal) = world.not_known_here(
+                        &center,
+                        crate::spatial::commands::place_type(&session, &center),
+                    ) {
+                        return Err(refusal);
+                    }
+                    let budget = session.preferences().map_node_budget;
+                    let map = world.map(&center, &request, budget);
+                    historical_record_of(&world, &map)?
+                }
+                None => {
+                    let map =
+                        project_at(ctx.providers(), &mut session, &center, &request, now).await?;
+                    record_of(ctx.providers(), &session, &map, None)?
+                }
+            };
 
             if json {
                 let document = ono_value::to_json_data(&Value::Record(Arc::new(record)));
@@ -335,7 +360,31 @@ pub fn record_of(
     map: &SpatialMap,
     changes: Option<&ono_spatial_events::ChangeSet>,
 ) -> Result<RecordValue, ErrorValue> {
-    map_record(providers, session, map, changes)
+    map_record(
+        session.index(),
+        session.scope(),
+        crate::spatial::live::capable(providers, session, &map.center),
+        map,
+        changes,
+    )
+}
+
+/// The same record for a map drawn from reconstructed evidence (v0.5 §14.1, §14.2).
+///
+/// One composition, two worlds. §14.2 asks for "the reconstructable topology at 12:17, not the
+/// current topology with an old timestamp label", and the difference between the two is entirely
+/// in which index and which instant arrive here — never in a second way of writing the record.
+/// A historical map is not live: nothing subscribes to a past that has already happened, so
+/// `live_capable` is false rather than a claim about what could be watched now (§2.17).
+///
+/// # Errors
+///
+/// A value the record could not be built from.
+pub fn historical_record_of(
+    world: &crate::spatial::HistoricalWorld,
+    map: &SpatialMap,
+) -> Result<RecordValue, ErrorValue> {
+    map_record(world.index(), world.scope(), false, map, None)
 }
 
 /// The places and edges around `center`, as the providers answer for them (§2.16, §45.6).
@@ -500,12 +549,12 @@ fn place_at(
 /// the difference between "nothing changed" and "nothing was watching" is exactly what §2.17
 /// requires to stay visible.
 fn map_record(
-    providers: &ProviderRegistry,
-    session: &SpatialSessionState,
+    index: &SpatialIndex,
+    scope: &ono_spatial_core::SpatialScope,
+    live_capable: bool,
     map: &SpatialMap,
     changes: Option<&ono_spatial_events::ChangeSet>,
 ) -> Result<RecordValue, ErrorValue> {
-    let index = session.index();
     let mut nodes = Vec::with_capacity(map.nodes.len());
     for node in &map.nodes {
         nodes.push(Value::Record(Arc::new(node_record(index, node)?)));
@@ -537,7 +586,7 @@ fn map_record(
             .as_ref()
             .map_or(Value::Null, |node| Value::string(&node.to_string())),
     )?
-    .set("scope", Value::string(&session.scope().to_string()))?
+    .set("scope", Value::string(&scope.to_string()))?
     .set("zoom_level", Value::Int(i128::from(map.zoom_level)))?
     .set("nodes", Value::list(nodes))?
     .set("edges", Value::list(edges))?
@@ -548,14 +597,7 @@ fn map_record(
     .set("completeness", Value::string(map.completeness.as_str()))?
     // §22: whether this place can be watched at all. It is answered rather than assumed — the
     // targets its horizon reads either have an event contract and a provider, or they do not.
-    .set(
-        "live_capable",
-        Value::Bool(crate::spatial::live::capable(
-            providers,
-            session,
-            &map.center,
-        )),
-    )?
+    .set("live_capable", Value::Bool(live_capable))?
     .set("live", Value::Bool(changes.is_some()))?
     .set(
         "freshness",
@@ -874,7 +916,7 @@ impl CommandImpl for MapLinks {
                 session.preferences().map_node_budget,
                 now,
             );
-            let record = map_record(ctx.providers(), &session, &map, None)?;
+            let record = record_of(ctx.providers(), &session, &map, None)?;
 
             if json {
                 let document = ono_value::to_json_data(&Value::Record(Arc::new(record)));

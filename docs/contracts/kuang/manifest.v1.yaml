@@ -389,6 +389,29 @@ sections:
         type: list<path>
         nullable: true
         doc: Assistant tool descriptors (spec §31.46). See `assistants.v1.yaml`.
+      temporal_sources:
+        type: list<path>
+        nullable: true
+        doc: >-
+          Temporal event sources and historical query providers (v0.5 §37.2, §37.5). Each
+          document is a `temporal_sources:` list of the `temporal_source` shape of
+          `contributions.v1.yaml`. §37.5 requires a source to map its data into canonical Ono
+          objects and events and to expose coverage and provenance; both are declared here,
+          before the runtime runs, because a source whose coverage is discovered by reading it
+          is a source that has already been believed. Contributing one needs
+          `temporal.contribute.events`; a bounded historical provider is answered as a table and
+          an unbounded event source becomes a live stream, and the host must know which before
+          the first record.
+      causal_rules:
+        type: list<path>
+        nullable: true
+        doc: >-
+          Causal and correlation rules (v0.5 §37.2, §37.4). Each document is a `causal_rules:`
+          list of the `causal_rule` shape of `contributions.v1.yaml`. §37.4: a third-party rule
+          MUST be namespaced to its publisher and MUST identify its source, and the strength of
+          the links it emits MUST NOT exceed `asserted` unless the host contract explicitly
+          trusts the package as authoritative for a domain. Contributing one needs
+          `temporal.contribute.causality`.
 
   # --- capabilities: the security boundary, spec §31.16–§31.17 -------------------------------
   - name: capabilities

@@ -1,0 +1,3 @@
+{"rule": "dev.example.fuzz.rule",
+  "relation": "caused_by", "strength": "authoritative",
+  "cause": "e000000000000000000000aa", "effect": "e000000000000000000000bb"}

@@ -27,6 +27,19 @@ const SUITE: &str = "crates/ono-cli/tests/provider_conformance.rs";
 /// The exercises a declaration may ask for.
 const EXERCISES: [&str; 3] = ["enumerable", "selector_required", "unbounded"];
 
+/// The six boolean capabilities of v0.5 §21.1, in the order the specification lists them.
+///
+/// `retained_history` is not among them: it is a duration rather than a claim, and a source's
+/// effective retention is its configuration's rather than its contract's.
+const TEMPORAL_KEYS: [&str; 6] = [
+    "current_snapshot",
+    "live_events",
+    "historical_query",
+    "exhaustive_events",
+    "causal_tokens",
+    "checkpointable",
+];
+
 /// One provider entry, as `docs/contracts/providers/*.yaml` declares it.
 struct Declaration {
     id: String,
@@ -38,6 +51,8 @@ struct Declaration {
     identity_token: Option<String>,
     exercises: Vec<(String, String)>,
     identity_strategy: Option<String>,
+    /// The keys of [`TEMPORAL_KEYS`] this provider's `temporal:` block declares as true.
+    temporal: BTreeSet<String>,
     /// The Rust identifier fragment this entry's tests are named after.
     ident: String,
 }
@@ -253,6 +268,15 @@ fn write_surface(
         .as_ref()
         .map_or_else(|| "None".to_owned(), |token| format!("Some(\"{token}\")"));
     let _ = writeln!(body, "        identity_token: {token},");
+    let _ = writeln!(body, "        temporal: harness::TemporalClaim {{");
+    for key in TEMPORAL_KEYS {
+        let _ = writeln!(
+            body,
+            "            {key}: {},",
+            declaration.temporal.contains(key)
+        );
+    }
+    let _ = writeln!(body, "        }},");
     let _ = writeln!(body, "    }}).await;");
     let _ = writeln!(body, "}}\n");
     Ok(())
@@ -417,6 +441,17 @@ fn read_declarations(spec: &Path) -> Result<Vec<Declaration>, GenerateError> {
                 ident: String::new(),
                 exercises,
                 identity_token: string_at(provider, "identity_token"),
+                temporal: TEMPORAL_KEYS
+                    .into_iter()
+                    .filter(|key| {
+                        provider
+                            .get("temporal")
+                            .and_then(|block| block.get(*key))
+                            .and_then(Yaml::as_bool)
+                            == Some(true)
+                    })
+                    .map(ToOwned::to_owned)
+                    .collect(),
                 identity_strategy: provider
                     .get("spatial")
                     .and_then(|spatial| string_at(spatial, "identity_strategy")),

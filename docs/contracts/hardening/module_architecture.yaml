@@ -104,6 +104,14 @@ session:
       owns: the provider registry and what it contributes
     - group: PresentationState
       owns: rendering, themes and settings
+    # v0.5 §4 gives a session one temporal coordinate, and §39 gives `ono-cli` the job of owning
+    # it. It is declared here beside the eight groups of §31.2 and lives in
+    # `src/temporal/session.rs` rather than in `session.rs`, for the same reason the v0.4 spatial
+    # place does: a command is handed an `Invocation` rather than the shell, so the state it must
+    # read is process-wide and reached without one (ADR-0690).
+    - group: TemporalState
+      file: src/temporal/session.rs
+      owns: the session's temporal coordinate, its temporal trail and the ledger it reads history from
 
 # §56.3's composition root. `ono-cli` is where everything is wired together, which makes it the
 # easiest place to put something that belongs a layer down: a module moved up to shrink a file
@@ -158,6 +166,7 @@ composition_root:
     - settings.rs
     - sink.rs
     - spatial
+    - temporal
     - theme.rs
     - trust.rs
     - view.rs

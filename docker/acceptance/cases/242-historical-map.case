@@ -1,0 +1,53 @@
+# v0.5 §14.1, §14.3, §9.7, §55.2, §55.9. The historical spatial world: `look` and `map` evaluate
+# against the active temporal coordinate, an exit at `T` corresponds to a relation supported at
+# `T`, a place that was not there says so and navigates nowhere, and returning to now restores the
+# present. §55.9 is the case this exists against: "if `at -10m` changes the prompt but `look`/`map`
+# still show present objects, the feature is invalid" (ADR-0681).
+case: a historical map is the topology of that instant, and a place that was not there says so
+timeout: 180
+env: NO_COLOR=1
+run: |
+  echo "== the recorder is what makes a past exist at all (v0.5 section 10.3) =="
+  ono --no-config -c 'start recorder' || echo "recorder-refused"
+
+  echo "== a place that exists only now =="
+  sleep 400 &
+  LATER=$!
+  sleep 1
+
+  echo "== the present sees it =="
+  ono --no-config -c "look --json" > /tmp/now.json
+  grep -q '"generated_at"' /tmp/now.json && echo "present-look-answers"
+
+  echo "== and a coordinate before it started does not (section 9.7) =="
+  ono --no-config -c "at -30m; enter process/$LATER" > /tmp/past-enter.txt 2>&1 || true
+  cat /tmp/past-enter.txt
+  if grep -qi 'not known at requested time\|not_recorded\|not found\|not_found' /tmp/past-enter.txt; then
+    echo "a-place-that-was-not-there-is-refused"
+  else
+    echo "WRONG a process started a second ago was reachable thirty minutes before it existed"
+  fi
+
+  echo "== the historical map is not the present map with an old label (section 55.2) =="
+  ono --no-config -c "at -30m; map --json" > /tmp/past-map.json 2>&1 || true
+  head -c 400 /tmp/past-map.json; echo
+  if grep -q "\"$LATER\"" /tmp/past-map.json; then
+    echo "WRONG the map at -30m drew a process that did not exist then"
+  else
+    echo "the-historical-map-omits-what-came-later"
+  fi
+
+  echo "== now restores the present, and the place is where it was (section 4.3, section 9.7) =="
+  ono --no-config -c 'at -30m; now; look --json' > /tmp/back.json 2>&1 || true
+  grep -q '"generated_at"' /tmp/back.json && echo "now-restores-the-present"
+
+  kill $LATER 2>/dev/null || true
+  echo done=ok
+exit: 0
+stdout-contains: present-look-answers
+stdout-contains: a-place-that-was-not-there-is-refused
+stdout-contains: the-historical-map-omits-what-came-later
+stdout-contains: now-restores-the-present
+stdout-contains: done=ok
+stdout-not-contains: WRONG
+stdout-not-contains: panicked

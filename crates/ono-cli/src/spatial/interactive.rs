@@ -251,6 +251,12 @@ pub async fn run_map_view(
     view.set_live(live, "polled");
     view.set_place(place_path(session, &center));
 
+    // v0.5 §18.1: one live/historical model. The cursor starts wherever the session's temporal
+    // coordinate is, so a `map` opened after `at 12:17` opens in the past and `N` is what brings
+    // it back — the same coordinate the prompt shows, never a second one (§55.7).
+    let mut cursor = crate::spatial::TemporalCursor::of(session.current_scope().clone());
+    draw_temporal(&mut view, &cursor, None, columns);
+
     let mut refreshed = std::time::Instant::now();
     loop {
         // §25.2 forbids motion that is not a state change, and §39.4 asks that a reduced-motion
@@ -274,7 +280,16 @@ pub async fn run_map_view(
                     // A live view has a second reason to redraw: the machine changed. §25.1 allows an
                     // explicit polling source where no event stream exists, and §25.3 makes the view say
                     // so — the freshness word beside the heading is `polled`, never `event driven`.
-                    if view.is_live() && refreshed.elapsed() >= LIVE_INTERVAL {
+                    //
+                    // v0.5 §18.2: a paused or rewound view does not take that reason. Its cursor
+                    // is somewhere the providers cannot answer about, so advancing it would be
+                    // the current topology under an old timestamp §55.2 prohibits. The providers
+                    // and the recorder keep running; this loop simply stops asking them.
+                    if view.is_live()
+                        && !cursor.is_paused()
+                        && !cursor.is_historical()
+                        && refreshed.elapsed() >= LIVE_INTERVAL
+                    {
                         record = match redraw(
                             ctx,
                             session,
@@ -302,6 +317,27 @@ pub async fn run_map_view(
                     TerminalEvent::Resize(columns, rows) => {
                         // §43.4: a resize preserves the current place and the focus. Neither is touched
                         // here; only the width the projection is drawn at and the viewport are (§39.3).
+                        // v0.5 §18: a resize changes the width and nothing semantic. A rewound
+                        // view therefore redraws the same instant at the new size rather than
+                        // asking the providers what is there now.
+                        if cursor.is_historical()
+                            && let Ok(Some(world)) = cursor.world()
+                        {
+                            {
+                                let budget = session.preferences().map_node_budget;
+                                let map = world.map(&center, &request, budget);
+                                if let Ok(drawn) =
+                                    crate::spatial::map::historical_record_of(&world, &map)
+                                {
+                                    record = drawn;
+                                }
+                                view.set_place(place_path(session, &center));
+                                view.resize(&record, columns, rows, charset);
+                                draw_temporal(&mut view, &cursor, Some(&world), columns);
+                                ono_editor::remember_terminal_size(columns, rows);
+                                continue;
+                            }
+                        }
                         let at = Timestamp::now();
                         let observed = while_answering(
                             crate::spatial::map::projection(ctx, session, &center, &request, at),
@@ -316,6 +352,7 @@ pub async fn run_map_view(
                         }
                         view.set_place(place_path(session, &center));
                         view.resize(&record, columns, rows, charset);
+                        draw_temporal(&mut view, &cursor, None, columns);
                         // The view has drawn itself at the new size, so the change is answered.
                         // Until this is said, the terminal keeps reporting it — which is what
                         // stops `ready_key` from swallowing a resize that arrives while a
@@ -485,8 +522,242 @@ pub async fn run_map_view(
                 let said = pin(pins, session, &node, Timestamp::now());
                 view.say(said);
             }
+            // v0.5 §18.2: pausing freezes the view's cursor and nothing else. No provider is
+            // stopped here, no subscription is cancelled and the recorder is not touched — the
+            // live refresh below simply stops moving the instant the view is drawn at.
+            Effect::PauseCursor => {
+                cursor.toggle_pause(Timestamp::now());
+                let said = if cursor.is_paused() {
+                    "the view is paused; the providers, the recorder and the machine are not"
+                } else {
+                    "the view is following the present again"
+                };
+                view.say(said);
+                record = match temporal_redraw(
+                    ctx,
+                    session,
+                    &mut view,
+                    &cursor,
+                    &center,
+                    &request,
+                    record,
+                    columns,
+                    &keymap,
+                    &mut waiting,
+                )
+                .await
+                {
+                    Awaited::Done(drawn) => drawn,
+                    Awaited::Left => return Ok(()),
+                };
+            }
+            effect @ (Effect::StepPrevious | Effect::StepNext) => {
+                let forward = effect == Effect::StepNext;
+                let neighbours = neighbours_of(session, &center);
+                match cursor.step(&center, neighbours, forward, Timestamp::now()) {
+                    Ok(Some(event)) => view.say(format!(
+                        "{} — {}",
+                        event.kind.as_str(),
+                        event
+                            .subject
+                            .as_ref()
+                            .map_or_else(|| "—".to_owned(), |subject| subject.label().to_owned())
+                    )),
+                    // §18.5: no frame is invented between supported states, so a step with
+                    // nothing to step to moves nothing and says so.
+                    Ok(None) => view.say(if cursor.has_evidence() {
+                        "no significant event that way in the window this view can reach"
+                    } else {
+                        "this session has recorded no events, so there is nothing to step through"
+                    }),
+                    Err(error) => view.say(error.message().to_owned()),
+                }
+                record = match temporal_redraw(
+                    ctx,
+                    session,
+                    &mut view,
+                    &cursor,
+                    &center,
+                    &request,
+                    record,
+                    columns,
+                    &keymap,
+                    &mut waiting,
+                )
+                .await
+                {
+                    Awaited::Done(drawn) => drawn,
+                    Awaited::Left => return Ok(()),
+                };
+            }
+            Effect::Nudge(seconds) => {
+                cursor.nudge(seconds, Timestamp::now());
+                record = match temporal_redraw(
+                    ctx,
+                    session,
+                    &mut view,
+                    &cursor,
+                    &center,
+                    &request,
+                    record,
+                    columns,
+                    &keymap,
+                    &mut waiting,
+                )
+                .await
+                {
+                    Awaited::Done(drawn) => drawn,
+                    Awaited::Left => return Ok(()),
+                };
+            }
+            // §18.7: `N` returns the cursor to now and briefly summarises what accumulated,
+            // through the canonical `changes` engine rather than a second comparison.
+            Effect::ReturnToNow => {
+                let now = Timestamp::now();
+                match cursor.return_to_now(now) {
+                    Ok(changed) if changed.is_empty() => view.say("returned to now"),
+                    Ok(changed) => view.show_detail(returned_frame(&changed, columns)),
+                    Err(error) => view.say(error.message().to_owned()),
+                }
+                record = match temporal_redraw(
+                    ctx,
+                    session,
+                    &mut view,
+                    &cursor,
+                    &center,
+                    &request,
+                    record,
+                    columns,
+                    &keymap,
+                    &mut waiting,
+                )
+                .await
+                {
+                    Awaited::Done(drawn) => drawn,
+                    Awaited::Left => return Ok(()),
+                };
+            }
+            Effect::ChangesToNow => match cursor.changes_to_now(Timestamp::now()) {
+                Ok(changed) if changed.is_empty() => {
+                    view.say("nothing the ledger holds changed between the cursor and now");
+                }
+                Ok(changed) => view.show_detail(returned_frame(&changed, columns)),
+                Err(error) => view.say(error.message().to_owned()),
+            },
+            // §19.1: `T` opens the full-screen timeline at the cursor. The view that draws it is
+            // the shell's timeline view, which is not this one; until it takes this terminal the
+            // honest answer is the command that opens it (§2.17).
+            Effect::OpenTimeline => view.say(match cursor.at() {
+                Some(at) => format!("`timeline --view --at {at}` opens the timeline at the cursor"),
+                None => "`timeline --view` opens the timeline at this place".to_owned(),
+            }),
         }
     }
+}
+
+/// The places around `center` this session knows, as the stepper's horizon (§18.4, §11.3).
+fn neighbours_of(session: &SpatialSessionState, center: &SpatialId) -> Vec<SpatialId> {
+    session
+        .index()
+        .get(center)
+        .map(|entry| {
+            entry
+                .edges()
+                .iter()
+                .filter_map(|edge| edge.other_end(center).cloned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// §18.7's summary as an overlay the next key press dismisses.
+fn returned_frame(
+    changed: &[ono_temporal_query::changes::TemporalChange],
+    width: usize,
+) -> Vec<String> {
+    let mut lines = crate::spatial::TemporalCursor::summary_lines(changed, width.saturating_sub(2));
+    lines.push(String::new());
+    lines.push("  any key returns to the map".to_owned());
+    lines
+}
+
+/// Puts the cursor's marker and, where it is standing in one, its gap on the view (§18.2, §18.6).
+fn draw_temporal(
+    view: &mut MapView,
+    cursor: &crate::spatial::TemporalCursor,
+    world: Option<&crate::spatial::HistoricalWorld>,
+    width: usize,
+) {
+    view.set_temporal(cursor.marker());
+    let gap = world
+        .and_then(|world| cursor.gap_in(world))
+        .map(|gap| crate::spatial::TemporalCursor::gap_frame(gap, width.saturating_sub(2)));
+    view.set_gap(gap);
+}
+
+/// Redraws at the cursor's instant: the historical world where it is in the past, the providers
+/// where it is in the present (v0.5 §18.1, §14.2).
+///
+/// One view, two worlds. A paused or rewound view never asks a provider what is there *now* —
+/// that is §55.2's prohibited "today's graph with an old timestamp" — and a view following the
+/// present never reconstructs.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the redraw needs everything the loop holds; the alternative is a struct that exists only to be destructured"
+)]
+async fn temporal_redraw(
+    ctx: &Invocation<'_>,
+    session: &mut SpatialSessionState,
+    view: &mut MapView,
+    cursor: &crate::spatial::TemporalCursor,
+    center: &SpatialId,
+    request: &MapRequest,
+    previous: ono_value::RecordValue,
+    columns: usize,
+    keymap: &Keymap,
+    waiting: &mut VecDeque<Key>,
+) -> Awaited<ono_value::RecordValue> {
+    if cursor.is_historical() {
+        let drawn = match cursor.world() {
+            Ok(Some(world)) => {
+                let budget = session.preferences().map_node_budget;
+                let map = world.map(center, request, budget);
+                match crate::spatial::map::historical_record_of(&world, &map) {
+                    Ok(record) => {
+                        draw_temporal(view, cursor, Some(&world), columns);
+                        view.redraw(&record, crate::sink::map_charset());
+                        return Awaited::Done(record);
+                    }
+                    Err(error) => {
+                        view.say(error.message().to_owned());
+                        previous
+                    }
+                }
+            }
+            Ok(None) => previous,
+            Err(error) => {
+                view.say(error.message().to_owned());
+                previous
+            }
+        };
+        draw_temporal(view, cursor, None, columns);
+        return Awaited::Done(drawn);
+    }
+    draw_temporal(view, cursor, None, columns);
+    redraw(
+        ctx,
+        session,
+        view,
+        center,
+        request,
+        previous,
+        Ui {
+            charset: crate::sink::map_charset(),
+            keymap,
+            waiting,
+        },
+    )
+    .await
 }
 
 /// Projects the map again and hands it to the view, keeping the old drawing where the providers

@@ -106,6 +106,28 @@ fields:
     type: int
     nullable: true
     doc: The numeric user id the far side reports, where it reports one. Context, not authority.
+  clock_id:
+    type: string
+    nullable: true
+    doc: >-
+      The clock identity the peer named for itself at the handshake (v0.5 §24.2, §25.5). Self-
+      reported context exactly as `runtime_user` is: it says which clock domain a remote event's
+      readings belong to, never that the peer's clock is right. Null where the far side named
+      none, which is every `ssh` and `local` link and every peer that predates v0.5.
+  clock_offset:
+    type: duration
+    nullable: true
+    doc: >-
+      How far the peer's wall clock was from this host's at the handshake, positive when the peer
+      reads later (v0.5 §24.2). Null where either side did not say — an unmeasured offset is
+      unknown rather than a measured zero (v0.2 §35.3).
+  clock_uncertainty:
+    type: duration
+    nullable: true
+    doc: >-
+      The bound the peer stated on its own reading (v0.5 §24.4). §24.3 forbids a false global
+      total order, and this is the figure a renderer warns from when it exceeds
+      `temporal.remote.clock_uncertainty_warn`. Null is unmeasured, not zero.
   runtime_elevated:
     type: bool
     nullable: true

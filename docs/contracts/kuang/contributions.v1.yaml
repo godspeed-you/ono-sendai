@@ -291,7 +291,7 @@ view:
     doc: >-
       A view submits a tree of these, never text and never escape sequences. Spec §31.27's
       conceptual component list, complete.
-    values: [Text, Table, Tree, Graph, KeyValue, LogStream, Sparkline, Gauge, Tabs, Split, CommandPalette, ObjectPicker, StatusLine]
+    values: [Text, Table, Tree, Graph, KeyValue, LogStream, Sparkline, Gauge, Tabs, Split, CommandPalette, ObjectPicker, StatusLine, Timeline]
   lifecycle:
     states: [created, mounted, focused, background, closed]
     doc: "Spec §31.28's `created -> mounted -> focused <-> background -> closed`."
@@ -306,6 +306,55 @@ view:
   rules:
     - "When stdout is redirected the view never mounts and the command produces its declared `fallback` (spec §31.28, §50). This is a determinism requirement, not a courtesy."
     - "Spec §31.2 makes it a non-goal for extensions to \"inject arbitrary terminal escape sequences directly\"; there is no host call that would allow it."
+
+# ---------------------------------------------------------------------------------------------
+# Temporal sources — v0.5 §37.2 and §37.5. A package may expose the past of an external system:
+# a metrics backend, a tracing store, a container runtime archive, a filesystem snapshot manager,
+# a security audit log, an application event store. §37.5 requires it to "map data into canonical
+# Ono objects/events and expose coverage/provenance", and both halves are declared here, on disk,
+# before the runtime runs.
+#
+# §37.1 draws the boundary the whole section sits inside: KUANG/11 may extend history, and Ono
+# core keeps authority over identity, evidence classes, causal labels, capability policy and
+# rendering truth. So a contributed source names canonical event kinds and a canonical schema; it
+# does not invent either, and the host attributes everything it produces to the package.
+# ---------------------------------------------------------------------------------------------
+temporal_source:
+  capability: temporal.contribute.events
+  fields:
+    id: {type: string, required: true, doc: "`<package.id>.temporal-source.<kebab-name>`."}
+    summary: {type: string, required: true, doc: "One line, for `get temporal-source` and `help`."}
+    schema: {type: string, required: true, doc: "The schema id of the objects the source maps its data into. A source that cannot name one has not mapped anything into canonical Ono objects, which is what §37.5 requires of it."}
+    kinds: {type: list<string>, nullable: true, doc: "The canonical event kinds it produces, from the closed list of `docs/contracts/temporal/events.yaml`. A package refines a kind through an event's `subtype`; the top-level kind is always one Ono owns (§6.1, §37.1). Each kind must also be inside the granted `kinds` scope of `temporal.contribute.events`, or the event is refused at the broker."}
+    answer: {type: "enum<bounded|unbounded>", nullable: true, doc: "Whether the answer ends by itself. Default `bounded`. §37.5's historical query provider is `bounded` and is collected; a temporal event source is `unbounded` and becomes a live stream. The host must know which before the first record, and it cannot find out by reading (ADR-0588)."}
+    coverage: {type: string, required: true, doc: "What the source covers and what it does not, in prose the package stands behind (§8, §37.5). It becomes the coverage record a reader sees beside the answer; a source that claims complete coverage it does not have is what §7.4 and §55.5 exist against."}
+    retained_history: {type: duration, nullable: true, doc: "How far back the external system keeps material, where the package states a bound. Null means the package does not say, which is not the same as `forever` (§21.1)."}
+  rules:
+    - "The id is inside the package's namespace and never claims `ono.*` (§31.5)."
+    - "Every kind resolves to an event kind of `docs/contracts/temporal/events.yaml`. An unknown kind is `package.invalid` at registration, never a silently dropped line."
+    - "The host sets the source identity: contributed evidence is `kuang:<package-id>/<provider-id>` (§7.1), and a package cannot present itself as a native source (§37.3)."
+    - "A source never advertises `exhaustive_events`. §21.5 reserves that claim for a source whose sequence continuity actually supports an absence claim, and nothing about a package's own report can establish it for an external system."
+
+# ---------------------------------------------------------------------------------------------
+# Causal rules — v0.5 §37.4 and §15.8. A rule is a claim about why, and the registry is the only
+# place causal language comes from: §15.8 says "no renderer may create causal language outside
+# this registry", and `docs/contracts/temporal/causality.yaml` is that registry for the built-in
+# rules. This section is the shape a package adds one in.
+# ---------------------------------------------------------------------------------------------
+causal_rule:
+  capability: temporal.contribute.causality
+  fields:
+    rule_id: {type: string, required: true, doc: "The rule id, namespaced to the publisher — `dev.example.packet-eye.retransmit-to-drop`. §37.4: third-party causal rules MUST be namespaced and MUST identify their source."}
+    relation: {type: string, required: true, doc: "The relation class it emits, from the five of `docs/contracts/temporal/causality.yaml` → `relation_classes`."}
+    strength: {type: string, required: true, doc: "The evidence strength its links carry, from `docs/contracts/temporal/evidence.yaml`. Capped at `contributed_rules.strength_ceiling` of `causality.yaml` — `asserted` — unless the host contract explicitly trusts this package as authoritative for a domain (§37.4). The host lowers a declared strength to the ceiling and never raises one (§7.2)."}
+    summary: {type: string, required: true, doc: "One line, what the rule claims and why."}
+    inputs: {type: list<string>, nullable: true, doc: "The canonical event kinds the rule reads."}
+    identity_constraints: {type: string, required: true, doc: "What must be *equal* for the rule to fire, in prose (§15.8). §15.2: temporal proximity is insufficient. A rule whose only constraint is a time window is a correlation rule, and the host holds it to that."}
+  rules:
+    - "`ono.*` is reserved to the project, so a contributed rule id in that namespace is `package.invalid` (§31.5, §37.4)."
+    - "A plugin's correlation stays correlation in core rendering: a `correlated_with` link is drawn with the non-directional connector and the words §15.6 forbids for a non-causal class are refused, whoever contributed it (§15.5, §45.3)."
+    - "The strength of a link is the weakest evidence behind it, then the ceiling (§7.2, §37.4). No path raises one."
+    - "A contributed rule identifies its source in every link it emits: `source` is `kuang:<package-id>/<provider-id>`, set by the host."
 
 # ---------------------------------------------------------------------------------------------
 # Analyses as pipeline stages — spec §31.29. The most natural KUANG/11 program is a typed

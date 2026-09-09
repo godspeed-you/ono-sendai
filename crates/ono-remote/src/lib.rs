@@ -37,6 +37,7 @@ mod client;
 mod identity;
 mod listener;
 mod retag;
+mod temporal;
 mod tls;
 mod transport;
 
@@ -50,6 +51,7 @@ pub use client::{RemoteLink, RemoteProvider};
 pub use identity::PeerIdentity;
 pub use listener::{ConnectionRegistry, ListeningAgent};
 pub use retag::retag_value;
+pub use temporal::{RemoteIngest, clock_identity};
 pub use tls::{
     DEFAULT_LISTEN_ADDRESS, DEFAULT_PORT, TlsListener, TlsTransport, connect as tls_connect,
     split_address,

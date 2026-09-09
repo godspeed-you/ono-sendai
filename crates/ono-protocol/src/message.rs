@@ -48,6 +48,9 @@ pub struct RemoteQuery {
     selectors: Vec<Selector>,
     options: Vec<(String, Value)>,
     limit: Option<usize>,
+    /// The interval a historical request is asked over (v0.5 §24.5). `None` is the question
+    /// every earlier build asked — what is true now — so an older frame decodes unchanged.
+    window: Option<ono_provider_api::TimeWindow>,
 }
 
 impl RemoteQuery {
@@ -81,6 +84,29 @@ impl RemoteQuery {
         self
     }
 
+    /// Asks the question about `window` rather than about now (v0.5 §24.5).
+    ///
+    /// The remote answers it through the temporal capabilities it declared at negotiation; a
+    /// peer that declared none refuses, which is what §24.5 requires instead of letting current
+    /// state stand in for past state.
+    #[must_use]
+    pub const fn over(mut self, window: ono_provider_api::TimeWindow) -> Self {
+        self.window = Some(window);
+        self
+    }
+
+    /// The interval the request is asked over, or `None` for the present.
+    #[must_use]
+    pub const fn window(&self) -> Option<ono_provider_api::TimeWindow> {
+        self.window
+    }
+
+    /// Whether the request is about the past at all (§24.5, §4.7).
+    #[must_use]
+    pub const fn is_historical(&self) -> bool {
+        self.window.is_some()
+    }
+
     /// The request a local [`Query`] describes: target, selectors, every option, and the limit.
     ///
     /// Nothing is dropped on the way across, because an option that silently went missing —
@@ -94,6 +120,7 @@ impl RemoteQuery {
             selectors: query.selectors().to_vec(),
             options: query.options().to_vec(),
             limit: query.max(),
+            window: None,
         }
     }
 
@@ -163,6 +190,9 @@ pub struct ActRequest {
     arguments: Vec<(String, Value)>,
     dry_run: bool,
     source: Option<String>,
+    /// The historical instant the calling session was standing at when it asked (v0.5 §4.7,
+    /// §30.6). `None` is the present, which is what every earlier build meant.
+    attempted_from: Option<jiff::Timestamp>,
 }
 
 impl ActRequest {
@@ -176,6 +206,7 @@ impl ActRequest {
             arguments: Vec::new(),
             dry_run: false,
             source: None,
+            attempted_from: None,
         }
     }
 
@@ -191,6 +222,25 @@ impl ActRequest {
     pub fn as_dry_run(mut self) -> Self {
         self.dry_run = true;
         self
+    }
+
+    /// Records that the calling session was standing at `at` in the past when it asked
+    /// (v0.5 §4.7, §30.6).
+    ///
+    /// The caller declares it because only the caller knows it, and the agent refuses on it
+    /// because §30.6 puts the decision at the boundary that owns the machine being changed. A
+    /// caller that lies by omission is refused by its own local guard first; a caller that tells
+    /// the truth is refused twice, which is the point.
+    #[must_use]
+    pub const fn attempted_at(mut self, at: jiff::Timestamp) -> Self {
+        self.attempted_from = Some(at);
+        self
+    }
+
+    /// The historical instant the request was made from, or `None` for the present.
+    #[must_use]
+    pub const fn attempted_from(&self) -> Option<jiff::Timestamp> {
+        self.attempted_from
     }
 
     /// The request a local [`Action`](ono_provider_api::Action) describes, argument for
@@ -611,7 +661,54 @@ fn query_to_json(query: &RemoteQuery) -> Json {
                 .and_then(|limit| u64::try_from(limit).ok())
                 .map_or(Json::Null, Json::from),
         ),
+        ("window", window_to_json(query.window.as_ref())),
     ])
+}
+
+/// A historical window as the wire writes it: two nullable RFC 3339 instants, or `null` for a
+/// request about the present (§24.5).
+fn window_to_json(window: Option<&ono_provider_api::TimeWindow>) -> Json {
+    let Some(window) = window else {
+        return Json::Null;
+    };
+    object([
+        (
+            "from",
+            window
+                .from
+                .map_or(Json::Null, |at| Json::String(at.to_string())),
+        ),
+        (
+            "until",
+            window
+                .until
+                .map_or(Json::Null, |at| Json::String(at.to_string())),
+        ),
+    ])
+}
+
+/// Reads a window back, refusing an instant that is not an instant.
+fn window_from_json(
+    kind: FrameKind,
+    json: Option<&Json>,
+) -> Result<Option<ono_provider_api::TimeWindow>, ProtocolError> {
+    let Some(json) = json.filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    let instant = |name: &str| -> Result<Option<jiff::Timestamp>, ProtocolError> {
+        match json.get(name).filter(|value| !value.is_null()) {
+            None => Ok(None),
+            Some(Json::String(text)) => text
+                .parse::<jiff::Timestamp>()
+                .map(Some)
+                .map_err(|_| bad(kind, "a historical window carries RFC 3339 instants")),
+            Some(_) => Err(bad(kind, "a historical window carries RFC 3339 instants")),
+        }
+    };
+    Ok(Some(ono_provider_api::TimeWindow {
+        from: instant("from")?,
+        until: instant("until")?,
+    }))
 }
 
 fn query_from_json(
@@ -636,6 +733,7 @@ fn query_from_json(
     if let Some(limit) = json.get("limit").and_then(Json::as_u64) {
         query = query.limit(usize::try_from(limit).unwrap_or(usize::MAX));
     }
+    query.window = window_from_json(kind, json.get("window"))?;
     Ok(query)
 }
 
@@ -684,6 +782,12 @@ fn act_to_json(request: &ActRequest) -> Json {
                 .as_ref()
                 .map_or(Json::Null, |source| Json::String(source.clone())),
         ),
+        (
+            "attempted_from",
+            request
+                .attempted_from
+                .map_or(Json::Null, |at| Json::String(at.to_string())),
+        ),
     ])
 }
 
@@ -707,6 +811,16 @@ fn act_from_json(
         request = request.as_dry_run();
     }
     request.source = json.get("source").and_then(Json::as_str).map(str::to_owned);
+    request.attempted_from = match json.get("attempted_from").filter(|v| !v.is_null()) {
+        None => None,
+        Some(Json::String(text)) => Some(
+            text.parse::<jiff::Timestamp>()
+                .map_err(|_| bad(kind, "a historical coordinate is an RFC 3339 instant"))?,
+        ),
+        Some(_) => {
+            return Err(bad(kind, "a historical coordinate is an RFC 3339 instant"));
+        }
+    };
     Ok(request)
 }
 
@@ -722,6 +836,15 @@ fn event_to_json(event: &ObjectEvent) -> Json {
             event.changed_fields().map_or(Json::Null, |fields| {
                 Json::Array(fields.iter().map(|f| Json::String(f.clone())).collect())
             }),
+        ),
+        // §21.6 and v0.5 §26.4: the transaction the source named is what lets a causal chain
+        // cross a host boundary at all. Dropping it in transit would leave proximity as the only
+        // thing left to join on, which §26.4 makes correlation at most.
+        (
+            "cause",
+            event
+                .cause()
+                .map_or(Json::Null, |token| Json::String(token.to_owned())),
         ),
         ("record", record),
     ])
@@ -756,8 +879,12 @@ fn event_from_json(
         Some(name) if name == EventKind::Removed.as_str() => ObjectEvent::removed(record),
         _ => return Err(bad(kind, "an object event says what happened")),
     };
-    Ok(match json.get("sequence").and_then(Json::as_u64) {
+    let event = match json.get("sequence").and_then(Json::as_u64) {
         Some(sequence) => event.with_sequence(sequence),
+        None => event,
+    };
+    Ok(match json.get("cause").and_then(Json::as_str) {
+        Some(token) => event.with_cause(token),
         None => event,
     })
 }

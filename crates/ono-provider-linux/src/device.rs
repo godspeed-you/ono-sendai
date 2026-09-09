@@ -17,7 +17,9 @@ use std::sync::Arc;
 
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, StreamSink, ValueStream};
-use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Risk, Selector};
+use ono_provider_api::{
+    Availability, Capability, ObjectRef, Provider, Query, Risk, Selector, TemporalCapabilities,
+};
 use ono_value::{ByteSize, ErrorValue, RecordValue, Schema, Value};
 
 use crate::common::{io_error, provenance};
@@ -249,6 +251,24 @@ impl Provider for DeviceProvider {
 
     fn capabilities(&self) -> Vec<Capability> {
         vec![Capability::new("device.list", Risk::Read)]
+    }
+
+    fn temporal(&self) -> TemporalCapabilities {
+        // sysfs and udev's database describe the devices attached now. udev broadcasts hotplug
+        // events on a netlink socket and this provider does not join it, so `live_events` is
+        // false: a capability the kernel offers and the code does not use is not a capability
+        // (§21.1). A device that was unplugged left nothing under `/sys` to read, so there is no
+        // history either — but a listing is a complete list at the instant it was read, which
+        // checkpoints (§21.7).
+        TemporalCapabilities {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+            retained_history: None,
+        }
     }
 
     fn availability(&self) -> Availability {

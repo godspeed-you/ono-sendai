@@ -55,6 +55,28 @@ pub struct Surface {
     /// The token its records give for a `provider` identity field, when its target is one two
     /// providers can claim (ADR-0559).
     pub identity_token: Option<&'static str>,
+    /// What it may say about time, as its `temporal:` block declares it (v0.5 §21.1).
+    pub temporal: TemporalClaim,
+}
+
+/// The six boolean capabilities of v0.5 §21.1, as a provider declaration states them.
+///
+/// `retained_history` is deliberately absent: it is a duration rather than a claim, and a
+/// source's effective retention is its configuration's rather than its contract's — the same
+/// exclusion `xtask/src/temporal.rs` makes when it holds `sources.yaml` against these blocks.
+pub struct TemporalClaim {
+    /// It can report its objects as they are now (§21.2).
+    pub current_snapshot: bool,
+    /// Its source pushes changes rather than being polled (§21.3).
+    pub live_events: bool,
+    /// It can answer directly about the past (§21.4).
+    pub historical_query: bool,
+    /// Its sequence continuity can support an absence claim (§21.5).
+    pub exhaustive_events: bool,
+    /// It carries transaction identifiers a causal link can join on (§21.6).
+    pub causal_tokens: bool,
+    /// Its snapshot serialises into the temporal store as itself (§21.7).
+    pub checkpointable: bool,
 }
 
 /// One field, as `docs/contracts/schemas/*.v1.yaml` fixes it.
@@ -250,6 +272,35 @@ pub async fn assert_surface(surface: &Surface) {
     assert_eq!(
         emitted, promised,
         "`{}` must carry the schemas its declaration promises",
+        surface.provider
+    );
+
+    // v0.5 §21.1 makes temporal capabilities inspectable, and §36.4 fails the gate when a
+    // provider advertises one its contract metadata does not carry. The reverse direction
+    // matters just as much and nothing else checks it: a provider that says nothing where its
+    // contract claims something makes the source capability matrix describe a tree that is not
+    // this one, and `sources.yaml` is compared against the contracts rather than against the
+    // code (ADR-0718).
+    let advertised = provider.temporal();
+    let claimed = &surface.temporal;
+    assert_eq!(
+        [
+            advertised.current_snapshot,
+            advertised.live_events,
+            advertised.historical_query,
+            advertised.exhaustive_events,
+            advertised.causal_tokens,
+            advertised.checkpointable,
+        ],
+        [
+            claimed.current_snapshot,
+            claimed.live_events,
+            claimed.historical_query,
+            claimed.exhaustive_events,
+            claimed.causal_tokens,
+            claimed.checkpointable,
+        ],
+        "`{}` must claim about time exactly what its `temporal:` block declares, in the order          current_snapshot, live_events, historical_query, exhaustive_events, causal_tokens,          checkpointable (v0.5 §21.1, §36.4)",
         surface.provider
     );
 }

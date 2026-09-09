@@ -12,7 +12,9 @@
 //! it is not a mock of a layer this crate wrote.
 
 use std::fmt;
+use std::pin::Pin;
 
+use futures::Stream;
 use ono_core::ErrorCode;
 use ono_value::ErrorValue;
 
@@ -149,6 +151,162 @@ impl fmt::Display for JobRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.path)
     }
+}
+
+/// One signal `org.freedesktop.systemd1` broadcasts to a client that has called
+/// `Manager.Subscribe` (spec v0.5 §22.2).
+///
+/// systemd emits these only while at least one client is subscribed, which is why the
+/// subscription is a call and not merely a match rule. Every variant names the unit it is about,
+/// because a signal a consumer cannot attribute to an object is a wake-up rather than an event.
+///
+/// The two job variants are what makes §15.2's strongest built-in rule possible: `JobNew` says
+/// which job is in flight for which unit, `JobRemoved` says how it ended, and a unit transition
+/// observed between them carries that job's identity rather than a coincidence of timing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnitSignal {
+    /// `Manager.JobNew(u id, o job, s unit)` — a job was queued for a unit.
+    JobNew {
+        /// The job systemd created.
+        job: JobRef,
+        /// The unit it is for.
+        unit: String,
+    },
+    /// `Manager.JobRemoved(u id, o job, s unit, s result)` — a job left the queue.
+    JobRemoved {
+        /// The job that ended.
+        job: JobRef,
+        /// The unit it was for.
+        unit: String,
+        /// systemd's own word for how it ended: `done`, `canceled`, `timeout`, `failed`,
+        /// `dependency`, `skipped`. `None` where systemd sent no result.
+        result: Option<String>,
+    },
+    /// `Manager.UnitNew(s unit, o path)` — a unit was loaded into the manager's memory.
+    UnitNew {
+        /// The unit name, suffix included.
+        unit: String,
+        /// Its D-Bus object path, so the properties can be read without a `LoadUnit`.
+        path: Option<String>,
+    },
+    /// `Manager.UnitRemoved(s unit, o path)` — a unit was unloaded.
+    UnitRemoved {
+        /// The unit name, suffix included.
+        unit: String,
+        /// Its D-Bus object path, as systemd last held it.
+        path: Option<String>,
+    },
+    /// `org.freedesktop.DBus.Properties.PropertiesChanged` on a unit's object path.
+    ///
+    /// systemd sends the changed property names rather than every value, and it coalesces, so
+    /// the honest response is to read the unit again and compare — which is what the provider
+    /// does, keeping the instant systemd itself recorded the transition at as the event's time.
+    UnitChanged {
+        /// The unit name, recovered from the object path the signal arrived on.
+        unit: String,
+        /// That object path.
+        path: Option<String>,
+    },
+}
+
+impl UnitSignal {
+    /// The unit this signal is about.
+    #[must_use]
+    pub fn unit(&self) -> &str {
+        match self {
+            UnitSignal::JobNew { unit, .. }
+            | UnitSignal::JobRemoved { unit, .. }
+            | UnitSignal::UnitNew { unit, .. }
+            | UnitSignal::UnitRemoved { unit, .. }
+            | UnitSignal::UnitChanged { unit, .. } => unit,
+        }
+    }
+
+    /// The unit's object path, where the signal carried one.
+    #[must_use]
+    pub fn path(&self) -> Option<&str> {
+        match self {
+            UnitSignal::UnitNew { path, .. }
+            | UnitSignal::UnitRemoved { path, .. }
+            | UnitSignal::UnitChanged { path, .. } => path.as_deref(),
+            UnitSignal::JobNew { .. } | UnitSignal::JobRemoved { .. } => None,
+        }
+    }
+}
+
+/// A subscription's signals, in the order systemd sent them.
+pub type UnitSignals = Pin<Box<dyn Stream<Item = UnitSignal> + Send>>;
+
+/// The unit name systemd encoded into a D-Bus object path.
+///
+/// `sd_bus_path_encode(3)` is the encoding: every byte outside `[A-Za-z0-9]` becomes `_` followed
+/// by two uppercase hex digits, so `nginx.service` is `nginx_2eservice` under
+/// `/org/freedesktop/systemd1/unit/`. Decoding it is reading a structured identifier systemd
+/// constructed, not parsing human output (spec §50): `PropertiesChanged` arrives on the path and
+/// names no unit, and a consumer that could not recover the name would have to guess which object
+/// changed.
+///
+/// `None` for a path that is not a unit path, or whose escaping is malformed — a name is never
+/// invented from a path that does not carry one (spec §35.3).
+///
+/// ```
+/// use ono_provider_systemd::unit_name_from_path;
+///
+/// assert_eq!(
+///     unit_name_from_path("/org/freedesktop/systemd1/unit/nginx_2eservice").as_deref(),
+///     Some("nginx.service")
+/// );
+/// assert_eq!(unit_name_from_path("/org/freedesktop/systemd1/job/4821"), None);
+/// ```
+#[must_use]
+pub fn unit_name_from_path(path: &str) -> Option<String> {
+    let escaped = path.strip_prefix("/org/freedesktop/systemd1/unit/")?;
+    if escaped.is_empty() || escaped.contains('/') {
+        return None;
+    }
+    let mut name = String::with_capacity(escaped.len());
+    let mut bytes = escaped.bytes();
+    while let Some(byte) = bytes.next() {
+        if byte != b'_' {
+            if !byte.is_ascii_alphanumeric() {
+                return None;
+            }
+            name.push(char::from(byte));
+            continue;
+        }
+        let high = bytes.next()?;
+        let low = bytes.next()?;
+        let value = (char::from(high).to_digit(16)? * 16 + char::from(low).to_digit(16)?) as u8;
+        name.push(char::from(value));
+    }
+    Some(name)
+}
+
+/// The D-Bus object path systemd gives a unit of this name.
+///
+/// The inverse of [`unit_name_from_path`], and the same `sd_bus_path_encode(3)` escaping.
+/// A consumer needs it where a signal names a unit and carries no path — `JobRemoved` does —
+/// because asking `Manager.LoadUnit` for the path instead *loads* the unit, and a manager that
+/// garbage-collects the unit again then announces both, which turns a reader into a writer.
+///
+/// ```
+/// use ono_provider_systemd::{unit_name_from_path, unit_object_path};
+///
+/// let path = unit_object_path("dbus-broker.service");
+/// assert_eq!(path, "/org/freedesktop/systemd1/unit/dbus_2dbroker_2eservice");
+/// assert_eq!(unit_name_from_path(&path).as_deref(), Some("dbus-broker.service"));
+/// ```
+#[must_use]
+pub fn unit_object_path(unit: &str) -> String {
+    let mut path = String::from("/org/freedesktop/systemd1/unit/");
+    for byte in unit.bytes() {
+        if byte.is_ascii_alphanumeric() {
+            path.push(char::from(byte));
+        } else {
+            path.push_str(&format!("_{byte:02x}"));
+        }
+    }
+    path
 }
 
 /// A job the `Manager` interface can be asked to queue for a unit.
@@ -336,6 +494,27 @@ pub trait SystemdBus: Send + Sync + fmt::Debug {
     /// [`BusError::PermissionDenied`] when polkit refuses, [`BusError::NoSuchUnit`] when the unit
     /// is unknown, [`BusError::Refused`] when systemd declines for a reason of its own.
     async fn queue_job(&self, unit: &str, job: JobKind) -> Result<JobRef, BusError>;
+
+    /// Calls `Manager.Subscribe` and answers with the signals that follow (spec v0.5 §22.2).
+    ///
+    /// systemd broadcasts `JobNew`, `JobRemoved`, `UnitNew`, `UnitRemoved` and per-unit
+    /// `PropertiesChanged` only while a client is subscribed, so the call is what turns the
+    /// service manager from a thing that is polled into a thing that pushes. §22.2 asks the
+    /// provider to "contribute live unit state transitions and job identity where available",
+    /// and both halves of that sentence arrive on this stream.
+    ///
+    /// The default refuses, so a bus that has no signal surface — and every test double that
+    /// does not need one — keeps compiling and claims nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`BusError::Unavailable`] when no subscription can be established. A provider that cannot
+    /// subscribe falls back to being polled rather than failing (spec §18.2).
+    async fn subscribe_units(&self) -> Result<UnitSignals, BusError> {
+        Err(BusError::Unavailable(
+            "this systemd connection offers no signal subscription".to_owned(),
+        ))
+    }
 
     /// Calls `EnableUnitFiles` or `DisableUnitFiles`, and reports whether systemd listed any
     /// change. An empty change list is systemd saying the unit files were already that way.

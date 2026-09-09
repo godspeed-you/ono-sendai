@@ -261,6 +261,9 @@ impl SessionLink {
             runtime_user: connection.and_then(LinkConnection::runtime_user),
             runtime_uid: connection.and_then(LinkConnection::runtime_uid),
             runtime_elevated: connection.and_then(LinkConnection::runtime_elevated),
+            clock_id: connection.and_then(LinkConnection::peer_clock_id),
+            clock_offset: connection.and_then(LinkConnection::peer_clock_offset),
+            clock_uncertainty: connection.and_then(LinkConnection::peer_clock_uncertainty),
         }
     }
 }
@@ -394,6 +397,34 @@ impl LinkConnection {
     pub fn runtime_uid(&self) -> Option<u32> {
         self.agent_link()
             .and_then(|link| link.negotiated().peer().identity().uid())
+    }
+
+    /// The clock identity the peer named for itself at the handshake (v0.5 §24.2, §25.5).
+    #[must_use]
+    pub fn peer_clock_id(&self) -> Option<String> {
+        self.agent_link()
+            .and_then(|link| link.negotiated().peer().clock())
+            .map(|clock| clock.clock_id().to_owned())
+    }
+
+    /// How far the peer's wall clock was from this host's at the handshake (§24.2).
+    ///
+    /// Measured against the clock now rather than kept from the handshake, because the figure a
+    /// reader wants is how far apart the two hosts are while they are reading it. `None` where
+    /// the peer stated no reading — an unmeasured offset is unknown, never zero (§35.3).
+    #[must_use]
+    pub fn peer_clock_offset(&self) -> Option<ono_value::Duration> {
+        self.agent_link()
+            .and_then(|link| link.negotiated().peer().clock())
+            .and_then(|clock| clock.offset_from(jiff::Timestamp::now()))
+    }
+
+    /// The bound the peer stated on its own reading, where it stated one (§24.4).
+    #[must_use]
+    pub fn peer_clock_uncertainty(&self) -> Option<ono_value::Duration> {
+        self.agent_link()
+            .and_then(|link| link.negotiated().peer().clock())
+            .and_then(ono_protocol::PeerClock::uncertainty)
     }
 
     /// Whether the far side reports it is elevated.

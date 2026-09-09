@@ -20,7 +20,9 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use ono_provider_systemd::{BusError, JobKind, JobRef, SystemdBus, UnitListing, UnitProperties};
+use ono_provider_systemd::{
+    BusError, JobKind, JobRef, SystemdBus, UnitListing, UnitProperties, UnitSignal, UnitSignals,
+};
 
 /// The microsecond timestamp `nginx.service` last changed state at, fixed so the assertion on
 /// `since` is a value and not a tolerance.
@@ -57,6 +59,13 @@ pub struct RecordedSystemd {
     /// The number of jobs queued so far. systemd's job ids ascend, and so do these, starting at
     /// [`FIRST_JOB_ID`], so a second job in one test is a different job.
     queued: Mutex<u32>,
+    /// The signals a subscribed client is given, and the end a test announces them from.
+    ///
+    /// A recorded systemd that never announces anything would let a subscription look correct
+    /// while never carrying an event, so the fixture hands the test the announcing end and
+    /// keeps the receiving one for the one client that subscribes.
+    announcements: tokio::sync::mpsc::Sender<UnitSignal>,
+    subscription: Mutex<Option<tokio::sync::mpsc::Receiver<UnitSignal>>>,
 }
 
 impl RecordedSystemd {
@@ -77,18 +86,35 @@ impl RecordedSystemd {
             version: Ok("257 (257.5-1)".to_owned()),
             authorised: true,
             queued: Mutex::new(0),
+            ..Self::silent()
         }
     }
 
     /// A machine with no service manager: the probe fails and nothing else is ever asked.
     pub fn absent(reason: &str) -> Self {
         Self {
+            version: Err(BusError::Unavailable(reason.to_owned())),
+            ..Self::silent()
+        }
+    }
+
+    /// The empty shell every constructor fills in: no units, no signals announced yet.
+    fn silent() -> Self {
+        let (announcements, subscription) = tokio::sync::mpsc::channel(16);
+        Self {
             units: Mutex::new(BTreeMap::new()),
             unit_files: Mutex::new(BTreeMap::new()),
-            version: Err(BusError::Unavailable(reason.to_owned())),
+            version: Ok("257 (257.5-1)".to_owned()),
             authorised: true,
             queued: Mutex::new(0),
+            announcements,
+            subscription: Mutex::new(Some(subscription)),
         }
+    }
+
+    /// The end a test announces signals from, as systemd would broadcast them.
+    pub fn announcer(&self) -> tokio::sync::mpsc::Sender<UnitSignal> {
+        self.announcements.clone()
     }
 
     /// The same service manager, with one more unit file on disk that is not loaded.
@@ -123,6 +149,26 @@ impl RecordedSystemd {
             authorised: false,
             ..Self::running()
         }
+    }
+
+    /// Moves a recorded unit the way a job in flight moves a real one.
+    ///
+    /// `at_usec` is what the manager would write into `StateChangeTimestamp`, so a test can
+    /// assert that an event's instant is systemd's own rather than the read-back's.
+    pub fn move_unit(&self, unit: &str, active: &str, sub: &str, at_usec: u64) {
+        self.with_unit(unit, |properties| {
+            properties.active_state = Some(active.to_owned());
+            properties.sub_state = Some(sub.to_owned());
+            properties.state_change_usec = Some(at_usec);
+        });
+    }
+
+    /// Forgets a recorded unit, the way `UnitRemoved` says the manager has.
+    pub fn forget_unit(&self, unit: &str) {
+        self.units
+            .lock()
+            .expect("the recorded units are not poisoned")
+            .remove(unit);
     }
 
     fn with_unit<T>(&self, unit: &str, act: impl FnOnce(&mut UnitProperties) -> T) -> Option<T> {
@@ -217,6 +263,23 @@ impl SystemdBus for RecordedSystemd {
         // A provider that took the stub at face value would report a service that is not
         // there.
         Ok(Some(not_found(unit)))
+    }
+
+    async fn subscribe_units(&self) -> Result<UnitSignals, BusError> {
+        let receiver = self
+            .subscription
+            .lock()
+            .expect("the recorded subscription is not poisoned")
+            .take()
+            .ok_or_else(|| {
+                BusError::Unavailable(
+                    "this recorded systemd has already given out its subscription".to_owned(),
+                )
+            })?;
+        Ok(Box::pin(futures::stream::unfold(
+            receiver,
+            |mut receiver| async move { receiver.recv().await.map(|signal| (signal, receiver)) },
+        )))
     }
 
     async fn queue_job(&self, unit: &str, job: JobKind) -> Result<JobRef, BusError> {

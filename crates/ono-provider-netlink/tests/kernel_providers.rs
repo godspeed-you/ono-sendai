@@ -267,3 +267,53 @@ async fn should_report_a_provider_that_cannot_answer_rather_than_an_empty_result
         }
     }
 }
+
+// --- what these sources may claim about time (v0.5 §21, §22.4) --------------------------------
+
+#[test]
+fn should_claim_live_events_only_for_the_tables_it_subscribes_to() {
+    // §21.1: a capability the kernel offers and the code does not use is not a capability.
+    // rtnetlink pushes link, address and route changes to a subscribed socket, and this crate
+    // subscribes to those groups and to no others.
+    assert!(
+        InterfaceProvider::new().temporal().live_events,
+        "§22.4: interface and address changes arrive on a subscribed socket"
+    );
+    assert!(RouteProvider::new().temporal().live_events);
+    assert!(
+        !NeighborProvider::new().temporal().live_events,
+        "the neighbour table is read, not subscribed to; `RTMGRP_NEIGH` is not joined"
+    );
+}
+
+#[test]
+fn should_not_claim_that_socket_history_is_exhaustive_because_netlink_is_used_elsewhere() {
+    // §22.4's last line, verbatim: "Socket connection history is not automatically exhaustive
+    // merely because netlink is used elsewhere." `sock_diag` dumps what exists at the instant of
+    // the dump; a connection that opened and closed between two dumps was never visible to it.
+    let claims = SocketProvider::new().temporal();
+    assert!(!claims.live_events);
+    assert!(!claims.exhaustive_events);
+    assert!(!claims.historical_query);
+    assert!(
+        claims.current_snapshot && claims.checkpointable,
+        "a dump is a complete list at the instant it was read, which is what a checkpoint is"
+    );
+}
+
+#[test]
+fn should_not_claim_exhaustive_events_for_a_socket_that_can_overrun() {
+    // §21.5: `exhaustive_events` means the sequence can carry an absence claim. A netlink socket
+    // whose receive buffer overruns is told `ENOBUFS` and the messages are gone, not replayed.
+    for claims in [
+        InterfaceProvider::new().temporal(),
+        RouteProvider::new().temporal(),
+    ] {
+        assert!(!claims.exhaustive_events);
+        assert!(
+            !claims.historical_query,
+            "a kernel table holds what is true now; a route deleted an hour ago left nothing"
+        );
+        assert!(!claims.causal_tokens, "rtnetlink names no transaction");
+    }
+}

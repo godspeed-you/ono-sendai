@@ -808,3 +808,22 @@ async fn should_report_the_propagation_peer_group_of_a_shared_mount() {
         "a private mount propagates nothing, so it is in no peer group"
     );
 }
+
+// --- what the mount table may claim about time (v0.5 §22.6) -----------------------------------
+
+#[test]
+fn should_offer_the_mount_table_as_a_checkpoint_and_not_as_history() {
+    // §22.6: "Mount state MAY be checkpointed and changes derived from authoritative mount
+    // snapshots or source-native events." `/proc/self/mountinfo` is such a snapshot — the
+    // kernel's complete list at the instant it was read — so it checkpoints; it answers nothing
+    // about a mount that is gone, so it claims no history, and this provider does not subscribe
+    // to the kernel's mount notification, so it claims no live events either (§21.1, §21.3).
+    let claims = ono_provider_linux::StorageProvider::new().temporal();
+    assert!(claims.current_snapshot);
+    assert!(claims.checkpointable);
+    assert!(!claims.live_events);
+    assert!(!claims.historical_query);
+    assert!(!claims.exhaustive_events);
+    assert!(!claims.causal_tokens);
+    assert_eq!(claims.retained_history, None);
+}

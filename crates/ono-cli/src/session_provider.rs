@@ -20,6 +20,7 @@ use ono_core::{ErrorCode, ExitStatus};
 use ono_pipeline::ValueStream;
 use ono_provider_api::{
     Action, ActionOutcome, Availability, Capability, ObjectRef, Provider, Query, Risk, Selector,
+    TemporalCapabilities,
 };
 use ono_value::{ErrorValue, Provenance, RecordValue, Schema, SchemaId, Value};
 
@@ -112,6 +113,15 @@ pub struct LinkRow {
     pub runtime_uid: Option<u32>,
     /// Whether the far side reports it is elevated.
     pub runtime_elevated: Option<bool>,
+    /// The clock identity the peer named for itself at the handshake (v0.5 §24.2, §25.5).
+    ///
+    /// Self-reported context, exactly as `runtime_user` is. It says which clock domain the far
+    /// side's readings belong to, never that they are right.
+    pub clock_id: Option<String>,
+    /// How far the peer's wall clock was from this host's when they shook hands (§24.2).
+    pub clock_offset: Option<ono_value::Duration>,
+    /// The bound the peer stated on its own reading, where it stated one (§24.4).
+    pub clock_uncertainty: Option<ono_value::Duration>,
 }
 
 /// What the session has published for the provider to answer from.
@@ -892,6 +902,21 @@ fn link_record(link: &LinkRow, schema: &Arc<Schema>) -> Result<RecordValue, Erro
         "runtime_elevated",
         link.runtime_elevated.map_or(Value::Null, Value::Bool),
     )?
+    // v0.5 §24.2: the clock identity belongs beside `runtime_uid`, and for the same reason —
+    // both are what the peer says about itself. §24.3 forbids deriving a global order from them,
+    // so they are three separate columns a reader can weigh rather than one adjusted timestamp.
+    .set(
+        "clock_id",
+        link.clock_id.as_deref().map_or(Value::Null, Value::string),
+    )?
+    .set(
+        "clock_offset",
+        link.clock_offset.map_or(Value::Null, Value::Duration),
+    )?
+    .set(
+        "clock_uncertainty",
+        link.clock_uncertainty.map_or(Value::Null, Value::Duration),
+    )?
     .build())
 }
 
@@ -991,6 +1016,23 @@ impl Provider for SessionProvider {
             .filter_map(|name| crate::kuang_host::schema(name).ok()),
         )
         .collect()
+    }
+
+    fn temporal(&self) -> TemporalCapabilities {
+        // The shell's own tables, read when asked. The session knows every change it made to
+        // them and records those as actions (§17.2), so nothing here is a provider event and
+        // there is nothing to subscribe to. The tables answer about now; the ledger is where
+        // their past lives. Each read is a complete list at the instant it was read, which is
+        // what a checkpoint is (§21.7).
+        TemporalCapabilities {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+            retained_history: None,
+        }
     }
 
     fn capabilities(&self) -> Vec<Capability> {

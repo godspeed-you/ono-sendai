@@ -1,0 +1,57 @@
+# v0.5 section 32.1, second sentence: "Temporal storage initialization MUST be lazy when recording
+# is disabled."
+#
+# Section 32.1's first sentence budgets the addition — under 5 ms p95 — and the way a shell breaks
+# that budget is by touching the store it was told not to record into. A store that is opened,
+# migrated or integrity-checked at startup costs more the larger it is, so this case puts a file at
+# the canonical path section 31.1 fixes and asserts that startup does not notice.
+#
+#   ~/.local/share/ono/temporal/ledger.sqlite3
+#
+# The file here is bytes rather than a real ledger, on purpose: what is being asserted is that the
+# shell does not read it. A shell that opened it would refuse it as corrupt, and a refusal is a
+# louder failure than a slow start. The reference-environment measurement of the same property, over
+# the real million-event fixture of section 49, is `temporal.startup_disabled` in
+# docs/contracts/hardening/performance_baseline.json.
+case: a temporal ledger sitting at the canonical path costs a shell with recording disabled nothing
+timeout: 180
+run: |
+  measure() {
+    local label="$1"; shift
+    local runs=20 start end total each
+    "$@" >/dev/null 2>&1
+    start=$(date +%s%N)
+    for _ in $(seq $runs); do "$@" >/dev/null 2>&1; done
+    end=$(date +%s%N)
+    total=$(( (end - start) / 1000000 ))
+    each=$(( total / runs ))
+    echo "$label: ${each}ms (${runs} runs)"
+    echo "$each"
+  }
+
+  store="$HOME/.local/share/ono/temporal"
+  mkdir -p "$store"
+
+  # The floor: the same shell with nothing at the canonical path.
+  before=$(measure without-ledger ono --no-config -c 'true' | tail -1)
+
+  # Thirty-two mebibytes where the recorder would have left a ledger.
+  dd if=/dev/zero of="$store/ledger.sqlite3" bs=1048576 count=32 2>/dev/null
+  ls -l "$store/ledger.sqlite3" >/dev/null && echo "ledger placed at the canonical path"
+
+  after=$(measure with-ledger ono --no-config -c 'true' | tail -1)
+
+  # Section 32.1 budgets 5 ms of addition on the reference environment. The container is a smaller
+  # machine and its floor is noisier, so the case asserts a limit it can hold honestly and prints
+  # the difference either way.
+  added=$(( after - before ))
+  echo "added by a ledger on disk: ${added}ms (section 32.1 budgets 5ms on the reference environment)"
+  if [ "$added" -le 20 ]; then echo "lazy: temporal storage was not initialized"; else echo "EAGER: startup grew with a ledger present"; fi
+
+  # And the shell is still a shell.
+  ono --no-config -c 'echo still here'
+exit: 0
+stdout-contains: ledger placed at the canonical path
+stdout-contains: lazy: temporal storage was not initialized
+stdout-contains: still here
+stdout-not-contains: EAGER

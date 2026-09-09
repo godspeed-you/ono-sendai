@@ -934,6 +934,93 @@ fn should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_o
 }
 
 #[test]
+fn should_show_the_paused_marker_and_keep_its_instant_when_the_terminal_is_resized() {
+    // v0.5 §18.2: `Space` "pauses temporal advancement of the displayed view", and "the HUD MUST
+    // show `PAUSED @14:03:12.410`". Pausing stops the view and nothing else — the providers, the
+    // recorder and the machine are untouched, which is why the shell underneath is still alive at
+    // the end of this test. v0.4 §43.4 adds the resize: the frame at the new row count still
+    // carries the same instant, so a resize changed no semantic time (ADR-0684).
+    let (home, work) = workspace();
+    let mut session = Session::start(WindowSize::new(30, 100), home.path(), &work);
+    assert!(
+        session.wait_for("> ", STARTUP),
+        "the shell must reach a prompt; saw:\n{}",
+        plain(session.seen())
+    );
+
+    session.line("enter compute");
+    let inside = session.prompt("RS0");
+    session.line("map");
+    assert!(
+        session.wait_for_after("\r\nRS0\r\n", ALTERNATE_SCREEN_ON, BUDGET),
+        "§52.1: `map` opens a full-screen view; saw:\n{}",
+        plain(&after(session.seen(), "\r\nRS0\r\n"))
+    );
+
+    session.keys(b" ");
+    assert!(
+        session.wait_for_after(ALTERNATE_SCREEN_ON, "PAUSED @", BUDGET),
+        "v0.5 §18.2: the HUD shows `PAUSED @…` while the view's cursor is frozen; saw:\n{}",
+        plain(&after(session.seen(), ALTERNATE_SCREEN_ON))
+    );
+    let frozen = paused_instant(&plain(&after(session.seen(), ALTERNATE_SCREEN_ON)))
+        .expect("the paused marker names the instant the view is showing");
+
+    let mark = session.seen().len();
+    // The rows change and the columns do not: §39.3 lets a narrower frame drop detail, and the
+    // detail this test is about is the HUD marker itself. Twenty rows is the resize; a hundred
+    // columns is what keeps the assertion about time rather than about clipping.
+    session.resize(WindowSize::new(20, 100));
+    // The observation a resize produces and nothing else can is the geometry of the frame it
+    // caused. A frame that addresses row 20 and no row above it is a frame at the new row count,
+    // and this one still carries the instant the view was frozen at.
+    assert!(
+        session.wait_until(BUDGET, |seen| {
+            if seen.len() <= mark {
+                return false;
+            }
+            frames(&seen[mark..]).into_iter().any(|frame| {
+                let rows = rows_addressed(frame);
+                rows.contains(&20)
+                    && rows.iter().all(|row| *row <= 20)
+                    && plain(frame).contains(&frozen)
+            })
+        }),
+        "v0.4 §43.4 with v0.5 §18: the map redraws at twenty rows and still shows `PAUSED @{frozen}`. \
+         The frames it painted addressed {:?}; saw:\n{}",
+        frames(&session.seen()[mark.min(session.seen().len())..])
+            .into_iter()
+            .map(rows_addressed)
+            .collect::<Vec<_>>(),
+        plain(&session.seen()[mark.min(session.seen().len())..])
+    );
+
+    session.keys(ESCAPE);
+    assert!(
+        session.wait_for_after(ALTERNATE_SCREEN_ON, ALTERNATE_SCREEN_OFF, BUDGET),
+        "the view closes; saw:\n{}",
+        plain(&after(session.seen(), ALTERNATE_SCREEN_ON))
+    );
+    assert_eq!(
+        session.prompt("RS1"),
+        inside,
+        "v0.5 §18.2: pausing the view froze the view, and moved neither the place nor the session"
+    );
+
+    session.line("exit");
+}
+
+/// The instant `PAUSED @…` names, as the HUD wrote it.
+fn paused_instant(frame: &str) -> Option<String> {
+    let at = frame.find("PAUSED @")? + "PAUSED @".len();
+    let rest = &frame[at..];
+    let end = rest
+        .find(|character: char| !character.is_ascii_digit() && character != ':' && character != '.')
+        .unwrap_or(rest.len());
+    (end > 0).then(|| rest[..end].to_owned())
+}
+
+#[test]
 fn should_leave_the_terminal_in_order_for_an_external_program_after_the_map_closes() {
     // §44.10: after extensive navigation and full-screen map use, `vim`, `less`, `ssh` and
     // `cargo test` must still work — interactive process control, terminal state and cwd remain

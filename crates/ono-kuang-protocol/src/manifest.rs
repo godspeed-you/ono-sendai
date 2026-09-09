@@ -224,6 +224,10 @@ pub struct ContributionPaths {
     pub tools: Option<Vec<String>>,
     /// Adapter packs in the `ono-adapter-pack/1` format (spec v0.3 §1.44, ADR-0065).
     pub adapters: Option<Vec<String>>,
+    /// Temporal event sources and historical query providers (v0.5 §37.2, §37.5).
+    pub temporal_sources: Option<Vec<String>>,
+    /// Causal and correlation rules, namespaced to the publisher (v0.5 §37.2, §37.4).
+    pub causal_rules: Option<Vec<String>>,
 }
 
 /// The `dependencies` section (spec §31.30). Composition stays protocol-mediated.
@@ -430,6 +434,8 @@ impl Manifest {
                 annotations: raw.annotations,
                 tools: raw.tools,
                 adapters: raw.adapters,
+                temporal_sources: raw.temporal_sources,
+                causal_rules: raw.causal_rules,
             }),
             dependencies: raw.dependencies.map(|raw| Dependencies {
                 packages: raw.packages,
@@ -639,6 +645,10 @@ struct RawContributions {
     tools: Option<Vec<String>>,
     #[serde(default)]
     adapters: Option<Vec<String>>,
+    #[serde(default)]
+    temporal_sources: Option<Vec<String>>,
+    #[serde(default)]
+    causal_rules: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]

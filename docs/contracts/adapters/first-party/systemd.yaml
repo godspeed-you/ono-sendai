@@ -72,8 +72,44 @@ adapters:
           env: {LC_ALL: C}
           stdin: "null"
           unbounded: true
+    temporal:
+      # Spec v0.5 §23.2: an adapter may declare a historical query plan where the underlying tool
+      # has explicit historical semantics, and `journalctl --since ... --until ... --output=json`
+      # is the section's own example. The five things §23.2 requires a plan to declare are the
+      # five keys below; the sixth, `plan`, is what makes it executable rather than descriptive,
+      # so a caller asking about a window does not have to know journalctl's flags.
+      #
+      # §23.1 is the boundary this sits inside: an adapter contributes temporal evidence only
+      # where its manifest declares it, and never by inferring temporal structure from output
+      # that happens to have been adapted. Nothing else in this pack declares a block, because
+      # `systemctl list-units` and `systemctl show` describe now (§23.3).
+      historical_query: true
+      # The window is journald's own — `journald.conf`'s `MaxRetentionSec`, `SystemMaxUse` and
+      # rotation — which Ono neither controls nor reads. A coverage record from this plan covers
+      # what the answer actually spanned, and claims nothing about what came before the earliest
+      # entry it returned: §7.4's own example is this source.
+      coverage: retained-window
+      # The source timestamp mapping. `timestamp` is `__REALTIME_TIMESTAMP`, journald's own
+      # microsecond wall clock for the entry, which `fields:` above already maps.
+      source_time: timestamp
+      # The identity mapping. A journal entry is not an object with a lifetime; what it is about
+      # is a unit, inside a boot. `boot_id` is `_BOOT_ID`, which v0.5 §25.5 makes the clock
+      # domain an instant belongs to, so an entry from a previous boot is never silently ordered
+      # against one from this boot.
+      identity: [boot_id, unit]
+      # §6.8's deduplication key. `__CURSOR` is journald's own unique, opaque handle for one
+      # entry: two reads of the same journal agree on it exactly, which is what lets an overlap
+      # between two windows be recognised rather than re-ingested.
+      deduplication_key: cursor
+      plan:
+        invocation: query
+        # `@<seconds>` is journalctl's unambiguous epoch form, which needs no locale and no time
+        # zone; the human forms it also accepts are what §50 forbids a provider to rely on.
+        since: "--since=@{seconds}"
+        until: "--until=@{seconds}"
     limits:
       - "`-o/--output` is the adapter's to choose; asking for another output format runs raw."
+      - "The historical plan answers over whatever the journal still retains; an empty answer for a window is not proof that nothing happened in it (spec v0.5 §7.4)."
       - "`--list-boots`, `--disk-usage`, `--verify` and the maintenance forms are not adapted."
       - "Every raw journal key (`_COMM`, `_EXE`, `_CMDLINE`, …) is in the extension map, never dropped (spec v0.3 §1.37)."
       - "A `MESSAGE` that is not valid UTF-8 arrives as journalctl's byte array and is decoded lossily (U+FFFD for what is not UTF-8); a field an entry carries more than once is its values joined by newlines."

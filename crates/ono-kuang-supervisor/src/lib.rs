@@ -34,6 +34,7 @@ mod report;
 mod sandbox;
 mod state;
 mod supervisor;
+mod temporal;
 mod trail;
 mod view;
 mod wasm;
@@ -60,6 +61,10 @@ pub use state::StateStore;
 pub use supervisor::{
     LoadConfig, LoadedPlugin, RegisteredCommand, RegisteredTarget, RunningInvocation, StreamEvent,
     Supervisor, host_platform,
+};
+pub use temporal::{
+    AuthoritativeDomains, CONTRIBUTED_STRENGTH_CEILING, Contribution, ContributionLimits,
+    ContributionRefusal, EventClaim, VisibleSchemas,
 };
 pub use trail::{AuditTrail, HostClock};
 pub use view::{MAX_DEPTH, MountedView, NoViews, ViewHost, validate_tree};

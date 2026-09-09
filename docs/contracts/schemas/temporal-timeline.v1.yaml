@@ -50,6 +50,17 @@ fields:
     doc: >-
       The events in the window, in presentation order (§26.3). Presentation order is a stable
       display order and makes no ordering claim; `inspect` is where ordering evidence is stated.
+  groups:
+    type: list<record>
+    nullable: true
+    doc: >-
+      §19.4's density rows, as the producer formed them: a representative `event_id`, every
+      `members` id so §19.5's expansion reaches the retained individuals with no second query,
+      the `hidden` count, the `from` and `until` of the span, and the `reason` the run was
+      grouped under. Grouping is a judgement about events rather than a way of drawing them, so
+      it is made once, here, and a renderer draws these rows rather than forming its own. Null
+      for a record whose producer formed none, which is the only case a renderer groups for
+      itself.
   gaps:
     type: list<ono.temporal-gap/1>
     required: true

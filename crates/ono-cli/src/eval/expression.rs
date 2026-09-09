@@ -132,20 +132,12 @@ pub fn eval_expr(session: &mut Session, expression: &Expr, source: &str) -> Eval
             Ok(index_into(&base, &key)?)
         }
         Expr::Call(call) => {
-            // `now()` is the one builtin function language.yaml declares (spec §6.3, ADR-0071).
-            if ono_command::is_now_call(call) {
-                return Ok(Value::now());
-            }
-            Err(Flow::Failed(
-                ErrorValue::new(
-                    ErrorCode::ResolveCommandNotFound,
-                    format!("no function to call at {}", call.span),
-                )
-                .with_help(
-                    "`now()` is the only function an expression can call; a user function is \
-                     called as a command (spec §19.3, ADR-0070)",
-                ),
-            ))
+            // `language.yaml`'s `builtin_functions` is the closed list, and `ono-command` holds
+            // it: `now()` since spec §6.3, `age()` and `between()` since v0.5 §28.3. Evaluating
+            // one here rather than reimplementing it keeps the shell and a `where` inside a
+            // provider stage answering the same thing (ADR-0693).
+            let scope = ono_command::Scope::new();
+            ono_command::evaluate_call(call, &Value::Null, &scope).map_err(Flow::Failed)
         }
         Expr::CurrentValue(current) => match current.selector {
             // Spec §20.2: previous structured results are reusable without screen scraping. A

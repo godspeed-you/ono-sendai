@@ -194,7 +194,7 @@ pub enum BuiltBy {
 
 impl BuiltBy {
     /// The word the registry uses.
-    fn from_name(name: &str) -> Option<Self> {
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
         match name {
             "gate" => Some(Self::Gate),
             "benchmark" => Some(Self::Benchmark),

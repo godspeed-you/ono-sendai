@@ -513,3 +513,53 @@ verbs:
     pipeline_role: producer/context
     mutating: false
     stability: stable
+
+  # --- temporal navigation and enquiry (v0.5 §4, §11, §13, §16) ---------------------------
+  # §40.1 asks for a verb review before a verb is added. Six are added here, and each one names
+  # something no existing verb means. `at` and `now` move the temporal coordinate, which is
+  # orthogonal to the spatial place `enter`, `jump` and `back` move (§12.4, ADR-0690); `present`
+  # names the escape hatch of §4.8 and nothing else does; `timeline`, `changes` and `why` are the
+  # three canonical projections of §11, §13 and §16. None of them is mutating: the whole point of
+  # the temporal coordinate is that standing at an instant changes nothing (§4.7).
+  - id: ono.verb.at
+    verb: at
+    semantics: Move the session's temporal coordinate to a resolved instant.
+    typical_targets: []
+    pipeline_role: context
+    mutating: false
+    stability: stable
+  - id: ono.verb.now
+    verb: now
+    semantics: Return the session's temporal coordinate to the present.
+    typical_targets: []
+    pipeline_role: context
+    mutating: false
+    stability: stable
+  - id: ono.verb.present
+    verb: present
+    semantics: Run one external command in the real present from historical context.
+    typical_targets: []
+    pipeline_role: context
+    mutating: false
+    stability: stable
+  - id: ono.verb.timeline
+    verb: timeline
+    semantics: Project events chronologically over a scope and a window.
+    typical_targets: [event, service, process]
+    pipeline_role: producer
+    mutating: false
+    stability: stable
+  - id: ono.verb.changes
+    verb: changes
+    semantics: Compare two instants and classify what is different.
+    typical_targets: [service, process, filesystem]
+    pipeline_role: producer
+    mutating: false
+    stability: stable
+  - id: ono.verb.why
+    verb: why
+    semantics: Explain a state, an event or a field from registered causal rules.
+    typical_targets: [service, process, event]
+    pipeline_role: producer/meta
+    mutating: false
+    stability: stable

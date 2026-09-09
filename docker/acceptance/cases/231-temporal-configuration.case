@@ -1,0 +1,103 @@
+# v0.5 §50 phase T2 — §33's twelve settings, §10.2's default state, §10.3's recorder commands and
+# §30.8's history deletion, all as a user meets them: typed, inspectable, and answering `help`,
+# completion and `explain` from the registry (v0.2 §50, v0.5 §56).
+#
+# §30.1's intent is the reason this case is not just a settings dump: "the user must know when Ono
+# is retaining system history and how much it retains", and a status nobody can read is not that.
+case: the temporal settings, the recorder commands, and what they say by default
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== §33 declares twelve settings, and every one is typed and inspectable =='
+  ono -c 'get config temporal. | to json' > /tmp/t2c-settings.json 2>&1
+  for key in \
+    temporal.recording.enabled temporal.retention.max_age temporal.retention.max_size \
+    temporal.checkpoint.interval temporal.flush.interval temporal.session.max_events \
+    temporal.timeline.default_window temporal.timeline.default_depth \
+    temporal.why.max_candidates temporal.remote.clock_uncertainty_warn \
+    temporal.record.process_argv temporal.ui.show_source_tags
+  do
+    prove "t2c-$key" "$key is declared and inspectable (§33)" \
+      "grep -q '$key' /tmp/t2c-settings.json"
+  done
+
+  echo '== §10.2: persistent recording MUST be disabled by default =='
+  prove t2aj "temporal.recording.enabled defaults to false (§10.2, §33)" \
+    'ono -c "get config temporal.recording.enabled | to json" | grep -q "false"'
+  prove t2ak "and no store was created by a session that did not ask for one (§32.1)" \
+    '! ls "$HOME"/.local/state/ono 2>/dev/null | grep -q "temporal"'
+
+  echo '== §10.3: the recorder commands answer, and say what they are (§30.1) =='
+  ono -c 'get recorder | to json' > /tmp/t2c-recorder.json 2>&1
+  prove t2al "`get recorder` answers `ono.recorder-status/1` (§10.3)" \
+    'grep -q "\"running\"" /tmp/t2c-recorder.json'
+  prove t2am "a recorder that is not running says `stopped` rather than nothing (§43.4)" \
+    'grep -q "stopped" /tmp/t2c-recorder.json'
+  prove t2an "the retention policy in force is part of the status (§30.1, §10.4)" \
+    'grep -q "\"max_age\"" /tmp/t2c-recorder.json && grep -q "\"max_size\"" /tmp/t2c-recorder.json'
+  prove t2ao "and so is how much is retained now (§30.1)" \
+    'grep -q "\"events\"" /tmp/t2c-recorder.json'
+  prove t2ap "the session ceiling of §10.7 is stated whether or not the recorder runs (§10.7)" \
+    'grep -q "\"session_max_events\"" /tmp/t2c-recorder.json'
+
+  echo '== §10.8: starting is idempotent, and stopping an absent recorder says so =='
+  prove t2aq "stopping a recorder that is not running is temporal.recorder_not_running (§34)" \
+    'ono -c "stop recorder" 2>&1 | grep -q "temporal.recorder_not_running"'
+  prove t2ar "starting twice is temporal.recorder_already_running (§34, §10.8)" \
+    'ono -c "start recorder
+     start recorder" 2>&1 | grep -q "temporal.recorder_already_running"'
+  prove t2as "a started recorder reports itself running and names its store (§10.3, §30.2)" \
+    'ono -c "start recorder
+     get recorder | to json" 2>&1 | grep -q "\"running\": true"'
+
+  echo '== §30.8: history deletion is destructive and takes the existing policy =='
+  prove t2at "`remove temporal-history` without a confirmation refuses (§30.8, v0.2 §17.4)" \
+    'ono -c "remove temporal-history" 2>&1 | grep -qi "confirm"'
+  prove t2au "a dry run says what it would destroy (§30.8)" \
+    'ono -c "remove temporal-history --dry-run | to json" 2>&1 | grep -qi "would"'
+  prove t2av "and a confirmed removal leaves nothing behind (§30.8)" \
+    'ono -c "start recorder
+     remove temporal-history --confirm" 2>&1 | grep -qi "gone"'
+
+  echo '== v0.2 §50: every temporal command answers help and explain from the registry =='
+  for spelling in "at" "now" "present" "timeline" "changes" "why" "find event" \
+                  "inspect event" "get recorder" "start recorder" "stop recorder" \
+                  "remove temporal-history"
+  do
+    prove "t2c-help-$(echo "$spelling" | tr ' ' '-')" \
+      "help describes \`$spelling\` (v0.2 §15.2, v0.5 §56)" \
+      "ono -c 'help $spelling' 2>&1 | grep -qv 'command_not_found' && test -n \"\$(ono -c 'help $spelling' 2>&1)\""
+  done
+
+  echo 'temporal configuration: done'
+exit: 0
+stdout-contains: PROVED t2aj
+stdout-contains: PROVED t2ak
+stdout-contains: PROVED t2al
+stdout-contains: PROVED t2am
+stdout-contains: PROVED t2an
+stdout-contains: PROVED t2ao
+stdout-contains: PROVED t2ap
+stdout-contains: PROVED t2aq
+stdout-contains: PROVED t2ar
+stdout-contains: PROVED t2as
+stdout-contains: PROVED t2at
+stdout-contains: PROVED t2au
+stdout-contains: PROVED t2av
+stdout-contains: PROVED t2c-temporal.recording.enabled
+stdout-contains: PROVED t2c-temporal.ui.show_source_tags
+stdout-contains: PROVED t2c-help-timeline
+stdout-contains: PROVED t2c-help-remove-temporal-history
+stdout-contains: temporal configuration: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

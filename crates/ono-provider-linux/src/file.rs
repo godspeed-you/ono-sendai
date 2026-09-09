@@ -24,7 +24,7 @@ use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, StreamSink, ValueStream};
 use ono_provider_api::{
     Action, ActionOutcome, Availability, Capability, EventStream, ObjectRef, Provider, Query, Risk,
-    Selector,
+    Selector, TemporalCapabilities,
 };
 use ono_value::{ByteSize, ErrorValue, RecordValue, Schema, Value};
 
@@ -782,6 +782,26 @@ impl Provider for FileProvider {
             Capability::new("file.watch", Risk::Observe),
             Capability::new("dir.list", Risk::Read),
         ]
+    }
+
+    fn temporal(&self) -> TemporalCapabilities {
+        // §22.5 is mostly a prohibition: "v0.5 MUST NOT promise complete generic filesystem
+        // history." inotify is a real subscription and this provider opens one, so `live_events`
+        // is true; its limits are structural and none of them can be argued away. A watch is per
+        // directory and does not recurse, the kernel's queue overflows under load and reports
+        // that it overflowed rather than what it lost, and the watch ceiling is a system-wide
+        // limit somebody else may already have spent. So `exhaustive_events` is false, and a
+        // filesystem's current state is not a thing that fits in a checkpoint — file content is
+        // outside the recorder entirely (§30.3).
+        TemporalCapabilities {
+            current_snapshot: true,
+            live_events: true,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: false,
+            retained_history: None,
+        }
     }
 
     fn availability(&self) -> Availability {

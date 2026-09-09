@@ -142,11 +142,22 @@ fn arguments(query: &Query) -> Result<Vec<String>, ErrorValue> {
     if query.flag("follow") {
         argv.push("--follow".to_owned());
     }
+    // §23.2: the time bounds are the adapter's declared historical plan, not this provider's
+    // idea of what journalctl accepts. Where the pack declares no plan the bounds are dropped
+    // rather than guessed at, which is §23.1's prohibition read from the calling side.
+    let historical = adapter()
+        .ok()
+        .and_then(ono_adapter::Adapter::temporal)
+        .filter(|plan| plan.historical_query());
     for (name, value) in query.options() {
         match (name.as_str(), value) {
             ("follow", _) | ("provider", _) => {}
-            ("since", Value::Timestamp(at)) => argv.push(format!("--since=@{}", at.as_second())),
-            ("until", Value::Timestamp(at)) => argv.push(format!("--until=@{}", at.as_second())),
+            ("since", Value::Timestamp(at)) => {
+                argv.extend(historical.map(|plan| plan.since_argument(*at)));
+            }
+            ("until", Value::Timestamp(at)) => {
+                argv.extend(historical.map(|plan| plan.until_argument(*at)));
+            }
             ("boot", Value::Int(boot)) => argv.push(format!("--boot={boot}")),
             ("lines", Value::Int(lines)) => argv.push(format!("--lines={lines}")),
             ("service", Value::String(unit)) => argv.push(format!("--unit={unit}")),
@@ -427,9 +438,18 @@ impl Provider for JournalProvider {
     }
 
     fn history(&self, query: &Query, window: &TimeWindow) -> Result<ValueStream, ErrorValue> {
-        // The journal answers about the past through the same call that answers about now; the
-        // window is the query's `--since` and `--until`. An end the caller left open is left
-        // open here too, rather than filled in from a clock this provider must not read.
+        // §23.2: the historical plan is the adapter's, declared beside its invocations, so the
+        // provider asks the contract how a bound is spelled rather than knowing journalctl's
+        // flags itself. Refusing where no plan is declared is §23.1's rule enforced from this
+        // side: an adapter contributes temporal evidence only where its manifest says it can.
+        let adapter = adapter()?;
+        let plan = adapter.temporal().filter(|plan| plan.historical_query());
+        if plan.is_none() {
+            return Err(ono_provider_api::unsupported_history(JOURNAL_PROVIDER_ID));
+        }
+        // The window becomes the query's own `since` and `until` options, which `arguments`
+        // turns into the declared plan's argv. An end the caller left open is left open here
+        // too, rather than filled in from a clock this provider must not read.
         let mut bounded = query.clone();
         if let Some(from) = window.from {
             bounded = bounded.option("since", Value::Timestamp(from));

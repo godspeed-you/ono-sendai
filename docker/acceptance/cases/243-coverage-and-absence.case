@@ -1,0 +1,48 @@
+# v0.5 section 7.4, section 8.5, section 9.2, section 9.6, section 9.7. Absence is a claim, and a
+# claim needs coverage capable of carrying it. A state between two observations is unknown in the
+# interval rather than interpolated; a historical collection says whether it is the complete set;
+# and a place that is not in a reconstruction is `absent` where coverage could prove it and
+# `unknown` where it could not (ADR-0650, ADR-0651, ADR-0681).
+case: absence is reported only where coverage supports it, and sparse evidence stays unknown
+timeout: 180
+env: NO_COLOR=1
+run: |
+  echo "== a session with no recorder has no coverage at all (section 8.5) =="
+  ono --no-config -c 'at -10m; look' > /tmp/no-coverage.txt 2>&1 || true
+  cat /tmp/no-coverage.txt
+  if grep -qi 'not_recorded\|not recorded\|not known at requested time\|coverage\|unknown' /tmp/no-coverage.txt; then
+    echo "an-uncovered-past-says-so"
+  else
+    echo "WRONG an uncovered past answered as if it were known"
+  fi
+
+  echo "== and nothing is invented for it (section 9.2, section 55.2) =="
+  if grep -qi 'complete' /tmp/no-coverage.txt; then
+    echo "WRONG an uncovered window claimed complete coverage"
+  else
+    echo "no-fake-completeness"
+  fi
+
+  echo "== with a recorder, coverage is composed per capability (section 8.5) =="
+  ono --no-config -c 'start recorder' || echo "recorder-refused"
+  sleep 1
+  ono --no-config -c 'get recorder | to json' > /tmp/recorder.json 2>&1 || true
+  cat /tmp/recorder.json
+
+  echo "== a historical collection does not imply completeness it cannot prove (section 9.6) =="
+  ono --no-config -c 'at -5s; get process | count' > /tmp/collection.txt 2>&1 || true
+  cat /tmp/collection.txt
+  if grep -qi 'panicked' /tmp/collection.txt; then
+    echo "WRONG a historical collection panicked"
+  else
+    echo "a-historical-collection-answers-or-refuses"
+  fi
+
+  echo done=ok
+exit: 0
+stdout-contains: an-uncovered-past-says-so
+stdout-contains: no-fake-completeness
+stdout-contains: a-historical-collection-answers-or-refuses
+stdout-contains: done=ok
+stdout-not-contains: WRONG
+stdout-not-contains: panicked

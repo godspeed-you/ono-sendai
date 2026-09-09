@@ -1,0 +1,83 @@
+# v0.5 §50 phase T6 — §11.3: "Without a selector, `timeline` is scoped to the current spatial
+# place and its directly relevant events. At the root system place, it shows high-significance
+# events and current-session actions rather than dumping every event from every object. `--all`
+# requests the full visible scope subject to retention and permissions."
+#
+# The failure this guards against is §55.1's pretty log viewer: a timeline that always shows
+# everything is a log tail with a nicer font.
+case: the timeline is scoped to where the session stands
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  MAKE="sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo \$! > /tmp/t6rel.pid'
+  stop process \$(cat /tmp/t6rel.pid)"
+
+  echo '== at the root place the session sees its own actions (§11.3) =='
+  ono -c "home
+  $MAKE
+  timeline --since 5m | to json" > /tmp/t6rel-root.json 2>&1
+  prove t6z "the root timeline shows the current session's actions (§11.3)" \
+    'grep -q "action.executed" /tmp/t6rel-root.json'
+  prove t6aa "and it declares the window it is a statement about (§11.2, §8.5)" \
+    'grep -q "\"from\"" /tmp/t6rel-root.json && grep -q "\"until\"" /tmp/t6rel-root.json'
+  prove t6ab "with the coverage that backs it, rather than an implied completeness (§8.5)" \
+    'grep -q "\"coverage\"" /tmp/t6rel-root.json'
+
+  echo '== somewhere else, the events of somewhere else are not shown (§11.3) =='
+  ono -c "home
+  $MAKE
+  enter identity
+  timeline --since 5m | to json" > /tmp/t6rel-elsewhere.json 2>&1
+  prove t6ac "a place with no events of its own does not inherit the root's (§11.3)" \
+    '! grep -q "action.executed" /tmp/t6rel-elsewhere.json'
+
+  echo '== `--all` widens to the visible scope (§11.3) =='
+  ono -c "home
+  $MAKE
+  enter identity
+  timeline --all --since 5m | to json" > /tmp/t6rel-all.json 2>&1
+  prove t6ad "`--all` reaches what the narrowed timeline left out (§11.3)" \
+    'grep -q "action.executed" /tmp/t6rel-all.json'
+
+  echo '== §11.2: a kind filter narrows rather than reorders =='
+  ono -c "home
+  $MAKE
+  timeline --since 5m --kind action.executed | to json" > /tmp/t6rel-kind.json 2>&1
+  prove t6ae "`--kind` restricts to the canonical kind named (§6.1, §11.2)" \
+    'grep -q "action.executed" /tmp/t6rel-kind.json && ! grep -q "action.requested" /tmp/t6rel-kind.json'
+  prove t6af "a kind outside §6.1's closed list is refused with the list (§6.1)" \
+    'ono -c "timeline --kind nonsense.kind" 2>&1 | grep -q "object.changed"'
+
+  echo '== §11.2, §32.3: the window is bounded, and a shorter one is smaller =='
+  prove t6ag "a one-second window does not answer with a five-minute window's events (§11.2)" \
+    'test "$(ono -c "home
+     '"$MAKE"'
+     sleep 2
+     timeline --since 1s | to json" 2>&1 | grep -o "action\." | wc -l)" -lt \
+     "$(ono -c "home
+     '"$MAKE"'
+     timeline --since 5m | to json" 2>&1 | grep -o "action\." | wc -l)"'
+
+  echo 'timeline relevance: done'
+exit: 0
+stdout-contains: PROVED t6z
+stdout-contains: PROVED t6aa
+stdout-contains: PROVED t6ab
+stdout-contains: PROVED t6ac
+stdout-contains: PROVED t6ad
+stdout-contains: PROVED t6ae
+stdout-contains: PROVED t6af
+stdout-contains: PROVED t6ag
+stdout-contains: timeline relevance: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

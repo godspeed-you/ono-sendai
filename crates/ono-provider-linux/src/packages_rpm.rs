@@ -31,6 +31,7 @@ use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
 use ono_provider_api::{
     Action, ActionOutcome, Availability, Capability, ObjectRef, Provider, Query, Risk, Selector,
+    TemporalCapabilities,
 };
 use ono_value::{ErrorValue, RecordValue, Schema, Value};
 use quick_xml::events::Event;
@@ -1002,6 +1003,23 @@ impl Provider for RpmPackageProvider {
             // The metadata cache is root's too (ADR-0565).
             Capability::new("package-source.refresh", Risk::Mutate).needing_elevation(),
         ]
+    }
+
+    fn temporal(&self) -> TemporalCapabilities {
+        // The package database as it is now. rpm keeps an install log — the `INSTALLTIME` header and `dnf`'s history database — and this
+        // provider reads neither, so it claims no history: the log is a source somebody could
+        // add, not one that is already answering (§21.1). A listing is a complete list at the
+        // instant it was read, so it checkpoints, and a package manager announces nothing to
+        // subscribe to.
+        TemporalCapabilities {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+            retained_history: None,
+        }
     }
 
     fn availability(&self) -> Availability {

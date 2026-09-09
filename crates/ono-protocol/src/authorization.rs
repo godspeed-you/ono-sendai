@@ -684,6 +684,44 @@ impl PeerAuthorization {
             )))
     }
 
+    /// Refuses a mutation the caller admits it attempted from a historical session.
+    ///
+    /// v0.5 §4.7 makes past context read-only, and §30.6 requires remote temporal access to
+    /// respect the same link authorization model as remote provider access. The caller declares
+    /// the coordinate because only the caller knows it, and the agent decides on it because the
+    /// machine being changed is the agent's. A caller in the present passes through untouched:
+    /// `None` is what every build before v0.5 meant and still means.
+    ///
+    /// The refusal joins the existing `denied_because` discriminators with a value of its own,
+    /// so a script that already matches on that field learns which of the three boundaries said
+    /// no — observe, capability, or time.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorCode::TemporalReadOnly`] when `attempted_from` names an instant.
+    pub fn require_present(
+        &self,
+        what: &str,
+        attempted_from: Option<jiff::Timestamp>,
+    ) -> Result<(), ErrorValue> {
+        let Some(at) = attempted_from else {
+            return Ok(());
+        };
+        Err(self
+            .refusal(ErrorCode::TemporalReadOnly, |who| {
+                format!(
+                    "{who} asked for `{what}` while standing at {at} in the past, and a \
+                     historical session cannot change anything"
+                )
+            })
+            .with_metadata("denied_because", Value::string("historical_context"))
+            .with_metadata("attempted_from", Value::string(&at.to_string()))
+            .with_help(
+                "return to the present with `now` and ask again; v0.5 section 4.7 makes past \
+                 context read-only, and section 30.6 has the agent enforce it too",
+            ))
+    }
+
     /// A capability denial whose sentence names the peer that was refused.
     ///
     /// `message` is handed the subject to write the sentence about, because §54.1's example is
@@ -695,12 +733,20 @@ impl PeerAuthorization {
     /// §53.3 permits it in full: a public key fingerprint is public identity material, and it is
     /// the exact string the operator types into `add client-key` to fix the refusal.
     fn denial(&self, message: impl FnOnce(&str) -> String) -> ErrorValue {
+        self.refusal(ErrorCode::RemoteCapabilityDenied, message)
+    }
+
+    /// A refusal of `code` whose sentence names the peer that was refused.
+    ///
+    /// The capability denial of §54.1 and the historical refusal of §4.7 are different codes
+    /// with the same obligation: the sentence has to name the boundary that decided, because
+    /// nothing on the default rendering path prints metadata.
+    fn refusal(&self, code: ErrorCode, message: impl FnOnce(&str) -> String) -> ErrorValue {
         let subject = match self.context() {
             None => "this client".to_owned(),
             Some(context) => format!("remote client {}", context.peer_fingerprint()),
         };
-        let error = ErrorValue::new(ErrorCode::RemoteCapabilityDenied, message(&subject))
-            .with_retryable(false);
+        let error = ErrorValue::new(code, message(&subject)).with_retryable(false);
         match self.context() {
             None => error,
             Some(context) => error

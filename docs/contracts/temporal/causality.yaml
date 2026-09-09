@@ -241,7 +241,7 @@ rules:
 correlation_rules:
   - rule_id: ono.change-before-failure
     status: declared
-    input_event_kinds: [object.changed, action.failed, object.changed]
+    input_event_kinds: [object.changed, action.failed]
     required_evidence_strengths:
       object.changed: observational
       action.failed: asserted
@@ -257,7 +257,10 @@ correlation_rules:
     doc: >-
       §15.5's first example: "config file changed 9 seconds before a service failure". Emits
       `correlated_with` only. It is offered as context beside an explanation, never as the
-      explanation.
+      explanation. Both shapes of failure count: an operator's mutation that failed is an
+      `action.failed`, and a service that gave up on its own is an `object.changed` whose state
+      moved to a failed word — which is the failure §15.5 and §16.6 actually illustrate, and the
+      commoner of the two.
     spec: "§15.5"
 
   - rule_id: ono.resource-pressure-overlap

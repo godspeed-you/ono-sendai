@@ -1,0 +1,59 @@
+# v0.5 section 32.3's temporal query targets, measured against a live recorder in the container.
+#
+#   timeline current place, 15m    < 100 ms p95
+#   changes current place, 1h      < 150 ms p95
+#   why with <=100 candidate ev.   < 200 ms p95
+#   find event indexed predicate   < 150 ms p95
+#
+# The fifth row, `at recent checkpoint +/- events`, is not here: entering a historical coordinate
+# over a ledger with no recorded history is `temporal.not_recorded` (section 34), which is the
+# correct refusal and not a latency. It is measured on the reference environment against section
+# 49's fixture, as `temporal.reconstruct_recent`.
+#
+# What this case proves is that each of the four answers in bounded time against a real SQLite
+# ledger at the canonical path, opened, migrated and queried by the shipped commands. What it does
+# not prove is behaviour at scale: the ledger this case builds holds the events one session
+# produced, and the container has no systemd, no journald and no D-Bus, so nothing else contributes
+# to it. Section 49's answer to that question is measured on the reference environment against the
+# million-event fixture, and lives in docs/contracts/hardening/performance_baseline.json under
+# `temporal.timeline_15m`, `temporal.changes_1h`, `temporal.why` and `temporal.find_event`. The two together are the evidence; neither alone is.
+#
+# The whole run is measured — startup, store open, migration, query, render and teardown — which
+# is strictly harsher than the moment section 32.3 budgets. The budgets asserted here are
+# therefore the section's own figures plus the shell around them, and the case prints the measured
+# figure either way so a regression inside the budget is still visible in a diff.
+case: every temporal query of section 32.3 answers inside its budget against a real ledger
+timeout: 300
+run: |
+  measure() {
+    local label="$1" limit_ms="$2"; shift 2
+    local runs=20 start end total each
+    ono --no-config -c "$1" >/dev/null 2>&1
+    start=$(date +%s%N)
+    for _ in $(seq $runs); do ono --no-config -c "$1" >/dev/null 2>&1; done
+    end=$(date +%s%N)
+    total=$(( (end - start) / 1000000 ))
+    each=$(( total / runs ))
+    echo "$label: ${each}ms (target ${limit_ms}ms, ${runs} runs)"
+    if [ "$each" -le "$limit_ms" ]; then echo "$label: within budget"; else echo "$label: OVER BUDGET"; fi
+  }
+
+  # The store is created at the canonical path of section 31.1 by the recorder itself, in WAL mode,
+  # migrated forward, 0700 on its directory and 0600 on the file (section 30.2).
+  ono --no-config -c 'start recorder; get recorder'
+  test -f "$HOME/.local/share/ono/temporal/ledger.sqlite3" && echo "the recorder created its store"
+
+  measure timeline 100 'start recorder; timeline --since 15m | count'
+  measure changes 150 'start recorder; changes --since 1h | count'
+  measure find-event 150 'start recorder; find event | count'
+  measure why 200 'start recorder; why process 1 | count'
+
+  # Section 32.6: the ledger survives the exercise and is still readable.
+  ono --no-config -c 'get recorder' | head -2
+exit: 0
+stdout-contains: the recorder created its store
+stdout-contains: timeline: within budget
+stdout-contains: changes: within budget
+stdout-contains: find-event: within budget
+stdout-contains: why: within budget
+stdout-not-contains: OVER BUDGET

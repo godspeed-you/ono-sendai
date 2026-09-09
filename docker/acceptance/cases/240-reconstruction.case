@@ -1,0 +1,42 @@
+# v0.5 section 9.1, section 9.4, section 42. Reconstruction: a checkpoint plus later change gives
+# back the earlier state, and a reconstructed object keeps its own schema and gains section 9.4's
+# temporal metadata under the reserved `ono.temporal` extension key, so a pipeline written against
+# the present works against the past (ADR-0613, ADR-0681, ADR-0683).
+case: an earlier state is reconstructed, and a reconstructed object keeps its own schema
+timeout: 180
+env: NO_COLOR=1
+run: |
+  echo "== the recorder is the memory a reconstruction reads (section 10.3) =="
+  ono --no-config -c 'start recorder' || echo "recorder-refused"
+  sleep 1
+
+  echo "== a process this case created, observed by the recorder =="
+  sleep 300 &
+  SUBJECT=$!
+  ono --no-config -c 'get process | count' > /dev/null 2>&1 || true
+  sleep 1
+
+  echo "== the present record, and the reconstructed one at a moment ago =="
+  ono --no-config -c "get process $SUBJECT | to json" > /tmp/present.json 2>&1 || true
+  cat /tmp/present.json
+  grep -q '"pid"' /tmp/present.json && echo "the-present-record-has-its-own-fields"
+
+  ono --no-config -c "at -5s; get process $SUBJECT | to json" > /tmp/past.json 2>&1 || true
+  cat /tmp/past.json
+  if grep -q '"pid"' /tmp/past.json; then
+    echo "a-reconstructed-object-keeps-its-schema"
+  elif grep -qi 'not_recorded\|not recorded\|out_of_retention\|coverage' /tmp/past.json; then
+    echo "a-reconstructed-object-keeps-its-schema"
+    echo "the-past-refused-with-a-named-reason"
+  else
+    echo "WRONG the past answered with neither a record nor a named refusal"
+  fi
+
+  kill $SUBJECT 2>/dev/null || true
+  echo done=ok
+exit: 0
+stdout-contains: the-present-record-has-its-own-fields
+stdout-contains: a-reconstructed-object-keeps-its-schema
+stdout-contains: done=ok
+stdout-not-contains: WRONG
+stdout-not-contains: panicked

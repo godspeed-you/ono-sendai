@@ -1,0 +1,95 @@
+# v0.5 §50 phase T6 — §11: `timeline` is a typed chronological projection, not a log viewer
+# (§55.1). §11.4 requires `Stream<TemporalEvent>` that a pipeline can filter; §11.5 fixes the
+# default text rendering; §11.6 requires stable event references; §17.2 requires an Ono mutation
+# to leave the whole four-stage action lifecycle behind it.
+#
+# The events this case reads are made by the case: it stops a process it started itself, which is
+# a real Ono mutation against a real Linux process, and §17.1's whole point is that the shell
+# knows it did.
+case: the timeline is typed, and an Ono action leaves its lifecycle on it
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== the fixture: a real process the shell stops through a real Ono mutation (§43.6) =='
+  sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo $!' > /tmp/t6.pid
+  VICTIM=$(cat /tmp/t6.pid)
+  echo "fixture: process $VICTIM"
+
+  ono -c "stop process $VICTIM
+  timeline --since 5m | to json" > /tmp/t6-timeline.json 2>&1
+  ono -c "sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo \$! > /tmp/t6b.pid'
+  stop process \$(cat /tmp/t6b.pid)
+  timeline --since 5m" > /tmp/t6-timeline.txt 2>&1
+
+  echo '== §17.2: the four-stage lifecycle is on the timeline =='
+  for stage in requested authorized executed completed; do
+    prove "t6-$stage" "action.$stage is recorded (§17.2)" \
+      "grep -q 'action.$stage' /tmp/t6-timeline.json"
+  done
+
+  echo '== §17.3: the ActionId exists and is what a provider transaction would join on =='
+  prove t6a "the action carries the identity the shell minted (§17.3)" \
+    'grep -q "\"action_id\":\"a" /tmp/t6-timeline.json'
+  prove t6b "and the actor and session it came from (§17.4, §29.2)" \
+    'grep -q "\"actor\"" /tmp/t6-timeline.json && grep -q "\"session_id\"" /tmp/t6-timeline.json'
+  prove t6c "the command reaching the ledger is a redacted summary (§17.5, §30.3)" \
+    'grep -q "\"command\":\"stop process" /tmp/t6-timeline.json'
+  prove t6d "and every lifecycle event names a §7.1 evidence source (§7.1, §11.5)" \
+    'grep -q "\"source\":\"ono.session\"" /tmp/t6-timeline.json'
+
+  echo '== §11.4: the value is typed, and a pipeline filters it =='
+  ono -c "sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo \$! > /tmp/t6c.pid'
+  stop process \$(cat /tmp/t6c.pid)
+  find event 'kind == \"action.executed\"' | to json" > /tmp/t6-filtered.json 2>&1
+  prove t6e "a predicate over `kind` selects exactly the executed actions (§11.4, §28.1)" \
+    'grep -q "action.executed" /tmp/t6-filtered.json && ! grep -q "action.requested" /tmp/t6-filtered.json'
+  prove t6f "the event is an `ono.temporal-event/1` with §3.3's three timestamps kept apart (§3.3)" \
+    'grep -q "\"source_time\"" /tmp/t6-filtered.json && grep -q "\"observed_at\"" /tmp/t6-filtered.json && grep -q "\"ingested_at\"" /tmp/t6-filtered.json'
+  prove t6g "and it carries the evidence it rests on rather than asserting itself (§3.4)" \
+    'grep -q "\"evidence\":\[\"@v" /tmp/t6-filtered.json'
+
+  echo '== §11.5, §11.6: the default rendering is a row per event, with a usable reference =='
+  prove t6h "a rendered row carries an `@e…` reference (§11.6)" \
+    'grep -qE "@e[0-9a-f]+" /tmp/t6-timeline.txt'
+  prove t6i "and an abbreviated source tag (§11.5)" \
+    'grep -q "\[ono\]" /tmp/t6-timeline.txt'
+  prove t6j "the row names what happened in words (§11.5)" \
+    'grep -q "executed" /tmp/t6-timeline.txt'
+  prove t6k "no escape sequence carries the meaning (§45.2)" \
+    "! grep -q \$'\\033\\[' /tmp/t6-timeline.txt"
+
+  echo '== §26.3, §55.6: a timeline is not a claim that wall-clock order is causal order =='
+  prove t6l "the event states its clock domain rather than assuming one (§25.5, §26.4)" \
+    'grep -q "\"boot_id\"" /tmp/t6-timeline.json && grep -q "\"host\"" /tmp/t6-timeline.json'
+
+  echo 'timeline: done'
+exit: 0
+stdout-contains: PROVED t6-requested
+stdout-contains: PROVED t6-authorized
+stdout-contains: PROVED t6-executed
+stdout-contains: PROVED t6-completed
+stdout-contains: PROVED t6a
+stdout-contains: PROVED t6b
+stdout-contains: PROVED t6c
+stdout-contains: PROVED t6d
+stdout-contains: PROVED t6e
+stdout-contains: PROVED t6f
+stdout-contains: PROVED t6g
+stdout-contains: PROVED t6h
+stdout-contains: PROVED t6i
+stdout-contains: PROVED t6j
+stdout-contains: PROVED t6k
+stdout-contains: PROVED t6l
+stdout-contains: timeline: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

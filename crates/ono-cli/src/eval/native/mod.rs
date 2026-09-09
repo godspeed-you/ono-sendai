@@ -109,6 +109,19 @@ fn implementations(session: &mut Session) -> Result<&'static CommandTable, Error
     built.register(std::sync::Arc::new(crate::spatial::UnpinPlace::new(
         crate::spatial::PinStore::of(session),
     )));
+    // The temporal commands of v0.5 §11, §13, §16, §20.3 and §10.3 are the shell's to dispatch
+    // for the same reason: each of them reads the session's temporal coordinate and its ledger,
+    // which live in this process and are reached without an `Invocation` (§39, ADR-0690).
+    crate::temporal::configure_from(session.settings());
+    built.register(std::sync::Arc::new(crate::temporal::Timeline));
+    built.register(std::sync::Arc::new(crate::temporal::Changes));
+    built.register(std::sync::Arc::new(crate::temporal::Why));
+    built.register(std::sync::Arc::new(crate::temporal::FindEvent));
+    built.register(std::sync::Arc::new(crate::temporal::InspectEvent));
+    built.register(std::sync::Arc::new(crate::temporal::GetRecorder));
+    built.register(std::sync::Arc::new(crate::temporal::StartRecorder));
+    built.register(std::sync::Arc::new(crate::temporal::StopRecorder));
+    built.register(std::sync::Arc::new(crate::temporal::RemoveTemporalHistory));
     Ok(TABLE.get_or_init(|| built))
 }
 

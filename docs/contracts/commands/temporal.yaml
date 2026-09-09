@@ -1,0 +1,306 @@
+# Command family: Temporal. Sources: the v0.5 Temporal & Causal Systems Interface — §4 (the
+# temporal coordinate and `at`/`now`/`present`), §10.3 (the recorder commands), §11 (`timeline`),
+# §13 (`changes`), §16 (`why`), §20.3 (`find event`), §11.6 (`inspect event`) and §30.8
+# (`remove temporal-history`) — and ADR-0690, which fixes the spellings and the argument shapes.
+#
+# `docs/contracts/temporal/temporal.yaml` holds the inventory these twelve ids are compared
+# against in both directions by `xtask/src/temporal.rs::check_command_inventory`, so a command
+# added here without a row there fails the gate, and the other way round.
+#
+# `phase: T` is the v0.5 tranche of §50, whose phases are T1–T12 rather than the letters of v0.2
+# §37 (ADR-0610 §3). `T` is in `DELIVERED` in `crates/ono-command/src/impls/mod.rs`, and every id
+# below is bound in `crates/ono-cli` rather than in the library, because each of them needs the
+# session's temporal coordinate — which is the shell's, not a provider's. `xtask/src/bindings.rs`
+# records that in `BOUND_ELSEWHERE`.
+#
+# Conventions as documented at the head of process.yaml.
+
+version: 1
+family: temporal
+
+commands:
+  # --- the coordinate, §4 --------------------------------------------------------------------
+  - id: ono.temporal.at
+    verb: at
+    target: null
+    summary: Resolve a time selector and evaluate everything that follows at that instant.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.temporal-context/1
+    provider_capability: null
+    selectors:
+      - {name: selector, type: string, repeatable: true, doc: "The instant to stand at: an RFC 3339 timestamp, a local date and time, a local time today, a negative relative duration, or `event @e42` (v0.5 §4.4). Written as words so `at event @e42` and `at 2026-08-31 12:17:00` both read as themselves."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: T
+    note: >-
+      §12.1: the selector and its coverage are resolved before the session moves, so an
+      unresolvable selector leaves the coordinate exactly where it was. §4.2: only the temporal
+      coordinate changes — the spatial place is untouched.
+    examples:
+      - at -10m
+      - at 12:17
+      - at 2026-08-31T12:17:00+02:00
+      - at event @e42
+
+  - id: ono.temporal.now
+    verb: now
+    target: null
+    summary: Return the session to the present, keeping the place where it still exists.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.temporal-context/1
+    provider_capability: null
+    selectors: []
+    options: []
+    privilege: none
+    streaming: false
+    phase: T
+    note: >-
+      §4.3: available from anywhere, always. Where the historical place has no live counterpart
+      the session returns to the nearest live canonical parent and says so, and a tombstone is
+      never revived as a current object.
+    examples:
+      - now
+
+  - id: ono.temporal.present
+    verb: present
+    target: null
+    summary: Run one external command in the real present without leaving historical context.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.action-result/1>
+    provider_capability: null
+    selectors:
+      - {name: command, type: string, repeatable: true, doc: "The external program and its arguments, run in the current environment exactly as they would be in the present (v0.5 §4.8)."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: T
+    note: >-
+      §4.8: the temporal coordinate is preserved across the run, and the result metadata says the
+      execution was present-bound at least once, so nothing about the past is implied by what the
+      program printed.
+    examples:
+      - present git status
+      - present printf ok
+
+  # --- the event views, §11, §13, §20 --------------------------------------------------------
+  - id: ono.temporal.timeline
+    verb: timeline
+    target: null
+    summary: The ordered event view over a scope and a window.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.temporal-event/1>
+    provider_capability: null
+    selectors:
+      - {name: target, type: string, doc: "The target word to scope the timeline to — `service`, `process`. Without one, the current place and its directly relevant events answer (v0.5 §11.3)."}
+      - {name: name, type: string, doc: "Which object of that target, by name or identifier."}
+    options:
+      - {name: since, type: string, doc: "The start of the window, as a duration (`30m`) or a time selector. Defaults to `temporal.timeline.default_window` before the coordinate (v0.5 §11.2, §33)."}
+      - {name: until, type: string, doc: "The end of the window. Defaults to the active temporal coordinate, normally now."}
+      - {name: kind, type: string, repeatable: true, doc: "Restrict to one canonical event kind — `object.changed`, `relation.added`, `action.failed` (v0.5 §6.1, §11.2)."}
+      - {name: all, type: bool, doc: "Widen to the whole visible scope rather than the current place, subject to retention and permission (v0.5 §11.3)."}
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
+    privilege: none
+    streaming: true
+    phase: T
+    note: >-
+      §11.4: the value is a stream of `ono.temporal-event/1`, and the renderer is presentation
+      over it. §11.8: in historical context the default window centres on the coordinate rather
+      than on now.
+    examples:
+      - timeline
+      - timeline --since 30m
+      - timeline service nginx
+      - timeline --kind object.changed
+      - timeline --since 1h | where kind == "object.changed"
+
+  - id: ono.temporal.changes
+    verb: changes
+    target: null
+    summary: What is different between two instants, classified and with per-field certainty.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.temporal-change/1>
+    provider_capability: null
+    selectors:
+      - {name: target, type: string, doc: "The target word to compare — `service`, `process`, `filesystem`. Without one, the current place answers (v0.5 §13.1)."}
+      - {name: name, type: string, doc: "Which object of that target, by name or identifier."}
+    options:
+      - {name: since, type: string, doc: "The earlier instant, as a duration or a time selector. Required: a comparison needs two ends (v0.5 §13.1)."}
+      - {name: until, type: string, doc: "The later instant. Defaults to the active temporal coordinate, normally now."}
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
+    privilege: none
+    streaming: true
+    phase: T
+    note: >-
+      §13.4: where one side lacks evidence the field is reported as unknown with the coverage
+      that explains it, never as a zero or an empty string.
+    examples:
+      - changes --since 10m
+      - changes service nginx --since 1h
+      - changes --since 12:00 --until 12:30
+      - changes --since 30m | group subject.object_type
+
+  - id: ono.temporal.why
+    verb: why
+    target: null
+    summary: Explain a state, an event or a field from registered causal rules and their evidence.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.causal-explanation/1
+    provider_capability: null
+    selectors:
+      - {name: subject, type: string, repeatable: true, doc: "One of §16.2's three forms: a target and a selector (`service nginx`), `event @e42`, or `field state` about the current place."}
+    options:
+      - {name: depth, type: int, doc: "How many causal hops the explanation follows. Defaults to `temporal.timeline.default_depth` (v0.5 §16.7, §33)."}
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
+    privilege: none
+    streaming: false
+    phase: T
+    note: >-
+      §16.1: it needs no model. Only links a registered rule of `causality.yaml` produced appear
+      as causes; a correlation stays a correlation however plausible it reads (§15.6, §16.6).
+    examples:
+      - why service nginx
+      - why event @e42
+      - why field state
+
+  - id: ono.event.find
+    verb: find
+    target: event
+    summary: Search across events when the time something happened is not known.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.temporal-event/1>
+    provider_capability: null
+    selectors:
+      - {name: predicate, type: string, doc: "An Ono expression over the event, quoted: `'kind == \"action.failed\"'`. Without one every event in the window answers (v0.5 §20.3)."}
+    options:
+      - {name: since, type: string, doc: "The start of the window searched. Defaults to what the ledger retains."}
+      - {name: until, type: string, doc: "The end of the window searched. Defaults to the active temporal coordinate."}
+      - {name: limit, type: int, doc: "How many events to answer with. The search is bounded by default, because §32.3 budgets it."}
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
+    privilege: none
+    streaming: true
+    phase: T
+    note: >-
+      §20.3: this reuses the existing `find` verb and Ono expression semantics rather than
+      inventing a second search language.
+    examples:
+      - find event 'kind == "action.failed"'
+      - find event --since 1h
+      - find event 'kind == "object.appeared"' | take 20
+
+  - id: ono.event.inspect
+    verb: inspect
+    target: event
+    summary: One event with its times, its subject and the evidence it rests on.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.temporal-event/1
+    provider_capability: null
+    selectors:
+      - {name: reference, type: string, doc: "The event reference a timeline printed, `@e42` — a prefix of the content digest, refused with `temporal.ambiguous_event` where it names more than one (v0.5 §11.6)."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: T
+    examples:
+      - inspect event @e42
+
+  # --- the recorder and its history, §10.3, §30.8 ---------------------------------------------
+  - id: ono.recorder.get
+    verb: get
+    target: recorder
+    summary: The recorder's state, what it is collecting and what it has retained.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.recorder-status/1
+    provider_capability: null
+    selectors: []
+    options: []
+    privilege: none
+    streaming: false
+    phase: T
+    examples:
+      - get recorder
+
+  - id: ono.recorder.start
+    verb: start
+    target: recorder
+    summary: Start persistent temporal recording for this user.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.recorder-status/1
+    provider_capability: null
+    selectors: []
+    options: []
+    privilege: none
+    streaming: false
+    phase: T
+    note: >-
+      §10.2: persistent recording is off until this is run, and §10.8 makes starting idempotent —
+      a recorder already running answers `temporal.recorder_already_running` rather than opening a
+      second store.
+    examples:
+      - start recorder
+
+  - id: ono.recorder.stop
+    verb: stop
+    target: recorder
+    summary: Flush the temporal ledger and stop recording cleanly.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.recorder-status/1
+    provider_capability: null
+    selectors: []
+    options: []
+    privilege: none
+    streaming: false
+    phase: T
+    note: >-
+      §10.8: the stop is clean — what was buffered is written, and the interval the recorder was
+      not running is a declared coverage gap rather than silence (§44.1).
+    examples:
+      - stop recorder
+
+  - id: ono.temporal-history.remove
+    verb: remove
+    target: temporal-history
+    summary: Destroy the local retained temporal history.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.action-result/1>
+    provider_capability: null
+    selectors: []
+    options:
+      - {name: confirm, type: bool, doc: "Required: the deletion is irreversible and a script never waits for a prompt (spec §17.4). Without it nothing is removed and the run fails with `safety.confirmation_required`."}
+      - {name: dry-run, type: bool, doc: "Report what would be destroyed without destroying it: the store, its size and the interval it covers."}
+    confirmation: always
+    privilege: none
+    streaming: false
+    phase: T
+    note: >-
+      §30.8: the target name `temporal-history` is canonical for v0.5, and the operation takes the
+      existing destructive-operation confirmation path rather than a temporal-specific one. §30.9:
+      v0.5 removes the whole local ledger, never single events, because selective editing destroys
+      causal and evidence integrity.
+    examples:
+      - remove temporal-history --confirm
+      - remove temporal-history --dry-run

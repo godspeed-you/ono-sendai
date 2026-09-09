@@ -245,10 +245,130 @@ pub struct Adapter {
     invocations: Vec<Invocation>,
     limits: Vec<String>,
     fixtures: String,
+    #[serde(default)]
+    temporal: Option<HistoricalPlan>,
     #[serde(skip)]
     pack_id: String,
     #[serde(skip)]
     pack_version: String,
+}
+
+/// The historical query plan of spec v0.5 §23.2.
+///
+/// §23.1 lets an adapter contribute temporal evidence only where its manifest declares it, and
+/// forbids inferring temporal structure from arbitrary output because a command has been adapted.
+/// §23.2 then fixes what such a declaration must contain, and this is that list: the claim itself,
+/// what a coverage record from it means, which canonical field carries the source's own instant,
+/// what the entries identify, and the deduplication key where the tool has one.
+///
+/// The `plan` is what makes it executable rather than descriptive: which of the adapter's own
+/// invocations answers a bounded question, and how a bound is written into its argv. Without it a
+/// caller would have to know the tool's flags, which is the knowledge the adapter exists to hold.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalPlan {
+    historical_query: bool,
+    coverage: HistoricalCoverage,
+    source_time: String,
+    identity: Vec<String>,
+    #[serde(default)]
+    deduplication_key: Option<String>,
+    plan: HistoricalInvocation,
+}
+
+/// What a coverage record derived from a historical adapter plan means (§23.2, v0.5 §8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HistoricalCoverage {
+    /// The tool answers over whatever its own store still retains, and states no bound on it.
+    ///
+    /// `journalctl` is the case: the window is `journald.conf`'s and rotation's, Ono neither
+    /// controls it nor reads it, so a coverage record from this plan covers what the answer
+    /// actually spanned and claims nothing about what came before the earliest entry.
+    RetainedWindow,
+    /// The tool answers over a store it keeps completely for the range it was asked about.
+    CompleteRange,
+}
+
+/// The invocation a bounded question is asked through, and how the bounds are spelled.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalInvocation {
+    invocation: String,
+    since: String,
+    until: String,
+}
+
+impl HistoricalPlan {
+    /// Whether the adapter claims to answer about the past (§23.2, v0.5 §21.4).
+    #[must_use]
+    pub const fn historical_query(&self) -> bool {
+        self.historical_query
+    }
+
+    /// What a coverage record from this plan means.
+    #[must_use]
+    pub const fn coverage(&self) -> HistoricalCoverage {
+        self.coverage
+    }
+
+    /// The canonical field carrying the source's own instant (§23.2's source timestamp mapping).
+    #[must_use]
+    pub fn source_time(&self) -> &str {
+        &self.source_time
+    }
+
+    /// The canonical fields an entry is identified by (§23.2's identity mapping).
+    #[must_use]
+    pub fn identity(&self) -> &[String] {
+        &self.identity
+    }
+
+    /// The canonical field two reports of one entry agree on, where the tool has one (§6.8).
+    #[must_use]
+    pub fn deduplication_key(&self) -> Option<&str> {
+        self.deduplication_key.as_deref()
+    }
+
+    /// The adapter invocation a bounded question is asked through.
+    #[must_use]
+    pub fn invocation(&self) -> &str {
+        &self.plan.invocation
+    }
+
+    /// The argv template a lower bound is written into, as the contract declares it.
+    ///
+    /// The template rather than a filled-in instant, so a reference page can show what the
+    /// adapter promises rather than one example of it.
+    #[must_use]
+    pub fn since_template(&self) -> &str {
+        &self.plan.since
+    }
+
+    /// The argv template an upper bound is written into.
+    #[must_use]
+    pub fn until_template(&self) -> &str {
+        &self.plan.until
+    }
+
+    /// The argument that bounds the answer below at `at`.
+    ///
+    /// The template is the adapter's, so the flag and the time format are the contract's rather
+    /// than a caller's guess at what the tool accepts.
+    #[must_use]
+    pub fn since_argument(&self, at: jiff::Timestamp) -> String {
+        self.plan
+            .since
+            .replace("{seconds}", &at.as_second().to_string())
+    }
+
+    /// The argument that bounds the answer above at `at`.
+    #[must_use]
+    pub fn until_argument(&self, at: jiff::Timestamp) -> String {
+        self.plan
+            .until
+            .replace("{seconds}", &at.as_second().to_string())
+    }
 }
 
 /// The executable family an adapter answers to.
@@ -542,6 +662,16 @@ impl Adapter {
     #[must_use]
     pub fn invocations(&self) -> &[Invocation] {
         &self.invocations
+    }
+
+    /// The historical query plan this adapter declares, where it declares one (v0.5 §23.2).
+    ///
+    /// `None` for every adapter over a current-state tool, which is most of them: §23.3 is
+    /// explicit that `ps`, ordinary `ss`, `ip address` and `lsblk` "remain current observations
+    /// unless their underlying tools expose history".
+    #[must_use]
+    pub const fn temporal(&self) -> Option<&HistoricalPlan> {
+        self.temporal.as_ref()
     }
 
     /// What the adapter does not do.
@@ -909,6 +1039,10 @@ pub fn validate(
         location: pack.id().to_owned(),
         detail,
     };
+
+    for adapter in &pack.adapters {
+        problems.extend(validate_historical_plan(adapter));
+    }
 
     if pack.format != "ono-adapter-pack/1" {
         problems.push(at(format!(
@@ -1306,6 +1440,77 @@ fn is_kebab(text: &str) -> bool {
     let mut chars = text.chars();
     chars.next().is_some_and(|c| c.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Holds a declared historical plan to spec v0.5 §23.2's five requirements.
+///
+/// The block's presence is the claim, so a block that says `historical_query: false` is a
+/// contradiction rather than an opt-out; and each mapping it declares has to name a canonical
+/// field the adapter actually produces, because a mapping onto a field that does not exist is a
+/// declaration nothing can act on.
+fn validate_historical_plan(adapter: &Adapter) -> Vec<Problem> {
+    let Some(temporal) = adapter.temporal() else {
+        return Vec::new();
+    };
+    let at = |detail: String| Problem {
+        location: adapter.full_id(),
+        detail,
+    };
+    let mut problems = Vec::new();
+    if !temporal.historical_query {
+        problems.push(at(
+            "declares a `temporal:` block with `historical_query: false`; the block is the claim,              so an adapter that answers nothing about the past declares none (spec v0.5 §23.2)"
+                .to_owned(),
+        ));
+    }
+    let known = |field: &str| adapter.fields().contains_key(field);
+    if !known(temporal.source_time()) {
+        problems.push(at(format!(
+            "maps the source timestamp onto `{}`, which is not a field this adapter produces              (spec v0.5 §23.2)",
+            temporal.source_time()
+        )));
+    }
+    if temporal.identity().is_empty() {
+        problems.push(at(
+            "declares no identity mapping; spec v0.5 §23.2 requires one, because an entry nothing              identifies cannot be reconciled with anything else"
+                .to_owned(),
+        ));
+    }
+    for field in temporal.identity() {
+        if !known(field) {
+            problems.push(at(format!(
+                "identifies its entries by `{field}`, which is not a field this adapter produces                  (spec v0.5 §23.2)"
+            )));
+        }
+    }
+    if let Some(key) = temporal.deduplication_key()
+        && !known(key)
+    {
+        problems.push(at(format!(
+            "names `{key}` as its deduplication key, which is not a field this adapter produces              (spec v0.5 §23.2, §6.8)"
+        )));
+    }
+    if !adapter
+        .invocations()
+        .iter()
+        .any(|invocation| invocation.id() == temporal.invocation())
+    {
+        problems.push(at(format!(
+            "asks a historical question through the invocation `{}`, which this adapter does not              declare (spec v0.5 §23.2)",
+            temporal.invocation()
+        )));
+    }
+    for (name, template) in [
+        ("since", &temporal.plan.since),
+        ("until", &temporal.plan.until),
+    ] {
+        if !template.contains("{seconds}") {
+            problems.push(at(format!(
+                "spells its `{name}` bound as `{template}`, which carries no `{{seconds}}` for the                  instant to go in (spec v0.5 §23.2)"
+            )));
+        }
+    }
+    problems
 }
 
 #[cfg(test)]

@@ -167,11 +167,31 @@ fn check_state_groups(root: &Path, document: &Yaml) -> Vec<Problem> {
     {
         let group = row.get("group").and_then(Yaml::as_str).unwrap_or_default();
         let owns = row.get("owns").and_then(Yaml::as_str).unwrap_or_default();
-        if !text.contains(&format!("struct {group} "))
-            && !text.contains(&format!("struct {group}<"))
+        // A group may declare its own file. §31.2's eight live in the session type itself; the
+        // v0.5 temporal coordinate lives in `src/temporal/session.rs`, because a command reaches
+        // it through an `Invocation` rather than through the shell. The declaration says where,
+        // so the check stays a check rather than becoming a place the exception is hidden.
+        let (home, body) = match row.get("file").and_then(Yaml::as_str) {
+            Some(declared) => {
+                let elsewhere = root.join("crates").join(crate_name).join(declared);
+                match std::fs::read_to_string(&elsewhere) {
+                    Ok(body) => (declared.to_owned(), body),
+                    Err(_) => {
+                        problems.push(Problem::new(
+                            format!("{}/{declared}", crate_display(crate_name)),
+                            format!("is declared as the home of `{group}` and cannot be read"),
+                        ));
+                        continue;
+                    }
+                }
+            }
+            None => (file.to_owned(), text.clone()),
+        };
+        if !body.contains(&format!("struct {group} "))
+            && !body.contains(&format!("struct {group}<"))
         {
             problems.push(Problem::new(
-                format!("{}/{file}", crate_display(crate_name)),
+                format!("{}/{home}", crate_display(crate_name)),
                 format!(
                     "declares no `{group}`, which §31.2 names as the owner of {owns}. A session \
                      whose state has no owner is the flat field list §31.3 asks to be replaced."

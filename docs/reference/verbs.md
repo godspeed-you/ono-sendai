@@ -73,3 +73,9 @@ The controlled vocabulary of spec §7. The registry is deliberately small: a mod
 | `grant` | Create an explicit capability grant or lease. | capability | mutation/security | yes |
 | `revoke` | Remove an existing capability grant or lease. | capability | mutation/security | yes |
 | `ask` | Send a request to an explicitly selected assistant. | assistant | producer/context | no |
+| `at` | Move the session's temporal coordinate to a resolved instant. |  | context | no |
+| `now` | Return the session's temporal coordinate to the present. |  | context | no |
+| `present` | Run one external command in the real present from historical context. |  | context | no |
+| `timeline` | Project events chronologically over a scope and a window. | event, service, process | producer | no |
+| `changes` | Compare two instants and classify what is different. | service, process, filesystem | producer | no |
+| `why` | Explain a state, an event or a field from registered causal rules. | service, process, event | producer/meta | no |

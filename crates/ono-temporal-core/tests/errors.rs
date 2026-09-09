@@ -111,6 +111,7 @@ fn should_describe_the_hole_when_an_operation_requires_an_interval_it_cannot_hav
         capability: "service.state".into(),
         reason: GapReason::ProviderUnavailable,
         source: EvidenceSource::recorder(),
+        detail: Some("recorder offline".into()),
     });
     assert_eq!(refused.code(), ErrorCode::TemporalCoverageGap);
     let rendered = refused.render_full();

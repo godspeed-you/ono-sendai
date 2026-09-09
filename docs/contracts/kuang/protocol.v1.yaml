@@ -115,6 +115,12 @@ domains:
   # Two domains spec §31.12's proposed list omits and §31.61's interface sketch names (ADR-0022).
   - {id: capabilities, since: "11.1", capability: null,             doc: "Check a grant and make a runtime request (spec §31.61's `interface capabilities`). Asking is always permitted; the answer is the policy's."}
   - {id: output,       since: "11.1", capability: null,             doc: "Emit values, findings and annotations from an invocation (spec §31.61's `interface output`)."}
+  # The temporal domain of v0.5 §37, added in 11.3. Deliberately separate from `objects` and
+  # `history`: v0.5 §30.7 requires that "a plugin with current object read permission does not
+  # automatically receive historical access", and a domain of its own behind capabilities of its
+  # own is what makes that structural rather than remembered. `history` is the shell's command
+  # history of v0.2 §31.19 and is a different thing entirely (v0.5 §29.1, §29.2).
+  - {id: temporal,     since: "11.3", capability: null,             doc: "Read the temporal context, recorded events and evidence, contribute events and causal rules, and manage the recorder (v0.5 §30.7, §37). Each call carries its own capability; there is no domain-wide one."}
 
 # ---------------------------------------------------------------------------------------------
 # Handles. Opaque to the plugin, minted and revoked by the host. A handle is authority in
@@ -424,6 +430,105 @@ host_calls:
     returns: {type: "null"}
     errors: []
     doc: A package cannot write an entry attributed to the operator or to another package.
+
+  # --- temporal, v0.5 §30.7 and §37 -----------------------------------------------------------
+  #
+  # Six calls for six capabilities. The host validates every contribution before it becomes
+  # evidence — §37.3 lists what it checks — and it owns attribution throughout: a contributed
+  # event's source is `kuang:<package-id>/<provider-id>`, set by the host, so a package cannot
+  # present itself as a native source or as another package.
+
+  - id: temporal.context
+    domain: temporal
+    direction: plugin->host
+    capability: temporal.read.current
+    since: "11.3"
+    params: {}
+    returns: {type: record, doc: "`ono.temporal-context/1`: whether the session is historical, the instant it is evaluating at, the selector the user wrote, and the coverage behind it."}
+    errors: []
+    doc: >-
+      Bounded by construction, like `context.get`. A package that renders differently in the past
+      needs to know it is in the past; §4.7 makes the session read-only there and §38.4 extends
+      the same rule to an assistant, so this is also how a package learns not to offer a mutation.
+
+  - id: temporal.query
+    domain: temporal
+    direction: plugin->host
+    capability: temporal.read.history
+    since: "11.3"
+    params:
+      query: {type: record, required: true, doc: "An `EventQuery`: scope, subjects, kinds, a time range, a limit and an order. The range is narrowed to the granted `window` scope before anything is read; a wider one is `capability.scope_violation`, never a silently narrowed answer."}
+    returns: {type: handle<stream>, doc: "A stream of `ono.temporal-event/1`, already redacted by the host's collection policy (§30.3, §30.4)."}
+    errors: [runtime.schema_violation]
+    doc: >-
+      §30.7: "A plugin with current object read permission does not automatically receive
+      historical access." `object.read` reaches `objects.query` and nothing here; the two are
+      different capabilities behind different calls, and holding one grants nothing about the
+      other. §30.6's sibling rule for links applies here too: a package may query history, and
+      querying it is not permission to copy the ledger.
+
+  - id: temporal.evidence
+    domain: temporal
+    direction: plugin->host
+    capability: temporal.read.evidence
+    since: "11.3"
+    params:
+      evidence: {type: list<string>, nullable: true, doc: "Evidence ids to resolve. Null asks for the evidence behind the events named in `events`."}
+      events: {type: list<string>, nullable: true, doc: "Event ids whose evidence and coverage to return."}
+    returns: {type: handle<stream>, doc: "A stream of `ono.temporal-evidence/1` and `ono.temporal-coverage/1` records."}
+    errors: []
+    doc: >-
+      §7.6: raw evidence is reached through a provider-owned handle, never as a copied log body,
+      so what crosses is the reference and the claim rather than the bytes.
+
+  - id: temporal.contribute.events
+    domain: temporal
+    direction: plugin->host
+    capability: temporal.contribute.events
+    since: "11.3"
+    params:
+      events: {type: list<ono.temporal-event/1>, required: true, doc: "The events to add. `source`, `provenance` and the event id are set by the host and cannot be supplied."}
+    returns: {type: int, doc: "How many events were accepted. Duplicates by content digest are not an error and are not counted twice (§6.8)."}
+    errors: [runtime.schema_violation, capability.scope_violation, resource.item_limit, resource.byte_limit]
+    doc: >-
+      §37.3's list, in the order the host applies it — schema, source identity, timestamps, scope
+      visibility, referenced spatial identities, and event size and rate limits. The scope rule is
+      the one with teeth: **a plugin cannot assert that an object exists outside the objects it
+      can resolve through permitted providers.** An event whose subject the package could not
+      have seen is refused with `capability.scope_violation`, because a package that could
+      manufacture the existence of an object could manufacture anything reconstructed from it.
+
+  - id: temporal.contribute.causality
+    domain: temporal
+    direction: plugin->host
+    capability: temporal.contribute.causality
+    since: "11.3"
+    params:
+      links: {type: list<ono.causal-link/1>, required: true, doc: "The links to add. Each names a `rule` the package declared in its `causal_rules` contribution; a rule the package did not declare is refused."}
+    returns: {type: int, doc: "How many links were accepted."}
+    errors: [runtime.schema_violation]
+    doc: >-
+      §37.4: third-party rules are namespaced and identify their source, and plugin causal
+      strength MUST NOT exceed `asserted` unless the host contract explicitly trusts the package
+      as authoritative for a domain. The host lowers a stronger declaration to the ceiling of
+      `docs/contracts/temporal/causality.yaml` → `contributed_rules.strength_ceiling` and never
+      raises a weaker one (§7.2). A plugin's correlation therefore stays correlation in core
+      rendering, whatever the package called it.
+
+  - id: temporal.recorder
+    domain: temporal
+    direction: plugin->host
+    capability: temporal.recorder.manage
+    since: "11.3"
+    params:
+      action: {type: "enum<start|stop|status>", required: true, doc: "What to do with the persistent history recorder."}
+    returns: {type: record, doc: "`ono.recorder-status/1` — the recorder's state after the call, whichever action was asked for."}
+    errors: [runtime.schema_violation]
+    doc: >-
+      §10.2 makes the recorder off by default and §10.8 makes starting it an explicit act. A
+      package may ask, and the capability is a mutating one for exactly that reason: turning on a
+      persistent record of the machine is a decision the operator makes, not a side effect of
+      loading a package.
 
   # --- filesystem, spec §31.16 ----------------------------------------------------------------
   - id: filesystem.read

@@ -18,18 +18,30 @@ providers:
       image: enumerable
     temporal:
       # §22.7: "Container providers SHOULD expose runtime-native lifecycle events when the runtime
-      # supports them." `GET /events` is such a stream and this provider does not open it, so the
-      # claim is a snapshot: the engine can do more than this provider currently asks it for, and
-      # the advertisement states what is implemented rather than what is possible (§21.1).
-      # The engine's container id is stable and never reused, so a snapshot checkpoints cleanly.
+      # supports them." `GET /events` is such a stream, and since ADR-0716 this provider opens it
+      # — live with no upper bound, and as a historical replay with `since` and `until`, which is
+      # the same endpoint answering about the past (§21.4). The engine's container id is the
+      # identity `get container` answers with, so the events reconcile with v0.4 container
+      # spatial identity by construction rather than by a mapping table.
+      #
+      # `exhaustive_events` is false because the engine's event log is bounded by its own
+      # retention and by the daemon's lifetime, and neither is a thing this provider can read: a
+      # container that came and went while the daemon was restarting left nothing to find (§21.5).
+      # `causal_tokens` is false because the event carries no request identifier — the engine
+      # does not publish one — so there is no transaction here to join a cause on (§21.6).
       current_snapshot: true
-      live_events: false
-      historical_query: false
+      live_events: true
+      historical_query: true
       exhaustive_events: false
       causal_tokens: false
       checkpointable: true
       retained_history: null
-      coverage: snapshot
+      # The word names the strongest thing this source can answer, and a historical query is
+      # stronger than a live stream: `GET /events` pushes as it happens *and* replays a window on
+      # request, and it is one endpoint doing both. `live_events: true` above is where the live
+      # half is stated; a single word cannot carry two claims and the capabilities are where the
+      # detail belongs.
+      coverage: historical_query
     spatial:
       # The engine's full container id is stable for the container's whole existence and is
       # never reused (§10.1 Tier A). The name is a label the engine lets a user change, so it

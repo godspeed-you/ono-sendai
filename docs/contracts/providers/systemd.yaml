@@ -12,19 +12,24 @@ providers:
       service: enumerable
     temporal:
       # §22.2: the systemd provider "SHOULD contribute live unit state transitions and job identity
-      # where available". Job identity is here — `StartUnit` and its siblings answer with the job's
-      # object path, and `Unit.Job` names a job in flight — and that is a causal token in the sense
-      # of §21.6 and the evidence §15.2 admits for `caused_by`. Live transitions are not: this
-      # provider reads unit state on demand and the runtime polls it, so `live_events` stays false
-      # until it subscribes to `PropertiesChanged` (§21.5).
+      # where available", and since ADR-0715 it contributes both. `Manager.Subscribe` plus the
+      # `JobNew`, `JobRemoved`, `UnitNew`, `UnitRemoved` and per-unit `PropertiesChanged` signals
+      # make a transition arrive because the manager said so, and a transition observed while a
+      # job is in flight for that unit carries the job's object path — the causal token of §21.6
+      # and the evidence §15.2 admits for `caused_by`.
+      #
+      # `exhaustive_events` stays false, and two facts keep it false. systemd coalesces
+      # `PropertiesChanged`, so two transitions inside one coalescing window arrive as one; and
+      # `UnitNew`/`UnitRemoved` are the manager's own memory management rather than the service
+      # appearing or going away, so this provider derives no lifecycle from them at all (§6.3).
       current_snapshot: true
-      live_events: false
+      live_events: true
       historical_query: false
       exhaustive_events: false
       causal_tokens: true
       checkpointable: true
       retained_history: null
-      coverage: snapshot
+      coverage: event_stream
     spatial:
       # §13: "A service place represents the stable service-manager concept rather than a
       # single process lifetime." The unit name is that concept, and it survives every

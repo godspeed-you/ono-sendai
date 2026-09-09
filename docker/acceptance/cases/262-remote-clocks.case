@@ -1,0 +1,26 @@
+# v0.5 §24.2 and §48.8 scenario 40: remote source time and local ingest time remain distinct.
+#
+# The far side is this very machine reached over `--transport local`, so the case needs no
+# network and no second host (ADR-0037 §2). What it proves is the property §24.2 turns on: a
+# record that crossed a link still carries *the observation the far side made*, beside the name
+# of the host that made it. Arrival rewrites the link and nothing else — `retag_provenance` never
+# touches `observed`, so there is no path by which the ingest instant could stand in for the
+# source's own time. §26.4 is the other half: proximity across a boundary is correlation at most,
+# so nothing here claims one host's reading orders another's.
+case: a record that crossed a link keeps the observation the far side made
+timeout: 120
+env: NO_COLOR=1
+run: |
+  echo "== the record names the host it was observed on =="
+  ono -c 'link host testbox --transport local; enter link testbox; get process | where pid == 1 | take 1 | inspect | to json' | tail -1
+
+  echo "== and it carries the far side's own observation instant beside that name =="
+  ono -c 'link host testbox --transport local; enter link testbox; get process | where pid == 1 | take 1 | inspect | select observed | to json' | tail -1
+
+  echo "== the same object read locally is attributed to this machine instead =="
+  ono -c 'get process | where pid == 1 | take 1 | inspect | to json' | tail -1
+exit: 0
+stdout-contains: "link":"testbox"
+stdout-contains: "observed":
+stdout-not-contains: "link":"testbox","observed":null
+stdout-not-contains: panicked

@@ -1059,6 +1059,30 @@ fn adapter_pack_page(pack: &ono_adapter::AdapterPack) -> String {
         for limit in adapter.limits() {
             let _ = writeln!(page, "- {limit}");
         }
+        if let Some(plan) = adapter.temporal() {
+            // Spec v0.5 §23.2: what a historical adapter plan declares is part of the adapter's
+            // public surface, because a caller reasoning about coverage needs to know what the
+            // answer's window means and what two reads agree on.
+            page.push_str("\n### Historical query plan\n\n| | |\n|---|---|\n");
+            let _ = writeln!(
+                page,
+                "| coverage | {} |\n| source timestamp | `{}` |\n| identity | `{}` |\n\
+                 | deduplication key | {} |\n| asked through | `{}` |\n| bounds | `{}` … `{}` |",
+                match plan.coverage() {
+                    ono_adapter::HistoricalCoverage::RetainedWindow =>
+                        "whatever the tool still retains; an empty answer proves nothing",
+                    ono_adapter::HistoricalCoverage::CompleteRange =>
+                        "the whole of the range asked about",
+                },
+                plan.source_time(),
+                plan.identity().join("`, `"),
+                plan.deduplication_key()
+                    .map_or_else(|| "—".to_owned(), |key| format!("`{key}`")),
+                plan.invocation(),
+                plan.since_template(),
+                plan.until_template(),
+            );
+        }
     }
     page
 }

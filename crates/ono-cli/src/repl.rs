@@ -641,6 +641,16 @@ fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
         prompt = prompt.segment(format!(" {branch}"), Token::Dim);
     }
 
+    // v0.5 §4.6: `local/service/nginx:// @12:07:14 [PAST] >`. Two segments, because they carry
+    // two different facts: the dim clock says which instant is being read, and the emphasised
+    // marker says that a historical instant is being read at all. §45.2 requires the second to
+    // survive monochrome, so it is a word — the colour is decoration over a meaning the
+    // characters already have, exactly as the `root` segment above works.
+    if let Some((clock, marker)) = crate::temporal::marker_segments() {
+        prompt = prompt.segment(format!(" {clock}"), Token::Dim);
+        prompt = prompt.segment(format!(" {marker}"), Token::PromptRoot);
+    }
+
     let jobs = session.executor().jobs().len();
     if jobs > 0 {
         prompt = prompt.segment(format!(" +{jobs}"), Token::Accent);

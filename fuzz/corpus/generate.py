@@ -136,6 +136,34 @@ capabilities:
 network:
   outbound: none
 """)
+# v0.5 §37.3: the temporal contribution decoder. Three seeds for the three shapes a mutator
+# should be able to reach from — a well-formed event, one about an object the package cannot
+# resolve, and a causal link declaring more than §37.4 lets it carry.
+put("plugin-protocol", "temporal-event.json", b"""[{"kind": "object.changed",
+  "source_time": "2026-08-31T11:58:00Z", "observed_at": "2026-08-31T11:59:00Z",
+  "subject": {"schema": "dev.example.fuzz.thing/1"}, "source": "linux.procfs"}]""")
+put("plugin-protocol", "temporal-event-invisible.json", b"""[{"kind": "object.appeared",
+  "observed_at": "2026-08-31T11:59:00Z", "subject": {"schema": "ono.process/1"}}]""")
+put("plugin-protocol", "temporal-link.json", b"""{"rule": "dev.example.fuzz.rule",
+  "relation": "caused_by", "strength": "authoritative",
+  "cause": "e000000000000000000000aa", "effect": "e000000000000000000000bb"}""")
+put("plugin-protocol", "temporal-sources.yaml", """temporal_sources:
+  - id: dev.example.fuzz.temporal-source.things
+    summary: Things, from somewhere.
+    schema: dev.example.fuzz.thing/1
+    kinds: [object.changed]
+    answer: bounded
+    coverage: Whatever there was.
+""")
+put("plugin-protocol", "causal-rules.yaml", """causal_rules:
+  - rule_id: dev.example.fuzz.rule
+    relation: correlated_with
+    strength: correlated
+    summary: Things happen near things.
+    inputs: [object.changed]
+    identity_constraints: The same thing on both sides.
+""")
+
 put("plugin-protocol", "signature.yaml", """format: kuang-signature/1
 algorithm: ed25519
 key: ed25519:""" + "ab" * 32 + """

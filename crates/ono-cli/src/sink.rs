@@ -9,7 +9,7 @@ use std::io::{IsTerminal, Write};
 
 use ono_pipeline::{StreamEvent, ValueStream};
 use ono_render::{Layout, Presentation, Renderer, Theme, View};
-use ono_value::{ErrorValue, Value};
+use ono_value::{ErrorValue, RecordValue, Value};
 
 /// How wide the output is, and how much decoration it may carry.
 #[derive(Debug, Clone)]
@@ -153,6 +153,48 @@ impl Sink {
         {
             return ono_spatial_render::spatial_map(record, map_width(self.width), map_charset());
         }
+        // §13.3 renders a whole comparison at once: the classes are headings and the objects are
+        // grouped under them, so a stream of `ono.temporal-change/1` is one rendering rather than
+        // one per row.
+        if values.len() > 1
+            && let Some(changes) = every_change(values)
+        {
+            return ono_temporal_render::changes(&changes, self.width, &temporal_options());
+        }
+        // The temporal views are presentation over one record each, and the renderer that knows
+        // them is `ono-temporal-render` (v0.5 §39.3). Every arm is keyed on one schema id, and
+        // the options — the session's UTC offset and `temporal.ui.show_source_tags` — are handed
+        // over rather than read, because §39.2 gives a renderer its settings (ADR-0694).
+        if let [value] = values
+            && let Ok(record) = value.as_record()
+        {
+            let options = temporal_options();
+            match record.schema_id().to_string().as_str() {
+                "ono.temporal-change/1" => {
+                    return ono_temporal_render::changes(
+                        &[RecordValue::clone(record)],
+                        self.width,
+                        &options,
+                    );
+                }
+                "ono.temporal-timeline/1" => {
+                    return ono_temporal_render::timeline(record, self.width, &options);
+                }
+                "ono.causal-explanation/1" => {
+                    return ono_temporal_render::causal_explanation(record, self.width, &options);
+                }
+                "ono.recorder-status/1" => {
+                    return ono_temporal_render::recorder_status(record, self.width, &options);
+                }
+                "ono.temporal-context/1" => {
+                    return ono_temporal_render::temporal_hud(record, self.width, &options);
+                }
+                "ono.temporal-gap/1" => {
+                    return ono_temporal_render::gap_frame(record, self.width, &options);
+                }
+                _ => {}
+            }
+        }
         let renderer = Renderer::new();
         let mut layout = Layout::new(self.width);
         if let Some(max_rows) = self.max_rows {
@@ -223,4 +265,31 @@ pub fn map_charset() -> ono_spatial_render::Charset {
     } else {
         ono_spatial_render::Charset::Ascii
     }
+}
+
+/// The render options the temporal renderers are handed (v0.5 §39.2, §33).
+///
+/// The session's zone offset and `temporal.ui.show_source_tags` reach the renderer as data. §39.2
+/// keeps the clock out of pure logic and the same discipline applies to settings: a renderer that
+/// read the configuration itself could not be tested and could not be told what to draw.
+fn temporal_options() -> ono_temporal_render::RenderOptions {
+    let now = jiff::Timestamp::now();
+    let offset = i128::from(jiff::tz::TimeZone::system().to_offset(now).seconds());
+    ono_temporal_render::RenderOptions {
+        utc_offset: ono_value::Duration::from_nanoseconds(offset.saturating_mul(1_000_000_000)),
+        show_source_tags: crate::temporal::session::show_source_tags(),
+        ..ono_temporal_render::RenderOptions::default()
+    }
+}
+
+/// Every value as an `ono.temporal-change/1`, or `None` where one of them is something else.
+fn every_change(values: &[Value]) -> Option<Vec<RecordValue>> {
+    values
+        .iter()
+        .map(|value| {
+            let record = value.as_record().ok()?;
+            (record.schema_id().to_string() == "ono.temporal-change/1")
+                .then(|| RecordValue::clone(record))
+        })
+        .collect()
 }

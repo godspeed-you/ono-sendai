@@ -20,6 +20,24 @@ fields:
     doc: >-
       The stable content identity of §3.3, rendered `@e<hex>`. §11.6 requires it to be usable in
       a later command — `inspect event @e42`, `at event @e42`, `why event @e42`.
+  reference:
+    type: string
+    nullable: true
+    doc: >-
+      The short form of `event_id` **this session** minted — `@e42` without the `@` (§11.6,
+      ADR-0660). It is the shortest prefix of the digest that names one event inside the session
+      that issued it, so it is the string `at event`, `inspect event` and `why event` accept, and
+      the string §20.4's completion offers. Null on a persisted event and on any record not
+      produced for a session: a reference is a session's word for an event, and a stored one
+      would go stale the moment another session shortened it differently.
+  source:
+    type: string
+    nullable: true
+    doc: >-
+      The §7.1 evidence source class the event came from — `linux.systemd-dbus`, `ono.recorder`,
+      `adapter:ps`, `remote:web01/procfs`. §11.5's `[systemd]` tag is an abbreviation of this and
+      of nothing else. Null where the event's provenance names no §7.1 class, and a renderer
+      then draws no tag rather than a wrong one (ADR-0709).
   kind:
     type: enum
     required: true

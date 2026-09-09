@@ -97,7 +97,13 @@ pub trait Provider: Send + Sync + std::fmt::Debug {
     /// objects that could be read still arrive (spec §16.5).
     fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue>;
 
-    /// Changes to the objects matching `query`, beginning with a snapshot of the current state.
+    /// Changes to the objects matching `query`.
+    ///
+    /// A provider MAY open with [`EventKind::Snapshot`] events describing the current state, and
+    /// several do; a provider watching a source that only announces transitions — netlink's
+    /// multicast groups, a container engine's event stream — MUST NOT invent one. The opening
+    /// snapshot a `watch` shows is the runtime's, taken through [`Provider::snapshot`], so that
+    /// the first frame is the same whichever kind of source is underneath (spec §18.2).
     ///
     /// # Errors
     ///

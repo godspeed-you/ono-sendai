@@ -1,0 +1,62 @@
+# v0.5 §50 phase T6 — §11.7: "If a visible interval contains a material coverage gap, the text
+# renderer MUST show it… A gap MUST not be hidden simply because events exist on both sides."
+# §55.5 names the opposite as a failure mode: silent gaps.
+#
+# The gap this case makes is real: the recorder is started, stopped, and started again, and the
+# stretch in between is one nothing was recording.
+case: a coverage gap is drawn, never hidden
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== a session says what its coverage is, rather than implying completeness (§8.5, §8.6) =='
+  ono -c 'sleep 1
+  at -1s' > /tmp/t6g-at.out 2>&1
+  prove t6ah "entering historical context reports the coverage behind it (§4.2, §8.5)" \
+    'grep -qi "coverage" /tmp/t6g-at.out'
+  prove t6ai "and partial coverage is `[PAST?]`, never `[PAST]` (§8.6)" \
+    'grep -q "\[PAST?\]" /tmp/t6g-at.out'
+
+  echo '== §8.6: `[PAST]` is not claimed merely because some event exists near that time =='
+  ono -c "sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo \$! > /tmp/t6g.pid'
+  stop process \$(cat /tmp/t6g.pid)
+  sleep 1
+  at -1s" > /tmp/t6g-events.out 2>&1
+  prove t6aj "an event near the coordinate does not upgrade the marker (§8.6)" \
+    'grep -q "\[PAST?\]" /tmp/t6g-events.out'
+
+  echo '== §11.7: the timeline record carries its gaps as data a renderer must draw =='
+  ono -c 'timeline --since 5m | to json' > /tmp/t6g-timeline.json 2>&1
+  prove t6ak "a timeline states its gaps rather than leaving them to be inferred (§11.7)" \
+    'grep -q "\"gaps\"" /tmp/t6g-timeline.json'
+  prove t6al "and it says whether the limit cut the answer or the window did (§11.2)" \
+    'grep -q "\"truncated\"" /tmp/t6g-timeline.json'
+
+  echo '== §12.3: an interval nothing recorded is a refusal that names the boundary (§55.5) =='
+  ono -c 'at -3d' > /tmp/t6g-far.out 2>&1
+  prove t6am "unrecorded history is named, not silently empty (§12.3, §55.5)" \
+    'grep -q "temporal.not_recorded" /tmp/t6g-far.out'
+  prove t6an "and the answer says how far each source can reach (§12.3, §7.5)" \
+    'grep -q "ono.session" /tmp/t6g-far.out'
+
+  echo 'timeline gaps: done'
+exit: 0
+stdout-contains: PROVED t6ah
+stdout-contains: PROVED t6ai
+stdout-contains: PROVED t6aj
+stdout-contains: PROVED t6ak
+stdout-contains: PROVED t6al
+stdout-contains: PROVED t6am
+stdout-contains: PROVED t6an
+stdout-contains: timeline gaps: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

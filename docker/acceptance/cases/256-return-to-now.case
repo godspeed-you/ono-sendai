@@ -1,0 +1,100 @@
+# v0.5 §18.3, §18.7, §13.5; v0.4 §43.4. `N` returns the temporal cursor to the present and briefly
+# summarises what accumulated, through the canonical `changes` engine — one implementation, shared
+# with `look`'s change section (ADR-0682). A terminal resize while the view is open changes no
+# semantic time and no place, and the terminal is cooked on every exit path.
+case: returning to now summarises through the changes engine, and the place never moved
+pty: true
+columns: 100
+lines: 30
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  drive() {
+    local keys="$1" out="$2" writer="$3" typist
+    rm -f "$keys" "$out"
+    mkfifo "$keys"
+    ( eval "$writer" ) > "$keys" &
+    typist=$!
+    script --quiet --return --command 'ono' "$out" < "$keys" > /dev/null 2>&1 || true
+    wait "$typist" 2>/dev/null || true
+    rm -f "$keys"
+  }
+
+  ESC=$(printf '\033')
+  SPACE=' '
+  ALT_ON="${ESC}[?1049h"
+  ALT_OFF="${ESC}[?1049l"
+
+  echo '== the change section of a place view is one engine with the return-to-now summary (§13.5) =='
+  ono --no-config -c 'look --changes 1m --json' > /tmp/changes-256.json 2>&1 || true
+  head -c 400 /tmp/changes-256.json; echo
+  prove t9t "the place view carries a change section field (v0.4 §24.3)" \
+    "grep -qaF '\"changed\"' /tmp/changes-256.json"
+  # §24.3 and §2.17: `unsupported` is "nothing was watching", `empty` is "nothing differs",
+  # `available` is "these are the differences". Never a fabricated list, never a silent absence.
+  prove t9u "the change section names its state rather than implying nothing happened (§24.3, §2.17)" \
+    "grep -qaE '\"state\":\"(unsupported|empty|available|unknown|stale|permission_denied)\"' /tmp/changes-256.json"
+
+  # The resize *while the view is open* is asserted where a resize can be delivered as the signal
+  # it is: `crates/ono-cli/tests/spatial_interactive.rs::should_show_the_paused_marker_and_keep_its_instant_when_the_terminal_is_resized`
+  # resizes the pseudo-terminal and asserts on the frame at the new row count (v0.4 §43.4). Typing
+  # `stty` into a full-screen view types keys, not a command.
+  echo '== a view paused, then returned to now with N (§18.3, §18.7) =='
+  drive /tmp/keys-256 /tmp/session-256 "
+    sleep 3
+    printf 'stty rows 30 cols 100\n'; sleep 2
+    printf 'echo AT-PROMPT\n';        sleep 1
+    printf 'enter compute\n';         sleep 2
+    printf 'map --live\n';            sleep 6
+    printf '%s' '${SPACE}';           sleep 3
+    printf 'N';                       sleep 4
+    printf '%s' '${ESC}';             sleep 3
+    printf '%s' '${ESC}';             sleep 3
+    printf 'echo AFTER-VIEW\n';       sleep 2
+    printf 'stty -a\n';               sleep 2
+    printf 'exit\n';                  sleep 2
+  "
+
+  prove t9v "the session reached its prompt (§29.1)" \
+    "grep -qaF 'AT-PROMPT' /tmp/session-256"
+  prove t9w "\`map --live\` opens a full-screen view (v0.4 §23.3, §52.1)" \
+    "grep -qaF '${ALT_ON}' /tmp/session-256"
+  prove t9x "the view was frozen before it was returned (§18.2)" \
+    "grep -qaE 'PAUSED @[0-9][0-9]:[0-9][0-9]:[0-9][0-9]' /tmp/session-256"
+  prove t9y "N returns the cursor to now and says so (§18.3, §18.7)" \
+    "grep -qa 'returned to now' /tmp/session-256"
+  prove t9z "the place is the one the session was standing in all along (§18.2, v0.4 §23.4)" \
+    "grep -qaF 'local/compute://' /tmp/session-256"
+  prove t9aa "Esc restores the shell's own screen (v0.4 §49.8)" \
+    "grep -qaF '${ALT_OFF}' /tmp/session-256"
+  prove t9ab "the shell survives the view (v0.4 §49.8)" \
+    "grep -qaF 'AFTER-VIEW' /tmp/session-256"
+  prove t9ac "an external program inherits a cooked terminal afterwards (v0.4 §44.10)" \
+    "grep -qa 'icanon' /tmp/session-256 && ! grep -qa -- '-icanon' /tmp/session-256"
+  prove t9ad "nothing panicked" \
+    "! grep -qai 'panicked' /tmp/session-256"
+
+  exit 0
+exit: 0
+stdout-contains: PROVED t9t
+stdout-contains: PROVED t9u
+stdout-contains: PROVED t9v
+stdout-contains: PROVED t9w
+stdout-contains: PROVED t9x
+stdout-contains: PROVED t9y
+stdout-contains: PROVED t9z
+stdout-contains: PROVED t9aa
+stdout-contains: PROVED t9ab
+stdout-contains: PROVED t9ac
+stdout-contains: PROVED t9ad
+stdout-not-contains: FAILED

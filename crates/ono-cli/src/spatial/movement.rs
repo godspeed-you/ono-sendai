@@ -212,7 +212,18 @@ pub fn go_up(
     // §11.3: one canonical parent, deterministic, computed from the place's own rule
     // chain — the same answer the place view already declares under `canonical_parent`,
     // because asking twice is how a hierarchy stops being one.
-    let Some(there) = ono_spatial_query::resolve::parent_of(session.index(), &here) else {
+    //
+    // v0.5 §14.1: at a historical coordinate the chain is the reconstructed one. A process that
+    // belonged to a service then goes up to that service, whatever service holds it today, and a
+    // hierarchy edge that only exists today cannot be climbed (§14.3).
+    let historical = match crate::spatial::historical::active() {
+        Some(active) => Some(active.world(session.current_scope())?),
+        None => None,
+    };
+    let index = historical
+        .as_ref()
+        .map_or_else(|| session.index(), crate::spatial::HistoricalWorld::index);
+    let Some(there) = ono_spatial_query::resolve::parent_of(index, &here) else {
         // A place of a kind a package contributed is not the top of anything — it is a place §7
         // gives no domain, because §36.4's plugin-defined aggregate space, which is what would
         // give it one, is a declaration a package cannot yet make (ADR-0584). Telling a user

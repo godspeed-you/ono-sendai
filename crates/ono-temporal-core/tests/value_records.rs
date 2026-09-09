@@ -42,6 +42,7 @@ fn gap() -> TemporalGap {
         capability: "service.state".into(),
         reason: GapReason::ProviderUnavailable,
         source: EvidenceSource::recorder(),
+        detail: Some("recorder offline".into()),
     }
 }
 
@@ -131,6 +132,66 @@ fn should_validate_against_its_contract_when_a_coverage_interval_becomes_a_recor
 }
 
 #[test]
+fn should_carry_the_evidence_source_class_when_an_events_provenance_names_one() {
+    let record = value::event_record(&event(
+        EventKind::ObjectChanged,
+        "2026-08-31T12:18:02.044Z",
+        "linux.systemd-dbus",
+    ))
+    .expect("an event becomes a record");
+    assert_valid(&record);
+    // §11.5's `[systemd]` tag abbreviates the §7.1 class and nothing else, so the class is a
+    // declared field rather than something a renderer reads out of free-text provenance.
+    assert_eq!(
+        record.get("source"),
+        Some(&Value::string("linux.systemd-dbus"))
+    );
+}
+
+#[test]
+fn should_leave_the_source_null_when_the_provenance_names_no_evidence_class() {
+    let record = value::event_record(&event(
+        EventKind::ObjectChanged,
+        "2026-08-31T12:18:02.044Z",
+        "linux.sock-diag",
+    ))
+    .expect("an event becomes a record");
+    assert_valid(&record);
+    assert_eq!(
+        record.get("source"),
+        Some(&Value::Null),
+        "§7.1 is a closed list: a provider name outside it is not an evidence source class"
+    );
+}
+
+#[test]
+fn should_carry_the_short_form_when_a_session_minted_a_reference_for_an_event() {
+    let event = event(
+        EventKind::ObjectChanged,
+        "2026-08-31T12:18:02.044Z",
+        "linux.systemd-dbus",
+    );
+    let record =
+        value::event_record_with_reference(&event, Some("e42")).expect("an event becomes a record");
+    assert_valid(&record);
+    // §11.6: the rendered reference must be usable in `at event`, `inspect event` and `why
+    // event`, so it is the string the session's own resolver accepts.
+    assert_eq!(record.get("reference"), Some(&Value::string("e42")));
+}
+
+#[test]
+fn should_leave_the_reference_null_when_no_session_minted_one() {
+    let record = value::event_record(&event(
+        EventKind::ObjectChanged,
+        "2026-08-31T12:18:02.044Z",
+        "linux.systemd-dbus",
+    ))
+    .expect("an event becomes a record");
+    assert_valid(&record);
+    assert_eq!(record.get("reference"), Some(&Value::Null));
+}
+
+#[test]
 fn should_validate_against_its_contract_when_a_gap_becomes_a_record() {
     let record = value::gap_record(&gap()).expect("a gap becomes a record");
     assert_valid(&record);
@@ -138,6 +199,29 @@ fn should_validate_against_its_contract_when_a_gap_becomes_a_record() {
         record.get("reason"),
         Some(&Value::string("provider_unavailable"))
     );
+}
+
+#[test]
+fn should_carry_the_producers_words_when_a_gap_states_a_detail() {
+    let record = value::gap_record(&gap()).expect("a gap becomes a record");
+    assert_valid(&record);
+    // §11.7's own worked example is this field: `---- coverage gap: recorder offline 4m12s ----`.
+    // A renderer that only had `reason` would write `provider unavailable` instead.
+    assert_eq!(
+        record.get("detail"),
+        Some(&Value::string("recorder offline"))
+    );
+}
+
+#[test]
+fn should_leave_the_detail_null_when_the_reason_says_everything() {
+    let bare = TemporalGap {
+        detail: None,
+        ..gap()
+    };
+    let record = value::gap_record(&bare).expect("a gap becomes a record");
+    assert_valid(&record);
+    assert_eq!(record.get("detail"), Some(&Value::Null));
 }
 
 #[test]

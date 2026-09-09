@@ -76,8 +76,8 @@ pub use authorization::{
 pub use error::ProtocolError;
 pub use frame::{FRAME_HEADER_LEN, FRAME_VERSION, Frame, FrameKind, decode, encode};
 pub use handshake::{
-    Accept, CapabilityDescriptor, Hello, Identity, Negotiated, PROTOCOL_VERSION, PeerInfo,
-    ProviderDescriptor, Reject,
+    Accept, CapabilityDescriptor, Hello, Identity, Negotiated, PROTOCOL_VERSION, PeerClock,
+    PeerInfo, ProviderDescriptor, Reject, RemoteTemporal, TemporalDescriptor,
 };
 pub use limits::{
     DEFAULT_CREDIT, HANDSHAKE_TIMEOUT, Limits, MAX_CONNECTIONS, MAX_CONNECTIONS_PER_CLIENT,

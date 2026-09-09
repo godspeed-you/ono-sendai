@@ -63,10 +63,11 @@ pub use clock::{ClockDomain, EventTimes};
 pub use context::TemporalContext;
 pub use coverage::{
     CoverageSummary, GapReason, HeadlineCoverage, TemporalCompleteness, TemporalCoverage,
-    TemporalGap,
+    TemporalGap, gap_detail,
 };
 pub use event::{
-    ChangeCertainty, ChangeClass, EventKind, EventSeed, FieldChange, SpatialRef, TemporalEvent,
+    CONFIDENCE_KEY, ChangeCertainty, ChangeClass, EventKind, EventSeed, FieldChange, RELATION_KEY,
+    SpatialRef, TemporalEvent, relation_of, relation_payload,
 };
 pub use evidence::{Evidence, EvidenceClaim, EvidenceStrength, OpaqueReference};
 pub use id::{ActionId, CausalLinkId, CheckpointId, EventId, EvidenceId};

@@ -16,6 +16,7 @@ ono-parser.workspace = true
 ono-pipeline.workspace = true
 ono-provider-api.workspace = true
 ono-render.workspace = true
+ono-temporal-core.workspace = true
 ono-value.workspace = true
 
 bytes.workspace = true

@@ -339,3 +339,97 @@ fn should_round_trip_an_adapt_request_when_framed() {
         other => panic!("got {other:?}"),
     }
 }
+
+// --- the temporal coordinate a request carries (v0.5 §24.5, §30.6) ----------------------------
+
+#[test]
+fn should_carry_the_window_a_historical_query_asks_over_when_a_request_crosses_the_link() {
+    let from: jiff::Timestamp = "2026-08-31T11:50:00Z".parse().expect("a fixed instant");
+    let until: jiff::Timestamp = "2026-08-31T12:00:00Z".parse().expect("a fixed instant");
+    let query =
+        RemoteQuery::target("process").over(ono_provider_api::TimeWindow::between(from, until));
+
+    let Message::StartQuery(decoded) = round_trip(&Message::StartQuery(query)) else {
+        panic!("a query decodes as a query");
+    };
+
+    assert_eq!(
+        decoded.window(),
+        Some(ono_provider_api::TimeWindow::between(from, until)),
+        "§24.5: `at -10m` on a remote place asks the remote about that interval"
+    );
+}
+
+#[test]
+fn should_read_a_query_with_no_window_as_a_question_about_now() {
+    let Message::StartQuery(decoded) =
+        round_trip(&Message::StartQuery(RemoteQuery::target("process")))
+    else {
+        panic!("a query decodes as a query");
+    };
+
+    assert_eq!(
+        decoded.window(),
+        None,
+        "an absent window means what it always meant: the present"
+    );
+}
+
+#[test]
+fn should_carry_the_historical_coordinate_a_mutation_was_attempted_from() {
+    let at: jiff::Timestamp = "2026-08-31T11:50:00Z".parse().expect("a fixed instant");
+    let request = ActRequest::new(
+        "service",
+        "restart",
+        ObjectId::new(SchemaId::new("ono.test.remote", 1), [Value::Int(1)]),
+    )
+    .attempted_at(at);
+
+    let Message::Act(decoded) = round_trip(&Message::Act(request)) else {
+        panic!("an action decodes as an action");
+    };
+
+    assert_eq!(
+        decoded.attempted_from(),
+        Some(at),
+        "§30.6: the agent has to know the caller was standing in the past to refuse it there"
+    );
+}
+
+#[test]
+fn should_read_an_action_with_no_coordinate_as_one_attempted_in_the_present() {
+    let request = ActRequest::new(
+        "service",
+        "restart",
+        ObjectId::new(SchemaId::new("ono.test.remote", 1), [Value::Int(1)]),
+    );
+
+    let Message::Act(decoded) = round_trip(&Message::Act(request)) else {
+        panic!("an action decodes as an action");
+    };
+
+    assert_eq!(
+        decoded.attempted_from(),
+        None,
+        "empty means the old behaviour"
+    );
+}
+
+#[test]
+fn should_carry_the_transaction_the_source_named_when_an_event_crosses_the_link() {
+    let event = ObjectEvent::changed(&remote_record(7, "nginx"), ["name"])
+        .with_sequence(3)
+        .with_cause("systemd:/org/freedesktop/systemd1/job/4821");
+
+    let Message::Event(decoded) = round_trip(&Message::Event(event)) else {
+        panic!("an event decodes as an event");
+    };
+
+    assert_eq!(
+        decoded.cause(),
+        Some("systemd:/org/freedesktop/systemd1/job/4821"),
+        "§26.4: a causal chain crosses a host boundary only where the evidence chain does, and \
+         the transaction identity is that evidence"
+    );
+    assert_eq!(decoded.sequence(), Some(3));
+}

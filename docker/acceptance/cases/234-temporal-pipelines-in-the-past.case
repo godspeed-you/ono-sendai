@@ -1,0 +1,77 @@
+# v0.5 §50 phase T2 — §4.8's last paragraph and §28: a pure Ono transform over reconstructed
+# values stays allowed in historical context, temporal events are ordinary values a pipeline can
+# filter, and §28.3's distinction between `now()` and the query coordinate is testable.
+#
+# §28.3 makes that distinction a MUST: "`now()` inside a command evaluated under historical
+# context refers to real current time only in expression semantics; historical query time is
+# exposed as `context.time`. This distinction MUST be documented and testable."
+case: pipelines and expressions under a historical coordinate
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== a pure Ono transform still runs in historical context (§4.8) =='
+  ono -c 'sleep 1
+  at -1s
+  get process | where cpu > 20 | select pid name | to json' > /tmp/t2t-transform.out 2>&1
+  prove t2aw "the pipeline runs rather than being refused as an external program (§4.8)" \
+    '! grep -q "temporal.present_only" /tmp/t2t-transform.out'
+  prove t2ax "and it is not refused as a mutation either (§4.7)" \
+    '! grep -q "temporal.read_only" /tmp/t2t-transform.out'
+
+  echo '== §28.3: `now()` is real current time even under a historical coordinate =='
+  ono -c 'let before = now()
+  sleep 1
+  at -1s
+  let after = now()
+  let moved = after > before
+  echo $moved' > /tmp/t2t-now.out 2>&1
+  prove t2ay "`now()` still reads the clock in historical context (§28.3)" \
+    'grep -q "true" /tmp/t2t-now.out'
+
+  echo '== §28.3 adds two typed helpers, and they answer =='
+  prove t2az "`age(timestamp)` is how long ago an instant was (§28.3)" \
+    'ono -c "let old = age(2020-01-01T00:00:00Z)
+     let big = old > 1h
+     echo \$big" 2>&1 | grep -q "true"'
+  prove t2ba "`between(t, from, to)` brackets an instant, both ends included (§28.3)" \
+    'ono -c "let inside = between(2026-01-02T00:00:00Z, 2026-01-01T00:00:00Z, 2026-01-03T00:00:00Z)
+     echo \$inside" 2>&1 | grep -q "true"'
+  prove t2bb "and it answers false for an instant outside the window (§28.3)" \
+    'ono -c "let outside = between(2026-02-02T00:00:00Z, 2026-01-01T00:00:00Z, 2026-01-03T00:00:00Z)
+     echo \$outside" 2>&1 | grep -q "false"'
+  prove t2bc "the closed list of callable functions is named when one is missing (v0.2 §19.3)" \
+    'ono -c "let x = nonsense(1)" 2>&1 | grep -q "age" '
+
+  echo '== §4.5: `--at` uses the same engine as `at`, and refuses the same things =='
+  ono -c 'at -3d' > /tmp/t2t-at-ctx.out 2>&1
+  ono -c 'timeline --at -3d' > /tmp/t2t-at-opt.out 2>&1
+  prove t2bd "an instant `at` refuses is one `--at` refuses (§4.5)" \
+    'grep -q "temporal.not_recorded" /tmp/t2t-at-ctx.out && grep -q "temporal.not_recorded" /tmp/t2t-at-opt.out'
+  prove t2be "and `--at` did not change the session coordinate (§4.5)" \
+    '! ono -c "timeline --at -0s
+     look" 2>&1 | grep -q "\[PAST"'
+
+  echo 'temporal pipelines: done'
+exit: 0
+stdout-contains: PROVED t2aw
+stdout-contains: PROVED t2ax
+stdout-contains: PROVED t2ay
+stdout-contains: PROVED t2az
+stdout-contains: PROVED t2ba
+stdout-contains: PROVED t2bb
+stdout-contains: PROVED t2bc
+stdout-contains: PROVED t2bd
+stdout-contains: PROVED t2be
+stdout-contains: temporal pipelines: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

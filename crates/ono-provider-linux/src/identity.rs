@@ -12,6 +12,7 @@ use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, StreamSink, ValueStream};
 use ono_provider_api::{
     Action, ActionOutcome, Availability, Capability, ObjectRef, Provider, Query, Risk, Selector,
+    TemporalCapabilities,
 };
 use ono_value::{ErrorValue, RecordValue, Schema, Value};
 
@@ -237,6 +238,23 @@ impl Provider for IdentityProvider {
             Capability::new("user.manage", Risk::Mutate).needing_elevation(),
             Capability::new("group.manage", Risk::Mutate).needing_elevation(),
         ]
+    }
+
+    fn temporal(&self) -> TemporalCapabilities {
+        // NSS answers about the accounts that exist now. A directory behind it — LDAP, a domain
+        // controller — may keep history, and this provider cannot ask it for any; saying so is
+        // the difference between "no history here" and implying the account database is as old
+        // as the machine (§7.4). The answer is a complete list at the instant it was read, so it
+        // checkpoints.
+        TemporalCapabilities {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+            retained_history: None,
+        }
     }
 
     fn availability(&self) -> Availability {

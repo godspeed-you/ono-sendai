@@ -13,6 +13,10 @@ ono-adapter.workspace = true
 ono-core.workspace = true
 ono-kuang-protocol.workspace = true
 ono-model-broker.workspace = true
+# The temporal vocabulary of v0.5 §6, §7 and §15: a contributed event names an `EventKind`, a
+# contributed link a `CausalRelation` and an `EvidenceStrength`, and the host validates against
+# the one definition of each rather than a copy (§37.1).
+ono-temporal-core.workspace = true
 ono-value.workspace = true
 async-trait.workspace = true
 globset.workspace = true
@@ -26,6 +30,7 @@ wasmtime.workspace = true
 wasmtime-wasi.workspace = true
 
 [dev-dependencies]
+ono-temporal-core.workspace = true
 serde_yaml_ng.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 

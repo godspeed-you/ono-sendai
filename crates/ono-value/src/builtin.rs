@@ -170,6 +170,10 @@ const CONTRACTS: &[&str] = &[
     include_str!(concat!(env!("OUT_DIR"), "/schemas/temporal-gap.v1.json")),
     include_str!(concat!(
         env!("OUT_DIR"),
+        "/schemas/temporal-landmark.v1.json"
+    )),
+    include_str!(concat!(
+        env!("OUT_DIR"),
         "/schemas/temporal-history.v1.json"
     )),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/temporal-source.v1.json")),

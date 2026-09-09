@@ -162,6 +162,9 @@ declared:
   - id: "crates/ono-cli/tests/spatial_identity.rs::should_refuse_to_stand_in_a_directory_this_user_may_not_read"
     category: missing_privilege
     prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-recorder/tests/retention_load.rs::should_stay_inside_its_memory_budget_when_a_recording_load_is_driven"
+    category: fixture_not_applicable
+    prerequisite: "the host's /proc/self/status reports VmHWM, which is what the §32.4 memory figure is read from"
   - id: "crates/ono-cli/tests/spatial_identity.rs::should_report_permission_denied_rather_than_zero_files_for_another_users_process"
     category: missing_privilege
     prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
@@ -279,6 +282,29 @@ declared:
   - id: "xtask/tests/packaging.rs::should_stamp_the_workspace_before_building_when_the_image_caches_its_target_directory"
     category: fixture_not_applicable
     prerequisite: "the acceptance Dockerfile mounts a build cache there is staleness to guard against"
+
+  - id: "crates/ono-provider-systemd/tests/live_signals.rs::should_report_a_real_unit_transition_with_the_job_the_manager_gave_it"
+    category: external_tool_unavailable
+    prerequisite: "a per-user systemd manager on the session bus and a `systemd-run` to make a transient unit transition, so the live subscription of v0.5 §22.2 can be observed without privilege (ADR-0715)"
+  - id: "crates/ono-provider-systemd/tests/live_signals.rs::should_open_a_subscription_against_the_real_system_manager"
+    category: external_tool_unavailable
+    prerequisite: "a systemd service manager on the system bus that `Manager.Subscribe` can be called on (ADR-0715)"
+
+  - id: "crates/ono-provider-systemd/tests/journal_history.rs::should_answer_only_within_the_window_it_was_asked_about"
+    category: external_tool_unavailable
+    prerequisite: "a `journalctl` on PATH, so the one built-in historical source of v0.5 §22.3 can be asked about a past window (ADR-0719)"
+  - id: "crates/ono-provider-systemd/tests/journal_history.rs::should_answer_only_within_the_window_it_was_asked_about"
+    category: missing_privilege
+    prerequisite: "a journal this user may read entries from; a reader the journal is closed to has nothing to bound (v0.5 §7.4)"
+  - id: "crates/ono-provider-systemd/tests/journal_history.rs::should_carry_the_boot_it_belongs_to_and_the_cursor_two_reads_agree_on"
+    category: external_tool_unavailable
+    prerequisite: "a `journalctl` on PATH, so §23.2's identity mapping and deduplication key can be read off a real entry (ADR-0719)"
+  - id: "crates/ono-provider-systemd/tests/journal_history.rs::should_carry_the_boot_it_belongs_to_and_the_cursor_two_reads_agree_on"
+    category: missing_privilege
+    prerequisite: "a journal this user may read entries from; a reader the journal is closed to has nothing to identify"
+  - id: "crates/ono-provider-systemd/tests/journal_history.rs::should_leave_an_open_end_open_rather_than_reading_a_clock_to_close_it"
+    category: external_tool_unavailable
+    prerequisite: "a `journalctl` on PATH, so a half-open window can be asked at all"
 
 canonical_ci:
   # The `ubuntu-latest` GitHub runner that `.github/workflows/ci.yml` runs the gate on: an

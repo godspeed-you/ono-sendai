@@ -13,7 +13,6 @@ ono-core.workspace = true
 ono-value.workspace = true
 ono-spatial-core.workspace = true
 ono-temporal-core.workspace = true
-ono-temporal-ledger.workspace = true
 jiff.workspace = true
 
 [dev-dependencies]

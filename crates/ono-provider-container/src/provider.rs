@@ -7,15 +7,17 @@ use std::time::Duration;
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
 use ono_provider_api::{
-    Action, ActionOutcome, Availability, Capability, ObjectId, ObjectRef, Provider, Query, Risk,
-    Selector,
+    Action, ActionOutcome, Availability, Capability, EventSink, EventStream, ObjectEvent, ObjectId,
+    ObjectRef, Provider, Query, Risk, Selector, TemporalCapabilities, TimeWindow,
 };
 use ono_value::{ErrorValue, RecordValue, SchemaId, Value};
 
 use crate::Endpoints;
 use crate::http::{self, HttpError, Response};
+use ono_pipeline::StreamSink;
+
 use crate::record::{
-    container_record, container_schema, image_matches, image_record, image_schema,
+    container_record, container_schema, event_record, image_matches, image_record, image_schema,
 };
 
 /// The id this provider signs its records with.
@@ -374,6 +376,70 @@ impl Provider for ContainerProvider {
         }
     }
 
+    fn temporal(&self) -> TemporalCapabilities {
+        TemporalCapabilities {
+            current_snapshot: true,
+            // §21.3 and §22.7: `GET /events` is a runtime-native lifecycle stream, and this
+            // provider opens it rather than comparing listings (ADR-0716).
+            live_events: true,
+            // The same endpoint bounded by `since` and `until` answers about the past: the
+            // engine keeps its event log and replays the window (§21.4).
+            historical_query: true,
+            // §21.5: the engine's event log is bounded by its own retention and by the daemon's
+            // lifetime, and neither is a thing this provider can read. A container that came and
+            // went while the daemon was restarting left nothing to find.
+            exhaustive_events: false,
+            // The event names no transaction. The engine's request ids are not published on the
+            // event stream, so there is nothing here to join a cause on (§21.6).
+            causal_tokens: false,
+            checkpointable: true,
+            // The engine states no bound on how long it keeps events, so neither does this.
+            retained_history: None,
+        }
+    }
+
+    /// `watch container`, through the engine's own `GET /events` stream (§22.7).
+    fn subscribe(&self, query: &Query) -> Result<EventStream, ErrorValue> {
+        if query.target_name() != "container" {
+            return Err(ErrorValue::new(
+                ErrorCode::ProviderUnsupported,
+                "the engine's event stream is about containers, so `image` cannot be watched",
+            )
+            .with_help("`watch container` follows `GET /events`; images are read on demand"));
+        }
+        let socket = self.socket()?;
+        let endpoint = format!("unix://{}", socket.display());
+        let query = query.clone();
+        Ok(EventStream::spawn(PipelineConfig::new(), move |sink| {
+            follow_events(socket, endpoint, query, TimeWindow::default(), sink)
+        }))
+    }
+
+    /// The container lifecycle the engine recorded within `window` (§21.4, §22.7).
+    ///
+    /// The engine keeps its event log, and `GET /events?since=&until=` replays a window of it and
+    /// then closes. An upper end the caller left open is closed at the instant the request is
+    /// made, because an open-ended `/events` is a live tail rather than an answer about the past
+    /// — the one place this provider reads a clock, and it reads it to bound a question rather
+    /// than to date an observation.
+    fn history(&self, query: &Query, window: &TimeWindow) -> Result<ValueStream, ErrorValue> {
+        if query.target_name() != "container" {
+            return Err(ono_provider_api::unsupported_history(PROVIDER_ID));
+        }
+        let socket = self.socket()?;
+        let endpoint = format!("unix://{}", socket.display());
+        let window = TimeWindow {
+            from: window.from,
+            until: Some(window.until.unwrap_or_else(jiff::Timestamp::now)),
+        };
+        let query = query.clone();
+        Ok(ValueStream::spawn(
+            PipelineConfig::new(),
+            Boundedness::Bounded,
+            move |sink| replay_events(socket, endpoint, query, window, sink),
+        ))
+    }
+
     fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
         let socket = self.socket()?;
         let endpoint = format!("unix://{}", socket.display());
@@ -511,4 +577,106 @@ impl Provider for ContainerProvider {
             ),
         })
     }
+}
+
+/// The `/events` request path for a window, with the filter the engine can apply itself.
+///
+/// `type=container` is the engine's own filter, so the daemon does the narrowing rather than this
+/// provider reading and discarding. Both ends are whole seconds because that is the resolution
+/// the engine's `since` and `until` accept.
+fn events_path(window: &TimeWindow) -> String {
+    let mut path = String::from("/events?filters=%7B%22type%22%3A%5B%22container%22%5D%7D");
+    if let Some(from) = window.from {
+        path.push_str(&format!("&since={}", from.as_second()));
+    }
+    if let Some(until) = window.until {
+        path.push_str(&format!("&until={}", until.as_second()));
+    }
+    path
+}
+
+/// Reads the engine's event stream, handing each container event to `deliver`.
+///
+/// Returns once the engine closes the stream — which a windowed request does by itself and a live
+/// one does only when the daemon stops — or once `deliver` says nobody is listening.
+async fn read_events<F, Fut>(
+    socket: PathBuf,
+    endpoint: String,
+    query: Query,
+    window: TimeWindow,
+    mut deliver: F,
+) where
+    F: FnMut(RecordValue) -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let Ok(mut stream) = http::open_stream(&socket, &events_path(&window), READ_BUDGET).await
+    else {
+        return;
+    };
+    while let Some(line) = stream.next_line().await {
+        let Ok(line) = line else {
+            return;
+        };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) else {
+            // The engine sends one JSON document per line; anything else is not an event, and
+            // guessing at it is how a decoder starts inventing objects.
+            continue;
+        };
+        let Some(Ok(record)) = event_record(&json, &endpoint) else {
+            continue;
+        };
+        if !query.matches(&record) {
+            continue;
+        }
+        if !deliver(record).await {
+            return;
+        }
+    }
+}
+
+/// The live subscription: each engine event as an object event about the container it names.
+///
+/// The kind follows the engine's action rather than a comparison, which is the whole point of a
+/// runtime-native stream: `create` is an appearance, `destroy` a disappearance, and everything
+/// else is the container changing. No state is held and nothing is diffed, so a container that
+/// was never listed still reports its own lifecycle correctly.
+async fn follow_events(
+    socket: PathBuf,
+    endpoint: String,
+    query: Query,
+    window: TimeWindow,
+    sink: EventSink,
+) {
+    read_events(socket, endpoint, query, window, move |record| {
+        let sink = sink.clone();
+        async move {
+            let action = record
+                .extra()
+                .get("container.action")
+                .and_then(|value| value.as_str().ok().map(str::to_owned));
+            let event = match action.as_deref() {
+                Some("create") => ObjectEvent::added(&record),
+                Some("destroy" | "remove") => ObjectEvent::removed(&record),
+                _ => ObjectEvent::changed(&record, ["state"]),
+            };
+            sink.send(event).await.is_ok()
+        }
+    })
+    .await;
+}
+
+/// The historical replay: each engine event as the container it was about, at the instant it
+/// happened.
+async fn replay_events(
+    socket: PathBuf,
+    endpoint: String,
+    query: Query,
+    window: TimeWindow,
+    sink: StreamSink,
+) {
+    read_events(socket, endpoint, query, window, move |record| {
+        let sink = sink.clone();
+        async move { sink.send(record.into_value()).await.is_ok() }
+    })
+    .await;
 }

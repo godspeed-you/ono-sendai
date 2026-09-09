@@ -2671,7 +2671,7 @@ Conventions this subsection relies on:
       not in the registry fails too.
 - [ ] **The twelve configuration settings of §33 are typed, inspectable and default as specified.**
       `temporal.recording.enabled` is `false` —
-      `crates/ono-cli/tests/temporal_settings.rs`, case 231-temporal-configuration.
+      `crates/ono-cli/tests/temporal_settings.rs`, case `231-temporal-configuration`.
 - [x] **No renderer, plugin or assistant can raise an evidence strength.** The type offers only
       `weakest_of`, and combining evidence never yields something stronger than what went in —
       `crates/ono-temporal-core/tests/evidence.rs::should_order_strengths_strongest_first_when_they_are_compared`,
@@ -2682,32 +2682,32 @@ Conventions this subsection relies on:
 
 - [ ] **`at -1m` enters historical context and the prompt says so.** The prompt carries the
       resolved instant and `[PAST]` or `[PAST?]`, and the spatial place is unchanged —
-      `crates/ono-cli/tests/temporal_context.rs`, case 230-temporal-at-and-now.
+      `crates/ono-cli/tests/temporal_context.rs`, case `230-temporal-at-and-now`.
 - [ ] **`now` returns to the present and keeps the place when it still exists.** Where the
       historical place has no live counterpart it returns to the nearest live canonical parent
       and reports the transition, and it never revives a tombstone (§4.3) —
-      `crates/ono-cli/tests/temporal_context.rs`, case 230-temporal-at-and-now.
+      `crates/ono-cli/tests/temporal_context.rs`, case `230-temporal-at-and-now`.
 - [ ] **An invalid or ambiguous time leaves the context untouched.** `at` resolves before it
       commits (§12.1); a future relative selector, an unparseable one and a local wall time
       inside a daylight-saving fold each answer `temporal.invalid_time` with the session's
       coordinate where it was — `crates/ono-cli/tests/temporal_context.rs`,
-      `crates/ono-temporal-core/tests/time_selector.rs`, case 230-temporal-at-and-now.
+      `crates/ono-temporal-core/tests/time_selector.rs`, case `230-temporal-at-and-now`.
 - [ ] **A native mutation in past context answers `temporal.read_only`.** Nothing is changed, and
       the message names `now` as the way back (§4.7) —
-      `crates/ono-cli/tests/temporal_read_only.rs`, case 232-temporal-past-is-read-only.
+      `crates/ono-cli/tests/temporal_read_only.rs`, case `232-temporal-past-is-read-only`.
 - [ ] **The read-only rule covers KUANG/11 and remote mutations too.** A plugin mutation tool and
       a remote action are refused by the same rule, at their own boundaries —
       `crates/ono-cli/tests/temporal_read_only.rs`,
-      `crates/ono-kuang-sdk/tests/conformance.rs`, case 232-temporal-past-is-read-only.
+      `crates/ono-kuang-sdk/tests/conformance.rs`, case `232-temporal-past-is-read-only`.
 - [ ] **An arbitrary external command in past context answers `temporal.present_only`.** It does
       not silently execute against the present machine (§4.8) —
-      `crates/ono-cli/tests/temporal_read_only.rs`, case 233-temporal-present-escape.
+      `crates/ono-cli/tests/temporal_read_only.rs`, case `233-temporal-present-escape`.
 - [ ] **`present printf ok` executes and preserves the historical coordinate.** The result
       metadata makes the present-bound execution visible at least once (§4.8) —
-      `crates/ono-cli/tests/temporal_read_only.rs`, case 233-temporal-present-escape.
+      `crates/ono-cli/tests/temporal_read_only.rs`, case `233-temporal-present-escape`.
 - [ ] **A pure Ono transform over reconstructed values still runs in past context.**
       `get process | where cpu > 20 | select pid name` answers from the reconstruction —
-      `crates/ono-cli/tests/temporal_context.rs`, case 234-temporal-pipelines-in-the-past.
+      `crates/ono-cli/tests/temporal_context.rs`, case `234-temporal-pipelines-in-the-past`.
 - [ ] **`--at` uses the same engine as `at`.** A command evaluated with `--at` and the same
       command under an `at` context produce the same values and the same coverage (§4.5) —
       `crates/ono-cli/tests/temporal_context.rs`.
@@ -2718,86 +2718,89 @@ Conventions this subsection relies on:
 
 - [ ] **A process appearing is a typed event.** `timeline` shows it, and the value is an
       `ono.temporal-event/1` that a pipeline can filter —
-      `crates/ono-cli/tests/timeline.rs`, case 235-timeline-is-typed.
+      `crates/ono-cli/tests/timeline.rs`, case `235-timeline-is-typed`.
 - [ ] **The process exiting is a disappearance carrying the same lifetime identity.** A PID
       reused later is a different identity — `crates/ono-cli/tests/timeline.rs`,
-      `crates/ono-temporal-core/tests/identity.rs`, case 235-timeline-is-typed.
+      `crates/ono-temporal-core/tests/identity.rs`, case `235-timeline-is-typed`.
 - [ ] **`timeline` at a service place excludes the firehose by default.** The default scope is
       the current place and its directly relevant events (§11.3) —
       `crates/ono-temporal-query/tests/relevance.rs`, `crates/ono-cli/tests/timeline.rs`,
-      case 236-timeline-relevance.
+      case `236-timeline-relevance`.
 - [ ] **`timeline --all` widens to the visible scope.** Subject to retention and permission —
-      `crates/ono-cli/tests/timeline.rs`, case 236-timeline-relevance.
+      `crates/ono-cli/tests/timeline.rs`, case `236-timeline-relevance`.
 - [ ] **`timeline` is pipeline-compatible.** `timeline --since 1h | where kind ==
       "object.changed" | where subject.type == "service"` yields typed values (§11.4) —
-      `crates/ono-cli/tests/timeline.rs`, case 235-timeline-is-typed.
+      `crates/ono-cli/tests/timeline.rs`, case `235-timeline-is-typed`.
 - [ ] **An event reference is stable, inspectable and usable.** `@e42` survives into `inspect
       event`, `at event` and `why event` (§11.6) — `crates/ono-cli/tests/timeline.rs`,
-      case 237-event-references.
+      case `237-event-references`.
 - [ ] **A recorder downtime interval is rendered as a gap.** The gap is shown even though events
       exist on both sides of it (§11.7) — `crates/ono-temporal-render/tests/timeline.rs`,
-      `crates/ono-cli/tests/timeline.rs`, case 238-timeline-gaps.
+      `crates/ono-cli/tests/timeline.rs`, case `238-timeline-gaps`.
 - [ ] **`find event` answers a predicate without a timestamp being known.** It reuses `find` and
       Ono expression semantics and returns a stream of events (§20.3) —
-      `crates/ono-cli/tests/find_event.rs`, case 239-find-event.
+      `crates/ono-cli/tests/find_event.rs`, case `239-find-event`.
 - [ ] **Historical context centres the default timeline on the coordinate.** ±15 minutes unless
       retention or configuration narrows it (§11.8) —
       `crates/ono-temporal-query/tests/timeline.rs`.
 - [ ] **`now()` and `context.time` are different things and both are documented.** `now()` is
       real current time in expression semantics; the query coordinate is `context.time` (§28.3) —
-      `crates/ono-cli/tests/temporal_expressions.rs`, case 234-temporal-pipelines-in-the-past.
+      `crates/ono-cli/tests/temporal_expressions.rs`, case `234-temporal-pipelines-in-the-past`.
 - [ ] **Command history and the temporal ledger stay separate.** Ctrl-R remains command recall;
       `timeline` is the system-event browser (§29) —
-      `crates/ono-cli/tests/temporal_context.rs`, case 237-event-references.
+      `crates/ono-cli/tests/temporal_context.rs`, case `237-event-references`.
 
 #### 4.11.4 Reconstruction and coverage (§9, §42, §48.3 scenarios 13–18)
 
 - [ ] **A checkpoint plus later change reconstructs the earlier service state.** Nearest trusted
       checkpoint at or before `T`, then ordered events (§9.1) —
-      `crates/ono-temporal-reconstruct/tests/reconstruction.rs`, case 240-reconstruction.
+      `crates/ono-temporal-reconstruct/tests/reconstruction.rs`, case `240-reconstruction`.
 - [ ] **A PID reused later does not resolve as the historical process.** The historical reference
       resolves to the lifetime that existed then, or to nothing (§5.2) —
-      `crates/ono-temporal-reconstruct/tests/lifetime.rs`, case 241-pid-reuse.
+      `crates/ono-temporal-reconstruct/tests/lifetime.rs`, case `241-pid-reuse`.
 - [ ] **A relation added after `T` does not appear in a map at `T`.** Current-only exits do not
       leak into a historical neighbourhood (§14.3) —
-      `crates/ono-temporal-reconstruct/tests/relations.rs`, case 242-historical-map.
+      `crates/ono-temporal-reconstruct/tests/relations.rs`, case `242-historical-map`.
 - [ ] **Absence is reported only where coverage can support it.** A point sample at 12:00 cannot
       prove a process did not exist from 11:50 to 12:10 (§7.4, §3.5) —
       `crates/ono-temporal-core/tests/coverage.rs`,
-      `crates/ono-temporal-reconstruct/tests/absence.rs`, case 243-coverage-and-absence.
+      `crates/ono-temporal-reconstruct/tests/absence.rs`, case `243-coverage-and-absence`.
 - [ ] **Sparse evidence produces unknown, never fake completeness.** A state between two
       observations is `unknown in interval`, with the last and next observations named (§9.2) —
-      `crates/ono-temporal-reconstruct/tests/reconstruction.rs`, case 243-coverage-and-absence.
+      `crates/ono-temporal-reconstruct/tests/reconstruction.rs`, case `243-coverage-and-absence`.
 - [ ] **A historical collection says whether it is the complete set.** `get process` at `T`
       carries collection-level coverage and does not imply completeness it cannot prove (§9.6) —
-      `crates/ono-cli/tests/temporal_objects.rs`, case 243-coverage-and-absence.
+      `crates/ono-cli/tests/temporal_objects.rs`, case `243-coverage-and-absence`.
 - [ ] **History outside retention answers `temporal.out_of_retention`.** Distinct from
       `temporal.not_recorded`, and naming the earliest instant still retained (§34) —
-      `crates/ono-temporal-ledger/tests/retention.rs`, case 244-retention-boundary.
+      `crates/ono-temporal-ledger/tests/retention.rs`, case `244-retention-boundary`.
 - [ ] **A reconstructed object keeps its own schema and gains temporal metadata.** A historical
-      `Process` is an `ono.process/1` with a `temporal` sub-record, so pipelines are unchanged
-      (§9.4, §28.2) — `crates/ono-cli/tests/temporal_objects.rs`, case 240-reconstruction.
+      `Process` is an `ono.process/1` with the same fields, carrying §9.4's metadata under the
+      reserved extension key `ono.temporal`, so a pipeline written against the present works
+      against the past (§9.4, §28.2; ADR-0613) —
+      `crates/ono-temporal-reconstruct/tests/provenance.rs`,
+      `crates/ono-cli/tests/temporal_objects.rs`, case `240-reconstruction`.
 - [ ] **Coverage is composed per capability, never as one global label.** `inspect` exposes the
       source-level detail behind a `complete`/`partial`/`uncertain` headline (§8.5) —
-      `crates/ono-temporal-core/tests/coverage.rs`, case 243-coverage-and-absence.
+      `crates/ono-temporal-core/tests/coverage.rs`, case `243-coverage-and-absence`.
 - [ ] **A place that did not exist at `T` says so and stays where it is.** `look` reports `place
       not known at requested time` with coverage explaining known-absent from unknown, and
       navigates nowhere on its own (§9.7) — `crates/ono-cli/tests/temporal_objects.rs`,
-      case 242-historical-map.
+      case `242-historical-map`.
 
 #### 4.11.5 Changes (§13, §48.4 scenarios 19–21)
 
 - [ ] **`changes --since` reports added, removed and changed objects with typed values.**
       Five change classes, each an `ono.temporal-change/1` (§13.2) —
-      `crates/ono-cli/tests/changes.rs`, case 245-changes.
+      `crates/ono-cli/tests/changes.rs`, case `245-changes`.
 - [ ] **A partial before-state is unknown, never zero or empty.** The field reports `from
       unknown` with the coverage that explains it (§13.4) —
       `crates/ono-temporal-query/tests/changes.rs`, case 246-changes-unknown-before.
 - [ ] **v0.4 `look`'s recent-change section is backed by the temporal engine.** One change
       implementation, not two (§13.5) — `crates/ono-cli/tests/spatial_look_changes.rs`,
-      case 247-look-changes-are-temporal.
+      case `247-look-changes-are-temporal`.
 - [ ] **`changes` is pipeline-compatible.** `changes --since 30m | group subject.object_type`
-      (§28.1) — `crates/ono-cli/tests/changes.rs`, case 245-changes.
+      (§28.1) — `crates/ono-cli/tests/changes.rs`, case `245-changes`.
 
 #### 4.11.6 Causality (§15, §16, §17, §26, §48.5 scenarios 22–27)
 
@@ -2835,31 +2838,31 @@ Conventions this subsection relies on:
       case 252-causal-rendering.
 - [ ] **An AI hypothesis cannot become a canonical causal edge.** It is an `Inference` with its
       model, inputs and confidence, and no registered rule accepts it (§38.2) —
-      `crates/ono-model-broker/tests/inference.rs`, case 268-kuang-causality-is-bounded.
+      `crates/ono-model-broker/tests/inference.rs`, case `268-kuang-causality-is-bounded`.
 
 #### 4.11.7 Rewind, the temporal HUD and the full-screen timeline (§18, §19, §48.6 scenarios 28–33)
 
 - [ ] **`map --live` pauses without stopping ingestion.** Space freezes the view's cursor; the
       providers, the recorder and the machine keep going (§18.2) —
-      `crates/ono-cli/tests/temporal_view.rs`, case 253-rewind-pause.
+      `crates/ono-cli/tests/temporal_view.rs`, case `253-rewind-pause`.
 - [ ] **Stepping backward moves the topology to the previous significant event.** `[` and `]`
       step through events relevant to the visible horizon, not every provider sample (§18.4) —
-      `crates/ono-cli/tests/temporal_view.rs`, case 254-rewind-stepping.
+      `crates/ono-cli/tests/temporal_view.rs`, case `254-rewind-stepping`.
 - [ ] **Stepping into a coverage gap shows the gap.** No last state with a silently advancing
       timestamp (§18.6) — `crates/ono-temporal-render/tests/gap_frame.rs`,
-      `crates/ono-cli/tests/temporal_view.rs`, case 255-rewind-gap.
+      `crates/ono-cli/tests/temporal_view.rs`, case `255-rewind-gap`.
 - [ ] **Enter on a past map node enters that historical place.** The session's coordinate follows
-      the cursor (§18.3) — `crates/ono-cli/tests/temporal_view.rs`, case 254-rewind-stepping.
+      the cursor (§18.3) — `crates/ono-cli/tests/temporal_view.rs`, case `254-rewind-stepping`.
 - [ ] **`N` returns to now and summarises what changed.** The summary uses the canonical
-      `changes` engine (§18.7) — `crates/ono-cli/tests/temporal_view.rs`, case 256-return-to-now.
+      `changes` engine (§18.7) — `crates/ono-cli/tests/temporal_view.rs`, case `256-return-to-now`.
 - [ ] **Terminal resize during the temporal view changes no semantic time or place.**
-      `crates/ono-cli/tests/temporal_view.rs`, case 256-return-to-now.
+      `crates/ono-cli/tests/temporal_view.rs`, case `256-return-to-now`.
 - [ ] **The full-screen timeline opens, navigates and exits cleanly.** `timeline --view` and `T`
       from a map; the keys of §19.3; the terminal is restored on every exit path including
-      Ctrl-C — `crates/ono-cli/tests/temporal_view.rs`, case 253-rewind-pause.
+      Ctrl-C — `crates/ono-cli/tests/temporal_view.rs`, case `253-rewind-pause`.
 - [ ] **Dense event sets are grouped with their hidden counts and time spans preserved.**
       Grouping never hides an object or relation lifecycle change (§19.4, §43.3) —
-      `crates/ono-temporal-render/tests/grouping.rs`, case 255-rewind-gap.
+      `crates/ono-temporal-render/tests/grouping.rs`, case `255-rewind-gap`.
 - [ ] **No frame is interpolated between unsupported states.** Semantic state changes only at
       evidence-supported positions (§18.5) — `crates/ono-temporal-render/tests/gap_frame.rs`.
 
@@ -2908,63 +2911,65 @@ Conventions this subsection relies on:
 
 - [ ] **Remote source time and local ingest time stay distinct.** The local ledger never
       overwrites one with the other (§24.2) — `crates/ono-remote/tests/temporal.rs`,
-      case 262-remote-clocks.
+      case `262-remote-clocks`.
 - [ ] **Clock skew alone never creates a causal edge.** Two hosts whose wall clocks differ
       produce a partial order, and `happens_before` answers `Concurrent` (§24.3, §26.3) —
       `crates/ono-temporal-core/tests/ordering.rs`, `crates/ono-remote/tests/temporal.rs`,
-      case 262-remote-clocks.
+      case `262-remote-clocks`.
 - [ ] **Explicit cross-host transaction evidence may create a causal chain.** A shared connection
       identity or transaction id crosses the boundary; proximity does not (§26.4) —
       `crates/ono-temporal-query/tests/cross_host.rs`, case 263-remote-causality.
 - [ ] **A remote host with no history says so.** It does not present current state as past state
-      (§24.5) — `crates/ono-remote/tests/temporal.rs`, case 264-remote-no-history.
+      (§24.5) — `crates/ono-remote/tests/temporal.rs`, case `264-remote-no-history`.
 - [ ] **Temporal capability negotiation reports what the peer has.** An absent temporal capability
       degrades the link rather than failing it (§24.1) —
-      `crates/ono-protocol/tests/handshake_temporal.rs`, case 264-remote-no-history.
+      `crates/ono-protocol/tests/handshake_temporal.rs`, case `264-remote-no-history`.
 - [ ] **Clock uncertainty is rendered where it matters.** The uncertainty travels with the event
       and the renderer shows it rather than implying precision (§24.4) —
-      `crates/ono-temporal-render/tests/clocks.rs`, case 262-remote-clocks.
+      `crates/ono-temporal-render/tests/clocks.rs`, case `262-remote-clocks`.
 - [ ] **A remote mutation from historical context is refused at the agent.** The refusal names the
       deciding boundary (§4.7) — `crates/ono-remote/tests/temporal.rs`,
-      case 232-temporal-past-is-read-only.
+      case `232-temporal-past-is-read-only`.
 
 #### 4.11.10 KUANG/11 temporal extensions (§30.7, §37, §48.9 scenarios 44–47)
 
 - [ ] **A plugin without `temporal.read.history` cannot query retained history.** Current object
       read does not imply historical access (§30.7) —
-      `crates/ono-kuang-sdk/tests/conformance.rs`, case 265-kuang-temporal-permissions.
+      `crates/ono-kuang-sdk/tests/conformance.rs`, case `265-kuang-temporal-permissions`.
 - [ ] **A plugin without `temporal.contribute.causality` cannot add a causal link.**
-      `crates/ono-kuang-sdk/tests/conformance.rs`, case 265-kuang-temporal-permissions.
+      `crates/ono-kuang-sdk/tests/conformance.rs`, case `265-kuang-temporal-permissions`.
 - [ ] **A plugin's correlation remains correlation in core rendering.** Plugin causal strength
       does not exceed `asserted` unless the host contract trusts that source as authoritative
       (§37.4) — `crates/ono-kuang-supervisor/tests/temporal.rs`,
-      case 268-kuang-causality-is-bounded.
+      case `268-kuang-causality-is-bounded`.
 - [ ] **A contributed event outside the permitted spatial scope is rejected.** A plugin cannot
       assert that an object exists outside what it can resolve through permitted providers
       (§37.3) — `crates/ono-kuang-supervisor/tests/temporal.rs`,
-      case 266-kuang-event-contribution.
+      case `266-kuang-event-contribution`.
 - [ ] **Contributed events are validated for schema, identity, timestamps, size and rate.**
       (§37.3) — `crates/ono-kuang-supervisor/tests/temporal.rs`,
-      case 266-kuang-event-contribution.
+      case `266-kuang-event-contribution`.
 - [ ] **A contributed historical provider maps into canonical objects with coverage and
       provenance.** (§37.5) — `crates/ono-kuang-testhost/tests/temporal_package.rs`,
-      case 267-kuang-history-provider.
+      case `267-kuang-history-provider`.
 - [ ] **A malformed plugin temporal payload is refused without destabilising the host.**
       `fuzz/src/targets.rs` covers the decoder — `fuzz/tests/corpus.rs`,
-      case 266-kuang-event-contribution.
+      case `266-kuang-event-contribution`.
 
 #### 4.11.11 Performance and scale (§32, §49)
 
 - [ ] **A deterministic fixture ledger of the declared cardinality exists and builds.** At least
       1 000 000 events, 100 000 objects and lifetimes, 500 000 relation changes and 10 000 action
       records (§49) — `crates/ono-testkit/src/temporal.rs`,
-      `crates/ono-temporal-ledger/tests/scale.rs`, case 269-temporal-scale.
+      `crates/ono-temporal-ledger/tests/scale.rs`, case 274-temporal-scale.
 - [ ] **Startup with temporal persistence disabled is measured and within budget.** Under 5 ms
       p95 added to interactive startup, with storage initialization lazy (§32.1) —
       `cargo run -p xtask -- perf`, `docs/contracts/hardening/performance_baseline.json`,
-      case 270-temporal-performance-budgets.
-- [ ] **Recorder idle overhead is measured.** (§32.4) — `cargo run -p xtask -- perf`,
-      case 270-temporal-performance-budgets.
+      case `269-startup-budgets-hold-with-the-temporal-tranche`,
+      case `270-a-ledger-on-disk-costs-a-disabled-shell-nothing`.
+- [ ] **Recorder idle overhead is measured.** (§32.4) —
+      `crates/ono-recorder/tests/retention_load.rs`, `cargo run -p xtask -- perf`,
+      case `270-a-ledger-on-disk-costs-a-disabled-shell-nothing`.
 - [ ] **The eight measurements of §49 are recorded against the fixture.** Startup, recorder idle
       overhead, a 15-minute timeline, a 1-hour changes query, a recent reconstruction, a
       historical L1 map, a `why`, and retention cleanup under load —
@@ -2972,8 +2977,11 @@ Conventions this subsection relies on:
 - [ ] **v0.4's current-state budgets do not regress.** (§32.2) —
       `cargo run -p xtask -- perf`, compared against the recorded baseline, plus
       case `060-performance-budgets` and case `100-spatial-performance-budgets`.
+- [ ] **The temporal query budgets of §32.3 hold in the container.** A 15-minute timeline, a
+      one-hour changes query and a `why` answer inside their budgets on the referee's own
+      hardware — case `271-temporal-query-budgets-hold-in-the-container`.
 - [ ] **A long historical query is cancellable and Ctrl-C leaves no lock held.** (§32.6) —
-      `crates/ono-cli/tests/temporal_cancellation.rs`, case 271-temporal-cancellation.
+      `crates/ono-cli/tests/temporal_cancellation.rs`, case 275-temporal-cancellation.
 - [ ] **Retention cleanup runs as bounded background work.** It does not block the prompt
       (§31.8, §31.9) — `crates/ono-recorder/tests/retention_load.rs`, case 272-retention-load.
 
@@ -3022,7 +3030,7 @@ Conventions this subsection relies on:
       and `remove temporal-history` are in `docs/contracts/commands/temporal.yaml`, bound, and
       answer `help`, completion, `explain` and `inspect` from the registry —
       `xtask/src/bindings.rs`, `crates/ono-cli/tests/temporal_discoverability.rs`,
-      case 231-temporal-configuration.
+      case `231-temporal-configuration`.
 - [ ] **The shell is unchanged when temporal persistence is disabled.** v0.2–v0.4 behaviour is
       green with the tranche in the tree and the recorder off: typed pipelines, external
       programs, v0.3 adapters, spatial navigation, maps, live maps, remote links, KUANG/11,

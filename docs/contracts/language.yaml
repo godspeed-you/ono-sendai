@@ -295,4 +295,6 @@ comment:
   doc: From `#` to end of line, when `#` begins a token.
 
 builtin_functions:
-  - {name: "now()", returns: timestamp, doc: "The current wall-clock time. Spec §6.3 uses it in `modified < now() - 7d`. The only function the specification names; others arrive with the phase that needs them."}
+  - {name: "now()", returns: timestamp, doc: "The current wall-clock time. Spec §6.3 uses it in `modified < now() - 7d`. v0.5 §28.3 keeps it meaning real current time even under a historical coordinate; the instant a query evaluates at is `context.time`."}
+  - {name: "age(timestamp)", returns: duration, doc: "How long ago an instant was — `now() - t` (v0.5 §28.3). An argument that is not an instant is unknown, never a fabricated span (ADR-0014)."}
+  - {name: "between(timestamp, from, to)", returns: bool, doc: "Whether an instant falls inside a window, both ends included (v0.5 §28.3). An undecided argument makes the answer unknown."}

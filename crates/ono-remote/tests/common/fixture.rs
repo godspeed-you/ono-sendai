@@ -311,3 +311,123 @@ pub fn fixture_registry(observed: Arc<FixtureObserved>) -> Arc<ProviderRegistry>
     registry.register(Arc::new(AbsentProvider));
     Arc::new(registry)
 }
+
+// --- the temporal half of the fixture (v0.5 §21.1, §24) ---------------------------------------
+
+/// The target the historical fixture provider answers about.
+pub const HISTORICAL_TARGET: &str = "archived";
+
+/// One record observed at a stated instant, so a suite can assert on source time.
+pub fn fixture_record_observed(pid: i128, name: &str, at: jiff::Timestamp) -> RecordValue {
+    let schema = Arc::new(fixture_schema());
+    let provenance = Provenance::local("fixture.demo", schema.id().clone())
+        .observed_at(at)
+        .from_source(&format!("fixture://process/{pid}"));
+    RecordValue::builder(schema, provenance)
+        .set("pid", Value::Int(pid))
+        .expect("pid is a field of the fixture schema")
+        .set("name", Value::String(name.into()))
+        .expect("name is a field of the fixture schema")
+        .build()
+}
+
+/// A provider that keeps history and says so (spec v0.5 §21.1, §21.4).
+///
+/// It stands in for journald on the far side: it answers about the past, it declares that it
+/// does, and it never claims `exhaustive_events`, which §21.5 forbids a source from advertising
+/// merely because events usually arrive.
+#[derive(Debug, Default)]
+pub struct HistoricalProvider;
+
+#[async_trait::async_trait]
+impl Provider for HistoricalProvider {
+    fn id(&self) -> &str {
+        "fixture.archive"
+    }
+
+    fn targets(&self) -> &[&str] {
+        &[HISTORICAL_TARGET]
+    }
+
+    fn schemas(&self) -> Vec<Arc<Schema>> {
+        vec![Arc::new(fixture_schema())]
+    }
+
+    fn capabilities(&self) -> Vec<Capability> {
+        vec![Capability::new("archive.read", Risk::Read)]
+    }
+
+    fn temporal(&self) -> ono_provider_api::TemporalCapabilities {
+        ono_provider_api::TemporalCapabilities {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: true,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: false,
+            retained_history: Some(ono_value::Duration::from_nanoseconds(86_400_000_000_000)),
+        }
+    }
+
+    fn snapshot(&self, _query: &Query) -> Result<ValueStream, ErrorValue> {
+        Ok(ValueStream::spawn(
+            PipelineConfig::new(),
+            Boundedness::Bounded,
+            |sink| async move {
+                let _ = sink.send(fixture_record(9, "archived").into_value()).await;
+            },
+        ))
+    }
+
+    fn history(
+        &self,
+        _query: &Query,
+        window: &ono_provider_api::TimeWindow,
+    ) -> Result<ValueStream, ErrorValue> {
+        let window = *window;
+        Ok(ValueStream::spawn(
+            PipelineConfig::new(),
+            Boundedness::Bounded,
+            move |sink| async move {
+                for (pid, at) in [
+                    (1_i128, "2026-08-31T11:55:00Z"),
+                    (2, "2026-08-31T11:56:00Z"),
+                    (3, "2026-08-31T10:00:00Z"),
+                ] {
+                    let at: jiff::Timestamp = match at.parse() {
+                        Ok(at) => at,
+                        Err(_) => continue,
+                    };
+                    if !window.contains(at) {
+                        continue;
+                    }
+                    if sink
+                        .send(fixture_record_observed(pid, "archived", at).into_value())
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            },
+        ))
+    }
+
+    async fn resolve(&self, _selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
+        Ok(Vec::new())
+    }
+}
+
+/// The fixture registry, plus a history-keeping provider when `historical` is set.
+pub fn temporal_registry(
+    observed: Arc<FixtureObserved>,
+    historical: bool,
+) -> Arc<ProviderRegistry> {
+    let mut registry = ProviderRegistry::new();
+    registry.register(Arc::new(FixtureProvider::new(observed)));
+    registry.register(Arc::new(AbsentProvider));
+    if historical {
+        registry.register(Arc::new(HistoricalProvider));
+    }
+    Arc::new(registry)
+}

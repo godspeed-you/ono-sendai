@@ -14,10 +14,11 @@
 #           snapshots carry provenance `snapshot_diff` rather than reading as observations.
 #
 # The survey fact this matrix records, which is easy to get wrong from the specification alone:
-# **only netlink (link, address, route) and inotify implement live subscription in this tree.**
-# systemd, procfs, containers, mounts and sockets are polled. A polled source has `live_events:
-# false` here however promptly it notices a change, because §21.3 is about the source pushing and
-# §8 is about what the sampling interval does to coverage.
+# **which sources subscribe, and which are polled.** netlink (link, address and route changes),
+# inotify, systemd's D-Bus manager and the container engine's event stream push; procfs, netlink's
+# neighbour and socket tables, the mount table and the package databases are polled. A polled
+# source has `live_events: false` here however promptly it notices a change, because §21.3 is
+# about the source pushing and §8 is about what the sampling interval does to coverage.
 #
 # `xtask/src/temporal.rs::check` holds this file against `temporal.yaml` (every capability key
 # must be one of §21.1's seven), against `evidence.yaml` (every `evidence_class` must be a
@@ -72,7 +73,7 @@ sources:
     provider: systemd
     capabilities:
       current_snapshot: true
-      live_events: false
+      live_events: true
       historical_query: false
       exhaustive_events: false
       causal_tokens: true
@@ -80,19 +81,20 @@ sources:
       retained_history: null
     coverage:
       completeness: partial
-      sampled: true
+      sampled: false
       derived_events_provenance: null
       absence_proves: nothing
       doc: >-
-        §22.2 calls systemd a strong source for service state and job correlation, and it is:
-        the unit states it reports are authoritative, and the job paths it returns from
-        `StartUnit` and `RestartUnit` are the identifiers three rules of `causality.yaml` join
-        on. What it is not, in this tree, is a live source: this implementation polls unit
-        properties rather than subscribing to `PropertiesChanged`, so `live_events` is false and
-        coverage is `partial` with a sampling interval. §21.3 describes a capability this
-        provider will claim when it subscribes, and claiming it earlier would make every
-        coverage record it writes a small lie.
-    spec: "§21.3, §21.6, §22.2"
+        §22.2 calls systemd a strong source for service state and job correlation, and since
+        ADR-0715 it is both halves of that sentence: `Manager.Subscribe` makes it push, and the
+        job paths it returns from `StartUnit` and `RestartUnit` — and announces on `JobNew` and
+        `JobRemoved` — are the identifiers three rules of `causality.yaml` join on. Coverage is
+        `partial` rather than `complete` because systemd coalesces `PropertiesChanged`: two
+        transitions inside one coalescing window arrive as one, which is exactly the sequence
+        discontinuity §21.5 says forbids `exhaustive_events`. `UnitNew` and `UnitRemoved` are
+        the manager loading and garbage-collecting a unit rather than the service appearing or
+        going away, so no lifecycle is derived from them (§6.3).
+    spec: "§21.3, §21.5, §21.6, §22.2"
 
   - id: linux.journald
     evidence_class: linux.journald
@@ -200,24 +202,30 @@ sources:
     provider: container-engine
     capabilities:
       current_snapshot: true
-      live_events: false
-      historical_query: false
+      live_events: true
+      historical_query: true
       exhaustive_events: false
       causal_tokens: false
       checkpointable: true
       retained_history: null
     coverage:
-      completeness: point_sample
-      sampled: true
-      derived_events_provenance: snapshot_diff
+      completeness: partial
+      sampled: false
+      derived_events_provenance: null
       absence_proves: nothing
       doc: >-
         §22.7: container runtimes SHOULD expose runtime-native lifecycle events where the
         runtime supports them, and the event ids and runtime identities MUST reconcile with
-        v0.4's container spatial identity. This implementation polls, so `live_events` is false
-        and lifecycle is derived from snapshot comparison. A runtime event stream is the upgrade
-        this row is waiting for, and it changes `live_events`, not the identity model.
-    spec: "§22.7, §21.3"
+        v0.4's container spatial identity. Since ADR-0716 this implementation opens the engine's
+        own `GET /events` rather than comparing listings, so the lifecycle is what the engine
+        said happened rather than what two snapshots imply; and the same endpoint bounded by
+        `since` and `until` replays a past window, which is the second built-in historical
+        source in this tree beside the journal. Identity reconciles by construction: an event's
+        `Actor.ID` is the full container id `ono.container/1` is keyed on. `exhaustive_events`
+        stays false because the event log's retention is the daemon's and not something this
+        provider can read, and a container that came and went across a daemon restart left
+        nothing to find.
+    spec: "§22.7, §21.3, §21.4, §21.5"
 
   # --- Ono's own sources -----------------------------------------------------------------------
   - id: ono.session

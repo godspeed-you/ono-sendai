@@ -1,0 +1,73 @@
+# v0.5 §37.4 and §48.9 scenario 46: Ono core keeps authority over causal labels and over how
+# strong a third party's claim may be.
+#
+# Three rules, and the host applies all three before a link becomes an explanation:
+#
+#   * a third-party rule is namespaced to its publisher, and `ono.*` belongs to the project;
+#   * the relation is one of the five classes of §15.1, and a package may not invent a sixth;
+#   * the strength is capped at `asserted` unless the host contract explicitly trusts that
+#     package as authoritative for a domain, which no host does by default.
+#
+# The first two are visible here as refusals. The third lowers rather than refuses — the example
+# package declares `authoritative` on the wire and what reaches the host carries `asserted` —
+# so it is held by `crates/ono-kuang-supervisor/tests/temporal.rs` and by the conformance suite,
+# which can read what the host was handed. What this case adds is that the lowering is silent and
+# lossless from the outside: a package declaring more than it may is not broken by the ceiling,
+# it is simply not believed.
+case: a plugin's causal claim is namespaced, classed and capped by the host
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/state/ono"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - object.read
+      - temporal.read.current
+      - temporal.read.history
+      - temporal.contribute.events
+      - temporal.contribute.causality
+  network:
+    outbound: none
+  MANIFEST
+
+  echo "== a rule claiming the project's own namespace is refused (§31.5, §37.4) =="
+  ono -c 'grant capability temporal.contribute.causality --plugin dev.example.echo | count; load plugin dev.example.echo; try { echo:temporal-causality --rule "ono.action-to-transaction" } catch e { $e | select name message | to json }' | grep -q 'belongs to the project' && echo "reserved-namespace-refused"
+
+  echo "== a relation class Ono does not have is refused (§15.1, §37.1) =="
+  ono -c 'grant capability temporal.contribute.causality --plugin dev.example.echo | count; load plugin dev.example.echo; try { echo:temporal-causality --relation "probably_caused" } catch e { $e | select name message | to json }' | grep -q 'five causal relation classes' && echo "invented-class-refused"
+
+  echo "== a link naming a rule the package never declared is refused (§15.8) =="
+  ono -c 'grant capability temporal.contribute.causality --plugin dev.example.echo | count; load plugin dev.example.echo; try { echo:temporal-causality --rule "dev.example.echo.invented-on-the-spot" } catch e { $e | select name message | to json }' | grep -q 'causal_rules' && echo "undeclared-rule-refused"
+
+  echo "== and the package's own correlation rule, overstated, is not refused but lowered =="
+  ono -c 'grant capability temporal.contribute.causality --plugin dev.example.echo | count; load plugin dev.example.echo; try { echo:temporal-causality } catch e { $e | select name | to json }' | grep -q 'provider.unavailable' && echo "overstated-claim-is-lowered-not-refused"
+exit: 0
+stdout-contains: reserved-namespace-refused
+stdout-contains: invented-class-refused
+stdout-contains: undeclared-rule-refused
+stdout-contains: overstated-claim-is-lowered-not-refused
+stdout-not-contains: panicked

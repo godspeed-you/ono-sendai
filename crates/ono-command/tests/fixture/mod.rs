@@ -431,6 +431,42 @@ pub async fn run_full(
     run_table(&table(), source, providers, Arc::new(scope), context).await
 }
 
+/// The historical context these tests stand in: an instant with no coverage behind it, which
+/// `[PAST?]` is exactly the honest marker for (v0.5 §8.6).
+pub fn historical() -> ono_temporal_core::TemporalContext {
+    let resolved_at: jiff::Timestamp = "2026-08-31T12:07:14Z"
+        .parse()
+        .expect("the fixture instant parses");
+    ono_temporal_core::TemporalContext::Historical {
+        requested: ono_temporal_core::TimeSelector::Absolute(resolved_at),
+        requested_text: "-10m".into(),
+        resolved_at,
+        coverage: ono_temporal_core::CoverageSummary::compose(
+            &[],
+            ono_temporal_core::TimeRange::default(),
+        ),
+        anchor_event: None,
+    }
+}
+
+/// Runs `source` at a temporal coordinate, the way the shell will (v0.5 §4.7).
+pub async fn run_at(
+    source: &str,
+    providers: &ProviderRegistry,
+    temporal: &ono_temporal_core::TemporalContext,
+) -> Result<Ran, ErrorValue> {
+    let table = ono_command::builtin_commands_for(registry(), providers);
+    run_table_at(
+        &table,
+        source,
+        providers,
+        Arc::new(Scope::new()),
+        Vec::new(),
+        temporal,
+    )
+    .await
+}
+
 /// Runs `source` with an explicit table against `providers`.
 pub async fn run_with_table(
     table: &CommandTable,
@@ -446,6 +482,25 @@ async fn run_table(
     providers: &ProviderRegistry,
     scope: Arc<Scope>,
     context: Vec<ono_command::ContextFrame>,
+) -> Result<Ran, ErrorValue> {
+    run_table_at(
+        table,
+        source,
+        providers,
+        scope,
+        context,
+        &ono_temporal_core::TemporalContext::Present,
+    )
+    .await
+}
+
+async fn run_table_at(
+    table: &CommandTable,
+    source: &str,
+    providers: &ProviderRegistry,
+    scope: Arc<Scope>,
+    context: Vec<ono_command::ContextFrame>,
+    temporal: &ono_temporal_core::TemporalContext,
 ) -> Result<Ran, ErrorValue> {
     let parsed = ono_parser::parse(source);
     assert!(
@@ -472,7 +527,8 @@ async fn run_table(
             let bound = resolved.contract.bind(resolved.arguments)?;
             let mut invocation = Invocation::new(resolved.contract, &bound, providers)
                 .with_scope(Arc::clone(&scope))
-                .with_context(context.clone());
+                .with_context(context.clone())
+                .with_temporal(Arc::new(temporal.clone()), registry());
             if let Some(input) = stream.take() {
                 invocation = invocation.with_input(input);
             }

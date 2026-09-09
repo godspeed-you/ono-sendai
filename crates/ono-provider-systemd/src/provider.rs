@@ -1,17 +1,18 @@
 //! The `service` provider itself.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
 use ono_provider_api::{
-    Action, ActionOutcome, Availability, Capability, ObjectId, ObjectRef, Provider, Query, Risk,
-    Selector, TemporalCapabilities,
+    Action, ActionOutcome, Availability, Capability, EventSink, EventStream, ObjectEvent, ObjectId,
+    ObjectRef, Provider, Query, Risk, Selector, TemporalCapabilities,
 };
-use ono_value::{ErrorValue, SchemaId, Value};
+use ono_value::{ErrorValue, RecordValue, SchemaId, Value};
 
 use crate::record::{already_in_state, service_schema, unit_name_candidates, unit_record};
-use crate::{BusError, JobKind, JobRef, SystemdBus, UnitProperties};
+use crate::{BusError, JobKind, JobRef, SystemdBus, UnitProperties, UnitSignal, unit_object_path};
 
 /// The id this provider signs its records with, and the value of their `provider` field.
 ///
@@ -269,14 +270,32 @@ impl Provider for SystemdProvider {
         }
     }
 
+    /// `watch service`, through `Manager.Subscribe` and the signals that follow (§22.2).
+    ///
+    /// The subscription is opened before the baseline is read, so a transition that happens
+    /// while the baseline is being read is queued rather than lost. Each signal names a unit;
+    /// the unit is read again and compared, because systemd coalesces `PropertiesChanged` and
+    /// sends property *names* rather than a complete state.
+    fn subscribe(&self, query: &Query) -> Result<EventStream, ErrorValue> {
+        let bus = self.bus()?;
+        let plan = Plan::of(query);
+        Ok(EventStream::spawn(PipelineConfig::new(), move |sink| {
+            watch_units(bus, plan, sink)
+        }))
+    }
+
     fn temporal(&self) -> TemporalCapabilities {
         TemporalCapabilities {
             current_snapshot: true,
-            // The unit state this provider serves is read on demand and polled by the runtime;
-            // it does not subscribe to `PropertiesChanged`. §21.5 and §22.2: a polled source
-            // states its live and exhaustive claims as false however reliably it is polled.
-            live_events: false,
+            // §21.3: the source pushes. `Manager.Subscribe` turns systemd's own `JobNew`,
+            // `JobRemoved`, `UnitNew`, `UnitRemoved` and per-unit `PropertiesChanged` signals
+            // into events, so a transition arrives because systemd said so rather than because
+            // something asked again (§22.2).
+            live_events: true,
             historical_query: false,
+            // §21.5: systemd coalesces `PropertiesChanged` and sends property names rather than
+            // values, so two transitions within one coalescing window arrive as one. A sequence
+            // with that property cannot carry an absence claim.
             exhaustive_events: false,
             // A queued job answers with its object path, and a unit read while a job is in
             // flight names it. Both are transaction identities in the sense of §21.6, and they
@@ -499,4 +518,211 @@ fn job_outcome(action: &Action, queued: &JobRef) -> ActionOutcome {
         Some(id) => outcome.with_metadata("systemd.job_id", Value::Int(i128::from(id))),
         None => outcome,
     }
+}
+
+/// Drives one subscription: the manager's signals, as object events about units.
+///
+/// The shape is fixed by what systemd sends. `JobNew` and `JobRemoved` carry the job identity
+/// §15.2 wants and no state, so they are remembered rather than emitted; `PropertiesChanged`
+/// carries a unit path and the *names* of what moved, so the unit is read again and compared.
+/// A transition observed while a job is in flight for that unit is attributed to the job — which
+/// is exactly the evidence `ono.systemd-job-to-unit-state` joins on, and it is systemd's claim
+/// rather than an inference from two things happening near each other.
+async fn watch_units(bus: Arc<dyn SystemdBus>, plan: Plan, sink: EventSink) {
+    use futures::StreamExt as _;
+
+    // Subscribed first, so a transition during the baseline read is queued rather than lost.
+    let Ok(mut signals) = bus.subscribe_units().await else {
+        // §18.2: a provider that cannot be told about changes is polled instead, and the watch
+        // runtime does that when this stream ends without having said anything.
+        return;
+    };
+    // The one unit a narrowed subscription is about, under the spelling systemd knows it by:
+    // `watch service nginx` is about `nginx.service`, and a signal for another unit is not an
+    // answer to it. `None` watches every unit.
+    let watched = match &plan.named {
+        Some(name) => Some(match load_unit(&bus, name).await {
+            Ok(Some(properties)) => properties.name,
+            _ => name.clone(),
+        }),
+        None => None,
+    };
+    // §31.14 and the trait's own contract: a subscription begins with the current state, so a
+    // consumer never has to reconstruct it and a change is a change against something real.
+    let Some(mut known) = baseline(&bus, watched.as_deref(), &plan, &sink).await else {
+        return;
+    };
+    // The jobs in flight, by unit. systemd tells us when one starts and when it ends, so the map
+    // holds exactly the interval `ono.systemd-job-to-unit-state` bounds a transition by.
+    let mut jobs: BTreeMap<String, JobRef> = BTreeMap::new();
+
+    while let Some(signal) = signals.next().await {
+        let unit = signal.unit().to_owned();
+        if watched.as_deref().is_some_and(|watched| watched != unit) {
+            continue;
+        }
+        match signal {
+            UnitSignal::JobNew { ref job, .. } => {
+                jobs.insert(unit, job.clone());
+                continue;
+            }
+            // `UnitNew` and `UnitRemoved` are the manager's own memory management: systemd loads
+            // a unit when something asks about it and garbage-collects it again when nothing
+            // does. Neither says the service appeared or went away, and reading the unit back on
+            // either loads it, which makes the manager announce it, which reads it again — a
+            // reader turned into a writer, observed against a live manager on 2026-09-08. So
+            // they are decoded, and they move nothing but the baseline: §6.3 forbids
+            // manufacturing a disappearance, and a unit nobody was asking about is the clearest
+            // case of one that has not disappeared.
+            UnitSignal::UnitRemoved { .. } => {
+                known.remove(&unit);
+                continue;
+            }
+            UnitSignal::UnitNew { .. } => continue,
+            UnitSignal::JobRemoved { .. } | UnitSignal::UnitChanged { .. } => {}
+        }
+
+        // Always read at the object path rather than through `LoadUnit`, for the same reason.
+        // `JobRemoved` names no path, and the path a unit of that name has is systemd's own
+        // encoding of it rather than something to ask for.
+        let path = signal
+            .path()
+            .map_or_else(|| unit_object_path(&unit), str::to_owned);
+        let read = bus.unit_properties_at(&unit, &path).await;
+        // A unit that could not be read this time is not a change; the next signal asks again.
+        let Ok(Some(properties)) = read else {
+            continue;
+        };
+        if properties.load_state.as_deref() == Some("not-found") {
+            continue;
+        }
+        let Ok(record) = unit_record(&properties) else {
+            continue;
+        };
+        if !plan.keeps(&record) {
+            continue;
+        }
+
+        // The job in flight for this unit, and — where the signal is the job's own removal —
+        // the job the removal named. `JobRemoved` arrives after the transition it completes, so
+        // the identity has to survive being taken out of the map.
+        let cause = match &signal {
+            UnitSignal::JobRemoved { job, .. } => {
+                jobs.remove(&unit);
+                Some(job.clone())
+            }
+            _ => jobs.get(&unit).cloned(),
+        };
+
+        let mut event = match known.get(&unit) {
+            Some(previous) => {
+                // Compared field by field rather than record by record: every read carries its
+                // own observation instant in its provenance, so two identical states are two
+                // unequal records and a coalesced signal would otherwise become a change.
+                let fields = moved(previous, &record);
+                if fields.is_empty() {
+                    continue;
+                }
+                ObjectEvent::changed(&record, fields)
+            }
+            None => ObjectEvent::added(&record),
+        };
+        // §3.3: the source's own instant, where the source states one. `StateChangeTimestamp`
+        // is when systemd recorded the unit moving; the read-back's clock is not.
+        if let Some(at) = state_change_instant(&properties) {
+            event = event.with_observed_at(at);
+        }
+        if let Some(job) = cause {
+            event = event.with_cause(job.token());
+        }
+        known.insert(unit, record);
+        if sink.send(event).await.is_err() {
+            return;
+        }
+    }
+}
+
+/// The units the query keeps, as they are before the first signal.
+///
+/// A change is measured against something, and against nothing every unit looks new. The read is
+/// bounded the way the enumeration is, and a unit that could not be read is simply not part of
+/// the baseline: its first signal then reports it as appearing, which is the honest reading of
+/// "this is the first state of it I could see".
+async fn baseline(
+    bus: &Arc<dyn SystemdBus>,
+    watched: Option<&str>,
+    plan: &Plan,
+    sink: &EventSink,
+) -> Option<BTreeMap<String, RecordValue>> {
+    use futures::StreamExt as _;
+
+    let units: Vec<(String, Option<String>)> = match watched {
+        Some(name) => vec![(name.to_owned(), None)],
+        None => match bus.list_units().await {
+            Ok(listings) => listings
+                .into_iter()
+                .filter(|unit| unit.load_state.as_deref() != Some("not-found"))
+                .map(|unit| (unit.name, unit.path))
+                .collect(),
+            Err(_) => Vec::new(),
+        },
+    };
+    let reads = futures::stream::iter(units.into_iter().map(|(name, path)| {
+        let bus = Arc::clone(bus);
+        async move {
+            let read = match path {
+                Some(path) => bus.unit_properties_at(&name, &path).await,
+                None => bus.unit_properties(&name).await,
+            };
+            (name, read)
+        }
+    }))
+    .buffered(UNITS_IN_FLIGHT);
+    futures::pin_mut!(reads);
+
+    let mut known = BTreeMap::new();
+    while let Some((name, read)) = reads.next().await {
+        let Ok(Some(properties)) = read else {
+            continue;
+        };
+        if properties.load_state.as_deref() == Some("not-found") {
+            continue;
+        }
+        let Ok(record) = unit_record(&properties) else {
+            continue;
+        };
+        if !plan.keeps(&record) {
+            continue;
+        }
+        let mut event = ObjectEvent::snapshot(&record);
+        if let Some(at) = state_change_instant(&properties) {
+            event = event.with_observed_at(at);
+        }
+        if sink.send(event).await.is_err() {
+            return None;
+        }
+        known.insert(name, record);
+    }
+    Some(known)
+}
+
+/// The fields whose values moved between two observations of one unit.
+fn moved(previous: &RecordValue, current: &RecordValue) -> Vec<String> {
+    current
+        .schema()
+        .fields()
+        .iter()
+        .filter(|field| previous.get(field.name()) != current.get(field.name()))
+        .map(|field| field.name().to_owned())
+        .collect()
+}
+
+/// `StateChangeTimestamp` as an instant: systemd's own record of when the unit last moved.
+///
+/// Zero is systemd's way of saying a unit has never changed state, and a microsecond count that
+/// does not fit an instant is not one — both are absent rather than converted into the epoch
+/// (spec §35.3).
+fn state_change_instant(properties: &UnitProperties) -> Option<jiff::Timestamp> {
+    let usec = properties.state_change_usec.filter(|usec| *usec > 0)?;
+    jiff::Timestamp::from_microsecond(i64::try_from(usec).ok()?).ok()
 }

@@ -56,6 +56,14 @@ async fn should_advertise_exactly_what_container_engine_declares() {
         ],
         schemas: &["ono.container/1", "ono.image/1"],
         identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: true,
+            historical_query: true,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
     }).await;
 }
 
@@ -140,6 +148,14 @@ async fn should_advertise_exactly_what_linux_netlink_serving_interface_declares(
         ],
         schemas: &["ono.interface/1"],
         identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: true,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
     }).await;
 }
 
@@ -192,6 +208,14 @@ async fn should_advertise_exactly_what_linux_netlink_serving_route_declares() {
         ],
         schemas: &["ono.route/1"],
         identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: true,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
     }).await;
 }
 
@@ -245,6 +269,14 @@ async fn should_advertise_exactly_what_linux_netlink_serving_neighbor_declares()
         ],
         schemas: &["ono.neighbor/1"],
         identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
     }).await;
 }
 
@@ -297,6 +329,14 @@ async fn should_advertise_exactly_what_linux_sock_diag_declares() {
         ],
         schemas: &["ono.socket/1", "ono.endpoint/1"],
         identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
     }).await;
 }
 
@@ -384,6 +424,14 @@ async fn should_advertise_exactly_what_linux_packages_declares() {
         ],
         schemas: &["ono.package/1", "ono.package-source/1"],
         identity_token: Some("dpkg"),
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
     }).await;
 }
 
@@ -470,6 +518,14 @@ async fn should_advertise_exactly_what_linux_packages_rpm_declares() {
         ],
         schemas: &["ono.package/1", "ono.package-source/1"],
         identity_token: Some("rpm"),
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
     }).await;
 }
 
@@ -555,6 +611,14 @@ async fn should_advertise_exactly_what_linux_procfs_declares() {
         ],
         schemas: &["ono.process/1", "ono.process-detail/1"],
         identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
     }).await;
 }
 
@@ -675,6 +739,14 @@ async fn should_advertise_exactly_what_linux_fs_declares() {
         ],
         schemas: &["ono.file/1"],
         identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: true,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: false,
+        },
     }).await;
 }
 
@@ -747,6 +819,14 @@ async fn should_advertise_exactly_what_linux_nss_declares() {
         ],
         schemas: &["ono.user/1", "ono.group/1"],
         identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
     }).await;
 }
 
@@ -827,6 +907,14 @@ async fn should_advertise_exactly_what_ono_session_declares() {
         ],
         schemas: &["ono.env-var/1"],
         identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
     }).await;
 }
 
@@ -890,6 +978,14 @@ async fn should_advertise_exactly_what_ono_shell_declares() {
         ],
         schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/1", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
         identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
     }).await;
 }
 
@@ -942,6 +1038,9 @@ async fn should_shape_ono_link_1_the_way_ono_shell_declares_it() {
             harness::FieldContract { name: "authorized", ty: "bool", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "runtime_user", ty: "string", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "runtime_uid", ty: "int", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "clock_id", ty: "string", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "clock_offset", ty: "duration", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "clock_uncertainty", ty: "duration", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "runtime_elevated", ty: "bool", required: false, nullable: true, unit: None },
         ],
     }).await;
@@ -1481,6 +1580,14 @@ async fn should_advertise_exactly_what_linux_mountinfo_declares() {
         ],
         schemas: &["ono.mount/1", "ono.filesystem/1"],
         identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
     }).await;
 }
 
@@ -1570,6 +1677,14 @@ async fn should_advertise_exactly_what_linux_sysfs_declares() {
         ],
         schemas: &["ono.device/1"],
         identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
     }).await;
 }
 
@@ -1620,6 +1735,14 @@ async fn should_advertise_exactly_what_linux_resolver_declares() {
         ],
         schemas: &["ono.dns-record/1"],
         identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: false,
+        },
     }).await;
 }
 
@@ -1666,6 +1789,14 @@ async fn should_advertise_exactly_what_ono_probe_declares() {
         ],
         schemas: &["ono.probe-result/1"],
         identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: false,
+        },
     }).await;
 }
 
@@ -1720,6 +1851,14 @@ async fn should_advertise_exactly_what_systemd_declares() {
         ],
         schemas: &["ono.service/1"],
         identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: true,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: true,
+            checkpointable: true,
+        },
     }).await;
 }
 
@@ -1773,6 +1912,14 @@ async fn should_advertise_exactly_what_systemd_journal_declares() {
         ],
         schemas: &["ono.journal-event/1", "ono.log-record/1"],
         identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: true,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: false,
+        },
     }).await;
 }
 
@@ -1865,6 +2012,14 @@ async fn should_advertise_exactly_what_systemd_logind_declares() {
         ],
         schemas: &["ono.session/1"],
         identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
     }).await;
 }
 

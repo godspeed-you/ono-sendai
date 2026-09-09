@@ -103,7 +103,8 @@ fn usage() {
     );
     eprintln!(
         "  perf           run the performance benchmarks of spec section 37.1 \
-[--profile S|M|L] [--iterations N] [--compare <path>] [--write-baseline]"
+[--profile S|M|L] [--iterations N] [--compare <path>] [--write-baseline] \
+[--skip-temporal]"
     );
     eprintln!(
         "  terminology    the documentation terminology contract of section 19.1 over this \
@@ -371,6 +372,9 @@ fn perf(args: &[String]) -> ExitCode {
     let mut compare: Option<PathBuf> = None;
     let mut write = false;
     let mut sample_completion = false;
+    let mut sample_temporal: Option<String> = None;
+    let mut sample_index = 0u32;
+    let mut skip_temporal = false;
 
     let mut rest = args.iter();
     while let Some(argument) = rest.next() {
@@ -392,6 +396,20 @@ fn perf(args: &[String]) -> ExitCode {
             // budget is about the *first* completion, and a completer caches what it read, so a
             // second sample in the same process would be a different measurement (§37.3).
             "--sample-completion" => sample_completion = true,
+            // One sample of one of v0.5 §49's rows, printed for the parent that spawned this
+            // process. §37.3: a temporal query is warm the instant it has been asked once, so a
+            // sample is a whole process rather than an iteration inside one.
+            "--sample-temporal" => match rest.next() {
+                Some(name) => sample_temporal = Some(name.clone()),
+                None => return usage_error("perf: --sample-temporal needs an operation"),
+            },
+            "--sample-index" => match rest.next().and_then(|count| count.parse::<u32>().ok()) {
+                Some(count) => sample_index = count,
+                None => return usage_error("perf: --sample-index needs a number"),
+            },
+            // v0.5 §49's fixture ledger takes minutes to write and hundreds of megabytes to hold.
+            // A run that only wants the v0.4.1 rows says so rather than paying for it.
+            "--skip-temporal" => skip_temporal = true,
             other => return usage_error(&format!("perf: unknown argument `{other}`")),
         }
     }
@@ -400,6 +418,10 @@ fn perf(args: &[String]) -> ExitCode {
         let (milliseconds, offered) = perf::sample_completion();
         println!("{milliseconds} {offered}");
         return ExitCode::SUCCESS;
+    }
+
+    if let Some(name) = sample_temporal {
+        return sample_temporal_row(&name, sample_index);
     }
 
     let root = repo_root();
@@ -446,15 +468,22 @@ fn perf(args: &[String]) -> ExitCode {
         perf::MIN_ITERATIONS
     );
 
-    let wanted: Vec<&perf::Benchmark> = perf::BENCHMARKS
-        .iter()
-        .filter(|benchmark| {
-            profile
-                .as_deref()
-                .is_none_or(|name| benchmark.profile == name)
-        })
-        .collect();
-    if wanted.is_empty() {
+    // Profile `T` is v0.5 §49's fixture ledger rather than one of Appendix F's host topologies,
+    // so naming it asks for the temporal table and nothing else.
+    let temporal_only = profile.as_deref() == Some("T");
+    let wanted: Vec<&perf::Benchmark> = if temporal_only {
+        Vec::new()
+    } else {
+        perf::BENCHMARKS
+            .iter()
+            .filter(|benchmark| {
+                profile
+                    .as_deref()
+                    .is_none_or(|name| benchmark.profile == name)
+            })
+            .collect()
+    };
+    if wanted.is_empty() && !temporal_only {
         eprintln!("perf: no declared benchmark runs at Profile {profile:?}");
         return ExitCode::FAILURE;
     }
@@ -493,20 +522,35 @@ fn perf(args: &[String]) -> ExitCode {
         measurements.push(measured);
     }
 
+    // v0.5 §49's eight release measurements, over §49's deterministic fixture ledger. They are
+    // skipped when a profile was named, because §49's ledger is not a topology profile and a
+    // `--profile M` run is asking about the host rather than about the history.
+    if !skip_temporal && (profile.is_none() || temporal_only) {
+        match temporal_measurements(&root, &runner) {
+            Ok(mut found) => measurements.append(&mut found),
+            Err(error) => {
+                eprintln!("perf: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
     // §36.2's completion budget, measured by calling the completer rather than by timing a
     // thousand registry lookups beside it (issue #21, ADR-0498). One cold sample per process, so
     // the samples are re-runs of this executable rather than iterations in it.
-    let measured = runner.run_completion();
-    println!(
-        "  {:<28} {:<3} {:<9} first {:>9.3} ms  p95 {:>9.3} ms  candidates {}",
-        measured.benchmark,
-        measured.profile,
-        measured.temperature.as_str(),
-        measured.metric("time_to_first_ms").unwrap_or_default(),
-        measured.p95_ms,
-        measured.values,
-    );
-    measurements.push(measured);
+    if !temporal_only {
+        let measured = runner.run_completion();
+        println!(
+            "  {:<28} {:<3} {:<9} first {:>9.3} ms  p95 {:>9.3} ms  candidates {}",
+            measured.benchmark,
+            measured.profile,
+            measured.temperature.as_str(),
+            measured.metric("time_to_first_ms").unwrap_or_default(),
+            measured.p95_ms,
+            measured.values,
+        );
+        measurements.push(measured);
+    }
 
     let mut failed = false;
     if let Some(path) = compare {
@@ -541,6 +585,14 @@ fn perf(args: &[String]) -> ExitCode {
         }
     }
 
+    if write && profile.is_some() {
+        eprintln!(
+            "perf: --write-baseline writes the whole baseline, so it cannot be combined with \
+             --profile: the run would replace every record with the subset it measured. Run \
+             without --profile, or compare with --compare instead"
+        );
+        return ExitCode::FAILURE;
+    }
     if write {
         let path = root.join(perf::BASELINE);
         if let Err(error) = perf::write_baseline(&path, environment.id, &measurements) {
@@ -555,6 +607,116 @@ fn perf(args: &[String]) -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// Builds v0.5 §49's fixture ledger and measures every row of [`perf::TEMPORAL_BENCHMARKS`]
+/// against it.
+///
+/// A row this repository cannot measure yet reports why and contributes no record, which leaves
+/// the target it answers `Unmeasured` — and `perf::verdicts` reports an unmeasured target as a
+/// failure rather than a pass (§65.10). That is the honest state of a measurement whose subject
+/// has not been written.
+fn temporal_measurements(
+    root: &Path,
+    runner: &perf::Runner,
+) -> Result<Vec<perf::Measurement>, String> {
+    let declaration = ono_testkit::temporal::declared_temporal_profiles()
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            "docs/contracts/hardening/performance_profiles.yaml declares no temporal profile \
+             (v0.5 section 49)"
+                .to_owned()
+        })?;
+    let profile = declaration.profile();
+    println!(
+        "perf: v0.5 section 49 fixture ledger — {} events, {} objects, {} relation changes, {} \
+         actions, seed {}",
+        profile.events, profile.objects, profile.relation_changes, profile.actions, profile.seed
+    );
+    let fixture = perf::fixture::build(profile, &root.join("target").join("perf"))?;
+    println!(
+        "  fixture {} — {} events, {} evidence, {} actions, {} checkpoints, {:.1} MiB on disk, \
+         built in {:.1} s{}, digest {}",
+        fixture.path().display(),
+        fixture.events(),
+        fixture.evidence(),
+        fixture.actions(),
+        fixture.checkpoints(),
+        fixture.bytes() as f64 / (1024.0 * 1024.0),
+        fixture.built_in().as_secs_f64(),
+        if fixture.reused() { " (reused)" } else { "" },
+        fixture.digest(),
+    );
+
+    let mut measurements = Vec::new();
+    for benchmark in perf::TEMPORAL_BENCHMARKS {
+        match runner.run_temporal(benchmark, &fixture) {
+            Ok(measured) => {
+                println!(
+                    "  {:<28} {:<3} {:<9} first {:>9.3} ms  p95 {:>9.3} ms  values {}",
+                    measured.benchmark,
+                    measured.profile,
+                    measured.temperature.as_str(),
+                    measured.metric("time_to_first_ms").unwrap_or_default(),
+                    measured.p95_ms,
+                    measured.values,
+                );
+                measurements.push(measured);
+            }
+            Err(reason) => println!("  {:<28} {:<3} unmeasured — {reason}", benchmark.id, "T"),
+        }
+    }
+    Ok(measurements)
+}
+
+/// Takes one sample of one v0.5 §49 row and prints `<milliseconds> <values> <peak_rss_bytes>`.
+fn sample_temporal_row(name: &str, index: u32) -> ExitCode {
+    let Some(operation) = perf::TemporalOperation::from_name(name) else {
+        return usage_error(&format!("perf: no temporal benchmark measures `{name}`"));
+    };
+    let root = repo_root();
+    let Some(declaration) = ono_testkit::temporal::declared_temporal_profiles()
+        .into_iter()
+        .next()
+    else {
+        eprintln!("perf: no temporal profile is declared (v0.5 section 49)");
+        return ExitCode::FAILURE;
+    };
+    let fixture =
+        match perf::fixture::build(declaration.profile(), &root.join("target").join("perf")) {
+            Ok(fixture) => fixture,
+            Err(error) => {
+                eprintln!("perf: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+    let binary = built_binary(&root).map(|(path, _)| path);
+    match perf::sample::take(operation, index, &fixture, binary.as_deref()) {
+        Ok(sample) => {
+            println!(
+                "{} {} {}",
+                sample.elapsed_ms,
+                sample.values,
+                peak_rss_of_self().unwrap_or(0)
+            );
+            ExitCode::SUCCESS
+        }
+        Err(reason) => {
+            eprintln!("perf: {reason}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// This process's peak resident set, or `None` where `/proc` does not say.
+fn peak_rss_of_self() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmHWM:"))
+        .and_then(|value| value.split_whitespace().next()?.parse::<u64>().ok())
+        .map(|kib| kib * 1024)
 }
 
 /// The built `ono` binary this run should measure, preferring the release one.

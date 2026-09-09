@@ -201,6 +201,59 @@ const BOUND_ELSEWHERE: &[(&str, &str)] = &[
         "ono.place.unpin",
         "`ono-cli`'s spatial dispatch (v0.4 §45.6)",
     ),
+    // --- `ono-cli` registers the temporal verbs ------------------------------------------------
+    // v0.5 §39 keeps `ono-cli` as the crate that "owns active TemporalContext in Session", and
+    // every one of these reads that coordinate and the session's ledger. A library table has
+    // neither, so binding one there would give the user a command that always answers about the
+    // present (ADR-0690).
+    (
+        "ono.temporal.at",
+        "`ono-cli`'s temporal dispatch (v0.5 §4.2, §39)",
+    ),
+    (
+        "ono.temporal.now",
+        "`ono-cli`'s temporal dispatch (v0.5 §4.3, §39)",
+    ),
+    (
+        "ono.temporal.present",
+        "`ono-cli`'s temporal dispatch (v0.5 §4.8, §39)",
+    ),
+    (
+        "ono.temporal.timeline",
+        "`ono-cli`'s temporal dispatch (v0.5 §11, §39)",
+    ),
+    (
+        "ono.temporal.changes",
+        "`ono-cli`'s temporal dispatch (v0.5 §13, §39)",
+    ),
+    (
+        "ono.temporal.why",
+        "`ono-cli`'s temporal dispatch (v0.5 §16, §39)",
+    ),
+    (
+        "ono.event.find",
+        "`ono-cli`'s temporal dispatch (v0.5 §20.3, §39)",
+    ),
+    (
+        "ono.event.inspect",
+        "`ono-cli`'s temporal dispatch (v0.5 §11.6, §39)",
+    ),
+    (
+        "ono.recorder.get",
+        "`ono-cli`'s temporal dispatch (v0.5 §10.3, §39)",
+    ),
+    (
+        "ono.recorder.start",
+        "`ono-cli`'s temporal dispatch (v0.5 §10.3, §39)",
+    ),
+    (
+        "ono.recorder.stop",
+        "`ono-cli`'s temporal dispatch (v0.5 §10.3, §39)",
+    ),
+    (
+        "ono.temporal-history.remove",
+        "`ono-cli`'s temporal dispatch (v0.5 §30.8, §39)",
+    ),
 ];
 
 /// The stable commands `registry` declares as delivered that `is_bound` does not answer for.

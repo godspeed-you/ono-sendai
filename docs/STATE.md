@@ -2280,6 +2280,33 @@ the provider samples — and no assertion changed.
 
 ## Found, not yet filed
 
+- **An exit nobody may read reports `empty` where the contract wants `permission_denied`
+  (2026-09-09, found while building the historical spatial world).** On this host `/proc/1/ns/` is
+  unreadable for an ordinary user, and the `namespaces` group of `enter process/1; look` composes
+  to `empty` rather than to `permission_denied`. v0.4 §35.2 keeps those two apart on purpose:
+  `empty` says the group was read and held nothing, `permission_denied` says it was not read.
+  Collapsing them is the shape §35.3 exists against — a refusal presented as an absence. It is
+  also why `spatial_contracts.rs::should_serve_every_relation_it_declares_and_declare_every_relation_it_serves`
+  fails here: `follow namespace` finds no members and answers `spatial.no_relation` instead of a
+  permission refusal. Reproduction, as an unprivileged user on a host whose `/proc/1/ns` is
+  restricted: `ono -c 'enter process/1; look --json'` and read the `namespaces` group's `state`.
+  What closes it: the group builder must distinguish a read that returned nothing from a read the
+  kernel refused, and carry `permission_denied` up. Pre-existing; the temporal tranche only made
+  the failure legible.
+
+- **A KUANG/11 failure-class test reads the memory ceiling differently under load (2026-09-09, found
+  while adding the temporal host calls).**
+  `crates/ono-kuang-sdk/tests/failure_classes.rs::should_distinguish_a_launch_failure_from_a_quarantine_a_resource_kill_and_a_crash`
+  expects `runtime.memory_limit` from a plugin that allocates past its ceiling. Under a
+  full-parallel `cargo test` on a loaded machine the allocator aborts at about 62 MB of the 64 MB
+  ceiling and the supervisor reports `runtime.trap` instead — SIGABRT rather than the cgroup's own
+  kill, which is a different failure class and the one the test exists to distinguish. It passes
+  in isolation and three times running at `--test-threads=2`. Reproduction: run the whole
+  workspace suite at full parallelism on a machine with other builds going. What closes it: give
+  the probe enough headroom that the allocator cannot beat the ceiling to the kill, or assert on
+  the class the kernel actually delivered rather than on the one the test hoped for. Pre-existing;
+  nothing in the temporal tranche touches that path.
+
 - **A backward wall-clock step splits one process into two spatial identities (2026-09-08, found
   while giving the process provider the kernel's boot id, ADR-0713).** Half of a process's
   identity digest is `started`, and `ProcessProvider::started` computes it as

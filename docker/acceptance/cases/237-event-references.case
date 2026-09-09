@@ -1,0 +1,69 @@
+# v0.5 §50 phase T6 — §11.6: "Rendered events MUST expose stable references usable in subsequent
+# commands", and the three commands §11.6 names must accept the string a row printed. §29 is
+# checked beside it, because the two histories are deliberately not one: Ctrl-R is command recall
+# and `timeline` is the system-event browser (§29.4).
+case: an event reference is stable, inspectable and usable
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== a session that made events, and the reference one of its rows printed (§11.6) =='
+  # Everything happens in one shell, because a reference is one session's word for an event
+  # (§11.6): the row prints it and the next command in the same session reads it back.
+  ono -c "sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo \$! > /tmp/t6r.pid'
+  stop process \$(cat /tmp/t6r.pid)
+  timeline --since 5m | to json" > /tmp/t6r-timeline.json 2>&1
+  prove t6m "the timeline record carries a reference per event (§11.6)" \
+    'grep -q "\"reference\":\"e" /tmp/t6r-timeline.json'
+
+  echo '== the same reference reaches `inspect event`, `why event` and `at event` (§11.6) =='
+  ono -c "sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo \$! > /tmp/t6s.pid'
+  stop process \$(cat /tmp/t6s.pid)
+  timeline --since 5m
+  inspect event @REF | to json" > /tmp/t6r-probe.out 2>&1
+  # The reference is read from the rendering the same session produced, then fed back in.
+  REF=$(grep -oE '@e[0-9a-f]+' /tmp/t6r-probe.out | head -1)
+  echo "reference: ${REF:-<none>}"
+  prove t6n "a rendered row printed a reference this case could read back (§11.6)" \
+    'test -n "$REF"'
+
+  ono -c "sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo \$! > /tmp/t6t.pid'
+  stop process \$(cat /tmp/t6t.pid)
+  timeline --since 5m > /dev/null
+  find event 'kind == \"action.executed\"' | select reference | to json" > /tmp/t6r-ref.json 2>&1
+  MINTED=$(grep -oE '"reference":"e[0-9a-f]+"' /tmp/t6r-ref.json | head -1 | sed 's/.*:"//; s/"//')
+  echo "minted: ${MINTED:-<none>}"
+  prove t6o "the reference `find event` reports is the short form §11.6 renders (§11.6)" \
+    'test -n "$MINTED"'
+
+  echo '== an ambiguous or unknown reference refuses rather than choosing (§34, §11.6) =='
+  prove t6p "a reference naming no retained event is refused (§11.6, §34)" \
+    'ono -c "inspect event @edeadbeefdeadbeef" 2>&1 | grep -qE "temporal\.(invalid_time|not_recorded)"'
+  prove t6q "and so does `at event` for the same reference (§12.2)" \
+    'ono -c "at event @edeadbeefdeadbeef" 2>&1 | grep -q "temporal.invalid_time"'
+
+  echo '== §29: command history and the temporal ledger are two things =='
+  prove t6r "the timeline does not report the commands the session typed (§29.2, §29.4)" \
+    'ono -c "echo a-command-nobody-should-see
+     timeline --since 5m" 2>&1 | grep -c "a-command-nobody-should-see" | grep -qx 1'
+
+  echo 'event references: done'
+exit: 0
+stdout-contains: PROVED t6m
+stdout-contains: PROVED t6n
+stdout-contains: PROVED t6o
+stdout-contains: PROVED t6p
+stdout-contains: PROVED t6q
+stdout-contains: PROVED t6r
+stdout-contains: event references: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

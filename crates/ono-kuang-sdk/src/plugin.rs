@@ -168,6 +168,33 @@ impl Plugin {
         self
     }
 
+    /// Declares a contributed temporal source (v0.5 §37.2, §37.5).
+    ///
+    /// The host reads this before the package answers anything: whether the source is bounded
+    /// decides whether the answer is collected or streamed, and the coverage prose becomes the
+    /// coverage record a reader sees beside it.
+    #[must_use]
+    pub fn contribute_temporal_source(
+        mut self,
+        contribution: ono_kuang_protocol::TemporalSourceContribution,
+    ) -> Self {
+        self.contributions.temporal_sources.push(contribution);
+        self
+    }
+
+    /// Declares a contributed causal or correlation rule (v0.5 §37.2, §37.4).
+    ///
+    /// A link the package later contributes must name a rule declared here, so a reader who
+    /// meets the link can go and read what the rule requires (§15.8).
+    #[must_use]
+    pub fn contribute_causal_rule(
+        mut self,
+        contribution: ono_kuang_protocol::CausalRuleContribution,
+    ) -> Self {
+        self.contributions.causal_rules.push(contribution);
+        self
+    }
+
     /// Names a feature that depends on an optional capability. When the negotiated contract
     /// denies the capability, the feature appears in `lifecycle.init`'s `disabled_features` —
     /// the plugin adapts once instead of re-prompting (spec §31.63).

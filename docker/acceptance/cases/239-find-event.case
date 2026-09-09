@@ -1,0 +1,59 @@
+# v0.5 §50 phase T6 — §20: "A user must not need to know the exact timestamp before being able to
+# discover an event." §20.3 adds `find event <predicate>` as a canonical native target that reuses
+# the existing `find` verb and Ono expression semantics rather than inventing a search language.
+case: events are discoverable without knowing when they happened
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  MAKE="sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo \$! > /tmp/t6f.pid'
+  stop process \$(cat /tmp/t6f.pid)"
+
+  echo '== a predicate finds events with no timestamp named anywhere (§20.1, §20.3) =='
+  ono -c "$MAKE
+  find event 'kind == \"action.completed\"' | to json" > /tmp/t6f-kind.json 2>&1
+  prove t6s "a predicate over `kind` answers (§20.3)" \
+    'grep -q "action.completed" /tmp/t6f-kind.json'
+  prove t6t "and it answers only that kind (§20.3)" \
+    '! grep -q "action.requested" /tmp/t6f-kind.json'
+
+  echo '== it is the existing `find` verb, and Ono expression semantics (§20.3) =='
+  prove t6u "a compound predicate is read as an Ono expression (§20.3)" \
+    'ono -c "'"$MAKE"'
+     find event '"'"'kind == \"action.executed\" and source == \"ono.session\"'"'"' | to json" 2>&1 | grep -q "action.executed"'
+  prove t6v "a predicate that is not an expression is refused with a parse error, not ignored" \
+    'ono -c "find event '"'"'kind ==='"'"'" 2>&1 | grep -qi "expression\|parse"'
+
+  echo '== §11.4, §28.1: the answer is a stream a pipeline continues =='
+  prove t6w "`find event … | take 1` is a pipeline, not a special form (§28.1)" \
+    'ono -c "'"$MAKE"'
+     find event '"'"'kind == \"action.executed\"'"'"' | take 1 | to json" 2>&1 | grep -q "action.executed"'
+
+  echo '== §20.3: with no predicate, the window itself bounds the answer =='
+  prove t6x "`find event` with no predicate answers the bounded window (§20.3, §32.3)" \
+    'ono -c "'"$MAKE"'
+     find event | to json" 2>&1 | grep -q "action."'
+  prove t6y "and a `--since` narrows it rather than widening it (§20.2)" \
+    'ono -c "find event --since 1s | to json" 2>&1 | grep -qE "^\[\]|action\."'
+
+  echo 'find event: done'
+exit: 0
+stdout-contains: PROVED t6s
+stdout-contains: PROVED t6t
+stdout-contains: PROVED t6u
+stdout-contains: PROVED t6v
+stdout-contains: PROVED t6w
+stdout-contains: PROVED t6x
+stdout-contains: PROVED t6y
+stdout-contains: find event: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

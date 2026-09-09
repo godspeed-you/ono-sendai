@@ -246,6 +246,93 @@ fn label_map(labels: Option<&Json>) -> Value {
     Value::Map(Arc::new(map))
 }
 
+/// One `GET /events` entry as the container it is about, observed at the instant of the event.
+///
+/// §22.7 requires that "container event IDs and runtime identities MUST reconcile with v0.4
+/// container spatial identity", so the record is an ordinary `ono.container/1` keyed on the
+/// engine's full container id — the same identity `get container` answers with, resolving to the
+/// same `SpatialId`. What the event adds beyond identity is little and stated exactly: the
+/// engine's own action word, and the nanosecond instant that with the id is the deduplication key
+/// of §6.8. Everything the event does not say stays null (§35.3); an event is not an inspection,
+/// and filling `created` or `labels` from one would be inventing an observation.
+///
+/// `None` for an entry that is not about a container, or that names no container id.
+pub(crate) fn event_record(json: &Json, endpoint: &str) -> Option<Result<RecordValue, ErrorValue>> {
+    if text(json.get("Type")).is_some_and(|kind| kind != "container") {
+        return None;
+    }
+    let actor = json.get("Actor");
+    let attributes = actor.and_then(|actor| actor.get("Attributes"));
+    let id = text(actor.and_then(|actor| actor.get("ID")))
+        .or_else(|| text(json.get("id")))?
+        .to_owned();
+    // `Action` is the modern key and `status` the one older engines send; a compound action such
+    // as `exec_start: /bin/sh` states its verb before the colon.
+    let action = text(json.get("Action"))
+        .or_else(|| text(json.get("status")))
+        .map(|action| action.split(':').next().unwrap_or(action).trim().to_owned());
+    let at = event_instant(json);
+
+    let schema = container_schema();
+    let mut provenance = Provenance::local(PROVIDER_ID, schema.id().clone()).from_source(endpoint);
+    provenance = provenance.observed_at(at.unwrap_or_else(Timestamp::now));
+
+    let build = || -> Result<RecordValue, ErrorValue> {
+        let mut builder = RecordValue::builder(Arc::clone(&schema), provenance.clone())
+            .set("id", Value::string(&id))?
+            .set(
+                "name",
+                text(attributes.and_then(|map| map.get("name"))).map_or(Value::Null, Value::string),
+            )?
+            .set(
+                "image",
+                text(attributes.and_then(|map| map.get("image")))
+                    .or_else(|| text(json.get("from")))
+                    .map_or(Value::Null, Value::string),
+            )?
+            .set("image_id", Value::Null)?
+            .set("state", Value::string(state_after(action.as_deref())))?
+            .set("created", Value::Null)?
+            .set("labels", Value::Null)?;
+        if let Some(action) = &action {
+            builder = builder.set_extra("container.action", Value::string(action));
+        }
+        if let Some(nanos) = json.get("timeNano").and_then(Json::as_i64) {
+            builder = builder.set_extra("container.event_time_nano", Value::Int(i128::from(nanos)));
+        }
+        Ok(builder.build())
+    };
+    Some(build())
+}
+
+/// The instant an event carries: `timeNano` where the engine sent one, `time` otherwise.
+fn event_instant(json: &Json) -> Option<Timestamp> {
+    if let Some(nanos) = json.get("timeNano").and_then(Json::as_i64)
+        && let Ok(at) = Timestamp::from_nanosecond(i128::from(nanos))
+    {
+        return Some(at);
+    }
+    json.get("time")
+        .and_then(Json::as_i64)
+        .and_then(|seconds| Timestamp::from_second(seconds).ok())
+}
+
+/// The lifecycle state an action leaves the container in, where the action states one.
+///
+/// The engine's actions are a larger vocabulary than the engine's states, and most of them say
+/// nothing about the state that follows: `exec_start`, `health_status`, `rename` and `update` all
+/// leave the container exactly as it was. Those are `unknown` rather than a guess, which is the
+/// same rule `container_state` applies to a state word this shell does not model (§10.5, §35.3).
+fn state_after(action: Option<&str>) -> &'static str {
+    match action {
+        Some("create") => "created",
+        Some("start" | "unpause" | "restart") => "running",
+        Some("pause") => "paused",
+        Some("die" | "stop" | "kill" | "oom") => "exited",
+        _ => "unknown",
+    }
+}
+
 #[cfg(test)]
 #[allow(
     clippy::expect_used,

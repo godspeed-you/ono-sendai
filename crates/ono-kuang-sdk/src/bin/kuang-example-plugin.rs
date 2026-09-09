@@ -479,6 +479,53 @@ fn honest_at_most(at_once: u32) -> Plugin {
             "stream<string>",
             &["history.read"],
         ))
+        .contribute_temporal_source(ono_kuang_protocol::TemporalSourceContribution {
+            id: format!("{PACKAGE}.temporal-source.echoes"),
+            summary: "The echoes this package has been asked for, as canonical events."
+                .to_owned(),
+            schema: format!("{PACKAGE}.item/1"),
+            kinds: vec!["object.observed".to_owned()],
+            answer: ono_kuang_protocol::Answer::Bounded,
+            coverage: "Only the echoes this session asked for; nothing before the package loaded."
+                .to_owned(),
+            retained_history: None,
+        })
+        .contribute_causal_rule(ono_kuang_protocol::CausalRuleContribution {
+            rule_id: format!("{PACKAGE}.echoes-follow-ticks"),
+            relation: "correlated_with".to_owned(),
+            strength: "correlated".to_owned(),
+            summary: "An echo tends to follow a tick, which is an association and nothing more."
+                .to_owned(),
+            inputs: vec!["object.observed".to_owned()],
+            identity_constraints: "The same echo sequence appears on both sides.".to_owned(),
+        })
+        // v0.5 §37: the temporal half of the example package. Four commands for four of §30.7's
+        // six capabilities, so a conformance case can prove each denial and each acceptance
+        // through the same door a real package would use.
+        .contribute_command(command(
+            "temporal-context",
+            "Report whether the session is historical, and at which instant.",
+            "stream<string>",
+            &["temporal.read.current"],
+        ))
+        .contribute_command(command(
+            "temporal-events",
+            "Query the host's recorded events, pulled as a stream.",
+            "stream<string>",
+            &["temporal.read.history"],
+        ))
+        .contribute_command(command(
+            "temporal-contribute",
+            "Contribute one canonical temporal event, attributed by the host.",
+            "stream<string>",
+            &["temporal.contribute.events"],
+        ))
+        .contribute_command(command(
+            "temporal-causality",
+            "Contribute one causal link from this package's own rule.",
+            "stream<string>",
+            &["temporal.contribute.causality"],
+        ))
         .contribute_command(command(
             "signal",
             "Send a signal to a process through the host.",
@@ -927,6 +974,119 @@ fn honest_at_most(at_once: u32) -> Plugin {
                     }),
                     None => Outcome::Completed,
                 },
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        .command(&format!("{PACKAGE}.command.temporal-context"), |ctx| {
+            match ctx.host_call(method::TEMPORAL_CONTEXT, json!({})) {
+                Ok(context) => {
+                    let _ = ctx.emit(&Value::String(context.to_string().into()));
+                    Outcome::Completed
+                }
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        .command(&format!("{PACKAGE}.command.temporal-events"), |ctx| {
+            // §30.7: holding `object.read` reaches `objects.query` and nothing here. The
+            // separate call is what makes "current object read does not imply historical
+            // access" a fact about the protocol rather than a promise.
+            match ctx.host_call(
+                method::TEMPORAL_QUERY,
+                json!({"query": {"kinds": [], "range": {"from": null, "until": null}}}),
+            ) {
+                Ok(opened) => match opened.get("handle").and_then(serde_json::Value::as_u64) {
+                    Some(handle) => pull_all(ctx, handle, |event| {
+                        event
+                            .get("kind")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| event.to_string())
+                    }),
+                    None => Outcome::Completed,
+                },
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        .command(&format!("{PACKAGE}.command.temporal-contribute"), |ctx| {
+            // The subject deliberately names a *core* schema when `--subject` says so, which is
+            // how a case proves §37.3's scope rule: a package that cannot resolve an
+            // `ono.process/1` may not assert that one exists.
+            let subject = ctx
+                .arguments()
+                .get("subject")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("dev.example.echo.item/1")
+                .to_owned();
+            let kind = ctx
+                .arguments()
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("object.observed")
+                .to_owned();
+            match ctx.host_call(
+                method::TEMPORAL_CONTRIBUTE_EVENTS,
+                json!({
+                    "source": "echo",
+                    "events": [{
+                        "kind": kind,
+                        "observed_at": "2026-08-26T11:59:00Z",
+                        "subject": {"schema": subject},
+                        // A package may write a source; the host overwrites it. Saying so here
+                        // is what lets a case prove that it cannot forge one (§37.3).
+                        "source": "linux.procfs",
+                    }],
+                }),
+            ) {
+                Ok(count) => {
+                    let _ = ctx.emit(&Value::String(
+                        format!("contributed {count}").into(),
+                    ));
+                    Outcome::Completed
+                }
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        .command(&format!("{PACKAGE}.command.temporal-causality"), |ctx| {
+            let strength = ctx
+                .arguments()
+                .get("strength")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("authoritative")
+                .to_owned();
+            // A case names a rule outside the package's own namespace to prove §37.4, and a
+            // relation outside §15.1's five to prove §37.1. Neither is something a well-behaved
+            // package would write; both are things the host has to refuse.
+            let rule = ctx
+                .arguments()
+                .get("rule")
+                .and_then(serde_json::Value::as_str)
+                .map_or_else(
+                    || format!("{PACKAGE}.echoes-follow-ticks"),
+                    str::to_owned,
+                );
+            let relation = ctx
+                .arguments()
+                .get("relation")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("correlated_with")
+                .to_owned();
+            match ctx.host_call(
+                method::TEMPORAL_CONTRIBUTE_CAUSALITY,
+                json!({
+                    "domain": "echo",
+                    "links": [{
+                        "rule": rule,
+                        "relation": relation,
+                        "strength": strength,
+                        "cause": "e000000000000000000000aa",
+                        "effect": "e000000000000000000000bb",
+                    }],
+                }),
+            ) {
+                Ok(count) => {
+                    let _ = ctx.emit(&Value::String(format!("linked {count}").into()));
+                    Outcome::Completed
+                }
                 Err(error) => Outcome::Failed(error),
             }
         })
@@ -1623,6 +1783,7 @@ fn misbehave(mode: Mode) {
             },
             schemas: Vec::new(),
             views: Vec::new(),
+            ..ContributionSet::default()
         },
     });
     if ono_kuang_protocol::write_frame(&mut writer, &hello, limits).is_err() {

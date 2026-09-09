@@ -278,3 +278,72 @@ fn should_list_every_source_that_contributed_when_the_summary_is_inspected() {
         "§8.5: `inspect` MUST expose source-level detail"
     );
 }
+
+#[test]
+fn should_say_the_recorder_was_offline_when_it_declared_the_interval_unavailable() {
+    // §11.7's own worked example: `---- coverage gap: recorder offline 4m12s ----`. The reason
+    // vocabulary of §7.5 has no word for that, so the phrase travels on the gap.
+    let summary = CoverageSummary::compose(
+        &[
+            interval(
+                "service.state",
+                "2026-08-31T12:00:00Z",
+                "2026-08-31T12:20:00Z",
+                TemporalCompleteness::Complete,
+                EvidenceSource::recorder(),
+            ),
+            interval(
+                "service.state",
+                "2026-08-31T12:20:00Z",
+                "2026-08-31T12:24:12Z",
+                TemporalCompleteness::Unavailable,
+                EvidenceSource::recorder(),
+            ),
+            interval(
+                "service.state",
+                "2026-08-31T12:24:12Z",
+                "2026-08-31T13:00:00Z",
+                TemporalCompleteness::Complete,
+                EvidenceSource::recorder(),
+            ),
+        ],
+        window(),
+    );
+    let gaps = summary.gaps();
+    assert_eq!(gaps.len(), 1, "one declared hole, one gap: {gaps:?}");
+    assert_eq!(gaps[0].reason, GapReason::ProviderUnavailable);
+    assert_eq!(
+        gaps[0].detail.as_deref(),
+        Some("recorder offline"),
+        "§11.7: the words the renderer prints come from the producer"
+    );
+}
+
+#[test]
+fn should_leave_the_detail_unstated_when_no_word_fits_the_reason_and_the_source() {
+    let summary = CoverageSummary::compose(
+        &[
+            interval(
+                "service.state",
+                "2026-08-31T12:00:00Z",
+                "2026-08-31T12:20:00Z",
+                TemporalCompleteness::Complete,
+                systemd(),
+            ),
+            interval(
+                "service.state",
+                "2026-08-31T12:24:12Z",
+                "2026-08-31T13:00:00Z",
+                TemporalCompleteness::Complete,
+                systemd(),
+            ),
+        ],
+        window(),
+    );
+    let gaps = summary.gaps();
+    assert_eq!(gaps.len(), 1);
+    assert_eq!(
+        gaps[0].detail, None,
+        "v0.2 §35.3: an invented phrase is worse than the reason word"
+    );
+}

@@ -24,6 +24,9 @@
 //! The baseline lives at `docs/contracts/hardening/performance_baseline.json`; the profiles its records
 //! name are `docs/contracts/hardening/performance_profiles.yaml` (ADR-0488). Decisions: ADR-0489.
 
+pub mod fixture;
+pub mod sample;
+
 use serde_json::Value as Json;
 
 use crate::scan::Problem;
@@ -837,6 +840,7 @@ pub const TARGETS: &[Target] = &[
         profile: "S",
         temperature: Temperature::CacheHit,
         budget_ms: 50.0,
+        relative_to: None,
     },
     Target {
         spec: "spatial query Profile M first result",
@@ -844,6 +848,7 @@ pub const TARGETS: &[Target] = &[
         profile: "M",
         temperature: Temperature::Cold,
         budget_ms: 150.0,
+        relative_to: None,
     },
     Target {
         spec: "map live Profile M initial visible frame",
@@ -851,6 +856,7 @@ pub const TARGETS: &[Target] = &[
         profile: "M",
         temperature: Temperature::Cold,
         budget_ms: 500.0,
+        relative_to: None,
     },
     Target {
         spec: "map live Profile L initial progress/summary",
@@ -858,6 +864,65 @@ pub const TARGETS: &[Target] = &[
         profile: "L",
         temperature: Temperature::Cold,
         budget_ms: 1_500.0,
+        relative_to: None,
+    },
+    // v0.5 §32.1 and §32.3, measured against §49's fixture ledger. Every one of these reads
+    // `Unmeasured` — and is therefore not a pass — until a record for it is in the baseline.
+    Target {
+        spec: "v0.5 s32.1: added to interactive startup with recording disabled",
+        benchmark: "temporal.startup_disabled",
+        profile: "T",
+        temperature: Temperature::Cold,
+        budget_ms: 5.0,
+        relative_to: Some("shell.cold_start"),
+    },
+    Target {
+        spec: "v0.5 s32.3: timeline current place, 15m",
+        benchmark: "temporal.timeline_15m",
+        profile: "T",
+        temperature: Temperature::Warm,
+        budget_ms: 100.0,
+        relative_to: None,
+    },
+    Target {
+        spec: "v0.5 s32.3: changes current place, 1h",
+        benchmark: "temporal.changes_1h",
+        profile: "T",
+        temperature: Temperature::Warm,
+        budget_ms: 150.0,
+        relative_to: None,
+    },
+    Target {
+        spec: "v0.5 s32.3: at recent checkpoint +/- events",
+        benchmark: "temporal.reconstruct_recent",
+        profile: "T",
+        temperature: Temperature::Warm,
+        budget_ms: 150.0,
+        relative_to: None,
+    },
+    Target {
+        spec: "v0.5 s32.3: map historical L0/L1 cached",
+        benchmark: "temporal.map_historical_l1",
+        profile: "T",
+        temperature: Temperature::CacheHit,
+        budget_ms: 150.0,
+        relative_to: None,
+    },
+    Target {
+        spec: "v0.5 s32.3: why with <=100 candidate events",
+        benchmark: "temporal.why",
+        profile: "T",
+        temperature: Temperature::Warm,
+        budget_ms: 200.0,
+        relative_to: None,
+    },
+    Target {
+        spec: "v0.5 s32.3: find event indexed predicate",
+        benchmark: "temporal.find_event",
+        profile: "T",
+        temperature: Temperature::Warm,
+        budget_ms: 150.0,
+        relative_to: None,
     },
 ];
 
@@ -890,38 +955,58 @@ pub enum TargetVerdict {
     Unmeasured,
 }
 
-/// What each §33.2 row says on the evidence of `baseline`.
+/// What each target row says on the evidence of `baseline`.
 ///
 /// Answering `Unmeasured` rather than passing is the same rule `Baseline::compare` follows: a
-/// target nobody measured is not a target that holds (§65.10).
+/// target nobody measured is not a target that holds (§65.10). A target stated as an increase
+/// (v0.5 §32.1) is `Unmeasured` when either half of the subtraction is missing, because half a
+/// difference is not a smaller difference.
 #[must_use]
 pub fn verdicts(baseline: &Baseline) -> Vec<(&'static Target, TargetVerdict)> {
     TARGETS
         .iter()
-        .map(|target| {
-            let verdict = baseline
-                .record_at(target.benchmark, target.profile, target.temperature)
-                .map_or(TargetVerdict::Unmeasured, |record| {
-                    if record.p95_ms <= target.budget_ms {
-                        TargetVerdict::Held {
-                            p95_ms: record.p95_ms,
-                        }
-                    } else {
-                        TargetVerdict::Missed {
-                            p95_ms: record.p95_ms,
-                            factor: record.p95_ms / target.budget_ms,
-                        }
-                    }
-                });
-            (target, verdict)
-        })
+        .map(|target| (target, verdict_of(baseline, target)))
         .collect()
 }
 
-/// One row of §33.2's reference targets table.
+/// One row's verdict.
+fn verdict_of(baseline: &Baseline, target: &Target) -> TargetVerdict {
+    let Some(record) = baseline.record_at(target.benchmark, target.profile, target.temperature)
+    else {
+        return TargetVerdict::Unmeasured;
+    };
+    let measured = match target.relative_to {
+        None => record.p95_ms,
+        Some(reference) => {
+            let Some(before) = baseline.record(reference, "S").or_else(|| {
+                baseline
+                    .measurements
+                    .iter()
+                    .find(|row| row.benchmark == reference)
+            }) else {
+                return TargetVerdict::Unmeasured;
+            };
+            // The increase, floored at zero: a startup that got *faster* added nothing, and a
+            // negative addition compared against a positive budget would read as a large margin
+            // rather than as no addition at all. Rounded like every other figure, because the
+            // difference of two three-decimal numbers carries float dust nobody measured.
+            round3((record.p95_ms - before.p95_ms).max(0.0))
+        }
+    };
+    if measured <= target.budget_ms {
+        TargetVerdict::Held { p95_ms: measured }
+    } else {
+        TargetVerdict::Missed {
+            p95_ms: measured,
+            factor: measured / target.budget_ms,
+        }
+    }
+}
+
+/// One row of a reference targets table — v0.4.1 §33.2's, or v0.5 §32.1's and §32.3's.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Target {
-    /// How §33.2 words the row.
+    /// How the specification words the row.
     pub spec: &'static str,
     /// The benchmark whose p95 answers for it.
     pub benchmark: &'static str,
@@ -930,7 +1015,17 @@ pub struct Target {
     /// The temperature it is stated at (§37.3).
     pub temperature: Temperature,
     /// The p95 the first result must stay inside.
+    ///
+    /// For a target carrying `relative_to`, the budget is what the p95 may *rise by*, rather than
+    /// what it may reach.
     pub budget_ms: f64,
+    /// The benchmark this target is stated as an increase over, where it is stated that way.
+    ///
+    /// v0.5 §32.1 budgets no absolute startup figure — it says v0.5 "MUST add less than 5 ms p95
+    /// to Ono interactive startup". A 5 ms budget compared against an absolute startup of 4.8 ms
+    /// would pass while saying nothing, so the row names what it is an addition to and the
+    /// verdict subtracts (ADR-0748).
+    pub relative_to: Option<&'static str>,
 }
 
 impl Benchmark {
@@ -1540,7 +1635,11 @@ pub fn check_registries(root: &std::path::Path) -> Vec<Problem> {
     problems
 }
 
-/// Every topology profile `docs/contracts/hardening/performance_profiles.yaml` declares.
+/// Every profile `docs/contracts/hardening/performance_profiles.yaml` declares.
+///
+/// Both sections: Appendix F's topology profiles, which size a host, and v0.5 §49's fixture
+/// ledger, which sizes a history. A record names one or the other and the registry answers for
+/// both, because a benchmark record does not care which axis its cardinality came from.
 fn declared_profiles(root: &std::path::Path) -> std::collections::BTreeSet<String> {
     let Ok(text) =
         std::fs::read_to_string(root.join("docs/contracts/hardening/performance_profiles.yaml"))
@@ -1550,14 +1649,318 @@ fn declared_profiles(root: &std::path::Path) -> std::collections::BTreeSet<Strin
     let Ok(document) = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&text) else {
         return std::collections::BTreeSet::new();
     };
-    document
-        .get("profiles")
-        .and_then(serde_yaml_ng::Value::as_sequence)
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| row.get("id").and_then(serde_yaml_ng::Value::as_str))
-                .map(str::to_owned)
-                .collect()
+    ["profiles", "temporal_profiles"]
+        .into_iter()
+        .filter_map(|section| {
+            document
+                .get(section)
+                .and_then(serde_yaml_ng::Value::as_sequence)
         })
-        .unwrap_or_default()
+        .flatten()
+        .filter_map(|row| row.get("id").and_then(serde_yaml_ng::Value::as_str))
+        .map(str::to_owned)
+        .collect()
 }
+
+// ------------------------------------------------------------------------------------------
+// v0.5 §49's release measurements, over §49's fixture ledger.
+// ------------------------------------------------------------------------------------------
+
+/// The eight measurements v0.5 §49 requires release evidence to include.
+///
+/// > Release evidence MUST include measurements for:
+/// >
+/// > ```text
+/// > startup with temporal disabled
+/// > recorder idle overhead
+/// > timeline 15m query
+/// > changes 1h query
+/// > recent reconstruction
+/// > historical map L1
+/// > why query
+/// > retention cleanup under load
+/// > ```
+///
+/// They are a table of their own rather than rows of [`BENCHMARKS`] because they are measured
+/// differently: a [`Benchmark`] is a script the `ono` binary runs, and seven of these eight are
+/// library operations over a ledger the shell has no command for yet. Both tables produce the
+/// same [`Measurement`], carry §32.3's six metrics, and name the same reference environment, so a
+/// reader of the baseline cannot tell — and does not need to — which table a row came from.
+///
+/// The ninth row is §32.3's `find event indexed predicate`, which §49's list omits and §32.3
+/// budgets. A budget with no measurement behind it is `Unmeasured`, so it is measured.
+pub const TEMPORAL_BENCHMARKS: &[TemporalBenchmark] = &[
+    TemporalBenchmark {
+        id: "temporal.startup_disabled",
+        temperature: Temperature::Cold,
+        spec: "v0.5 §32.1, §49",
+        operation: TemporalOperation::StartupWithLedgerPresent,
+        blocked_on: None,
+    },
+    TemporalBenchmark {
+        id: "temporal.recorder_idle",
+        temperature: Temperature::Warm,
+        spec: "v0.5 §32.4, §49",
+        operation: TemporalOperation::RecorderIdle,
+        blocked_on: None,
+    },
+    TemporalBenchmark {
+        id: "temporal.timeline_15m",
+        temperature: Temperature::Warm,
+        spec: "v0.5 §32.3, §49",
+        operation: TemporalOperation::Timeline15m,
+        blocked_on: None,
+    },
+    TemporalBenchmark {
+        id: "temporal.changes_1h",
+        temperature: Temperature::Warm,
+        spec: "v0.5 §32.3, §49",
+        operation: TemporalOperation::Changes1h,
+        blocked_on: None,
+    },
+    TemporalBenchmark {
+        id: "temporal.reconstruct_recent",
+        temperature: Temperature::Warm,
+        spec: "v0.5 §32.3, §49",
+        operation: TemporalOperation::RecentReconstruction,
+        blocked_on: None,
+    },
+    TemporalBenchmark {
+        id: "temporal.map_historical_l1",
+        temperature: Temperature::CacheHit,
+        spec: "v0.5 §32.3, §49",
+        operation: TemporalOperation::HistoricalMapL1,
+        blocked_on: Some(
+            "the historical spatial world (work package SPA-001…SPA-006, ADR range 0680–0689) is \
+             not in the tree, so there is no second `SpatialIndex` to draw an L1 map from. The \
+             row stays declared and `Unmeasured`, which `perf::verdicts` reports as a failure \
+             rather than a pass.",
+        ),
+    },
+    TemporalBenchmark {
+        id: "temporal.why",
+        temperature: Temperature::Warm,
+        spec: "v0.5 §32.3, §49",
+        operation: TemporalOperation::Why,
+        blocked_on: None,
+    },
+    TemporalBenchmark {
+        id: "temporal.find_event",
+        temperature: Temperature::Warm,
+        spec: "v0.5 §32.3",
+        operation: TemporalOperation::FindEvent,
+        blocked_on: None,
+    },
+    TemporalBenchmark {
+        id: "temporal.retention_sweep",
+        temperature: Temperature::Warm,
+        spec: "v0.5 §31.8, §49",
+        operation: TemporalOperation::RetentionSweep,
+        blocked_on: None,
+    },
+];
+
+/// One of §49's release measurements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TemporalBenchmark {
+    /// What it measures.
+    pub id: &'static str,
+    /// Cold, warm or cache hit (§37.3).
+    pub temperature: Temperature,
+    /// The sections that ask for it.
+    pub spec: &'static str,
+    /// The operation the figure is about.
+    pub operation: TemporalOperation,
+    /// Why this repository cannot measure it yet, where it cannot.
+    ///
+    /// A row that names a reason is still a declared row: the target it answers reads
+    /// `Unmeasured`, which is a failure rather than a pass. The reason is here so the next reader
+    /// knows which package unblocks it instead of concluding the measurement was forgotten.
+    pub blocked_on: Option<&'static str>,
+}
+
+/// The operation a §49 measurement times.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemporalOperation {
+    /// Shell startup with the fixture ledger sitting at the canonical path and recording off.
+    StartupWithLedgerPresent,
+    /// The recorder's idle CPU and memory overhead (§32.4).
+    RecorderIdle,
+    /// Fifteen minutes of one place's timeline (§11, §32.3).
+    Timeline15m,
+    /// One hour of one place's changes (§13, §32.3).
+    Changes1h,
+    /// The state of the host at a recent checkpoint, replayed forward (§9.1, §32.3).
+    RecentReconstruction,
+    /// A cached historical L0/L1 map (§14, §32.3).
+    HistoricalMapL1,
+    /// An explanation over at most a hundred candidate events (§16, §32.3).
+    Why,
+    /// An indexed event search (§20.3, §32.3).
+    FindEvent,
+    /// One bounded retention sweep of a ledger past its bounds (§31.8).
+    RetentionSweep,
+}
+
+impl TemporalOperation {
+    /// The word `--sample-temporal` names it by.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::StartupWithLedgerPresent => "startup_disabled",
+            Self::RecorderIdle => "recorder_idle",
+            Self::Timeline15m => "timeline_15m",
+            Self::Changes1h => "changes_1h",
+            Self::RecentReconstruction => "reconstruct_recent",
+            Self::HistoricalMapL1 => "map_historical_l1",
+            Self::Why => "why",
+            Self::FindEvent => "find_event",
+            Self::RetentionSweep => "retention_sweep",
+        }
+    }
+
+    /// The operation that word names.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        TEMPORAL_BENCHMARKS
+            .iter()
+            .map(|benchmark| benchmark.operation)
+            .find(|operation| operation.as_str() == name)
+    }
+}
+
+/// What one sample of a temporal operation observed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TemporalSample {
+    /// How long the operation took, in milliseconds.
+    pub elapsed_ms: f64,
+    /// How many values it produced — events, changes, objects, swept rows.
+    pub values: f64,
+    /// The peak resident set of the process that took the sample.
+    pub peak_rss_bytes: Option<u64>,
+}
+
+impl Runner {
+    /// Measures one of §49's rows, one cold process per sample.
+    ///
+    /// One process per sample for the reason `run_completion` uses: the store, the operating
+    /// system's page cache and the query planner all remember the previous call, so twenty
+    /// iterations inside one process would be one cold figure and nineteen cache hits, which
+    /// §37.3 forbids advertising as one number. Each sample also varies the window it asks about,
+    /// so a repeat is a new question rather than the same one answered from a cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason the row could not be measured — a package that is not in the tree, or a
+    /// fixture that could not be opened. The caller records nothing for it, which leaves the
+    /// target `Unmeasured`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this executable cannot be located, which means nothing can be re-run.
+    #[allow(
+        clippy::expect_used,
+        reason = "a benchmark that cannot find the executable it re-runs has nothing to measure"
+    )]
+    pub fn run_temporal(
+        &self,
+        benchmark: &TemporalBenchmark,
+        fixture: &fixture::FixtureLedger,
+    ) -> Result<Measurement, String> {
+        if let Some(reason) = benchmark.blocked_on {
+            return Err(reason.to_owned());
+        }
+        let me = std::env::current_exe().expect("the running xtask must have a path");
+        let mut latencies = Vec::new();
+        let mut values = Vec::new();
+        let mut peaks = Vec::new();
+        let mut refusal = None;
+        for iteration in 0..self.iterations {
+            let output = std::process::Command::new(&me)
+                .args([
+                    "perf",
+                    "--sample-temporal",
+                    benchmark.operation.as_str(),
+                    "--sample-index",
+                    &iteration.to_string(),
+                ])
+                .output()
+                .map_err(|error| format!("cannot re-run this executable: {error}"))?;
+            let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            if !output.status.success() || text.is_empty() {
+                refusal = Some(
+                    String::from_utf8_lossy(&output.stderr)
+                        .trim()
+                        .lines()
+                        .next_back()
+                        .unwrap_or("the sample produced no figure")
+                        .to_owned(),
+                );
+                continue;
+            }
+            let mut parts = text.split_whitespace();
+            let (Some(ms), Some(count)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            if let (Ok(ms), Ok(count)) = (ms.parse::<f64>(), count.parse::<f64>()) {
+                latencies.push(ms);
+                values.push(count);
+                if let Some(Ok(rss)) = parts.next().map(str::parse::<u64>) {
+                    peaks.push(rss);
+                }
+            }
+        }
+        if latencies.is_empty() {
+            return Err(refusal
+                .unwrap_or_else(|| format!("no sample of `{}` produced a figure", benchmark.id)));
+        }
+
+        let complete_ms = median(&latencies);
+        let count = median(&values);
+        Ok(Measurement {
+            benchmark: benchmark.id.to_owned(),
+            profile: fixture.profile().name.to_owned(),
+            commit: self.commit.clone(),
+            environment: self.environment.clone(),
+            temperature: benchmark.temperature,
+            iterations: u32::try_from(latencies.len()).unwrap_or(0),
+            build: self.build.clone(),
+            values: round3(count),
+            p95_ms: round3(percentile(&latencies, 95.0)),
+            metrics: vec![
+                // The answer is one value produced whole, so the first value and the last one
+                // arrive together. Stating both rather than one is what Appendix F.4 asks for,
+                // and the equality is the honest reading of a non-streaming call.
+                ("time_to_first_ms", Some(round3(complete_ms))),
+                ("time_to_complete_ms", Some(round3(complete_ms))),
+                (
+                    "peak_rss_bytes",
+                    peaks.iter().max().map(|bytes| *bytes as f64),
+                ),
+                (
+                    "values_per_second",
+                    Some(round3(if complete_ms > 0.0 {
+                        count * 1000.0 / complete_ms
+                    } else {
+                        0.0
+                    })),
+                ),
+                (
+                    "estimated_bytes",
+                    Some(round3(count * TEMPORAL_VALUE_BYTES)),
+                ),
+                // A single library call inside one process is not interruptible from outside it.
+                // §32.6's cancellation contract is about the command that wraps it, and that
+                // command does not exist yet; a zero here would be a figure nobody measured.
+                ("cancel_ms", None),
+            ],
+        })
+    }
+}
+
+/// What one temporal value is estimated to weigh, for §32.3's byte metric.
+///
+/// An event with its times, its subject reference and its changed fields. Approximate on purpose,
+/// the same way [`AVERAGE_CANDIDATE_BYTES`] is: §21.2 makes value-size estimation deterministic
+/// and approximate, and serializing every answer to count its bytes would measure the counter.
+const TEMPORAL_VALUE_BYTES: f64 = 512.0;

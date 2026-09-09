@@ -188,6 +188,7 @@ Default view: `state_or_change`, `cause`, `coverage`
 |---|---|---|---|---|
 | `subject` | `string` | — | nullable | The `spatial_id` the question was asked about. Null where the question named an event. |
 | `explained_event` | `string` | — | nullable | The `ono.temporal-event/1` id being explained. Null where the question named a state. |
+| `at` | `timestamp` | — | nullable | The instant the explained state or change happened. §16.5 renders `failed at 14:03:17.004` and §16.6 renders an association as `11s before failure`; neither is derivable from an event id, and §39.3 forbids a renderer resolving one. So the producer states the instant here. Null where nothing notable was recorded and there is no explained event. |
 | `state_or_change` | `string` | — | required | What is being explained, in words a person asked for — `nginx.service is active`, `process/2741 appeared`. |
 | `cause` | `record` | — | nullable | The immediate cause, where a registered rule found one: the event, the relation and the rule. Null is §15.7's `cause: unknown` — a valid outcome, still carrying everything below. |
 | `causal_chain` | `list<record>` | — | required | The chain from the explained event back towards its origin, one `ono.causal-link/1` per step, nearest first (§16.7). Empty where no rule matched. |
@@ -954,6 +955,9 @@ Default view: `name`, `host`, `transport`, `mode`, `state`, `targets`
 | `authorized` | `bool` | — | nullable | Whether the far side's own policy admitted this connection (v0.4.1 §19.1: "authorized — authenticated principal is permitted by policy"). True for an established direct link, where the agent resolved its `authorized_clients` store for this client before it negotiated anything (§9.4, §10.1). Null where no policy this process can see decided — `ssh` and `local`, where the carrier decided — and null for a link that was never established. A client the agent refuses never becomes a row: the refusal is `remote.unauthorized` (E1202), which is where an unauthorized authenticated peer is seen. |
 | `runtime_user` | `string` | — | nullable | The user the far side reports it is running as. v0.4.1 §7.3: "the runtime identity is useful context but MUST NOT grant authority" — it is what the peer said about itself, and `transport_fingerprint` is what it proved. |
 | `runtime_uid` | `int` | — | nullable | The numeric user id the far side reports, where it reports one. Context, not authority. |
+| `clock_id` | `string` | — | nullable | The clock identity the peer named for itself at the handshake (v0.5 §24.2, §25.5). Self- reported context exactly as `runtime_user` is: it says which clock domain a remote event's readings belong to, never that the peer's clock is right. Null where the far side named none, which is every `ssh` and `local` link and every peer that predates v0.5. |
+| `clock_offset` | `duration` | — | nullable | How far the peer's wall clock was from this host's at the handshake, positive when the peer reads later (v0.5 §24.2). Null where either side did not say — an unmeasured offset is unknown rather than a measured zero (v0.2 §35.3). |
+| `clock_uncertainty` | `duration` | — | nullable | The bound the peer stated on its own reading (v0.5 §24.4). §24.3 forbids a false global total order, and this is the figure a renderer warns from when it exceeds `temporal.remote.clock_uncertainty_warn`. Null is unmeasured, not zero. |
 | `runtime_elevated` | `bool` | — | nullable | Whether the far side reports it is running with elevated privilege (spec §17.2). Self- reported, and §2.1 forbids it from satisfying the word authenticated. |
 
 ## LogRecord — `ono.log-record/1`
@@ -1640,6 +1644,7 @@ Default view: `running`, `events`, `earliest`, `latest`, `health`
 | `sources` | `list<string>` | — | required | The §7.1 sources the recorder is subscribed to, so the collection policy of §10.6 is visible. |
 | `dropped` | `int` | — | required | How many events the bounded queues of §43.1 discarded. §43.2 forbids silent loss, so the count is part of the status rather than a log line. |
 | `health` | `enum` | — | required | §43.4's recorder health. `degraded` is what a run of dropped events or a coverage loss produces; §21.8 forbids freezing the last known state and calling it current. |
+| `diagnostic` | `string` | — | nullable | Why the recorder is not retaining history, where it is `failed`. §44.3 requires an upgrade whose migration cannot complete safely to leave the shell working with temporal persistence disabled *and an explicit diagnostic*, and §31.7 requires a store that cannot be read to name itself. A health of `failed` with no reason beside it is the shape of both those rules half-kept: the user learns that history stopped and not what to do about it. Null whenever the recorder has nothing to explain. |
 
 ## RouteEvent — `ono.route-event/1`
 
@@ -1997,6 +2002,8 @@ Default view: `observed_at`, `event_id`, `kind`, `subject`
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
 | `event_id` | `string` | — | required | The stable content identity of §3.3, rendered `@e<hex>`. §11.6 requires it to be usable in a later command — `inspect event @e42`, `at event @e42`, `why event @e42`. |
+| `reference` | `string` | — | nullable | The short form of `event_id` **this session** minted — `@e42` without the `@` (§11.6, ADR-0660). It is the shortest prefix of the digest that names one event inside the session that issued it, so it is the string `at event`, `inspect event` and `why event` accept, and the string §20.4's completion offers. Null on a persisted event and on any record not produced for a session: a reference is a session's word for an event, and a stored one would go stale the moment another session shortened it differently. |
+| `source` | `string` | — | nullable | The §7.1 evidence source class the event came from — `linux.systemd-dbus`, `ono.recorder`, `adapter:ps`, `remote:web01/procfs`. §11.5's `[systemd]` tag is an abbreviation of this and of nothing else. Null where the event's provenance names no §7.1 class, and a renderer then draws no tag rather than a wrong one (ADR-0709). |
 | `kind` | `enum` | — | required | The top-level class of §6.1. The list is closed; a provider refines it in `subtype`. |
 | `subtype` | `string` | — | nullable | §6.1's namespaced provider or plugin refinement, such as `linux.systemd.job-result`. Null where the top-level kind says everything the source said. |
 | `scope` | `string` | — | required | The v0.4 §3.2 boundary the event belongs to, rendered `<kind>:<id>` — `host:web01`. |
@@ -2080,6 +2087,23 @@ Default view: `store`, `size`, `events`, `earliest`, `latest`
 | `scopes` | `list<string>` | — | required | The v0.4 §3.2 boundaries the ledger holds history for. §30.9 does not offer selective removal, so this is a statement of what removal would take. |
 | `provenance` | `record` | — | required | Where the answer came from (v0.2 §25.2). |
 
+## TemporalLandmark — `ono.temporal-landmark/1`
+
+A moment worth navigating to, and the event that is it.
+
+Identity: `event`, `kind`
+
+Default view: `at`, `kind`, `subject`, `detail`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | Which of §27.1's built-in candidates this is. The list is closed: a rule may not invent a word, for the same reason v0.4 §3.7's list is closed — a vocabulary anybody may extend is one nothing can be filtered on. |
+| `event` | `ref<ono.temporal-event/1>` | — | required | The event this landmark is. §27.3 requires the reference to survive, so that `why event`, `at event` and a map at that event all reach the same moment. |
+| `at` | `timestamp` | — | required | The instant the landmark orients to — the event's presentation instant. |
+| `scope` | `string` | — | required | The spatial scope the landmark happened in, so a federated timeline can say whose it is. |
+| `subject` | `value` | — | nullable | The object the landmark is about, where one is identified. Null for a landmark about a source rather than an object — a recorder gap belongs to the recorder, not to anything it failed to observe. |
+| `detail` | `string` | — | required | What the rule observed, in the rule's own words. §27.2 bounds this: it states the transition and claims no operational severity beyond it, because a landmark is an anchor and the shell is not an alerting product. |
+
 ## TemporalSource — `ono.temporal-source/1`
 
 What one evidence source can answer about time, and how far back it reaches.
@@ -2119,6 +2143,7 @@ Default view: `place_label`, `from`, `until`, `truncated`
 | `until` | `timestamp` | — | required | The end of the window. |
 | `centre` | `timestamp` | — | nullable | The instant the window is centred on — the active historical context, where there is one (§11.8). Null for a window anchored to its own ends. |
 | `events` | `list<ono.temporal-event/1>` | — | required | The events in the window, in presentation order (§26.3). Presentation order is a stable display order and makes no ordering claim; `inspect` is where ordering evidence is stated. |
+| `groups` | `list<record>` | — | nullable | §19.4's density rows, as the producer formed them: a representative `event_id`, every `members` id so §19.5's expansion reaches the retained individuals with no second query, the `hidden` count, the `from` and `until` of the span, and the `reason` the run was grouped under. Grouping is a judgement about events rather than a way of drawing them, so it is made once, here, and a renderer draws these rows rather than forming its own. Null for a record whose producer formed none, which is the only case a renderer groups for itself. |
 | `gaps` | `list<ono.temporal-gap/1>` | — | required | The coverage gaps inside the window (§11.7). A renderer draws each one as a break in the timeline; an empty list means the window is covered, not that gaps were left out. |
 | `coverage` | `record` | — | required | The composed coverage summary over the window (§8.5). |
 | `truncated` | `bool` | — | required | Whether the event list was cut by a limit rather than by the window (§19.4's density handling). A reader must be able to tell a quiet interval from a truncated one. |

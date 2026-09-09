@@ -1,0 +1,74 @@
+# v0.5 §50 phase T2 — §4.8: an arbitrary external program executes in the present and may have
+# side effects, so it MUST NOT run while historical context is active; `present <command>` is the
+# explicit escape hatch, it does not change the coordinate, and the result metadata says the
+# execution was present-bound.
+#
+# The refusal is checked by its effect and not only by its words: the refused program would have
+# written a file, and the file is not there.
+case: an external program refuses in the past, and `present` is the way through
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  rm -f /tmp/t2p-side-effect
+  echo '== an arbitrary external program in historical context does not run (§4.8) =='
+  ono -c 'sleep 1
+  at -1s
+  touch /tmp/t2p-side-effect' > /tmp/t2p-refused.out 2>&1
+  prove t2ab "the refusal is temporal.present_only (§4.8, §34)" \
+    'grep -q "temporal.present_only" /tmp/t2p-refused.out'
+  prove t2ac "and it names the escape hatch (§4.8)" \
+    'grep -q "present" /tmp/t2p-refused.out'
+  prove t2ad "the program did not run: its side effect is absent (§4.8)" \
+    '! test -e /tmp/t2p-side-effect'
+
+  echo '== `present` runs it in the real current environment (§4.8) =='
+  ono -c 'sleep 1
+  at -1s
+  present touch /tmp/t2p-side-effect' > /tmp/t2p-present.out 2>&1
+  prove t2ae "the escaped program really ran against the present machine (§4.8)" \
+    'test -e /tmp/t2p-side-effect'
+  prove t2af "the result metadata says the execution was present-bound (§4.8)" \
+    'grep -qi "present" /tmp/t2p-present.out'
+
+  echo '== and the coordinate is exactly where it was (§4.8) =='
+  ono -c 'sleep 1
+  at -1s
+  present printf "ran\n"
+  look' > /tmp/t2p-after.out 2>&1
+  prove t2ag "the escaped program wrote its own output (§4.8)" \
+    'grep -q "^ran$" /tmp/t2p-after.out'
+  prove t2ah "the session is still in historical context afterwards (§4.8)" \
+    'grep -q "\[PAST" /tmp/t2p-after.out'
+
+  echo '== the escape is one command wide, not a mode (§4.8) =='
+  rm -f /tmp/t2p-second
+  ono -c 'sleep 1
+  at -1s
+  present printf "one\n"
+  touch /tmp/t2p-second' > /tmp/t2p-scope.out 2>&1
+  prove t2ai "the command after a `present` is refused again (§4.8)" \
+    'grep -q "temporal.present_only" /tmp/t2p-scope.out && ! test -e /tmp/t2p-second'
+
+  echo 'present escape: done'
+exit: 0
+stdout-contains: PROVED t2ab
+stdout-contains: PROVED t2ac
+stdout-contains: PROVED t2ad
+stdout-contains: PROVED t2ae
+stdout-contains: PROVED t2af
+stdout-contains: PROVED t2ag
+stdout-contains: PROVED t2ah
+stdout-contains: PROVED t2ai
+stdout-contains: present escape: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

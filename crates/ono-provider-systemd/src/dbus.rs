@@ -11,10 +11,13 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use futures::StreamExt as _;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 use zbus::{Connection, Proxy};
 
-use crate::{BusError, JobKind, JobRef, SystemdBus, UnitListing, UnitProperties};
+use crate::{
+    BusError, JobKind, JobRef, SystemdBus, UnitListing, UnitProperties, UnitSignal, UnitSignals,
+};
 
 const DESTINATION: &str = "org.freedesktop.systemd1";
 const MANAGER_PATH: &str = "/org/freedesktop/systemd1";
@@ -32,6 +35,13 @@ const JOB_MODE: &str = "replace";
 /// is long enough for a slow `StartUnit` that waits on dependencies and short enough that a user
 /// gets an answer rather than a hang.
 const CALL_BUDGET: Duration = Duration::from_secs(10);
+
+/// How many unread signals the bus may hold for one match rule before it drops them.
+///
+/// Bounded for the same reason every queue in this shell is (§28.1, §43.1). A subscriber that
+/// falls this far behind on a busy manager is one whose consumer has stopped reading, and the
+/// honest outcome is that the bus discards rather than that the shell grows without limit.
+const SIGNAL_QUEUE: usize = 256;
 
 /// Where the D-Bus system bus socket is, when the environment does not say otherwise.
 const SYSTEM_BUS_SOCKETS: [&str; 2] = [
@@ -64,6 +74,41 @@ impl SystemBus {
         let connection = open_system_bus().await?;
         let manager = budgeted(
             "building the org.freedesktop.systemd1.Manager proxy",
+            Proxy::new(&connection, DESTINATION, MANAGER_PATH, MANAGER_INTERFACE),
+        )
+        .await?;
+        Ok(Self {
+            connection,
+            manager,
+        })
+    }
+
+    /// The same surface against the **per-user** service manager on the session bus.
+    ///
+    /// `org.freedesktop.systemd1` is owned on the session bus by `user@<uid>.service`, and it
+    /// answers the same `Manager` interface with the same signals. The distinction that matters
+    /// is authority: an unprivileged process may queue jobs there, which is what makes the live
+    /// subscription of §22.2 observable in a test on an ordinary account without asking for a
+    /// privilege core v0.5 must not need (§22.8).
+    ///
+    /// [`SystemdProvider`](crate::SystemdProvider) still answers `service` from the system
+    /// manager; nothing here changes which manager a query reaches.
+    ///
+    /// # Errors
+    ///
+    /// [`BusError::Unavailable`] when there is no session bus, or nothing owns
+    /// `org.freedesktop.systemd1` on it.
+    pub async fn user() -> Result<Self, BusError> {
+        let connection = budgeted("connecting to the D-Bus session bus", Connection::session())
+            .await
+            .map_err(|error| {
+                BusError::Unavailable(format!(
+                    "the D-Bus session bus could not be opened: {}",
+                    error.message()
+                ))
+            })?;
+        let manager = budgeted(
+            "building the org.freedesktop.systemd1.Manager proxy on the session bus",
             Proxy::new(&connection, DESTINATION, MANAGER_PATH, MANAGER_INTERFACE),
         )
         .await?;
@@ -224,6 +269,40 @@ impl SystemdBus for SystemBus {
             return self.unit_properties(unit).await;
         };
         self.read_at(&path, unit).await
+    }
+
+    async fn subscribe_units(&self) -> Result<UnitSignals, BusError> {
+        // systemd emits its signals only while a client has asked for them. Without this call
+        // the match rules below would be registered and nothing would ever arrive, which is the
+        // failure mode that looks like a working subscription (spec v0.5 §22.2).
+        budgeted(
+            "org.freedesktop.systemd1.Manager.Subscribe",
+            self.manager.call::<_, _, ()>("Subscribe", &()),
+        )
+        .await?;
+
+        let manager_signals = signal_rule(
+            zbus::MatchRule::builder()
+                .msg_type(zbus::message::Type::Signal)
+                .interface(MANAGER_INTERFACE)
+                .and_then(|rule| rule.path(MANAGER_PATH)),
+        )?;
+        // `PropertiesChanged` arrives on each unit's own object path, so the rule is narrowed by
+        // the interface whose properties changed rather than by a path.
+        let unit_signals = signal_rule(
+            zbus::MatchRule::builder()
+                .msg_type(zbus::message::Type::Signal)
+                .interface(PROPERTIES_INTERFACE)
+                .and_then(|rule| rule.member("PropertiesChanged"))
+                .and_then(|rule| rule.arg(0, UNIT_INTERFACE)),
+        )?;
+
+        let manager = stream_for(&self.connection, manager_signals).await?;
+        let units = stream_for(&self.connection, unit_signals).await?;
+        Ok(Box::pin(
+            futures::stream::select(manager, units)
+                .filter_map(|message| async move { decode_signal(&message.ok()?) }),
+        ))
     }
 
     async fn queue_job(&self, unit: &str, job: JobKind) -> Result<JobRef, BusError> {
@@ -415,4 +494,83 @@ where
     properties
         .get(key)
         .and_then(|value| T::try_from(value.clone()).ok())
+}
+
+/// Finishes a match rule builder, naming `org.freedesktop.systemd1` as the sender.
+///
+/// The sender narrows the rule to signals systemd itself broadcast, so no other service on the
+/// bus can put a unit transition into this stream.
+fn signal_rule(
+    builder: zbus::Result<zbus::match_rule::Builder<'static>>,
+) -> Result<zbus::MatchRule<'static>, BusError> {
+    builder
+        .and_then(|rule: zbus::match_rule::Builder<'static>| rule.sender(DESTINATION))
+        .map(zbus::match_rule::Builder::build)
+        .map_err(|error: zbus::Error| {
+            BusError::Unavailable(format!(
+                "a systemd signal match rule could not be built: {error}"
+            ))
+        })
+}
+
+/// Registers one match rule with the bus and answers with its messages.
+async fn stream_for(
+    connection: &Connection,
+    rule: zbus::MatchRule<'static>,
+) -> Result<zbus::MessageStream, BusError> {
+    budgeted(
+        "registering a systemd signal match rule",
+        zbus::MessageStream::for_match_rule(rule, connection, Some(SIGNAL_QUEUE)),
+    )
+    .await
+}
+
+/// One `org.freedesktop.systemd1` signal as the fact it states, or `None` for one this provider
+/// has no use for.
+///
+/// Every arm reads the signal's declared argument types. A message whose body does not
+/// deserialize is not one of these signals, and it is dropped rather than guessed at.
+fn decode_signal(message: &zbus::Message) -> Option<UnitSignal> {
+    let header = message.header();
+    let member = header.member()?.as_str().to_owned();
+    let body = message.body();
+    match member.as_str() {
+        "JobNew" => {
+            let (_id, job, unit): (u32, OwnedObjectPath, String) = body.deserialize().ok()?;
+            Some(UnitSignal::JobNew {
+                job: JobRef::new(job.as_str()),
+                unit,
+            })
+        }
+        "JobRemoved" => {
+            let (_id, job, unit, result): (u32, OwnedObjectPath, String, String) =
+                body.deserialize().ok()?;
+            Some(UnitSignal::JobRemoved {
+                job: JobRef::new(job.as_str()),
+                unit,
+                result: (!result.is_empty()).then_some(result),
+            })
+        }
+        "UnitNew" | "UnitRemoved" => {
+            let (unit, path): (String, OwnedObjectPath) = body.deserialize().ok()?;
+            let path = Some(path.as_str().to_owned());
+            if member == "UnitNew" {
+                Some(UnitSignal::UnitNew { unit, path })
+            } else {
+                Some(UnitSignal::UnitRemoved { unit, path })
+            }
+        }
+        "PropertiesChanged" => {
+            // The signal names no unit: it arrives on the unit's object path, into which systemd
+            // encoded the name. Where the path is not a unit path there is nothing to attribute
+            // the change to, and inventing a name would be worse than dropping the signal.
+            let path = header.path()?.as_str().to_owned();
+            let unit = crate::unit_name_from_path(&path)?;
+            Some(UnitSignal::UnitChanged {
+                unit,
+                path: Some(path),
+            })
+        }
+        _ => None,
+    }
 }

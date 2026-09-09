@@ -1,0 +1,55 @@
+# v0.5 §50 phase T6 — §13: `changes [selector] --since <t> [--until <t>]` returns
+# `Stream<TemporalChange>` with the five canonical classes of §13.2, and §28.1 makes it an
+# ordinary pipeline value.
+case: what changed, as typed values a pipeline can group
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== §13.1: a comparison needs two ends, and one of them is not optional =='
+  prove t6ao "`changes` without `--since` refuses rather than inventing a window (§13.1)" \
+    'ono -c "changes" 2>&1 | grep -q -- "--since"'
+  prove t6ap "`changes --since 10m` runs (§13.1)" \
+    'ono -c "changes --since 10m | to json" 2>&1 | grep -qE "^\[|\{"'
+  prove t6aq "and a wall-clock selector is one of the forms `--since` accepts (§13.1, §4.4)" \
+    'ono -c "changes --since 00:00:01 | to json" 2>&1 | grep -qE "^\[|\{|temporal\."'
+
+  echo '== §13.2: the answer is `ono.temporal-change/1`, with the five classes =='
+  ono -c 'changes --since 10m | to json' > /tmp/t6ch.json 2>&1
+  prove t6ar "the value is a list, empty or not, rather than a rendering (§13.2, §28.1)" \
+    'head -c 1 /tmp/t6ch.json | grep -q "\["'
+
+  echo '== §28.1: `changes` is pipeline-compatible =='
+  prove t6as "`changes --since 30m | group subject.object_type` is a pipeline (§28.1)" \
+    'ono -c "changes --since 30m | group subject.object_type | to json" 2>&1 | grep -qE "^\[|\{"'
+  prove t6at "and so is a `where` over it (§28.1)" \
+    'ono -c "changes --since 30m | where class == \"added\" | to json" 2>&1 | grep -qE "^\[|\{"'
+
+  echo '== §13.1: `--until` defaults to the active coordinate, and can be named (§13.1) =='
+  prove t6au "an explicit window is accepted (§13.1)" \
+    'ono -c "changes --since 10m --until 1m | to json" 2>&1 | grep -qE "^\[|\{|temporal\."'
+  prove t6av "a `--since` older than anything retained refuses rather than guessing (§12.3)" \
+    'ono -c "changes --since 3d" 2>&1 | grep -qE "temporal\.(not_recorded|out_of_retention)|^\["'
+
+  echo 'changes: done'
+exit: 0
+stdout-contains: PROVED t6ao
+stdout-contains: PROVED t6ap
+stdout-contains: PROVED t6aq
+stdout-contains: PROVED t6ar
+stdout-contains: PROVED t6as
+stdout-contains: PROVED t6at
+stdout-contains: PROVED t6au
+stdout-contains: PROVED t6av
+stdout-contains: changes: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

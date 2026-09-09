@@ -356,12 +356,16 @@ fn should_measure_every_time_to_first_result_target_of_the_reference_targets_tab
             .expect("the baseline parses");
 
     let verdicts = xtask::perf::verdicts(&baseline);
+    let spatial: Vec<_> = verdicts
+        .iter()
+        .filter(|(target, _)| target.profile != "T")
+        .collect();
     assert_eq!(
-        verdicts.len(),
+        spatial.len(),
         4,
         "v0.4.1 §33.2 states four reference targets"
     );
-    for (target, verdict) in &verdicts {
+    for (target, verdict) in &spatial {
         assert_ne!(
             *verdict,
             xtask::perf::TargetVerdict::Unmeasured,
@@ -618,5 +622,385 @@ fn should_capture_the_frozen_baseline_from_the_sources_rather_than_from_a_second
             .len(),
         measured.measurements.len(),
         "every figure H7 measured is named, and none is invented"
+    );
+}
+
+// ------------------------------------------------------------------------------------------
+// v0.5 §32, §49 and work packages TEST-001, TEST-002, TEST-003.
+// ------------------------------------------------------------------------------------------
+
+/// A small fixture built from §49's declaration, so the generator is proven where the gate can
+/// afford to run it.
+///
+/// v0.5 §49's own cardinality is a million events; the profile declares itself `benchmark` for
+/// that reason and `cargo xtask perf` builds it. What a gate run can prove is the property that
+/// makes the large one worth building — that the generator is deterministic and that the store it
+/// writes is a real ledger — and that is proven at a size a laptop writes in under a second.
+fn small_fixture(seed: u64, root: &std::path::Path) -> xtask::perf::fixture::FixtureLedger {
+    let profile = ono_testkit::temporal::TemporalProfile {
+        name: "T",
+        events: 4_000,
+        objects: 400,
+        relation_changes: 2_000,
+        actions: 40,
+        seed,
+    };
+    xtask::perf::fixture::build(profile, root).expect("the fixture builds")
+}
+
+/// A scratch directory under `target/`, because this host's `/tmp` is quota'd.
+fn scratch(name: &str) -> std::path::PathBuf {
+    let path = repository_root()
+        .join("target")
+        .join("perf-tests")
+        .join(name);
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).expect("a scratch directory");
+    path
+}
+
+#[test]
+fn should_write_the_same_history_when_the_fixture_is_built_twice_from_one_seed() {
+    // §49's word is "deterministic", and this is what it has to mean for a ledger: the same seed
+    // produces the same events with the same identities, so two measurements a fortnight apart
+    // are measurements of one history. The digest is over every `EventId` in write order, which
+    // is a digest over the content of every event — an `EventId` is the SHA-256 of the fields
+    // that make it that observation.
+    let root = scratch("determinism");
+    let first = small_fixture(11, &root.join("a"));
+    let second = small_fixture(11, &root.join("b"));
+
+    assert_eq!(
+        first.digest(),
+        second.digest(),
+        "two builds from seed 11 wrote two different histories, so no figure measured against \
+         either can be compared with the other"
+    );
+    assert_eq!(first.events(), second.events());
+    assert_eq!(first.evidence(), second.evidence());
+    assert_eq!(first.actions(), second.actions());
+    assert_eq!(first.checkpoints(), second.checkpoints());
+
+    let third = small_fixture(12, &root.join("c"));
+    assert_ne!(
+        first.digest(),
+        third.digest(),
+        "a different seed must produce a different history, or the seed is not a seed"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn should_hold_the_declared_cardinality_in_a_real_store_when_the_fixture_is_built() {
+    // §49's fixture is a ledger, not a file: it is read back through `LedgerRead`, its retention
+    // state counts what it holds, and its query plans are SQLite's own. A hand-written file would
+    // pass none of this.
+    use ono_temporal_core::LedgerRead as _;
+
+    let root = scratch("cardinality");
+    let fixture = small_fixture(21, &root);
+    let profile = fixture.profile();
+
+    assert_eq!(
+        fixture.events(),
+        profile.events as u64,
+        "the fixture wrote fewer events than it declares"
+    );
+    assert_eq!(fixture.actions(), profile.actions as u64);
+    assert!(
+        fixture.bytes() > 0,
+        "a fixture ledger that occupies no disk is not a store"
+    );
+
+    let store = fixture
+        .open(ono_temporal_ledger::RetentionPolicy::unlimited())
+        .expect("the fixture opens");
+    let retention = store.retention();
+    assert_eq!(
+        retention.events, profile.events as u64,
+        "the store holds a different number of events than the generator wrote"
+    );
+
+    // §49 counts relation changes separately, and they are events of the two relation kinds.
+    let relations = store
+        .events(&ono_temporal_core::EventQuery {
+            kinds: vec![
+                ono_temporal_core::EventKind::RelationAdded,
+                ono_temporal_core::EventKind::RelationRemoved,
+            ],
+            ..ono_temporal_core::EventQuery::in_range(ono_temporal_core::TimeRange::all())
+        })
+        .expect("the relation query answers");
+    assert_eq!(
+        relations.len(),
+        profile.relation_changes,
+        "§49 asks for {} relation changes and the fixture holds {}",
+        profile.relation_changes,
+        relations.len()
+    );
+
+    // §49's hundred thousand lifetimes, at this size four hundred: every object appears exactly
+    // once, so the count of appearance events is the count of lifetimes.
+    let appearances = store
+        .events(&ono_temporal_core::EventQuery {
+            kinds: vec![ono_temporal_core::EventKind::ObjectAppeared],
+            ..ono_temporal_core::EventQuery::in_range(ono_temporal_core::TimeRange::all())
+        })
+        .expect("the appearance query answers");
+    let distinct: std::collections::BTreeSet<_> = appearances
+        .iter()
+        .filter_map(|event| event.subject.as_ref())
+        .filter_map(|reference| match reference {
+            ono_temporal_core::SpatialRef::Resolved { id, .. } => Some(id.clone()),
+            ono_temporal_core::SpatialRef::Unresolved { .. } => None,
+        })
+        .collect();
+    assert_eq!(
+        distinct.len(),
+        profile.objects,
+        "§49 asks for {} object lifetimes and the fixture holds {}",
+        profile.objects,
+        distinct.len()
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn should_answer_every_measured_query_from_an_index_rather_than_a_scan() {
+    // §32.3's budgets are met by the plan or not at all, and SQLite will say which. `EXPLAIN
+    // QUERY PLAN` answering "SCAN events" over a million rows is the architectural scaling
+    // failure §49 exists to catch, so it is asserted rather than hoped for.
+    let root = scratch("plans");
+    let fixture = small_fixture(31, &root);
+    let store = fixture
+        .open(ono_temporal_ledger::RetentionPolicy::default())
+        .expect("the fixture opens");
+
+    for (what, plan) in [
+        ("timeline", store.explain_timeline_plan()),
+        ("changes", store.explain_changes_plan()),
+        ("at (checkpoint)", store.explain_checkpoint_plan()),
+        ("why (causal links)", store.explain_causal_plan()),
+        ("find event", store.explain_event_plan()),
+        ("retention sweep", store.explain_retention_plan()),
+    ] {
+        let rows = plan.unwrap_or_else(|error| panic!("the {what} plan is unavailable: {error}"));
+        assert!(
+            !rows.is_empty(),
+            "SQLite reported no plan at all for the {what} query"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("USING INDEX") || row.contains("USING COVERING INDEX")),
+            "v0.5 §32.3 budgets the {what} query, and SQLite plans it as {rows:?} — no index is \
+             used, so the cost grows with the whole ledger rather than with the answer"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn should_declare_a_benchmark_for_every_release_measurement_v05_requires() {
+    // §49's list, typed out from the specification rather than read from the table it checks.
+    const SECTION_49: [&str; 8] = [
+        "temporal.startup_disabled",
+        "temporal.recorder_idle",
+        "temporal.timeline_15m",
+        "temporal.changes_1h",
+        "temporal.reconstruct_recent",
+        "temporal.map_historical_l1",
+        "temporal.why",
+        "temporal.retention_sweep",
+    ];
+
+    let declared: Vec<&str> = xtask::perf::TEMPORAL_BENCHMARKS
+        .iter()
+        .map(|benchmark| benchmark.id)
+        .collect();
+    for wanted in SECTION_49 {
+        assert!(
+            declared.contains(&wanted),
+            "v0.5 §49 requires release evidence for `{wanted}` and no benchmark is declared for \
+             it; the table declares {declared:?}"
+        );
+    }
+
+    // Every §32 target names a benchmark somebody can run. A target pointing at nothing is a
+    // budget that can never be measured, which is worse than a missing budget.
+    for target in xtask::perf::TARGETS {
+        if target.profile != "T" {
+            continue;
+        }
+        assert!(
+            declared.contains(&target.benchmark),
+            "the target \"{}\" is answered by `{}`, which no benchmark measures",
+            target.spec,
+            target.benchmark
+        );
+    }
+}
+
+#[test]
+fn should_report_an_unmeasured_temporal_target_as_a_failure_rather_than_a_pass() {
+    // The property the whole package rests on (§65.10). A baseline with no temporal record must
+    // answer `Unmeasured` for every v0.5 row — never `Held`.
+    let baseline = Baseline::parse(&baseline_of(&[complete_record("spatial.look")]))
+        .expect("the baseline parses");
+    for (target, verdict) in xtask::perf::verdicts(&baseline) {
+        if target.profile != "T" {
+            continue;
+        }
+        assert_eq!(
+            verdict,
+            xtask::perf::TargetVerdict::Unmeasured,
+            "\"{}\" has no record in this baseline and must not read as held",
+            target.spec
+        );
+    }
+}
+
+#[test]
+fn should_state_a_startup_target_as_an_increase_rather_than_as_an_absolute_figure() {
+    // v0.5 §32.1: "MUST add less than 5 ms p95 to Ono interactive startup". A 5 ms budget read
+    // against an absolute startup figure would be a budget the shell has already spent, so the
+    // row names what it is an increase over and the verdict subtracts.
+    let target = xtask::perf::TARGETS
+        .iter()
+        .find(|target| target.benchmark == "temporal.startup_disabled")
+        .expect("v0.5 §32.1 is a declared target");
+    assert_eq!(
+        target.relative_to,
+        Some("shell.cold_start"),
+        "§32.1 budgets an addition, so the row must name what it is added to"
+    );
+
+    // A startup that costs 4.8 ms without a ledger and 6.0 ms with one added 1.2 ms, which holds.
+    let held = Baseline::parse(&baseline_of(&[
+        record_at("shell.cold_start", "S", "cold", 4.8),
+        record_at("temporal.startup_disabled", "T", "cold", 6.0),
+    ]))
+    .expect("the baseline parses");
+    assert_eq!(
+        verdict_for(&held, "temporal.startup_disabled"),
+        xtask::perf::TargetVerdict::Held { p95_ms: 1.2 }
+    );
+
+    // The same shell paying 12 ms for the ledger's presence added 7.2 ms, which does not.
+    let missed = Baseline::parse(&baseline_of(&[
+        record_at("shell.cold_start", "S", "cold", 4.8),
+        record_at("temporal.startup_disabled", "T", "cold", 12.0),
+    ]))
+    .expect("the baseline parses");
+    assert!(
+        matches!(
+            verdict_for(&missed, "temporal.startup_disabled"),
+            xtask::perf::TargetVerdict::Missed { .. }
+        ),
+        "7.2 ms of added startup is outside §32.1's 5 ms and must be reported as missed"
+    );
+
+    // Half a subtraction is not a smaller difference.
+    let alone = Baseline::parse(&baseline_of(&[record_at(
+        "temporal.startup_disabled",
+        "T",
+        "cold",
+        6.0,
+    )]))
+    .expect("the baseline parses");
+    assert_eq!(
+        verdict_for(&alone, "temporal.startup_disabled"),
+        xtask::perf::TargetVerdict::Unmeasured,
+        "without the figure it is an increase over, the increase is unknown"
+    );
+}
+
+/// The verdict the row answered by `benchmark` reads on `baseline`.
+fn verdict_for(baseline: &Baseline, benchmark: &str) -> xtask::perf::TargetVerdict {
+    xtask::perf::verdicts(baseline)
+        .into_iter()
+        .find(|(target, _)| target.benchmark == benchmark)
+        .map(|(_, verdict)| verdict)
+        .expect("the row is a declared target")
+}
+
+/// A complete record at a stated profile, temperature and p95.
+fn record_at(benchmark: &str, profile: &str, temperature: &str, p95_ms: f64) -> String {
+    format!(
+        r#"{{
+          "benchmark": "{benchmark}",
+          "profile": "{profile}",
+          "commit": "0000000000000000000000000000000000000000",
+          "environment": "reference-2026-09",
+          "temperature": "{temperature}",
+          "iterations": 20,
+          "build": "release",
+          "time_to_first_ms": {p95_ms},
+          "time_to_complete_ms": {p95_ms},
+          "p95_ms": {p95_ms},
+          "peak_rss_bytes": 41943040,
+          "values": 1,
+          "values_per_second": 100.0,
+          "estimated_bytes": 512,
+          "cancel_ms": null
+        }}"#
+    )
+}
+
+#[test]
+fn should_declare_the_fixture_ledger_in_the_registry_and_in_the_testkit_alike() {
+    // The property `crates/ono-spatial-query/tests/profiles.rs` keeps for Appendix F, kept here
+    // for §49: a fixture the registry declares and nothing can build is a failure, and so is a
+    // fixture the code knows and the registry omits.
+    //
+    // §49's numbers are typed out from the specification rather than read from either side, so
+    // the check has something to disagree with.
+    const SECTION_49: (usize, usize, usize, usize) = (1_000_000, 100_000, 500_000, 10_000);
+
+    let declared = ono_testkit::temporal::declared_temporal_profiles();
+    assert_eq!(
+        declared.len(),
+        1,
+        "v0.5 §49 describes one fixture ledger; the registry declares {declared:?}"
+    );
+    let row = &declared[0];
+    assert_eq!(
+        (row.events, row.objects, row.relation_changes, row.actions),
+        SECTION_49,
+        "the registry declares a fixture at a cardinality v0.5 §49 does not state"
+    );
+    assert_eq!(
+        row.built_by,
+        ono_testkit::BuiltBy::Benchmark,
+        "a million-event store is minutes of writing; §49's fixture is built by the benchmark \
+         command rather than on every gate run"
+    );
+
+    let constant = row.profile();
+    assert_eq!(
+        (
+            constant.events,
+            constant.objects,
+            constant.relation_changes,
+            constant.actions
+        ),
+        SECTION_49,
+        "`TEMPORAL_PROFILE_T` and its declaration are two different fixtures; §52.2 allows one \
+         home for a number"
+    );
+    assert_eq!(
+        constant.seed, row.seed,
+        "the seed is part of the declaration, because \"deterministic\" is a claim about one \
+         stream"
+    );
+}
+
+#[test]
+fn should_agree_with_the_kuang_test_host_on_the_instant_a_fixture_starts_at() {
+    // Two origins would make two suites' fixtures incomparable for no gain. The test host pins
+    // spec §31.73's virtual time; the temporal harness agrees with it rather than choosing again.
+    assert_eq!(
+        ono_testkit::temporal::VIRTUAL_NOW,
+        ono_kuang_testhost::VIRTUAL_NOW,
+        "the temporal harness and the KUANG/11 test host must read the same clock"
     );
 }

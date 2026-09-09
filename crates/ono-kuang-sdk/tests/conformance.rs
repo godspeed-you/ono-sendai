@@ -100,6 +100,20 @@ network:
     .to_owned()
 }
 
+/// The same manifest, plus the four temporal capabilities the temporal suite exercises.
+///
+/// Kept apart from [`manifest`] on purpose: the shared fixture's optional set is what
+/// `fully_granted` grants, and a package loads degraded when an optional capability is denied
+/// (spec §31.8). Widening the shared set would make every "loads undegraded" assertion in this
+/// file depend on grants that have nothing to do with what it is testing.
+fn manifest_with_temporal() -> String {
+    manifest().replace(
+        "    - ui.view\n",
+        "    - ui.view\n    - temporal.read.current\n    - temporal.read.history\n    \
+         - temporal.contribute.events\n    - temporal.contribute.causality\n",
+    )
+}
+
 fn manifest_requiring_clock() -> String {
     manifest().replace(
         "capabilities:\n  optional:",
@@ -1630,6 +1644,10 @@ struct FakeHost {
     heard: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     appended: std::sync::Mutex<Vec<(String, Json)>>,
     contributed: std::sync::Mutex<Vec<(String, Json)>>,
+    /// Contributed temporal events, with the evidence source the *host* stamped on them.
+    temporal: std::sync::Mutex<Vec<(String, Json)>>,
+    /// Contributed causal links, as they reached the host after §37.4's ceiling.
+    links: std::sync::Mutex<Vec<(String, Json)>>,
 }
 
 fn item(seq: i64, label: &str) -> Json {
@@ -1867,6 +1885,52 @@ impl ono_kuang_supervisor::HostServices for FakeHost {
                 "no secret `{name}`"
             )))
         }
+    }
+
+    // The temporal domain of v0.5 §37. The host clock is `VIRTUAL_NOW`, so a temporal assertion
+    // here is exact (spec §31.73).
+    async fn temporal_context(&self) -> Result<Json, ono_kuang_supervisor::HostError> {
+        Ok(json!({"historical": false, "at": VIRTUAL_NOW}))
+    }
+    async fn temporal_query(
+        &self,
+        _query: Json,
+    ) -> Result<ono_kuang_supervisor::LiveStream, ono_kuang_supervisor::HostError> {
+        Ok(ono_kuang_supervisor::ready_stream(vec![
+            json!({"kind": "object.appeared", "observed_at": "2026-08-26T11:58:00Z"}),
+            json!({"kind": "object.changed", "observed_at": "2026-08-26T11:59:00Z"}),
+        ]))
+    }
+    async fn temporal_contribute_events(
+        &self,
+        package: &str,
+        source: &str,
+        events: Vec<Json>,
+    ) -> Result<u64, ono_kuang_supervisor::HostError> {
+        let count = events.len() as u64;
+        let mut recorded = self.temporal.lock().expect("the fake host's lock");
+        for event in events {
+            recorded.push((format!("kuang:{package}/{source}"), event));
+        }
+        Ok(count)
+    }
+    async fn temporal_contribute_causality(
+        &self,
+        package: &str,
+        links: Vec<Json>,
+    ) -> Result<u64, ono_kuang_supervisor::HostError> {
+        let count = links.len() as u64;
+        let mut recorded = self.links.lock().expect("the fake host's lock");
+        for link in links {
+            recorded.push((package.to_owned(), link));
+        }
+        Ok(count)
+    }
+    async fn temporal_recorder(
+        &self,
+        action: String,
+    ) -> Result<Json, ono_kuang_supervisor::HostError> {
+        Ok(json!({"state": if action == "start" { "running" } else { "stopped" }}))
     }
 }
 
@@ -2923,6 +2987,270 @@ async fn should_keep_serving_a_package_that_answers_one_invocation_at_a_time() {
     assert_eq!(result.status, InvokeStatus::Completed);
     assert_eq!(values_of(&later), vec![Value::Int(1), Value::Int(2)]);
     assert_eq!(plugin.state(), PluginState::Loaded);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+// --- the temporal domain (v0.5 §30.7, §37; §48.9 scenarios 44–47) ------------------------------
+
+/// The name of the structured refusal `command` meets, wherever the refusal happened.
+///
+/// A command whose declared capabilities the package does not hold is refused before its handler
+/// runs; one that asks for something else mid-invocation fails the invocation. Both are the same
+/// answer to the same question, and a test about *whether* a package is refused should not depend
+/// on which of the two doors closed first.
+async fn refusal_of(plugin: &LoadedPlugin, command: &str) -> String {
+    match plugin.invoke(command, args(&[])).await {
+        Err(error) => error.name,
+        Ok(invocation) => {
+            let (_, result) = invocation.collect().await;
+            assert_eq!(
+                result.status,
+                InvokeStatus::Failed,
+                "{command} without its grant"
+            );
+            result.error.expect("structured").name
+        }
+    }
+}
+
+#[tokio::test]
+async fn should_refuse_history_to_a_package_that_only_holds_current_object_read() {
+    // §30.7: "A plugin with current object read permission does not automatically receive
+    // historical access." The package holds `object.read` and nothing else, and the query it
+    // makes is `temporal.query`.
+    let plugin = TestHost::new(PLUGIN, &manifest_with_temporal())
+        .host(std::sync::Arc::new(FakeHost::default()))
+        .grant(Capability::ObjectRead)
+        .load()
+        .await
+        .expect("loads");
+
+    let refused = refusal_of(&plugin, "dev.example.echo.command.temporal-events").await;
+
+    assert_eq!(
+        refused, "capability.denied",
+        "current object read is not historical access"
+    );
+    assert!(
+        plugin
+            .audit()
+            .iter()
+            .any(|event| event.capability == "temporal.read.history"
+                && event.result == AuditResult::Denied),
+        "and the attempt is in the trail as loudly as a success (spec §31.37)"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_answer_recorded_events_to_a_package_that_holds_temporal_read_history() {
+    let plugin = TestHost::new(PLUGIN, &manifest_with_temporal())
+        .host(std::sync::Arc::new(FakeHost::default()))
+        .grant(Capability::TemporalReadHistory)
+        .load()
+        .await
+        .expect("loads");
+
+    let invocation = plugin
+        .invoke("dev.example.echo.command.temporal-events", args(&[]))
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    assert_eq!(strings(&events), ["object.appeared", "object.changed"]);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_answer_the_temporal_context_against_the_hosts_virtual_clock() {
+    let plugin = TestHost::new(PLUGIN, &manifest_with_temporal())
+        .host(std::sync::Arc::new(FakeHost::default()))
+        .grant(Capability::TemporalReadCurrent)
+        .load()
+        .await
+        .expect("loads");
+
+    let invocation = plugin
+        .invoke("dev.example.echo.command.temporal-context", args(&[]))
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    assert!(
+        strings(&events)[0].contains(VIRTUAL_NOW),
+        "the test host pins the clock, so a temporal assertion is exact (spec §31.73): {:?}",
+        strings(&events)
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_a_causal_link_from_a_package_without_the_contribution_capability() {
+    // §48.9 scenario 45.
+    let plugin = TestHost::new(PLUGIN, &manifest_with_temporal())
+        .host(std::sync::Arc::new(FakeHost::default()))
+        .grant(Capability::TemporalContributeEvents)
+        .load()
+        .await
+        .expect("loads");
+
+    let refused = refusal_of(&plugin, "dev.example.echo.command.temporal-causality").await;
+
+    // `temporal.contribute.causality` is decided just in time (K11P §14), and this host can ask
+    // nobody, so the refusal is the permission layer's rather than the broker's. Either way the
+    // package holding `temporal.contribute.events` gained nothing about causality, which is what
+    // §48.9 scenario 45 asks.
+    assert_eq!(
+        refused, "permission.denied",
+        "contributing events grants nothing about causality"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_stamp_a_contributed_event_with_the_source_the_host_chose() {
+    // §37.3: the host owns attribution. The example package writes `linux.procfs` into the
+    // event's own `source` field, and what reaches the ledger is `kuang:dev.example.echo/echo`.
+    let host = std::sync::Arc::new(FakeHost::default());
+    let plugin = TestHost::new(PLUGIN, &manifest_with_temporal())
+        .host(host.clone())
+        .grant(Capability::TemporalContributeEvents)
+        .load()
+        .await
+        .expect("loads");
+
+    let invocation = plugin
+        .invoke("dev.example.echo.command.temporal-contribute", args(&[]))
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    assert_eq!(strings(&events), ["contributed 1"]);
+    let stamped = {
+        let recorded = host.temporal.lock().expect("the fake host's lock");
+        recorded[0].0.clone()
+    };
+    assert_eq!(
+        stamped, "kuang:dev.example.echo/echo",
+        "a package cannot forge a source"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_a_contributed_event_about_an_object_the_package_cannot_resolve() {
+    // §48.9 scenario 47, and §37.3's scope rule: the package holds no `object.read`, so it
+    // cannot resolve an `ono.process/1`, so it may not assert that one exists.
+    let plugin = TestHost::new(PLUGIN, &manifest_with_temporal())
+        .host(std::sync::Arc::new(FakeHost::default()))
+        .grant(Capability::TemporalContributeEvents)
+        .load()
+        .await
+        .expect("loads");
+
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.temporal-contribute",
+            args(&[("subject", json!("ono.process/1"))]),
+        )
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+
+    assert_eq!(result.status, InvokeStatus::Failed);
+    assert_eq!(
+        result.error.expect("structured").name,
+        "capability.scope_violation",
+        "a plugin cannot assert an object exists outside the objects it can resolve"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_lower_a_contributed_causal_claim_to_what_the_package_may_say() {
+    // §48.9 scenario 46, and §37.4. The example package declares `authoritative` on the wire and
+    // the link that reaches the host carries `asserted`.
+    let host = std::sync::Arc::new(FakeHost::default());
+    let plugin = TestHost::new(PLUGIN, &manifest_with_temporal())
+        .host(host.clone())
+        .grant(Capability::TemporalContributeCausality)
+        .load()
+        .await
+        .expect("loads");
+
+    let invocation = plugin
+        .invoke("dev.example.echo.command.temporal-causality", args(&[]))
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    assert_eq!(strings(&events), ["linked 1"]);
+    let link = {
+        let recorded = host.links.lock().expect("the fake host's lock");
+        recorded[0].1.clone()
+    };
+    assert_eq!(
+        link.get("strength").and_then(Json::as_str),
+        Some("asserted"),
+        "§37.4: plugin causal strength MUST NOT exceed `asserted`"
+    );
+    assert_eq!(
+        link.get("relation").and_then(Json::as_str),
+        Some("correlated_with"),
+        "§15.5: a plugin's correlation stays a correlation"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_keep_a_weaker_contributed_claim_weak() {
+    let host = std::sync::Arc::new(FakeHost::default());
+    let plugin = TestHost::new(PLUGIN, &manifest_with_temporal())
+        .host(host.clone())
+        .grant(Capability::TemporalContributeCausality)
+        .load()
+        .await
+        .expect("loads");
+
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.temporal-causality",
+            args(&[("strength", json!("observational"))]),
+        )
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    let link = {
+        let recorded = host.links.lock().expect("the fake host's lock");
+        recorded[0].1.clone()
+    };
+    assert_eq!(
+        link.get("strength").and_then(Json::as_str),
+        Some("observational"),
+        "§7.2: no path raises a strength, and the ceiling is a ceiling rather than a value"
+    );
     plugin
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
         .await;

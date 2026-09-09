@@ -281,15 +281,7 @@ pub fn evaluate(expression: &Expr, current: &Value, scope: &Scope) -> Result<Val
             }
         }
         Expr::Binary(binary) => binary_op(binary, current, scope),
-        Expr::Call(call) if is_now_call(call) => Ok(Value::now()),
-        Expr::Call(call) => Err(ErrorValue::new(
-            ErrorCode::ResolveCommandNotFound,
-            format!("no function to call at {}", call.span),
-        )
-        .with_help(
-            "`now()` is the only function an expression can call; a user function is called as \
-             a command (spec §19.3, ADR-0070)",
-        )),
+        Expr::Call(call) => evaluate_call(call, current, scope),
         Expr::Error(span) => Err(ErrorValue::new(
             ErrorCode::ParseSyntax,
             format!("this expression could not be read at {span}"),
@@ -297,11 +289,89 @@ pub fn evaluate(expression: &Expr, current: &Value, scope: &Scope) -> Result<Val
     }
 }
 
-/// Whether a call is `now()`, the one builtin function `language.yaml` declares (spec §6.3,
-/// ADR-0071).
+/// The functions an expression may call, in the order `docs/contracts/language.yaml` lists them.
+///
+/// The list is closed: §19.3 keeps user functions in the command position, so an expression calls
+/// only what the language declares. A name and an arity together identify a builtin, which is why
+/// the arity is here rather than checked inside each one — `now(1)` is as much "no such function"
+/// as `nonsense()` is, and it says so with the same message.
+pub const BUILTIN_FUNCTIONS: &[(&str, usize)] = &[("now", 0), ("age", 1), ("between", 3)];
+
+/// The builtin `call` names, or `None` when nothing in [`BUILTIN_FUNCTIONS`] matches its name and
+/// its argument count.
+#[must_use]
+pub fn builtin_call(call: &ono_parser::CallExpr) -> Option<&'static str> {
+    let Expr::Path(path) = &call.callee else {
+        return None;
+    };
+    BUILTIN_FUNCTIONS
+        .iter()
+        .find(|(name, arity)| *name == path.name && *arity == call.arguments.len())
+        .map(|(name, _)| *name)
+}
+
+/// Whether a call is `now()` — kept because `now()` is the one builtin whose meaning the
+/// evaluator overrides: v0.5 §28.3 fixes it as real current time even under a historical
+/// coordinate, and the query time is `context.time` instead.
 #[must_use]
 pub fn is_now_call(call: &ono_parser::CallExpr) -> bool {
-    matches!(&call.callee, Expr::Path(path) if path.name == "now") && call.arguments.is_empty()
+    builtin_call(call) == Some("now")
+}
+
+/// Evaluates one call to a declared builtin (spec §6.3, v0.5 §28.3).
+///
+/// `age` and `between` are the two v0.5 §28.3 adds, and both follow ADR-0014 rather than
+/// inventing an answer: an argument that is not an instant is unknown, and an unknown argument
+/// makes the whole call unknown. Neither reads a clock of its own — `age` is `now() - t`, so the
+/// one place the clock is read stays [`Value::now`].
+///
+/// # Errors
+///
+/// `resolve.command_not_found` when nothing in [`BUILTIN_FUNCTIONS`] has that name and that
+/// arity, and whatever evaluating an argument reported.
+pub fn evaluate_call(
+    call: &ono_parser::CallExpr,
+    current: &Value,
+    scope: &Scope,
+) -> Result<Value, ErrorValue> {
+    let Some(name) = builtin_call(call) else {
+        let listed: Vec<String> = BUILTIN_FUNCTIONS
+            .iter()
+            .map(|(name, arity)| format!("`{name}()` takes {arity}"))
+            .collect();
+        return Err(ErrorValue::new(
+            ErrorCode::ResolveCommandNotFound,
+            format!("no function to call at {}", call.span),
+        )
+        .with_help(format!(
+            "an expression can call {}; a user function is called as a command (spec §19.3, \
+             ADR-0070)",
+            listed.join(", ")
+        )));
+    };
+    let mut arguments = Vec::with_capacity(call.arguments.len());
+    for argument in &call.arguments {
+        arguments.push(evaluate(argument, current, scope)?);
+    }
+    match (name, arguments.as_slice()) {
+        ("now", []) => Ok(Value::now()),
+        // v0.5 §28.3: how long ago an instant was. The subtraction is `ono-value`'s, so the
+        // result is the same `Duration` a `where modified < now() - 7d` already compares against.
+        ("age", [Value::Timestamp(instant)]) => Value::now().sub(&Value::Timestamp(*instant)),
+        ("age", [_]) => Ok(Value::Null),
+        // v0.5 §28.3: whether an instant falls inside a window, ends included. An undecided end
+        // decides nothing, which is ADR-0014 applied to a three-argument comparison.
+        (
+            "between",
+            [
+                Value::Timestamp(instant),
+                Value::Timestamp(from),
+                Value::Timestamp(until),
+            ],
+        ) => Ok(Value::Bool(instant >= from && instant <= until)),
+        ("between", [_, _, _]) => Ok(Value::Null),
+        _ => Ok(Value::Null),
+    }
 }
 
 /// Evaluates `expression` and reports a failure as the error *value* it is.

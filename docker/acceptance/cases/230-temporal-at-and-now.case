@@ -1,0 +1,127 @@
+# v0.5 §50 phase T2 — the temporal coordinate: `at` resolving before it moves (§12.1), the prompt
+# and HUD saying where the session is (§4.6, §8.6), `now` returning from anywhere (§4.3), the
+# selector grammar of §4.4, and §12.3's refusal that leaves the coordinate where it was.
+#
+# The failure mode this case exists against is §55.9: "If `at -10m` changes the prompt but
+# `look`/`map` still show present objects, the feature is invalid." So the last block does not
+# check a marker — it checks that the world the shell describes actually changed.
+#
+# Everything is built by the case: a session's own coverage begins when the session does, so the
+# script sleeps to make an instant it can honestly reach and reaches for one it cannot.
+case: the temporal coordinate resolves, moves, and reaches the data
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== a session starts in the present, and says nothing about the past (§4.1) =='
+  ono -c 'get recorder | to json' > /tmp/t2-present.json 2>&1
+  prove t2a "a fresh session carries no historical marker (§4.1, §4.6)" \
+    '! ono -c "look" 2>&1 | grep -q "\[PAST"'
+
+  echo '== `at` resolves and reports where it landed (§4.2) =='
+  ono -c 'sleep 1
+  at -1s' > /tmp/t2-at.out 2>&1
+  prove t2b "`at -1s` enters historical context and reports it (§4.2)" \
+    'grep -qE "\[PAST\??\]" /tmp/t2-at.out'
+  prove t2c "the report names what was requested and what it resolved to (§4.2)" \
+    'grep -q -- "-1s" /tmp/t2-at.out && grep -qi "coverage" /tmp/t2-at.out'
+  prove t2d "the marker is a word, so monochrome and plain text keep the meaning (§45.2)" \
+    'grep -qE "\[PAST\??\]" /tmp/t2-at.out && ! grep -q "\033\[" /tmp/t2-at.out'
+
+  echo '== an unresolvable selector leaves the coordinate exactly where it was (§12.1) =='
+  ono -c 'at nonsense
+  look' > /tmp/t2-bad.out 2>&1
+  prove t2e "an unreadable selector is temporal.invalid_time (§4.4, §34)" \
+    'grep -q "temporal.invalid_time" /tmp/t2-bad.out'
+  prove t2f "and the session did not move (§12.1)" \
+    '! grep -q "\[PAST" /tmp/t2-bad.out'
+
+  echo '== §4.4 defines five forms, and a future is not one of them =='
+  prove t2g "a relative selector naming the future is refused (§4.4)" \
+    'ono -c "at +10m" 2>&1 | grep -q "temporal.invalid_time"'
+  prove t2h "an absolute selector naming the future is refused (§4.4)" \
+    'ono -c "at 2099-01-01T00:00:00Z" 2>&1 | grep -q "temporal.invalid_time"'
+  prove t2i "a bare wall time is one of the five forms and parses (§4.4)" \
+    'ono -c "at 00:00:01" 2>&1 | grep -qE "temporal\.(not_recorded|out_of_retention)|\[PAST"'
+  prove t2j "an event reference that names no retained event is refused, not guessed (§4.4)" \
+    'ono -c "at event @edeadbeef" 2>&1 | grep -q "temporal.invalid_time"'
+
+  echo '== history nothing can reach is a refusal that lists what each source can (§12.3) =='
+  ono -c 'at -3d' > /tmp/t2-far.out 2>&1
+  prove t2k "three days back is temporal.not_recorded on a session that has none (§12.3)" \
+    'grep -q "temporal.not_recorded" /tmp/t2-far.out'
+  prove t2l "and the refusal says what each source can reach (§12.3)" \
+    'grep -q "ono.session" /tmp/t2-far.out && grep -q "ono.recorder" /tmp/t2-far.out'
+  prove t2m "the recorder is named as disabled rather than as absent (§10.2, §12.3)" \
+    'grep -q "disabled" /tmp/t2-far.out'
+
+  echo '== `now` returns to the present, from anywhere (§4.3) =='
+  ono -c 'sleep 1
+  at -1s
+  now
+  look' > /tmp/t2-now.out 2>&1
+  prove t2n "`now` is available from historical context and succeeds (§4.3)" \
+    'test "$(tail -c 200 /tmp/t2-now.out | grep -c "temporal.read_only")" -eq 0'
+  prove t2o "and what it prints afterwards carries no historical marker (§4.1, §4.6)" \
+    'test "$(sed -n "/^SYSTEM/,\$p" /tmp/t2-now.out | grep -c "\[PAST")" -eq 0'
+
+  echo '== §4.2: `at` changes the time and MUST NOT change the place =='
+  ono -c 'enter compute
+  look' > /tmp/t2-place-present.out 2>&1
+  ono -c 'enter compute
+  sleep 1
+  at -1s
+  look' > /tmp/t2-place-past.out 2>&1
+  prove t2p "the place the session stands at is the same before and after `at` (§4.2)" \
+    'grep -qi "compute" /tmp/t2-place-present.out && grep -qi "compute" /tmp/t2-place-past.out'
+
+  echo '== §55.9: the coordinate reaches the data, or the feature is invalid =='
+  # The present root place has neighbours the container really has. A historical instant one
+  # second old has no reconstruction behind it, so the historical world is *smaller* — and that
+  # difference is the whole proof. A past mode that showed the same objects would be cosmetic.
+  ono -c 'home
+  look' > /tmp/t2-look-now.out 2>&1
+  ono -c 'home
+  sleep 1
+  at -1s
+  look' > /tmp/t2-look-past.out 2>&1
+  NOW_LINES=$(grep -c . /tmp/t2-look-now.out)
+  PAST_LINES=$(grep -c . /tmp/t2-look-past.out)
+  echo "present look: $NOW_LINES lines; historical look: $PAST_LINES lines"
+  prove t2q "a historical `look` is not the present `look` with a marker on it (§55.9, §14.1)" \
+    'test "$PAST_LINES" -lt "$NOW_LINES"'
+  prove t2r "the present `look` really did describe the machine (§55.9 needs a real baseline)" \
+    'grep -qi "exits" /tmp/t2-look-now.out'
+
+  echo 'temporal coordinate: done'
+exit: 0
+stdout-contains: PROVED t2a
+stdout-contains: PROVED t2b
+stdout-contains: PROVED t2c
+stdout-contains: PROVED t2d
+stdout-contains: PROVED t2e
+stdout-contains: PROVED t2f
+stdout-contains: PROVED t2g
+stdout-contains: PROVED t2h
+stdout-contains: PROVED t2i
+stdout-contains: PROVED t2j
+stdout-contains: PROVED t2k
+stdout-contains: PROVED t2l
+stdout-contains: PROVED t2m
+stdout-contains: PROVED t2n
+stdout-contains: PROVED t2o
+stdout-contains: PROVED t2p
+stdout-contains: PROVED t2q
+stdout-contains: PROVED t2r
+stdout-contains: temporal coordinate: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

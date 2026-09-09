@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
-use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Risk, Selector};
+use ono_provider_api::{
+    Availability, Capability, ObjectRef, Provider, Query, Risk, Selector, TemporalCapabilities,
+};
 use ono_value::{ErrorValue, RecordValue, Schema, Value};
 
 use crate::resolver::addresses_of;
@@ -303,6 +305,21 @@ impl Provider for PortProvider {
 
     fn capabilities(&self) -> Vec<Capability> {
         vec![Capability::new("port.probe", Risk::Observe)]
+    }
+
+    fn temporal(&self) -> TemporalCapabilities {
+        // A probe is a point sample by construction: it says what one connection attempt found
+        // at one instant, and §8.4's `point_sample` is what its coverage becomes in the ledger.
+        // Nothing about the interval between two probes follows from either of them.
+        TemporalCapabilities {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: false,
+            retained_history: None,
+        }
     }
 
     fn availability(&self) -> Availability {

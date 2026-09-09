@@ -110,6 +110,12 @@ pub struct LoadConfig {
     /// Who answers a just-in-time permission request (K11P §14, ADR-0603): the shell's prompt,
     /// a test's script, or the default that can ask nobody and answers `permission.required`.
     pub consent: Arc<dyn crate::consent::ConsentSource>,
+    /// Which packages the host contract trusts as authoritative for a domain (v0.5 §37.4).
+    ///
+    /// Empty by default, which is what makes §37.4's ceiling the rule rather than the exception:
+    /// a package's causal claim is capped at `asserted` until an operator names that package and
+    /// that domain.
+    pub authoritative: crate::temporal::AuthoritativeDomains,
 }
 
 impl std::fmt::Debug for LoadConfig {
@@ -148,6 +154,7 @@ impl LoadConfig {
             host: Arc::new(crate::host::NoHost),
             views: Arc::new(crate::view::NoViews),
             consent: Arc::new(crate::consent::NoConsent),
+            authoritative: crate::temporal::AuthoritativeDomains::none(),
         }
     }
 }
@@ -215,6 +222,7 @@ impl Supervisor {
             host,
             views,
             consent,
+            authoritative,
         } = config;
         manifest.check_host(HOST_API, &platform)?;
         // The human layer over the capabilities, read once here: which families are decided just
@@ -357,6 +365,66 @@ impl Supervisor {
                 provider: provider.clone(),
             });
         }
+        // v0.5 §37.5: a contributed temporal source names canonical event kinds and a canonical
+        // schema, and both are settled on disk before the runtime answers anything. §37.1 keeps
+        // the event vocabulary with the host: a package refines a kind through `subtype`, and
+        // the top-level kind is always one Ono owns.
+        for source in &hello.contributions.temporal_sources {
+            ono_kuang_protocol::validate_contributed_id(
+                &package_id,
+                "temporal-source",
+                &source.id,
+            )?;
+            for kind in &source.kinds {
+                if ono_temporal_core::EventKind::from_name(kind).is_none() {
+                    return Err(KuangError::new(
+                        KuangErrorCode::PackageInvalid,
+                        format!(
+                            "temporal source `{}` produces `{kind}`, which is not one of Ono's \
+                             event kinds (v0.5 §6.1, §37.1)",
+                            source.id
+                        ),
+                    ));
+                }
+            }
+            resolve_schema_reference(&schemas, &source.schema, "temporal source", &source.id)?;
+        }
+        // §37.4: a third-party causal rule MUST be namespaced and MUST identify its source, and
+        // `ono.*` belongs to the project (§31.5). A rule that names a class Ono does not have is
+        // refused here rather than at the first link, because §37.1 keeps causal labels with the
+        // host.
+        for rule in &hello.contributions.causal_rules {
+            if !rule.rule_id.starts_with(&format!("{package_id}.")) {
+                return Err(KuangError::new(
+                    KuangErrorCode::PackageInvalid,
+                    format!(
+                        "causal rule `{}` is not namespaced under `{package_id}`; v0.5 §37.4 \
+                         requires a third-party rule to be namespaced and to identify its source",
+                        rule.rule_id
+                    ),
+                ));
+            }
+            if ono_temporal_core::CausalRelation::from_name(&rule.relation).is_none() {
+                return Err(KuangError::new(
+                    KuangErrorCode::PackageInvalid,
+                    format!(
+                        "causal rule `{}` emits `{}`, which is not one of Ono's five relation \
+                         classes (v0.5 §15.1, §37.1)",
+                        rule.rule_id, rule.relation
+                    ),
+                ));
+            }
+            if ono_temporal_core::EvidenceStrength::from_name(&rule.strength).is_none() {
+                return Err(KuangError::new(
+                    KuangErrorCode::PackageInvalid,
+                    format!(
+                        "causal rule `{}` claims strength `{}`, which is not one of the five of \
+                         v0.5 §7.2",
+                        rule.rule_id, rule.strength
+                    ),
+                ));
+            }
+        }
         for view in &hello.contributions.views {
             ono_kuang_protocol::validate_contributed_id(&package_id, "view", &view.id)?;
             if !view.id.starts_with(&format!("{package_id}.view.")) {
@@ -442,6 +510,7 @@ impl Supervisor {
             package_name,
             consents: 0,
             exec_arguments: Vec::new(),
+            temporal: temporal_surface(&contract, &hello, &package_id, authoritative),
         };
         tokio::spawn(actor.run());
         Ok(LoadedPlugin {
@@ -1376,6 +1445,68 @@ impl Inbound {
 
 /// A schema as `schemas.get` and `schemas.list` describe it: fields, types, units, nullability,
 /// identity, default view, and where it came from (spec §31.64).
+/// What this package may claim about the past, built once at load (v0.5 §37.3, §37.4).
+///
+/// §37.3's scope rule asks a question about providers — "can this package resolve an object of
+/// this schema?" — and the answer is the grant on `object.read` plus the schemas the package
+/// contributes itself. A package holding no `object.read` can resolve nothing, and may therefore
+/// assert the existence of nothing outside its own schemas; a package holding an unscoped grant
+/// can resolve whatever the host can, and may say so.
+fn temporal_surface(
+    contract: &PluginContract,
+    hello: &Hello,
+    package_id: &str,
+    authoritative: crate::temporal::AuthoritativeDomains,
+) -> crate::temporal::Contribution {
+    let mut visible = match contract.grant(ono_kuang_protocol::Capability::ObjectRead.id()) {
+        None => crate::temporal::VisibleSchemas::none(),
+        Some(grant) => match grant.scope.as_ref().and_then(|scope| scope.get("schemas")) {
+            None => crate::temporal::VisibleSchemas::unscoped(),
+            Some(Json::Array(ids)) => crate::temporal::VisibleSchemas::of(
+                ids.iter()
+                    .filter_map(Json::as_str)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>(),
+            ),
+            Some(_) => crate::temporal::VisibleSchemas::none(),
+        },
+    };
+    for schema in &hello.contributions.schemas {
+        visible = visible.and_own(&schema.id);
+    }
+    for target in &hello.contributions.targets {
+        visible = visible.and_own(&target.schema);
+    }
+    for source in &hello.contributions.temporal_sources {
+        visible = visible.and_own(&source.schema);
+    }
+    crate::temporal::Contribution::new(package_id)
+        .seeing(visible)
+        .declaring(
+            hello
+                .contributions
+                .causal_rules
+                .iter()
+                .map(|rule| rule.rule_id.clone()),
+        )
+        .trusted_for(authoritative)
+}
+
+/// The window an event query asks over, as the scope check spells it (v0.5 §30.7).
+///
+/// A range with no lower bound is "everything the ledger has", which is exactly the request a
+/// `window` scope exists to bound, so it is checked as `unbounded` rather than passing unchecked
+/// for having no value to check.
+fn window_of(query: &Json) -> Vec<String> {
+    let Some(range) = query.get("range") else {
+        return vec!["unbounded".to_owned()];
+    };
+    match range.get("from").and_then(Json::as_str) {
+        Some(from) => vec![from.to_owned()],
+        None => vec!["unbounded".to_owned()],
+    }
+}
+
 fn schema_record(schema: &ono_value::Schema, package_id: &str) -> Json {
     let id = schema.id().to_string();
     let origin = if id.starts_with("ono.") {
@@ -1475,6 +1606,12 @@ struct Actor {
     /// The arguments of the `process.exec` call being checked, so a consent request can show
     /// the command line (K11P §14.2). Set by the handler before the check and taken by it.
     exec_arguments: Vec<String>,
+    /// What this package may claim about the past, and how fast (v0.5 §37.3, §37.4).
+    ///
+    /// Built once at load from the grant and the package's own contributions, so that every
+    /// contribution call is checked against the same answer and a rate window survives across
+    /// calls.
+    temporal: crate::temporal::Contribution,
 }
 
 enum LoopStep {
@@ -2452,6 +2589,16 @@ impl Actor {
             method::SECRETS_RELEASE => self.host_secrets_release(seq, params).await,
             method::MODELS_LIST => self.host_models_list(seq).await,
             method::MODELS_INFER => self.host_models_infer(seq, params).await,
+            method::TEMPORAL_CONTEXT => self.host_temporal_context(seq).await,
+            method::TEMPORAL_QUERY => self.host_temporal_query(seq, params).await,
+            method::TEMPORAL_EVIDENCE => self.host_temporal_evidence(seq, params).await,
+            method::TEMPORAL_CONTRIBUTE_EVENTS => {
+                self.host_temporal_contribute_events(seq, params).await
+            }
+            method::TEMPORAL_CONTRIBUTE_CAUSALITY => {
+                self.host_temporal_contribute_causality(seq, params).await
+            }
+            method::TEMPORAL_RECORDER => self.host_temporal_recorder(seq, params).await,
             unknown => Err(protocol_violation(format!(
                 "a call to `{unknown}`, which the negotiated host API does not carry"
             ))),
@@ -3557,6 +3704,341 @@ impl Actor {
         )
         .await;
         Ok(())
+    }
+
+    /// `temporal.context`: whether the session is historical, and at which instant (§30.7, §4).
+    async fn host_temporal_context(&mut self, seq: u64) -> Result<(), KuangError> {
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::TemporalReadCurrent,
+                "temporal.context",
+                &[],
+                None,
+            )
+            .await
+        {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let outcome = host.temporal_context().await;
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::TemporalReadCurrent,
+            "temporal.context",
+            None,
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `temporal.query`: recorded events within the granted window (§30.7, §11).
+    ///
+    /// §30.7: "A plugin with current object read permission does not automatically receive
+    /// historical access." This is the call that makes that true — a separate capability, a
+    /// separate broker check, and a `window` scope the range is measured against.
+    async fn host_temporal_query(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let query = params.get("query").cloned().unwrap_or(Json::Null);
+        // The `window` scope of `temporal.read.history` bounds how far back the package may
+        // read. The value checked is the range the query actually asks for, so a package that
+        // asks for more than it holds is refused rather than quietly narrowed (§31.16).
+        let uses: Vec<ScopeUse> = window_of(&query)
+            .into_iter()
+            .map(|value| ScopeUse::Name {
+                key: "window",
+                value,
+            })
+            .collect();
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::TemporalReadHistory,
+                "temporal.query",
+                &uses,
+                Some(query.clone()),
+            )
+            .await
+        {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let outcome = host.temporal_query(query.clone()).await.map(|live| {
+            let handle = self.open_live(live);
+            json!({"handle": handle})
+        });
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::TemporalReadHistory,
+            "temporal.query",
+            Some(query),
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `temporal.evidence`: the evidence and coverage behind a claim (§7.3, §30.7).
+    async fn host_temporal_evidence(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let ids = |name: &str| -> Vec<String> {
+            params
+                .get(name)
+                .and_then(Json::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Json::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let evidence = ids("evidence");
+        let events = ids("events");
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::TemporalReadEvidence,
+                "temporal.evidence",
+                &[],
+                Some(Json::from(evidence.len() + events.len())),
+            )
+            .await
+        {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let outcome = host.temporal_evidence(evidence, events).await.map(|live| {
+            let handle = self.open_live(live);
+            json!({"handle": handle})
+        });
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::TemporalReadEvidence,
+            "temporal.evidence",
+            None,
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `temporal.contribute.events`: events the host validates, attributes and stores (§37.3).
+    async fn host_temporal_contribute_events(
+        &mut self,
+        seq: u64,
+        params: Json,
+    ) -> Result<(), KuangError> {
+        let events: Vec<Json> = params
+            .get("events")
+            .and_then(Json::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let source_id = params
+            .get("source")
+            .and_then(Json::as_str)
+            .unwrap_or("events")
+            .to_owned();
+        // Every event's kind is a use the `kinds` scope bounds, exactly as a relation's id is
+        // bounded by `relations` (ADR-0600 §2).
+        let uses: Vec<ScopeUse> = events
+            .iter()
+            .filter_map(|event| event.get("kind").and_then(Json::as_str))
+            .map(|kind| ScopeUse::Name {
+                key: "kinds",
+                value: kind.to_owned(),
+            })
+            .collect();
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::TemporalContributeEvents,
+                "temporal.contribute.events",
+                &uses,
+                Some(Json::from(events.len())),
+            )
+            .await
+        {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        // §37.3's own list — schema, source identity, timestamps, scope visibility, referenced
+        // spatial identities, size and rate — applied before the host is asked to store
+        // anything. The whole call is refused or none of it is: a partially accepted
+        // contribution leaves the package unable to say which half landed.
+        let now = self.instant();
+        if let Err(refusal) = self.temporal.check_events(&events, &source_id, now) {
+            self.audit_refusal(
+                ono_kuang_protocol::Capability::TemporalContributeEvents,
+                "temporal.contribute.events",
+                Some(Json::from(events.len())),
+                &refusal,
+            );
+            self.reply_err(seq, (&refusal).into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let count = events.len();
+        let outcome = host
+            .temporal_contribute_events(&self.package_id, &source_id, events)
+            .await
+            .map(Json::from);
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::TemporalContributeEvents,
+            "temporal.contribute.events",
+            Some(Json::from(count)),
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `temporal.contribute.causality`: links from a rule the package declared (§37.4).
+    ///
+    /// The declared strength is lowered to §37.4's ceiling before the host sees it, so a link
+    /// that reaches the ledger carries what the package is permitted to claim rather than what
+    /// it claimed. Nothing here raises a strength; §7.2 has no operation that could.
+    async fn host_temporal_contribute_causality(
+        &mut self,
+        seq: u64,
+        params: Json,
+    ) -> Result<(), KuangError> {
+        let links: Vec<Json> = params
+            .get("links")
+            .and_then(Json::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let domain = params
+            .get("domain")
+            .and_then(Json::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let uses: Vec<ScopeUse> = links
+            .iter()
+            .filter_map(|link| link.get("rule").and_then(Json::as_str))
+            .map(|rule| ScopeUse::Name {
+                key: "rules",
+                value: rule.to_owned(),
+            })
+            .collect();
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::TemporalContributeCausality,
+                "temporal.contribute.causality",
+                &uses,
+                Some(Json::from(links.len())),
+            )
+            .await
+        {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let mut bounded = Vec::with_capacity(links.len());
+        for mut link in links {
+            match self.temporal.check_link(&link, &domain) {
+                Ok((_, strength)) => {
+                    if let Some(object) = link.as_object_mut() {
+                        object.insert(
+                            "strength".to_owned(),
+                            Json::String(strength.as_str().to_owned()),
+                        );
+                    }
+                    bounded.push(link);
+                }
+                Err(refusal) => {
+                    self.audit_refusal(
+                        ono_kuang_protocol::Capability::TemporalContributeCausality,
+                        "temporal.contribute.causality",
+                        None,
+                        &refusal,
+                    );
+                    self.reply_err(seq, (&refusal).into()).await;
+                    return Ok(());
+                }
+            }
+        }
+        let host = Arc::clone(&self.host);
+        let count = bounded.len();
+        let outcome = host
+            .temporal_contribute_causality(&self.package_id, bounded)
+            .await
+            .map(Json::from);
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::TemporalContributeCausality,
+            "temporal.contribute.causality",
+            Some(Json::from(count)),
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `temporal.recorder`: start, stop or report the persistent recorder (§10.3, §30.7).
+    async fn host_temporal_recorder(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let action = params
+            .get("action")
+            .and_then(Json::as_str)
+            .unwrap_or("status")
+            .to_owned();
+        if let Err(error) = self
+            .broker_check(
+                ono_kuang_protocol::Capability::TemporalRecorderManage,
+                "temporal.recorder",
+                &[],
+                Some(Json::String(action.clone())),
+            )
+            .await
+        {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let outcome = host.temporal_recorder(action.clone()).await;
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::TemporalRecorderManage,
+            "temporal.recorder",
+            Some(Json::String(action)),
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// The host clock as an instant, for the temporal validations that need one.
+    ///
+    /// [`HostClock::Fixed`] is the determinism hook the test host pins, so a temporal assertion
+    /// in the conformance suite is exact (spec §31.73).
+    fn instant(&self) -> jiff::Timestamp {
+        self.clock
+            .now()
+            .parse()
+            .unwrap_or(jiff::Timestamp::UNIX_EPOCH)
+    }
+
+    /// Records a validation refusal in the trail, as loudly as a capability denial (§31.37).
+    fn audit_refusal(
+        &self,
+        capability: ono_kuang_protocol::Capability,
+        action: &str,
+        target: Option<Json>,
+        refusal: &crate::temporal::ContributionRefusal,
+    ) {
+        let label = self.invocation_label();
+        let error: WireError = refusal.into();
+        self.audit.record(
+            &self.package_id,
+            &label,
+            capability.id(),
+            None,
+            Enforcement::Broker,
+            action,
+            target,
+            self.now(),
+            AuditResult::Denied,
+            Some(error),
+        );
     }
 
     /// `relations.query`: the edges around an object, as a stream of `ono.graph-edge/1`.

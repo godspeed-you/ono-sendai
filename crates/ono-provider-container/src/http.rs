@@ -136,6 +136,118 @@ async fn exchange(
     Ok(Response { status, body })
 }
 
+/// An open response whose body is read a piece at a time (spec v0.5 §22.7).
+///
+/// `GET /events` is the reason this exists: the engine answers it with a chunked stream that
+/// carries one JSON document per line, and — where the request states no upper bound — never
+/// ends. Reading such a body into a `Vec` the way [`request`] does would mean holding the whole
+/// of it and answering nothing until the engine stopped talking, which for a live subscription
+/// is never.
+pub(crate) struct Streaming {
+    reader: Reader,
+    chunked: bool,
+    /// Body bytes that have arrived and do not yet form a whole line.
+    pending: Vec<u8>,
+    /// Whether the body has ended.
+    finished: bool,
+}
+
+impl Streaming {
+    /// The next non-empty line of the body, or `None` once the engine has finished.
+    ///
+    /// # Errors
+    ///
+    /// [`HttpError::Protocol`] when the framing does not hold, [`HttpError::Unreachable`] when
+    /// the connection is lost mid-body.
+    pub(crate) async fn next_line(&mut self) -> Option<Result<String, HttpError>> {
+        loop {
+            if let Some(end) = self.pending.iter().position(|byte| *byte == b'\n') {
+                let line = String::from_utf8_lossy(&self.pending[..end]).into_owned();
+                self.pending.drain(..=end);
+                if line.trim().is_empty() {
+                    continue;
+                }
+                return Some(Ok(line));
+            }
+            if self.finished {
+                let rest = String::from_utf8_lossy(&self.pending).into_owned();
+                self.pending.clear();
+                return (!rest.trim().is_empty()).then_some(Ok(rest));
+            }
+            if self.pending.len() > MAX_LINE {
+                return Some(Err(HttpError::Protocol(format!(
+                    "the engine sent more than {MAX_LINE} bytes without ending a line"
+                ))));
+            }
+            match self.reader.next_body_piece(self.chunked).await {
+                Ok(Some(piece)) => self.pending.extend_from_slice(&piece),
+                Ok(None) => self.finished = true,
+                Err(error) => return Some(Err(error)),
+            }
+        }
+    }
+}
+
+/// More than this in one line is not an engine event.
+const MAX_LINE: usize = 1024 * 1024;
+
+/// Opens a request and answers with its body as a line stream, leaving the connection open.
+///
+/// `budget` bounds reaching the engine and reading the response head; the body has no deadline,
+/// because a live event stream legitimately has nothing to say for hours.
+///
+/// # Errors
+///
+/// As [`request`], plus the engine's own status where it refused: a non-2xx answer is returned as
+/// [`HttpError::Protocol`] carrying what the engine said, because a stream cannot report it later.
+pub(crate) async fn open_stream(
+    socket: &Path,
+    path: &str,
+    budget: Duration,
+) -> Result<Streaming, HttpError> {
+    tokio::time::timeout(budget, begin_stream(socket, path))
+        .await
+        .unwrap_or(Err(HttpError::TimedOut(budget)))
+}
+
+async fn begin_stream(socket: &Path, path: &str) -> Result<Streaming, HttpError> {
+    let mut stream = UnixStream::connect(socket)
+        .await
+        .map_err(|error| HttpError::Unreachable(error.to_string()))?;
+    let head = format!(
+        "GET {path} HTTP/1.1\r\nHost: localhost\r\nAccept: application/json\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+    );
+    stream
+        .write_all(head.as_bytes())
+        .await
+        .map_err(|error| HttpError::Unreachable(error.to_string()))?;
+    stream
+        .flush()
+        .await
+        .map_err(|error| HttpError::Unreachable(error.to_string()))?;
+
+    let mut reader = Reader {
+        stream,
+        buffer: Vec::new(),
+    };
+    let head = reader.read_head().await?;
+    let (status, headers) = parse_head(&head)?;
+    if !(200..300).contains(&status) {
+        return Err(HttpError::Protocol(format!(
+            "the engine answered HTTP {status} to {path}"
+        )));
+    }
+    let chunked = headers
+        .iter()
+        .any(|(name, value)| name == "transfer-encoding" && value.contains("chunked"));
+    Ok(Streaming {
+        reader,
+        chunked,
+        pending: Vec::new(),
+        finished: false,
+    })
+}
+
 /// A response's status and its headers, names lower-cased.
 fn parse_head(head: &[u8]) -> Result<(u16, Vec<(String, String)>), HttpError> {
     let text = std::str::from_utf8(head)
@@ -236,6 +348,39 @@ impl Reader {
                     "the connection closed inside a chunked body".to_owned(),
                 ));
             }
+        }
+    }
+
+    /// The next piece of a body being read incrementally, or `None` at its end.
+    ///
+    /// For a chunked body that is one chunk; for an identity one it is whatever has arrived.
+    async fn next_body_piece(&mut self, chunked: bool) -> Result<Option<Vec<u8>>, HttpError> {
+        if !chunked {
+            if !self.buffer.is_empty() {
+                return Ok(Some(std::mem::take(&mut self.buffer)));
+            }
+            return if self.fill().await? {
+                Ok(Some(std::mem::take(&mut self.buffer)))
+            } else {
+                Ok(None)
+            };
+        }
+        let line = self.read_line().await?;
+        let size_text = line.split(';').next().unwrap_or_default().trim();
+        let size = usize::from_str_radix(size_text, 16)
+            .map_err(|_| HttpError::Protocol(format!("the chunk size was {size_text:?}")))?;
+        if size == 0 {
+            while !self.read_line().await?.is_empty() {}
+            return Ok(None);
+        }
+        let chunk = self.read_exact(size).await?;
+        let separator = self.read_line().await?;
+        if separator.is_empty() {
+            Ok(Some(chunk))
+        } else {
+            Err(HttpError::Protocol(
+                "a chunk was not followed by CRLF".to_owned(),
+            ))
         }
     }
 

@@ -1,0 +1,66 @@
+# v0.5 §37.5 and §48.9: a package may expose historical state from an external system, and it
+# "MUST map data into canonical Ono objects/events and expose coverage/provenance".
+#
+# Both halves are settled on disk, before the runtime answers anything: the source names a schema
+# the package actually contributes and event kinds Ono actually has, and a source that names
+# neither is `package.invalid` at load. So a package that loads at all is one whose history
+# provider maps into canonical objects — which is what this case shows, from the outside, by
+# loading it and asking it for something.
+#
+# The refusal side, and the coverage and boundedness a publisher checks before shipping, are held
+# by `crates/ono-kuang-testhost/tests/temporal_package.rs`: a source mapping into nothing
+# canonical, producing a kind Ono does not have, or stating no coverage is reported there rather
+# than discovered here.
+case: a package that contributes a history provider maps it into canonical objects
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/state/ono"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - object.read
+      - temporal.read.current
+      - temporal.read.history
+      - temporal.contribute.events
+      - temporal.contribute.causality
+  network:
+    outbound: none
+  MANIFEST
+
+  echo "== the package loads, so its temporal source resolved to a schema it contributes =="
+  ono -c 'load plugin dev.example.echo; get plugin | where id == "dev.example.echo" | select id state | to json' | tail -1
+
+  echo "== and the target that schema belongs to still answers =="
+  ono -c 'load plugin dev.example.echo; get echo-item --count 2 | count | to json' | grep -q '^\[2\]$' && echo "contributed-target-answers"
+
+  echo "== a historical query provider is bounded, so its answer is collected rather than followed =="
+  ono -c 'load plugin dev.example.echo; get echo-item --count 1 | to json' | tail -1
+exit: 0
+stdout-contains: "id":"dev.example.echo","state":"loaded"
+stdout-contains: contributed-target-answers
+stdout-not-contains: package.invalid
+stdout-not-contains: panicked

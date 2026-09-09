@@ -196,6 +196,39 @@ pub struct TemporalGap {
     pub reason: GapReason,
     /// The §7.1 source that would have covered the interval.
     pub source: EvidenceSource,
+    /// What the producer adds to the reason, in the words §11.7 renders.
+    ///
+    /// §11.7's own worked example is this field: `---- coverage gap: recorder offline 4m12s ----`
+    /// says `recorder offline`, which no reason word spells. The producer that knows why the
+    /// interval is empty writes the phrase; `None` where the reason says everything, and a
+    /// renderer then falls back to the reason.
+    pub detail: Option<Arc<str>>,
+}
+
+/// The words §11.7 renders for a gap in `capability` that `source` would have covered.
+///
+/// The phrase is the producer's, so a renderer never has to invent one and never has to know the
+/// source vocabulary. It is stated for the combinations §7.5 and §10 give words to and is `None`
+/// otherwise, because a reason word on its own is honest and an invented phrase is not.
+#[must_use]
+pub fn gap_detail(source: &EvidenceSource, reason: GapReason) -> Option<Arc<str>> {
+    let recorder = source.as_str() == EvidenceSource::recorder().as_str();
+    match (recorder, reason) {
+        // §10.8: the recorder is a process that can be stopped, and an interval it did not cover
+        // is the interval it was not running for — which is what §11.7 prints.
+        (true, GapReason::ProviderUnavailable | GapReason::SourceDisconnected) => {
+            Some(Arc::from("recorder offline"))
+        }
+        (true, GapReason::NotRecorded) => Some(Arc::from("recorder not running")),
+        (_, GapReason::RetentionExpired) => Some(Arc::from("beyond retention")),
+        (false, GapReason::SourceDisconnected) => Some(Arc::from(
+            format!("{} disconnected", source.as_str()).as_str(),
+        )),
+        (false, GapReason::ProviderUnavailable) => Some(Arc::from(
+            format!("{} unavailable", source.as_str()).as_str(),
+        )),
+        _ => None,
+    }
 }
 
 /// What a renderer or a prompt may say in one word about a whole reconstruction (§8.5).
@@ -411,6 +444,7 @@ fn compose_one(
         .into_iter()
         .map(|(gap_from, gap_until)| {
             let (reason, source) = explain(intervals, gap_from, gap_until);
+            let detail = gap_detail(&source, reason);
             TemporalGap {
                 scope: intervals
                     .first()
@@ -420,6 +454,7 @@ fn compose_one(
                 capability: Arc::clone(capability),
                 reason,
                 source,
+                detail,
             }
         })
         .collect();

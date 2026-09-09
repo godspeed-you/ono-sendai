@@ -388,6 +388,223 @@ pub fn check_spatial_package(directory: &std::path::Path) -> SpatialPackageRepor
     report
 }
 
+/// What the test host found in a package that contributes history or causality (v0.5 §37).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemporalPackageReport {
+    /// Everything wrong, in order; empty when the package may be loaded.
+    pub problems: Vec<String>,
+    /// The ids of the temporal sources the package would contribute (§37.5).
+    pub sources: Vec<String>,
+    /// The ids of the causal rules the package would contribute (§37.4).
+    pub rules: Vec<String>,
+    /// The source ids whose answer ends by itself: a historical query provider (§37.5).
+    pub bounded_sources: Vec<String>,
+    /// The strongest claim any of the package's rules could carry once the host has capped it
+    /// (§37.4). `None` when the package contributes no rules.
+    pub strength_ceiling: Option<String>,
+    /// Whether history reaches the package under the default policy: never (§30.7, §31.19).
+    pub history_by_default: bool,
+    /// Whether an explicit `temporal.contribute.events` grant would let it contribute.
+    pub contributes_when_granted: bool,
+}
+
+/// Validates a package's temporal contributions as the shell would before loading it (§37).
+///
+/// The counterpart of [`check_spatial_package`], and it answers the questions §37 makes a package
+/// author responsible for *before* the package runs: which sources would this contribute, whether
+/// each one ends by itself, which causal rules it registers, and what the strongest thing it
+/// could ever say is.
+///
+/// §37.5 requires a historical query provider to "map data into canonical Ono objects/events and
+/// expose coverage/provenance", so a source that names no canonical schema, produces a kind Ono
+/// does not have, or states no coverage is a problem here rather than a surprise later. §37.4
+/// requires a third-party rule to be namespaced and to identify its source, and caps what it may
+/// claim; a package that declares `authoritative` learns here that it will carry `asserted`.
+#[must_use]
+pub fn check_temporal_package(directory: &std::path::Path) -> TemporalPackageReport {
+    let mut report = TemporalPackageReport {
+        problems: Vec::new(),
+        sources: Vec::new(),
+        rules: Vec::new(),
+        bounded_sources: Vec::new(),
+        strength_ceiling: None,
+        history_by_default: Policy::deny_all().grants_capability(Capability::TemporalReadHistory),
+        contributes_when_granted: false,
+    };
+    let manifest = match std::fs::read_to_string(directory.join("manifest.yaml"))
+        .map_err(|error| error.to_string())
+        .and_then(|text| Manifest::parse(&text).map_err(|error| error.to_string()))
+    {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            report.problems.push(format!("manifest.yaml: {error}"));
+            return report;
+        }
+    };
+    let contributions = manifest.contributions.clone().unwrap_or_default();
+    let source_paths = contributions.temporal_sources.unwrap_or_default();
+    let rule_paths = contributions.causal_rules.unwrap_or_default();
+    if source_paths.is_empty() && rule_paths.is_empty() {
+        report.problems.push(
+            "the package declares neither `contributions.temporal_sources` nor \
+             `contributions.causal_rules`, so it contributes nothing about the past"
+                .to_owned(),
+        );
+        return report;
+    }
+    let package = manifest.package.id.clone();
+    let own_schemas = declared_schemas(directory, &manifest);
+
+    for path in &source_paths {
+        let text = match std::fs::read_to_string(directory.join(path)) {
+            Ok(text) => text,
+            Err(error) => {
+                report.problems.push(format!("{path}: {error}"));
+                continue;
+            }
+        };
+        let document = match ono_kuang_protocol::TemporalSourceDocument::parse(&text) {
+            Ok(document) => document,
+            Err(error) => {
+                report.problems.push(format!("{path}: {}", error.message()));
+                continue;
+            }
+        };
+        for source in document.temporal_sources {
+            if !source
+                .id
+                .starts_with(&format!("{package}.temporal-source."))
+            {
+                report.problems.push(format!(
+                    "`{}` is not `<package.id>.temporal-source.<kebab-name>` (spec section 31.5)",
+                    source.id
+                ));
+                continue;
+            }
+            for kind in &source.kinds {
+                if ono_temporal_core::EventKind::from_name(kind).is_none() {
+                    report.problems.push(format!(
+                        "`{}` produces `{kind}`, which is not one of Ono's event kinds; a \
+                         package refines a kind through `subtype` and the top-level kind stays \
+                         Ono's (v0.5 section 6.1, section 37.1)",
+                        source.id
+                    ));
+                }
+            }
+            if source.coverage.trim().is_empty() {
+                report.problems.push(format!(
+                    "`{}` states no coverage, and v0.5 section 37.5 requires a contributed \
+                     source to expose coverage and provenance",
+                    source.id
+                ));
+            }
+            if !own_schemas.contains(&source.schema) && !source.schema.starts_with("ono.") {
+                report.problems.push(format!(
+                    "`{}` maps its data into `{}`, which is neither a core schema nor one this \
+                     package declares a target for; v0.5 section 37.5 requires the mapping to \
+                     reach canonical Ono objects",
+                    source.id, source.schema
+                ));
+            }
+            if source.answer.is_bounded() {
+                report.bounded_sources.push(source.id.clone());
+            }
+            report.sources.push(source.id);
+        }
+    }
+
+    let mut ceiling: Option<ono_temporal_core::EvidenceStrength> = None;
+    for path in &rule_paths {
+        let text = match std::fs::read_to_string(directory.join(path)) {
+            Ok(text) => text,
+            Err(error) => {
+                report.problems.push(format!("{path}: {error}"));
+                continue;
+            }
+        };
+        let document = match ono_kuang_protocol::CausalRuleDocument::parse(&text) {
+            Ok(document) => document,
+            Err(error) => {
+                report.problems.push(format!("{path}: {}", error.message()));
+                continue;
+            }
+        };
+        for rule in document.causal_rules {
+            if !rule.rule_id.starts_with(&format!("{package}.")) {
+                report.problems.push(format!(
+                    "`{}` is not namespaced under `{package}`; v0.5 section 37.4 requires a \
+                     third-party causal rule to be namespaced and to identify its source",
+                    rule.rule_id
+                ));
+                continue;
+            }
+            if ono_temporal_core::CausalRelation::from_name(&rule.relation).is_none() {
+                report.problems.push(format!(
+                    "`{}` emits `{}`, which is not one of Ono's five relation classes (v0.5 \
+                     section 15.1, section 37.1)",
+                    rule.rule_id, rule.relation
+                ));
+                continue;
+            }
+            let Some(declared) = ono_temporal_core::EvidenceStrength::from_name(&rule.strength)
+            else {
+                report.problems.push(format!(
+                    "`{}` claims strength `{}`, which is not one of the five of v0.5 section 7.2",
+                    rule.rule_id, rule.strength
+                ));
+                continue;
+            };
+            // §37.4's ceiling, applied through the one operation §7.2 permits. A package that
+            // declared something stronger learns here what it will actually carry.
+            let effective = declared.weakest_of(ono_kuang_supervisor::CONTRIBUTED_STRENGTH_CEILING);
+            if effective != declared {
+                report.problems.push(format!(
+                    "`{}` declares `{}` and will carry `{}`: v0.5 section 37.4 caps a plugin's \
+                     causal strength unless the host contract trusts this package as \
+                     authoritative for a domain",
+                    rule.rule_id,
+                    declared.as_str(),
+                    effective.as_str()
+                ));
+            }
+            ceiling = Some(match ceiling {
+                None => effective,
+                // The strongest of the rules, which is the weakest-of applied in reverse: the
+                // report answers "what is the most this package could ever say".
+                Some(current) if effective.weakest_of(current) == current => effective,
+                Some(current) => current,
+            });
+            report.rules.push(rule.rule_id);
+        }
+    }
+    report.strength_ceiling = ceiling.map(|strength| strength.as_str().to_owned());
+
+    let requests = |capability: Capability| {
+        manifest
+            .required_capabilities
+            .iter()
+            .chain(&manifest.optional_capabilities)
+            .any(|request| request.capability == capability)
+    };
+    if !report.sources.is_empty() && !requests(Capability::TemporalContributeEvents) {
+        report.problems.push(
+            "the package requests no temporal.contribute.events, so none of its events could \
+             ever reach the ledger"
+                .to_owned(),
+        );
+    }
+    if !report.rules.is_empty() && !requests(Capability::TemporalContributeCausality) {
+        report.problems.push(
+            "the package requests no temporal.contribute.causality, so none of its links could \
+             ever reach an explanation"
+                .to_owned(),
+        );
+    }
+    report.contributes_when_granted =
+        report.problems.is_empty() && (!report.sources.is_empty() || !report.rules.is_empty());
+    report
+}
+
 /// The schema ids the targets a package declares on disk answer with (spec §31.23, §31.68).
 fn declared_schemas(directory: &std::path::Path, manifest: &Manifest) -> Vec<String> {
     let paths = manifest

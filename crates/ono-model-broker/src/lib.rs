@@ -21,6 +21,19 @@
 //! does. That is the structural form of `assistants.v1.yaml`'s `no-model-in-privileged-path`:
 //! no model output can sit between a capability check and the operation it guards, because the
 //! component that talks to models cannot reach either.
+//!
+//! [`temporal`] adds the v0.5 §38 half of the same principle. A model is a consumer of temporal
+//! evidence and never a source of it: its causal claim is an [`Inference`] whose kind is
+//! `hypothesis` and which cannot become a canonical `caused_by` without evidence the model never
+//! saw (§38.2), the evidence it is shown crosses as untrusted data rather than as instruction
+//! (§38.3), and an assistant answering while the session is historical is refused a mutating
+//! tool exactly as the operator would be (§38.4).
+
+pub mod temporal;
+
+pub use temporal::{
+    HistoricalRefusal, Inference, InferenceKind, TurnStance, evidence_is_data, evidence_segment,
+};
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;

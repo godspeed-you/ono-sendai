@@ -1,0 +1,66 @@
+# v0.5 §30.7 and §48.9 scenarios 44 and 45: temporal access is capability-controlled, and each of
+# the six capabilities is its own question.
+#
+# §30.7's sentence with teeth is "A plugin with current object read permission does not
+# automatically receive historical access." It is structural here rather than remembered: reading
+# objects is `objects.query` under `object.read`, reading recorded events is `temporal.query`
+# under `temporal.read.history`, and holding one reaches nothing of the other. The same applies
+# between the two contribution capabilities: a package that may add events may not add causal
+# explanations.
+case: current object read is not historical access, and events are not causality
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/state/ono"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - object.read
+      - temporal.read.current
+      - temporal.read.history
+      - temporal.contribute.events
+      - temporal.contribute.causality
+  network:
+    outbound: none
+  MANIFEST
+
+  echo "== object read reaches the host's objects =="
+  ono -c 'grant capability object.read --plugin dev.example.echo | count; load plugin dev.example.echo; echo:objects --target process --limit 1 | count | to json' | grep -q '^\[1\]$' && echo "object-read-works"
+
+  echo "== and reaches nothing about the past (§30.7) =="
+  ono -c 'grant capability object.read --plugin dev.example.echo | count; load plugin dev.example.echo; try { echo:temporal-events } catch e { $e | select name | to json }' | grep -q 'capability.denied' && echo "history-is-a-separate-grant"
+
+  echo "== contributing events grants nothing about causality (§37.4) =="
+  ono -c 'grant capability temporal.contribute.events --plugin dev.example.echo | count; load plugin dev.example.echo; try { echo:temporal-causality } catch e { $e | select name | to json }' | grep -qE 'capability.denied|permission.denied' && echo "causality-is-a-separate-grant"
+
+  echo "== and the attempt is in the trail as loudly as a success (§31.37) =="
+  ono -c 'grant capability object.read --plugin dev.example.echo | count; load plugin dev.example.echo; try { echo:temporal-events } catch e { $e | select name }; get audit --plugin dev.example.echo | where capability == "temporal.read.history" | select result | to json' | grep -q '"result":"denied"' && echo "denial-is-audited"
+exit: 0
+stdout-contains: object-read-works
+stdout-contains: history-is-a-separate-grant
+stdout-contains: causality-is-a-separate-grant
+stdout-contains: denial-is-audited
+stdout-not-contains: panicked

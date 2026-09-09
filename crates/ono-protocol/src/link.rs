@@ -44,7 +44,7 @@ use tokio::sync::mpsc;
 
 use crate::connection::{FrameReader, FrameSink, spawn_writer};
 use crate::error::unreachable;
-use crate::handshake::{Negotiated, hello};
+use crate::handshake::{Negotiated, PeerClock, hello};
 use crate::message::{ActRequest, AdaptRequest, RemoteQuery};
 use crate::trust::{TrustPolicy, TrustStore, decide};
 use crate::{
@@ -74,6 +74,7 @@ pub struct ClientConfig {
     trust: TrustStore,
     policy: TrustPolicy,
     pty: bool,
+    clock: Option<PeerClock>,
 }
 
 impl ClientConfig {
@@ -92,8 +93,23 @@ impl ClientConfig {
             credit_window: crate::DEFAULT_CREDIT,
             trust: TrustStore::in_memory(),
             policy: TrustPolicy::default(),
+            clock: None,
             pty: false,
         }
+    }
+
+    /// States this end's own clock identity, so the far side can tell which clock domain the
+    /// events it receives from here belong to (v0.5 §24.2, §25.5).
+    #[must_use]
+    pub fn with_clock(mut self, clock: PeerClock) -> Self {
+        self.clock = Some(clock);
+        self
+    }
+
+    /// This end's own clock identity, where one was stated.
+    #[must_use]
+    pub const fn clock(&self) -> Option<&PeerClock> {
+        self.clock.as_ref()
     }
 
     /// The link protocol versions this end will accept.
@@ -374,7 +390,8 @@ impl Link {
             config.identity.clone(),
             config.credit_window.clamp(1, limits.max_credit()),
             config.pty,
-        );
+        )
+        .announcing(config.clock.clone());
         let payload = encode_message(&Message::Hello(offer), &limits).map_err(ErrorValue::from)?;
         frames
             .send(Frame::new(FrameKind::Hello, 0, payload))

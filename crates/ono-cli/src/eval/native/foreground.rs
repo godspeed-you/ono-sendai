@@ -218,14 +218,36 @@ pub(super) fn run_native_segment(
                 continue;
             }
             let started = std::time::Instant::now();
+            // v0.5 §4: every stage carries the session's temporal coordinate, or the one its
+            // own `--at` names. `CommandTable::run` reads it there — the read-only rule of §4.7
+            // and the historical evaluation of §4.5 are one seam, not two (ADR-0691).
+            let temporal = crate::temporal::invocation_context(arguments).await?;
             let mut invocation = Invocation::new(contract, arguments, providers)
                 .with_scope(std::sync::Arc::clone(&scope))
                 .with_context(context.clone())
                 .with_adapters(std::sync::Arc::clone(&adapters), resolver.clone())
+                .with_temporal(temporal, registry)
                 .with_display(displays && position == final_stage);
             if let Some(previous) = stream.take() {
                 invocation = invocation.with_input(previous);
             }
+            // v0.5 §17.2: an Ono mutation's lifecycle is recorded around the call that makes
+            // it, because this is the one place the shell holds both what was asked and what came
+            // back. The identity is minted before execution (§17.3), so it can travel into a
+            // provider call and be joined against whatever transaction the authority returns.
+            let mutating = registry
+                .verb(contract.verb())
+                .is_some_and(ono_command::VerbSpec::is_mutating);
+            let requested_at = jiff::Timestamp::now();
+            let words: Vec<String> = arguments
+                .selectors()
+                .iter()
+                .chain(arguments.options().iter())
+                .map(|(name, binding)| match binding.value() {
+                    Some(value) => format!("{name}={value}"),
+                    None => name.clone(),
+                })
+                .collect();
             match table.run(contract.id(), &mut invocation).await {
                 // v0.4.1 §22.2: the configured materialization limits are stated once, here,
                 // where the pipeline is assembled. Every stage built from this stream inherits
@@ -234,6 +256,14 @@ pub(super) fn run_native_segment(
                     stream = Some(values.with_materialization_limits(materialization));
                 }
                 Ok(Outcome::Actions(outcomes)) => {
+                    crate::temporal::record_action(
+                        &contract.spelling(),
+                        contract.id(),
+                        &words,
+                        requested_at,
+                        Ok(outcomes.len()),
+                    )
+                    .await;
                     // Spec §11.5: one record per target, so `97 succeeded, 3 failed` stays two
                     // readable numbers rather than one ambiguous status — and a failed row
                     // fails the run, after every row has been written (spec §16.5, ADR-0006).
@@ -248,7 +278,19 @@ pub(super) fn run_native_segment(
                             .with_materialization_limits(materialization),
                     );
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    if mutating {
+                        crate::temporal::record_action(
+                            &contract.spelling(),
+                            contract.id(),
+                            &words,
+                            requested_at,
+                            Err(&error),
+                        )
+                        .await;
+                    }
+                    return Err(error);
+                }
             }
         }
         Ok((stream, failed_rows))

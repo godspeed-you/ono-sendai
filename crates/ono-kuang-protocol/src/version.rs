@@ -9,14 +9,17 @@ use std::str::FromStr;
 
 use crate::{KuangError, KuangErrorCode};
 
-/// The host API version this build implements: `kuang-host/11.2` (ADR-0022 §9, ADR-0600 §3).
+/// The host API version this build implements: `kuang-host/11.3` (ADR-0022 §9, ADR-0600 §3,
+/// ADR-0722).
 ///
-/// `11.2` is `11.1` plus the permission layer: `capabilities.check` may answer `ask`, a
-/// `process.exec` call may wait for consent, and a `kuang-package/2` manifest is read. A package
-/// declaring `>=11.1` still loads, because the minor is additive.
+/// `11.2` was `11.1` plus the permission layer: `capabilities.check` may answer `ask`, a
+/// `process.exec` call may wait for consent, and a `kuang-package/2` manifest is read. `11.3` is
+/// `11.2` plus the temporal domain of v0.5 §37: six host calls, a contributed temporal source, a
+/// contributed causal rule and a `Timeline` view component. Every one of them is additive, so a
+/// package declaring `>=11.1` still loads and a package that asks for none of it is unaffected.
 pub const HOST_API: ApiVersion = ApiVersion {
     major: 11,
-    minor: 2,
+    minor: 3,
 };
 
 /// The value protocol values cross the boundary in (spec §31.62).
@@ -182,8 +185,8 @@ mod tests {
 
     #[test]
     fn should_refuse_a_version_outside_the_range_when_checked() {
-        let range: VersionRange = ">=11.3 <12".parse().expect("range parses");
-        assert!(!range.contains(HOST_API), "11.2 is below >=11.3");
+        let range: VersionRange = ">=11.9 <12".parse().expect("range parses");
+        assert!(!range.contains(HOST_API), "this build is below >=11.9");
         let range: VersionRange = "<11".parse().expect("range parses");
         assert!(!range.contains(HOST_API));
     }

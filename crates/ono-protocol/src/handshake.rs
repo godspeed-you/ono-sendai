@@ -97,6 +97,221 @@ impl Default for Identity {
     }
 }
 
+/// What a peer says about its own clock (v0.5 §24.2, §25.5).
+///
+/// §24.2 requires a remote event to preserve "a source clock identity or host identity" beside
+/// its source time, and §25.5 makes the boot boundary the thing that separates clock domains.
+/// Both are settled once, here, rather than repeated on every event.
+///
+/// It is documented the way [`Identity`] is, and for the same reason: **self-reported context,
+/// never authority.** A peer that names a boot has told this side which domain its monotonic
+/// readings belong to; it has not proved anything, and nothing may be granted because of it. A
+/// peer that says nothing leaves the clock unknown, which
+/// [`ClockDomain::is_comparable_to`](ono_temporal_core::ClockDomain::is_comparable_to) already
+/// treats as "not comparable to anything, including itself".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PeerClock {
+    clock_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    boot_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reading: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    uncertainty_nanos: Option<i128>,
+}
+
+impl PeerClock {
+    /// The clock of the host named `clock_id`, with nothing else stated.
+    #[must_use]
+    pub fn of(clock_id: impl Into<String>) -> Self {
+        Self {
+            clock_id: clock_id.into(),
+            boot_id: None,
+            reading: None,
+            uncertainty_nanos: None,
+        }
+    }
+
+    /// Names which boot of that host the monotonic readings belong to (§25.5).
+    #[must_use]
+    pub fn on_boot(mut self, boot_id: impl Into<String>) -> Self {
+        self.boot_id = Some(boot_id.into());
+        self
+    }
+
+    /// Records what the peer's own wall clock said while it answered.
+    #[must_use]
+    pub fn reading_at(mut self, now: jiff::Timestamp) -> Self {
+        self.reading = Some(now.to_string());
+        self
+    }
+
+    /// States how far that reading may be from true (§24.4).
+    #[must_use]
+    pub fn within(mut self, uncertainty: ono_value::Duration) -> Self {
+        self.uncertainty_nanos = Some(uncertainty.nanoseconds());
+        self
+    }
+
+    /// The clock identity the peer reported — a host name, a runtime id, whatever it calls
+    /// itself. Never checked against the transport's own idea of who the peer is.
+    #[must_use]
+    pub fn clock_id(&self) -> &str {
+        &self.clock_id
+    }
+
+    /// Which boot of that host, where the peer said (§25.5). `None` separates the domain from
+    /// every other, including another `None`.
+    #[must_use]
+    pub fn boot_id(&self) -> Option<&str> {
+        self.boot_id.as_deref()
+    }
+
+    /// What the peer's wall clock said at the handshake, where it said anything.
+    #[must_use]
+    pub fn reading(&self) -> Option<jiff::Timestamp> {
+        self.reading.as_deref().and_then(|text| text.parse().ok())
+    }
+
+    /// How far that reading may be from true, where the peer stated a bound (§24.4).
+    ///
+    /// `None` is unmeasured, which is not a measured zero.
+    #[must_use]
+    pub fn uncertainty(&self) -> Option<ono_value::Duration> {
+        self.uncertainty_nanos
+            .map(ono_value::Duration::from_nanoseconds)
+    }
+
+    /// The clock domain a remote event's monotonic reading belongs to (§25.5).
+    #[must_use]
+    pub fn domain(&self) -> ono_temporal_core::ClockDomain {
+        ono_temporal_core::ClockDomain::new(&self.clock_id, self.boot_id.as_deref())
+    }
+
+    /// How far the peer's wall clock was from `local_now`, measured at the handshake.
+    ///
+    /// Positive means the peer reads later than this host. `None` where either side did not
+    /// say, because an unmeasured offset is unknown rather than zero (§35.3).
+    #[must_use]
+    pub fn offset_from(&self, local_now: jiff::Timestamp) -> Option<ono_value::Duration> {
+        let peer = self.reading()?;
+        Some(ono_value::Duration::from_nanoseconds(
+            peer.as_nanosecond() - local_now.as_nanosecond(),
+        ))
+    }
+}
+
+/// What a linked host can answer about time, as §24.1 enumerates it.
+///
+/// The four cases are ordered, and the link reports the strongest one any negotiated provider
+/// supports: a peer with one journal and twenty snapshot providers still has persisted history.
+/// [`RemoteTemporal::None`] is the answer §24.5 requires a caller to be able to act on — "the
+/// remote has none" is a fact to state, never a reason to show current state as past state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RemoteTemporal {
+    /// The peer claims nothing about time.
+    None,
+    /// The peer can say what is true now, and nothing about what was (§24.1, §21.2).
+    CurrentSnapshot,
+    /// The peer emits changes as they happen (§24.1, §21.3).
+    LiveEvents,
+    /// The peer can answer directly about the past (§24.1, §21.4).
+    PersistedHistory,
+}
+
+impl RemoteTemporal {
+    /// The case `capabilities` amounts to.
+    #[must_use]
+    pub const fn of(capabilities: &ono_provider_api::TemporalCapabilities) -> Self {
+        if capabilities.historical_query {
+            Self::PersistedHistory
+        } else if capabilities.live_events {
+            Self::LiveEvents
+        } else if capabilities.current_snapshot {
+            Self::CurrentSnapshot
+        } else {
+            Self::None
+        }
+    }
+
+    /// The name a link table and an error message spell.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::CurrentSnapshot => "current_snapshot",
+            Self::LiveEvents => "live_events",
+            Self::PersistedHistory => "persisted_history",
+        }
+    }
+}
+
+impl std::fmt::Display for RemoteTemporal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// What a provider says it can answer about time, as the wire writes it down (§21.1, §24.1).
+///
+/// The seven flags of [`ono_provider_api::TemporalCapabilities`], serialised so that a claim
+/// nobody made is absent rather than false-by-omission-of-meaning. Every field defaults, so a
+/// peer built before this existed decodes as a provider that claims nothing — which is exactly
+/// what §24.5 needs it to be.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TemporalDescriptor {
+    #[serde(default, skip_serializing_if = "is_false")]
+    current_snapshot: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    live_events: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    historical_query: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    exhaustive_events: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    causal_tokens: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    checkpointable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retained_history_nanos: Option<i128>,
+}
+
+fn is_false(flag: &bool) -> bool {
+    !*flag
+}
+
+impl TemporalDescriptor {
+    /// The claim as a provider makes it.
+    #[must_use]
+    pub fn to_capabilities(&self) -> ono_provider_api::TemporalCapabilities {
+        ono_provider_api::TemporalCapabilities {
+            current_snapshot: self.current_snapshot,
+            live_events: self.live_events,
+            historical_query: self.historical_query,
+            exhaustive_events: self.exhaustive_events,
+            causal_tokens: self.causal_tokens,
+            checkpointable: self.checkpointable,
+            retained_history: self
+                .retained_history_nanos
+                .map(ono_value::Duration::from_nanoseconds),
+        }
+    }
+}
+
+impl From<&ono_provider_api::TemporalCapabilities> for TemporalDescriptor {
+    fn from(capabilities: &ono_provider_api::TemporalCapabilities) -> Self {
+        Self {
+            current_snapshot: capabilities.current_snapshot,
+            live_events: capabilities.live_events,
+            historical_query: capabilities.historical_query,
+            exhaustive_events: capabilities.exhaustive_events,
+            causal_tokens: capabilities.causal_tokens,
+            checkpointable: capabilities.checkpointable,
+            retained_history_nanos: capabilities.retained_history.map(|d| d.nanoseconds()),
+        }
+    }
+}
+
 /// One thing a remote provider can do, with how much it could change (spec §17.1, §21.2).
 ///
 /// This is [`ono_provider_api::Capability`] as the wire writes it down. Risk and elevation
@@ -198,6 +413,12 @@ pub struct ProviderDescriptor {
     capabilities: Vec<CapabilityDescriptor>,
     #[serde(default)]
     unavailable: Option<String>,
+    /// What the provider says it can answer about time (v0.5 §21.1, §24.1).
+    ///
+    /// Absent is the honest reading of a peer built before v0.5: it claims nothing, so the link
+    /// degrades to "no temporal support" rather than failing, which is §24.5's requirement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    temporal: Option<TemporalDescriptor>,
 }
 
 impl ProviderDescriptor {
@@ -209,6 +430,7 @@ impl ProviderDescriptor {
             targets: Vec::new(),
             capabilities: Vec::new(),
             unavailable: None,
+            temporal: None,
         }
     }
 
@@ -256,6 +478,16 @@ impl ProviderDescriptor {
         self
     }
 
+    /// Declares what it can answer about time (v0.5 §21.1).
+    ///
+    /// A provider that never calls this claims nothing, which is what §21.5 requires of a
+    /// source that has not thought about the question.
+    #[must_use]
+    pub fn with_temporal(mut self, capabilities: ono_provider_api::TemporalCapabilities) -> Self {
+        self.temporal = Some(TemporalDescriptor::from(&capabilities));
+        self
+    }
+
     /// Marks the provider as unable to answer here, with the reason a user needs.
     #[must_use]
     pub fn unavailable(mut self, reason: impl Into<String>) -> Self {
@@ -279,6 +511,20 @@ impl ProviderDescriptor {
     #[must_use]
     pub fn capabilities(&self) -> &[CapabilityDescriptor] {
         &self.capabilities
+    }
+
+    /// What it can answer about time (v0.5 §21.1, §24.1).
+    ///
+    /// A peer that declared nothing answers [`TemporalCapabilities::none`], so silence is never
+    /// read as coverage.
+    ///
+    /// [`TemporalCapabilities::none`]: ono_provider_api::TemporalCapabilities::none
+    #[must_use]
+    pub fn temporal(&self) -> ono_provider_api::TemporalCapabilities {
+        self.temporal.as_ref().map_or_else(
+            ono_provider_api::TemporalCapabilities::none,
+            TemporalDescriptor::to_capabilities,
+        )
     }
 
     /// Whether it can answer on the remote machine.
@@ -313,6 +559,10 @@ pub struct Hello {
     pty: bool,
     identity: Identity,
     credit_window: u32,
+    /// What this end says about its own clock (§24.2, §25.5). Absent from a peer that predates
+    /// v0.5, and unknown is the honest reading of that.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    clock: Option<PeerClock>,
 }
 
 impl Hello {
@@ -381,6 +631,18 @@ impl Hello {
     pub const fn credit_window(&self) -> u32 {
         self.credit_window
     }
+
+    /// What this end said about its own clock (§24.2). Self-reported context, never authority.
+    #[must_use]
+    pub const fn clock(&self) -> Option<&PeerClock> {
+        self.clock.as_ref()
+    }
+
+    /// States this end's clock identity on an offer already built (§24.2).
+    pub(crate) fn announcing(mut self, clock: Option<PeerClock>) -> Self {
+        self.clock = clock;
+        self
+    }
 }
 
 /// What the remote end answers when it establishes a link.
@@ -402,6 +664,9 @@ pub struct Accept {
     pty: bool,
     identity: Identity,
     credit_window: u32,
+    /// What the answering end says about its own clock (§24.2, §25.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    clock: Option<PeerClock>,
 }
 
 impl Accept {
@@ -451,6 +716,12 @@ impl Accept {
     #[must_use]
     pub const fn credit_window(&self) -> u32 {
         self.credit_window
+    }
+
+    /// What the remote said about its own clock (§24.2).
+    #[must_use]
+    pub const fn clock(&self) -> Option<&PeerClock> {
+        self.clock.as_ref()
     }
 }
 
@@ -544,6 +815,21 @@ impl Negotiated {
         self.credit_window
     }
 
+    /// The strongest thing any negotiated provider can answer about time (§24.1).
+    ///
+    /// §24.1 requires negotiation to report which of its four cases the peer is, and §24.5
+    /// requires a caller standing on a remote place to be able to say "the remote has none"
+    /// rather than showing current state as past state. This is the sentence that answers both.
+    #[must_use]
+    pub fn temporal(&self) -> RemoteTemporal {
+        self.providers
+            .iter()
+            .filter(|provider| provider.is_available())
+            .map(|provider| RemoteTemporal::of(&provider.temporal()))
+            .max()
+            .unwrap_or(RemoteTemporal::None)
+    }
+
     /// What the trust store concluded about the peer's key (ADR-0015 T5, T6).
     #[must_use]
     pub const fn trust(&self) -> TrustDecision {
@@ -569,6 +855,7 @@ impl Negotiated {
                 arch: accept.arch,
                 identity: accept.identity,
                 pty: accept.pty,
+                clock: accept.clock,
             },
             providers: accept.providers,
             schemas: accept.schemas,
@@ -589,6 +876,7 @@ pub struct PeerInfo {
     arch: String,
     identity: Identity,
     pty: bool,
+    clock: Option<PeerClock>,
 }
 
 impl PeerInfo {
@@ -622,6 +910,16 @@ impl PeerInfo {
     pub const fn supports_pty(&self) -> bool {
         self.pty
     }
+
+    /// What the remote said about its own clock (§24.2, §25.5).
+    ///
+    /// `None` where it said nothing, which §35.3 makes unknown rather than a zero offset. Like
+    /// [`PeerInfo::identity`], this is the peer describing itself: useful context, never
+    /// authority, and never a reason to grant anything.
+    #[must_use]
+    pub const fn clock(&self) -> Option<&PeerClock> {
+        self.clock.as_ref()
+    }
 }
 
 /// The agent string this build announces itself with.
@@ -652,6 +950,7 @@ pub(crate) fn hello(
         pty,
         identity,
         credit_window,
+        clock: None,
     }
 }
 
@@ -665,6 +964,7 @@ pub(crate) struct Offer {
     pub identity: Identity,
     pub pty: bool,
     pub limits: Limits,
+    pub clock: Option<PeerClock>,
 }
 
 /// Settles a `Hello` against what this end offers.
@@ -718,6 +1018,7 @@ pub(crate) fn negotiate(hello: &Hello, offer: &Offer) -> Result<Accept, Reject> 
         compression,
         pty: offer.pty,
         identity: offer.identity.clone(),
+        clock: offer.clock.clone(),
         credit_window: hello
             .credit_window
             .clamp(1, offer.limits.max_credit().max(1)),

@@ -1,0 +1,7 @@
+causal_rules:
+  - rule_id: dev.example.fuzz.rule
+    relation: correlated_with
+    strength: correlated
+    summary: Things happen near things.
+    inputs: [object.changed]
+    identity_constraints: The same thing on both sides.

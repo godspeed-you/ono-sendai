@@ -11,7 +11,10 @@
 //! rather than growing with a length field an attacker wrote.
 
 use ono_adapter::{Adapter, Trace};
-use ono_kuang_protocol::{FrameLimits, Manifest, PackageSignature, decode_payload, read_frame};
+use ono_kuang_protocol::{
+    CausalRuleDocument, FrameLimits, Manifest, PackageSignature, TemporalSourceDocument,
+    decode_payload, read_frame,
+};
 use ono_parser::{parse, tokens, words_arguments};
 use ono_protocol::{FrameKind, Limits, decode, decode_message};
 use ono_provider_linux::decoders as procfs;
@@ -153,7 +156,13 @@ fn remote_protocol(data: &[u8]) {
     }
 }
 
-/// The plugin protocol: the frame reader, the payload decoder, the manifest and the signature.
+/// The plugin protocol: the frame reader, the payload decoder, the manifest, the signature and
+/// the temporal contribution decoder of v0.5 §37.3.
+///
+/// The temporal half is here rather than in a target of its own because it is the same attacker
+/// with the same bytes: a package that can send a frame can send a contribution in it. §37.3 puts
+/// six validations between those bytes and the ledger, and a validation that panics on a payload
+/// is a validation that hands the instance the host (spec §31.34, ADR-0041).
 fn plugin_protocol(data: &[u8]) {
     let mut reader = std::io::Cursor::new(data);
     let mut guard = 0;
@@ -168,6 +177,61 @@ fn plugin_protocol(data: &[u8]) {
     let text = String::from_utf8_lossy(data);
     let _ = Manifest::parse(&text);
     let _ = PackageSignature::parse(&text);
+    // §37.3's size ceiling is checked before anything is decoded, and the target models that:
+    // a payload larger than one contribution may be is refused by the host without a decoder
+    // ever seeing it, so hammering the decoder with it would fuzz a path that does not exist.
+    // §37.3's size ceiling is checked before anything is decoded, and the target models that: a
+    // payload larger than one contribution may be is refused by the host without a decoder ever
+    // seeing it, so hammering the decoder with it would fuzz a path that does not exist.
+    if data.len() <= ono_kuang_supervisor::ContributionLimits::default().max_event_bytes {
+        // The YAML parser itself is `Manifest::parse`'s subject; what these two add is the typed
+        // shape behind a root key, so they are attempted where a mutator has produced one.
+        if text.contains("temporal_sources") {
+            let _ = TemporalSourceDocument::parse(&text);
+        }
+        if text.contains("causal_rules") {
+            let _ = CausalRuleDocument::parse(&text);
+        }
+        temporal_contributions(&text);
+    }
+}
+
+/// The v0.5 §37.3 contribution decoder, over whatever JSON the bytes happen to be.
+///
+/// The invariant beyond "did not panic" is the one §37.3 exists for: **an accepted event is one
+/// the package could have seen.** A contribution the host accepted about a schema outside the
+/// package's visible set would be a plugin asserting an object into existence, which every
+/// reconstruction downstream would then believe.
+fn temporal_contributions(text: &str) {
+    use ono_kuang_supervisor::{Contribution, VisibleSchemas};
+
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+        return;
+    };
+    let events: Vec<serde_json::Value> = match value.clone() {
+        serde_json::Value::Array(items) => items,
+        other => vec![other],
+    };
+    let now = jiff::Timestamp::UNIX_EPOCH;
+    let mut package = Contribution::new("dev.example.fuzz")
+        .seeing(VisibleSchemas::of(["dev.example.fuzz.thing/1".to_owned()]))
+        .declaring(["dev.example.fuzz.rule".to_owned()]);
+    if let Ok(claims) = package.check_events(&events, "fuzz", now) {
+        for claim in claims {
+            assert!(
+                claim
+                    .subject_schema
+                    .as_deref()
+                    .is_none_or(|schema| schema == "dev.example.fuzz.thing/1"),
+                "v0.5 section 37.3: an accepted event names an object the package can resolve"
+            );
+            assert!(
+                claim.source.as_str().starts_with("kuang:dev.example.fuzz/"),
+                "v0.5 section 37.3: the host owns attribution, whatever the payload claimed"
+            );
+        }
+    }
+    let _ = package.check_link(&value, "fuzz");
 }
 
 /// The kernel's own interfaces: netlink from a socket, procfs from a file.

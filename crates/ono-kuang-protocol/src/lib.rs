@@ -63,14 +63,15 @@ pub use manifest::{
     StateDeclaration, validate_contributed_id,
 };
 pub use message::{
-    ActionContribution, Answer, AuditLogParams, CancelParams, CancelReason, CheckAnswer,
-    CheckParams, ClockNowResult, CloseParams, CommandContribution, CommandDocument,
-    ContributionSet, DemandParams, EmitParams, EmitResult, Envelope, FilesystemReadParams,
-    FilesystemReadResult, HealthState, Hello, Idempotency, InitParams, InitResult, InvokeParams,
-    InvokeResult, InvokeStatus, NextParams, NextResult, ParameterContribution, ProbeResult,
-    QueryParams, RequestOnceParams, SchemaContribution, SchemaFieldContribution, SchemaGetParams,
-    SchemaListParams, ShutdownParams, ShutdownReason, StateGetResult, StateKeyParams,
-    StateSetParams, StreamHandleParams, TargetContribution, TargetDocument, VIEW_COMPONENTS,
+    ActionContribution, Answer, AuditLogParams, CancelParams, CancelReason, CausalRuleContribution,
+    CausalRuleDocument, CheckAnswer, CheckParams, ClockNowResult, CloseParams, CommandContribution,
+    CommandDocument, ContributionSet, DemandParams, EmitParams, EmitResult, Envelope,
+    FilesystemReadParams, FilesystemReadResult, HealthState, Hello, Idempotency, InitParams,
+    InitResult, InvokeParams, InvokeResult, InvokeStatus, NextParams, NextResult,
+    ParameterContribution, ProbeResult, QueryParams, RequestOnceParams, SchemaContribution,
+    SchemaFieldContribution, SchemaGetParams, SchemaListParams, ShutdownParams, ShutdownReason,
+    StateGetResult, StateKeyParams, StateSetParams, StreamHandleParams, TargetContribution,
+    TargetDocument, TemporalSourceContribution, TemporalSourceDocument, VIEW_COMPONENTS,
     ViewContribution, ViewEvent, ViewEventParams, ViewHandleParams, ViewMountParams,
     ViewOpenParams, ViewOpenResult, ViewSize, ViewSubmitParams, method, parse_type_name,
 };

@@ -320,6 +320,7 @@ pub struct ObjectEvent {
     schema: SchemaId,
     at: Timestamp,
     sequence: Option<u64>,
+    cause: Option<Arc<str>>,
     value: Option<Arc<RecordValue>>,
     changed_fields: Option<Vec<String>>,
     provenance: Provenance,
@@ -379,6 +380,7 @@ impl ObjectEvent {
                 .observed()
                 .unwrap_or_else(Timestamp::now),
             sequence: None,
+            cause: None,
             provenance: record.provenance().clone(),
             value: Some(Arc::new(record.clone())),
             changed_fields,
@@ -389,6 +391,35 @@ impl ObjectEvent {
     #[must_use]
     pub fn with_sequence(mut self, sequence: u64) -> Self {
         self.sequence = Some(sequence);
+        self
+    }
+
+    /// Attributes the event to the transaction its source named (spec v0.5 §21.6, §15.2).
+    ///
+    /// The token is the source's own identifier for the piece of work that produced the change —
+    /// a systemd job path, a container runtime request id, a remote correlation id — prefixed by
+    /// the authority that issued it, as [`JobRef::token`] spells it. §15.2 admits such an
+    /// identifier as evidence for a `caused_by` link; two events being close together in time
+    /// never is. Only a provider advertising
+    /// [`TemporalCapabilities::causal_tokens`](crate::TemporalCapabilities::causal_tokens) may
+    /// set one, because a token from a source that does not claim the capability is not a token.
+    ///
+    /// [`JobRef::token`]: https://docs.rs/ono-provider-systemd
+    #[must_use]
+    pub fn with_cause(mut self, token: impl Into<Arc<str>>) -> Self {
+        self.cause = Some(token.into());
+        self
+    }
+
+    /// States the instant the source announced the change, over the instant it was read back.
+    ///
+    /// A provider that learns of a change from a pushed notification and then re-reads the object
+    /// holds two instants: when the source said so, and when the re-read finished. §3.3 asks for
+    /// the first. A provider that has only the second says nothing here, and the record's own
+    /// observation instant stands.
+    #[must_use]
+    pub fn with_observed_at(mut self, at: Timestamp) -> Self {
+        self.at = at;
         self
     }
 
@@ -420,6 +451,12 @@ impl ObjectEvent {
     #[must_use]
     pub fn sequence(&self) -> Option<u64> {
         self.sequence
+    }
+
+    /// The transaction the source named for this event, where it named one (§21.6).
+    #[must_use]
+    pub fn cause(&self) -> Option<&str> {
+        self.cause.as_deref()
     }
 
     /// The object's value, where the event carries one.

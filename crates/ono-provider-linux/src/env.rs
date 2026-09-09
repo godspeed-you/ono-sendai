@@ -10,7 +10,9 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
-use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Risk, Selector};
+use ono_provider_api::{
+    Availability, Capability, ObjectRef, Provider, Query, Risk, Selector, TemporalCapabilities,
+};
 use ono_value::{ErrorValue, RecordValue, Schema, Value};
 
 use crate::common::provenance;
@@ -177,6 +179,21 @@ impl Provider for EnvProvider {
         // the evaluator owns. A provider handed a snapshot of the environment cannot honour it,
         // and claiming the capability would make `set env` fail somewhere less obvious.
         vec![Capability::new("env.read", Risk::Read)]
+    }
+
+    fn temporal(&self) -> TemporalCapabilities {
+        // The session's own environment as it is now. It changes only when the shell changes it,
+        // and the shell records that as an action rather than as a provider event (§17.2), so
+        // there is nothing here to subscribe to and nothing to ask about the past.
+        TemporalCapabilities {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+            retained_history: None,
+        }
     }
 
     fn availability(&self) -> Availability {
