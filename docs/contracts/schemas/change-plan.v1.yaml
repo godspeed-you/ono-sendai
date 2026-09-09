@@ -1,0 +1,172 @@
+# Canonical ChangePlan schema. Source: v0.6 §46.1 (the required conceptual fields), §3.2 (a
+# versioned immutable description of one proposed change), §4 (the lifecycle the `state` field
+# names) and §4.4 (what the `digest` is taken over).
+#
+# The field that carries the most weight is `protection`. §10.1 forbids a `reversible: true/false`
+# flag, so protection here is a matrix — one `ono.protection-coverage/1` per mutation domain — and
+# `protection_level` beside it is *computed* from that matrix by the coverage algorithm of
+# Appendix A.5. §20.4 requires it near the top of any rendering, and §62.6 requires the exclusions
+# to travel with it, which is why `protection` is a list and never a word on its own.
+#
+# `state` is §4.1's machine, including the recovery branch. A reader who sees `prepare-failed`
+# knows from Appendix F that no mutating action ran; a reader who sees `apply-failed` knows the
+# opposite. Nothing else in this record carries that distinction, so nothing else may be read for
+# it.
+id: ono.change-plan/1
+name: ChangePlan
+summary: One proposed change, with what it would touch, what would protect it and what would remain irreversible.
+identity: [id, revision]
+fields:
+  id:
+    type: string
+    required: true
+    doc: The plan's stable identity (§3.2). References resolve on an unambiguous prefix of it (§36.4).
+  revision:
+    type: int
+    required: true
+    doc: >-
+      The monotonically increasing revision (§3.2). Any change to the plan's semantics — targets,
+      actions, strategy, protection policy, accepted risk — creates a new one rather than editing
+      this (§4.4, §7.5).
+  kind:
+    type: enum
+    required: true
+    values: [change, recovery]
+    doc: >-
+      Whether this plan changes the system forward or restores it. §3.8 makes a RecoveryPlan a
+      specialised ChangePlan, so it carries the same lifecycle and the same gates (§2.12).
+  state:
+    type: enum
+    required: true
+    values:
+      [draft, resolved, sealed, expired, preparing, prepare-failed, protected, applying,
+       apply-failed, verifying, verified, degraded, failed, closed, recovery-planned, recovering,
+       recovered, recovery-failed, recovery-verified]
+    doc: >-
+      Where the plan is in §4.1. `prepare-failed` means no mutating action ran (Appendix F);
+      `apply-failed` means what ran, ran. The distinction is load-bearing and lives only here.
+  intent:
+    type: string
+    required: true
+    doc: The operator's requested change at the highest semantic level (§3.1).
+  source:
+    type: string
+    required: true
+    doc: What the operator typed, kept so `explain` can show where the plan came from.
+  session:
+    type: string
+    required: true
+    doc: The session the plan was created in, which §42.4 uses to keep two of them from applying it at once.
+  created_at:
+    type: timestamp
+    required: true
+    doc: When the plan was created (§46.1).
+  sealed_at:
+    type: timestamp
+    nullable: true
+    doc: When the plan was sealed (§4.4). Null for a draft, which has no digest either.
+  expires_at:
+    type: timestamp
+    nullable: true
+    doc: When the sealed plan stops being appliable (§4.1's `EXPIRED`). Null where no window was set.
+  targets:
+    type: list<record>
+    required: true
+    doc: >-
+      The frozen object identities (§4.3, §7.1) — schema, identity, label, host and the
+      persistence domain each resolves to. §2.6 forbids this set changing after the seal.
+  actions:
+    type: list<ono.plan-action/1>
+    required: true
+    doc: The ordered action graph (§3.3, §46.2), roles included, so PREPARE is visible before MUTATE.
+  effects:
+    type: list<ono.proposed-effect/1>
+    required: true
+    doc: >-
+      Every effect every action declares, at §8.1's four confidence classes. §2.4 keeps `unknown`
+      here rather than dropping it.
+  impact_summary:
+    type: record
+    required: true
+    doc: >-
+      §9.5's blast radius — counts by class, the number of hosts and the number of places the
+      graph stops. `impact <plan>` returns the full `ono.impact-graph/1`; this is the summary that
+      never hides a boundary.
+  protection:
+    type: list<ono.protection-coverage/1>
+    required: true
+    doc: >-
+      The coverage matrix of §10.3, one row per mutation domain. §10.1 forbids reducing this to a
+      boolean, and §62.1 is what happens when someone does.
+  protection_level:
+    type: enum
+    required: true
+    values: [unprotected, compensatable, partially-protected, protected, transactional, unknown]
+    doc: >-
+      §10.2's plan-level status, composed from `protection` by Appendix A.5 and capped by A.7.
+      It is derived, never asserted: §4.6 forbids the word `protected` for partial coverage.
+  protection_mode:
+    type: enum
+    required: true
+    values: [off, prefer, require, maximize]
+    doc: The policy the plan runs under (§17.2). `prefer` is the interactive default (§17.1).
+  coverage_exclusions:
+    type: list<record>
+    required: true
+    doc: >-
+      What the protection does not cover, and which of it is irreversible rather than merely
+      uncovered (§10.3, §2.13). Appendix A.5 requires this beside the class, always.
+  risk:
+    type: enum
+    required: true
+    values: [low, moderate, high, critical, unknown]
+    doc: >-
+      §19.2's class, composed from rule findings. §19.1 keeps it independent of protection: a
+      strongly protected plan can still be dangerous.
+  risk_findings:
+    type: list<record>
+    required: true
+    doc: >-
+      Each rule that contributed, with the dimension it found and the sentence a gate shows.
+      §40.2 prints these instead of a generic question, and §62.11 forbids generating them.
+  strategy:
+    type: string
+    required: true
+    doc: >-
+      The execution strategy (§28.4) — `sequential`, `batch N`, `canary N then batch N` or
+      `parallel N`. Part of the seal, because it changes operational risk (§28.5).
+  verification_contracts:
+    type: list<record>
+    required: true
+    doc: >-
+      What will be checked afterwards (§23.1). A plan containing a MUTATE action cannot be sealed
+      without at least one.
+  preconditions:
+    type: list<record>
+    required: true
+    doc: The facts revalidated immediately before PREPARE (§7.2, §7.3).
+  provider_bindings:
+    type: list<record>
+    required: true
+    doc: >-
+      Every provider the plan resolved against, and the version whose semantics it used. §4.4 puts
+      these in the seal; Appendix G.4 is why the version matters.
+  accepted_risk_overrides:
+    type: list<string>
+    required: true
+    doc: >-
+      The acknowledgements the operator has given (§19.4), stored in the sealed revision so that
+      accepting a risk re-seals the plan rather than editing it in place.
+  requires_privilege:
+    type: bool
+    required: true
+    doc: Whether any action needs elevated privilege, which §43.3 requires the plan to show.
+  digest:
+    type: string
+    nullable: true
+    doc: >-
+      The canonical seal digest of §4.4, over revision, targets, action graph, provider identities
+      and versions, preconditions, protection policy, verification contracts and accepted
+      overrides. Null for a draft.
+default_view:
+  columns: [id, revision, state, protection_level, risk, intent]

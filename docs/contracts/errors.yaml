@@ -768,6 +768,385 @@ errors:
       so that a silently ignored change is impossible. `stop recorder` then `start recorder`
       applies them.
 
+  # --- prospective change, v0.6 §45 ------------------------------------------------------
+  #
+  # The three groups of §45, at the numbers ADR-0801 allocated: E17 for the plan, E18 for the
+  # way back, E19 for the guarantee §27 reserves. Every `help` says what was *not* changed,
+  # because a refusal in this family is nearly always a refusal to touch the system at all.
+  - code: Ono-Sendai-E1701
+    name: change.plan_not_sealed
+    kind: conflict
+    summary: A plan that is not sealed was given to a command that acts on one.
+    help: >-
+      Only a sealed plan can be applied (v0.6 §4.4, §5.6). `plan` seals what it builds; a draft
+      reached by editing an earlier revision is sealed again by re-planning it. Nothing was
+      changed.
+  - code: Ono-Sendai-E1702
+    name: change.plan_sealed
+    kind: conflict
+    summary: A sealed plan cannot be edited.
+    help: >-
+      A sealed plan is immutable (v0.6 §4.4). `rebase plan/<id>` opens a new revision against
+      current state and leaves the sealed one exactly as it is (§7.5).
+  - code: Ono-Sendai-E1703
+    name: change.plan_expired
+    kind: conflict
+    summary: The sealed plan's validity window has closed.
+    help: >-
+      v0.6 §5.6: `apply` refuses an expired plan, because its targets were frozen against a world
+      that has had time to move. `rebase plan/<id>` resolves it again.
+  - code: Ono-Sendai-E1704
+    name: change.plan_already_applying
+    kind: conflict
+    summary: Another session is applying this plan.
+    help: >-
+      v0.6 §42.4: the plan store prevents two sessions from applying one sealed plan at once. The
+      metadata names the holder and when the claim was taken. Nothing was changed here.
+  - code: Ono-Sendai-E1705
+    name: change.plan_drift_detected
+    kind: conflict
+    summary: A precondition the plan froze no longer holds.
+    help: >-
+      v0.6 §7.3: material drift stops execution before anything is prepared or mutated. The
+      metadata names each fact that moved, what was expected and what was found. `rebase
+      plan/<id>` creates a new revision against the world as it is now.
+  - code: Ono-Sendai-E1706
+    name: change.plan_not_found
+    kind: resolution
+    summary: No plan matches the reference.
+    help: >-
+      v0.6 §36.4: a plan is referenced by its identity or an unambiguous prefix of it. `get plan`
+      lists what the store holds, with the shortest reference that resolves.
+  - code: Ono-Sendai-E1707
+    name: change.plan_reference_ambiguous
+    kind: resolution
+    summary: The reference matches more than one plan.
+    help: >-
+      v0.6 §36.4: a reference is a prefix, and a prefix that matches two plans names neither. The
+      metadata lists the candidates with the width that tells them apart.
+  - code: Ono-Sendai-E1708
+    name: change.plan_state_invalid
+    kind: conflict
+    summary: The lifecycle transition is not one v0.6 §4.1 draws.
+    help: >-
+      v0.6 §4.1 is a state machine, not a set of labels. The metadata names the state the plan is
+      in and the transition that was attempted.
+  - code: Ono-Sendai-E1709
+    name: change.plan_store_unavailable
+    kind: io
+    summary: The plan store cannot be accessed.
+    help: >-
+      v0.6 §36.1 persists sealed plans so they survive shell exit. The metadata names the path and
+      the underlying failure. No plan was created, changed or applied.
+  - code: Ono-Sendai-E1710
+    name: change.plan_store_corrupt
+    kind: io
+    summary: The plan store failed its integrity check.
+    help: >-
+      v0.6 §36.2: the store is versioned and checked on open. A store this build cannot read is
+      refused rather than migrated downwards, so nothing overwrites a newer schema.
+  - code: Ono-Sendai-E1711
+    name: change.target_unresolved
+    kind: resolution
+    summary: A selector did not resolve to a concrete object.
+    help: >-
+      v0.6 §4.3 freezes identities, not selectors, so a selector matching nothing cannot become a
+      plan. The metadata names the selector and the provider that was asked.
+  - code: Ono-Sendai-E1712
+    name: change.target_changed
+    kind: conflict
+    summary: A frozen target is no longer the object the plan resolved.
+    help: >-
+      v0.6 §7.1 and §55.2 case 7: identity includes generation, inode or unit identity, so a
+      replaced object is a different object. `rebase plan/<id>` resolves against what is there
+      now.
+  - code: Ono-Sendai-E1713
+    name: change.action_not_plannable
+    kind: provider
+    summary: The operation has no provider contract v0.6 can plan from.
+    help: >-
+      v0.6 §6.1: an operation is plannable only where a contract declares its target schema,
+      mutation semantics, capabilities, preconditions, effects, execution method, idempotency
+      class, recovery semantics and verification options. The metadata names what is missing.
+  - code: Ono-Sendai-E1714
+    name: change.opaque_action_forbidden
+    kind: safety
+    summary: An opaque external command cannot be planned by default.
+    help: >-
+      v0.6 §6.2: Ono cannot reason about the target scope or side effects of an arbitrary command,
+      so it does not pretend to. §6.3's `opaque action` entry exists for the case where an
+      operator accepts that, and it classifies impact and reversibility as unknown.
+  - code: Ono-Sendai-E1715
+    name: change.historical_context_read_only
+    kind: safety
+    summary: A plan for application cannot be resolved against historical state.
+    help: >-
+      v0.6 §6.4: historical state can be inspected but not used as the executable target base.
+      `now` returns to the present, where the plan resolves against the world it would change.
+  - code: Ono-Sendai-E1716
+    name: change.precondition_failed
+    kind: conflict
+    summary: A declared precondition of an action did not hold.
+    help: >-
+      v0.6 §7.2: each action declares the facts sufficient to detect material drift. The metadata
+      names the action, the fact, what was expected and what was found.
+  - code: Ono-Sendai-E1717
+    name: change.prepare_failed
+    kind: provider
+    summary: Preparation failed, and no mutating action ran.
+    help: >-
+      v0.6 §2.3 and §4.5: if a required recovery asset cannot be created, mutation MUST NOT begin.
+      The metadata names the prepare action that failed and every asset that was created before
+      it, which are retained until a cleanup decision is made (Appendix F.1).
+  - code: Ono-Sendai-E1718
+    name: change.apply_failed
+    kind: provider
+    summary: A mutating action failed.
+    help: >-
+      v0.6 §4.7 and Appendix F: what ran, ran. The metadata names the failed action, the actions
+      that completed and the actions that were not executed. Protection created for this plan is
+      retained. `inspect plan`, `recover plan/<id>` and `rebase plan/<id>` are all available; none
+      of them is automatically the right one.
+  - code: Ono-Sendai-E1719
+    name: change.verification_failed
+    kind: provider
+    summary: A required postcondition did not hold after the change.
+    help: >-
+      v0.6 §2.14 and §23.2: a command that returned success has not proved that the intended state
+      exists. The plan is FAILED and its recovery assets are retained (§37.2).
+  - code: Ono-Sendai-E1720
+    name: change.verification_unknown
+    kind: provider
+    summary: A verification check could not be answered.
+    help: >-
+      v0.6 §23.3 and §23.5: an unanswerable check is UNKNOWN, and §2.4 forbids reading that as a
+      pass. The metadata names the check and why it could not be observed.
+  - code: Ono-Sendai-E1721
+    name: change.verification_missing
+    kind: conflict
+    summary: A plan containing a mutating action carries no verification contract.
+    help: >-
+      v0.6 §23.1: every plan that mutates MUST have at least one verification contract, even where
+      the minimum is provider-level state acknowledgement. A plan that cannot be checked cannot be
+      sealed.
+  - code: Ono-Sendai-E1722
+    name: change.irreversible_not_accepted
+    kind: safety
+    summary: The plan contains an irreversible action that has not been acknowledged.
+    help: >-
+      v0.6 §19.4: irreversible actions require an explicit acknowledgement stored in the sealed
+      revision. The metadata names each one. Add `--accept-irreversible`, which re-seals the plan.
+  - code: Ono-Sendai-E1723
+    name: change.risk_not_accepted
+    kind: safety
+    summary: The plan's risk class requires an acknowledgement that has not been given.
+    help: >-
+      v0.6 §19.4 and §40.2: HIGH and CRITICAL plans require explicit acknowledgement, and the
+      reason is in the metadata rather than behind a generic question. Add `--accept-risk`. A
+      script supplies it as policy and never waits for a prompt (§40.3).
+  - code: Ono-Sendai-E1724
+    name: change.bulk_guard_failed
+    kind: safety
+    summary: A bulk plan reaches further than its configured guard permits.
+    help: >-
+      v0.6 §28.3 and §53's `change.bulk` settings: scope is a risk dimension of its own. The
+      metadata names the target count and the guard. Narrow the selection, raise the guard
+      deliberately, or acknowledge the risk.
+  - code: Ono-Sendai-E1725
+    name: change.remote_state_unknown
+    kind: provider
+    summary: The state of a remote action could not be established.
+    help: >-
+      v0.6 §29.3 and Appendix F.2: a link that dropped mid-plan leaves an unknown outcome, and Ono
+      MUST NOT mark it failed or successful without evidence. The metadata names the host and the
+      action. Querying again when the link returns is the way to resolve it.
+  - code: Ono-Sendai-E1726
+    name: change.auto_recovery_rejected
+    kind: safety
+    summary: The plan declares automatic recovery under conditions v0.6 does not permit.
+    help: >-
+      v0.6 §26.3 allows an auto-recovery declaration only where the recovery plan can be fully
+      constructed before mutation, no known irreversible external side effect exists, recovery
+      destroys no unrelated newer state, protection is PROTECTED or TRANSACTIONAL for the required
+      domains, recovery verification exists and policy enables it. The metadata names which of
+      those does not hold.
+  - code: Ono-Sendai-E1727
+    name: change.privilege_required
+    kind: permission
+    summary: An action or its recovery needs privilege this session does not hold.
+    help: >-
+      v0.6 §43.3 and §43.4: the plan shows which actions require privilege and when elevation
+      occurs, and recovery may need more than the mutation did. The metadata names the action, the
+      privilege and whether it is needed to change or to recover.
+  - code: Ono-Sendai-E1801
+    name: recovery.provider_unavailable
+    kind: provider
+    summary: A recovery provider the plan needs cannot run here.
+    help: >-
+      v0.6 §12.2 and Appendix G.4: a provider whose tool is absent, or whose version it has not
+      validated against, degrades to unavailable rather than executing semantics it has not
+      tested. The metadata names the provider and the reason.
+  - code: Ono-Sendai-E1802
+    name: recovery.asset_create_failed
+    kind: provider
+    summary: A recovery asset could not be created.
+    help: >-
+      v0.6 §2.3 and §55.3 case 13: snapshot creation failure prevents mutation. Nothing was
+      changed. The metadata names the provider, the scope and what the provider said.
+  - code: Ono-Sendai-E1803
+    name: recovery.asset_invalid
+    kind: provider
+    summary: A recovery asset exists and cannot satisfy protection.
+    help: >-
+      v0.6 §11.4 and Appendix D.10: an asset is usable only once existence, identity, scope,
+      restore availability and permissions have been checked. The metadata names which check
+      failed.
+  - code: Ono-Sendai-E1804
+    name: recovery.asset_expired
+    kind: resolution
+    summary: The recovery asset's retention has passed.
+    help: >-
+      v0.6 §37.1: assets are retained for a bounded window, by default twenty-four hours after
+      successful verification. The metadata names when it expired. `get recovery` shows what
+      remains.
+  - code: Ono-Sendai-E1805
+    name: recovery.asset_not_found
+    kind: resolution
+    summary: No recovery asset matches the reference.
+    help: >-
+      `get recovery` lists the assets this shell knows about, with the plan each belongs to and
+      the scope each covers (v0.6 §37.5).
+  - code: Ono-Sendai-E1806
+    name: recovery.scope_mismatch
+    kind: conflict
+    summary: A recovery asset does not cover the object it was expected to.
+    help: >-
+      v0.6 §11.2 and §13.4: a path must be mapped to its containing persistence domain before
+      protection is claimed, and a snapshot of a parent dataset or subvolume does not cover a
+      nested one. The metadata names the asset's scope and the object that is outside it.
+  - code: Ono-Sendai-E1807
+    name: recovery.coverage_insufficient
+    kind: safety
+    summary: The plan cannot reach the protection its policy requires.
+    help: >-
+      v0.6 §17.2: `require` refuses to apply when a required mutation domain cannot reach the
+      plan's protection class. The metadata is the coverage matrix, one row per domain, so the
+      shortfall is visible rather than summarised. Nothing was changed.
+  - code: Ono-Sendai-E1808
+    name: recovery.consistency_unknown
+    kind: provider
+    summary: The consistency of a captured state could not be established.
+    help: >-
+      v0.6 §39.1 and §39.2: a filesystem snapshot of a database is not application-consistent
+      unless a database-aware provider says so. Unknown consistency stays unknown (§2.4).
+  - code: Ono-Sendai-E1809
+    name: recovery.newer_state_conflict
+    kind: conflict
+    summary: Recovery would discard state written after the recovery point.
+    help: >-
+      v0.6 §24.2 and Appendix C.4: the object the recovery would restore has changed again since.
+      The metadata names each conflicting object and when it changed. A less destructive method
+      may exist; `inspect recovery` shows what each would preserve.
+  - code: Ono-Sendai-E1810
+    name: recovery.destructive_history_not_accepted
+    kind: safety
+    summary: Recovery would destroy newer snapshots, bookmarks or clones, and that was not accepted.
+    help: >-
+      v0.6 §13.6 and §24.5: Ono never silently adds destructive flags. The metadata enumerates
+      every provider-native object that would be destroyed. `--accept-newer-state-loss` accepts it
+      explicitly; nothing has been changed.
+  - code: Ono-Sendai-E1811
+    name: recovery.requires_offline
+    kind: conflict
+    summary: Recovery needs the filesystem unmounted or the system offline.
+    help: >-
+      v0.6 §13.7 and §14.6: Ono does not promise online rollback merely because a snapshot exists.
+      The metadata names what must be taken offline and the method that requires it.
+  - code: Ono-Sendai-E1812
+    name: recovery.requires_reboot
+    kind: conflict
+    summary: Recovery needs a reboot to take effect.
+    help: >-
+      v0.6 §13.7 and §14.6: a root recovery may be a next-boot workflow rather than an in-place
+      operation, and that is stated before execution rather than discovered after it.
+  - code: Ono-Sendai-E1813
+    name: recovery.apply_failed
+    kind: provider
+    summary: A recovery action failed.
+    help: >-
+      v0.6 Appendix F: the remaining assets and the exact partial state are preserved, and nothing
+      claims the state was recovered. The metadata names the action that failed and what had
+      completed before it.
+  - code: Ono-Sendai-E1814
+    name: recovery.verification_failed
+    kind: provider
+    summary: Recovery verification did not hold.
+    help: >-
+      v0.6 §25.3 and Appendix F: nothing may claim the state was recovered. The metadata reports
+      per equivalence domain — persistent state, runtime state, external side effects — so the
+      scope of what did and did not come back is visible.
+  - code: Ono-Sendai-E1815
+    name: recovery.cleanup_blocked
+    kind: safety
+    summary: Removing this asset would take away recovery a retained plan still offers.
+    help: >-
+      v0.6 §2.15 and §37.2: assets required by a retained plan MUST NOT be deleted silently, and
+      assets of a failed plan are not removed by ordinary success retention. The metadata names
+      the plans that become unrecoverable. `remove recovery <id> --confirm` overrides it.
+  - code: Ono-Sendai-E1816
+    name: recovery.storage_pressure
+    kind: resource
+    summary: Creating this asset would push storage below the configured floor.
+    help: >-
+      v0.6 Appendix D.3 and §53's `recovery.min_filesystem_free`: automatic protection fails
+      closed rather than worsening storage exhaustion. The metadata names the pool or filesystem,
+      the free space and the floor. `get recovery` shows what is already retained.
+  - code: Ono-Sendai-E1817
+    name: recovery.asset_stale
+    kind: conflict
+    summary: The recovery asset no longer reflects the state that is about to change.
+    help: >-
+      v0.6 §18.3: an asset created before the state drifted is not a just-before-change recovery
+      point, and Ono does not pretend it is. Creating a fresh asset, or accepting the stale one
+      explicitly, are the two ways forward.
+  - code: Ono-Sendai-E1818
+    name: recovery.quiesce_failed
+    kind: provider
+    summary: An application could not be quiesced for an application-consistent asset.
+    help: >-
+      v0.6 §18.4 and §39.3: the quiesce window is bounded and the application is resumed when
+      snapshot creation fails. Nothing was mutated.
+  - code: Ono-Sendai-E1819
+    name: recovery.resume_failed
+    kind: provider
+    summary: An application was quiesced and could not be resumed.
+    help: >-
+      v0.6 §18.4 makes this a critical error surfaced separately from whatever else happened: the
+      application is still paused. The metadata names the application, the provider and the resume
+      operation that failed.
+  - code: Ono-Sendai-E1820
+    name: recovery.plan_incomplete
+    kind: safety
+    summary: A recovery fact required before destructive recovery could not be established.
+    help: >-
+      v0.6 §56.3: where any critical recovery fact cannot be established, destructive recovery is
+      blocked rather than guessed. The metadata names the fact — a snapshot that may not exist, a
+      clone whose effect on rollback is unknown, a boundary that could not be read.
+  - code: Ono-Sendai-E1901
+    name: transaction.atomicity_unavailable
+    kind: provider
+    summary: A transaction was requested from a provider that does not offer one.
+    help: >-
+      v0.6 §27.1: the word `transaction` is reserved for a provider that can state concrete
+      atomicity and rollback guarantees for its own domain.
+  - code: Ono-Sendai-E1902
+    name: transaction.cross_provider_not_atomic
+    kind: provider
+    summary: A change spanning several providers cannot be atomic.
+    help: >-
+      v0.6 §2.11 and §27.2: a plan involving a filesystem, a service manager and a remote call is
+      a ChangeSet, not a transaction, even where each domain has recovery actions. §27.3 makes
+      generic distributed two-phase commit an explicit non-goal.
   # --- KUANG/11, spec §31.79 (folded into the global model by ADR-0108) ---------------------
   - code: Ono-Sendai-K11001
     name: package.invalid

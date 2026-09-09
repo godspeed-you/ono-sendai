@@ -1,0 +1,82 @@
+# Canonical ProtectionCoverage schema: one row of the coverage matrix. Source: v0.6 §10.3 (the
+# per-domain matrix), Appendix A.2 (recovery objectives), Appendix A.5 (composition) and
+# Appendix A.7 (the unknown cap).
+#
+# §10.1 forbids a plan carrying `reversible: true/false`. This record is what it carries instead:
+# one row per mutation domain, each saying what that domain would need to get back, what actually
+# covers it, and what is left out. The plan-level word of §10.2 is composed from these rows and
+# never asserted beside them — a level that can disagree with its matrix is §62.1's snapshot
+# theatre with extra steps.
+#
+# `satisfied` is derived from `objective` and `protection` by Appendix A.5's rule, and it is the
+# strict one that matters: `preserve-exact` is met only by a captured state image, because an
+# inverse action cannot promise the same bytes back.
+id: ono.protection-coverage/1
+name: ProtectionCoverage
+summary: What one mutation domain of a plan needs to get back, and what actually covers it.
+identity: [domain]
+fields:
+  domain:
+    type: enum
+    required: true
+    values:
+      [filesystem-persistent, block-storage-persistent, application-persistent, process-runtime,
+       kernel-runtime, network-runtime, remote-system, external-side-effect,
+       identity-security-state, provider-transaction-state, unknown]
+    doc: Appendix A.1's mutation domain this row is about.
+  objective:
+    type: enum
+    required: true
+    values: [preserve-exact, restore-semantic, compensate, no-recovery-required, unknown]
+    doc: >-
+      Appendix A.2's recovery objective. `preserve-exact` suits file and configuration state;
+      `restore-semantic` suits state whose identity may legitimately change, such as worker PIDs.
+  protection:
+    type: enum
+    required: true
+    values: [unprotected, compensatable, protected, transactional, unknown]
+    doc: >-
+      What covers the domain. There is no `partially-protected` here: a domain is atomic, and
+      partial coverage is a statement about a plan spanning several of them.
+  satisfied:
+    type: bool
+    required: true
+    doc: >-
+      Whether what covers the domain meets what it needs (Appendix A.5). A `preserve-exact`
+      objective is satisfied only by a captured state image, never by compensation.
+  required:
+    type: bool
+    required: true
+    doc: >-
+      Whether the plan must cover this domain before it may be called protected. False for
+      `no-recovery-required`, and for a domain policy has explicitly declared irrelevant
+      (Appendix A.7).
+  assets:
+    type: list<string>
+    required: true
+    doc: The validated recovery assets that cover this domain (§11.4).
+  consistency:
+    type: enum
+    nullable: true
+    values:
+      [byte-consistent, filesystem-consistent, crash-consistent, application-consistent,
+       transaction-consistent, unknown]
+    doc: The consistency the covering mechanism achieves (§11.3). Null where nothing covers the domain.
+  transaction_scope:
+    type: string
+    nullable: true
+    doc: >-
+      The provider whose transaction boundary this domain sits inside (§27.1). §27.2 forbids
+      calling a plan transactional once two boundaries are involved.
+  exclusions:
+    type: list<record>
+    required: true
+    doc: >-
+      What this row does not cover, each with a reason and whether it is irreversible rather than
+      merely uncovered (§10.3, §2.13).
+  note:
+    type: string
+    required: true
+    doc: The sentence a person reads beside the row (§13.8's rendering).
+default_view:
+  columns: [domain, objective, protection, satisfied]

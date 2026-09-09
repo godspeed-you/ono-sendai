@@ -1,0 +1,74 @@
+# Canonical ImpactGraph schema. Source: v0.6 §46.7 (canonical object refs and relationship
+# provenance from v0.4), §9.2 (the classes), §9.5 (blast radius) and §9.6 (the unknown boundary).
+#
+# §9.1 is careful about what this is: what could this plan touch, directly or indirectly — not
+# what will fail. Every node therefore carries the v0.4 relation that reached it and the
+# confidence that edge already had, unchanged. §3.5 requires impact to retain provenance, and
+# raising a v0.4 `inferred` edge to something stronger on the way through here would be exactly
+# the invention §1.3 forbids.
+#
+# `boundaries` is the field that makes the graph honest. A graph that simply stops has said
+# nothing about whether it stopped because there was nothing more or because Ono could not see
+# further; §9.6 requires the difference to be visible, and `truncated_reason` says which of the
+# two a bounded traversal was.
+id: ono.impact-graph/1
+name: ImpactGraph
+summary: What a plan could touch, how Ono knows, and where its knowledge stops.
+identity: [plan_id]
+fields:
+  plan_id:
+    type: string
+    required: true
+    doc: The plan this graph is about.
+  nodes:
+    type: list<record>
+    required: true
+    doc: >-
+      Every object in the graph: its canonical identity and label, its type, its §9.2 class, its
+      depth, the v0.4 relation that reached it, that edge's confidence unchanged, and its host.
+  boundaries:
+    type: list<record>
+    required: true
+    doc: >-
+      §9.6's opaque boundaries: the last object Ono can see, what lies past it, and why the graph
+      stops there. An empty list means the graph reached the edge of what evidence supports.
+  direct_targets:
+    type: int
+    required: true
+    doc: §9.5's count of objects the plan names.
+  direct_effects:
+    type: int
+    required: true
+    doc: §9.5's count of objects an action's declared effects land on.
+  dependents:
+    type: int
+    required: true
+    doc: §9.5's count of objects one relation away.
+  transitive:
+    type: int
+    required: true
+    doc: §9.5's count of objects more than one relation away.
+  external:
+    type: int
+    required: true
+    doc: §9.5's count of effects that leave the machine (§35.1).
+  boundary_count:
+    type: int
+    required: true
+    doc: >-
+      §9.5's count of places the graph stops. It is counted beside the objects rather than under
+      them, because a summary that hides a boundary is the summary §9.6 forbids.
+  hosts:
+    type: int
+    required: true
+    doc: How many hosts the graph spans (§29.1).
+  complete:
+    type: bool
+    required: true
+    doc: Whether traversal reached the edge of the evidence rather than a budget (§52.2).
+  truncated_reason:
+    type: string
+    nullable: true
+    doc: Why traversal stopped early, where it did. Null when `complete` is true.
+default_view:
+  columns: [plan_id, direct_targets, dependents, transitive, boundary_count]

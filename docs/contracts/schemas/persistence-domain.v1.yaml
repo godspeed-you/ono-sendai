@@ -1,0 +1,98 @@
+# Canonical PersistenceDomain schema. Source: v0.6 Appendix B (the resolution pipeline) and
+# Appendix B.10 (the rendering `inspect plan` expands to).
+#
+# Appendix B.1's pipeline is `path -> namespace-visible mount -> mount id -> filesystem type ->
+# filesystem root -> backing persistence object -> snapshot boundaries -> provider candidates`,
+# and this record is where it lands. §11.2 makes completing it a precondition of claiming
+# protection at all, which is why a plan that could not complete it says so here rather than
+# omitting the row.
+#
+# `refusal` is the honest half. Appendix B.7 lists the filesystems that are never automatically a
+# persistent recovery domain; Appendix B.4 and B.5 name the cases where the writable state lives
+# somewhere other than the mount you would snapshot; Appendix B.6 forbids a local provider
+# claiming a network filesystem. Each of those is a reason a path has no protectable domain, and
+# saying which is what separates §32.4's refusal from an omission.
+id: ono.persistence-domain/1
+name: PersistenceDomain
+summary: Where a path's state actually lives, and whether a local provider can protect it.
+identity: [path]
+fields:
+  path:
+    type: string
+    required: true
+    doc: The path that was resolved.
+  mount_point:
+    type: string
+    required: true
+    doc: The namespace-visible mount the path resolves through (Appendix B.1, B.2).
+  mount_id:
+    type: string
+    required: true
+    doc: The kernel's mount id, so two mounts of one filesystem stay distinguishable.
+  filesystem:
+    type: string
+    required: true
+    doc: The filesystem type as the kernel spells it.
+  filesystem_kind:
+    type: enum
+    required: true
+    values: [zfs, btrfs, ext4, xfs, lvm, overlay, network, pseudo, volatile, other, unknown]
+    doc: >-
+      How Ono classified it. Appendix B.8 and B.9 forbid inferring a snapshot mechanism from a
+      name, so anything unrecognised is `other` rather than a guess.
+  source:
+    type: string
+    required: true
+    doc: >-
+      The mount source — a device, a ZFS dataset name, a server export. For ZFS this is the
+      dataset, which Appendix B.8 requires to come from mount metadata rather than a path
+      convention.
+  filesystem_root:
+    type: string
+    required: true
+    doc: >-
+      The mount's root within its filesystem. For Btrfs this is what tells one subvolume from
+      another (Appendix B.9).
+  object:
+    type: string
+    nullable: true
+    doc: >-
+      The backing persistence object — the dataset, the subvolume id, the logical volume. Null
+      where the pipeline could not be completed, which is a refusal rather than an absence.
+  object_kind:
+    type: string
+    required: true
+    doc: What kind of object it is — `zfs-dataset`, `btrfs-subvolume`, `file`, `none`.
+  boundary:
+    type: string
+    nullable: true
+    doc: >-
+      The snapshot boundary the object sits inside (§13.4, §14.3). Nested subvolumes and child
+      datasets are separate boundaries, whatever the paths look like.
+  read_only:
+    type: bool
+    required: true
+    doc: Whether the mount is read-only, which prevents a restore into it (Appendix G.2).
+  namespace:
+    type: string
+    nullable: true
+    doc: >-
+      The mount namespace this reading was taken in (Appendix B.2). A path inside a container may
+      map differently from the host path of the same name.
+  protectable:
+    type: bool
+    required: true
+    doc: Whether a local recovery provider may be asked to protect this path.
+  refusal:
+    type: enum
+    nullable: true
+    values:
+      [pseudo-filesystem, volatile-filesystem, remote-filesystem, upper-layer-elsewhere,
+       container-ephemeral, no-provider, unresolved]
+    doc: Why it is not protectable, where it is not. Null when it is.
+  detail:
+    type: string
+    required: true
+    doc: The sentence `inspect plan` shows beside the resolution (Appendix B.10).
+default_view:
+  columns: [path, filesystem_kind, object, boundary, protectable]

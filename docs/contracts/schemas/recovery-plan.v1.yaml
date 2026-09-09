@@ -1,0 +1,132 @@
+# Canonical RecoveryPlan schema. Source: v0.6 §46.5 (the field list), §24 (recovery is a new plan)
+# and Appendix C (method selection and the newer-state conflict model).
+#
+# §24.1: `recover <plan>` produces this and changes nothing. The extra step is deliberate, because
+# recovery may destroy newer state — so the two fields that decide whether it may run at all are
+# `newer_state` and `newer_state_analysed`. An unanalysed recovery is gated, not waved through:
+# §62.8 names "recovery without drift analysis" as a failure mode, and §56.3 makes an
+# unestablished fact a reason to block rather than to guess.
+#
+# `unrecoverable_effects` is what stops §62.2's universal undo button. A filesystem restored does
+# not un-send a webhook, and the effect stays in this list even where a provider offers a
+# compensating action for it (§35.3).
+id: ono.recovery-plan/1
+name: RecoveryPlan
+summary: What recovering a change would restore, what it would destroy, and what it cannot touch.
+identity: [id]
+fields:
+  id:
+    type: string
+    required: true
+    doc: The recovery plan's identity. It is a ChangePlan (§3.8), so this is a plan id.
+  source_plan:
+    type: string
+    nullable: true
+    doc: The plan being recovered from, or null when recovering from an asset directly (§5.8).
+  source_assets:
+    type: list<string>
+    required: true
+    doc: The recovery assets this plan would use (§46.5).
+  goal:
+    type: enum
+    required: true
+    values: [restore-changed-objects, restore-domain, compensate-semantics, restore-service-health]
+    doc: >-
+      Appendix C.2's goal. The normal one is to restore the objects the original plan changed, not
+      to rewind a whole persistence domain to a timestamp.
+  method:
+    type: enum
+    required: true
+    values:
+      [provider-native-restore, selective-file-restore, clone-and-copy, subvolume-replacement,
+       dataset-rollback, offline-root-recovery, compensation]
+    doc: >-
+      The method that will actually be used (§13.5, §14.4). Appendix C.1 requires the
+      least-destructive method that satisfies the goal, and §62.5 forbids the convenient one.
+  target_state:
+    type: string
+    required: true
+    doc: The state that would be restored — the asset, the version, the checkpoint (§46.5).
+  restore_actions:
+    type: list<ono.plan-action/1>
+    required: true
+    doc: The actions the recovery would take (§46.5).
+  restores:
+    type: list<string>
+    required: true
+    doc: The objects that would come back (§24.4's "will restore").
+  newer_state:
+    type: list<record>
+    required: true
+    doc: >-
+      Appendix C.3's classification of everything that changed after the recovery point:
+      `preserved-by-method`, `discarded-by-method`, `conflicting` or `unknown`, each with when it
+      changed and why it is classified so.
+  newer_state_analysed:
+    type: bool
+    required: true
+    doc: >-
+      Whether the drift analysis actually ran. False is not "nothing would be lost": §62.8 makes
+      an unanalysed recovery a gated one.
+  destroyed_assets:
+    type: list<string>
+    required: true
+    doc: >-
+      Provider-native objects the recovery would destroy — newer snapshots, bookmarks, clones
+      (§13.6, §24.5). Ono never adds a destructive flag that produces these silently.
+  discarded_size:
+    type: bytesize
+    nullable: true
+    doc: How much live data would be discarded, where it could be estimated (§24.5).
+  unrecoverable_effects:
+    type: list<record>
+    required: true
+    doc: >-
+      What recovery cannot reverse (§24.3, §35.2), each with its domain, its reason and any
+      compensating action. A compensation does not remove an effect from this list (§35.3).
+  metadata_restored:
+    type: list<string>
+    required: true
+    doc: >-
+      Which pieces of file metadata the restore actually puts back — content, mode, owner, ACLs,
+      xattrs, capabilities, SELinux labels, hard links (Appendix C.7).
+  metadata_gaps:
+    type: list<string>
+    required: true
+    doc: >-
+      Which it does not. Appendix C.7: missing metadata support reduces recovery coverage and
+      MUST be visible.
+  directory_policy:
+    type: enum
+    required: true
+    values: [keep-extra-files, exact-tree]
+    doc: >-
+      What happens to files that exist now and did not then (Appendix C.6). The default keeps
+      them; deleting newer extra files is a choice the objective has to require.
+  risk:
+    type: enum
+    required: true
+    values: [low, moderate, high, critical, unknown]
+    doc: The recovery's own risk class (§19.2). Recovering is itself a change (§2.12).
+  requires_reboot:
+    type: bool
+    required: true
+    doc: Whether recovery takes effect only after a reboot (§13.7, §14.6).
+  requires_offline:
+    type: bool
+    required: true
+    doc: Whether recovery needs the filesystem unmounted or the system offline (§13.7).
+  requires_acceptance:
+    type: bool
+    required: true
+    doc: >-
+      Whether §24.5's explicit gate is still outstanding. True whenever newer state would be
+      discarded, a provider-native object destroyed, or the analysis could not be completed.
+  verification_contracts:
+    type: list<record>
+    required: true
+    doc: >-
+      What will be checked after recovery (§25). §25.1 keeps persistent, runtime and external
+      equivalence separate, so these carry the domain each one speaks about.
+default_view:
+  columns: [id, source_plan, method, requires_acceptance, risk]

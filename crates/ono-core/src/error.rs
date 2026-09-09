@@ -338,6 +338,113 @@ error_codes! {
     TemporalRecorderAlreadyRunning => "Ono-Sendai-E1314", "temporal.recorder_already_running", Conflict,
         "A start was requested while the recorder is already active.";
 
+    // --- prospective change, v0.6 §45: the family a shell owes a user who asked what a change
+    // would do before it did it, and the one that says why a way back is not available. §45
+    // fixes the names and leaves the numbers open; E17, E18 and E19 are the lowest free blocks
+    // (ADR-0801). Three groups, and the split is the specification's: `change.*` is about the
+    // plan, `recovery.*` about the way back, `transaction.*` about a guarantee nobody has.
+    ChangePlanNotSealed => "Ono-Sendai-E1701", "change.plan_not_sealed", Conflict,
+        "A plan that is not sealed was given to a command that acts on one.";
+    ChangePlanSealed => "Ono-Sendai-E1702", "change.plan_sealed", Conflict,
+        "A sealed plan cannot be edited.";
+    ChangePlanExpired => "Ono-Sendai-E1703", "change.plan_expired", Conflict,
+        "The sealed plan's validity window has closed.";
+    ChangePlanAlreadyApplying => "Ono-Sendai-E1704", "change.plan_already_applying", Conflict,
+        "Another session is applying this plan.";
+    ChangePlanDriftDetected => "Ono-Sendai-E1705", "change.plan_drift_detected", Conflict,
+        "A precondition the plan froze no longer holds.";
+    ChangePlanNotFound => "Ono-Sendai-E1706", "change.plan_not_found", Resolution,
+        "No plan matches the reference.";
+    ChangePlanReferenceAmbiguous => "Ono-Sendai-E1707", "change.plan_reference_ambiguous", Resolution,
+        "The reference matches more than one plan.";
+    ChangePlanStateInvalid => "Ono-Sendai-E1708", "change.plan_state_invalid", Conflict,
+        "The lifecycle transition is not one v0.6 §4.1 draws.";
+    ChangePlanStoreUnavailable => "Ono-Sendai-E1709", "change.plan_store_unavailable", Io,
+        "The plan store cannot be accessed.";
+    ChangePlanStoreCorrupt => "Ono-Sendai-E1710", "change.plan_store_corrupt", Io,
+        "The plan store failed its integrity check.";
+    ChangeTargetUnresolved => "Ono-Sendai-E1711", "change.target_unresolved", Resolution,
+        "A selector did not resolve to a concrete object.";
+    ChangeTargetChanged => "Ono-Sendai-E1712", "change.target_changed", Conflict,
+        "A frozen target is no longer the object the plan resolved.";
+    ChangeActionNotPlannable => "Ono-Sendai-E1713", "change.action_not_plannable", Provider,
+        "The operation has no provider contract v0.6 can plan from.";
+    ChangeOpaqueActionForbidden => "Ono-Sendai-E1714", "change.opaque_action_forbidden", Safety,
+        "An opaque external command cannot be planned by default.";
+    ChangeHistoricalContextReadOnly => "Ono-Sendai-E1715", "change.historical_context_read_only", Safety,
+        "A plan for application cannot be resolved against historical state.";
+    ChangePreconditionFailed => "Ono-Sendai-E1716", "change.precondition_failed", Conflict,
+        "A declared precondition of an action did not hold.";
+    ChangePrepareFailed => "Ono-Sendai-E1717", "change.prepare_failed", Provider,
+        "Preparation failed, and no mutating action ran.";
+    ChangeApplyFailed => "Ono-Sendai-E1718", "change.apply_failed", Provider,
+        "A mutating action failed.";
+    ChangeVerificationFailed => "Ono-Sendai-E1719", "change.verification_failed", Provider,
+        "A required postcondition did not hold after the change.";
+    ChangeVerificationUnknown => "Ono-Sendai-E1720", "change.verification_unknown", Provider,
+        "A verification check could not be answered.";
+    ChangeVerificationMissing => "Ono-Sendai-E1721", "change.verification_missing", Conflict,
+        "A plan containing a mutating action carries no verification contract.";
+    ChangeIrreversibleNotAccepted => "Ono-Sendai-E1722", "change.irreversible_not_accepted", Safety,
+        "The plan contains an irreversible action that has not been acknowledged.";
+    ChangeRiskNotAccepted => "Ono-Sendai-E1723", "change.risk_not_accepted", Safety,
+        "The plan's risk class requires an acknowledgement that has not been given.";
+    ChangeBulkGuardFailed => "Ono-Sendai-E1724", "change.bulk_guard_failed", Safety,
+        "A bulk plan reaches further than its configured guard permits.";
+    ChangeRemoteStateUnknown => "Ono-Sendai-E1725", "change.remote_state_unknown", Provider,
+        "The state of a remote action could not be established.";
+    ChangeAutoRecoveryRejected => "Ono-Sendai-E1726", "change.auto_recovery_rejected", Safety,
+        "The plan declares automatic recovery under conditions v0.6 does not permit.";
+    ChangePrivilegeRequired => "Ono-Sendai-E1727", "change.privilege_required", Permission,
+        "An action or its recovery needs privilege this session does not hold.";
+
+    // --- recovery, v0.6 §45: what a recovery provider, an asset or a restore could not do.
+    RecoveryProviderUnavailable => "Ono-Sendai-E1801", "recovery.provider_unavailable", Provider,
+        "A recovery provider the plan needs cannot run here.";
+    RecoveryAssetCreateFailed => "Ono-Sendai-E1802", "recovery.asset_create_failed", Provider,
+        "A recovery asset could not be created.";
+    RecoveryAssetInvalid => "Ono-Sendai-E1803", "recovery.asset_invalid", Provider,
+        "A recovery asset exists and cannot satisfy protection.";
+    RecoveryAssetExpired => "Ono-Sendai-E1804", "recovery.asset_expired", Resolution,
+        "The recovery asset's retention has passed.";
+    RecoveryAssetNotFound => "Ono-Sendai-E1805", "recovery.asset_not_found", Resolution,
+        "No recovery asset matches the reference.";
+    RecoveryScopeMismatch => "Ono-Sendai-E1806", "recovery.scope_mismatch", Conflict,
+        "A recovery asset does not cover the object it was expected to.";
+    RecoveryCoverageInsufficient => "Ono-Sendai-E1807", "recovery.coverage_insufficient", Safety,
+        "The plan cannot reach the protection its policy requires.";
+    RecoveryConsistencyUnknown => "Ono-Sendai-E1808", "recovery.consistency_unknown", Provider,
+        "The consistency of a captured state could not be established.";
+    RecoveryNewerStateConflict => "Ono-Sendai-E1809", "recovery.newer_state_conflict", Conflict,
+        "Recovery would discard state written after the recovery point.";
+    RecoveryDestructiveHistoryNotAccepted => "Ono-Sendai-E1810", "recovery.destructive_history_not_accepted", Safety,
+        "Recovery would destroy newer snapshots, bookmarks or clones, and that was not accepted.";
+    RecoveryRequiresOffline => "Ono-Sendai-E1811", "recovery.requires_offline", Conflict,
+        "Recovery needs the filesystem unmounted or the system offline.";
+    RecoveryRequiresReboot => "Ono-Sendai-E1812", "recovery.requires_reboot", Conflict,
+        "Recovery needs a reboot to take effect.";
+    RecoveryApplyFailed => "Ono-Sendai-E1813", "recovery.apply_failed", Provider,
+        "A recovery action failed.";
+    RecoveryVerificationFailed => "Ono-Sendai-E1814", "recovery.verification_failed", Provider,
+        "Recovery verification did not hold.";
+    RecoveryCleanupBlocked => "Ono-Sendai-E1815", "recovery.cleanup_blocked", Safety,
+        "Removing this asset would take away recovery a retained plan still offers.";
+    RecoveryStoragePressure => "Ono-Sendai-E1816", "recovery.storage_pressure", Resource,
+        "Creating this asset would push storage below the configured floor.";
+    RecoveryAssetStale => "Ono-Sendai-E1817", "recovery.asset_stale", Conflict,
+        "The recovery asset no longer reflects the state that is about to change.";
+    RecoveryQuiesceFailed => "Ono-Sendai-E1818", "recovery.quiesce_failed", Provider,
+        "An application could not be quiesced for an application-consistent asset.";
+    RecoveryResumeFailed => "Ono-Sendai-E1819", "recovery.resume_failed", Provider,
+        "An application was quiesced and could not be resumed.";
+    RecoveryPlanIncomplete => "Ono-Sendai-E1820", "recovery.plan_incomplete", Safety,
+        "A recovery fact required before destructive recovery could not be established.";
+
+    // --- transaction, v0.6 §45: the two refusals that keep §27's word honest.
+    TransactionAtomicityUnavailable => "Ono-Sendai-E1901", "transaction.atomicity_unavailable", Provider,
+        "A transaction was requested from a provider that does not offer one.";
+    TransactionCrossProviderNotAtomic => "Ono-Sendai-E1902", "transaction.cross_provider_not_atomic", Provider,
+        "A change spanning several providers cannot be atomic.";
     // --- KUANG/11, spec §31.79: the K11 family of docs/contracts/kuang/errors.v1.yaml, folded into
     // the global model (ADR-0108). Numbering follows §31.79's families.
     KuangPackageInvalid => "Ono-Sendai-K11001", "package.invalid", Parse,

@@ -1,0 +1,23 @@
+[package]
+name = "ono-change-plan"
+description = "Plan construction, target freezing, drift revalidation, sealing and the persistent plan store of Ono-Sendai v0.6 (spec §4, §7, §36)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-value.workspace = true
+ono-change-core.workspace = true
+ono-provider-api.workspace = true
+jiff.workspace = true
+rusqlite.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,25 @@
+[package]
+name = "ono-change-impact"
+description = "Impact derivation and risk rules for Ono-Sendai v0.6 change plans, over the v0.4 spatial topology and the v0.5 evidence ledger (spec §9, §19)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-value.workspace = true
+ono-change-core.workspace = true
+ono-spatial-core.workspace = true
+ono-spatial-index.workspace = true
+ono-spatial-query.workspace = true
+ono-provider-api.workspace = true
+jiff.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+
+[lints]
+workspace = true

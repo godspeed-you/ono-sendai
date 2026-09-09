@@ -1,0 +1,79 @@
+# Canonical change VerificationResult schema. Source: v0.6 §23.3 (the field list), §23.2 (the
+# three classes) and §25.1 (the equivalence domains a recovery verification reports).
+#
+# §46.6 asks for this to be `ono.verification-result/1`. That name is v0.2 §31.36's, held by
+# `verify plugin`, which answers four entirely different questions about a package artifact.
+# ADR-0802 records the collision and the decision: the v0.6 record is registered as
+# `ono.change-verification/1`, every field §23.3 names is present, and nothing about the earlier
+# schema moves.
+#
+# §2.14 is what this record exists for: verification is separate from execution success. A command
+# that exited zero has proved that it exited zero. Whether the intended state exists is asked
+# here, against the world, afterwards — and §62.9 names exit-code verification as a failure mode.
+#
+# `status: unknown` is not a pass. §23.5 forbids infinite waiting and requires a timeout to
+# produce a stated outcome, and §2.4 forbids reading an unanswered check as an answered one.
+id: ono.change-verification/1
+name: ChangeVerificationResult
+summary: Whether one observable condition held after a change, and what was actually seen.
+identity: [plan_id, check_id]
+fields:
+  plan_id:
+    type: string
+    required: true
+    doc: The plan the check belongs to (§23.3).
+  check_id:
+    type: string
+    required: true
+    doc: The check's stable identity (§23.3).
+  class:
+    type: enum
+    required: true
+    values: [required, advisory, observational]
+    doc: >-
+      §23.2's classes. A failing `required` postcondition makes the plan FAILED; a failing
+      `advisory` one may make it DEGRADED; `observational` provides context and changes nothing.
+  subject:
+    type: string
+    required: true
+    doc: What the check is about — `nginx.service`, `listener :443`, `installed version`.
+  expression:
+    type: string
+    required: true
+    doc: The condition, as a person and a machine both read it.
+  status:
+    type: enum
+    required: true
+    values: [passed, failed, unknown, skipped]
+    doc: >-
+      §23.3's outcome. `unknown` means the check could not be answered — a timeout, an absent
+      source — and §23.5 forbids treating it as success.
+  observed:
+    type: value
+    nullable: true
+    doc: What was actually seen, or null where nothing could be observed.
+  expected:
+    type: value
+    nullable: true
+    doc: What the contract expected, where it stated a value.
+  evidence:
+    type: list<string>
+    required: true
+    doc: What the observation rests on, so a verification can be argued with rather than believed.
+  equivalence_domain:
+    type: enum
+    nullable: true
+    values: [persistent-state, runtime-state, external-side-effect]
+    doc: >-
+      For a recovery verification, which of §25.1's domains this result speaks about. §25.3
+      forbids a global claim, so a recovery result without a domain claims nothing.
+  detail:
+    type: string
+    nullable: true
+    doc: The sentence a person reads beside the result.
+  timestamp:
+    type: timestamp
+    required: true
+    doc: When it was observed (§23.3).
+default_view:
+  columns: [class, subject, status, observed]

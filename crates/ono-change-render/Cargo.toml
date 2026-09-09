@@ -1,0 +1,22 @@
+[package]
+name = "ono-change-render"
+description = "The plan, impact, protection, recovery and progress projections of Ono-Sendai v0.6 (spec §20, §21, Appendix E)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-value.workspace = true
+ono-change-core.workspace = true
+ono-render.workspace = true
+jiff.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+
+[lints]
+workspace = true

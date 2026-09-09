@@ -1,0 +1,21 @@
+[package]
+name = "ono-recovery-zfs"
+description = "The first-party ZFS recovery provider of Ono-Sendai v0.6 (spec §13, Appendix D.1-D.5)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-value.workspace = true
+ono-change-core.workspace = true
+jiff.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+
+[lints]
+workspace = true

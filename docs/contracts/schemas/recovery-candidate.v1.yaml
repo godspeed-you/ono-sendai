@@ -1,0 +1,92 @@
+# Canonical RecoveryCandidate schema. Source: v0.6 Appendix A.3 (the field list) and Appendix A.4
+# (candidate dominance).
+#
+# Appendix A.3 is explicit that *candidates are not yet assets*. A candidate says what a provider
+# could make, what it would cost and what it would leave out; nothing exists until PREPARE creates
+# it, which is how §2.1 stays true of a plan that discusses protection at length.
+#
+# Appendix A.4's preference order is why `scope_width` and `restore_destructiveness` are on the
+# record rather than computed at render time: preference is *not* "strongest snapshot wins". A
+# small configuration backup dominates a root-dataset rollback for one file, because its recovery
+# blast radius is smaller, and a comparison that cannot see the blast radius will get that
+# backwards.
+id: ono.recovery-candidate/1
+name: RecoveryCandidate
+summary: Protection a provider could create for one domain, and what it would and would not do.
+identity: [provider, domain, scope_object]
+fields:
+  provider:
+    type: string
+    required: true
+    doc: The recovery provider offering it.
+  domain:
+    type: enum
+    required: true
+    values:
+      [filesystem-persistent, block-storage-persistent, application-persistent, process-runtime,
+       kernel-runtime, network-runtime, remote-system, external-side-effect,
+       identity-security-state, provider-transaction-state, unknown]
+    doc: The mutation domain it would cover (Appendix A.1).
+  objective:
+    type: enum
+    required: true
+    values: [preserve-exact, restore-semantic, compensate, no-recovery-required, unknown]
+    doc: The recovery objective it would satisfy (Appendix A.2).
+  scope_object:
+    type: string
+    required: true
+    doc: The resolved persistence object it would capture (§11.2).
+  scope_kind:
+    type: string
+    required: true
+    doc: What kind of object that is — `zfs-dataset`, `btrfs-subvolume`, `file`.
+  scope_width:
+    type: int
+    required: true
+    doc: >-
+      How many objects the scope holds. Appendix A.4's second preference key: the smallest scope
+      that satisfies the objective wins, because it has the smallest recovery blast radius.
+  consistency:
+    type: enum
+    required: true
+    values:
+      [byte-consistent, filesystem-consistent, crash-consistent, application-consistent,
+       transaction-consistent, unknown]
+    doc: The consistency it would achieve (§11.3).
+  restore_method:
+    type: enum
+    required: true
+    values:
+      [provider-native-restore, selective-file-restore, clone-and-copy, subvolume-replacement,
+       dataset-rollback, offline-root-recovery, compensation]
+    doc: How the resulting asset would be used to restore (Appendix C.1).
+  restore_destructiveness:
+    type: int
+    required: true
+    doc: >-
+      How much unrelated state that method risks, least first. Appendix A.4's fourth preference
+      key, and the reason a rollback does not beat a file copy merely by being bigger.
+  estimated_size:
+    type: bytesize
+    nullable: true
+    doc: What it would occupy, where the provider can estimate it. Null is unknown, not zero (§38.2).
+  creation_requirements:
+    type: list<string>
+    required: true
+    doc: What creating it needs — a capability, free space, a quiesce window (Appendix A.3).
+  restore_requirements:
+    type: list<string>
+    required: true
+    doc: >-
+      What restoring from it needs — a reboot, an unmount, a privilege stronger than the mutation
+      itself required. §43.4 requires this to be discovered before protection is advertised.
+  exclusions:
+    type: list<record>
+    required: true
+    doc: What it would not cover, each with a reason (Appendix A.3).
+  detail:
+    type: string
+    required: true
+    doc: The sentence the plan view shows.
+default_view:
+  columns: [provider, domain, scope_object, consistency, restore_method]

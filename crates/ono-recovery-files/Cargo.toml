@@ -1,0 +1,22 @@
+[package]
+name = "ono-recovery-files"
+description = "The first-party file and configuration recovery provider of Ono-Sendai v0.6 (spec §15)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-value.workspace = true
+ono-change-core.workspace = true
+jiff.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+
+[lints]
+workspace = true

@@ -1613,6 +1613,98 @@ dependencies = [
 ]
 
 [[package]]
+name = "ono-change-core"
+version = "0.5.0"
+dependencies = [
+ "jiff",
+ "ono-core",
+ "ono-provider-api",
+ "ono-spatial-core",
+ "ono-testkit",
+ "ono-value",
+ "serde_yaml_ng",
+ "sha2 0.11.0",
+]
+
+[[package]]
+name = "ono-change-executor"
+version = "0.5.0"
+dependencies = [
+ "jiff",
+ "ono-change-core",
+ "ono-change-plan",
+ "ono-change-protection",
+ "ono-core",
+ "ono-temporal-core",
+ "ono-testkit",
+ "ono-value",
+]
+
+[[package]]
+name = "ono-change-impact"
+version = "0.5.0"
+dependencies = [
+ "jiff",
+ "ono-change-core",
+ "ono-core",
+ "ono-provider-api",
+ "ono-spatial-core",
+ "ono-spatial-index",
+ "ono-spatial-query",
+ "ono-testkit",
+ "ono-value",
+]
+
+[[package]]
+name = "ono-change-plan"
+version = "0.5.0"
+dependencies = [
+ "jiff",
+ "ono-change-core",
+ "ono-core",
+ "ono-provider-api",
+ "ono-testkit",
+ "ono-value",
+ "rusqlite",
+]
+
+[[package]]
+name = "ono-change-protection"
+version = "0.5.0"
+dependencies = [
+ "jiff",
+ "ono-change-core",
+ "ono-core",
+ "ono-provider-linux",
+ "ono-testkit",
+ "ono-value",
+]
+
+[[package]]
+name = "ono-change-recovery"
+version = "0.5.0"
+dependencies = [
+ "jiff",
+ "ono-change-core",
+ "ono-change-protection",
+ "ono-core",
+ "ono-testkit",
+ "ono-value",
+]
+
+[[package]]
+name = "ono-change-render"
+version = "0.5.0"
+dependencies = [
+ "jiff",
+ "ono-change-core",
+ "ono-core",
+ "ono-render",
+ "ono-testkit",
+ "ono-value",
+]
+
+[[package]]
 name = "ono-cli"
 version = "0.5.0"
 dependencies = [
@@ -2003,6 +2095,40 @@ dependencies = [
  "ono-value",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "ono-recovery-btrfs"
+version = "0.5.0"
+dependencies = [
+ "jiff",
+ "ono-change-core",
+ "ono-core",
+ "ono-testkit",
+ "ono-value",
+]
+
+[[package]]
+name = "ono-recovery-files"
+version = "0.5.0"
+dependencies = [
+ "jiff",
+ "ono-change-core",
+ "ono-core",
+ "ono-testkit",
+ "ono-value",
+ "sha2 0.11.0",
+]
+
+[[package]]
+name = "ono-recovery-zfs"
+version = "0.5.0"
+dependencies = [
+ "jiff",
+ "ono-change-core",
+ "ono-core",
+ "ono-testkit",
+ "ono-value",
 ]
 
 [[package]]

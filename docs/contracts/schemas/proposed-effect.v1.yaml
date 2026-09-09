@@ -1,0 +1,82 @@
+# Canonical ProposedEffect schema. Source: v0.6 §8.2 (the field list) and §8.1 (the four
+# confidence classes).
+#
+# There is no probability field, and §8.3 is why: v0.6 MUST NOT invent percentages such as
+# "82% likely" unless a provider supplies a documented statistical model with provenance. What a
+# provider has instead is `confidence`, a member of a closed four-element set, and `explanation`,
+# a sentence a person reads.
+#
+# `confidence: unknown` is a first-class answer. §1.3's rule for this generation is "do not invent
+# the future or recoverability", and §2.4 forbids promoting unknown to expected on the way to a
+# renderer.
+id: ono.proposed-effect/1
+name: ProposedEffect
+summary: One thing Ono expects an action may do, and how strongly it can say so.
+identity: [id]
+fields:
+  id:
+    type: string
+    required: true
+    doc: The effect's stable identity (§8.2).
+  action_id:
+    type: string
+    required: true
+    doc: The action this effect belongs to (§8.2).
+  object:
+    type: string
+    nullable: true
+    doc: The object the effect lands on, or null where the effect has no single object.
+  domain:
+    type: enum
+    required: true
+    values:
+      [filesystem-persistent, block-storage-persistent, application-persistent, process-runtime,
+       kernel-runtime, network-runtime, remote-system, external-side-effect,
+       identity-security-state, provider-transaction-state, unknown]
+    doc: >-
+      Appendix A.1's mutation domains. Protection is computed per domain, which is what makes
+      "filesystem protected, process runtime unprotected" a statable answer (§10.3).
+  kind:
+    type: enum
+    required: true
+    values: [create, modify, remove, replace, interrupt, emit, unknown]
+    doc: What the effect does to its object. `emit` is inherently irreversible (§35.1).
+  confidence:
+    type: enum
+    required: true
+    values: [guaranteed, expected, possible, unknown]
+    doc: >-
+      §8.1's classes. `guaranteed` follows from the provider contract and is scoped to that
+      provider's observable domain; `unknown` means Ono lacks a justified model and stays visible.
+  before:
+    type: value
+    nullable: true
+    doc: The value the object holds now, where it is known (§8.2).
+  proposed:
+    type: value
+    nullable: true
+    doc: The value proposed for it, where one is known (§8.2).
+  evidence:
+    type: list<string>
+    required: true
+    doc: The provider contracts cited in support of the claim (§8.2).
+  explanation:
+    type: string
+    required: true
+    doc: >-
+      The sentence a person reads. §20.1's fifth question — what does Ono not know? — is answered
+      out of these, so an unknown effect with nothing to say is a gap where a reason belongs.
+  irreversible:
+    type: bool
+    required: true
+    doc: >-
+      Whether no recovery asset can undo this effect (§2.13). A protected filesystem does not
+      hide an irreversible network call or process signal.
+  compensation:
+    type: string
+    nullable: true
+    doc: >-
+      A declared inverse action that restores an acceptable semantic state (§27.4). It is
+      compensation, not rollback, and §27.4 forbids the second word for it.
+default_view:
+  columns: [action_id, domain, kind, confidence, explanation]

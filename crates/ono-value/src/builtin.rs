@@ -29,47 +29,32 @@ use crate::schema::{FieldDef, FieldType, Schema, SchemaId, SchemaRegistry, Unit}
 const CONTRACTS: &[&str] = &[
     include_str!(concat!(env!("OUT_DIR"), "/schemas/action-event.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/action-result.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/assistant.v1.json")),
     include_str!(concat!(
         env!("OUT_DIR"),
         "/schemas/assistant-action.v1.json"
     )),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/assistant-turn.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/assistant.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/block-device.v1.json")),
     include_str!(concat!(
         env!("OUT_DIR"),
         "/schemas/capability-grant.v1.json"
     )),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/evidence.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/finding.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/model-provider.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/plugin.v1.json")),
-    include_str!(concat!(
-        env!("OUT_DIR"),
-        "/schemas/plugin-audit-event.v1.json"
-    )),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/permission.v1.json")),
-    include_str!(concat!(
-        env!("OUT_DIR"),
-        "/schemas/plugin-inspection.v1.json"
-    )),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/plugin-package.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/plugin-runtime.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/recommendation.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/recorder-status.v1.json")),
-    include_str!(concat!(
-        env!("OUT_DIR"),
-        "/schemas/verification-result.v1.json"
-    )),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/block-device.v1.json")),
     include_str!(concat!(
         env!("OUT_DIR"),
         "/schemas/causal-explanation.v1.json"
     )),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/causal-link.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/cgroup.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/change-plan.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/change-summary.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/change-verification.v1.json"
+    )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/client-key.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/command.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/commit.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/change-summary.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/config-setting.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/container-event.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/container.v1.json")),
@@ -79,9 +64,11 @@ const CONTRACTS: &[&str] = &[
     include_str!(concat!(env!("OUT_DIR"), "/schemas/endpoint.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/env-var.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/error.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/evidence.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/file-event.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/file.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/filesystem.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/finding.v1.json")),
     include_str!(concat!(
         env!("OUT_DIR"),
         "/schemas/git-status-entry.v1.json"
@@ -89,14 +76,15 @@ const CONTRACTS: &[&str] = &[
     include_str!(concat!(env!("OUT_DIR"), "/schemas/graph-edge.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/graph-node.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/graph.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/host-key.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/client-key.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/group-event.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/group.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/host.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/hidden-summary.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/host-event.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/host-key.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/host.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/http-exchange.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/image.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/impact-graph.v1.json")),
     include_str!(concat!(
         env!("OUT_DIR"),
         "/schemas/interface-address.v1.json"
@@ -105,35 +93,65 @@ const CONTRACTS: &[&str] = &[
     include_str!(concat!(env!("OUT_DIR"), "/schemas/interface.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/job.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/journal-event.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/landmark.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/link-event.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/link-place.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/link.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/mount-event.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/landmark.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/log-record.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/hidden-summary.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/map-cluster.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/map-edge.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/map-node.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/model-provider.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/mount-boundary.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/mount-event.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/mount.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/namespace.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/navigation-step.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/neighbor.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/neighborhood.v1.json")),
     include_str!(concat!(
         env!("OUT_DIR"),
         "/schemas/neighborhood-group.v1.json"
     )),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/mount-boundary.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/neighborhood.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/open-file.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/place-view.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/probe-result.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/package.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/package-source.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/package.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/permission.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/persistence-domain.v1.json"
+    )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/place-view.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/plan-action.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/plugin-audit-event.v1.json"
+    )),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/plugin-inspection.v1.json"
+    )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/plugin-package.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/plugin-runtime.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/plugin.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/probe-result.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/process-detail.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/process-event.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/process.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/proposed-effect.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/protection-coverage.v1.json"
+    )),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/provider.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/recommendation.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/recorder-status.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/recovery-asset.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/recovery-candidate.v1.json"
+    )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/recovery-plan.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/route-event.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/route.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/service-event.v1.json")),
@@ -141,12 +159,12 @@ const CONTRACTS: &[&str] = &[
     include_str!(concat!(env!("OUT_DIR"), "/schemas/session.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/socket-event.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/socket.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/spatial-change.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/spatial-map.v1.json")),
     include_str!(concat!(
         env!("OUT_DIR"),
         "/schemas/spatial-neighbor.v1.json"
     )),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/spatial-change.v1.json")),
-    include_str!(concat!(env!("OUT_DIR"), "/schemas/spatial-map.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/spatial-place.v1.json")),
     include_str!(concat!(
         env!("OUT_DIR"),
@@ -170,11 +188,11 @@ const CONTRACTS: &[&str] = &[
     include_str!(concat!(env!("OUT_DIR"), "/schemas/temporal-gap.v1.json")),
     include_str!(concat!(
         env!("OUT_DIR"),
-        "/schemas/temporal-landmark.v1.json"
+        "/schemas/temporal-history.v1.json"
     )),
     include_str!(concat!(
         env!("OUT_DIR"),
-        "/schemas/temporal-history.v1.json"
+        "/schemas/temporal-landmark.v1.json"
     )),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/temporal-source.v1.json")),
     include_str!(concat!(
@@ -183,6 +201,10 @@ const CONTRACTS: &[&str] = &[
     )),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/user-event.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/user.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/verification-result.v1.json"
+    )),
 ];
 
 /// The schemas every provider and command can rely on.

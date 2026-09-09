@@ -1,0 +1,149 @@
+# Canonical RecoveryAsset schema. Source: v0.6 §11.1 (the field list), §11.2 (scope must be
+# concrete), §11.3 (the consistency classes), §11.4 (validation) and §11.5 (a snapshot is not a
+# backup).
+#
+# `scope` is a record and not a path, because §11.2 requires a path to be mapped to its containing
+# persistence domain *before* protection is claimed. §13.4 is the failure this prevents: a
+# snapshot of `rpool/ROOT/debian` does not protect `/data/customer.db` when `/data` is
+# `tank/data`, however the paths nest.
+#
+# `shares_failure_domain` exists so a renderer never has to remember §11.5. A copy-on-write
+# snapshot lives on the storage it protects; if the pool is lost, so is the recovery point. That
+# is a fact about the mechanism, so it travels with the asset.
+id: ono.recovery-asset/1
+name: RecoveryAsset
+summary: One concrete resource that can contribute to restoring state, and exactly what it holds.
+identity: [id]
+fields:
+  id:
+    type: string
+    required: true
+    doc: The asset's stable identity (§11.1).
+  provider:
+    type: string
+    required: true
+    doc: The recovery provider that owns it — `ono.recovery.zfs`, `ono.recovery.btrfs`, `ono.recovery.file-copy` (§3.7).
+  type:
+    type: enum
+    required: true
+    values:
+      [zfs-snapshot, btrfs-snapshot, lvm-snapshot, file-archive, configuration-backup,
+       vm-snapshot, container-checkpoint, database-checkpoint, transaction-savepoint,
+       timed-reversion, package-recovery-metadata]
+    doc: The mechanism (§3.6, §16).
+  reference:
+    type: string
+    required: true
+    doc: >-
+      The provider-native reference — `rpool/ROOT/debian@ono-a82f`, a subvolume path, a store
+      path, a savepoint name. Sanitised at creation (§43.6).
+  host:
+    type: string
+    required: true
+    doc: The host the asset lives on (§11.1, §29.2).
+  scope:
+    type: record
+    required: true
+    doc: >-
+      What it protects, concretely (§11.2): the resolved persistence object, its kind, and the
+      objects it actually covers. Membership is exact; a path prefix is not coverage (§13.4).
+  created_at:
+    type: timestamp
+    required: true
+    doc: When it was created (§11.1).
+  source_plan:
+    type: string
+    nullable: true
+    doc: The plan that asked for it, or null for an asset that predates any plan (§11.1).
+  state:
+    type: enum
+    required: true
+    values: [proposed, creating, ready, invalid, expired, removed, failed]
+    doc: >-
+      §11.1's lifecycle. `proposed` is what a plan carries before apply, because §2.1 makes
+      planning side-effect free; only a validation that passed reaches `ready` (§11.4).
+  consistency:
+    type: enum
+    required: true
+    values:
+      [byte-consistent, filesystem-consistent, crash-consistent, application-consistent,
+       transaction-consistent, unknown]
+    doc: >-
+      §11.3's classes. §39.2 forbids Ono labelling a filesystem snapshot of a database
+      `application-consistent` unless a database-aware provider asserts it.
+  restore_method:
+    type: enum
+    required: true
+    values:
+      [provider-native-restore, selective-file-restore, clone-and-copy, subvolume-replacement,
+       dataset-rollback, offline-root-recovery, compensation]
+    doc: >-
+      How the asset would actually be used (§13.5, §14.4). Appendix C.1 orders these
+      least-destructive first and requires the least one that satisfies the goal.
+  validation:
+    type: record
+    nullable: true
+    doc: >-
+      §11.4's checks — existence, identity, scope, restore availability, permissions — and which
+      of them passed. Null for an asset nothing has validated, which is not the same as one that
+      failed.
+  retention:
+    type: duration
+    required: true
+    doc: How long the asset is kept after successful verification (§37.1). Default twenty-four hours.
+  expires_at:
+    type: timestamp
+    nullable: true
+    doc: When retention ends, where it is known (§37.5).
+  held:
+    type: bool
+    required: true
+    doc: >-
+      Whether an explicit hold prevents automatic removal. §37.2 holds the assets of a failed,
+      degraded or recovery-failed plan out of ordinary success retention.
+  initial_size:
+    type: bytesize
+    nullable: true
+    doc: The space the asset occupied when it was created, or null where it is not measurable (§38.2).
+  retained_size:
+    type: bytesize
+    nullable: true
+    doc: The space it occupies now, or null. §38.2 forbids displaying "free" for a copy-on-write snapshot.
+  size_estimated:
+    type: bool
+    required: true
+    doc: >-
+      Whether the size figures are estimated rather than exact. §37.5 requires the label wherever
+      filesystem accounting is not exact.
+  requires_reboot:
+    type: bool
+    required: true
+    doc: Whether restoring from this asset needs a reboot (§13.7, §14.6).
+  requires_offline:
+    type: bool
+    required: true
+    doc: Whether restoring from it needs the filesystem unmounted or the system offline (§13.7).
+  shares_failure_domain:
+    type: bool
+    required: true
+    doc: >-
+      Whether the asset lives on the storage it protects. §11.5 and §14.7 require a local
+      copy-on-write snapshot to be described as a recovery point, not a backup.
+  dependencies:
+    type: list<string>
+    required: true
+    doc: Other assets this one needs to be usable (§11.1).
+  exclusions:
+    type: list<record>
+    required: true
+    doc: >-
+      What the asset explicitly does not protect, each with a reason (§11.1). §13.8's rendering is
+      built from these.
+  captured_state:
+    type: string
+    nullable: true
+    doc: >-
+      A fingerprint of the state the asset captured (§18.3). Null means Ono cannot say the asset
+      is a just-before-change recovery point, and will not pretend it is.
+default_view:
+  columns: [id, type, source_plan, state, consistency, expires_at]

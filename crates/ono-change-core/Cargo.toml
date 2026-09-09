@@ -1,0 +1,24 @@
+[package]
+name = "ono-change-core"
+description = "The canonical prospective-change vocabulary of Ono-Sendai: plan, action, effect, impact, protection, risk, recovery asset, recovery plan and verification types (spec v0.6 §3, §50)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-value.workspace = true
+ono-provider-api.workspace = true
+ono-spatial-core.workspace = true
+jiff.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+serde_yaml_ng.workspace = true
+
+[lints]
+workspace = true

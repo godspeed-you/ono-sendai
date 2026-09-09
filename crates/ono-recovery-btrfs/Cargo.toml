@@ -1,0 +1,21 @@
+[package]
+name = "ono-recovery-btrfs"
+description = "The first-party Btrfs recovery provider of Ono-Sendai v0.6 (spec §14, Appendix D.6-D.9)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-value.workspace = true
+ono-change-core.workspace = true
+jiff.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+
+[lints]
+workspace = true

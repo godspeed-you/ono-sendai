@@ -1,0 +1,22 @@
+[package]
+name = "ono-change-protection"
+description = "Persistence-domain resolution, recovery provider registry, the protection coverage algorithm, policy, freshness, cost and retention of Ono-Sendai v0.6 (spec §10, §17, §18, §37, §38, Appendix A, Appendix B)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-value.workspace = true
+ono-change-core.workspace = true
+ono-provider-linux.workspace = true
+jiff.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,94 @@
+# Canonical PlanAction schema. Source: v0.6 §46.2 (the field list), §3.3 (the five roles) and
+# §41.1 (the idempotency classes).
+#
+# `execution` is a record rather than a string, and that is the whole of §2.17: *provider
+# operations MUST be structured execution plans, not interpolated shell command strings*. It
+# carries a method, a provider or program, and an argument vector — never a command line. §43.6
+# follows from the same shape: a snapshot name containing shell syntax is one argument.
+#
+# `status` includes `unknown`, and Appendix F.2 is why: for a remote or non-idempotent action
+# whose outcome cannot be established, the state MUST be unknown rather than guessed, and recovery
+# planning treats it as an uncertainty boundary.
+id: ono.plan-action/1
+name: PlanAction
+summary: One semantically meaningful operation in a plan, with how it runs and what it may do.
+identity: [id]
+fields:
+  id:
+    type: string
+    required: true
+    doc: The action's stable identity within its plan (§3.3).
+  ordinal:
+    type: int
+    required: true
+    doc: Its position in the plan, which is also the number the plan view shows beside it (§20.2).
+  role:
+    type: enum
+    required: true
+    values: [prepare, mutate, verify, recover, cleanup]
+    doc: >-
+      §3.3's roles. `prepare` runs immediately before the first mutation (§4.5) and its failure
+      means no mutating action ran at all (§2.3).
+  summary:
+    type: string
+    required: true
+    doc: The line a person reads in the plan view (§20.2, Appendix E.2).
+  target:
+    type: string
+    nullable: true
+    doc: The frozen target this action acts on (§7.1). Null where the action acts on the plan rather than an object.
+  execution:
+    type: record
+    required: true
+    doc: >-
+      How the action runs: a `method` of `provider-action`, `program`, `recovery-operation` or
+      `opaque`, the provider or resolved program, and typed arguments or an argument vector.
+      §12.3 forbids a generated shell string anywhere in it.
+  provider:
+    type: string
+    required: true
+    doc: The provider or program that carries the action out, for the plan's provider bindings (§4.4).
+  depends_on:
+    type: list<string>
+    required: true
+    doc: The actions this one runs after (§3.2's directed acyclic graph).
+  preconditions:
+    type: list<record>
+    required: true
+    doc: >-
+      The facts that must still hold, each with its kind, its expected value and whether drift in
+      it is material (§7.2, §7.4).
+  idempotency:
+    type: enum
+    required: true
+    values: [idempotent, retry-safe-with-token, non-idempotent, unknown]
+    doc: >-
+      §41.1's class. §41.2 forbids blindly rerunning `unknown` or `non-idempotent` after a crash,
+      so `unknown` is not a soft `idempotent`.
+  proposed_effects:
+    type: list<ono.proposed-effect/1>
+    required: true
+    doc: What the action may do, at §8.1's confidence classes.
+  recovery_semantics:
+    type: string
+    nullable: true
+    doc: >-
+      What the contract says about undoing this action, or null — which §6.1 calls "explicit lack
+      thereof" and which is shown as such rather than inferred.
+  requires_privilege:
+    type: bool
+    required: true
+    doc: Whether the action needs elevated privilege, which §43.3 requires the plan to show before apply.
+  verification:
+    type: list<string>
+    nullable: true
+    doc: The verification checks that speak to this action, by identity (§23.1).
+  status:
+    type: enum
+    required: true
+    values: [pending, running, succeeded, failed, skipped, unknown]
+    doc: >-
+      What is known about the outcome. `unknown` is Appendix F.2's uncertainty boundary — not a
+      failure, not a success — and §41.2 treats it as a reason not to retry.
+default_view:
+  columns: [ordinal, role, summary, status]
