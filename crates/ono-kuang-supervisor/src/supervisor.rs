@@ -4170,7 +4170,12 @@ impl Actor {
                 .unwrap_or_default();
             if !uses.is_empty()
                 && let Err(error) = self
-                    .broker_check(capability, method::CHANGE_PLAN_READ, &uses, Some(target.clone()))
+                    .broker_check(
+                        capability,
+                        method::CHANGE_PLAN_READ,
+                        &uses,
+                        Some(target.clone()),
+                    )
                     .await
             {
                 self.reply_err(seq, error.into()).await;

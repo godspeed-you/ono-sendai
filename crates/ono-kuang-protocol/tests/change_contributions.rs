@@ -99,6 +99,52 @@ fn should_mark_the_two_application_scopes_advisory_when_scope_keys_are_read() {
 }
 
 #[test]
+fn should_mark_the_unenforceable_change_scopes_advisory_when_scope_keys_are_read() {
+    // The same rule, applied where it is least comfortable. The call that spends
+    // `change.plan.contribute` or `verification.observe` names a plan or a check, and the target
+    // schema behind it is a property of the plan the host resolved; `change.action.execute` has
+    // no host call at all — its authority is checked when a contributed command is invoked, and
+    // there is no plan or schema value at that moment to compare. Calling any of those a
+    // boundary would be spec §31.80's last failure: "capability scope is broader in
+    // implementation than UI suggests."
+    for (family, keys) in [
+        (Capability::ChangePlanContribute, &["schemas"][..]),
+        (Capability::ChangeActionExecute, &["schemas", "plans"][..]),
+        (Capability::VerificationObserve, &["schemas"][..]),
+    ] {
+        for name in keys {
+            let key = family
+                .scope_keys()
+                .iter()
+                .find(|key| key.name == *name)
+                .expect("the declared key");
+            assert_eq!(
+                key.enforcement,
+                Enforcement::Advisory,
+                "`{}.{name}` is recorded, and the host cannot prove the call stayed inside it",
+                family.id()
+            );
+        }
+    }
+}
+
+#[test]
+fn should_enforce_the_plan_read_scopes_at_the_broker_when_scope_keys_are_read() {
+    // The contrast that keeps the previous test from being an excuse: reading a plan is
+    // checkable on both keys. The plan id is a call parameter, and the host holds the plan
+    // before it discloses it, so the schemas of its frozen targets (§4.3) are compared while
+    // there is still something to refuse.
+    for key in Capability::ChangePlanRead.scope_keys() {
+        assert_eq!(
+            key.enforcement,
+            Enforcement::Broker,
+            "`change.plan.read.{}` is a value the host compares before disclosure",
+            key.name
+        );
+    }
+}
+
+#[test]
 fn should_enforce_every_recovery_domain_and_scope_key_at_the_broker_when_scope_keys_are_read() {
     // The other side of the same rule: a domain kind and a resolved persistence object both
     // arrive in the call's parameters, so both are checked before the operation happens.

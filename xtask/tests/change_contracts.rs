@@ -987,3 +987,39 @@ fn should_reject_destructive_tests_that_are_not_forbidden_on_production_filesyst
         "production host filesystems MUST never be used for test rollback",
     );
 }
+
+// --- §44's privacy rules ------------------------------------------------------------------------
+
+#[test]
+fn should_reject_a_privacy_policy_that_states_fewer_rules_than_section_forty_four_does() {
+    // §44.6 is the last rule of the file, so folding its keys into the rule above it leaves five
+    // entries where §44 states six — the shape a rule that fell out of the list really has.
+    let tree = copied();
+    let policies = "docs/contracts/recovery/policies.yaml";
+    edit(
+        &tree,
+        policies,
+        "  - id: deletion-is-real\n    rule: \"§44.6",
+        "    deletion_rule: \"§44.6",
+    );
+    edit(
+        &tree,
+        policies,
+        "    mechanism: >-\n      `cleanup` removes what the provider owns",
+        "    deletion_mechanism: >-\n      `cleanup` removes what the provider owns",
+    );
+    assert_refuses(&tree, "`privacy` lists 5 rules; §44 states six");
+}
+
+#[test]
+fn should_reject_a_privacy_rule_that_names_no_mechanism() {
+    let tree = broken(
+        "docs/contracts/recovery/policies.yaml",
+        "  - id: store-is-private\n    rule: \"§44.3: local recovery stores MUST use restrictive permissions.\"\n    mechanism: >-",
+        "  - id: store-is-private\n    rule: \"§44.3: local recovery stores MUST use restrictive permissions.\"\n    mechanism_notes: >-",
+    );
+    assert_refuses(
+        &tree,
+        "privacy rule `store-is-private` states no `mechanism`",
+    );
+}

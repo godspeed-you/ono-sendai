@@ -1952,6 +1952,11 @@ impl ono_kuang_supervisor::HostServices for FakeHost {
             "id": "plan-1",
             "state": "sealed",
             "risk": "high",
+            // §4.3's frozen targets, which is where the `schemas` scope finds the values it
+            // compares before the plan is disclosed.
+            "targets": [
+                {"schema": "dev.example.echo.place/1", "identity": "place-1", "label": "one"},
+            ],
         }))
     }
 
@@ -3782,6 +3787,40 @@ async fn should_refuse_to_read_a_plan_outside_the_granted_plan_scope() {
     let (_, result) = invocation.collect().await;
     let error = result.error.expect("a structured refusal");
     assert_eq!(error.name, "capability.scope_violation");
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_a_plan_whose_targets_are_outside_the_granted_schemas() {
+    // The `schemas` scope of `change.plan.read` is a boundary because the host holds the plan
+    // before it discloses it: every `targets[].schema` of §4.3 is compared while there is still
+    // something to refuse. A plan reaching outside the grant is a scope violation rather than a
+    // plan handed over with its inconvenient targets quietly removed.
+    let mut scope = JsonMap::new();
+    scope.insert("schemas".to_owned(), json!(["dev.example.echo.zone/1"]));
+    let plugin = TestHost::new(PLUGIN, &manifest_with_change())
+        .args(&["--change-provider"])
+        .host(change_host())
+        .grant_scoped(Capability::ChangePlanRead, scope)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.plan-read",
+            args(&[("plan", json!("plan-1"))]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    let error = result.error.expect("a structured refusal");
+    assert_eq!(error.name, "capability.scope_violation");
+    assert!(
+        strings(&events).is_empty(),
+        "nothing about the plan reached the package before it was refused"
+    );
     plugin
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
         .await;
