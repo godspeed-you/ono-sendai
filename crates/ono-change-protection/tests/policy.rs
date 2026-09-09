@@ -11,10 +11,10 @@ use std::path::Path;
 use std::time::Duration;
 
 use ono_change_core::{
-    ConsistencyClass, EffectDomain, EffectKind, PlanId, ProtectionLevel, ProtectionMode,
-    RecoveryCost, RecoveryObjective, RestoreMethod, RetentionPolicy,
+    ConsistencyClass, EffectDomain, PlanId, ProtectionLevel, ProtectionMode, RecoveryCost,
+    RecoveryObjective, RestoreMethod, RetentionPolicy,
 };
-use ono_change_protection::coverage::{CoverageRequest, MutationDomain, analyse};
+use ono_change_protection::coverage::{CoverageRequest, analyse};
 use ono_change_protection::policy::{
     CostLimits, FreeSpaceFloor, LimitBreach, Profile, ProtectionPolicy, effective_mode, level_rank,
 };

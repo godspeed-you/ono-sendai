@@ -357,10 +357,14 @@ impl ChangeSettings {
     /// The policy a plan runs under, given what the plan itself asked for (§17, §53).
     #[must_use]
     pub fn policy_for(&self, requested: Option<ProtectionMode>) -> ProtectionPolicy {
-        ProtectionPolicy::of(self.protection_mode_for(requested))
+        let mut policy = ProtectionPolicy::of(self.protection_mode_for(requested))
             .requiring(ProtectionLevel::Protected)
             .retaining(self.retention_policy())
-            .limited_by(self.limits())
+            .limited_by(self.limits());
+        if let Some(asked) = requested {
+            policy = policy.asked_for(asked);
+        }
+        policy
     }
 
     /// The settings as the key/value pairs §53 prints, for `get settings`.

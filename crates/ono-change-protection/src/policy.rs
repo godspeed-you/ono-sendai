@@ -188,6 +188,31 @@ impl Default for CostLimits {
 }
 
 impl CostLimits {
+    /// §38.3's five bounds, in the order the specification lists them.
+    pub const KEYS: &'static [&'static str] = &[
+        "estimated-size",
+        "target-scope",
+        "quiesce-duration",
+        "snapshot-count",
+        "filesystem-free-space-floor",
+    ];
+
+    /// Whether one of [`CostLimits::KEYS`] is bound here, or `None` for a name that is not one.
+    ///
+    /// The free-space floor is always bound — Appendix D.3 makes falling below it a refusal rather
+    /// than a preference, so [`FreeSpaceFloor`] has no absent form, only a zero one.
+    #[must_use]
+    pub fn bounds(&self, key: &str) -> Option<bool> {
+        match key {
+            "estimated-size" => Some(self.max_estimated_size.is_some()),
+            "target-scope" => Some(self.max_scope_objects.is_some()),
+            "quiesce-duration" => Some(self.max_quiesce.is_some()),
+            "snapshot-count" => Some(self.max_snapshot_count.is_some()),
+            "filesystem-free-space-floor" => Some(true),
+            _ => None,
+        }
+    }
+
     /// Limits that bound nothing, for a caller that states every bound itself.
     #[must_use]
     pub const fn unbounded() -> Self {
@@ -466,6 +491,7 @@ impl Profile {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProtectionPolicy {
     mode: ProtectionMode,
+    requested: Option<ProtectionMode>,
     required_level: ProtectionLevel,
     retention: RetentionPolicy,
     limits: CostLimits,
@@ -479,6 +505,7 @@ impl Default for ProtectionPolicy {
     fn default() -> Self {
         Self {
             mode: ProtectionMode::Prefer,
+            requested: None,
             required_level: ProtectionLevel::Protected,
             retention: RetentionPolicy::default(),
             limits: CostLimits::default(),
@@ -497,6 +524,20 @@ impl ProtectionPolicy {
             mode,
             ..Self::default()
         }
+    }
+
+    /// Records what the plan itself asked for, so a narrowing is never silent (§17.3, §53).
+    ///
+    /// §17.2's four modes are ordered by [`mode_rank`], and that order is total while the
+    /// underlying properties are not: `require` refuses on shortfall and `maximize` attempts every
+    /// mechanism that fits, and neither implies the other. So a plan sealed with
+    /// `--protection maximize` under a `require` configuration runs at `require` — the failing-
+    /// closed answer — and loses the breadth it asked for. [`ProtectionPolicy::narrowed`] is what
+    /// keeps that visible instead of leaving an operator to notice it from the coverage matrix.
+    #[must_use]
+    pub const fn asked_for(mut self, requested: ProtectionMode) -> Self {
+        self.requested = Some(requested);
+        self
     }
 
     /// The protection class `require` holds the plan to (§17.2).
@@ -543,6 +584,28 @@ impl ProtectionPolicy {
     #[must_use]
     pub const fn mode(&self) -> ProtectionMode {
         self.mode
+    }
+
+    /// What the plan asked for, where the configuration answered with something else (§17.3, §53).
+    ///
+    /// `None` when the plan asked for nothing, or when it got what it asked for. `Some(requested)`
+    /// is a narrowing an operator is told about: §53 forbids configuration weakening an explicit
+    /// plan requirement, and the only reason this is not that is that the two modes are
+    /// incomparable rather than ordered — so it is reported rather than refused.
+    #[must_use]
+    pub fn narrowed(&self) -> Option<ProtectionMode> {
+        self.requested.filter(|requested| *requested != self.mode)
+    }
+
+    /// The sentence a narrowing is shown as (§17.3).
+    #[must_use]
+    pub fn narrowing_note(&self) -> Option<String> {
+        self.narrowed().map(|requested| {
+            format!(
+                "the plan asked for `{requested}` protection and the configuration answered                  `{}`; the two are not ordered, and the mode that refuses on a shortfall was                  chosen (§17.2, §17.3)",
+                self.mode
+            )
+        })
     }
 
     /// The protection class a `require` plan must reach (§17.2).

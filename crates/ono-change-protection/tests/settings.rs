@@ -140,6 +140,47 @@ fn should_keep_an_explicit_plan_requirement_when_configuration_asks_for_less() {
 }
 
 #[test]
+fn should_say_so_when_configuration_answers_a_plan_with_a_mode_it_did_not_ask_for() {
+    // §17.2's four modes are ordered so that `require` — the one that refuses on a shortfall — is
+    // the strictest. `maximize` is not weaker; it is a different property, and a plan that asked
+    // for breadth and got refusal instead lost something. §53 permits the choice and forbids it
+    // being silent.
+    let lookup = source(&[("change.default_protection", Value::string("require"))]);
+    let settings = ChangeSettings::from_settings(&lookup).expect("require is a mode");
+    let policy = settings.policy_for(Some(ProtectionMode::Maximize));
+    assert_eq!(policy.mode(), ProtectionMode::Require);
+    assert_eq!(
+        policy.narrowed(),
+        Some(ProtectionMode::Maximize),
+        "§17.3: the plan asked for `maximize` and this is the only record that it did"
+    );
+    assert!(
+        policy
+            .narrowing_note()
+            .is_some_and(|note| note.contains("maximize") && note.contains("require")),
+        "an operator is told which mode was asked for and which one runs"
+    );
+}
+
+#[test]
+fn should_report_no_narrowing_when_the_plan_got_the_mode_it_asked_for() {
+    let lookup = source(&[("change.default_protection", Value::string("prefer"))]);
+    let settings = ChangeSettings::from_settings(&lookup).expect("prefer is a mode");
+    assert_eq!(
+        settings
+            .policy_for(Some(ProtectionMode::Require))
+            .narrowed(),
+        None,
+        "there is nothing to report when the requirement survived"
+    );
+    assert_eq!(
+        settings.policy_for(None).narrowed(),
+        None,
+        "a plan that asked for nothing was not narrowed"
+    );
+}
+
+#[test]
 fn should_take_the_configured_mode_when_the_plan_asks_for_nothing() {
     let lookup = source(&[("change.default_protection", Value::string("maximize"))]);
     let settings = ChangeSettings::from_settings(&lookup).expect("maximize is a mode");
