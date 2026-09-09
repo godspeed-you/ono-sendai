@@ -34,6 +34,9 @@ use crate::scan::Problem;
 /// Where the snapshot lives.
 pub const PATH: &str = "docs/baselines/v0.4.1.json";
 
+/// Where the frozen snapshots live — one file per tranche (ADR-0785).
+pub const DIRECTORY: &str = "docs/baselines";
+
 /// What the snapshot says about itself.
 const SCHEMA: &str = "ono.baseline.v1";
 
@@ -79,21 +82,27 @@ pub fn capture(root: &Path) -> Result<String, String> {
         .map_err(|error| format!("{} is not JSON: {error}", crate::perf::BASELINE))?;
 
     let environment = crate::perf::reference_environment(root)?;
+    let tranche = format!(
+        "v{}",
+        crate::scan::workspace_version(root).unwrap_or_else(|| "0.0.0".to_owned())
+    );
 
     Ok(serde_json::to_string_pretty(&json!({
         "schema": SCHEMA,
-        "tranche": "v0.4.1",
-        "note": "The v0.4.1 tranche as it stands, captured by `cargo xtask baseline --write`. \
-                 §57's phase H0 asked for a snapshot of the state before the hardening work; this \
-                 is the state after it, because H0's last issue was worked after H1-H12 and \
-                 measuring today's tree cannot produce yesterday's figures (§2.6, ADR-0548). It \
-                 restates nothing: the performance figures live in \
-                 `docs/contracts/hardening/performance_baseline.json` and the build inputs are \
-                 captured from `cargo xtask build-manifest`, so the file is a binding rather than \
-                 a copy (§52.2).",
+        "tranche": tranche,
+        "note": format!(
+            "The {tranche} tranche as it stands, captured by `cargo xtask baseline --write`. \
+             v0.4.1 §57's phase H0 asked for a snapshot, and one file per tranche is how the \
+             register keeps them: an earlier snapshot is history and is never rewritten, because \
+             re-capturing it today would name benchmarks that tranche never measured (ADR-0785). \
+             It restates nothing: the performance figures live in \
+             `docs/contracts/hardening/performance_baseline.json` and the build inputs are \
+             captured from `cargo xtask build-manifest`, so the file is a binding rather than a \
+             copy (§52.2)."
+        ),
         "captured": {
             "commit": commit,
-            "state": "the v0.4.1 tranche complete",
+            "state": format!("the {tranche} tranche complete"),
         },
         "tests": {
             "source": "cargo xtask metrics",
@@ -155,21 +164,59 @@ fn counts(root: &Path) -> Json {
     Json::Object(map)
 }
 
-/// Writes the snapshot.
+/// Writes the snapshot of the tranche the workspace is currently on.
+///
+/// An earlier tranche's snapshot is history and is never rewritten: re-capturing `v0.4.1.json`
+/// today would name benchmarks the v0.4.1 tranche never measured, which is the "snapshot of what
+/// somebody remembered" the check below exists against (ADR-0785).
 ///
 /// # Errors
 ///
 /// Returns the reason the snapshot could not be assembled or written.
 pub fn write(root: &Path) -> Result<String, String> {
     let text = capture(root)?;
-    let path = root.join(PATH);
+    let relative = current_path(root);
+    let path = root.join(&relative);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     }
     std::fs::write(&path, text)
         .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
-    Ok(PATH.to_owned())
+    Ok(relative)
+}
+
+/// Where this tranche's snapshot lives, from the version the workspace declares.
+fn current_path(root: &Path) -> String {
+    let version = crate::scan::workspace_version(root).unwrap_or_else(|| "0.0.0".to_owned());
+    format!("{DIRECTORY}/v{version}.json")
+}
+
+/// Every frozen snapshot the repository holds, oldest first, with the path each was read from.
+///
+/// One file per tranche. A snapshot is a binding to the figures of the tree it was captured on,
+/// so a later tranche adds a file beside the earlier ones rather than editing them.
+fn snapshots(root: &Path) -> Vec<(String, Json)> {
+    let Ok(entries) = std::fs::read_dir(root.join(DIRECTORY)) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".json"))
+        .collect();
+    names.sort();
+    names
+        .into_iter()
+        .map(|name| {
+            let relative = format!("{DIRECTORY}/{name}");
+            let document = std::fs::read_to_string(root.join(&relative))
+                .ok()
+                .and_then(|text| serde_json::from_str::<Json>(&text).ok())
+                .unwrap_or(Json::Null);
+            (relative, document)
+        })
+        .collect()
 }
 
 /// Holds the snapshot against the sources it froze (v0.4.1 §52.3, §57 H0).
@@ -181,15 +228,79 @@ pub fn write(root: &Path) -> Result<String, String> {
 /// the manifest must have the shape the generator produces, and an absence must carry a reason.
 #[must_use]
 pub fn check(root: &Path) -> Vec<Problem> {
-    let Ok(text) = std::fs::read_to_string(root.join(PATH)) else {
-        // A missing snapshot is not an error before the increment that writes it (AGENTS.md §14).
+    let held = snapshots(root);
+    // No snapshot at all is not an error before the increment that writes the first one
+    // (AGENTS.md §14).
+    if held.is_empty() {
         return Vec::new();
+    }
+    let mut problems = Vec::new();
+    for (path, snapshot) in &held {
+        problems.extend(check_snapshot(root, path, snapshot));
+    }
+    problems.extend(check_every_measurement_is_frozen(root, &held));
+    problems
+}
+
+/// No measured figure is left unfrozen: every benchmark the regression baseline holds is named by
+/// one of the snapshots (v0.4.1 §52.3, ADR-0785).
+///
+/// The guarantee is the one §32.4's baseline exists for — a figure nobody wrote down is a figure
+/// nobody can look back at — and it is asked across the whole register rather than of one file,
+/// because a tranche freezes its own snapshot and never edits an earlier one. A benchmark v0.5
+/// added is named by `v0.5.0.json`; asking `v0.4.1.json` for it would be asking a snapshot to
+/// know what happened after it was taken.
+fn check_every_measurement_is_frozen(root: &Path, held: &[(String, Json)]) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let Ok(text) = std::fs::read_to_string(root.join(crate::perf::BASELINE)) else {
+        return problems;
     };
-    let problem = |detail: String| Problem::new(PATH, detail);
-    let snapshot: Json = match serde_json::from_str(&text) {
-        Ok(document) => document,
-        Err(error) => return vec![problem(format!("is not JSON: {error}"))],
+    let Ok(raw) = serde_json::from_str::<Json>(&text) else {
+        return problems;
     };
+    let same = |left: &Json, right: &Json| {
+        ["benchmark", "profile", "temperature"]
+            .iter()
+            .all(|field| left[*field] == right[*field])
+    };
+    let named: Vec<&Json> = held
+        .iter()
+        .filter_map(|(_, snapshot)| snapshot["performance"]["measurements"].as_array())
+        .flatten()
+        .collect();
+    // The newest snapshot is the one a new figure belongs in, so that is where the absence is
+    // reported.
+    let newest = held
+        .last()
+        .map_or(PATH, |(path, _)| path.as_str())
+        .to_owned();
+    let records: Vec<&Json> = raw["measurements"]
+        .as_array()
+        .map_or_else(Vec::new, |rows| rows.iter().collect());
+    for record in &records {
+        if !named.iter().any(|row| same(record, row)) {
+            problems.push(Problem::new(
+                &newest,
+                format!(
+                    "says nothing about `{} at profile {} ({})`, which `{}` measured. A snapshot \
+                     that names some of the figures is a snapshot of what somebody remembered",
+                    record["benchmark"].as_str().unwrap_or("?"),
+                    record["profile"].as_str().unwrap_or("?"),
+                    record["temperature"].as_str().unwrap_or("?"),
+                    crate::perf::BASELINE
+                ),
+            ));
+        }
+    }
+    problems
+}
+
+/// One frozen snapshot, held against the sources it froze.
+fn check_snapshot(root: &Path, path: &str, snapshot: &Json) -> Vec<Problem> {
+    let problem = |detail: String| Problem::new(path, detail);
+    if snapshot.is_null() {
+        return vec![problem("is not JSON".to_owned())];
+    }
     let mut problems = Vec::new();
 
     if snapshot["schema"].as_str() != Some(SCHEMA) {
@@ -217,9 +328,9 @@ pub fn check(root: &Path) -> Vec<Problem> {
         ));
     }
 
-    problems.extend(check_counts(root, &snapshot));
-    problems.extend(check_performance(root, &snapshot));
-    problems.extend(check_release_inputs(root, &snapshot));
+    problems.extend(check_counts(root, path, snapshot));
+    problems.extend(check_performance(root, path, snapshot));
+    problems.extend(check_release_inputs(root, path, snapshot));
 
     match (
         snapshot["artifacts"]["hashes"].as_array(),
@@ -246,10 +357,10 @@ pub fn check(root: &Path) -> Vec<Problem> {
 }
 
 /// The recorded counts name the metrics §50 computes, and no others.
-fn check_counts(root: &Path, snapshot: &Json) -> Vec<Problem> {
+fn check_counts(root: &Path, path: &str, snapshot: &Json) -> Vec<Problem> {
     let Some(recorded) = snapshot["tests"]["at_capture"].as_object() else {
         return vec![Problem::new(
-            PATH,
+            path,
             "records no repository counts; §57 H0 asks the baseline to freeze the test snapshot"
                 .to_owned(),
         )];
@@ -263,7 +374,7 @@ fn check_counts(root: &Path, snapshot: &Json) -> Vec<Problem> {
     for metric in &computed {
         if !recorded.contains_key(metric) {
             problems.push(Problem::new(
-                PATH,
+                path,
                 format!("records no `{metric}`, which `cargo xtask metrics` computes"),
             ));
         }
@@ -271,7 +382,7 @@ fn check_counts(root: &Path, snapshot: &Json) -> Vec<Problem> {
     for metric in recorded.keys() {
         if !computed.contains(metric) {
             problems.push(Problem::new(
-                PATH,
+                path,
                 format!(
                     "records `{metric}`, which `cargo xtask metrics` does not compute. A count \
                      nothing produces is a count nobody can check"
@@ -284,7 +395,7 @@ fn check_counts(root: &Path, snapshot: &Json) -> Vec<Problem> {
 
 /// Every benchmark the snapshot names resolves, with all six of §32.3's metrics, and none is left
 /// out.
-fn check_performance(root: &Path, snapshot: &Json) -> Vec<Problem> {
+fn check_performance(root: &Path, path: &str, snapshot: &Json) -> Vec<Problem> {
     let mut problems = Vec::new();
     let Ok(text) = std::fs::read_to_string(root.join(crate::perf::BASELINE)) else {
         return problems;
@@ -315,7 +426,7 @@ fn check_performance(root: &Path, snapshot: &Json) -> Vec<Problem> {
     for row in &named {
         let Some(record) = records.iter().find(|record| same(record, row)) else {
             problems.push(Problem::new(
-                PATH,
+                path,
                 format!(
                     "names `{}`, and `{}` holds no such figure",
                     label(row),
@@ -327,7 +438,7 @@ fn check_performance(root: &Path, snapshot: &Json) -> Vec<Problem> {
         for metric in crate::perf::REQUIRED_METRICS {
             if record.get(metric.field).is_none() {
                 problems.push(Problem::new(
-                    PATH,
+                    path,
                     format!(
                         "names `{}`, whose record states no `{}` — v0.4.1 §32.3's \"{}\"",
                         label(row),
@@ -338,19 +449,6 @@ fn check_performance(root: &Path, snapshot: &Json) -> Vec<Problem> {
             }
         }
     }
-    for record in &records {
-        if !named.iter().any(|row| same(record, row)) {
-            problems.push(Problem::new(
-                PATH,
-                format!(
-                    "says nothing about `{}`, which `{}` measured. A snapshot that names some of \
-                     the figures is a snapshot of what somebody remembered",
-                    label(record),
-                    crate::perf::BASELINE
-                ),
-            ));
-        }
-    }
 
     if let Ok(environment) = crate::perf::reference_environment(root) {
         let named = snapshot["performance"]["environment"]
@@ -358,7 +456,7 @@ fn check_performance(root: &Path, snapshot: &Json) -> Vec<Problem> {
             .unwrap_or_default();
         if named != environment.id {
             problems.push(Problem::new(
-                PATH,
+                path,
                 format!(
                     "was captured on `{named}`, and \
                      `docs/contracts/hardening/performance_environment.yaml` names `{}` (v0.4.1 §32.4)",
@@ -371,14 +469,14 @@ fn check_performance(root: &Path, snapshot: &Json) -> Vec<Problem> {
 }
 
 /// The captured manifest has the shape `cargo xtask build-manifest` produces.
-fn check_release_inputs(root: &Path, snapshot: &Json) -> Vec<Problem> {
+fn check_release_inputs(root: &Path, path: &str, snapshot: &Json) -> Vec<Problem> {
     let generated = crate::provenance::build_inputs(root);
     let Some(expected) = generated.as_object() else {
         return Vec::new();
     };
     let Some(recorded) = snapshot["release_inputs"]["at_capture"].as_object() else {
         return vec![Problem::new(
-            PATH,
+            path,
             "captures no release input manifest; §57 H0 asks the baseline to record the workflow \
              inputs, and Appendix H is the list"
                 .to_owned(),
@@ -388,7 +486,7 @@ fn check_release_inputs(root: &Path, snapshot: &Json) -> Vec<Problem> {
     for field in expected.keys() {
         if !recorded.contains_key(field) {
             problems.push(Problem::new(
-                PATH,
+                path,
                 format!(
                     "captured a release input manifest without `{field}`, which \
                      `cargo xtask build-manifest` emits (Appendix H)"
@@ -399,7 +497,7 @@ fn check_release_inputs(root: &Path, snapshot: &Json) -> Vec<Problem> {
     for field in recorded.keys() {
         if !expected.contains_key(field) {
             problems.push(Problem::new(
-                PATH,
+                path,
                 format!(
                     "captured `{field}` in the release input manifest, and \
                      `cargo xtask build-manifest` produces no such field. The snapshot is a \

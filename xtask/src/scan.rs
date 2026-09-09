@@ -2164,7 +2164,7 @@ pub fn check_release_notes(root: &Path) -> Vec<Problem> {
 }
 
 /// The `version` of the `[workspace.package]` table.
-fn workspace_version(root: &Path) -> Option<String> {
+pub(crate) fn workspace_version(root: &Path) -> Option<String> {
     let manifest = std::fs::read_to_string(root.join("Cargo.toml")).ok()?;
     manifest
         .lines()
