@@ -21,10 +21,15 @@ ono-parser.workspace = true
 ono-protocol.workspace = true
 ono-provider-linux.workspace = true
 ono-provider-netlink.workspace = true
+ono-spatial-core.workspace = true
+ono-temporal-core.workspace = true
+ono-temporal-ledger.workspace = true
+ono-temporal-query.workspace = true
 ono-testkit.workspace = true
 ono-value.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

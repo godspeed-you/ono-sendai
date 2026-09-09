@@ -42,13 +42,13 @@ run: |
   find event 'kind == \"action.executed\"' | select reference | to json" > /tmp/t6r-ref.json 2>&1
   MINTED=$(grep -oE '"reference":"e[0-9a-f]+"' /tmp/t6r-ref.json | head -1 | sed 's/.*:"//; s/"//')
   echo "minted: ${MINTED:-<none>}"
-  prove t6o "the reference `find event` reports is the short form §11.6 renders (§11.6)" \
+  prove t6o "the reference \`find event\` reports is the short form §11.6 renders (§11.6)" \
     'test -n "$MINTED"'
 
   echo '== an ambiguous or unknown reference refuses rather than choosing (§34, §11.6) =='
   prove t6p "a reference naming no retained event is refused (§11.6, §34)" \
     'ono -c "inspect event @edeadbeefdeadbeef" 2>&1 | grep -qE "temporal\.(invalid_time|not_recorded)"'
-  prove t6q "and so does `at event` for the same reference (§12.2)" \
+  prove t6q "and so does \`at event\` for the same reference (§12.2)" \
     'ono -c "at event @edeadbeefdeadbeef" 2>&1 | grep -q "temporal.invalid_time"'
 
   echo '== §29: command history and the temporal ledger are two things =='

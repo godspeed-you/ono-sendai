@@ -657,3 +657,19 @@ fn read_reference(body: &Cbor, schemas: &SchemaRegistry) -> Decoded<ValueRef> {
 pub(crate) fn corrupt(segment: &str, detail: &str) -> ErrorValue {
     ono_temporal_core::error::store_corrupt(segment, detail)
 }
+
+/// Decode a stored payload blob, for a fuzz target and for nothing else.
+///
+/// §31.4's payload is a versioned CBOR document, and §31.7 requires a damaged one to fail its row
+/// rather than the process. The bytes that reach it are the bytes a plugin or a remote host
+/// contributed, written and read back, so it is an attacker-influenced decoder in the sense v0.2
+/// §35.6 means. Exposed so `fuzz` can reach it without the store around it — the store is fuzzed
+/// separately, and a decoder read through a database spends its budget on SQLite.
+///
+/// # Errors
+///
+/// Returns the reason the bytes are not a payload this build wrote.
+pub fn decode_payload(bytes: &[u8]) -> Result<ono_value::Value, String> {
+    let sealed = unseal(bytes)?;
+    read_value(&sealed, ono_value::builtin_schemas())
+}

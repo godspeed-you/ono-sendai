@@ -35,15 +35,15 @@ run: |
   let after = now()
   let moved = after > before
   echo $moved' > /tmp/t2t-now.out 2>&1
-  prove t2ay "`now()` still reads the clock in historical context (§28.3)" \
+  prove t2ay "\`now()\` still reads the clock in historical context (§28.3)" \
     'grep -q "true" /tmp/t2t-now.out'
 
   echo '== §28.3 adds two typed helpers, and they answer =='
-  prove t2az "`age(timestamp)` is how long ago an instant was (§28.3)" \
+  prove t2az "\`age(timestamp)\` is how long ago an instant was (§28.3)" \
     'ono -c "let old = age(2020-01-01T00:00:00Z)
      let big = old > 1h
      echo \$big" 2>&1 | grep -q "true"'
-  prove t2ba "`between(t, from, to)` brackets an instant, both ends included (§28.3)" \
+  prove t2ba "\`between(t, from, to)\` brackets an instant, both ends included (§28.3)" \
     'ono -c "let inside = between(2026-01-02T00:00:00Z, 2026-01-01T00:00:00Z, 2026-01-03T00:00:00Z)
      echo \$inside" 2>&1 | grep -q "true"'
   prove t2bb "and it answers false for an instant outside the window (§28.3)" \
@@ -55,9 +55,9 @@ run: |
   echo '== §4.5: `--at` uses the same engine as `at`, and refuses the same things =='
   ono -c 'at -3d' > /tmp/t2t-at-ctx.out 2>&1
   ono -c 'timeline --at -3d' > /tmp/t2t-at-opt.out 2>&1
-  prove t2bd "an instant `at` refuses is one `--at` refuses (§4.5)" \
+  prove t2bd "an instant \`at\` refuses is one \`--at\` refuses (§4.5)" \
     'grep -q "temporal.not_recorded" /tmp/t2t-at-ctx.out && grep -q "temporal.not_recorded" /tmp/t2t-at-opt.out'
-  prove t2be "and `--at` did not change the session coordinate (§4.5)" \
+  prove t2be "and \`--at\` did not change the session coordinate (§4.5)" \
     '! ono -c "timeline --at -0s
      look" 2>&1 | grep -q "\[PAST"'
 

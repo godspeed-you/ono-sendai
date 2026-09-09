@@ -56,7 +56,7 @@ run: |
   at -1s
   present printf "one\n"
   touch /tmp/t2p-second' > /tmp/t2p-scope.out 2>&1
-  prove t2ai "the command after a `present` is refused again (§4.8)" \
+  prove t2ai "the command after a \`present\` is refused again (§4.8)" \
     'grep -q "temporal.present_only" /tmp/t2p-scope.out && ! test -e /tmp/t2p-second'
 
   echo 'present escape: done'

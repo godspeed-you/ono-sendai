@@ -30,7 +30,7 @@ run: |
   echo '== `at` resolves and reports where it landed (§4.2) =='
   ono -c 'sleep 1
   at -1s' > /tmp/t2-at.out 2>&1
-  prove t2b "`at -1s` enters historical context and reports it (§4.2)" \
+  prove t2b "\`at -1s\` enters historical context and reports it (§4.2)" \
     'grep -qE "\[PAST\??\]" /tmp/t2-at.out'
   prove t2c "the report names what was requested and what it resolved to (§4.2)" \
     'grep -q -- "-1s" /tmp/t2-at.out && grep -qi "coverage" /tmp/t2-at.out'
@@ -69,7 +69,7 @@ run: |
   at -1s
   now
   look' > /tmp/t2-now.out 2>&1
-  prove t2n "`now` is available from historical context and succeeds (§4.3)" \
+  prove t2n "\`now\` is available from historical context and succeeds (§4.3)" \
     'test "$(tail -c 200 /tmp/t2-now.out | grep -c "temporal.read_only")" -eq 0'
   prove t2o "and what it prints afterwards carries no historical marker (§4.1, §4.6)" \
     'test "$(sed -n "/^SYSTEM/,\$p" /tmp/t2-now.out | grep -c "\[PAST")" -eq 0'
@@ -81,7 +81,7 @@ run: |
   sleep 1
   at -1s
   look' > /tmp/t2-place-past.out 2>&1
-  prove t2p "the place the session stands at is the same before and after `at` (§4.2)" \
+  prove t2p "the place the session stands at is the same before and after \`at\` (§4.2)" \
     'grep -qi "compute" /tmp/t2-place-present.out && grep -qi "compute" /tmp/t2-place-past.out'
 
   echo '== §55.9: the coordinate reaches the data, or the feature is invalid =='
@@ -97,9 +97,9 @@ run: |
   NOW_LINES=$(grep -c . /tmp/t2-look-now.out)
   PAST_LINES=$(grep -c . /tmp/t2-look-past.out)
   echo "present look: $NOW_LINES lines; historical look: $PAST_LINES lines"
-  prove t2q "a historical `look` is not the present `look` with a marker on it (§55.9, §14.1)" \
+  prove t2q "a historical \`look\` is not the present \`look\` with a marker on it (§55.9, §14.1)" \
     'test "$PAST_LINES" -lt "$NOW_LINES"'
-  prove t2r "the present `look` really did describe the machine (§55.9 needs a real baseline)" \
+  prove t2r "the present \`look\` really did describe the machine (§55.9 needs a real baseline)" \
     'grep -qi "exits" /tmp/t2-look-now.out'
 
   echo 'temporal coordinate: done'

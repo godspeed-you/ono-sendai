@@ -60,7 +60,7 @@ run: |
 
   prove t9m "the session reached its prompt (§29.1)" \
     "grep -qaF 'AT-PROMPT' /tmp/session-254"
-  prove t9n "\`map\` opens a full-screen view to step in (v0.4 §23.3)" \
+  prove t9n "\\`map\\` opens a full-screen view to step in (v0.4 §23.3)" \
     "grep -qaF '${ALT_ON}' /tmp/session-254"
   # §18.4 and §2.17: a step either lands on a significant event and names it, or reports that
   # there is none to land on. Both are answers; an unmoved view that said nothing is not.

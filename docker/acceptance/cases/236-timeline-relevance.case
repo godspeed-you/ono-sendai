@@ -46,14 +46,14 @@ run: |
   $MAKE
   enter identity
   timeline --all --since 5m | to json" > /tmp/t6rel-all.json 2>&1
-  prove t6ad "`--all` reaches what the narrowed timeline left out (§11.3)" \
+  prove t6ad "\`--all\` reaches what the narrowed timeline left out (§11.3)" \
     'grep -q "action.executed" /tmp/t6rel-all.json'
 
   echo '== §11.2: a kind filter narrows rather than reorders =='
   ono -c "home
   $MAKE
   timeline --since 5m --kind action.executed | to json" > /tmp/t6rel-kind.json 2>&1
-  prove t6ae "`--kind` restricts to the canonical kind named (§6.1, §11.2)" \
+  prove t6ae "\`--kind\` restricts to the canonical kind named (§6.1, §11.2)" \
     'grep -q "action.executed" /tmp/t6rel-kind.json && ! grep -q "action.requested" /tmp/t6rel-kind.json'
   prove t6af "a kind outside §6.1's closed list is refused with the list (§6.1)" \
     'ono -c "timeline --kind nonsense.kind" 2>&1 | grep -q "object.changed"'

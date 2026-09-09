@@ -212,6 +212,17 @@ impl TimeSelector {
                             "that span reaches outside recorded time",
                         )
                     })?;
+                // `jiff::Timestamp::from_nanosecond` asserts rather than answering `Err` for a
+                // value far outside its range, so the range is checked before it is called. A
+                // fuzz target found this with `-110101010101010100m`, which is the sort of
+                // duration nobody types and a script can produce (v0.5 §47.3).
+                if nanos < Timestamp::MIN.as_nanosecond() || nanos > Timestamp::MAX.as_nanosecond()
+                {
+                    return Err(error::invalid_time(
+                        &span.exact(),
+                        "that span reaches outside recorded time",
+                    ));
+                }
                 Timestamp::from_nanosecond(nanos)
                     .map(TimeResolution::Resolved)
                     .map_err(|_| {

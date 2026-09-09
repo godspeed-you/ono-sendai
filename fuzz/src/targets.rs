@@ -78,6 +78,29 @@ pub const TARGETS: &[Target] = &[
         area: "adapter machine-readable decoders",
         run: adapter_decoders,
     },
+    // v0.5 §47.3. The first two read bytes a plugin or a remote host can influence and that a
+    // corrupt store can produce; the third is the most reachable parser in the tranche, sitting
+    // at a prompt; the fourth holds the rule the whole causal design rests on.
+    Target {
+        name: "temporal-store",
+        area: "temporal store decoders",
+        run: temporal_store,
+    },
+    Target {
+        name: "temporal-events",
+        area: "temporal event payloads",
+        run: temporal_events,
+    },
+    Target {
+        name: "time-selectors",
+        area: "time selectors",
+        run: time_selectors,
+    },
+    Target {
+        name: "causal-candidates",
+        area: "causal rule candidates",
+        run: causal_candidates,
+    },
 ];
 
 /// The target of that name.
@@ -323,4 +346,158 @@ fn adapter_decoders(data: &[u8]) {
             let _ = outcome;
         }
     }
+}
+
+/// A corrupt temporal store, opened and queried (v0.5 §31.7, §47.3).
+///
+/// §31.7 requires a store whose bytes are damaged to refuse the affected history, name what was
+/// discarded, and leave the shell working. What must not happen is a panic, an unbounded
+/// allocation, or a read outside the row — and the bytes reaching this decoder are exactly the
+/// bytes a plugin or a remote host contributed, written and read back.
+fn temporal_store(data: &[u8]) {
+    let Ok(scratch) = tempfile::tempdir() else {
+        return;
+    };
+    let path = scratch.path().join("ledger.sqlite3");
+    if std::fs::write(&path, data).is_err() {
+        return;
+    }
+    // Opening is allowed to fail; it is not allowed to panic, and neither is reading whatever it
+    // decided it could open.
+    if let Ok(store) =
+        ono_temporal_ledger::LedgerStore::open_with(&ono_temporal_ledger::StoreOptions::at(&path))
+    {
+        use ono_temporal_core::LedgerRead as _;
+        let _ = store.events(&ono_temporal_core::EventQuery::default());
+        let _ = store.coverage(&ono_temporal_core::CoverageQuery::default());
+        let _ = store.retention();
+        let _ = store.integrity();
+    }
+}
+
+/// An event payload decoded from arbitrary bytes (v0.5 §31.4, §47.3).
+fn temporal_events(data: &[u8]) {
+    let _ = ono_temporal_ledger::decode_payload(data);
+}
+
+/// A time selector parsed and resolved from arbitrary text (v0.5 §4.4, §47.3).
+///
+/// This is the most reachable parser the tranche adds: it sits at a prompt, and a shell reads
+/// what a person types. Resolution is included because the interesting failures are there —
+/// a daylight-saving fold, a wall time outside the representable range, a future instant.
+fn time_selectors(data: &[u8]) {
+    let text = String::from_utf8_lossy(data);
+    let Ok(selector) = ono_temporal_core::TimeSelector::parse(&text) else {
+        return;
+    };
+    struct NoAnchors;
+    impl ono_temporal_core::EventAnchors for NoAnchors {
+        fn instant_of(&self, _id: &ono_temporal_core::EventId) -> Option<jiff::Timestamp> {
+            None
+        }
+    }
+    for zone in [
+        "UTC",
+        "Europe/Berlin",
+        "America/New_York",
+        "Pacific/Kiritimati",
+    ] {
+        let Ok(zone) = jiff::tz::TimeZone::get(zone) else {
+            continue;
+        };
+        let _ = selector.resolve(&zone, jiff::Timestamp::UNIX_EPOCH, &NoAnchors);
+        let _ = selector.resolve(&zone, jiff::Timestamp::now(), &NoAnchors);
+    }
+}
+
+/// An arbitrary event set through the causal rule runtime (v0.5 §15.2, §47.3).
+///
+/// The assertion inside is the one the whole causal design rests on and the cheapest place to
+/// hold it: **no rule may emit a causal relation without a rule id, a source and at least one
+/// piece of evidence.** §55.3 names the failure this prevents, and a fuzz target asks the
+/// question over inputs nobody thought to write down.
+fn causal_candidates(data: &[u8]) {
+    let events = decode_events(data);
+    if events.is_empty() {
+        return;
+    }
+    let engine = ono_temporal_query::causal::CausalEngine::builtin();
+    let context = ono_temporal_query::causal::CausalContext::default();
+    for link in engine.links(&events, &context) {
+        if link.relation.is_causal() {
+            assert!(
+                !link.evidence.is_empty(),
+                "v0.5 §15.2: a causal relation carries the evidence that established it"
+            );
+            assert!(
+                !link.rule.as_str().trim().is_empty(),
+                "v0.5 §15.8: a causal relation names the rule that emitted it"
+            );
+        }
+    }
+}
+
+/// Events built from the bytes through the public constructors.
+///
+/// The rule runtime takes typed events rather than bytes, so the bytes choose the *shape* — the
+/// kind, the subject, the instants, the sequence — and everything is built the way an ingest path
+/// builds it. That is what explores the rule space: which rule fires is decided by kinds,
+/// identities and evidence, and those are exactly what varies here.
+fn decode_events(data: &[u8]) -> Vec<ono_temporal_core::TemporalEvent> {
+    use ono_spatial_core::{BootIdentity, SpatialIdentity, SpatialType};
+    use ono_temporal_core::{ClockDomain, EventKind, EventSeed, EventTimes, SpatialRef};
+
+    let scope = ono_spatial_core::SpatialScope::host(
+        "fuzz",
+        BootIdentity::new("fuzz", "00000000-0000-4000-8000-000000000000"),
+    );
+    data.chunks(8)
+        .take(64)
+        .filter(|chunk| chunk.len() == 8)
+        .map(|chunk| {
+            let kind = EventKind::ALL[usize::from(chunk[0]) % EventKind::ALL.len()];
+            let subject = SpatialIdentity::lifetime(
+                SpatialType::Process,
+                [("pid".to_owned(), chunk[1].to_string())],
+            )
+            .spatial_id();
+            let nanos = i64::from(chunk[2]) * 1_000_000_000;
+            let at = jiff::Timestamp::from_nanosecond(i128::from(nanos))
+                .unwrap_or(jiff::Timestamp::UNIX_EPOCH);
+            EventSeed {
+                kind,
+                subtype: None,
+                scope: scope.clone(),
+                subject: Some(SpatialRef::Resolved {
+                    id: subject,
+                    object_type: SpatialType::Process,
+                    label: std::sync::Arc::from("fuzz"),
+                }),
+                related: Vec::new(),
+                times: EventTimes {
+                    source_time: Some(at),
+                    observed_at: at,
+                    ingested_at: at,
+                    source_sequence: Some(u64::from(chunk[3])),
+                    monotonic_nanos: Some(u64::from(chunk[4])),
+                    clock_uncertainty: None,
+                    domain: ClockDomain {
+                        host: std::sync::Arc::from("fuzz"),
+                        boot_id: Some(std::sync::Arc::from("boot")),
+                    },
+                },
+                before: None,
+                after: None,
+                changed_fields: Vec::new(),
+                evidence: Vec::new(),
+                causal_parents: Vec::new(),
+                payload: None,
+                provenance: ono_value::Provenance::local(
+                    "linux.procfs",
+                    ono_value::SchemaId::new("ono.temporal-event", 1),
+                ),
+            }
+            .seal()
+        })
+        .collect()
 }

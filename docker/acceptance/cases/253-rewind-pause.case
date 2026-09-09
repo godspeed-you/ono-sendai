@@ -62,7 +62,7 @@ run: |
 
   prove t9a "the session reached its prompt (§29.1)" \
     "grep -qaF 'AT-PROMPT' /tmp/session-253"
-  prove t9b "\`map --live\` opens a full-screen view (v0.4 §23.3, §52.1)" \
+  prove t9b "\\`map --live\\` opens a full-screen view (v0.4 §23.3, §52.1)" \
     "grep -qaF '${ALT_ON}' /tmp/session-253"
   prove t9c "the HUD says the view is paused, and at which instant (§18.2)" \
     "grep -qaE 'PAUSED @[0-9][0-9]:[0-9][0-9]:[0-9][0-9]' /tmp/session-253"

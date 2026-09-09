@@ -23,7 +23,7 @@ run: |
   at -1s' > /tmp/t6g-at.out 2>&1
   prove t6ah "entering historical context reports the coverage behind it (§4.2, §8.5)" \
     'grep -qi "coverage" /tmp/t6g-at.out'
-  prove t6ai "and partial coverage is `[PAST?]`, never `[PAST]` (§8.6)" \
+  prove t6ai "and partial coverage is \`[PAST?]\`, never \`[PAST]\` (§8.6)" \
     'grep -q "\[PAST?\]" /tmp/t6g-at.out'
 
   echo '== §8.6: `[PAST]` is not claimed merely because some event exists near that time =='

@@ -21,7 +21,7 @@ run: |
   echo '== a predicate finds events with no timestamp named anywhere (§20.1, §20.3) =='
   ono -c "$MAKE
   find event 'kind == \"action.completed\"' | to json" > /tmp/t6f-kind.json 2>&1
-  prove t6s "a predicate over `kind` answers (§20.3)" \
+  prove t6s "a predicate over \`kind\` answers (§20.3)" \
     'grep -q "action.completed" /tmp/t6f-kind.json'
   prove t6t "and it answers only that kind (§20.3)" \
     '! grep -q "action.requested" /tmp/t6f-kind.json'
@@ -34,15 +34,15 @@ run: |
     'ono -c "find event '"'"'kind ==='"'"'" 2>&1 | grep -qi "expression\|parse"'
 
   echo '== §11.4, §28.1: the answer is a stream a pipeline continues =='
-  prove t6w "`find event … | take 1` is a pipeline, not a special form (§28.1)" \
+  prove t6w "\`find event … | take 1\` is a pipeline, not a special form (§28.1)" \
     'ono -c "'"$MAKE"'
      find event '"'"'kind == \"action.executed\"'"'"' | take 1 | to json" 2>&1 | grep -q "action.executed"'
 
   echo '== §20.3: with no predicate, the window itself bounds the answer =='
-  prove t6x "`find event` with no predicate answers the bounded window (§20.3, §32.3)" \
+  prove t6x "\`find event\` with no predicate answers the bounded window (§20.3, §32.3)" \
     'ono -c "'"$MAKE"'
      find event | to json" 2>&1 | grep -q "action."'
-  prove t6y "and a `--since` narrows it rather than widening it (§20.2)" \
+  prove t6y "and a \`--since\` narrows it rather than widening it (§20.2)" \
     'ono -c "find event --since 1s | to json" 2>&1 | grep -qE "^\[\]|action\."'
 
   echo 'find event: done'

@@ -51,15 +51,15 @@ run: |
   ono -c "sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo \$! > /tmp/t6c.pid'
   stop process \$(cat /tmp/t6c.pid)
   find event 'kind == \"action.executed\"' | to json" > /tmp/t6-filtered.json 2>&1
-  prove t6e "a predicate over `kind` selects exactly the executed actions (§11.4, §28.1)" \
+  prove t6e "a predicate over \`kind\` selects exactly the executed actions (§11.4, §28.1)" \
     'grep -q "action.executed" /tmp/t6-filtered.json && ! grep -q "action.requested" /tmp/t6-filtered.json'
-  prove t6f "the event is an `ono.temporal-event/1` with §3.3's three timestamps kept apart (§3.3)" \
+  prove t6f "the event is an \`ono.temporal-event/1\` with §3.3's three timestamps kept apart (§3.3)" \
     'grep -q "\"source_time\"" /tmp/t6-filtered.json && grep -q "\"observed_at\"" /tmp/t6-filtered.json && grep -q "\"ingested_at\"" /tmp/t6-filtered.json'
   prove t6g "and it carries the evidence it rests on rather than asserting itself (§3.4)" \
     'grep -q "\"evidence\":\[\"@v" /tmp/t6-filtered.json'
 
   echo '== §11.5, §11.6: the default rendering is a row per event, with a usable reference =='
-  prove t6h "a rendered row carries an `@e…` reference (§11.6)" \
+  prove t6h "a rendered row carries an \`@e…\` reference (§11.6)" \
     'grep -qE "@e[0-9a-f]+" /tmp/t6-timeline.txt'
   prove t6i "and an abbreviated source tag (§11.5)" \
     'grep -q "\[ono\]" /tmp/t6-timeline.txt'

@@ -37,7 +37,7 @@ run: |
     'grep -q "temporal.read_only" /tmp/t2ro-stop.out'
   prove t2u "it names the command it refused (§4.7)" \
     'grep -q "stop process" /tmp/t2ro-stop.out'
-  prove t2v "and it names `now` as the way back (§4.7)" \
+  prove t2v "and it names \`now\` as the way back (§4.7)" \
     'grep -q "now" /tmp/t2ro-stop.out'
   prove t2w "nothing was changed: the process is still there (§4.7)" \
     'test -d /proc/'"$VICTIM"

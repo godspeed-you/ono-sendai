@@ -53,6 +53,7 @@ mod rows;
 mod sequences;
 mod store;
 
+pub use codec::decode_payload;
 pub use integrity::{IntegrityFinding, IntegrityReport};
 pub use ledger::Ledger;
 pub use migrate::{LOGICAL_SETS, STORE_VERSION};

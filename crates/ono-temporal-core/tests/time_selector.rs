@@ -271,3 +271,18 @@ fn should_refuse_a_wall_time_no_instant_answers_to_rather_than_substituting_one(
 
     assert_eq!(refused.code(), ono_core::ErrorCode::TemporalInvalidTime);
 }
+
+#[test]
+fn should_refuse_a_span_that_reaches_outside_representable_time_rather_than_panicking() {
+    // Found by the §47.3 fuzz target, with `-110101010101010100m`: `jiff::Timestamp::from_nanosecond`
+    // asserts rather than answering `Err` for a value far enough outside its range, so the range
+    // has to be checked before it is called. A shell reads what a person types, and a script
+    // types worse than a person.
+    let selector = TimeSelector::parse("-110101010101010100m").expect("the span parses");
+
+    let refused = selector
+        .resolve(&TimeZone::UTC, instant("2026-08-31T08:00:00Z"), &NoAnchors)
+        .expect_err("a span outside representable time is a refusal");
+
+    assert_eq!(refused.code(), ono_core::ErrorCode::TemporalInvalidTime);
+}

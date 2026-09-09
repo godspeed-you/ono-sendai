@@ -39,9 +39,9 @@ run: |
 
   echo '== §10.3: the recorder commands answer, and say what they are (§30.1) =='
   ono -c 'get recorder | to json' > /tmp/t2c-recorder.json 2>&1
-  prove t2al "`get recorder` answers `ono.recorder-status/1` (§10.3)" \
+  prove t2al "\`get recorder\` answers \`ono.recorder-status/1\` (§10.3)" \
     'grep -q "\"running\"" /tmp/t2c-recorder.json'
-  prove t2am "a recorder that is not running says `stopped` rather than nothing (§43.4)" \
+  prove t2am "a recorder that is not running says \`stopped\` rather than nothing (§43.4)" \
     'grep -q "stopped" /tmp/t2c-recorder.json'
   prove t2an "the retention policy in force is part of the status (§30.1, §10.4)" \
     'grep -q "\"max_age\"" /tmp/t2c-recorder.json && grep -q "\"max_size\"" /tmp/t2c-recorder.json'
@@ -61,7 +61,7 @@ run: |
      get recorder | to json" 2>&1 | grep -q "\"running\": true"'
 
   echo '== §30.8: history deletion is destructive and takes the existing policy =='
-  prove t2at "`remove temporal-history` without a confirmation refuses (§30.8, v0.2 §17.4)" \
+  prove t2at "\`remove temporal-history\` without a confirmation refuses (§30.8, v0.2 §17.4)" \
     'ono -c "remove temporal-history" 2>&1 | grep -qi "confirm"'
   prove t2au "a dry run says what it would destroy (§30.8)" \
     'ono -c "remove temporal-history --dry-run | to json" 2>&1 | grep -qi "would"'

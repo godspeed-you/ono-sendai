@@ -67,7 +67,7 @@ run: |
 
   prove t9v "the session reached its prompt (§29.1)" \
     "grep -qaF 'AT-PROMPT' /tmp/session-256"
-  prove t9w "\`map --live\` opens a full-screen view (v0.4 §23.3, §52.1)" \
+  prove t9w "\\`map --live\\` opens a full-screen view (v0.4 §23.3, §52.1)" \
     "grep -qaF '${ALT_ON}' /tmp/session-256"
   prove t9x "the view was frozen before it was returned (§18.2)" \
     "grep -qaE 'PAUSED @[0-9][0-9]:[0-9][0-9]:[0-9][0-9]' /tmp/session-256"

@@ -23,6 +23,12 @@ const AREAS: &[&str] = &[
     "remote protocol",
     "plugin protocol",
     "procfs/netlink decoders",
+    // v0.5 §47.3's list. Every one of these reads bytes or values a machine gave Ono, and three
+    // of them can be reached by a plugin or a remote host.
+    "temporal store decoders",
+    "temporal event payloads",
+    "time selectors",
+    "causal rule candidates",
 ];
 
 /// The entry points v0.4.1 §41.2 requires the coverage-guided tier to cover, in its own words,
@@ -41,6 +47,13 @@ const GUIDED: &[(&str, &str)] = &[
         "procfs/netlink or equivalent structured system-data decoders",
         "system-decoders",
     ),
+    // v0.5 §47.3. The store and the payload decoders read bytes a plugin or a remote host
+    // contributed and a damaged file can produce; the selector parser sits at a prompt; the rule
+    // runtime is where §55.3's failure would live if it lived anywhere.
+    ("temporal store decoders", "temporal-store"),
+    ("temporal event payload decoders", "temporal-events"),
+    ("time selectors", "time-selectors"),
+    ("causal rule candidate input", "causal-candidates"),
     (
         "adapter machine-readable decoders with attacker-controlled bytes",
         "adapter-decoders",

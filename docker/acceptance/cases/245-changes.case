@@ -16,11 +16,11 @@ run: |
   }
 
   echo '== §13.1: a comparison needs two ends, and one of them is not optional =='
-  prove t6ao "`changes` without `--since` refuses rather than inventing a window (§13.1)" \
+  prove t6ao "\`changes\` without \`--since\` refuses rather than inventing a window (§13.1)" \
     'ono -c "changes" 2>&1 | grep -q -- "--since"'
-  prove t6ap "`changes --since 10m` runs (§13.1)" \
+  prove t6ap "\`changes --since 10m\` runs (§13.1)" \
     'ono -c "changes --since 10m | to json" 2>&1 | grep -qE "^\[|\{"'
-  prove t6aq "and a wall-clock selector is one of the forms `--since` accepts (§13.1, §4.4)" \
+  prove t6aq "and a wall-clock selector is one of the forms \`--since\` accepts (§13.1, §4.4)" \
     'ono -c "changes --since 00:00:01 | to json" 2>&1 | grep -qE "^\[|\{|temporal\."'
 
   echo '== §13.2: the answer is `ono.temporal-change/1`, with the five classes =='
@@ -29,15 +29,15 @@ run: |
     'head -c 1 /tmp/t6ch.json | grep -q "\["'
 
   echo '== §28.1: `changes` is pipeline-compatible =='
-  prove t6as "`changes --since 30m | group subject.object_type` is a pipeline (§28.1)" \
+  prove t6as "\`changes --since 30m | group subject.object_type\` is a pipeline (§28.1)" \
     'ono -c "changes --since 30m | group subject.object_type | to json" 2>&1 | grep -qE "^\[|\{"'
-  prove t6at "and so is a `where` over it (§28.1)" \
+  prove t6at "and so is a \`where\` over it (§28.1)" \
     'ono -c "changes --since 30m | where class == \"added\" | to json" 2>&1 | grep -qE "^\[|\{"'
 
   echo '== §13.1: `--until` defaults to the active coordinate, and can be named (§13.1) =='
   prove t6au "an explicit window is accepted (§13.1)" \
     'ono -c "changes --since 10m --until 1m | to json" 2>&1 | grep -qE "^\[|\{|temporal\."'
-  prove t6av "a `--since` older than anything retained refuses rather than guessing (§12.3)" \
+  prove t6av "a \`--since\` older than anything retained refuses rather than guessing (§12.3)" \
     'ono -c "changes --since 3d" 2>&1 | grep -qE "temporal\.(not_recorded|out_of_retention)|^\["'
 
   echo 'changes: done'

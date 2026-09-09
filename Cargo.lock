@@ -1717,10 +1717,15 @@ dependencies = [
  "ono-protocol",
  "ono-provider-linux",
  "ono-provider-netlink",
+ "ono-spatial-core",
+ "ono-temporal-core",
+ "ono-temporal-ledger",
+ "ono-temporal-query",
  "ono-testkit",
  "ono-value",
  "serde_json",
  "sha2 0.11.0",
+ "tempfile",
 ]
 
 [[package]]
