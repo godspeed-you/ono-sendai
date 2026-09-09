@@ -45,6 +45,9 @@ declared:
   - id: "crates/ono-kuang-sdk/tests/conformance.rs::should_hold_a_component_to_the_capability_broker_like_a_process"
     category: external_tool_unavailable
     prerequisite: "the `wasm32-wasip2` target of the pinned toolchain, so the example package can be built as a component (ADR-0569)"
+  - id: "crates/ono-cli/tests/adapters.rs::should_compose_a_familiar_command_with_ono_semantics"
+    category: external_tool_unavailable
+    prerequisite: "a util-linux `lsns` that enumerates on this kernel, so the adapter has namespaces to compose; a build whose namespace ioctls the running kernel does not answer exits non-zero before Ono is involved"
   - id: "crates/ono-cli/tests/spatial_orientation_bound.rs::should_count_a_bounded_target_by_what_the_provider_says_is_there"
     category: external_tool_unavailable
     prerequisite: "a service manager holding more units than the bound, so a bounded read leaves something out to be counted (ADR-0576)"
@@ -144,6 +147,9 @@ declared:
   - id: "crates/ono-cli/tests/services_logs.rs::should_trace_a_service_to_the_processes_it_owns"
     category: external_tool_unavailable
     prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/spatial_contracts.rs::should_report_an_exit_the_kernel_refuses_as_denied_rather_than_as_empty"
+    category: missing_privilege
+    prerequisite: "the run may not read `/proc/1/ns/`, so `process/1` has an exit the kernel refuses and §35.2's `permission_denied` has something to be about (ADR-0784)"
   - id: "crates/ono-cli/tests/spatial_first_output.rs::should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture"
     category: missing_privilege
     prerequisite: "the host allows the 101 024 open descriptors `performance_profiles.yaml` declares for Profile L's socket axis"

@@ -54,9 +54,28 @@ fn should_compose_a_familiar_command_with_ono_semantics() {
         run.stdout()
     );
 
-    // lsns itself exits 1 when a process it was reading vanishes mid-scan — which happens
-    // under this suite's load — and a non-zero child fails the stage (spec v0.3 §1.20). The
-    // race is the machine's, not the adapter's, so the enumeration is retried.
+    // The second half asks the same of `lsns`, and whether it can be asked at all is a property
+    // of the host rather than of the adapter: `lsns` exits non-zero when a process it was reading
+    // vanishes mid-scan, and on a kernel whose namespace ioctls its util-linux build does not
+    // know it exits non-zero every time, before Ono is involved. A non-zero child fails the stage
+    // by spec v0.3 §1.20, so the prerequisite is stated against the bare tool — if `lsns` cannot
+    // enumerate for a shell, it cannot enumerate for an adapter either, and a red result there
+    // would be a fact about the machine wearing the adapter's name.
+    let bare = std::process::Command::new("lsns")
+        .arg("--json")
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false);
+    if ono_testkit::require(
+        bare,
+        ono_testkit::SkipReason::ExternalToolUnavailable,
+        "`lsns --json` does not enumerate namespaces on this host, so no adapter can compose it",
+    )
+    .unmet()
+    {
+        return;
+    }
+
     let counted = (0..5)
         .map(|_| ono("lsns | where processes > 0 | count | to text"))
         .find(|run| run.status().code() == 0)
