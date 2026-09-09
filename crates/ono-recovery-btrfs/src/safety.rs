@@ -87,9 +87,7 @@ impl SafetyFact {
             SafetyFact::SnapshotExistsAndValid => "whether the target snapshot exists and is valid",
             SafetyFact::NestedBoundaries => "the nested subvolume boundaries",
             SafetyFact::SelectiveRestorePossible => "whether a selected restore is possible",
-            SafetyFact::SubvolumeReplacementRequired => {
-                "whether subvolume replacement is required"
-            }
+            SafetyFact::SubvolumeReplacementRequired => "whether subvolume replacement is required",
             SafetyFact::DefaultSubvolumeAndBootImpact => "the default-subvolume and boot impact",
             SafetyFact::MountAndRebootRequirement => "the mount and reboot requirement",
             SafetyFact::LaterStateDiscarded => "the later files and state that would be discarded",
@@ -105,7 +103,9 @@ impl SafetyFact {
     /// The fact a token names.
     #[must_use]
     pub fn from_token(token: &str) -> Option<Self> {
-        SafetyFact::ALL.into_iter().find(|fact| fact.token() == token)
+        SafetyFact::ALL
+            .into_iter()
+            .find(|fact| fact.token() == token)
     }
 }
 

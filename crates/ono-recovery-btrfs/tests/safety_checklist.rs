@@ -13,11 +13,13 @@ mod support;
 
 use std::sync::Arc;
 
-use ono_change_core::{RecoveryAsset, RecoveryAssetType, RecoveryGoal, RecoveryProvider, ToolOutput};
+use ono_change_core::{
+    RecoveryAsset, RecoveryAssetType, RecoveryGoal, RecoveryProvider, ToolOutput,
+};
 use ono_recovery_btrfs::{BtrfsMounts, BtrfsProvider, RecordedFiles, SafetyChecklist, SafetyFact};
 use support::{
-    NGINX_CONF, ROOT_ID, ROOT_SNAPSHOT, fixture, mounts, provider_with_files, replacing, root_asset,
-    root_recovery_script, runner, var_asset, var_recovery_script,
+    NGINX_CONF, ROOT_ID, ROOT_SNAPSHOT, fixture, mounts, provider_with_files, replacing,
+    root_asset, root_recovery_script, runner, var_asset, var_recovery_script,
 };
 
 /// The checklist the recorded output establishes in full.

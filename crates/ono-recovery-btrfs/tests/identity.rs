@@ -9,7 +9,7 @@
 mod support;
 
 use ono_change_core::RecoveryProvider;
-use ono_recovery_btrfs::{SubvolumeRef, SCOPE_KIND};
+use ono_recovery_btrfs::{SCOPE_KIND, SubvolumeRef};
 use support::{FILESYSTEM, NESTED_ID, ROOT_ID, VAR_ID, fixture, provider};
 
 /// The three answers `resolve_domain` asks for, in the order it asks them.
@@ -30,7 +30,11 @@ fn should_resolve_a_plain_directory_to_its_containing_subvolume_when_its_name_lo
         .expect("the path is on a Btrfs filesystem");
     assert_eq!(
         domain.object(),
-        Some(SubvolumeRef::new(FILESYSTEM, ROOT_ID, "@").reference().as_str()),
+        Some(
+            SubvolumeRef::new(FILESYSTEM, ROOT_ID, "@")
+                .reference()
+                .as_str()
+        ),
         "Appendix B.9: `looks-like-a-subvol` is an ordinary directory inside `@`, and a \
          subdirectory named like a subvolume is not sufficient evidence of one. Its state lives \
          in subvolume 256"

@@ -12,9 +12,7 @@ use std::sync::Arc;
 
 use ono_change_core::{RecoveryGoal, RecoveryProvider, RestoreMethod};
 use ono_recovery_btrfs::{BtrfsConfig, BtrfsProvider, RootRecovery, SafetyFact};
-use support::{
-    mounts, root_asset, root_recovery_script, var_asset, var_recovery_script,
-};
+use support::{mounts, root_asset, root_recovery_script, var_asset, var_recovery_script};
 
 fn provider_recovering_root_by(policy: RootRecovery) -> BtrfsProvider {
     BtrfsProvider::new(support::runner(root_recovery_script()))

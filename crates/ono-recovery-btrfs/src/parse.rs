@@ -324,7 +324,6 @@ impl SubvolumeEntry {
     pub fn tree_path(&self) -> &str {
         &self.tree_path
     }
-
 }
 
 /// Parses `btrfs subvolume list` output, whatever combination of flags produced it (§14.3).

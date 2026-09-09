@@ -76,7 +76,7 @@ impl std::fmt::Debug for Connection {
 }
 
 /// What a package reaches through `objects.*`, `relations.*`, `history.*`, `process.*`,
-/// `network.*` and `secrets.*`. Every method takes the wire's JSON and answers with it; the object ids,
+/// `network.*`, `secrets.*`, `temporal.*`, `change.*` and `recovery.*`. Every method takes the wire's JSON and answers with it; the object ids,
 /// queries and selectors are the shapes `protocol.v1.yaml` declares.
 #[async_trait::async_trait]
 pub trait HostServices: Send + Sync + std::fmt::Debug {
@@ -210,6 +210,69 @@ pub trait HostServices: Send + Sync + std::fmt::Debug {
     /// `temporal.recorder`: start, stop or report the persistent recorder (v0.5 §10.3, §30.7).
     async fn temporal_recorder(&self, _action: String) -> Result<Json, HostError> {
         Err(HostError::unavailable("a history recorder"))
+    }
+
+    // --- the change and recovery domain of v0.6 §48 -------------------------------------------
+    //
+    // Defaulted, all four, for the reason the temporal six are: a host that plans no changes
+    // answers "I serve none" rather than failing to compile, and every existing implementation
+    // keeps working unchanged.
+    //
+    // Four methods rather than eleven, because the eleven calls of `protocol.v1.yaml` are eleven
+    // *capability* boundaries and not eleven services. What separates them is what the broker
+    // checks and what the audit records, which is the supervisor's work; what reaches the host is
+    // "read a plan", "add to a plan", "report a recovery fact" and "report a verification".
+
+    /// `change.plan.read`: the `ono.change-plan/1` record for one plan (v0.6 §48.3, §5.1).
+    ///
+    /// §48.4: reading is where a package that describes impact stops. Nothing a host returns
+    /// here is an instruction, and there is no companion call that executes what it describes.
+    async fn change_plan_read(&self, _plan: &str) -> Result<Json, HostError> {
+        Err(HostError::unavailable("change plans"))
+    }
+
+    /// `change.plan.contribute`: actions, effects, impact edges and risk findings the package
+    /// adds to a plan (v0.6 §48.2, §48.3).
+    ///
+    /// The contribution has already been validated when this is called: every effect names a
+    /// domain, a kind and a confidence of v0.6's own vocabulary, and every risk finding names a
+    /// rule the package declared and a class that rule may emit. What is left is composing it
+    /// into the plan, and §19.2 fixes how: the class is the strongest any rule found, so a host
+    /// implementation folds with a maximum and has no operation that lowers one.
+    async fn change_plan_contribute(
+        &self,
+        _package: &str,
+        _contribution: Json,
+    ) -> Result<Json, HostError> {
+        Err(HostError::unavailable("a change planner to contribute to"))
+    }
+
+    /// The `recovery.*` calls: one fact a recovery provider reports, named by `call` (§12.1).
+    ///
+    /// `call` is the protocol call id — `recovery.discover`, `recovery.restore` — so a host that
+    /// records provider activity records which operation it was without the supervisor having to
+    /// project seven near-identical methods onto it. The capability behind each is checked and
+    /// audited before this is reached.
+    async fn recovery_report(
+        &self,
+        _package: &str,
+        _call: &str,
+        _report: Json,
+    ) -> Result<Json, HostError> {
+        Err(HostError::unavailable("recovery providers"))
+    }
+
+    /// `verification.observe`: the result of observing one verification contract (§23, §25.1).
+    ///
+    /// §23.5 forbids treating an unanswerable check as success, and §25.3 forbids a scopeless
+    /// claim that recovery worked. Both are properties of what the package reported, which the
+    /// supervisor has already settled against the vocabulary before calling this.
+    async fn verification_observe(
+        &self,
+        _package: &str,
+        _result: Json,
+    ) -> Result<Json, HostError> {
+        Err(HostError::unavailable("change verification"))
     }
 }
 

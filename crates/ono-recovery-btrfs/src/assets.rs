@@ -118,10 +118,7 @@ impl RecoveryAssetSet {
     /// Each member's own creation instant, as the filesystem recorded it (Appendix D.7).
     #[must_use]
     pub fn creation_instants(&self) -> Vec<Timestamp> {
-        self.members
-            .iter()
-            .map(RecoveryAsset::created_at)
-            .collect()
+        self.members.iter().map(RecoveryAsset::created_at).collect()
     }
 
     /// The consistency the whole set may claim (§11.3, Appendix D.7).

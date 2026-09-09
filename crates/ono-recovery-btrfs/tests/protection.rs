@@ -78,7 +78,10 @@ fn should_propose_one_read_only_snapshot_per_subvolume_the_plan_changes() {
         action.proposed_asset().asset_type(),
         RecoveryAssetType::BtrfsSnapshot
     );
-    assert!(action.is_required(), "§2.3: protection that fails stops the apply");
+    assert!(
+        action.is_required(),
+        "§2.3: protection that fails stops the apply"
+    );
 }
 
 #[test]
@@ -129,7 +132,11 @@ fn should_accept_a_recovery_namespace_beside_the_subvolumes_it_protects() {
         !config.is_nested_in("@snap"),
         "and the comparison is by path component, so `@snapshots` is not read as living in `@snap`"
     );
-    assert!(BtrfsConfig::default().snapshots_in("@/snaps").is_nested_in("@"));
+    assert!(
+        BtrfsConfig::default()
+            .snapshots_in("@/snaps")
+            .is_nested_in("@")
+    );
 }
 
 #[test]
@@ -147,7 +154,10 @@ fn should_create_the_snapshot_with_the_read_only_flag_and_no_shell() {
     let calls = runner.calls();
     let snapshot = calls
         .iter()
-        .find(|(_, argv)| argv.first().is_some_and(|first| first == "subvolume") && argv.get(1).is_some_and(|second| second == "snapshot"))
+        .find(|(_, argv)| {
+            argv.first().is_some_and(|first| first == "subvolume")
+                && argv.get(1).is_some_and(|second| second == "snapshot")
+        })
         .expect("a snapshot was taken");
     assert_eq!(
         snapshot.1,
@@ -185,9 +195,9 @@ fn should_verify_the_read_only_flag_after_creation_rather_than_assuming_it() {
     let actions = provider
         .plan_protection(&[candidate], ProtectionMode::Prefer)
         .expect("planning runs");
-    let error = provider
-        .create(&actions[0])
-        .expect_err("§14.5: a snapshot asked to be read-only and found writable is not a recovery point");
+    let error = provider.create(&actions[0]).expect_err(
+        "§14.5: a snapshot asked to be read-only and found writable is not a recovery point",
+    );
     assert_eq!(error.code().name(), "recovery.asset_create_failed");
     assert!(error.help().is_some_and(|help| help.contains("ro=false")));
 }
@@ -248,7 +258,11 @@ fn should_refuse_to_snapshot_a_subvolume_that_is_not_mounted() {
     let error = provider
         .create(&actions[0])
         .expect_err("§56.3: a source nobody can see is a refusal rather than a guessed path");
-    assert!(error.message().contains("could not create a recovery point"));
+    assert!(
+        error
+            .message()
+            .contains("could not create a recovery point")
+    );
 }
 
 #[test]
@@ -385,9 +399,7 @@ fn should_retain_the_first_snapshot_when_the_second_one_fails() {
         "and it is still there, not quietly removed"
     );
     assert!(
-        shortfall
-            .failed_scope()
-            .contains(&VAR_ID.to_string()),
+        shortfall.failed_scope().contains(&VAR_ID.to_string()),
         "the failure names the subvolume it could not protect"
     );
     assert_eq!(
@@ -404,7 +416,10 @@ fn should_retain_the_first_snapshot_when_the_second_one_fails() {
          cleaning up is a decision, not a reflex"
     );
     assert!(
-        shortfall.error().help().is_some_and(|help| help.contains("Nothing was changed")),
+        shortfall
+            .error()
+            .help()
+            .is_some_and(|help| help.contains("Nothing was changed")),
         "§2.3: the refusal says that mutation never began"
     );
 }
@@ -421,7 +436,10 @@ fn should_track_a_writable_subvolume_derived_from_a_snapshot_as_its_own_asset() 
     ]);
     let read_only = support::root_asset();
     let derived = provider
-        .derive_writable(&read_only, Path::new("/mnt/top/@snapshots/ono-a82f-root-rw"))
+        .derive_writable(
+            &read_only,
+            Path::new("/mnt/top/@snapshots/ono-a82f-root-rw"),
+        )
         .expect("the derived subvolume is created");
     assert_ne!(
         derived.id(),
@@ -435,10 +453,9 @@ fn should_track_a_writable_subvolume_derived_from_a_snapshot_as_its_own_asset() 
     );
     assert_eq!(derived.reference(), "/mnt/top/@snapshots/ono-a82f-root-rw");
     assert!(
-        derived
-            .exclusions()
-            .iter()
-            .any(|exclusion| exclusion.reason().contains("stops being the captured state")),
+        derived.exclusions().iter().any(|exclusion| exclusion
+            .reason()
+            .contains("stops being the captured state")),
         "§14.5: what a writable derivative holds is no longer provably the captured state"
     );
 }

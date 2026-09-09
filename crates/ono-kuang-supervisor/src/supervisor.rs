@@ -459,6 +459,14 @@ impl Supervisor {
             });
         }
 
+        // v0.6 §48.4, at the one moment it can be enforced without trusting anything: the
+        // package's declarations are settled against the change vocabulary and against the
+        // authority it actually holds, before its runtime is asked to do anything.
+        crate::change::validate(&package_id, &hello, &mut |schema, what, name| {
+            resolve_schema_reference(&schemas, schema, what, name)
+        })?;
+        let change = crate::change::ChangeContributions::of(&hello);
+
         let mut lifecycle = Lifecycle::installed();
         let enabled = lifecycle.enable();
         let loaded = lifecycle.load(contract.degraded);
@@ -513,6 +521,7 @@ impl Supervisor {
             consents: 0,
             exec_arguments: Vec::new(),
             temporal: temporal_surface(&contract, &hello, &package_id, authoritative),
+            change: change.clone(),
             declared_memory_max: manifest.runtime.as_ref().map(|runtime| runtime.memory_max),
         };
         tokio::spawn(actor.run());
@@ -527,6 +536,7 @@ impl Supervisor {
             commands,
             targets,
             schemas: contributed_schemas,
+            change,
             audit,
             to_actor: msg_tx,
         })
@@ -1060,6 +1070,7 @@ pub struct LoadedPlugin {
     targets: Vec<RegisteredTarget>,
     schemas: Vec<Arc<ono_value::Schema>>,
     views: Vec<ono_kuang_protocol::ViewContribution>,
+    change: crate::change::ChangeContributions,
     audit: AuditTrail,
     to_actor: mpsc::Sender<ActorMsg>,
 }
@@ -1075,6 +1086,15 @@ impl LoadedPlugin {
     #[must_use]
     pub fn views(&self) -> &[ono_kuang_protocol::ViewContribution] {
         &self.views
+    }
+
+    /// What the package contributes to plan intelligence (v0.6 §48.2).
+    ///
+    /// Every entry here passed the load-time validation of §48.4, so a host reading this table
+    /// is reading declarations that have already been held to the authority the package holds.
+    #[must_use]
+    pub const fn change(&self) -> &crate::change::ChangeContributions {
+        &self.change
     }
 
     /// What the instance was started inside (spec §31.10).
@@ -1633,6 +1653,8 @@ struct Actor {
     /// contribution call is checked against the same answer and a rate window survives across
     /// calls.
     temporal: crate::temporal::Contribution,
+    /// What the package contributes to plan intelligence, validated at load (v0.6 §48.2).
+    change: crate::change::ChangeContributions,
     /// The ceiling the package's manifest declared, beside the effective one in `sandbox`.
     /// `None` when the manifest declares no runtime at all (spec §31.15's "host policy has final
     /// authority", errors.v1.yaml K11203).

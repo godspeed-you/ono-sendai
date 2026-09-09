@@ -96,9 +96,7 @@ fn should_classify_a_file_changed_again_after_the_snapshot_as_conflicting() {
         "§62.8: the analysis ran, which is a different state from finding nothing"
     );
     assert!(
-        fragment
-            .newer_state()
-            .requires_destructive_acceptance(),
+        fragment.newer_state().requires_destructive_acceptance(),
         "§24.5: a recovery that discards a later edit is gated on explicit acceptance"
     );
 }
@@ -178,7 +176,9 @@ fn should_block_a_recovery_of_an_object_inside_a_nested_subvolume() {
         .expect_err("§14.3: the snapshot of @var holds an empty directory where lib-app is");
     assert_eq!(error.code().name(), "recovery.plan_incomplete");
     assert!(
-        error.help().is_some_and(|help| help.contains("empty directory")),
+        error
+            .help()
+            .is_some_and(|help| help.contains("empty directory")),
         "and the refusal says why rather than reporting a generic failure"
     );
 }
@@ -242,12 +242,12 @@ fn should_never_claim_that_btrfs_performs_a_rollback() {
         .expect("discovery runs");
     for candidate in &candidates {
         spoken.push(candidate.detail().to_owned());
-        spoken.extend(
-            candidate
-                .exclusions()
-                .iter()
-                .flat_map(|exclusion| [exclusion.subject().to_owned(), exclusion.reason().to_owned()]),
-        );
+        spoken.extend(candidate.exclusions().iter().flat_map(|exclusion| {
+            [
+                exclusion.subject().to_owned(),
+                exclusion.reason().to_owned(),
+            ]
+        }));
         spoken.extend(
             candidate
                 .creation_requirements()
@@ -270,7 +270,12 @@ fn should_never_claim_that_btrfs_performs_a_rollback() {
         .plan_recovery_with_checklist(&root_asset(), None, RecoveryGoal::RestoreChangedObjects)
         .expect("the recovery plans");
     spoken.push(fragment.method().as_str().to_owned());
-    spoken.extend(fragment.actions().iter().map(|action| action.summary().to_owned()));
+    spoken.extend(
+        fragment
+            .actions()
+            .iter()
+            .map(|action| action.summary().to_owned()),
+    );
     spoken.extend(
         fragment
             .newer_state()

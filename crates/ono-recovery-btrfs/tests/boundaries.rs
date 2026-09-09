@@ -85,7 +85,10 @@ fn should_not_snapshot_a_subvolume_the_plan_does_not_touch() {
          anti-pattern §62.7 names"
     );
     assert!(
-        required.required().iter().all(|entry| entry.boundary().id() != HOME_ID),
+        required
+            .required()
+            .iter()
+            .all(|entry| entry.boundary().id() != HOME_ID),
         "not by id either"
     );
 }

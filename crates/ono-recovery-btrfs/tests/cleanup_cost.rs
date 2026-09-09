@@ -29,8 +29,8 @@ fn discovery_script() -> Vec<ono_change_core::ToolOutput> {
 #[test]
 fn should_delete_exactly_the_snapshot_it_was_given_and_nothing_beneath_it() {
     let runner = runner(vec![fixture("delete-readonly")]);
-    let provider = BtrfsProvider::new(Arc::clone(&runner) as Arc<dyn ToolRunner>)
-        .with_mounts(mounts());
+    let provider =
+        BtrfsProvider::new(Arc::clone(&runner) as Arc<dyn ToolRunner>).with_mounts(mounts());
     provider
         .cleanup(&root_asset())
         .expect("§37: removing an asset is a provider operation");
@@ -119,7 +119,10 @@ fn should_report_no_zero_cost_on_any_path_that_offers_one() {
         .expect("discovery runs");
     for candidate in &candidates {
         assert!(candidate.cost().is_estimated());
-        assert_ne!(candidate.cost().initial_bytes(), Some(ono_value::ByteSize::ZERO));
+        assert_ne!(
+            candidate.cost().initial_bytes(),
+            Some(ono_value::ByteSize::ZERO)
+        );
         assert_ne!(
             candidate.cost().retained_bytes(),
             Some(ono_value::ByteSize::ZERO),
@@ -186,11 +189,10 @@ fn should_state_that_a_snapshot_shares_the_storage_failure_domain_of_what_it_pro
          filesystem/storage failure domain unless a separate backup provider exists"
     );
     assert!(
-        candidate
-            .exclusions()
-            .iter()
-            .any(|exclusion| exclusion.reason().contains("storage failure domain")
-                && exclusion.reason().contains("backup provider")),
+        candidate.exclusions().iter().any(|exclusion| exclusion
+            .reason()
+            .contains("storage failure domain")
+            && exclusion.reason().contains("backup provider")),
         "and it is an exclusion as well as a sentence, so a renderer that shows only what an \
          asset excludes still shows it"
     );
@@ -259,8 +261,8 @@ fn should_keep_the_default_retention_the_specification_names() {
 #[test]
 fn should_name_the_snapshot_a_cleanup_would_remove() {
     let runner = runner(vec![fixture("delete-readonly")]);
-    let provider = BtrfsProvider::new(Arc::clone(&runner) as Arc<dyn ToolRunner>)
-        .with_mounts(mounts());
+    let provider =
+        BtrfsProvider::new(Arc::clone(&runner) as Arc<dyn ToolRunner>).with_mounts(mounts());
     let asset = var_asset(&[]);
     provider.cleanup(&asset).expect("the deletion runs");
     assert_eq!(

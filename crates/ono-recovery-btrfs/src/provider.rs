@@ -412,7 +412,12 @@ impl BtrfsProvider {
         destination: &Path,
     ) -> Result<RecoveryAsset, ErrorValue> {
         let destination_text = destination.to_string_lossy().into_owned();
-        let output = self.btrfs(&["subvolume", "snapshot", asset.reference(), &destination_text])?;
+        let output = self.btrfs(&[
+            "subvolume",
+            "snapshot",
+            asset.reference(),
+            &destination_text,
+        ])?;
         if !output.succeeded() {
             return Err(snapshot_failed(
                 asset.scope().domain(),
@@ -615,8 +620,10 @@ impl BtrfsProvider {
                         asset.reference(),
                         show.id(),
                         show.uuid(),
-                        show.created_at()
-                            .map_or_else(|| "at an unrecorded time".to_owned(), |at| at.to_string())
+                        show.created_at().map_or_else(
+                            || "at an unrecorded time".to_owned(),
+                            |at| at.to_string()
+                        )
                     ),
                 );
                 show
@@ -697,9 +704,7 @@ impl BtrfsProvider {
             RestoreMethod::SelectiveFileRestore | RestoreMethod::CloneAndCopy => {
                 Some(RootRecovery::OnlineSelectiveRestore)
             }
-            RestoreMethod::SubvolumeReplacement => {
-                Some(RootRecovery::OfflineSubvolumeReplacement)
-            }
+            RestoreMethod::SubvolumeReplacement => Some(RootRecovery::OfflineSubvolumeReplacement),
             RestoreMethod::OfflineRootRecovery => Some(RootRecovery::NextBoot),
             _ => None,
         }
@@ -716,7 +721,9 @@ impl BtrfsProvider {
             plan.map_or("ono", |plan| plan.short()),
             reference.tree_path(),
         );
-        Ok(self.recovery_namespace(mounts, reference.tree_path())?.join(name))
+        Ok(self
+            .recovery_namespace(mounts, reference.tree_path())?
+            .join(name))
     }
 
     /// Where the recovery namespace is visible in this mount namespace (Appendix D.8).
@@ -1384,11 +1391,10 @@ impl BtrfsProvider {
             .map(|namespace| {
                 namespace.join(format!(
                     "{}{DERIVED_SUFFIX}",
-                    PathBuf::from(asset.reference())
-                        .file_name()
-                        .map_or_else(|| "ono-derived".to_owned(), |name| name
-                            .to_string_lossy()
-                            .into_owned())
+                    PathBuf::from(asset.reference()).file_name().map_or_else(
+                        || "ono-derived".to_owned(),
+                        |name| name.to_string_lossy().into_owned()
+                    )
                 ))
             })
             .unwrap_or_else(|_| PathBuf::from(format!("{}{DERIVED_SUFFIX}", asset.reference())));
@@ -1441,20 +1447,13 @@ impl BtrfsProvider {
                             plan_id,
                             ordinal,
                             ActionRole::Recover,
-                            format!(
-                                "restore {} from {}",
-                                object.display(),
-                                from.display()
-                            ),
+                            format!("restore {} from {}", object.display(), from.display()),
                             recovery_operation(
                                 RecoveryCapability::Restore,
                                 OP_RESTORE_FILE,
                                 vec![
                                     (ARG_SOURCE, Value::string(&from.to_string_lossy())),
-                                    (
-                                        ARG_DESTINATION,
-                                        Value::string(&object.to_string_lossy()),
-                                    ),
+                                    (ARG_DESTINATION, Value::string(&object.to_string_lossy())),
                                 ],
                             ),
                         )
@@ -1481,10 +1480,7 @@ impl BtrfsProvider {
                                 OP_REPLACE_SUBVOLUME,
                                 vec![
                                     (ARG_SOURCE, Value::string(&derived.to_string_lossy())),
-                                    (
-                                        ARG_DESTINATION,
-                                        Value::string(&live_path.to_string_lossy()),
-                                    ),
+                                    (ARG_DESTINATION, Value::string(&live_path.to_string_lossy())),
                                     (ARG_SUBVOLUME, Value::string(reference.tree_path())),
                                 ],
                             ),
@@ -1630,7 +1626,8 @@ impl RecoveryProvider for BtrfsProvider {
         let mount_point = PathBuf::from(mount.mount_point());
         let info = self.filesystem_info(&mount_point)?;
         let outcome = self.show(&target)?;
-        let layout = SubvolumeLayout::new(self.boundaries(&mount_point)?, mounts.clone().into_owned());
+        let layout =
+            SubvolumeLayout::new(self.boundaries(&mount_point)?, mounts.clone().into_owned());
         let (boundary, evidence) = match &outcome {
             ShowOutcome::Subvolume(show) => match layout.by_id(show.id()) {
                 Some(boundary) => (
@@ -1905,9 +1902,7 @@ impl RecoveryProvider for BtrfsProvider {
         let source = argument(arguments, ARG_SOURCE).unwrap_or_default();
         let destination = argument(arguments, ARG_DESTINATION).unwrap_or_default();
         match operation.as_str() {
-            OP_RESTORE_FILE => self
-                .files
-                .copy(Path::new(&source), Path::new(&destination)),
+            OP_RESTORE_FILE => self.files.copy(Path::new(&source), Path::new(&destination)),
             OP_SET_DEFAULT => {
                 let mount = argument(arguments, ARG_MOUNT).unwrap_or_default();
                 let id = match self.show(Path::new(&source))? {
@@ -2119,7 +2114,8 @@ fn describe_outcome(outcome: &ShowOutcome) -> String {
 
 /// The mount as `ono-change-core` models it (Appendix B.1).
 fn resolved_mount(mount: &BtrfsMount) -> ResolvedMount {
-    let mut options: Vec<Arc<str>> = vec![Arc::from(if mount.is_read_only() { "ro" } else { "rw" })];
+    let mut options: Vec<Arc<str>> =
+        vec![Arc::from(if mount.is_read_only() { "ro" } else { "rw" })];
     if let Some(id) = mount.subvolume_id() {
         options.push(Arc::from(format!("subvolid={id}")));
     }
@@ -2203,11 +2199,10 @@ fn mount_evidence(
         "{} is mounted at {} ({}), and the mount is {}",
         live_path.display(),
         mount.mount_point(),
-        mount
-            .subvolume()
-            .map_or_else(|| "no subvol= option".to_owned(), |subvol| format!(
-                "subvol={subvol}"
-            )),
+        mount.subvolume().map_or_else(
+            || "no subvol= option".to_owned(),
+            |subvol| format!("subvol={subvol}")
+        ),
         if mount.is_read_only() {
             "read-only, so nothing could be written back into it (Appendix G.2)"
         } else {

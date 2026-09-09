@@ -86,7 +86,7 @@ pub use parse::{
     BtrfsVersion, DefaultSubvolume, FS_TREE_ID, FilesystemInfo, FilesystemUsage, ShowOutcome,
     SubvolumeEntry, SubvolumeShow,
 };
-pub use provider::{BtrfsProvider, BTRFS, SCOPE_KIND, VALIDATED_VERSIONS};
+pub use provider::{BTRFS, BtrfsProvider, SCOPE_KIND, VALIDATED_VERSIONS};
 pub use runner::{ProcessRunner, TOOL_PATH};
 pub use safety::{SafetyChecklist, SafetyFact};
 pub use subvolume::SubvolumeRef;

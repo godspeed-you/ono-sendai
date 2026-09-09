@@ -236,10 +236,12 @@ impl SubvolumeLayout {
             .boundaries
             .iter()
             .filter(|candidate| candidate.id() != boundary.id())
-            .filter(|candidate| match (outer.as_ref(), self.visible_path(candidate)) {
-                (Some(outer), Some(inner)) => inner.starts_with(outer) && inner != *outer,
-                _ => candidate.is_nested_in(boundary),
-            })
+            .filter(
+                |candidate| match (outer.as_ref(), self.visible_path(candidate)) {
+                    (Some(outer), Some(inner)) => inner.starts_with(outer) && inner != *outer,
+                    _ => candidate.is_nested_in(boundary),
+                },
+            )
             .collect();
         nested.sort_by(|left, right| left.tree_path().cmp(right.tree_path()));
         nested

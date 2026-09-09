@@ -208,9 +208,8 @@ impl BtrfsMounts {
             if !contains(mount.mount_point(), &target) {
                 continue;
             }
-            let deeper = best.is_none_or(|current| {
-                mount.mount_point().len() >= current.mount_point().len()
-            });
+            let deeper =
+                best.is_none_or(|current| mount.mount_point().len() >= current.mount_point().len());
             if deeper {
                 best = Some(mount);
             }

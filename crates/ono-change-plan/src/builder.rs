@@ -153,10 +153,10 @@ impl BlockStatement {
     pub const fn forbidden_construct(&self) -> Option<&'static str> {
         match self {
             BlockStatement::Action(_) => None,
-            BlockStatement::Loop { .. } => "a loop",
-            BlockStatement::Function { .. } => "an arbitrary function",
-            BlockStatement::BackgroundJob { .. } => "a background job",
-            BlockStatement::ControlFlow { .. } => "unbounded runtime control flow",
+            BlockStatement::Loop { .. } => Some("a loop"),
+            BlockStatement::Function { .. } => Some("an arbitrary function"),
+            BlockStatement::BackgroundJob { .. } => Some("a background job"),
+            BlockStatement::ControlFlow { .. } => Some("unbounded runtime control flow"),
         }
     }
 }
