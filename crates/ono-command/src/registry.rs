@@ -22,6 +22,7 @@ use crate::suggest::closest;
 
 /// The command families of `docs/contracts/commands/`, embedded as the JSON `build.rs` wrote.
 const COMMAND_FILES: &[&str] = &[
+    include_str!(concat!(env!("OUT_DIR"), "/commands/change.json")),
     include_str!(concat!(env!("OUT_DIR"), "/commands/container.json")),
     include_str!(concat!(env!("OUT_DIR"), "/commands/data.json")),
     include_str!(concat!(env!("OUT_DIR"), "/commands/file.json")),

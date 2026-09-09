@@ -51,6 +51,14 @@ fields:
       Whether the plan must cover this domain before it may be called protected. False for
       `no-recovery-required`, and for a domain policy has explicitly declared irrelevant
       (Appendix A.7).
+  declared_irrelevant:
+    type: bool
+    required: true
+    doc: >-
+      Whether an operator's policy declared this domain irrelevant to the requested recovery
+      objective. Appendix A.7's only escape from the unknown cap, and it is a decision recorded in
+      the sealed plan rather than a default — which is why it travels beside `required` instead of
+      being inferred from it.
   assets:
     type: list<string>
     required: true

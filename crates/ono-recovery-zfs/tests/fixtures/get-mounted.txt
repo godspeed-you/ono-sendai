@@ -1,0 +1,37 @@
+$ zfs get -H -p -o name,property,value mounted,mountpoint,canmount,readonly,origin
+rpool	mounted	yes
+rpool	mountpoint	/rpool
+rpool	canmount	on
+rpool	readonly	off
+rpool	origin	-
+rpool/ROOT	mounted	yes
+rpool/ROOT	mountpoint	/altroot
+rpool/ROOT	canmount	on
+rpool/ROOT	readonly	off
+rpool/ROOT	origin	-
+rpool/ROOT/debian	mounted	yes
+rpool/ROOT/debian	mountpoint	/altroot/debian
+rpool/ROOT/debian	canmount	on
+rpool/ROOT/debian	readonly	off
+rpool/ROOT/debian	origin	-
+tank	mounted	yes
+tank	mountpoint	/tank
+tank	canmount	on
+tank	readonly	off
+tank	origin	-
+tank/data	mounted	yes
+tank/data	mountpoint	/tank/data
+tank/data	canmount	on
+tank/data	readonly	off
+tank/data	origin	-
+tank/data/customer	mounted	yes
+tank/data/customer	mountpoint	/tank/data/customer
+tank/data/customer	canmount	on
+tank/data/customer	readonly	off
+tank/data/customer	origin	-
+tank/home	mounted	yes
+tank/home	mountpoint	/tank/home
+tank/home	canmount	on
+tank/home	readonly	off
+tank/home	origin	-
+[exit 0]

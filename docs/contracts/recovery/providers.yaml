@@ -1,0 +1,127 @@
+# The recovery providers of v0.6 §12: the capabilities each declares, the first-party set, and the
+# conformance version a provider advertises.
+#
+# `xtask/src/change.rs::check_providers` holds this file against
+# `ono_change_core::RecoveryCapability::ALL`, against the capability registry in
+# `docs/contracts/capabilities.yaml`, and against the providers the shell actually registers, in
+# both directions. A provider that ships without a row here fails the gate, and a row here naming
+# a provider nothing registers fails it too.
+#
+# §12.3 is the constraint that shapes every first-party provider in the table: a provider MUST use
+# direct process APIs, libraries, DBus, ioctls or other structured interfaces, and MUST NOT
+# generate shell command strings from user-controlled values. In this implementation that is a
+# type — every storage provider runs its tool through a runner that takes a program and an
+# argument vector, and there is no variant that takes a command line.
+#
+# Decisions: ADR-0800, ADR-0807.
+
+version: 1
+
+conformance: ono.recovery-provider/1
+
+# §12.2's capabilities. The first five are required of every recovery provider: a provider that
+# can discover and cannot restore is not a recovery provider, it is §62.1's snapshot theatre with
+# a discovery step. The last two are optional and are claims a provider makes about its own domain.
+capabilities:
+  - {id: recovery.discover, required: true, mutates: false, doc: "§12.2: find candidate protection for a target. Read-only."}
+  - {id: recovery.prepare, required: true, mutates: true, doc: "§12.2 and §5.5: create a recovery asset. A real mutation of the storage or control plane, and visible in history."}
+  - {id: recovery.restore, required: true, mutates: true, doc: "§12.2: use an asset to put state back. The most consequential capability v0.6 defines, and §43.4 requires the privilege it needs to be discovered before protection is advertised as usable."}
+  - {id: recovery.cleanup, required: true, mutates: true, doc: "§12.2 and §37: remove an asset."}
+  - {id: recovery.estimate-cost, required: true, mutates: false, doc: "§12.2 and §38: report what an asset costs to create and to keep."}
+  - {id: recovery.quiesce, required: false, mutates: true, doc: "§12.2 and §39.3, optional: pause an application so a snapshot is application-consistent. §18.4 bounds the window and requires the application to be resumed when creation fails."}
+  - {id: recovery.transaction, required: false, mutates: true, doc: "§12.2 and §27.1, optional: begin, prepare, commit and roll back inside the provider's own boundary. §27.2 forbids the word once a second boundary is involved."}
+
+# §48.3's change capabilities, for a KUANG/11 plugin that contributes to planning. §48.4 is the
+# rule they exist to enforce: a plugin that can describe impact MUST NOT automatically gain
+# permission to execute the change, and only `change.action.execute` carries that authority.
+change_capabilities:
+  - {id: change.plan.read, mutates: false, doc: "§48.3: read plans and their impact."}
+  - {id: change.plan.contribute, mutates: false, doc: "§48.3: contribute actions, impact or risk findings to a plan. Still not permission to run anything."}
+  - {id: change.action.execute, mutates: true, doc: "§48.3: carry out a mutating plan action. The only one of the four that authorises a change."}
+  - {id: verification.observe, mutates: false, doc: "§48.3: observe a verification contract and report the result."}
+
+# The first-party providers. §0.4 lists the mechanisms v0.6 treats as first-class; these three are
+# the ones this release ships, and the rest arrive through KUANG/11 (§16, §48).
+providers:
+  - id: ono.recovery.zfs
+    crate: ono-recovery-zfs
+    spec: "§13, Appendix D.1–D.5, §56.1"
+    asset_types: [zfs-snapshot]
+    tool: zfs
+    shares_failure_domain: true
+    doc: >-
+      §13: ZFS is a first-party reference provider because its snapshot semantics map naturally to
+      protected change. §13.4 is the fact it exists to get right — a snapshot of the root dataset
+      does not protect a separate child dataset, however the paths nest — and §13.6 is the one it
+      exists to refuse: rollback that would destroy newer snapshots, bookmarks or clones is
+      enumerated and gated, never silently forced.
+  - id: ono.recovery.btrfs
+    crate: ono-recovery-btrfs
+    spec: "§14, Appendix D.6–D.9, §56.2"
+    asset_types: [btrfs-snapshot]
+    tool: btrfs
+    shares_failure_domain: true
+    doc: >-
+      §14: Btrfs is a first-party reference provider, and §14 opens by forbidding it being modelled
+      as if it were ZFS. §14.3 is the fact the whole provider turns on: snapshots are not recursive
+      across nested subvolumes, so a snapshot of a parent contains an empty directory where a
+      nested subvolume was. §14.4 forbids presenting a generic in-place rollback primitive that
+      Btrfs does not have.
+  - id: ono.recovery.file-copy
+    crate: ono-recovery-files
+    spec: "§15, §44, Appendix C.6–C.7"
+    asset_types: [file-archive, configuration-backup]
+    tool: null
+    shares_failure_domain: false
+    doc: >-
+      §15: not every system uses snapshot-capable storage, so v0.6 provides a narrow first-party
+      file and configuration provider. §15.3 puts its copies in a store other users cannot read,
+      §15.4 restores through temp-file, fsync and rename rather than truncating in place, and
+      §15.5 keeps their contents out of default rendering because they may hold secrets.
+
+# Appendix G.4: a provider tests the filesystem and tool versions it supports and degrades to
+# unsupported rather than executing semantics it has not validated. The versions each provider
+# validated against are declared in its own crate and checked against this policy.
+version_variance:
+  degrade_to: unsupported
+  doc: >-
+    Appendix G.4: providers MUST test supported filesystem and tool versions and degrade to
+    unsupported or unknown rather than execute semantics they have not validated. §56.3 makes the
+    same choice for a single unestablished fact: block rather than guess.
+
+# Appendix G.1's fixture set. Every provider owes a scenario for each of these, and
+# `xtask/src/change.rs::check_provider_fixtures` checks that each first-party provider has one.
+required_fixtures:
+  - resource-discovery
+  - scope-boundaries
+  - successful-protection
+  - failed-protection
+  - asset-validation
+  - restore-planning
+  - restore-execution
+  - newer-state-conflict
+  - cleanup
+  - permission-failure
+  - capacity-failure
+
+# Appendix G.2's truth tests: layouts designed to mislead, where the provider must refuse false
+# coverage. These are the tests that decide whether a provider can be trusted at all.
+truth_tests:
+  - {id: zfs-child-dataset, doc: "A path under a ZFS mount that is actually in a separate child dataset. §13.4."}
+  - {id: btrfs-nested-subvolume, doc: "A nested Btrfs subvolume beneath a snapshotted parent. §14.3."}
+  - {id: bind-mount-crossing, doc: "A bind mount crossing to a different filesystem. Appendix B.3."}
+  - {id: nfs-below-snapshotted-root, doc: "A network filesystem mounted below a snapshotted root. Appendix B.6."}
+  - {id: container-bind-mount, doc: "A host bind mount into a container, where the writable layer is elsewhere. Appendix B.5."}
+  - {id: vanished-snapshot, doc: "An asset that was recorded and no longer exists. §11.4."}
+  - {id: zfs-clone-blocks-rollback, doc: "A clone or newer snapshot that makes a safe rollback impossible without destruction. §13.6."}
+  - {id: read-only-filesystem, doc: "A read-only filesystem that prevents a restore. §11.4."}
+
+# Appendix G.3: destructive recovery tests run only in disposable environments the suite creates.
+destructive_tests:
+  environment: disposable-loopback-or-container
+  production_filesystems: forbidden
+  doc: >-
+    Appendix G.3: destructive recovery tests MUST run only in disposable loopback, VM or container
+    test environments specifically created for the suite. Production host filesystems MUST never be
+    used for test rollback. The first-party harnesses build their own filesystem on a loop file and
+    refuse to run against anything they did not create.

@@ -1,0 +1,20 @@
+$ btrfs subvolume show /mnt/top/@snapshots/ono-a82f-root
+@snapshots/ono-a82f-root
+	Name: 			ono-a82f-root
+	UUID: 			bc1638ef-a9cb-5141-aef0-b9a662b98266
+	Parent UUID: 		b08a487d-1079-ac45-9f7e-12d9f15bea63
+	Received UUID: 		-
+	Creation time: 		2026-09-09 20:33:06 +0000
+	Subvolume ID: 		261
+	Generation: 		9
+	Gen at creation: 	9
+	Parent ID: 		259
+	Top level ID: 		259
+	Flags: 			readonly
+	Send transid: 		0
+	Send time: 		2026-09-09 20:33:06 +0000
+	Receive transid: 	0
+	Receive time: 		-
+	Snapshot(s):
+	Quota group:		n/a
+[exit 0]

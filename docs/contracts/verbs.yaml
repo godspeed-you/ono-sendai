@@ -521,6 +521,69 @@ verbs:
   # names the escape hatch of §4.8 and nothing else does; `timeline`, `changes` and `why` are the
   # three canonical projections of §11, §13 and §16. None of them is mutating: the whole point of
   # the temporal coordinate is that standing at an instant changes nothing (§4.7).
+  # --- prospective change, v0.6 §5 ---------------------------------------------------------
+  #
+  # Seven verbs, and the split between them is §2.1's: `plan`, `impact` and `recover` produce a
+  # description and change nothing, while `protect`, `apply` and `resume` are the three that
+  # touch the system. §5.5 is explicit that `protect` belongs in the second group even though it
+  # creates only a recovery point — a snapshot is a real mutation of the storage plane.
+  #
+  # `plan` is `mutating: false` and still refuses to run from a historical coordinate. §6.4 wants
+  # its own sentence there — historical state can be inspected and not used as the executable
+  # target base — so the refusal is `change.historical_context_read_only` raised by the command
+  # rather than the generic one the mutating flag would produce (ADR-0803).
+  #
+  # `verify` is not here because §7.1 already has it, and §5.7's meaning is the one it already
+  # carries: establish whether something is what it claims to be.
+  - id: ono.verb.plan
+    verb: plan
+    semantics: Describe a proposed change as an inspectable object, without making it.
+    typical_targets: [service, file, package, process, route]
+    pipeline_role: transform
+    mutating: false
+    stability: stable
+  - id: ono.verb.impact
+    verb: impact
+    semantics: Show what a proposed change could touch, directly and indirectly.
+    typical_targets: [plan]
+    pipeline_role: transform
+    mutating: false
+    stability: stable
+  - id: ono.verb.protect
+    verb: protect
+    semantics: Create the recovery points a plan describes, before the change window.
+    typical_targets: [plan]
+    pipeline_role: mutation
+    mutating: true
+    stability: stable
+  - id: ono.verb.apply
+    verb: apply
+    semantics: Carry out a sealed plan.
+    typical_targets: [plan]
+    pipeline_role: mutation
+    mutating: true
+    stability: stable
+  - id: ono.verb.recover
+    verb: recover
+    semantics: Plan the way back from a change, without taking it.
+    typical_targets: [plan, recovery]
+    pipeline_role: transform
+    mutating: false
+    stability: stable
+  - id: ono.verb.rebase
+    verb: rebase
+    semantics: Resolve a sealed plan again against the world as it is now, as a new revision.
+    typical_targets: [plan]
+    pipeline_role: transform
+    mutating: false
+    stability: stable
+  - id: ono.verb.resume
+    verb: resume
+    semantics: Continue an interrupted plan, for the actions whose state permits it.
+    typical_targets: [plan]
+    pipeline_role: mutation
+    mutating: true
+    stability: stable
   - id: ono.verb.at
     verb: at
     semantics: Move the session's temporal coordinate to a resolved instant.

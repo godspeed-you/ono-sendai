@@ -1,0 +1,3 @@
+$ btrfs subvolume show /mnt/root/looks-like-a-subvol
+ERROR: Not a Btrfs subvolume: Invalid argument
+[exit 1]

@@ -1,0 +1,3 @@
+$ btrfs subvolume get-default /mnt/top
+ID 5 (FS_TREE)
+[exit 0]

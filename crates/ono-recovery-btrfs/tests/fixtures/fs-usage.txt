@@ -1,0 +1,27 @@
+$ btrfs filesystem usage /mnt/root
+Overall:
+    Device size:		   2.00GiB
+    Device allocated:		 228.75MiB
+    Device unallocated:		   1.78GiB
+    Device missing:		     0.00B
+    Device slack:		     0.00B
+    Used:			 288.00KiB
+    Free (estimated):		   1.78GiB	(min: 917.62MiB)
+    Free (statfs, df):		   1.78GiB
+    Data ratio:			      1.00
+    Metadata ratio:		      2.00
+    Global reserve:		   5.50MiB	(used: 0.00B)
+    Multiple profiles:		        no
+
+Data,single: Size:8.00MiB, Used:0.00B (0.00%)
+   /dev/loop20	   8.00MiB
+
+Metadata,DUP: Size:102.38MiB, Used:128.00KiB (0.12%)
+   /dev/loop20	 204.75MiB
+
+System,DUP: Size:8.00MiB, Used:16.00KiB (0.20%)
+   /dev/loop20	  16.00MiB
+
+Unallocated:
+   /dev/loop20	   1.78GiB
+[exit 0]

@@ -9,6 +9,7 @@
 pub mod architecture;
 pub mod baseline;
 pub mod bindings;
+pub mod change;
 pub mod conformance;
 pub mod contracts;
 pub mod evidence;

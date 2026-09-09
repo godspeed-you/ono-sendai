@@ -1,0 +1,3 @@
+$ zfs list -H -p -t bookmark -o name,creation,guid
+rpool/ROOT/debian#book-1	1788985942	5048339186470821115
+[exit 0]

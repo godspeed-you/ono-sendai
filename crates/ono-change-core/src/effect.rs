@@ -180,6 +180,42 @@ impl ProposedEffect {
         }
     }
 
+    /// Rebuilds an effect out of the fields a store read back.
+    ///
+    /// The identity travels rather than being re-derived, because §8.2 makes it the handle a
+    /// verification result and an impact node both reference.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub(crate) fn restore(
+        id: EffectId,
+        action: ActionId,
+        object: Option<Arc<str>>,
+        domain: EffectDomain,
+        kind: EffectKind,
+        confidence: EffectConfidence,
+        before: Option<Value>,
+        proposed: Option<Value>,
+        evidence: Vec<Arc<str>>,
+        explanation: Arc<str>,
+        irreversible: bool,
+        compensation: Option<Arc<str>>,
+    ) -> Self {
+        Self {
+            id,
+            action,
+            object,
+            domain,
+            kind,
+            confidence,
+            before,
+            proposed,
+            evidence,
+            explanation,
+            irreversible,
+            compensation,
+        }
+    }
+
     /// Names the object the effect lands on.
     #[must_use]
     pub fn on(mut self, object: impl Into<Arc<str>>) -> Self {

@@ -208,6 +208,7 @@ layering:
         - ono-model-broker
         - ono-spatial-render
         - ono-temporal-render
+        - ono-change-render
     - layer: capability
       of: what the shell can observe and act on, and the boundaries around it
       crates:
@@ -224,6 +225,10 @@ layering:
         - ono-temporal-ledger
         - ono-temporal-reconstruct
         - ono-temporal-query
+        - ono-change-core
+        - ono-change-plan
+        - ono-change-impact
+        - ono-change-recovery
     - layer: surface
       of: the concrete providers, the command contract and the remote link
       crates:
@@ -237,6 +242,11 @@ layering:
         - ono-provider-systemd
         - ono-provider-container
         - ono-recorder
+        - ono-change-protection
+        - ono-change-executor
+        - ono-recovery-files
+        - ono-recovery-zfs
+        - ono-recovery-btrfs
     - layer: composition
       of: the binary that wires the rest together
       crates: [ono-cli]

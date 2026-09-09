@@ -1,0 +1,3 @@
+$ su -s /bin/sh -c btrfs subvolume list /mnt/root nobody
+ERROR: can't perform the search: Operation not permitted
+[exit 1]

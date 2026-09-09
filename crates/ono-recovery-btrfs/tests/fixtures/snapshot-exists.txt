@@ -1,0 +1,3 @@
+$ btrfs subvolume snapshot -r /mnt/root /mnt/top/@snapshots/ono-a82f-root
+ERROR: Could not create subvolume: Read-only file system
+[exit 1]

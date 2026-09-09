@@ -1,0 +1,73 @@
+# The verification model: the three classes of v0.6 §23.2, the four outcomes of §23.3, the
+# equivalence domains of §25.1, and the timeout rule of §23.5.
+#
+# §2.14 is the invariant the whole file serves: verification is separate from execution success. A
+# command that returned zero has proved that it returned zero. §62.9 names exit-code verification
+# as a failure mode, and this registry is what makes the alternative checkable.
+#
+# `xtask/src/change.rs::check_verification` holds each list against
+# `ono_change_core::{VerificationClass, VerificationStatus, EquivalenceDomain}::ALL` in both
+# directions, and asserts that no contract can be built without a timeout.
+#
+# Decisions: ADR-0800.
+
+version: 1
+
+# §23.2's classes and what a failure in each says about the plan.
+classes:
+  - {id: required, on_failure: failed, on_unknown: degraded, doc: "§23.2: a failing required postcondition makes the plan FAILED. §55.7 case 32."}
+  - {id: advisory, on_failure: degraded, on_unknown: degraded, doc: "§23.2: a failing advisory expectation may make the plan DEGRADED. §55.7 case 33."}
+  - {id: observational, on_failure: verified, on_unknown: verified, doc: "§23.2: context only. §23.4's example shows an observed relation change reported as UNKNOWN without changing the verdict."}
+
+# §23.3's outcomes. `counts_as_pass: false` for `unknown` is §23.5 and §2.4 together: a check that
+# could not be answered has not been answered, and treating a timeout as success is the specific
+# thing §23.5 forbids.
+statuses:
+  - {id: passed, counts_as_pass: true, doc: "§23.3: the observed state matched what was expected."}
+  - {id: failed, counts_as_pass: false, doc: "§23.3: the observed state did not match."}
+  - {id: unknown, counts_as_pass: false, doc: "§23.3: the check could not be answered — a timeout, or a source that was not there."}
+  - {id: skipped, counts_as_pass: true, doc: "§23.3: the check was not run because what it depends on did not happen. It makes no claim either way."}
+
+# §4.8's plan-level verdicts, composed from the results.
+verdicts:
+  - {id: verified, doc: "§4.8: every required postcondition held."}
+  - {id: degraded, doc: "§4.8: the intended primary state exists and some expectation is violated or unknown."}
+  - {id: failed, doc: "§4.8: a required postcondition failed."}
+
+# §25.1's equivalence domains. §25.3 forbids the sentence "rollback successful" without a scope,
+# and these are the scopes. A recovery verification reports each of them separately, and there is
+# no composed field for a renderer to reach for.
+equivalence_domains:
+  - {id: persistent-state, doc: "§25.1: the bytes and metadata came back."}
+  - {id: runtime-state, doc: "§25.1: the service is running again, with new process identities, which §25.2 shows as DIFFERENT / EXPECTED rather than as a failure."}
+  - {id: external-side-effect, doc: "§25.1 and §35.2: what left the machine. Never recoverable by a local asset."}
+
+# What a recovery achieved for one subject.
+equivalence_states:
+  - {id: restored, doc: "§25.2: the subject came back as it was."}
+  - {id: different-as-expected, doc: "§25.2: the subject differs in a way recovery never claimed to fix."}
+  - {id: not-recoverable, doc: "§25.2: the subject cannot be brought back at all — a TCP session, a webhook already delivered."}
+  - {id: not-restored, doc: "§25.2: the subject should have come back and did not."}
+  - {id: unknown, doc: "§25.2: whether the subject came back could not be established."}
+
+# §23.5's rule, as a checkable fact rather than a sentence. There is no way to construct a
+# verification contract without a timeout, and a timeout produces a stated outcome.
+timeouts:
+  required: true
+  unbounded_permitted: false
+  default: 30s
+  doc: >-
+    §23.5: verification contracts MUST have explicit timeout semantics, and infinite waiting is
+    forbidden. A contract chooses whether its own timeout is a failure or an unknown; a required
+    postcondition that never became true did not hold, and an advisory check that timed out has
+    disproved nothing.
+
+# §23.1, the rule that makes an unverifiable plan unsealable.
+minimum:
+  applies_when: "the plan contains a MUTATE action"
+  requires: "at least one verification contract"
+  error: change.verification_missing
+  doc: >-
+    §23.1: every plan containing a MUTATE action MUST have at least one verification contract,
+    even where the minimum verification is only provider-level state acknowledgement. It is
+    checked at seal, so a plan that cannot be checked never reaches a state `apply` accepts.

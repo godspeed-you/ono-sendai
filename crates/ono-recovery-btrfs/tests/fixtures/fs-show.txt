@@ -1,0 +1,5 @@
+$ btrfs filesystem show
+Label: 'onotest'  uuid: 1ba9ceee-e246-4007-aee5-a98f80e3e3c8
+	Total devices 1 FS bytes used 144.00KiB
+	devid    1 size 2.00GiB used 228.75MiB path /dev/loop20
+[exit 0]

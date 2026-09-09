@@ -1618,8 +1618,6 @@ version = "0.5.0"
 dependencies = [
  "jiff",
  "ono-core",
- "ono-provider-api",
- "ono-spatial-core",
  "ono-testkit",
  "ono-value",
  "serde_yaml_ng",
@@ -1702,6 +1700,7 @@ dependencies = [
  "ono-render",
  "ono-testkit",
  "ono-value",
+ "unicode-width",
 ]
 
 [[package]]
@@ -2117,6 +2116,7 @@ dependencies = [
  "ono-core",
  "ono-testkit",
  "ono-value",
+ "rustix",
  "sha2 0.11.0",
 ]
 
@@ -3858,6 +3858,7 @@ version = "0.5.0"
 dependencies = [
  "jiff",
  "ono-adapter",
+ "ono-change-core",
  "ono-cli",
  "ono-command",
  "ono-core",

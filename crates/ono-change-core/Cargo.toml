@@ -11,8 +11,6 @@ authors.workspace = true
 [dependencies]
 ono-core.workspace = true
 ono-value.workspace = true
-ono-provider-api.workspace = true
-ono-spatial-core.workspace = true
 jiff.workspace = true
 sha2.workspace = true
 

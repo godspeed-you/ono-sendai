@@ -1,0 +1,75 @@
+# The proposed-effect model: the four confidence classes of v0.6 §8.1, the mutation domains of
+# Appendix A.1, and what an effect does to its object.
+#
+# `xtask/src/change.rs::check_effects` compares each list against
+# `ono_change_core::{EffectConfidence, EffectDomain, EffectKind}::ALL` in both directions, and
+# asserts that the confidence lattice has no operation that strengthens.
+#
+# §8.3 is why there is no probability anywhere in this file: v0.6 MUST NOT invent percentages such
+# as "82% likely" unless a provider supplies a documented statistical model with provenance. What
+# a provider has is a member of a four-element closed set and a sentence.
+#
+# Decisions: ADR-0800.
+
+version: 1
+
+# §8.1's classes, strongest first. `assertable: true` for `guaranteed` alone: §1.1 permits stating
+# a future state only where a provider can prove it.
+#
+# The lattice combines with a weakest-of and has no counterpart. §2.4 forbids unknown being
+# silently promoted, and the absence of a strengthening operation is how that is enforced rather
+# than remembered — the same shape v0.5 §7.2 gave `EvidenceStrength`.
+confidence_classes:
+  - {id: guaranteed, rank: 0, assertable: true, doc: "§8.1: the effect follows directly from the successfully completed operation and the provider contract, scoped to that provider's observable domain."}
+  - {id: expected, rank: 1, assertable: false, doc: "§8.1: the provider has strong semantics for the effect, and external system behaviour can still intervene."}
+  - {id: possible, rank: 2, assertable: false, doc: "§8.1: the object is in the known impact graph, or the provider documents the effect as possible, and Ono cannot assert it will occur."}
+  - {id: unknown, rank: 3, assertable: false, doc: "§8.1: Ono lacks a justified model. It stays visible (§2.4)."}
+
+lattice:
+  operation: weakest_of
+  strengthening_operation: null
+  doc: >-
+    §2.4 and §8.1: composing two statements about the future can never produce a stronger
+    statement than either. `strengthening_operation: null` is a contract rather than an omission —
+    `xtask` asserts the implementation offers no such method.
+
+# Appendix A.1's canonical mutation domains. `persistent: true` marks state that outlives the
+# process that made it, and Appendix A.5 uses exactly that predicate to decide which domains a
+# plan must cover before it may be called protected.
+#
+# `unknown` is persistent: false and is nevertheless the domain that caps a plan, because
+# Appendix A.7 forbids an opaque effect inheriting safety from an unrelated snapshot.
+domains:
+  - {id: filesystem-persistent, persistent: true, external: false, doc: "Appendix A.1: file and directory content and metadata that survives a reboot."}
+  - {id: block-storage-persistent, persistent: true, external: false, doc: "Appendix A.1: state below the filesystem — a logical volume, an image, a device."}
+  - {id: application-persistent, persistent: true, external: false, doc: "Appendix A.1: state an application owns and only the application can restore consistently (§39.1)."}
+  - {id: process-runtime, persistent: false, external: false, doc: "Appendix A.1: process identity and in-memory state. §33.1 makes this generally unrecoverable, whatever the filesystem offers."}
+  - {id: kernel-runtime, persistent: false, external: false, doc: "Appendix A.1: kernel state such as modules, sysctls and namespaces."}
+  - {id: network-runtime, persistent: false, external: false, doc: "Appendix A.1: routes, addresses, firewall rules and live sessions (§34)."}
+  - {id: remote-system, persistent: false, external: true, doc: "Appendix A.1: state on another host, reached over a link (§29)."}
+  - {id: external-side-effect, persistent: false, external: true, doc: "Appendix A.1 and §35.1: an effect outside the machine entirely — a webhook, an email, a cloud API call."}
+  - {id: identity-security-state, persistent: true, external: false, doc: "Appendix A.1: users, groups, keys, credentials and policy."}
+  - {id: provider-transaction-state, persistent: false, external: false, doc: "Appendix A.1: state inside a provider's own transaction boundary (§27.1)."}
+  - {id: unknown, persistent: false, external: false, doc: "Appendix A.1: a domain a provider declared and Ono cannot classify. Appendix A.7 caps plan protection at partially protected while one is required."}
+
+# What an effect does to its object. `inherently_irreversible: true` for `emit` alone: §35.1's
+# request has already been served by the time Ono could reconsider, and §2.13 keeps it visible
+# after protection.
+kinds:
+  - {id: create, inherently_irreversible: false, doc: "The object does not exist now and is proposed to exist afterwards."}
+  - {id: modify, inherently_irreversible: false, doc: "The object exists and its state is proposed to change."}
+  - {id: remove, inherently_irreversible: false, doc: "The object exists and is proposed not to exist afterwards. §32.1 makes this strongly protectable on snapshot-capable storage."}
+  - {id: replace, inherently_irreversible: false, doc: "The object's identity is proposed to be replaced by another of the same kind — a restarted service's worker set (§21.4)."}
+  - {id: interrupt, inherently_irreversible: false, doc: "Something in flight may be cut — an open connection, a request being served (§8.1's POSSIBLE example)."}
+  - {id: emit, inherently_irreversible: true, doc: "§35.1: an outward call or message leaves the system and cannot be taken back. A provider MAY declare a compensating action, which is COMPENSATABLE and not rollback (§35.3)."}
+  - {id: unknown, inherently_irreversible: false, doc: "The provider declared an effect it cannot classify."}
+
+# §9.2's impact classes, ordered by how close the plan comes to the object. `map --plan` and
+# `impact` both render in this order, and the ordering is the contract rather than a convenience.
+impact_classes:
+  - {id: direct-target, distance: 0, doc: "§9.2: the plan names this object."}
+  - {id: direct-effect, distance: 1, doc: "§9.2: an action's declared effect lands on this object."}
+  - {id: dependent, distance: 2, doc: "§9.2: a v0.4 relation says this object depends on something the plan touches."}
+  - {id: transitive-related, distance: 3, doc: "§9.2: reached through more than one relation."}
+  - {id: external-side-effect, distance: 4, doc: "§9.2 and §35.1: an effect that leaves the machine."}
+  - {id: unknown-boundary, distance: 4, doc: "§9.2 and §9.6: the graph ends here and Ono cannot see past it. Counted beside the objects rather than under them, because a summary that hides a boundary is the summary §9.6 forbids."}

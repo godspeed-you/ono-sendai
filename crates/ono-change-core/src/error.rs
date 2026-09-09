@@ -168,6 +168,26 @@ pub fn store_corrupt(detail: &str) -> ErrorValue {
     .with_retryable(false)
 }
 
+/// A persisted record could not be read back (§36.2).
+///
+/// This is `change.plan_store_corrupt` rather than a parse error, and the distinction matters:
+/// the bytes came out of Ono's own store, so a field that will not read is a store this build
+/// cannot trust rather than input a user got wrong. §36.2's versioned schema is what should have
+/// prevented it, and naming the field is what makes the version that broke findable.
+#[must_use]
+pub fn record_malformed(field: &str, detail: &str) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::ChangePlanStoreCorrupt,
+        format!("the stored record's `{field}` field cannot be read"),
+    )
+    .with_help(format!(
+        "v0.6 §36.2: the plan store is versioned and checked on open, so a field this build \
+         cannot read is a store it cannot trust. {detail}"
+    ))
+    .with_metadata("field", Value::string(field))
+    .with_retryable(false)
+}
+
 /// A selector resolved to nothing (§4.3).
 #[must_use]
 pub fn target_unresolved(selector: &str, detail: &str) -> ErrorValue {

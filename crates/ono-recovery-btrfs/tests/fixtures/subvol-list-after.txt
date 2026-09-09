@@ -1,0 +1,5 @@
+$ btrfs subvolume list -a -p -u -q -R -s /mnt/top
+ID 261 gen 9 cgen 9 parent 259 top level 259 otime 2026-09-09 20:33:06 parent_uuid b08a487d-1079-ac45-9f7e-12d9f15bea63 received_uuid -                                    uuid bc1638ef-a9cb-5141-aef0-b9a662b98266 path <FS_TREE>/@snapshots/ono-a82f-root
+ID 262 gen 10 cgen 10 parent 259 top level 259 otime 2026-09-09 20:33:06 parent_uuid d8f32c45-9c7c-5342-ae8c-b34f8a3010e7 received_uuid -                                    uuid aaa4f7f5-bfc8-7f4d-b59e-25ba0d37ac05 path <FS_TREE>/@snapshots/ono-a82f-var
+ID 263 gen 11 cgen 11 parent 259 top level 259 otime 2026-09-09 20:33:06 parent_uuid f9bee8bf-4a82-6645-80d5-3ffbc9df92cf received_uuid -                                    uuid 9e76df63-dd24-934d-b325-3cb39013eb44 path <FS_TREE>/@snapshots/ono-a82f-home
+[exit 0]

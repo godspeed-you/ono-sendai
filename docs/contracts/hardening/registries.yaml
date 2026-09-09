@@ -350,6 +350,141 @@ registries:
       §10.7's session ledger bound, §10.8's lifecycle, §30.2's file permissions, §30.4's argv
       rule and the setting that turns it on, and §44.1's restart procedure.
 
+  # --- the change and recovery registries of v0.6 §47 ------------------------------------------
+  # Eleven files across two directories, `docs/contracts/change/` and `docs/contracts/recovery/`,
+  # because §47 gives the prospective change interface its own contract set and AGENTS.md §2 maps
+  # the specification's `docs/spec/change/` and `docs/spec/recovery/` onto them. Indexed here for
+  # the reason the temporal six are: §52.3's word is *every*, and two inventories is one inventory
+  # nobody reads.
+  #
+  # `xtask/src/change.rs::check` validates all eleven together. Most of what can go wrong is a
+  # cross-reference — a restore method whose destructiveness order differs from the one recovery
+  # planning uses, an asset type whose failure-domain claim differs from the one a renderer reads,
+  # a lifecycle edge one side draws and the other does not — so one function holds them against
+  # each other and against `ono-change-core`.
+
+  - file: ../change/plans.yaml
+    domain: null
+    validated_by: [xtask/src/change.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.6 §4, §5, §10.2, §46, §53"
+    doc: >-
+      The plan model: §4.1's nineteen lifecycle states with the four predicates Appendix F reads
+      off them, every edge §4 draws compared against `PlanState::after` in both directions, §10.2's
+      six protection classes with the persistent-coverage claim §4.6 turns on, the thirteen
+      commands of §5, the ten schemas of §46, and §53's seventeen settings at their declared
+      defaults.
+
+  - file: ../change/actions.yaml
+    domain: null
+    validated_by: [xtask/src/change.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.6 §3.3, §7.2, §41.1, §2.17, Appendix F.2"
+    doc: >-
+      The action model: §3.3's five roles, §41.1's four idempotency classes, the six outcome states
+      including Appendix F.2's `unknown`, §7.2's precondition kinds, and the four execution methods
+      — every one of which declares `admits_command_line: false`, which is how §2.17 becomes a
+      thing the gate checks rather than a thing a reviewer remembers.
+
+  - file: ../change/effects.yaml
+    domain: null
+    validated_by: [xtask/src/change.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.6 §8, §9.2, Appendix A.1"
+    doc: >-
+      The proposed-effect model: §8.1's four confidence classes with the lattice that has no
+      strengthening operation (§2.4), Appendix A.1's eleven mutation domains with the persistence
+      predicate Appendix A.5 composes coverage from, the seven effect kinds, and §9.2's impact
+      classes. There is no probability field anywhere in it, and §8.3 is why.
+
+  - file: ../change/risk.yaml
+    domain: null
+    validated_by: [xtask/src/change.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.6 §19, §28.3, §34.2, §40.2"
+    doc: >-
+      The risk model: §19.2's five classes, §19.1's ten dimensions, the fourteen built-in rules
+      that may emit a finding, and §19.4's four gates — each naming the error it raises and the
+      flag §40.3 requires a script to supply instead of a prompt. §19.2 makes the classes
+      rule-based and §62.11 forbids generating them, so the rules are a table.
+
+  - file: ../change/verification.yaml
+    domain: null
+    validated_by: [xtask/src/change.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.6 §23, §25.1, §4.8"
+    doc: >-
+      The verification model: §23.2's three classes and what a failure in each says about the plan,
+      §23.3's four outcomes with `unknown` explicitly not a pass, §4.8's verdicts, §25.1's three
+      equivalence domains, §23.5's rule that no contract may be unbounded, and §23.1's minimum —
+      the one that makes a mutating plan with nothing to check unsealable.
+
+  - file: ../change/strategies.yaml
+    domain: null
+    validated_by: [xtask/src/change.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.6 §28"
+    doc: >-
+      The four execution strategies of §28.4, every one of them bounded — §28.4 rules out unlimited
+      parallel mutation, and a registry where `bounded` could be false is a registry that would let
+      it back in. Plus §28.2's frozen membership, which is §2.6 read from the scheduler's side.
+
+  - file: ../recovery/providers.yaml
+    domain: null
+    validated_by: [xtask/src/change.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.6 §12, §48.3, Appendix G"
+    doc: >-
+      The recovery providers: §12.2's seven capabilities with the five every provider must have —
+      a provider that can discover and cannot restore is §62.1's snapshot theatre — §48.3's four
+      change capabilities with the mutation flag §48.4 turns on, the three first-party providers,
+      and Appendix G's eleven required fixtures and eight truth tests.
+
+  - file: ../recovery/assets.yaml
+    domain: null
+    validated_by: [xtask/src/change.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.6 §11, §13.5, §14.4, §37, §38, Appendix C.1"
+    doc: >-
+      The recovery asset model: eleven types with the failure-domain flag §11.5 requires, §11.1's
+      seven lifecycle states, §11.4's five validation checks, and the seven restore methods ordered
+      least-destructive-first as Appendix C.1 requires. `cost.free_permitted: false` is §38.2 made
+      checkable.
+
+  - file: ../recovery/consistency.yaml
+    domain: null
+    validated_by: [xtask/src/change.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.6 §11.3, §18.4, §39"
+    doc: >-
+      The consistency classes of §11.3 with an owner on each, which is §39.2 written down: a
+      storage provider may claim `crash-consistent` and may not claim `application-consistent`,
+      whatever the filesystem did. Plus §39.3's quiesce protocol and §18.4's rule that a failure to
+      resume is a critical error surfaced on its own.
+
+  - file: ../recovery/policies.yaml
+    domain: null
+    validated_by: [xtask/src/change.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.6 §17, §18, §26, §38.3, Appendix H"
+    doc: >-
+      Protection policy: §17.2's four modes, §18.3's freshness rule and its three outcomes,
+      Appendix H's four profiles expanded to inspectable settings, and the authority rule all three
+      of Appendix H.5, §53 and a plan's own requirement state from different sides — the strictest
+      requirement in force is the one that applies. Plus §26.3's six conditions for auto-recovery,
+      which is off by default and rejected at seal when they do not hold.
+
+  - file: ../recovery/errors.yaml
+    domain: null
+    validated_by: [xtask/src/change.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.6 §45, Appendix F"
+    doc: >-
+      The index over §45's forty-nine refusals, grouped by the question a reader is asking and
+      compared bidirectionally against `docs/contracts/errors.yaml`. Its load-bearing column is
+      `nothing_changed`: Appendix F's whole matrix turns on an operator being able to tell a
+      refusal from a partial apply, and this is where that fact is recorded per code.
+
 # ---------------------------------------------------------------------------------------------
 # §52.3's first named failure: an unknown capability id in an authorization fixture.
 # ---------------------------------------------------------------------------------------------
@@ -374,3 +509,4 @@ authorization_fixtures:
         §9.5: "wildcards and risk-class grants are not permitted". The fixture stores the pattern
         to prove the parser refuses it, so the id is meant to be unresolvable.
       used_by: crates/ono-cli/tests/authorized_clients.rs::should_refuse_a_wildcard_or_risk_class_in_an_action_grant
+

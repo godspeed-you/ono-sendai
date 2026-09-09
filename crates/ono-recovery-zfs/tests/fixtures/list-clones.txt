@@ -1,0 +1,10 @@
+$ zfs list -H -p -t filesystem -o name,origin
+rpool	-
+rpool/ROOT	-
+rpool/ROOT/debian	-
+tank	-
+tank/cloned	tank/data@ono-b91c-20260909T194501Z
+tank/data	-
+tank/data/customer	-
+tank/home	-
+[exit 0]

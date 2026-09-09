@@ -1,0 +1,20 @@
+$ btrfs subvolume show /mnt/root/var/lib-app
+@var/lib-app
+	Name: 			lib-app
+	UUID: 			9f9becfe-f429-bc44-ac0c-4d778b1b162e
+	Parent UUID: 		-
+	Received UUID: 		-
+	Creation time: 		2026-09-09 20:33:06 +0000
+	Subvolume ID: 		260
+	Generation: 		9
+	Gen at creation: 	9
+	Parent ID: 		258
+	Top level ID: 		258
+	Flags: 			-
+	Send transid: 		0
+	Send time: 		2026-09-09 20:33:06 +0000
+	Receive transid: 	0
+	Receive time: 		-
+	Snapshot(s):
+	Quota group:		n/a
+[exit 0]

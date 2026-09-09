@@ -1,0 +1,7 @@
+$ btrfs subvolume list -a -p -u -q -R /mnt/top
+ID 256 gen 9 parent 5 top level 5 parent_uuid -                                    received_uuid -                                    uuid b08a487d-1079-ac45-9f7e-12d9f15bea63 path @
+ID 257 gen 9 parent 5 top level 5 parent_uuid -                                    received_uuid -                                    uuid f9bee8bf-4a82-6645-80d5-3ffbc9df92cf path @home
+ID 258 gen 9 parent 5 top level 5 parent_uuid -                                    received_uuid -                                    uuid d8f32c45-9c7c-5342-ae8c-b34f8a3010e7 path @var
+ID 259 gen 9 parent 5 top level 5 parent_uuid -                                    received_uuid -                                    uuid 5f293c2e-420b-4d45-9bf0-1c00d2305e02 path @snapshots
+ID 260 gen 9 parent 258 top level 258 parent_uuid -                                    received_uuid -                                    uuid 9f9becfe-f429-bc44-ac0c-4d778b1b162e path <FS_TREE>/@var/lib-app
+[exit 0]

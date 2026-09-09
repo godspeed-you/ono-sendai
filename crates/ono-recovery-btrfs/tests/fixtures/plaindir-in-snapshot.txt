@@ -1,0 +1,6 @@
+$ ls -la /mnt/top/@snapshots/ono-a82f-var/plain-dir
+total 4
+drwxr-xr-x 1 root root  2 Sep  9 20:33 .
+drwxr-xr-x 1 root root 32 Sep  9 20:33 ..
+-rw-r--r-- 1 root root  2 Sep  9 20:33 f
+[exit 0]

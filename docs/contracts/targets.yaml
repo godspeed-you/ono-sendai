@@ -500,3 +500,21 @@ targets:
     summary: The local retained temporal ledger, as a whole, for inspection and for deletion.
     schema: ono.temporal-history/1
     phase: T
+  # --- prospective change, v0.6 §3 ---------------------------------------------------------
+  #
+  # Two targets, and they are objects rather than views: §3.2 makes a plan "a versioned immutable
+  # description of one proposed change" that is persisted (§36.1), referenced (§36.4) and acted on
+  # by six verbs. A recovery asset is likewise a thing with a lifetime, a cost and a scope (§11.1),
+  # which is why `get recovery`, `inspect recovery` and `remove recovery` all name it.
+  - id: ono.target.plan
+    name: plan
+    category: system
+    summary: A proposed change, with its impact, its protection and its way back.
+    schema: ono.change-plan/1
+    phase: P
+  - id: ono.target.recovery
+    name: recovery
+    category: system
+    summary: A recovery asset — a snapshot, an archive or a checkpoint — and what it protects.
+    schema: ono.recovery-asset/1
+    phase: P

@@ -1,0 +1,105 @@
+# The recovery asset model: the types of v0.6 §3.6 and §16, the lifecycle of §11.1, the restore
+# methods of §13.5 and §14.4 ordered by Appendix C.1, and the retention of §37.
+#
+# `xtask/src/change.rs::check_assets` holds each list against
+# `ono_change_core::{RecoveryAssetType, AssetState, RestoreMethod}::ALL` in both directions.
+#
+# `shares_failure_domain` is the column §11.5 exists for. A local copy-on-write snapshot lives on
+# the storage it protects: if the pool is lost, so is the recovery point. Ono MUST label such
+# assets local recovery points and MUST NOT imply protection from device corruption, pool loss or
+# destructive writes below the filesystem layer, and a renderer that has to remember that will
+# eventually forget. It is a fact about the mechanism, so it travels with the mechanism.
+#
+# Decisions: ADR-0800, ADR-0808.
+
+version: 1
+
+types:
+  - {id: zfs-snapshot, shares_failure_domain: true, independent_copy: false, spec: "§13.2"}
+  - {id: btrfs-snapshot, shares_failure_domain: true, independent_copy: false, spec: "§14.2"}
+  - {id: lvm-snapshot, shares_failure_domain: true, independent_copy: false, spec: "§16.1, Appendix D.10"}
+  - {id: file-archive, shares_failure_domain: false, independent_copy: true, spec: "§15"}
+  - {id: configuration-backup, shares_failure_domain: false, independent_copy: true, spec: "§15"}
+  - {id: vm-snapshot, shares_failure_domain: false, independent_copy: false, spec: "§16.2"}
+  - {id: container-checkpoint, shares_failure_domain: false, independent_copy: false, spec: "§16.3"}
+  - {id: database-checkpoint, shares_failure_domain: false, independent_copy: false, spec: "§16.4"}
+  - {id: transaction-savepoint, shares_failure_domain: true, independent_copy: false, spec: "§27.1"}
+  - {id: timed-reversion, shares_failure_domain: false, independent_copy: false, spec: "§34.3"}
+  - {id: package-recovery-metadata, shares_failure_domain: false, independent_copy: false, spec: "§30.1"}
+
+# §11.1's lifecycle. `proposed` is what a plan carries before apply, because §2.1 makes planning
+# side-effect free — a plan that mentions an asset has not created one. `ready` is reachable only
+# through a validation that passed (§11.4), which is what stops an unvalidated asset counting
+# toward coverage.
+states:
+  - {id: proposed, usable: false, occupies_storage: false, doc: "§11.1 and §2.1: the plan says this will be created. Nothing exists yet."}
+  - {id: creating, usable: false, occupies_storage: true, doc: "§11.1: creation is in flight."}
+  - {id: ready, usable: true, occupies_storage: true, doc: "§11.1 and §11.4: the asset exists and a validation confirmed existence, identity, scope, restore availability and permissions."}
+  - {id: invalid, usable: false, occupies_storage: true, doc: "§11.1 and Appendix D.10: it exists and can no longer satisfy protection — an LVM snapshot whose space was exhausted, a scope that does not match."}
+  - {id: expired, usable: false, occupies_storage: true, doc: "§11.1 and §37.1: retention passed."}
+  - {id: removed, usable: false, occupies_storage: false, doc: "§11.1: the asset was deleted."}
+  - {id: failed, usable: false, occupies_storage: false, doc: "§11.1: creation did not succeed. §2.3 then aborts before any mutation."}
+
+# §11.4's checks. Creating an asset is not sufficient; a provider that skips one of these has not
+# validated anything, and the coverage algorithm finds no validated path for the domain.
+validation_checks:
+  - {id: exists, doc: "§11.4: the asset exists."}
+  - {id: identity-matches, doc: "§11.4: its identity matches the planned source."}
+  - {id: scope-matches, doc: "§11.4: its scope matches the expected target."}
+  - {id: restore-available, doc: "§11.4: the restore path is syntactically and semantically available."}
+  - {id: permissions-present, doc: "§11.4 and §43.4: the permissions recovery needs are present. Recovery may require stronger privilege than the mutation did, and this is where that is discovered."}
+
+# Appendix C.1's methods, ordered least-destructive first. `destructiveness` is that order made
+# comparable, and it is the reason a full dataset rollback does not win a comparison merely by
+# being the biggest hammer available.
+restore_methods:
+  - {id: provider-native-restore, destructiveness: 0, discards_newer_state: false, restores_prior_state: true, doc: "Appendix C.1: the owning provider restores its own object — a package downgrade, a database point-in-time restore. Appendix I.1 prefers this over a root rollback for a package plan."}
+  - {id: selective-file-restore, destructiveness: 1, discards_newer_state: false, restores_prior_state: true, doc: "Appendix C.1 and §13.5: read the wanted objects out of the asset and put them back, leaving everything else alone. §59.6's whole scenario."}
+  - {id: clone-and-copy, destructiveness: 2, discards_newer_state: false, restores_prior_state: true, doc: "Appendix C.1: materialise the asset elsewhere, then copy the wanted state out of it."}
+  - {id: compensation, destructiveness: 3, discards_newer_state: false, restores_prior_state: false, doc: "§27.4: an inverse action. It restores semantics rather than prior state, and MUST NOT be labelled rollback."}
+  - {id: subvolume-replacement, destructiveness: 4, discards_newer_state: true, restores_prior_state: true, doc: "Appendix C.1 and §14.4: replace or rename a subvolume. Offline or next-boot depending on layout."}
+  - {id: dataset-rollback, destructiveness: 5, discards_newer_state: true, restores_prior_state: true, doc: "Appendix C.1 and §13.6: roll the whole dataset back, discarding everything written since. Requires the destructive gate."}
+  - {id: offline-root-recovery, destructiveness: 6, discards_newer_state: true, restores_prior_state: true, doc: "Appendix C.1, §13.7 and §14.6: recovery that needs the filesystem unmounted, a boot-environment switch or a reboot."}
+
+# §37's retention rules.
+retention:
+  default: 24h
+  after: successful-verification
+  failure_states_exempt: [failed, degraded, apply-failed, prepare-failed, recovery-failed]
+  doc: >-
+    §37.1: the default temporary retention is twenty-four hours after successful verification, and
+    it is configurable. §37.2: assets for FAILED, DEGRADED or RECOVERY_FAILED plans MUST NOT be
+    automatically deleted by ordinary success retention rules — they are exactly the assets
+    somebody may still need.
+  cleanup_preview_required_when: "removal changes recovery capability"
+  cleanup_preview_doc: >-
+    §37.3: before deleting an asset whose removal changes recovery capability, Ono shows which
+    plans become unrecoverable. §2.15 turns that into a refusal by default:
+    `recovery.cleanup_blocked`, naming the plans, overridable only explicitly.
+  storage_pressure_doc: >-
+    §37.4: if recovery assets cause storage pressure, Ono may surface landmarks and recommend
+    cleanup, and MUST NOT delete assets early without policy authorisation.
+
+# §38's cost dimensions. §38.2 forbids displaying "free" for a copy-on-write snapshot, and §37.5
+# requires cost figures to be labelled estimated wherever filesystem accounting is not exact —
+# which, for both first-party snapshot providers, is always.
+cost:
+  dimensions: [initial-latency, retained-storage-growth, io-overhead, quiesce-duration, reboot-downtime-requirement, cleanup-cost]
+  free_permitted: false
+  estimated_label_required_when: "filesystem accounting is not exact"
+  snapshot_rendering:
+    initial_creation: near-instant
+    initial_space: minimal
+    future_growth: depends-on-changed-blocks
+    retention_risk: moderate
+  doc: >-
+    §38.2: Ono MUST NOT display "free" for a copy-on-write snapshot. The four lines above are what
+    it displays instead, and they are the specification's own words rather than a paraphrase.
+
+# §38.3's policy limits on automatic protection.
+limits:
+  - {key: estimated-size, doc: "§38.3: bound automatic protection by the size it would occupy."}
+  - {key: target-scope, doc: "§38.3: bound it by how much the asset would cover."}
+  - {key: quiesce-duration, doc: "§38.3 and §18.4: bound how long an application may be paused."}
+  - {key: snapshot-count, doc: "§38.3 and §53's `recovery.max_auto_snapshot_count`."}
+  - {key: filesystem-free-space-floor, doc: "§38.3, §53's `recovery.min_filesystem_free` and Appendix D.3: below the floor, automatic protection fails closed rather than worsening exhaustion."}

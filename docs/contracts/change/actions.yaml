@@ -1,0 +1,93 @@
+# The action model: the five roles of v0.6 §3.3, the idempotency classes of §41.1, the outcome
+# states of Appendix F.2, and the execution methods §2.17 permits.
+#
+# `xtask/src/change.rs::check_actions` compares every list here against
+# `ono_change_core::{ActionRole, Idempotency, ActionStatus}::ALL` in both directions, and checks
+# that no execution method admits a command line.
+#
+# The file's reason for existing is `execution_methods:`. §2.17 says provider operations MUST be
+# structured execution plans, not interpolated shell command strings, and §12.3 repeats it for
+# recovery providers. A registry that enumerates the permitted methods makes that checkable: a
+# method added to the shell without a row here fails the gate, and a row here that admits a shell
+# string is refused by the check rather than by review.
+#
+# Decisions: ADR-0800, ADR-0805.
+
+version: 1
+
+# §3.3's roles. `mutates_target` is what Appendix F's matrix keys on, and `runs_before_mutation`
+# is §4.5: preparation happens immediately before the first mutating action, so its failure means
+# nothing was changed.
+roles:
+  - {id: prepare, mutates_target: false, runs_before_mutation: true, doc: "§3.3: create protection, acquire leases, validate prerequisites. §2.3 makes its failure an abort rather than a downgrade."}
+  - {id: mutate, mutates_target: true, runs_before_mutation: false, doc: "§3.3: change target system state."}
+  - {id: verify, mutates_target: false, runs_before_mutation: false, doc: "§3.3: establish whether the expected state exists. §2.14 keeps this separate from execution success."}
+  - {id: recover, mutates_target: true, runs_before_mutation: false, doc: "§3.3: restore or compensate after failure. §2.12 makes it a change like any other."}
+  - {id: cleanup, mutates_target: false, runs_before_mutation: false, doc: "§3.3: remove temporary resources once retention permits. §2.15 keeps it behind recovery policy."}
+
+# §41.1's classes. `permits_blind_retry` is false for `unknown`, and that is the point: §41.2
+# forbids blindly rerunning an unknown or non-idempotent action after a crash, so a default of
+# "probably fine" is exactly the blind rerun it names.
+idempotency_classes:
+  - {id: idempotent, permits_blind_retry: true, permits_token_retry: true, doc: "§41.1: running it twice is running it once."}
+  - {id: retry-safe-with-token, permits_blind_retry: false, permits_token_retry: true, doc: "§41.1: safe to retry when the same request token is presented."}
+  - {id: non-idempotent, permits_blind_retry: false, permits_token_retry: false, doc: "§41.1: running it twice is not running it once."}
+  - {id: unknown, permits_blind_retry: false, permits_token_retry: false, doc: "§41.1: the contract does not say, which §41.2 treats as not safe to retry."}
+
+# What is known about an action after the executor ran it. `unknown` is Appendix F.2's uncertainty
+# boundary: for a remote or non-idempotent action whose outcome cannot be established, the state
+# MUST be unknown rather than guessed, and recovery planning treats it as a boundary.
+#
+# `may_have_mutated: true` for `unknown` is the conservative reading, and it is the only one that
+# cannot lose data.
+statuses:
+  - {id: pending, may_have_mutated: false, settled: false, doc: "The action has not been started."}
+  - {id: running, may_have_mutated: true, settled: false, doc: "The action is in flight."}
+  - {id: succeeded, may_have_mutated: true, settled: true, doc: "The action completed and the provider said so."}
+  - {id: failed, may_have_mutated: true, settled: true, doc: "The action did not complete, and the provider said so."}
+  - {id: skipped, may_have_mutated: false, settled: true, doc: "The action was not run because something it depends on did not happen."}
+  - {id: unknown, may_have_mutated: true, settled: true, doc: "Appendix F.2: the outcome could not be established. It is not a failure and it is not a success."}
+
+# The four ways an action can run, and the shape each carries. `admits_command_line: false` on
+# every one of them is §2.17 and §12.3 made checkable: there is nowhere in the model for a quoted,
+# expanded, word-split string to live, so §43.6's sanitisation is a property of the shape.
+execution_methods:
+  - id: provider-action
+    admits_command_line: false
+    shape: "provider id, operation id, typed arguments"
+    doc: >-
+      A native provider action. The arguments are already typed values; nothing is interpolated
+      into text on the way to the provider.
+  - id: program
+    admits_command_line: false
+    shape: "resolved absolute program path, argument vector"
+    doc: >-
+      A program run directly. `argv` is passed to `execve` as it stands, so a dataset name
+      containing a semicolon is a dataset name containing a semicolon (§43.6).
+  - id: recovery-operation
+    admits_command_line: false
+    shape: "recovery provider id, capability id, typed arguments"
+    doc: >-
+      A recovery provider operation, named by the §12.2 capability it exercises so the broker can
+      check it before it runs.
+  - id: opaque
+    admits_command_line: false
+    shape: "operator description, optional resolved program, argument vector"
+    doc: >-
+      §6.3's explicit escape, for an action Ono cannot reason about. It carries no protection
+      claim, its impact and reversibility are unknown, and Appendix A.7 caps the plan it appears
+      in at partially protected — §6.3: an opaque action MUST NOT receive a PROTECTED status
+      merely because a filesystem snapshot exists somewhere on the host.
+
+# §7.2's precondition kinds — the facts an action declares so that material drift can be detected
+# at all. §7.4 makes tolerance contract-declared rather than guessed, so a precondition is material
+# unless a provider says otherwise.
+precondition_kinds:
+  - {id: existence, doc: "§7.2: the object still exists and is still this object."}
+  - {id: content-digest, doc: "§7.2: the file's hash still equals what was resolved."}
+  - {id: generation, doc: "§7.2: the service's generation or state still equals what was resolved."}
+  - {id: version, doc: "§7.2: the installed version still equals what was resolved."}
+  - {id: persistence-domain, doc: "§7.2 and Appendix B: the path still resolves to the same dataset or subvolume. A target that moved filesystems has moved recovery domains."}
+  - {id: provider-available, doc: "§7.2: the recovery provider is still available."}
+  - {id: capability, doc: "§43.2: the capability the action needs is still held."}
+  - {id: field, doc: "§7.2: some other declared field still holds its resolved value."}

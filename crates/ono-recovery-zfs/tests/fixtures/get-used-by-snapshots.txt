@@ -1,0 +1,4 @@
+$ zfs get -H -p -o name,property,value usedbysnapshots,usedbydataset rpool/ROOT/debian
+rpool/ROOT/debian	usedbysnapshots	0
+rpool/ROOT/debian	usedbydataset	24576
+[exit 0]

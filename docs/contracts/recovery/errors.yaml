@@ -1,0 +1,126 @@
+# The recovery half of the v0.6 §45 error family, indexed by what it is about.
+#
+# The codes themselves live in `docs/contracts/errors.yaml`, which is compared bidirectionally
+# against `ono_core::ErrorCode::ALL` by `xtask/src/contracts.rs::check_error_registry`. This file
+# is the index over that one: it groups the family by the question a reader is asking, records
+# which refusals mean nothing was changed, and names the flag that answers each gate.
+#
+# `xtask/src/change.rs::check_errors` holds every `code` here against the global registry, and
+# every code in the `change.`, `recovery.` and `transaction.` families against this index, in both
+# directions. A code added to the shell without a row here fails the gate.
+#
+# The column worth reading is `nothing_changed`. Appendix F's whole matrix turns on an operator
+# being able to tell a refusal from a partial apply, and prose is where a person reads that. Every
+# `true` row's `help` in the global registry says so in words.
+#
+# Decisions: ADR-0800, ADR-0801.
+
+version: 1
+
+groups:
+  - id: plan-state
+    doc: "The plan is not in a state this command acts on (§4, §5.6)."
+    errors:
+      - {code: Ono-Sendai-E1701, name: change.plan_not_sealed, nothing_changed: true}
+      - {code: Ono-Sendai-E1702, name: change.plan_sealed, nothing_changed: true}
+      - {code: Ono-Sendai-E1703, name: change.plan_expired, nothing_changed: true}
+      - {code: Ono-Sendai-E1704, name: change.plan_already_applying, nothing_changed: true}
+      - {code: Ono-Sendai-E1708, name: change.plan_state_invalid, nothing_changed: true}
+
+  - id: plan-reference
+    doc: "The plan or asset named cannot be resolved (§36.4, §37.5)."
+    errors:
+      - {code: Ono-Sendai-E1706, name: change.plan_not_found, nothing_changed: true}
+      - {code: Ono-Sendai-E1707, name: change.plan_reference_ambiguous, nothing_changed: true}
+      - {code: Ono-Sendai-E1805, name: recovery.asset_not_found, nothing_changed: true}
+
+  - id: plan-store
+    doc: "The persistent plan store of §36.1 could not be used."
+    errors:
+      - {code: Ono-Sendai-E1709, name: change.plan_store_unavailable, nothing_changed: true}
+      - {code: Ono-Sendai-E1710, name: change.plan_store_corrupt, nothing_changed: true}
+
+  - id: resolution-and-drift
+    doc: "The world is not what the plan froze (§4.3, §7)."
+    errors:
+      - {code: Ono-Sendai-E1705, name: change.plan_drift_detected, nothing_changed: true}
+      - {code: Ono-Sendai-E1711, name: change.target_unresolved, nothing_changed: true}
+      - {code: Ono-Sendai-E1712, name: change.target_changed, nothing_changed: true}
+      - {code: Ono-Sendai-E1716, name: change.precondition_failed, nothing_changed: true}
+
+  - id: plannability
+    doc: "The operation cannot become a plan (§6)."
+    errors:
+      - {code: Ono-Sendai-E1713, name: change.action_not_plannable, nothing_changed: true}
+      - {code: Ono-Sendai-E1714, name: change.opaque_action_forbidden, nothing_changed: true}
+      - {code: Ono-Sendai-E1715, name: change.historical_context_read_only, nothing_changed: true}
+      - {code: Ono-Sendai-E1721, name: change.verification_missing, nothing_changed: true}
+      - {code: Ono-Sendai-E1726, name: change.auto_recovery_rejected, nothing_changed: true}
+
+  - id: gates
+    doc: >-
+      §19.4's acknowledgements and §40.2's high-risk gates. Every one has a flag, because §40.3
+      forbids a script waiting for a question.
+    errors:
+      - {code: Ono-Sendai-E1722, name: change.irreversible_not_accepted, nothing_changed: true, flag: "--accept-irreversible"}
+      - {code: Ono-Sendai-E1723, name: change.risk_not_accepted, nothing_changed: true, flag: "--accept-risk"}
+      - {code: Ono-Sendai-E1724, name: change.bulk_guard_failed, nothing_changed: true, flag: "--accept-service-outage"}
+      - {code: Ono-Sendai-E1810, name: recovery.destructive_history_not_accepted, nothing_changed: true, flag: "--accept-newer-state-loss"}
+
+  - id: privilege
+    doc: "§43.3 and §43.4: the authority a change or its recovery needs."
+    errors:
+      - {code: Ono-Sendai-E1727, name: change.privilege_required, nothing_changed: true}
+
+  - id: preparation
+    doc: >-
+      §2.3 and §4.5: everything here happened before the first mutation, and the plan target is
+      exactly as it was.
+    errors:
+      - {code: Ono-Sendai-E1717, name: change.prepare_failed, nothing_changed: true}
+      - {code: Ono-Sendai-E1801, name: recovery.provider_unavailable, nothing_changed: true}
+      - {code: Ono-Sendai-E1802, name: recovery.asset_create_failed, nothing_changed: true}
+      - {code: Ono-Sendai-E1803, name: recovery.asset_invalid, nothing_changed: true}
+      - {code: Ono-Sendai-E1806, name: recovery.scope_mismatch, nothing_changed: true}
+      - {code: Ono-Sendai-E1807, name: recovery.coverage_insufficient, nothing_changed: true}
+      - {code: Ono-Sendai-E1816, name: recovery.storage_pressure, nothing_changed: true}
+      - {code: Ono-Sendai-E1817, name: recovery.asset_stale, nothing_changed: true}
+      - {code: Ono-Sendai-E1818, name: recovery.quiesce_failed, nothing_changed: true}
+
+  - id: execution
+    doc: >-
+      Appendix F: something ran. What ran, ran, and the refusal says what completed and what did
+      not.
+    errors:
+      - {code: Ono-Sendai-E1718, name: change.apply_failed, nothing_changed: false}
+      - {code: Ono-Sendai-E1725, name: change.remote_state_unknown, nothing_changed: false}
+      - {code: Ono-Sendai-E1813, name: recovery.apply_failed, nothing_changed: false}
+      - {code: Ono-Sendai-E1819, name: recovery.resume_failed, nothing_changed: false}
+
+  - id: verification
+    doc: "§2.14: what the world says, after the fact, independently of any exit status."
+    errors:
+      - {code: Ono-Sendai-E1719, name: change.verification_failed, nothing_changed: false}
+      - {code: Ono-Sendai-E1720, name: change.verification_unknown, nothing_changed: false}
+      - {code: Ono-Sendai-E1814, name: recovery.verification_failed, nothing_changed: false}
+
+  - id: recovery-planning
+    doc: "§24 and §56.3: what recovery would cost, and what could not be established about it."
+    errors:
+      - {code: Ono-Sendai-E1804, name: recovery.asset_expired, nothing_changed: true}
+      - {code: Ono-Sendai-E1808, name: recovery.consistency_unknown, nothing_changed: true}
+      - {code: Ono-Sendai-E1809, name: recovery.newer_state_conflict, nothing_changed: true}
+      - {code: Ono-Sendai-E1811, name: recovery.requires_offline, nothing_changed: true}
+      - {code: Ono-Sendai-E1812, name: recovery.requires_reboot, nothing_changed: true}
+      - {code: Ono-Sendai-E1820, name: recovery.plan_incomplete, nothing_changed: true}
+
+  - id: retention
+    doc: "§2.15 and §37: cleanup never outruns recovery policy."
+    errors:
+      - {code: Ono-Sendai-E1815, name: recovery.cleanup_blocked, nothing_changed: true}
+
+  - id: transaction
+    doc: "§27: the word, and the two refusals that keep it honest."
+    errors:
+      - {code: Ono-Sendai-E1901, name: transaction.atomicity_unavailable, nothing_changed: true}
+      - {code: Ono-Sendai-E1902, name: transaction.cross_provider_not_atomic, nothing_changed: true}

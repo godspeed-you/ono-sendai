@@ -1,0 +1,9 @@
+$ zfs list -H -p -t all -o name,type,creation,used,referenced,mountpoint
+rpool	filesystem	1788985942	207360	24576	/rpool
+rpool/ROOT	filesystem	1788985942	49152	24576	/altroot
+rpool/ROOT/debian	filesystem	1788985942	24576	24576	/altroot/debian
+tank	filesystem	1788985942	221184	24576	/tank
+tank/data	filesystem	1788985942	49152	24576	/tank/data
+tank/data/customer	filesystem	1788985942	24576	24576	/tank/data/customer
+tank/home	filesystem	1788985942	24576	24576	/tank/home
+[exit 0]

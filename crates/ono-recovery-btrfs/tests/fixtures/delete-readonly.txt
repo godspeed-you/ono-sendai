@@ -1,0 +1,3 @@
+$ btrfs subvolume delete /mnt/top/@snapshots/ono-a82f-root
+Delete subvolume 261 (no-commit): '/mnt/top/@snapshots/ono-a82f-root'
+[exit 0]

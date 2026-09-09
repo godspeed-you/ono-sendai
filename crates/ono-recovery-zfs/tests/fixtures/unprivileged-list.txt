@@ -1,0 +1,3 @@
+$ su -s /bin/sh -c zfs list -H -o name nobody
+Permission denied the ZFS utilities must be run as root.
+[exit 1]

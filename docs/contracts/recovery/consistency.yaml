@@ -1,0 +1,83 @@
+# The consistency classes of v0.6 §11.3, and the rule that keeps them honest.
+#
+# §39.1 states the distinction the whole file exists for: filesystem consistency is not application
+# consistency, and it MUST be visible everywhere. §39.2 gives the case — a filesystem snapshot
+# containing PostgreSQL files may be crash-consistent and recoverable through PostgreSQL's own WAL
+# semantics, and Ono MUST NOT independently label it application-consistent unless a
+# PostgreSQL-aware provider asserts that guarantee.
+#
+# `owned_by` is that rule written down. A class whose owner is `storage-provider` may be claimed by
+# a filesystem provider; a class whose owner is `application-provider` may not, whatever the
+# filesystem did. `xtask/src/change.rs::check_consistency` checks that no first-party storage
+# provider declares a class it does not own.
+#
+# Decisions: ADR-0800, ADR-0809.
+
+version: 1
+
+# Strongest first. `rank` is the lattice position, and combination is `weakest_of` with no
+# counterpart — the same shape §8.1's confidence has, and for the same reason: a set of assets
+# spanning two mechanisms is only as consistent as its weakest member.
+classes:
+  - id: transaction-consistent
+    rank: 0
+    owned_by: transaction-provider
+    doc: "§11.3: a transaction-capable provider supplies its own atomic consistency guarantee, inside its own boundary (§27.1)."
+  - id: application-consistent
+    rank: 1
+    owned_by: application-provider
+    doc: >-
+      §11.3: the application or provider participated in quiesce or checkpoint semantics and
+      declares the snapshot recoverable as an application state. §39.2: the provider must own the
+      claim; a storage provider may not make it on the application's behalf.
+  - id: filesystem-consistent
+    rank: 2
+    owned_by: storage-provider
+    doc: "§11.3: the storage mechanism captured a filesystem, subvolume or dataset point-in-time state under its own atomicity semantics."
+  - id: crash-consistent
+    rank: 3
+    owned_by: storage-provider
+    doc: >-
+      §11.3: the resulting state is equivalent to storage observed after abrupt interruption,
+      suitable only for applications able to recover from such a state. This is the honest class
+      for a filesystem snapshot of a running database (§39.2).
+  - id: byte-consistent
+    rank: 4
+    owned_by: file-provider
+    doc: "§11.3: the provider can restore the captured bytes and files and claims nothing filesystem- or application-wide."
+  - id: unknown
+    rank: 5
+    owned_by: nobody
+    doc: "§11.3: the consistency of the captured state could not be established. §2.4 keeps it there."
+
+lattice:
+  operation: weakest_of
+  strengthening_operation: null
+  doc: >-
+    Appendix D.7 is the case this rule is for: when a plan spans several Btrfs subvolumes, the
+    protection engine creates a set whose members were created sequentially, and Ono MUST NOT
+    invent cross-subvolume atomicity. The set's composed consistency is therefore the weakest of
+    its members, and there is no operation that could produce anything else.
+
+# §39.3's quiesce protocol, for a provider that can make an application-consistent claim.
+quiesce_protocol:
+  steps: [prepare_quiesce, verify_quiesced, create_storage_asset, resume, verify_resumed]
+  bounded_window_required: true
+  resume_on_failure_required: true
+  resume_failure_is_critical: true
+  doc: >-
+    §18.4: PREPARE MUST bound the quiesce window and resume the application if snapshot creation
+    fails. Failure to resume is a critical error and MUST be surfaced separately — the application
+    is still paused, and that is a different fact from "the snapshot failed".
+    `recovery.quiesce_failed` and `recovery.resume_failed` are the two refusals, and they are two
+    rather than one for exactly that reason.
+
+# §11.5's rule, as a property rather than a sentence somebody has to remember.
+backup_distinction:
+  local_snapshot_is_backup: false
+  doc: >-
+    §11.5: Ono MUST label local copy-on-write snapshots as local recovery assets, and MUST NOT
+    imply protection from underlying device corruption, pool loss or destructive writes below the
+    filesystem layer. §14.7 says the same for Btrfs specifically. `shares_failure_domain` on the
+    asset type in `assets.yaml` is where a renderer reads it, so no rendering path has to know the
+    rule to obey it.

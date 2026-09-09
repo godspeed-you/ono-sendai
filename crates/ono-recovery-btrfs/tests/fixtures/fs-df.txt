@@ -1,0 +1,6 @@
+$ btrfs filesystem df /mnt/root
+Data, single: total=8.00MiB, used=0.00B
+System, DUP: total=8.00MiB, used=16.00KiB
+Metadata, DUP: total=102.38MiB, used=128.00KiB
+GlobalReserve, single: total=5.50MiB, used=0.00B
+[exit 0]

@@ -1,0 +1,3 @@
+$ btrfs property get /mnt/top/@snapshots/ono-a82f-root ro
+ro=true
+[exit 0]

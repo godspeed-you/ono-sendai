@@ -1,0 +1,369 @@
+# Command family: Change. Sources: the v0.6 Prospective Change, Protection & Recovery Interface —
+# §5 (the canonical commands), §5.1–§5.3 (single-action, block and pipeline planning), §5.4–§5.8
+# (`impact`, `protect`, `apply`, `verify`, `recover`), §7.5 (`rebase`), §36.4 (plan references),
+# §37.5 (`get recovery`) and §41.3 (`resume`) — and ADR-0803, which fixes the spellings and the
+# argument shapes.
+#
+# `docs/contracts/change/plans.yaml` holds the inventory these thirteen ids are compared against in
+# both directions by `xtask/src/change.rs::check_command_inventory`, so a command added here
+# without a row there fails the gate, and the other way round.
+#
+# `phase: P` is the v0.6 tranche of §57, whose phases are P1–P13 rather than the letters of v0.2
+# §37. `P` is in `DELIVERED` in `crates/ono-command/src/impls/mod.rs`, and every id below is bound
+# in `crates/ono-cli` rather than in the library, because each of them needs session state the
+# library cannot reach: the plan store, the provider registry, the spatial index and the temporal
+# ledger. `xtask/src/bindings.rs` records that in `BOUND_ELSEWHERE`.
+#
+# Three shapes recur and are worth stating once.
+#
+# **A plan reference is a selector, not a target word.** §36.4 asks for `apply plan/a82f`, and
+# `plan/a82f` is one word that happens to contain a slash. So `impact`, `protect`, `apply`,
+# `verify` and `recover` declare `target: null` and take the reference as a `ref<ono.change-plan/1>`
+# selector, which also accepts the record itself when it arrives through `@` or a pipe.
+#
+# **Nothing here is a dry run.** §1.2 separates a plan from one: `plan` produces the object and
+# `apply` is the commitment point (§40.1). There is no `--dry-run` on `apply`, because the dry run
+# is a different command with a different name and a durable result.
+#
+# **The acknowledgement flags are policy, not prompts.** §40.3 forbids a script waiting for a
+# question, so every gate §19.4 raises has a flag that supplies it. Conventions as documented at
+# the head of process.yaml.
+
+version: 1
+family: change
+
+commands:
+  # --- planning, §5.1, §5.2, §5.3 ------------------------------------------------------------
+  - id: ono.change.plan
+    verb: plan
+    target: null
+    summary: Describe a proposed change as an inspectable object, and change nothing.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<any>"
+    output: ono.change-plan/1
+    provider_capability: null
+    selectors:
+      - {name: action, type: value, repeatable: true, doc: "The change to plan. Either a mutation written as words — `plan restart service nginx` (§5.1) — or a `{ ... }` block of them (§5.2). The block describes actions; §5.2 forbids it becoming a workflow language with loops, functions or background jobs."}
+    options:
+      - {name: protection, type: string, doc: "Override the protection policy for this plan: `off`, `prefer`, `require` or `maximize` (§17.2, §17.3). Defaults to `change.default_protection`, which is `prefer` (§17.1)."}
+      - {name: strategy, type: string, doc: "The execution strategy: `sequential`, `batch <n>`, `canary <n> <n>` or `parallel <n>` (§28.4). Part of the seal, because it changes operational risk (§28.5). Unlimited parallel mutation is not offered."}
+      - {name: accept-irreversible, type: bool, doc: "Acknowledge the plan's irreversible actions (§19.4). Stored in the sealed revision, so giving it re-seals the plan."}
+      - {name: accept-risk, type: bool, doc: "Acknowledge the plan's HIGH or CRITICAL risk class (§19.4). A script supplies this rather than waiting for a prompt (§40.3)."}
+      - {name: opaque, type: bool, doc: "Permit an action Ono cannot reason about, as §6.3's explicit escape. Its impact and reversibility are classified unknown, and Appendix A.7 caps the plan's protection at partially protected. Refused unless `change.allow_opaque_actions` is set (§53)."}
+      - {name: expires, type: duration, doc: "How long the sealed plan stays appliable (§4.1's `EXPIRED`). After it, `apply` refuses and `rebase` resolves the plan again."}
+      - {name: one-per-object, type: bool, doc: "Produce one plan per input object rather than one plan over the frozen set (§5.3). The default is one plan, because §2.6 freezes membership and a single plan is what carries that."}
+    confirmation: bulk
+    privilege: none
+    streaming: false
+    execution: explicit_collect
+    phase: P
+    note: >-
+      §2.1: creating or inspecting a plan MUST NOT mutate the target system. §6.4: a plan intended
+      for application is resolved against present state, so from a historical coordinate this
+      answers `change.historical_context_read_only` and `now` is the way back.
+    examples:
+      - plan restart service nginx
+      - plan update package openssl --protection require
+      - get service | where state == failed | plan restart service
+      - plan replace file /etc/nginx/nginx.conf from ./nginx.conf
+
+  # --- the plan store, §36.4 -----------------------------------------------------------------
+  - id: ono.change-plan.get
+    verb: get
+    target: plan
+    summary: The plans this shell holds, with their state, protection and risk.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.change-plan/1>
+    provider_capability: null
+    selectors:
+      - {name: reference, type: string, doc: "A plan identity or an unambiguous prefix of one (§36.4). Without it, every retained plan."}
+    options:
+      - {name: state, type: string, repeatable: true, doc: "Restrict to plans in these lifecycle states (§4.1), such as `failed` or `verified`."}
+      - {name: all, type: bool, doc: "Include closed and expired plans, which are hidden by default."}
+      - {name: since, type: duration, doc: "Restrict to plans created within this window."}
+    privilege: none
+    streaming: true
+    phase: P
+    examples:
+      - get plan
+      - get plan a82f
+      - get plan --state failed
+
+  - id: ono.change-plan.inspect
+    verb: inspect
+    target: plan
+    summary: Everything one plan knows — its actions, impact, coverage, resolution and verification.
+    stability: stable
+    argument_mode: words
+    input: "null | ono.change-plan/1"
+    output: ono.change-plan/1
+    provider_capability: null
+    selectors:
+      - {name: reference, type: "ref<ono.change-plan/1>", doc: "The plan to inspect (§36.4)."}
+    options:
+      - {name: protection, type: bool, doc: "Expand the coverage matrix: one row per mutation domain, with what covers it and what it excludes (§10.3)."}
+      - {name: impact, type: bool, doc: "Expand the impact graph rather than its summary (§9.5)."}
+      - {name: actions, type: bool, doc: "Expand every action with its execution, preconditions, effects and idempotency class (§46.2)."}
+      - {name: resolution, type: bool, doc: "Expand the persistence resolution for each target — mount, filesystem, dataset or subvolume, recovery boundary (Appendix B.10). This is the view that explains why several recovery assets are planned."}
+      - {name: verification, type: bool, doc: "Expand the verification contracts (§23.1)."}
+      - {name: recovery, type: bool, doc: "Expand the recovery assets the plan proposes or has created (§11.1)."}
+    privilege: none
+    streaming: false
+    phase: P
+    examples:
+      - inspect plan a82f
+      - inspect plan a82f --resolution
+      - inspect plan a82f --protection
+
+  - id: ono.change-plan.rebase
+    verb: rebase
+    target: plan
+    summary: Resolve a sealed plan again against the world as it is now, as a new revision.
+    stability: stable
+    argument_mode: words
+    input: "null | ono.change-plan/1"
+    output: ono.change-plan/1
+    provider_capability: null
+    selectors:
+      - {name: reference, type: "ref<ono.change-plan/1>", doc: "The plan to rebase (§7.5)."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: P
+    note: >-
+      §7.5: rebase MUST NOT mutate the sealed original. It creates the next revision and leaves the
+      one it came from exactly as it was, so the plan that was refused for drift stays inspectable.
+    examples:
+      - rebase plan a82f
+
+  - id: ono.change-plan.resume
+    verb: resume
+    target: plan
+    summary: Continue an interrupted plan, for the actions whose recorded state permits it.
+    stability: stable
+    argument_mode: words
+    input: "null | ono.change-plan/1"
+    output: stream<ono.action-result/1>
+    provider_capability: null
+    selectors:
+      - {name: reference, type: "ref<ono.change-plan/1>", doc: "The plan to resume (§41.3)."}
+    options:
+      - {name: confirm, type: bool, doc: "Required outside an interactive session, because resuming is a commitment like `apply` (§40.3)."}
+    confirmation: always
+    privilege: conditional
+    streaming: true
+    phase: P
+    note: >-
+      §41.2: Ono MUST NOT blindly rerun unknown or non-idempotent actions. An action whose outcome
+      could not be established is an uncertainty boundary (Appendix F.2), and resume leaves it
+      alone; what remains is a recovery or rebase decision.
+    examples:
+      - resume plan a82f --confirm
+
+  # --- the lifecycle, §5.4 – §5.8 ------------------------------------------------------------
+  - id: ono.change.impact
+    verb: impact
+    target: null
+    summary: What a plan could touch, directly and indirectly, and where Ono stops knowing.
+    stability: stable
+    argument_mode: words
+    input: "null | ono.change-plan/1"
+    output: ono.impact-graph/1
+    provider_capability: null
+    selectors:
+      - {name: plan, type: "ref<ono.change-plan/1>", doc: "The plan to analyse (§5.4)."}
+    options:
+      - {name: depth, type: int, doc: "How many relations out to follow. Beyond the interactive budget the answer is bounded and says so (§9.5, §52.2)."}
+      - {name: all, type: bool, doc: "Follow every relation, including the expensive classes, rather than the bounded default."}
+    privilege: none
+    streaming: false
+    phase: P
+    note: >-
+      §9.1: impact answers what could be touched, and is not failure prediction. §9.6: where the
+      graph ends at an opaque boundary, the boundary is part of the answer.
+    examples:
+      - impact a82f
+      - impact a82f --depth 3
+
+  - id: ono.change.protect
+    verb: protect
+    target: null
+    summary: Create the recovery points a plan describes, before the change window.
+    stability: stable
+    argument_mode: words
+    input: "null | ono.change-plan/1"
+    output: stream<ono.recovery-asset/1>
+    provider_capability: null
+    selectors:
+      - {name: plan, type: "ref<ono.change-plan/1>", doc: "The plan whose protection to materialise (§5.5)."}
+    options:
+      - {name: refresh, type: bool, doc: "Replace an existing asset whose captured state has drifted, rather than accepting it as stale (§18.3)."}
+      - {name: confirm, type: bool, doc: "Required outside an interactive session. §5.5: protection is a real mutation of the storage or control plane, and it is visible in history."}
+    confirmation: always
+    privilege: conditional
+    streaming: true
+    phase: P
+    note: >-
+      §18.1 makes just-in-time protection the normal path — `apply` performs the required PREPARE
+      actions itself. This command exists for an operator who wants the recovery point established
+      earlier and inspected before the window, and §18.2 then makes `apply` reassess whether it is
+      still appropriate.
+    examples:
+      - protect a82f --confirm
+
+  - id: ono.change.apply
+    verb: apply
+    target: null
+    summary: Carry out a sealed plan, with its protection created first.
+    stability: stable
+    argument_mode: words
+    input: "null | ono.change-plan/1"
+    output: stream<ono.action-result/1>
+    provider_capability: null
+    selectors:
+      - {name: plan, type: "ref<ono.change-plan/1>", doc: "The plan to apply (§5.6)."}
+    options:
+      - {name: accept-risk, type: bool, doc: "Acknowledge a HIGH or CRITICAL risk class (§19.4). The refusal names the actual reason rather than asking a generic question (§40.2)."}
+      - {name: accept-irreversible, type: bool, doc: "Acknowledge the plan's irreversible actions (§19.4)."}
+      - {name: accept-service-outage, type: bool, doc: "Acknowledge that no healthy serving member of a targeted group is excluded (§40.2's worked gate, §28.3)."}
+      - {name: accept-newer-state-loss, type: bool, doc: "For a recovery plan: acknowledge the newer state and the provider-native history the recovery would destroy (§24.5, §13.6). Nothing destructive runs without it."}
+      - {name: accept-stale-protection, type: bool, doc: "Accept a recovery asset captured before the state drifted, rather than creating a fresh one (§18.3)."}
+      - {name: confirm, type: bool, doc: "Required outside an interactive session for a plan carrying any gate (§40.3)."}
+    confirmation: always
+    privilege: conditional
+    streaming: true
+    phase: P
+    note: >-
+      §5.6: apply refuses drafts and expired plans, and revalidates a sealed plan before mutation.
+      §2.3: if a required recovery asset cannot be created, mutation MUST NOT begin. §40.1 keeps the
+      normal path usable — for a LOW or MODERATE plan with no irreversible action, invoking `apply`
+      is sufficient intent.
+    examples:
+      - apply a82f
+      - apply a82f --accept-risk --confirm
+
+  - id: ono.change.verify
+    verb: verify
+    target: null
+    summary: Whether a plan achieved what it intended, asked of the world rather than of an exit status.
+    stability: stable
+    argument_mode: words
+    input: "null | ono.change-plan/1"
+    output: stream<ono.change-verification/1>
+    provider_capability: null
+    selectors:
+      - {name: plan, type: "ref<ono.change-plan/1>", doc: "The plan to verify (§5.7)."}
+    options:
+      - {name: timeout, type: duration, doc: "Bound the whole verification. Individual checks carry their own timeouts, and §23.5 forbids infinite waiting in either."}
+    privilege: none
+    streaming: true
+    phase: P
+    note: >-
+      §2.14: verification is separate from execution success. `apply` runs this automatically; it
+      can be run again later while the evidence it needs is still available (§5.7). For a recovery
+      plan it reports per equivalence domain, and §25.3 forbids a claim wider than the domain.
+    examples:
+      - verify a82f
+
+  - id: ono.change.recover
+    verb: recover
+    target: null
+    summary: Plan the way back from a change. Nothing is restored until the recovery plan is applied.
+    stability: stable
+    argument_mode: words
+    input: "null | ono.change-plan/1 | ono.recovery-asset/1"
+    output: ono.recovery-plan/1
+    provider_capability: null
+    selectors:
+      - {name: source, type: string, doc: "The plan to recover from, or a recovery asset to recover toward (§5.8)."}
+    options:
+      - {name: to, type: string, doc: "Recover toward a specific recovery asset rather than the one the plan created."}
+      - {name: goal, type: string, doc: "What recovery should achieve: `restore-changed-objects` (the default), `restore-domain`, `compensate-semantics` or `restore-service-health` (Appendix C.2)."}
+      - {name: method, type: string, doc: "Force a restore method rather than taking the least destructive one that meets the goal (Appendix C.1). Refused when the method cannot meet the goal."}
+    privilege: none
+    streaming: false
+    phase: P
+    note: >-
+      §5.8 and §24.1: this plans recovery and does not perform it. The extra step is deliberate,
+      because recovery may destroy newer state (§24.2). Inspect the result, then `apply` it.
+    examples:
+      - recover a82f
+      - recover a82f --goal restore-changed-objects
+
+  # --- recovery assets, §37.5 ----------------------------------------------------------------
+  - id: ono.recovery.get
+    verb: get
+    target: recovery
+    summary: The recovery assets this shell knows about, with their scope, cost and retention.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.recovery-asset/1>
+    provider_capability: null
+    selectors:
+      - {name: reference, type: string, doc: "An asset identity or an unambiguous prefix of one. Without it, every retained asset."}
+    options:
+      - {name: plan, type: string, doc: "Restrict to the assets one plan created."}
+      - {name: state, type: string, repeatable: true, doc: "Restrict to assets in these states (§11.1), such as `ready` or `invalid`."}
+      - {name: all, type: bool, doc: "Include removed and expired assets, which are hidden by default."}
+    privilege: none
+    streaming: true
+    phase: P
+    note: >-
+      §37.5: cost figures are labelled estimated wherever filesystem accounting is not exact, and
+      §38.2 forbids reporting a copy-on-write snapshot as free.
+    examples:
+      - get recovery
+      - get recovery --plan a82f
+
+  - id: ono.recovery.inspect
+    verb: inspect
+    target: recovery
+    summary: What one recovery asset holds, what it excludes, and what restoring from it would need.
+    stability: stable
+    argument_mode: words
+    input: "null | ono.recovery-asset/1"
+    output: ono.recovery-asset/1
+    provider_capability: null
+    selectors:
+      - {name: reference, type: "ref<ono.recovery-asset/1>", doc: "The asset to inspect."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: P
+    note: >-
+      §11.5: a local copy-on-write snapshot is a recovery point and not a backup, and this view
+      says so. §43.4: recovery may need stronger privilege than the mutation did, and this is where
+      that is discovered rather than at the moment it is needed.
+    examples:
+      - inspect recovery r-a82f
+
+  - id: ono.recovery.remove
+    verb: remove
+    target: recovery
+    summary: Delete a recovery asset, once nothing still depends on it.
+    stability: stable
+    argument_mode: words
+    input: "null | ono.recovery-asset/1"
+    output: stream<ono.action-result/1>
+    provider_capability: null
+    selectors:
+      - {name: reference, type: "ref<ono.recovery-asset/1>", doc: "The asset to remove."}
+    options:
+      - {name: confirm, type: bool, doc: "Required: removal is irreversible and a script never waits for a prompt (§40.3). Without it nothing is removed."}
+      - {name: dry-run, type: bool, doc: "Report which plans would become unrecoverable, and remove nothing (§37.3)."}
+      - {name: force, type: bool, doc: "Remove an asset a retained plan still depends on. §2.15 blocks that by default, and this is the explicit override."}
+    confirmation: always
+    privilege: conditional
+    streaming: true
+    phase: P
+    note: >-
+      §2.15: cleanup never outruns recovery policy. An asset a retained plan requires is refused
+      with `recovery.cleanup_blocked` naming the plans, and §37.2 keeps the assets of a failed plan
+      out of ordinary success retention entirely.
+    examples:
+      - remove recovery r-a82f --dry-run
+      - remove recovery r-a82f --confirm

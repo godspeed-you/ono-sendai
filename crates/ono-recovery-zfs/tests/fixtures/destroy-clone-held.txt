@@ -1,0 +1,5 @@
+$ zfs destroy tank/data@ono-b91c-20260909T194501Z
+cannot destroy 'tank/data@ono-b91c-20260909T194501Z': snapshot has dependent clones
+use '-R' to destroy the following datasets:
+tank/cloned
+[exit 1]

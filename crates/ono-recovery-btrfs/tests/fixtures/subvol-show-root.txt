@@ -1,0 +1,20 @@
+$ btrfs subvolume show /mnt/root
+@
+	Name: 			@
+	UUID: 			b08a487d-1079-ac45-9f7e-12d9f15bea63
+	Parent UUID: 		-
+	Received UUID: 		-
+	Creation time: 		2026-09-09 20:33:06 +0000
+	Subvolume ID: 		256
+	Generation: 		9
+	Gen at creation: 	9
+	Parent ID: 		5
+	Top level ID: 		5
+	Flags: 			-
+	Send transid: 		0
+	Send time: 		2026-09-09 20:33:06 +0000
+	Receive transid: 	0
+	Receive time: 		-
+	Snapshot(s):
+	Quota group:		n/a
+[exit 0]

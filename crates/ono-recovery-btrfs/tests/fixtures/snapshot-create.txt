@@ -1,0 +1,3 @@
+$ btrfs subvolume snapshot -r /mnt/root/home /mnt/top/@snapshots/ono-a82f-home
+Create readonly snapshot of '/mnt/root/home' in '/mnt/top/@snapshots/ono-a82f-home'
+[exit 0]

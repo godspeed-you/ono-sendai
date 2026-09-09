@@ -1,0 +1,69 @@
+# The risk model: the classes of v0.6 §19.2, the dimensions of §19.1, and the registry of rules
+# that may emit a finding.
+#
+# §19.2 is the sentence this file exists to satisfy: "These classes are rule-based, not
+# AI-generated", and §62.11 repeats it — AI may explain or propose, and may not upgrade unknown to
+# guaranteed. So risk in Ono has exactly one source, and it is a table. Every finding names the
+# rule that made it, and `xtask/src/change.rs::check_risk_rules` holds this list against the rules
+# the engine actually registers, in both directions.
+#
+# §19.1 keeps risk independent of protection, and it is worth stating plainly because the two are
+# easy to conflate: restoring a root filesystem snapshot is PROTECTED and needs a reboot and
+# discards later changes. A plan can be strongly protected and still be the most dangerous thing
+# an operator does that week.
+#
+# Decisions: ADR-0800, ADR-0806.
+
+version: 1
+
+# §19.2's classes. `rank` orders them for composition, and `unknown` sits between `moderate` and
+# `high` deliberately: a risk nobody could classify is worse than one that was classified as
+# ordinary, and better than one that was classified as serious. §2.4's rule that unknown is never
+# quietly promoted works in both directions here.
+classes:
+  - {id: low, rank: 0, requires_acknowledgement: false, doc: "§19.2: a bounded change whose consequences are understood and small."}
+  - {id: moderate, rank: 1, requires_acknowledgement: false, doc: "§19.2 and §19.3: replacing one config file and restarting one service."}
+  - {id: unknown, rank: 2, requires_acknowledgement: false, doc: "§19.2: the risk could not be classified, which is not the same as low."}
+  - {id: high, rank: 3, requires_acknowledgement: true, doc: "§19.2 and §19.3: a change whose consequences reach beyond its target, or which cannot be undone. §19.4 requires explicit acknowledgement."}
+  - {id: critical, rank: 4, requires_acknowledgement: true, doc: "§19.2 and §19.3: a change that risks the availability of a whole role, or the operator's own link (§34.2)."}
+
+# §19.1's dimensions. A rule contributes to exactly one, so a gate can say which axis it is
+# objecting on rather than emitting a number.
+dimensions:
+  - {id: scope, doc: "§19.1: how much of the system the change reaches."}
+  - {id: privilege, doc: "§19.1 and §43.3: the authority the change needs, and when elevation occurs."}
+  - {id: downtime, doc: "§19.1: service interruption the change causes."}
+  - {id: external-side-effects, doc: "§19.1 and §35.1: effects that leave the machine."}
+  - {id: irreversibility, doc: "§19.1 and §2.13: effects nothing can undo. §19.4 gates on this independently of the class."}
+  - {id: unknown-impact, doc: "§19.1 and §9.6: parts of the blast radius Ono cannot see."}
+  - {id: bulk-count, doc: "§19.1 and §28.3: how many objects one plan touches."}
+  - {id: remote-fanout, doc: "§19.1 and §29: how many hosts one plan reaches."}
+  - {id: recovery-complexity, doc: "§19.1: how hard recovery would be if it were needed."}
+  - {id: reboot-requirement, doc: "§19.1, §13.7 and §30.5: whether recovery or the change itself needs a reboot. §30.5 requires a requirement to be distinguishable from a suggestion."}
+
+# The built-in rules. Every one is deterministic and reads only what the plan and the topology
+# already say; none of them consults a model, and §62.11 is why.
+rules:
+  - {id: risk.scope.single-object, dimension: scope, emits: low, doc: "One object, one provider, bounded effects."}
+  - {id: risk.scope.multi-object, dimension: scope, emits: moderate, doc: "More than one object of more than one kind."}
+  - {id: risk.bulk.warn-threshold, dimension: bulk-count, emits: moderate, doc: "§28.3: above `change.bulk.warn_targets`."}
+  - {id: risk.bulk.high-threshold, dimension: bulk-count, emits: high, doc: "§28.3: above `change.bulk.high_risk_targets`."}
+  - {id: risk.bulk.whole-role, dimension: scope, emits: critical, doc: "§28.3: the topology proves every member of a service group is targeted, so no healthy serving member is excluded. §19.3's forty frontend nodes."}
+  - {id: risk.privilege.elevation, dimension: privilege, emits: moderate, doc: "§43.3: an action requires elevated privilege."}
+  - {id: risk.irreversibility.effect, dimension: irreversibility, emits: high, doc: "§2.13: an effect nothing can undo. §19.3's SIGKILL."}
+  - {id: risk.external.side-effect, dimension: external-side-effects, emits: high, doc: "§35.1: an effect that leaves the machine and cannot be taken back."}
+  - {id: risk.downtime.service-restart, dimension: downtime, emits: moderate, doc: "A restart that interrupts listeners or in-flight requests."}
+  - {id: risk.unknown.impact, dimension: unknown-impact, emits: unknown, doc: "§9.6: the graph has boundaries, the plan has UNKNOWN effects, or it carries an opaque action."}
+  - {id: risk.reboot.required, dimension: reboot-requirement, emits: high, doc: "§30.5: a reboot is required rather than recommended."}
+  - {id: risk.remote.fanout, dimension: remote-fanout, emits: high, doc: "§29: the plan reaches several hosts, and §29.1 forbids implying global atomicity over them."}
+  - {id: risk.remote.link-loss, dimension: remote-fanout, emits: critical, doc: "§34.2: the plan may remove the transport path this active Ono link depends on. Appendix I.3's scenario, and the one landmark that must be impossible to miss."}
+  - {id: risk.recovery.complexity, dimension: recovery-complexity, emits: high, doc: "§13.7 and §14.6: recovery would need an offline or next-boot method."}
+
+# §19.4's gates. Both are acknowledgements stored in the sealed revision, so giving one re-seals
+# the plan — a plan that has been accepted is not the same sealed object as one that has not.
+# §40.3 forbids a script waiting for a prompt, which is why each has a flag.
+gates:
+  - {id: risk, applies_to: [high, critical], flag: "--accept-risk", error: change.risk_not_accepted, doc: "§19.4, §40.2. The refusal names the actual reason rather than asking a generic question."}
+  - {id: irreversible, applies_to: [any-class], flag: "--accept-irreversible", error: change.irreversible_not_accepted, doc: "§19.4: a plan containing a known irreversible action requires this whatever its class."}
+  - {id: newer-state-loss, applies_to: [recovery], flag: "--accept-newer-state-loss", error: recovery.destructive_history_not_accepted, doc: "§24.5 and §13.6: no recovery execution occurs without the explicit gate."}
+  - {id: service-outage, applies_to: [critical], flag: "--accept-service-outage", error: change.bulk_guard_failed, doc: "§40.2's worked gate: no healthy serving member of the targeted group is excluded."}

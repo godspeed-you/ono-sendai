@@ -161,6 +161,62 @@ impl ChangePlan {
         }
     }
 
+    /// Rebuilds a plan out of the fields a store read back (§36.1, §41.2).
+    ///
+    /// The public builders cannot produce a plan in `APPLYING`, or one that carries a digest it
+    /// did not just compute, and that is right for building a plan. It is wrong for reading one
+    /// back: §41.2 requires plan state to be reconstructable from persisted records after a shell
+    /// crash, and a plan that came back as a fresh draft would have lost exactly the fact the
+    /// operator needs. This is `pub(crate)` and reachable only through [`crate::value`], which
+    /// round-trips it against the schema and checks the digest still holds.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub(crate) fn restore(
+        id: PlanId,
+        revision: u32,
+        kind: PlanKind,
+        state: PlanState,
+        intent: Intent,
+        session: Arc<str>,
+        created_at: Timestamp,
+        sealed_at: Option<Timestamp>,
+        expires_at: Option<Timestamp>,
+        targets: Vec<FrozenTarget>,
+        actions: Vec<PlanAction>,
+        impact: ImpactGraph,
+        protection: ProtectionSummary,
+        protection_mode: ProtectionMode,
+        risk: RiskAssessment,
+        strategy: Strategy,
+        verification: VerificationSet,
+        providers: Vec<ProviderBinding>,
+        digest: Option<Arc<str>>,
+        supersedes: Option<u32>,
+    ) -> Self {
+        Self {
+            id,
+            revision,
+            kind,
+            state,
+            intent,
+            session,
+            created_at,
+            sealed_at,
+            expires_at,
+            targets,
+            actions,
+            impact,
+            protection,
+            protection_mode,
+            risk,
+            strategy,
+            verification,
+            providers,
+            digest,
+            supersedes,
+        }
+    }
+
     /// Marks this plan as a recovery plan (§3.8).
     #[must_use]
     pub const fn as_recovery(mut self) -> Self {

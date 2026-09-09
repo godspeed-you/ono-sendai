@@ -1,0 +1,9 @@
+$ zfs list -H -p -t filesystem -o name,mountpoint,mounted,type,used,available,referenced,origin,canmount
+rpool	/rpool	yes	filesystem	207360	872207872	24576	-	on
+rpool/ROOT	/altroot	yes	filesystem	49152	872207872	24576	-	on
+rpool/ROOT/debian	/altroot/debian	yes	filesystem	24576	872207872	24576	-	on
+tank	/tank	yes	filesystem	221184	872194048	24576	-	on
+tank/data	/tank/data	yes	filesystem	49152	872194048	24576	-	on
+tank/data/customer	/tank/data/customer	yes	filesystem	24576	872194048	24576	-	on
+tank/home	/tank/home	yes	filesystem	24576	872194048	24576	-	on
+[exit 0]

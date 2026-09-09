@@ -1,0 +1,162 @@
+# The plan model: the lifecycle of v0.6 §4.1, the transitions §4 draws between its states, the
+# protection classes of §10.2, the command inventory of §5 and the schemas of §46.
+#
+# `xtask/src/change.rs::check` holds this file against the implementation in both directions.
+# `states:` is compared against `ono_change_core::PlanState::ALL`, `transitions:` against
+# `PlanState::after`, `protection_levels:` against `ProtectionLevel::ALL`, and `commands:` against
+# `docs/contracts/commands/change.yaml`. A state renamed in Rust and not here fails the gate, and
+# so does a state written here that the machine does not know.
+#
+# The file exists because §4.1's diagram is load-bearing and prose cannot be checked. Two of its
+# edges carry the whole of Appendix F: `prepare-failed` is reachable without passing through
+# `applying`, which is how an operator knows nothing was mutated; and there is no edge from
+# `prepare-failed` to `applying`, which is §2.3 — if a required recovery asset cannot be created,
+# mutation MUST NOT begin.
+#
+# Decisions: ADR-0800, ADR-0803, ADR-0804.
+
+version: 1
+
+# ---------------------------------------------------------------------------------------------
+# §4.1's states. `mutated: true` marks everything at or after the first mutating action, which is
+# the predicate Appendix F's whole matrix turns on: an operator must be able to tell "it refused"
+# from "it stopped partway", and this column is where that distinction is written down.
+#
+# `retains_assets: true` is §37.2 — a plan that did not succeed keeps its recovery assets out of
+# ordinary success retention, because it is exactly the plan somebody may still need to recover.
+# ---------------------------------------------------------------------------------------------
+states:
+  - {id: draft, mutated: false, terminal: false, appliable: false, retains_assets: false, recoverable: false, doc: "§4.2: editable, and not executable."}
+  - {id: resolved, mutated: false, terminal: false, appliable: false, retains_assets: false, recoverable: false, doc: "§4.3: selectors have become concrete object identities and provider bindings."}
+  - {id: sealed, mutated: false, terminal: false, appliable: true, retains_assets: false, recoverable: false, doc: "§4.4: immutable, digest-bearing, ready to apply."}
+  - {id: expired, mutated: false, terminal: true, appliable: false, retains_assets: false, recoverable: false, doc: "§4.1: the sealed plan outlived its validity window. `rebase` resolves it again."}
+  - {id: preparing, mutated: false, terminal: false, appliable: false, retains_assets: false, recoverable: false, doc: "§4.5: revalidation, capability checks and recovery asset creation, immediately before the first mutation."}
+  - {id: prepare-failed, mutated: false, terminal: true, appliable: false, retains_assets: true, recoverable: false, doc: "§4.5 and Appendix F: preparation failed and no mutating action ran. §55.7 case 31 is this state."}
+  - {id: protected, mutated: false, terminal: false, appliable: true, retains_assets: false, recoverable: false, doc: "§4.6: every protection action the policy required completed and validated. §4.6 forbids the word for partial coverage."}
+  - {id: applying, mutated: true, terminal: false, appliable: false, retains_assets: false, recoverable: false, doc: "§4.7: mutating actions are executing."}
+  - {id: apply-failed, mutated: true, terminal: false, appliable: false, retains_assets: true, recoverable: true, doc: "§4.7 and Appendix F: a mutating action failed. What ran, ran."}
+  - {id: verifying, mutated: true, terminal: false, appliable: false, retains_assets: false, recoverable: false, doc: "§4.8: postconditions are being observed."}
+  - {id: verified, mutated: true, terminal: false, appliable: false, retains_assets: false, recoverable: true, doc: "§4.8: every required postcondition held."}
+  - {id: degraded, mutated: true, terminal: false, appliable: false, retains_assets: true, recoverable: true, doc: "§4.8: the intended primary state exists and some expectation is violated or unknown."}
+  - {id: failed, mutated: true, terminal: false, appliable: false, retains_assets: true, recoverable: true, doc: "§4.8: a required postcondition failed. §2.14 keeps this independent of any exit status."}
+  - {id: closed, mutated: true, terminal: true, appliable: false, retains_assets: false, recoverable: true, doc: "§4.9: the plan is finished. Asset retention is independent and policy-driven."}
+  - {id: recovery-planned, mutated: true, terminal: false, appliable: false, retains_assets: false, recoverable: true, doc: "§24.1: a RecoveryPlan exists and has not been applied. Nothing has been restored."}
+  - {id: recovering, mutated: true, terminal: false, appliable: false, retains_assets: false, recoverable: false, doc: "§4.1: the recovery plan is executing."}
+  - {id: recovered, mutated: true, terminal: false, appliable: false, retains_assets: false, recoverable: false, doc: "§4.1: the recovery actions completed. §25.3 forbids calling that a recovered world until verification says which domains came back."}
+  - {id: recovery-failed, mutated: true, terminal: false, appliable: false, retains_assets: true, recoverable: true, doc: "§4.1 and Appendix F: recovery did not complete. The remaining assets and the exact partial state are preserved."}
+  - {id: recovery-verified, mutated: true, terminal: true, appliable: false, retains_assets: false, recoverable: false, doc: "§4.1 and §25: recovery verification passed for the domains it covers, and for no others."}
+
+# ---------------------------------------------------------------------------------------------
+# Every edge §4.1 draws, and no others. `ono_change_core::PlanState::after` is a total function
+# that answers `None` for anything absent here, and the executor turns that into a structured
+# refusal rather than a silent state change.
+# ---------------------------------------------------------------------------------------------
+transitions:
+  - {from: draft, event: resolve, to: resolved}
+  - {from: draft, event: seal, to: sealed}
+  - {from: resolved, event: seal, to: sealed}
+  - {from: sealed, event: expire, to: expired}
+  - {from: sealed, event: begin-prepare, to: preparing}
+  - {from: protected, event: begin-prepare, to: preparing}
+  - {from: preparing, event: prepare-failed, to: prepare-failed}
+  - {from: preparing, event: protected, to: protected}
+  - {from: preparing, event: begin-apply, to: applying}
+  - {from: protected, event: begin-apply, to: applying}
+  - {from: applying, event: apply-failed, to: apply-failed}
+  - {from: applying, event: begin-verify, to: verifying}
+  - {from: verifying, event: verified, to: verified}
+  - {from: verifying, event: degraded, to: degraded}
+  - {from: verifying, event: verification-failed, to: failed}
+  - {from: verified, event: close, to: closed}
+  - {from: degraded, event: close, to: closed}
+  - {from: failed, event: close, to: closed}
+  - {from: verified, event: plan-recovery, to: recovery-planned}
+  - {from: degraded, event: plan-recovery, to: recovery-planned}
+  - {from: failed, event: plan-recovery, to: recovery-planned}
+  - {from: apply-failed, event: plan-recovery, to: recovery-planned}
+  - {from: closed, event: plan-recovery, to: recovery-planned}
+  - {from: recovery-failed, event: plan-recovery, to: recovery-planned}
+  - {from: recovery-planned, event: begin-recovery, to: recovering}
+  - {from: recovering, event: recovered, to: recovered}
+  - {from: recovering, event: recovery-failed, to: recovery-failed}
+  - {from: recovered, event: recovery-verified, to: recovery-verified}
+  - {from: recovered, event: recovery-verification-failed, to: recovery-failed}
+
+# ---------------------------------------------------------------------------------------------
+# §10.2's plan-level protection classes. `covers_persistent_state` is the predicate that decides
+# whether the word may be shown as covering what a plan changes on disk; §4.6 and §62.1 are what
+# it prevents.
+#
+# There is no boolean anywhere in this file, and §10.1 is why: a plan MUST NOT use a single
+# `reversible: true/false` flag, so the class is composed from a per-domain matrix by Appendix A.5
+# and can never be asserted beside it.
+# ---------------------------------------------------------------------------------------------
+protection_levels:
+  - {id: unprotected, covers_persistent_state: false, symbol: "!", doc: "§10.2: no usable recovery or compensation mechanism covers the required persistent effects."}
+  - {id: compensatable, covers_persistent_state: false, symbol: "~>", doc: "§10.2: no prior state image exists, and declared inverse actions can restore an acceptable semantic state. §27.4 forbids calling this rollback."}
+  - {id: partially-protected, covers_persistent_state: false, symbol: "1/2", doc: "§10.2: some important effects are covered and others are not. The matrix says which."}
+  - {id: protected, covers_persistent_state: true, symbol: "<->", doc: "§10.2: every known persistent state mutation the plan requires is covered by validated recovery assets or provider restore contracts. Runtime and external effects may still be excluded, and Appendix A.5 requires those exclusions to be shown beside the word."}
+  - {id: transactional, covers_persistent_state: true, symbol: "<->", doc: "§10.2 and §27.1: one provider guarantees atomic commit and rollback for the entire protected scope. §27.2 forbids the word once a second boundary is involved."}
+  - {id: unknown, covers_persistent_state: false, symbol: "?", doc: "§10.2: Ono cannot establish the recovery properties at all."}
+
+# ---------------------------------------------------------------------------------------------
+# The thirteen commands of §5, compared against `docs/contracts/commands/change.yaml` in both
+# directions. `mutates` here is about the system rather than about the store: `plan` writes a plan
+# and changes nothing an operator would call state (§2.1), while `protect` creates only a recovery
+# point and is a real mutation of the storage plane (§5.5).
+# ---------------------------------------------------------------------------------------------
+commands:
+  - {id: ono.change.plan, spelling: plan, mutates: false, spec: "§5.1, §5.2, §5.3"}
+  - {id: ono.change-plan.get, spelling: get plan, mutates: false, spec: "§36.4"}
+  - {id: ono.change-plan.inspect, spelling: inspect plan, mutates: false, spec: "§5, Appendix B.10"}
+  - {id: ono.change-plan.rebase, spelling: rebase plan, mutates: false, spec: "§7.5"}
+  - {id: ono.change-plan.resume, spelling: resume plan, mutates: true, spec: "§41.3"}
+  - {id: ono.change.impact, spelling: impact, mutates: false, spec: "§5.4, §9"}
+  - {id: ono.change.protect, spelling: protect, mutates: true, spec: "§5.5, §18.2"}
+  - {id: ono.change.apply, spelling: apply, mutates: true, spec: "§5.6, §40.1"}
+  - {id: ono.change.verify, spelling: verify, mutates: false, spec: "§5.7, §23"}
+  - {id: ono.change.recover, spelling: recover, mutates: false, spec: "§5.8, §24.1"}
+  - {id: ono.recovery.get, spelling: get recovery, mutates: false, spec: "§37.5"}
+  - {id: ono.recovery.inspect, spelling: inspect recovery, mutates: false, spec: "§11.1"}
+  - {id: ono.recovery.remove, spelling: remove recovery, mutates: true, spec: "§37.3, §2.15"}
+
+# ---------------------------------------------------------------------------------------------
+# The schemas of §46, and the one rename. §46.6 asks the change verification record to be
+# `ono.verification-result/1`; v0.2 §31.36 already holds that name for `verify plugin`, which
+# answers four entirely different questions about a package. ADR-0802 records the collision.
+# ---------------------------------------------------------------------------------------------
+schemas:
+  - {id: ono.change-plan/1, file: change-plan.v1.yaml, spec: "§46.1"}
+  - {id: ono.plan-action/1, file: plan-action.v1.yaml, spec: "§46.2"}
+  - {id: ono.proposed-effect/1, file: proposed-effect.v1.yaml, spec: "§46.3, §8.2"}
+  - {id: ono.recovery-asset/1, file: recovery-asset.v1.yaml, spec: "§46.4, §11.1"}
+  - {id: ono.recovery-plan/1, file: recovery-plan.v1.yaml, spec: "§46.5"}
+  - {id: ono.change-verification/1, file: change-verification.v1.yaml, spec: "§46.6, §23.3 — renamed by ADR-0802"}
+  - {id: ono.impact-graph/1, file: impact-graph.v1.yaml, spec: "§46.7"}
+  - {id: ono.protection-coverage/1, file: protection-coverage.v1.yaml, spec: "§10.3, Appendix A.5"}
+  - {id: ono.persistence-domain/1, file: persistence-domain.v1.yaml, spec: "Appendix B.10"}
+  - {id: ono.recovery-candidate/1, file: recovery-candidate.v1.yaml, spec: "Appendix A.3"}
+
+# ---------------------------------------------------------------------------------------------
+# §53's reference configuration, at the defaults §53 writes. `xtask/src/change.rs::check_settings`
+# compares each default against the shell's own, because §53's closing line — configuration MUST
+# NOT silently weaken explicit plan requirements — is only checkable if the defaults agree.
+# ---------------------------------------------------------------------------------------------
+settings:
+  - {key: change.default_protection, type: string, default: prefer, doc: "§17.1: the interactive default. `off`, `prefer`, `require` or `maximize`."}
+  - {key: change.default_strategy, type: string, default: sequential, doc: "§28.4: the default execution strategy."}
+  - {key: change.high_risk_requires_ack, type: bool, default: true, doc: "§19.4: HIGH plans require explicit acknowledgement."}
+  - {key: change.critical_risk_requires_ack, type: bool, default: true, doc: "§19.4: CRITICAL plans require explicit acknowledgement."}
+  - {key: change.allow_opaque_actions, type: bool, default: false, doc: "§6.2: an arbitrary external command is not plannable by default."}
+  - {key: change.bulk.warn_targets, type: int, default: 10, doc: "§28.3: the count above which a bulk plan is called out."}
+  - {key: change.bulk.high_risk_targets, type: int, default: 50, doc: "§28.3: the count above which bulk scope is HIGH risk."}
+  - {key: recovery.retention, type: duration, default: 24h, doc: "§37.1: how long a recovery asset is kept after successful verification."}
+  - {key: recovery.max_auto_snapshot_count, type: int, default: 32, doc: "§38.3: a bound on automatic protection."}
+  - {key: recovery.min_filesystem_free, type: string, default: 10%, doc: "§38.3 and Appendix D.3: the free-space floor automatic protection fails closed at."}
+  - {key: recovery.prefer_read_only_snapshots, type: bool, default: true, doc: "§14.5: recovery snapshots are read-only while retained."}
+  - {key: recovery.zfs.enabled, type: bool, default: true, doc: "§53."}
+  - {key: recovery.zfs.prefer_selective_restore, type: bool, default: true, doc: "§13.5: prefer the method that minimises unrelated rollback damage."}
+  - {key: recovery.zfs.allow_destructive_rollback, type: bool, default: false, doc: "§13.6: Ono never silently adds flags that destroy newer history."}
+  - {key: recovery.btrfs.enabled, type: bool, default: true, doc: "§53."}
+  - {key: recovery.btrfs.prefer_read_only_snapshots, type: bool, default: true, doc: "§14.5."}
+  - {key: recovery.btrfs.root_recovery, type: string, default: next-boot, doc: "§14.6 and Appendix D.9: `online`, `offline` or `next-boot`."}

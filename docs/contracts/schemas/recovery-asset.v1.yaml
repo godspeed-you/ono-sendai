@@ -115,6 +115,19 @@ fields:
     doc: >-
       Whether the size figures are estimated rather than exact. §37.5 requires the label wherever
       filesystem accounting is not exact.
+  creation_latency:
+    type: duration
+    nullable: true
+    doc: >-
+      How long creating the asset took, or is expected to take (§38.1's initial latency). Null
+      where nobody measured it, which is not zero (spec v0.2 §35.3).
+  quiesce_duration:
+    type: duration
+    nullable: true
+    doc: >-
+      How long an application must be paused for this asset (§38.1, §18.4). Null where no quiesce
+      is involved. §18.4 bounds the window and requires the application to be resumed when
+      snapshot creation fails.
   requires_reboot:
     type: bool
     required: true

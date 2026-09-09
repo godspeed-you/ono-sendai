@@ -1,0 +1,6 @@
+$ ls -la /mnt/root/var/lib-app
+total 0
+drwxr-xr-x 1 root root 10 Sep  9 20:33 .
+drwxr-xr-x 1 root root 32 Sep  9 20:33 ..
+drwxr-xr-x 1 root root 16 Sep  9 20:33 state
+[exit 0]

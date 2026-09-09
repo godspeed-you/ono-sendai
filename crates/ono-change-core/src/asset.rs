@@ -288,6 +288,36 @@ impl RecoveryValidation {
         self
     }
 
+    /// Whether the asset was found to exist (§11.4).
+    #[must_use]
+    pub const fn exists(&self) -> bool {
+        self.exists
+    }
+
+    /// Whether the asset's identity matched the planned source (§11.4).
+    #[must_use]
+    pub const fn identity_matches(&self) -> bool {
+        self.identity_matches
+    }
+
+    /// Whether the asset's scope matched the expected target (§11.4).
+    #[must_use]
+    pub const fn scope_matches(&self) -> bool {
+        self.scope_matches
+    }
+
+    /// Whether a restore path was available (§11.4).
+    #[must_use]
+    pub const fn restore_available(&self) -> bool {
+        self.restore_available
+    }
+
+    /// Whether the permissions recovery needs were held (§11.4, §43.4).
+    #[must_use]
+    pub const fn permissions_present(&self) -> bool {
+        self.permissions_present
+    }
+
     /// Whether every §11.4 check passed.
     #[must_use]
     pub const fn is_complete(&self) -> bool {
@@ -597,6 +627,53 @@ impl RecoveryAsset {
             exclusions: Vec::new(),
             captured_state: None,
             expires_at: None,
+        }
+    }
+
+    /// Rebuilds an asset out of the fields a store read back (§37.5).
+    ///
+    /// `pub(crate)`, and reached only through [`crate::value`]. An asset's identity is what a plan
+    /// references and what `remove recovery` names, so re-deriving it on read would break every
+    /// reference that had already been printed.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub(crate) fn restore(
+        id: RecoveryAssetId,
+        provider: Arc<str>,
+        asset_type: RecoveryAssetType,
+        reference: Arc<str>,
+        scope: RecoveryScope,
+        created_at: Timestamp,
+        source_plan: Option<PlanId>,
+        state: AssetState,
+        consistency: ConsistencyClass,
+        restore_method: RestoreMethod,
+        validation: Option<RecoveryValidation>,
+        retention: RetentionPolicy,
+        cost: RecoveryCost,
+        dependencies: Vec<RecoveryAssetId>,
+        exclusions: Vec<RecoveryExclusion>,
+        captured_state: Option<Arc<str>>,
+        expires_at: Option<Timestamp>,
+    ) -> Self {
+        Self {
+            id,
+            provider,
+            asset_type,
+            reference,
+            scope,
+            created_at,
+            source_plan,
+            state,
+            consistency,
+            restore_method,
+            validation,
+            retention,
+            cost,
+            dependencies,
+            exclusions,
+            captured_state,
+            expires_at,
         }
     }
 

@@ -192,6 +192,7 @@ pub struct VerificationResult {
     check: CheckId,
     class: VerificationClass,
     subject: Arc<str>,
+    expression: Arc<str>,
     status: VerificationStatus,
     observed: Option<Value>,
     expected: Option<Value>,
@@ -215,6 +216,7 @@ impl VerificationResult {
             check: contract.id().clone(),
             class: contract.class(),
             subject: Arc::from(contract.subject()),
+            expression: Arc::from(contract.expression()),
             status,
             observed: None,
             expected: contract.expected().cloned(),
@@ -268,6 +270,15 @@ impl VerificationResult {
     #[must_use]
     pub fn subject(&self) -> &str {
         &self.subject
+    }
+
+    /// The condition that was checked, carried so a result can be read without its contract.
+    ///
+    /// §23.3 lists it beside `observed` and `expected` for the same reason both of those are
+    /// there: a result that says only `FAILED` has told the operator nothing they can act on.
+    #[must_use]
+    pub fn expression(&self) -> &str {
+        &self.expression
     }
 
     /// The outcome.

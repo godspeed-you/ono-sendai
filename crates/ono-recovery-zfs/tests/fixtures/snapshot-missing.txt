@@ -1,0 +1,11 @@
+$ zfs snapshot rpool/nope@x
+cannot open 'rpool/nope': dataset does not exist
+usage:
+	snapshot [-r] [-o property=value] ... <filesystem|volume>@<snap> ...
+
+For the property list, run: zfs set|get
+
+For the delegated permission list, run: zfs allow|unallow
+
+For further help on a command or topic, run: zfs help [<topic>]
+[exit 2]

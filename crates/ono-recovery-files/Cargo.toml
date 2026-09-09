@@ -13,10 +13,15 @@ ono-core.workspace = true
 ono-value.workspace = true
 ono-change-core.workspace = true
 jiff.workspace = true
+# `statfs`, `statx`, the `l*xattr` family and `mknodat` are the safe filesystem APIs §43.5 asks
+# for: every one of them acts on the path it was given without following a symlink behind it.
+rustix = { workspace = true, features = ["fs", "process"] }
 sha2.workspace = true
 
 [dev-dependencies]
 ono-testkit.workspace = true
+jiff.workspace = true
+rustix = { workspace = true, features = ["fs", "process"] }
 
 [lints]
 workspace = true

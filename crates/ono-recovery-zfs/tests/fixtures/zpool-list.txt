@@ -1,0 +1,4 @@
+$ zpool list -H -p -o name,size,alloc,free,capacity,fragmentation,health
+rpool	1006632960	274944	1006358016	0	3	ONLINE
+tank	1006632960	335360	1006297600	0	3	ONLINE
+[exit 0]

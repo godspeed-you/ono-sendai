@@ -1,0 +1,3 @@
+$ su -s /bin/sh -c btrfs subvolume snapshot -r /mnt/root /mnt/top/@snapshots/nope nobody
+ERROR: Could not create subvolume: Operation not permitted
+[exit 1]

@@ -1,0 +1,3 @@
+$ zfs list -H -p -t filesystem rpool/nope
+cannot open 'rpool/nope': dataset does not exist
+[exit 1]

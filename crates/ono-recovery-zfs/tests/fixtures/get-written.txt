@@ -1,0 +1,3 @@
+$ zfs get -H -p -o name,property,value written rpool/ROOT/debian
+rpool/ROOT/debian	written	0
+[exit 0]

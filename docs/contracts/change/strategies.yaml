@@ -1,0 +1,68 @@
+# The execution strategies of v0.6 §28.4, and what each one does with a plan's frozen target set.
+#
+# §28.4 defines four and rules out a fifth in the same breath: "Unlimited parallel mutation is not
+# a default strategy." So `parallel` carries its bound, `bounded: true` is on every row, and
+# `xtask/src/change.rs::check_strategies` asserts the implementation offers no unbounded variant —
+# a width of zero is refused at construction rather than read as "as many as possible".
+#
+# §28.5 makes the strategy part of the seal, because it changes operational risk and temporal
+# effects. Changing it creates a new plan revision.
+#
+# Decisions: ADR-0800.
+
+version: 1
+
+strategies:
+  - id: sequential
+    parameters: []
+    bounded: true
+    gated_first_wave: false
+    default: true
+    doc: >-
+      §28.4: one target at a time. §53's `change.default_strategy`, and the one that makes the
+      smallest claim about what happens when something goes wrong halfway.
+  - id: batch
+    parameters: [size]
+    bounded: true
+    gated_first_wave: false
+    default: false
+    doc: "§28.4: fixed-size batches, each completing before the next begins."
+  - id: canary
+    parameters: [canary, batch]
+    bounded: true
+    gated_first_wave: true
+    default: false
+    doc: >-
+      §28.4 and §28.6: a first small batch whose required verification MUST pass before the
+      remaining batches continue. §55.10 case 43 is the test — the canary stops after the first
+      batch's verification fails, and the rest never run.
+  - id: parallel
+    parameters: [width]
+    bounded: true
+    gated_first_wave: false
+    default: false
+    doc: >-
+      §28.4: at most `width` targets at once. The bound is the whole point; there is no variant
+      without one.
+
+# Every strategy answers in waves, including the sequential one, so §28.6's gate is one rule
+# rather than four and the executor has a single shape to schedule.
+waves:
+  contiguous: true
+  covers_every_target_once: true
+  doc: >-
+    A strategy partitions the frozen target set into ordered, contiguous waves that between them
+    cover every target exactly once. §2.6 froze the set; the strategy decides only the order and
+    the concurrency, never the membership.
+
+# §28's bulk rules, which are about the plan rather than about the schedule.
+bulk:
+  frozen_membership: true
+  membership_freezes_at: resolution
+  doc: >-
+    §28.2 and §4.3: membership freezes at resolution. If four services match at resolution time
+    and a fifth fails before execution, the fifth MUST NOT be added silently — §55.1 case 2.
+  availability_rule: >-
+    §28.3: where the topology proves that all members of a service group are targeted, Ono
+    identifies availability risk. `risk.bulk.whole-role` in `risk.yaml` is that rule, and it emits
+    CRITICAL.

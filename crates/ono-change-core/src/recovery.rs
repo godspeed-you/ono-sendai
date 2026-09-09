@@ -161,6 +161,25 @@ impl NewerStateImpact {
         }
     }
 
+    /// Rebuilds an impact analysis out of the fields a store read back.
+    ///
+    /// `complete` travels rather than being re-derived, because §62.8 makes "the analysis did not
+    /// run" a distinct state from "the analysis found nothing", and only the writer knows which.
+    #[must_use]
+    pub(crate) fn restore(
+        items: Vec<NewerStateItem>,
+        destroyed_assets: Vec<Arc<str>>,
+        discarded_bytes: Option<ByteSize>,
+        complete: bool,
+    ) -> Self {
+        Self {
+            items,
+            destroyed_assets,
+            discarded_bytes,
+            complete,
+        }
+    }
+
     /// Names a provider-native object recovery would destroy — a newer snapshot, a bookmark, a
     /// clone (§13.6, §24.5, Appendix D.5).
     #[must_use]
@@ -417,6 +436,48 @@ impl RecoveryPlan {
             requires_reboot: false,
             requires_offline: false,
             destructive_accepted: false,
+        }
+    }
+
+    /// Rebuilds a recovery plan out of the fields a store read back (§36.1).
+    ///
+    /// `pub(crate)`, reached only through [`crate::value`]. The field that must survive the round
+    /// trip intact is `destructive_accepted`: §24.5's gate is recorded in the stored plan, and a
+    /// recovery plan that came back with the acceptance dropped would ask again — or, worse, with
+    /// it invented, would not.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub(crate) fn restore(
+        plan: ChangePlan,
+        source_plan: Option<PlanId>,
+        source_assets: Vec<RecoveryAssetId>,
+        goal: RecoveryGoal,
+        method: RestoreMethod,
+        target_state: Arc<str>,
+        restores: Vec<Arc<str>>,
+        newer_state: NewerStateImpact,
+        unrecoverable: Vec<UnrecoverableEffect>,
+        metadata: MetadataCoverage,
+        directory_policy: DirectoryRestorePolicy,
+        requires_reboot: bool,
+        requires_offline: bool,
+        destructive_accepted: bool,
+    ) -> Self {
+        Self {
+            plan,
+            source_plan,
+            source_assets,
+            goal,
+            method,
+            target_state,
+            restores,
+            newer_state,
+            unrecoverable,
+            metadata,
+            directory_policy,
+            requires_reboot,
+            requires_offline,
+            destructive_accepted,
         }
     }
 

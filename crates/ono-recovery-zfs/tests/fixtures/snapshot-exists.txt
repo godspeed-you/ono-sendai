@@ -1,0 +1,3 @@
+$ zfs snapshot rpool/ROOT/debian@later-1
+cannot create snapshot 'rpool/ROOT/debian@later-1': dataset already exists
+[exit 1]

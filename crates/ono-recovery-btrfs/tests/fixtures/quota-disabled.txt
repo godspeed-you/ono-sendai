@@ -1,0 +1,3 @@
+$ btrfs qgroup show /mnt/top
+ERROR: can't list qgroups: quotas not enabled
+[exit 1]

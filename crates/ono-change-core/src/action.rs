@@ -262,6 +262,45 @@ impl PlanAction {
         }
     }
 
+    /// Rebuilds an action out of the fields a store read back (§41.2).
+    ///
+    /// `pub(crate)` for the same reason as [`crate::ChangePlan::restore`]: an action's identity
+    /// and its recorded status are facts about what happened, and re-deriving them from a summary
+    /// would quietly discard the evidence resume depends on.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub(crate) fn restore(
+        id: ActionId,
+        ordinal: usize,
+        role: ActionRole,
+        summary: Arc<str>,
+        target: Option<Arc<str>>,
+        execution: Execution,
+        depends_on: Vec<ActionId>,
+        preconditions: Vec<Precondition>,
+        idempotency: Idempotency,
+        effects: Vec<ProposedEffect>,
+        recovery_semantics: Option<Arc<str>>,
+        requires_privilege: bool,
+        status: ActionStatus,
+    ) -> Self {
+        Self {
+            id,
+            ordinal,
+            role,
+            summary,
+            target,
+            execution,
+            depends_on,
+            preconditions,
+            idempotency,
+            effects,
+            recovery_semantics,
+            requires_privilege,
+            status,
+        }
+    }
+
     /// Names the frozen target this action acts on.
     #[must_use]
     pub fn on(mut self, target: impl Into<Arc<str>>) -> Self {

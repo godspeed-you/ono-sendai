@@ -1,0 +1,3 @@
+$ su -s /bin/sh -c zfs snapshot rpool/ROOT/debian@nope nobody
+Permission denied the ZFS utilities must be run as root.
+[exit 1]

@@ -1,0 +1,146 @@
+# Protection policy: the four modes of v0.6 §17.2, the profiles of Appendix H, the freshness rule
+# of §18.3 and the cost limits of §38.3.
+#
+# §17.4 and §40.3 are the constraint that shapes every row: a non-interactive script MUST never
+# stop for a yes/no question. So every gate has a flag, every mode has a defined behaviour when it
+# cannot be satisfied, and `scripted` is a profile rather than a special case in the code.
+#
+# Appendix H.5 is the rule that keeps profiles from being a back door: a plan may impose stricter
+# requirements than a profile, and a profile MUST NOT weaken a provider-declared safety
+# constraint. `xtask/src/change.rs::check_policies` checks that every profile's settings are a
+# tightening of the defaults rather than a loosening of them.
+#
+# Decisions: ADR-0800, ADR-0810.
+
+version: 1
+
+# §17.2's modes.
+modes:
+  - id: off
+    creates_assets: false
+    refuses_shortfall: false
+    doc: >-
+      §17.2: do not create automatic recovery assets, and **still show the protection that was
+      available**. The second half is the part that matters: `off` means "I will not take a
+      snapshot", not "I will not tell you one was possible".
+  - id: prefer
+    creates_assets: true
+    refuses_shortfall: false
+    default: true
+    doc: >-
+      §17.1 and §17.2: discover available low-cost protection, include the protection actions in
+      the plan, execute them during PREPARE when `apply` is called, abort before mutation if a
+      required planned protection action fails, and never fabricate protection where no suitable
+      provider exists. The interactive default.
+  - id: require
+    creates_assets: true
+    refuses_shortfall: true
+    doc: >-
+      §17.2: refuse to apply if required mutation domains cannot reach the plan's required
+      protection class. The refusal is `recovery.coverage_insufficient` and it carries the coverage
+      matrix, so the operator sees which domain fell short rather than a summary.
+  - id: maximize
+    creates_assets: true
+    refuses_shortfall: false
+    doc: >-
+      §17.2: attempt all non-conflicting available protection mechanisms that improve recovery
+      coverage within configured cost limits. §17.2 and §62.7 both add the same caveat, and it is
+      the operative one: `maximize` MUST NOT mean "snapshot everything on the host". Protection
+      follows the planned mutation scope.
+
+# §18's preparation and freshness rules.
+preparation:
+  just_in_time: true
+  doc: >-
+    §18.1: for a normal `apply`, recovery assets are created immediately before mutation, to
+    minimise the unprotected window. §18.2: an operator may run `protect` earlier, and `apply` then
+    assesses whether the asset is still appropriate.
+freshness:
+  fingerprint_field: captured_state
+  no_fingerprint_is_fresh: false
+  outcomes: [usable, usable-with-explicit-acceptance, must-be-replaced]
+  doc: >-
+    §18.3: recovery assets carry a source-state fingerprint where one is available. If current
+    state drifted materially after protection, Ono MUST NOT pretend the old asset is a
+    just-before-change recovery point. An asset with no recorded fingerprint is never fresh —
+    silence is not evidence of currency — and the three outcomes are the three §18.3 lists:
+    create a new asset, require explicit acceptance of stale protection, or abort where policy
+    requires fresh protection.
+
+# Appendix H's profiles. They expand to the inspectable settings below and hide nothing.
+profiles:
+  - id: interactive
+    protection: prefer
+    risk_gate: high+
+    retention: 24h
+    strategy: sequential
+    opaque_actions: false
+    doc: "Appendix H.1: the default desktop and operator profile."
+  - id: cautious
+    protection: require
+    risk_gate: moderate+
+    retention: 72h
+    strategy: sequential
+    opaque_actions: false
+    min_filesystem_free: 15%
+    doc: "Appendix H.2."
+  - id: fleet
+    protection: prefer
+    risk_gate: high+
+    strategy: canary 1 then batch 10%
+    remote_unknown: stop-new-batches
+    retention: 24h
+    opaque_actions: false
+    doc: >-
+      Appendix H.3. `remote_unknown: stop-new-batches` is §29.3 applied to a strategy: a host whose
+      state could not be established is not a host to launch the next batch over.
+  - id: scripted
+    protection: prefer
+    risk_gate: high+
+    retention: 24h
+    strategy: sequential
+    opaque_actions: false
+    prompts: false
+    doc: >-
+      Appendix H.4: no prompts. Every required acknowledgement must be supplied through policy or
+      flags, and a policy that cannot be satisfied fails with a structured error rather than
+      waiting (§17.4).
+
+authority:
+  profile_may_weaken_provider_constraint: false
+  plan_may_be_stricter_than_profile: true
+  configuration_may_weaken_plan: false
+  doc: >-
+    Appendix H.5: a plan may impose stricter requirements than a profile, and a profile MUST NOT
+    weaken provider-declared safety constraints. §53's closing line adds the third: configuration
+    MUST NOT silently weaken explicit plan requirements. All three are one rule read from three
+    directions — the strictest requirement in force is the one that applies.
+
+# §26's auto-recovery policy. Off by default, and §26.3's six conditions are all of them.
+auto_recovery:
+  default: off
+  doc: >-
+    §26.1 and §26.2: automatic recovery after verification failure is off by default, and
+    deliberately. A failed verification does not prove that rollback is safer than leaving the new
+    state in place.
+  conditions:
+    - "the recovery plan can be fully constructed before mutation"
+    - "no known irreversible external side effects exist"
+    - "recovery does not destroy unrelated newer state"
+    - "protection is PROTECTED or TRANSACTIONAL for the required mutation domains"
+    - "recovery verification exists"
+    - "user policy explicitly enables it"
+  rejected_at: seal
+  error: change.auto_recovery_rejected
+  conditions_doc: >-
+    §26.3: a plan MAY declare auto-recovery only when **all** of these are true. Otherwise the
+    declaration MUST be rejected at seal time, which is what keeps it from being discovered at the
+    moment it would have run.
+
+# §38.3's limits on automatic protection.
+cost_limits:
+  - {key: estimated_size, spec: "§38.3"}
+  - {key: target_scope, spec: "§38.3"}
+  - {key: quiesce_duration, spec: "§38.3, §18.4"}
+  - {key: snapshot_count, spec: "§38.3, recovery.max_auto_snapshot_count"}
+  - {key: filesystem_free_floor, spec: "§38.3, Appendix D.3, recovery.min_filesystem_free"}

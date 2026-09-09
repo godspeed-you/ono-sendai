@@ -1,0 +1,12 @@
+$ zpool get -H -p -o name,property,value capacity,free,size,health,fragmentation
+rpool	capacity	0
+rpool	free	1006358016
+rpool	size	1006632960
+rpool	health	ONLINE
+rpool	fragmentation	3
+tank	capacity	0
+tank	free	1006297600
+tank	size	1006632960
+tank	health	ONLINE
+tank	fragmentation	3
+[exit 0]
