@@ -139,6 +139,7 @@ pub fn check(root: &Path) -> Vec<Problem> {
     problems.extend(check_errors(root, &registries));
     problems.extend(check_risk_gates(&registries));
     problems.extend(check_strategies(&registries));
+    problems.extend(check_privacy(&registries));
     problems.extend(check_providers(root, &registries));
     problems.extend(check_inventory(root));
     problems
@@ -1376,6 +1377,50 @@ fn check_strategies(registries: &Registries) -> Vec<Problem> {
             "`bulk.frozen_membership` is not true. §2.6: newly matching objects MUST NOT silently \
              join a bulk plan at apply time",
         ));
+    }
+    problems
+}
+
+/// §44's six privacy rules each name the mechanism that answers them.
+///
+/// A privacy rule with no mechanism is a sentence somebody has to remember, and §44 is the part of
+/// v0.6 where remembering is not enough: recovery assets may hold credentials, private keys,
+/// database files and application secrets, and every one of the six rules is about something that
+/// would leak silently.
+fn check_privacy(registries: &Registries) -> Vec<Problem> {
+    let location = "docs/contracts/recovery/policies.yaml";
+    if registries.get("policies.yaml").is_none() {
+        return Vec::new();
+    }
+    let mut problems = Vec::new();
+    let rules = registries.entries("policies.yaml", "privacy");
+    if rules.len() < 6 {
+        problems.push(Problem::new(
+            location,
+            format!(
+                "`privacy` lists {} rules; §44 states six, and a rule nobody wrote down is one \
+                 nobody checks",
+                rules.len()
+            ),
+        ));
+    }
+    for entry in rules {
+        let id = entry.get("id").and_then(Yaml::as_str).unwrap_or("");
+        for key in ["rule", "mechanism"] {
+            if entry
+                .get(key)
+                .and_then(Yaml::as_str)
+                .is_none_or(str::is_empty)
+            {
+                problems.push(Problem::new(
+                    location,
+                    format!(
+                        "privacy rule `{id}` states no `{key}`. §44's rules are about data that \
+                         leaks silently, so each has to say what stops it"
+                    ),
+                ));
+            }
+        }
     }
     problems
 }

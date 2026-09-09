@@ -144,3 +144,43 @@ cost_limits:
   - {key: quiesce_duration, spec: "§38.3, §18.4"}
   - {key: snapshot_count, spec: "§38.3, recovery.max_auto_snapshot_count"}
   - {key: filesystem_free_floor, spec: "§38.3, Appendix D.3, recovery.min_filesystem_free"}
+
+# §44's six rules about recovery data that may hold credentials, private keys, database files,
+# shell configuration or application secrets. Each names the mechanism that answers it, because a
+# privacy rule with no mechanism is a sentence somebody has to remember.
+privacy:
+  - id: metadata-may-appear
+    rule: "§44.1: metadata MAY appear in plan history."
+    mechanism: >-
+      `ono.recovery-asset/1` carries the scope, the consistency, the cost and the retention, and
+      carries no content field at all. The v0.5 ledger receives the same record.
+  - id: contents-never-rendered
+    rule: "§44.2: contents MUST NOT appear in default rendering."
+    mechanism: >-
+      The file provider exposes no accessor that returns captured bytes, and `ono-change-render`
+      depends on `ono-value` and cannot reach a provider. A renderer that wanted to print a
+      protected file's contents would have to be given them, and nothing gives them.
+  - id: store-is-private
+    rule: "§44.3: local recovery stores MUST use restrictive permissions."
+    mechanism: >-
+      §15.3's store creates its directory `0700` and its files `0600` in the creating syscall, and
+      tightens an existing directory that is wider before using it.
+  - id: plugin-scope-only
+    rule: "§44.4: plugins MUST receive scoped access only."
+    mechanism: >-
+      The `recovery.*` capabilities of §48.3 each declare scope keys — domain kinds, scopes,
+      application names — and the broker checks them against the values the operation will actually
+      use. A scope the broker cannot check is declared `advisory` and says so.
+  - id: remote-metadata-bounded
+    rule: "§44.5: remote recovery metadata MUST NOT disclose paths or secrets beyond policy."
+    mechanism: >-
+      A recovery asset record crossing a link is redacted by the same pass the recorder applies
+      before writing one to the ledger, so a path or an argument the local policy withholds is
+      withheld in both directions. The link's own authorization decides whether the record crosses
+      at all (v0.4.1 §9, §10).
+  - id: deletion-is-real
+    rule: "§44.6: deletion MUST remove Ono-owned copies according to provider guarantees."
+    mechanism: >-
+      `cleanup` removes what the provider owns and reports what it could not, and §2.15 blocks a
+      removal a retained plan still depends on rather than performing a partial one. A provider
+      that cannot guarantee removal says so in its capability declaration rather than in prose.
