@@ -17,6 +17,11 @@ thiserror.workspace = true
 
 [dev-dependencies]
 bytes.workspace = true
+# The change vocabulary the conformance suite composes risk with: §19.2's maximum is
+# `RiskAssessment::classify`, and a test that re-implemented it would prove nothing about it.
+ono-change-core.workspace = true
+# `protocol.v1.yaml` is the contract the dispatch is compared against, in both directions.
+serde_yaml_ng.workspace = true
 ono-value.workspace = true
 ono-testkit.workspace = true
 async-trait.workspace = true
