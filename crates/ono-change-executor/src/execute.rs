@@ -737,9 +737,8 @@ fn create_and_validate(
         Ok(validation) => Ok(asset.validated(validation)),
         // §11.4 separates a check that was made and failed from a check nobody could make. The
         // second is still not protection, so the asset is INVALID and the refusal says why.
-        Err(refusal) => Ok(asset.validated(
-            RecoveryValidation::none(now, refusal.message().to_owned()).existing(true),
-        )),
+        Err(refusal) => Ok(asset
+            .validated(RecoveryValidation::none(now, refusal.message().to_owned()).existing(true))),
     }
 }
 
@@ -758,21 +757,20 @@ fn run_cleanup(request: &mut PrepareRequest<'_>) {
             .collect();
         for asset in &request.created {
             if let Some(reason) = retention_reason(request, asset, quiesce_holds, &depended_on) {
-                report.retained.push((asset.id().clone(), Arc::from(reason)));
+                report
+                    .retained
+                    .push((asset.id().clone(), Arc::from(reason)));
                 continue;
             }
-            let removal = request
-                .providers
-                .get(asset.provider())
-                .map_or_else(
-                    || {
-                        Err(error::provider_unavailable(
-                            asset.provider(),
-                            "the provider that created the asset is not registered here",
-                        ))
-                    },
-                    |provider| provider.cleanup(asset),
-                );
+            let removal = request.providers.get(asset.provider()).map_or_else(
+                || {
+                    Err(error::provider_unavailable(
+                        asset.provider(),
+                        "the provider that created the asset is not registered here",
+                    ))
+                },
+                |provider| provider.cleanup(asset),
+            );
             match removal {
                 Ok(()) => report.removed.push(asset.id().clone()),
                 Err(failure) => {
@@ -1110,7 +1108,9 @@ pub fn apply(request: &mut ApplyRequest<'_>) -> ApplyOutcome {
     }
 
     // 3. §43.2, §43.3: capability and privilege, before prepare.
-    if let Some(refusal) = check_authority(plan, &request.prepare.authority, request.prepare.protection) {
+    if let Some(refusal) =
+        check_authority(plan, &request.prepare.authority, request.prepare.protection)
+    {
         drop(claim);
         return refused(plan, FailurePoint::PrivilegeCheck, refusal);
     }
@@ -1955,5 +1955,151 @@ pub fn close(request: &mut CloseRequest<'_>) -> CloseOutcome {
         retained,
         failures,
         failure_point,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::expect_used,
+        clippy::panic,
+        reason = "a test states its preconditions directly (AGENTS.md section 16)"
+    )]
+
+    use super::*;
+
+    #[test]
+    fn should_treat_every_failure_point_from_the_first_mutation_onwards_as_having_touched_the_system()
+     {
+        for point in [
+            FailurePoint::Claim,
+            FailurePoint::PlanState,
+            FailurePoint::TargetRevalidation,
+            FailurePoint::PrivilegeCheck,
+            FailurePoint::RecoveryDiscovery,
+            FailurePoint::Gate,
+            FailurePoint::RecoveryAssetCreation,
+            FailurePoint::RecoveryValidation,
+            FailurePoint::ApplicationQuiesce,
+            FailurePoint::Cleanup,
+        ] {
+            assert!(
+                !point.may_have_mutated(),
+                "Appendix F's second column says no mutation occurred at {point}"
+            );
+        }
+        for point in [
+            FailurePoint::FirstMutateAction,
+            FailurePoint::MiddleMutateAction,
+            FailurePoint::RemoteDisconnect,
+            FailurePoint::UnknownOutcome,
+            FailurePoint::RequiredVerification,
+            FailurePoint::VerificationTimeout,
+            FailurePoint::RecoveryAction,
+            FailurePoint::RecoveryVerification,
+        ] {
+            assert!(
+                point.may_have_mutated(),
+                "Appendix F's second column says yes or unknown at {point}"
+            );
+        }
+    }
+
+    #[test]
+    fn should_never_record_an_unestablished_outcome_as_a_failure() {
+        let refusal = error::remote_state_unknown("api-04", "restart nginx");
+        assert_eq!(
+            ExecutionOutcome::Unknown(refusal).status(),
+            ActionStatus::Unknown,
+            "Appendix F.2: the state MUST be UNKNOWN, not guessed"
+        );
+        assert_eq!(
+            ExecutionOutcome::Succeeded.status(),
+            ActionStatus::Succeeded
+        );
+    }
+
+    #[test]
+    fn should_carry_the_refusal_out_of_an_outcome_that_has_one() {
+        let refusal = error::tool_failed("/usr/bin/systemctl", "the unit refused");
+        let outcome = ExecutionOutcome::Failed(refusal);
+        assert_eq!(
+            outcome.error().map(|error| error.code().name()),
+            Some("recovery.provider_unavailable")
+        );
+        assert!(ExecutionOutcome::Succeeded.error().is_none());
+    }
+
+    #[test]
+    fn should_hold_no_capability_a_planning_only_session_was_not_given() {
+        let authority = Authority::planning_only();
+        assert!(
+            !authority.has_change(ChangeCapability::ActionExecute),
+            "§43.2: planning MAY be available without mutation capability"
+        );
+        assert!(!authority.is_elevated());
+        assert!(
+            Authority::full().has_recovery(RecoveryCapability::Prepare),
+            "a full session holds §12.2's five"
+        );
+    }
+
+    #[test]
+    fn should_stop_everything_downstream_of_a_failed_action() {
+        let plan = ono_change_core::PlanId::derive(&["p"]);
+        let first = PlanAction::new(
+            &plan,
+            1,
+            ono_change_core::ActionRole::Mutate,
+            "a",
+            ono_change_core::Execution::Program {
+                program: Arc::from("/bin/true"),
+                argv: Vec::new(),
+            },
+        );
+        let second = PlanAction::new(
+            &plan,
+            2,
+            ono_change_core::ActionRole::Mutate,
+            "b",
+            ono_change_core::Execution::Program {
+                program: Arc::from("/bin/true"),
+                argv: Vec::new(),
+            },
+        )
+        .after(first.id().clone());
+        let third = PlanAction::new(
+            &plan,
+            3,
+            ono_change_core::ActionRole::Mutate,
+            "c",
+            ono_change_core::Execution::Program {
+                program: Arc::from("/bin/true"),
+                argv: Vec::new(),
+            },
+        )
+        .after(second.id().clone());
+        let actions = vec![first.clone(), second, third];
+
+        let blocked = dependents_of(&actions, first.id());
+
+        assert_eq!(
+            blocked.len(),
+            2,
+            "Appendix F: stop the dependency chain, transitively"
+        );
+        assert!(
+            !blocked.contains(first.id()),
+            "the failed action is not its own dependent"
+        );
+    }
+
+    #[test]
+    fn should_name_every_row_of_the_matrix_in_the_word_the_appendix_uses() {
+        assert_eq!(
+            FailurePoint::TargetRevalidation.to_string(),
+            "target-revalidation"
+        );
+        assert_eq!(FailurePoint::RemoteDisconnect.as_str(), "remote-disconnect");
     }
 }

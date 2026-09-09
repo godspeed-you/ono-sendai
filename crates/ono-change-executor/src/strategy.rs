@@ -212,3 +212,37 @@ pub fn run_waves(
     }
     run
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::expect_used,
+        clippy::panic,
+        reason = "a test states its preconditions directly (AGENTS.md section 16)"
+    )]
+
+    use super::*;
+
+    #[test]
+    fn should_stop_a_run_on_a_result_nobody_could_establish() {
+        let unknown = TargetResult::new(Arc::from("svc-1"), ActionStatus::Unknown, None);
+        assert!(
+            unknown.stops_the_run(),
+            "Appendix F.2: the next wave would run against a system nobody has an account of"
+        );
+        let failed = TargetResult::new(Arc::from("svc-1"), ActionStatus::Failed, None);
+        assert!(failed.stops_the_run());
+        let done = TargetResult::new(Arc::from("svc-1"), ActionStatus::Succeeded, None);
+        assert!(!done.stops_the_run());
+    }
+
+    #[test]
+    fn should_run_no_waves_at_all_over_no_targets() {
+        let submit = |_wave: &Wave, _slice: &[Arc<str>]| Vec::new();
+        let gate = |_wave: &Wave, _slice: &[Arc<str>]| Verdict::Verified;
+        let run = run_waves(Strategy::Sequential, &[], &submit, &gate);
+        assert_eq!(run.waves_run(), 0);
+        assert!(run.completed());
+        assert_eq!(run.gate_verdict(), None);
+    }
+}

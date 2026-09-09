@@ -74,7 +74,12 @@ pub fn mutate(plan: &PlanId, ordinal: usize, target: &str) -> PlanAction {
 /// A required verification contract over `subject`.
 #[must_use]
 pub fn required(plan: &PlanId, subject: &str) -> VerificationContract {
-    VerificationContract::new(plan, VerificationClass::Required, subject, "state == running")
+    VerificationContract::new(
+        plan,
+        VerificationClass::Required,
+        subject,
+        "state == running",
+    )
 }
 
 /// How a test wants its plan shaped.
@@ -151,7 +156,7 @@ impl PlanSpec {
 
     /// The same plan, as a recovery plan (§3.8).
     #[must_use]
-    pub fn as_recovery(mut self) -> Self {
+    pub fn recovering(mut self) -> Self {
         self.recovery = true;
         self
     }
@@ -171,10 +176,7 @@ impl PlanSpec {
     /// The same plan, with its targets on `host` (§7.1).
     #[must_use]
     pub fn on_hosts(mut self, hosts: &[&str]) -> Self {
-        self.hosts = hosts
-            .iter()
-            .map(|host| Some((*host).to_owned()))
-            .collect();
+        self.hosts = hosts.iter().map(|host| Some((*host).to_owned())).collect();
         self
     }
 
@@ -215,7 +217,8 @@ impl PlanSpec {
             .iter()
             .enumerate()
             .map(|(index, identity)| {
-                let target = FrozenTarget::new("ono.service/1", identity.as_str(), identity.as_str());
+                let target =
+                    FrozenTarget::new("ono.service/1", identity.as_str(), identity.as_str());
                 match self.hosts.get(index).and_then(Option::as_ref) {
                     Some(host) => target.on_host(host.as_str()),
                     None => target,
@@ -365,13 +368,19 @@ impl FakeRecoveryProvider {
     /// The assets it was asked to remove.
     #[must_use]
     pub fn removed(&self) -> Vec<String> {
-        self.removed.lock().map(|log| log.clone()).unwrap_or_default()
+        self.removed
+            .lock()
+            .map(|log| log.clone())
+            .unwrap_or_default()
     }
 
     /// The assets it created.
     #[must_use]
     pub fn created(&self) -> Vec<String> {
-        self.created.lock().map(|log| log.clone()).unwrap_or_default()
+        self.created
+            .lock()
+            .map(|log| log.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -550,12 +559,7 @@ pub fn protection_owned_by(
     )
     .for_plan(owner.clone())
     .at_consistency(ConsistencyClass::FilesystemConsistent);
-    ProtectionAction::new(
-        provider,
-        format!("snapshot {domain}"),
-        candidate,
-        asset,
-    )
+    ProtectionAction::new(provider, format!("snapshot {domain}"), candidate, asset)
 }
 
 /// Five protection actions, which is Appendix F.1's own example.
@@ -635,16 +639,14 @@ impl Quiesce for FakeQuiesce {
 }
 
 /// A revalidation that finds nothing moved (§7.3).
-#[must_use]
 pub fn no_drift() -> impl Fn(&PlanAction) -> Result<Vec<ono_change_core::DriftFinding>, ErrorValue>
 {
     |_action: &PlanAction| Ok(Vec::new())
 }
 
 /// A revalidation that finds `subject`'s frozen fact moved materially (§7.3).
-#[must_use]
-pub fn material_drift(
-) -> impl Fn(&PlanAction) -> Result<Vec<ono_change_core::DriftFinding>, ErrorValue> {
+pub fn material_drift()
+-> impl Fn(&PlanAction) -> Result<Vec<ono_change_core::DriftFinding>, ErrorValue> {
     |action: &PlanAction| {
         Ok(action
             .preconditions()
@@ -661,9 +663,8 @@ pub fn material_drift(
 }
 
 /// A revalidation that finds a tolerated change, which §7.4 lets through.
-#[must_use]
-pub fn tolerated_drift(
-) -> impl Fn(&PlanAction) -> Result<Vec<ono_change_core::DriftFinding>, ErrorValue> {
+pub fn tolerated_drift()
+-> impl Fn(&PlanAction) -> Result<Vec<ono_change_core::DriftFinding>, ErrorValue> {
     |action: &PlanAction| {
         Ok(action
             .preconditions()
@@ -715,7 +716,6 @@ impl Script {
     }
 
     /// The execution function itself.
-    #[must_use]
     pub fn execute(
         &self,
     ) -> impl Fn(&PlanAction) -> ono_change_executor::ExecutionOutcome + use<'_> {
@@ -746,7 +746,6 @@ impl Script {
 }
 
 /// An observation function answering `status` for every contract.
-#[must_use]
 pub fn observing(
     status: ono_change_core::VerificationStatus,
 ) -> impl Fn(&VerificationContract) -> ono_change_executor::Observation {
@@ -757,7 +756,6 @@ pub fn observing(
 }
 
 /// An observation function that answers `status` for `subject` and passes everything else.
-#[must_use]
 pub fn observing_only(
     subject: &str,
     status: ono_change_core::VerificationStatus,
@@ -775,7 +773,6 @@ pub fn observing_only(
 }
 
 /// An observation function whose every check exceeds its timeout (§23.5).
-#[must_use]
 pub fn timing_out() -> impl Fn(&VerificationContract) -> ono_change_executor::Observation {
     |_contract: &VerificationContract| ono_change_executor::Observation::TimedOut
 }

@@ -17,17 +17,17 @@ use ono_change_core::{
     ActionStatus, PlanState, Verdict, VerificationClass, VerificationContract, VerificationResult,
     VerificationStatus,
 };
+use ono_change_executor::events::PlanLifecycle;
 use ono_change_executor::events::{
     ACTION_COMPLETED, ACTION_FAILED, ACTION_STARTED, ASSET_CREATED, ASSET_REMOVED, PLAN_CREATED,
     PLAN_DEGRADED, PLAN_FAILED, PLAN_PROTECTED, PLAN_SEALED, PLAN_VERIFIED, RECOVERY_COMPLETED,
-    RECOVERY_FAILED, RECOVERY_PLANNED, RECOVERY_STARTED, RECOVERY_VERIFIED,
-    VERIFICATION_OBSERVED, checkpoint_before_mutation,
+    RECOVERY_FAILED, RECOVERY_PLANNED, RECOVERY_STARTED, RECOVERY_VERIFIED, VERIFICATION_OBSERVED,
+    checkpoint_before_mutation,
 };
 use ono_change_executor::execute::{ApplyRequest, apply};
-use ono_change_executor::events::PlanLifecycle;
 use ono_spatial_core::{BootIdentity, SpatialScope};
 use ono_temporal_core::{
-    ActionEvent, Appended, CausalLink, Checkpoint, EvidenceClaim, EvidenceStrength, EventKind,
+    ActionEvent, Appended, CausalLink, Checkpoint, EventKind, EvidenceClaim, EvidenceStrength,
     LedgerWrite, TemporalCoverage, TemporalEvent,
 };
 use ono_temporal_ledger::Ledger;
@@ -101,12 +101,8 @@ fn full_lifecycle(now: jiff::Timestamp) -> (ono_change_core::ChangePlan, PlanLif
         lifecycle.action_settled(action, ActionStatus::Succeeded, now);
     }
     for contract in plan.verification().contracts() {
-        let result = VerificationResult::new(
-            plan.id().clone(),
-            contract,
-            VerificationStatus::Passed,
-            now,
-        );
+        let result =
+            VerificationResult::new(plan.id().clone(), contract, VerificationStatus::Passed, now);
         lifecycle.verification_observed(&result, now);
     }
     lifecycle.verified(Verdict::Verified, now);
@@ -152,7 +148,7 @@ fn should_contribute_every_event_section_twenty_two_names() {
 fn should_contribute_the_recovery_half_of_section_twenty_two() {
     let now = instant(1_000);
     let plan = PlanSpec::default().seal(now);
-    let recovery = PlanSpec::default().as_recovery().seal(now);
+    let recovery = PlanSpec::default().recovering().seal(now);
     let mut lifecycle = PlanLifecycle::created(&plan, scope(), now);
     lifecycle.recovery_planned(recovery.id(), now);
     lifecycle.recovery_started(now);
@@ -527,9 +523,9 @@ fn should_take_a_checkpoint_when_the_ledger_is_persistent() {
     let now = instant(1_000);
     let plan = PlanSpec::default().seal(now);
     let directory = tempfile::tempdir().expect("a temporary directory");
-    let ledger = Ledger::persistent(
-        &ono_temporal_ledger::StoreOptions::at(&directory.path().join("ledger.sqlite3")),
-    )
+    let ledger = Ledger::persistent(&ono_temporal_ledger::StoreOptions::at(
+        &directory.path().join("ledger.sqlite3"),
+    ))
     .expect("a persistent ledger opens");
 
     let projection = checkpoint_before_mutation(&plan, &scope(), &[], &[], &ledger, now)
@@ -546,36 +542,23 @@ fn should_take_a_checkpoint_when_the_ledger_is_persistent() {
 fn should_keep_only_the_objects_the_plan_reaches() {
     let now = instant(1_000);
     let directory = tempfile::tempdir().expect("a temporary directory");
-    let ledger = Ledger::persistent(
-        &ono_temporal_ledger::StoreOptions::at(&directory.path().join("ledger.sqlite3")),
-    )
+    let ledger = Ledger::persistent(&ono_temporal_ledger::StoreOptions::at(
+        &directory.path().join("ledger.sqlite3"),
+    ))
     .expect("a persistent ledger opens");
-    let inside = ono_spatial_core::SpatialId::new(
-        ono_spatial_core::IdentityTier::Stable,
-        ono_spatial_core::SpatialType::Service,
-        &["nginx.service"],
-    );
-    let outside = ono_spatial_core::SpatialId::new(
-        ono_spatial_core::IdentityTier::Stable,
-        ono_spatial_core::SpatialType::Service,
-        &["postgresql.service"],
-    );
-    let plan = {
-        let base = PlanSpec::default().seal(now);
-        let targets = vec![
+    let inside = service_id("nginx.service");
+    let outside = service_id("postgresql.service");
+    let base = PlanSpec::default().seal(now);
+    let plan = base
+        .revise()
+        .resolve(vec![
             ono_change_core::FrozenTarget::new("ono.service/1", "nginx.service", "nginx")
                 .at_place(inside.as_str()),
-        ];
-        base.revise()
-            .resolve(targets)
-            .expect("a draft resolves")
-            .seal(now)
-            .expect("re-seals")
-    };
-    let objects = vec![
-        object_state(&inside, now),
-        object_state(&outside, now),
-    ];
+        ])
+        .expect("a draft resolves")
+        .seal(now)
+        .expect("re-seals");
+    let objects = vec![object_state(&inside, now), object_state(&outside, now)];
 
     let projection = checkpoint_before_mutation(&plan, &scope(), &objects, &[], &ledger, now)
         .expect("a persistent ledger takes the checkpoint");
@@ -588,6 +571,25 @@ fn should_keep_only_the_objects_the_plan_reaches() {
     assert_eq!(projection.checkpoint().objects[0].id, inside);
 }
 
+fn service_id(name: &str) -> ono_spatial_core::SpatialId {
+    ono_spatial_core::SpatialIdentity::stable(
+        ono_spatial_core::SpatialType::Service,
+        [("unit", name)],
+    )
+    .spatial_id()
+}
+
+fn service_record(name: &str) -> ono_value::RecordValue {
+    let id = ono_value::SchemaId::new("ono.service", 1);
+    let schema = ono_value::builtin_schemas()
+        .get(&id)
+        .expect("the contract is embedded");
+    ono_value::RecordValue::builder(schema, ono_value::Provenance::local("fixture", id))
+        .set("name", ono_value::Value::string(name))
+        .expect("a declared field")
+        .build()
+}
+
 fn object_state(
     id: &ono_spatial_core::SpatialId,
     now: jiff::Timestamp,
@@ -596,11 +598,7 @@ fn object_state(
         id: id.clone(),
         object_type: ono_spatial_core::SpatialType::Service,
         label: Arc::from("a service"),
-        record: ono_value::RecordValue::new(
-            ono_value::SchemaId::new("ono.service", 1),
-            ono_value::MapValue::new(),
-            ono_value::Provenance::local("ono.session", ono_value::SchemaId::new("ono.service", 1)),
-        ),
+        record: service_record(id.as_str()),
         observed_at: now,
         source: ono_temporal_core::EvidenceSource::session(),
     }
@@ -614,12 +612,8 @@ fn should_stage_one_event_per_contract_a_plan_carries() {
         .seal(now);
     let mut lifecycle = PlanLifecycle::created(&plan, scope(), now);
     for contract in plan.verification().contracts() {
-        let result = VerificationResult::new(
-            plan.id().clone(),
-            contract,
-            VerificationStatus::Passed,
-            now,
-        );
+        let result =
+            VerificationResult::new(plan.id().clone(), contract, VerificationStatus::Passed, now);
         lifecycle.verification_observed(&result, now);
     }
     let observed = subtypes(&lifecycle)
@@ -638,12 +632,8 @@ fn should_name_the_check_and_its_class_in_the_observation_body() {
     let now = instant(1_000);
     let plan = PlanSpec::default().seal(now);
     let contract: &VerificationContract = &plan.verification().contracts()[0];
-    let result = VerificationResult::new(
-        plan.id().clone(),
-        contract,
-        VerificationStatus::Failed,
-        now,
-    );
+    let result =
+        VerificationResult::new(plan.id().clone(), contract, VerificationStatus::Failed, now);
     let mut lifecycle = PlanLifecycle::created(&plan, scope(), now);
     lifecycle.verification_observed(&result, now);
     let last = lifecycle.events().last().expect("an event was staged");

@@ -255,3 +255,40 @@ pub fn run_fragments(
     }
     RemoteRun { hosts }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::expect_used,
+        clippy::panic,
+        reason = "a test states its preconditions directly (AGENTS.md section 16)"
+    )]
+
+    use super::*;
+
+    #[test]
+    fn should_call_a_host_incomplete_while_anything_on_it_is_unresolved() {
+        let plan = ono_change_core::PlanId::derive(&["p"]);
+        let action = PlanAction::new(
+            &plan,
+            1,
+            ono_change_core::ActionRole::Mutate,
+            "restart nginx",
+            ono_change_core::Execution::Program {
+                program: Arc::from("/bin/true"),
+                argv: Vec::new(),
+            },
+        );
+        let outcome = HostOutcome {
+            host: Arc::from("api-04"),
+            link: LinkState::Lost,
+            statuses: vec![(action.id().clone(), ActionStatus::Unknown)],
+            error: None,
+        };
+        assert!(
+            !outcome.is_complete(),
+            "§29.3: an unknown remote action is not a success"
+        );
+        assert_eq!(outcome.uncertainty_boundary().len(), 1);
+    }
+}

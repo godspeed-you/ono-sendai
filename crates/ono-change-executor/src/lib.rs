@@ -32,7 +32,7 @@
 //!
 //! - [`execute`] — §4.5 to §4.9, §5.5 to §5.7, §18, §19.4, §23, §40, §42, §43, Appendix F.
 //! - [`strategy`] — §28.4's waves and §28.6's canary gate.
-//! - [`resume`] — §41.2's reconstruction and §41.3's per-action decision.
+//! - [`mod@resume`] — §41.2's reconstruction and §41.3's per-action decision.
 //! - [`events`] — §22.1's thirteen ledger events and §22.2's pre-plan checkpoint.
 //! - [`remote`] — §29.1's per-host fragments and §29.3's link failure.
 

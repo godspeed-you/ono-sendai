@@ -12,7 +12,7 @@ mod common;
 
 use common::{
     FakeRecoveryProvider, PlanSpec, Script, empty_registry, instant, no_drift, observing,
-    protection, registry, stored, store, timing_out, tolerated_drift,
+    protection, registry, store, stored, timing_out, tolerated_drift,
 };
 use ono_change_core::{
     ActionStatus, PlanState, RiskClass, RiskDimension, VerificationClass, VerificationStatus,
@@ -475,9 +475,10 @@ fn should_answer_unknown_rather_than_failed_when_a_check_could_not_be_run() {
     });
 
     assert_eq!(
-        outcome.results().first().map(
-            ono_change_core::VerificationResult::status
-        ),
+        outcome
+            .results()
+            .first()
+            .map(ono_change_core::VerificationResult::status),
         Some(VerificationStatus::Unknown),
         "§23.3: a check that could not be answered is UNKNOWN"
     );

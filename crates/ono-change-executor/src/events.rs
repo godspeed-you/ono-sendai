@@ -50,8 +50,9 @@ use ono_change_core::{
 };
 use ono_spatial_core::{SpatialId, SpatialScope};
 use ono_temporal_core::{
-    ClockDomain, Evidence, EvidenceClaim, EvidenceId, EvidenceSource, EvidenceStrength, EventKind,
-    EventSeed, EventTimes, LedgerWrite, ObjectState, RelationState, SpatialRef, TemporalEvent,
+    ClockDomain, EventKind, EventSeed, EventTimes, Evidence, EvidenceClaim, EvidenceId,
+    EvidenceSource, EvidenceStrength, LedgerWrite, ObjectState, RelationState, SpatialRef,
+    TemporalEvent,
 };
 use ono_temporal_ledger::Ledger;
 use ono_temporal_reconstruct::{
@@ -174,10 +175,7 @@ impl PlanLifecycle {
             vec![
                 ("action", Value::string(action.id().as_str())),
                 ("role", Value::string(action.role().as_str())),
-                (
-                    "target",
-                    action.target().map_or(Value::Null, Value::string),
-                ),
+                ("target", action.target().map_or(Value::Null, Value::string)),
             ],
         );
     }
@@ -408,10 +406,7 @@ impl PlanLifecycle {
     fn payload(&self, subtype: &str, extra: Vec<(&str, Value)>) -> Value {
         let mut map = MapValue::new();
         map.insert("plan".into(), Value::string(self.plan.as_str()));
-        map.insert(
-            "revision".into(),
-            Value::Int(i128::from(self.revision)),
-        );
+        map.insert("revision".into(), Value::Int(i128::from(self.revision)));
         map.insert("intent".into(), Value::string(&self.intent));
         map.insert("session".into(), Value::string(&self.session));
         map.insert("event".into(), Value::string(subtype));

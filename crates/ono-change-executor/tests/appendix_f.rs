@@ -16,8 +16,8 @@ mod common;
 
 use common::{
     FakeQuiesce, FakeRecoveryProvider, PlanSpec, ProviderScript, Script, empty_registry,
-    five_snapshots, instant, material_drift, no_drift, observing, protection, registry, sealed_plan,
-    stored, store, timing_out,
+    five_snapshots, instant, material_drift, no_drift, observing, protection, registry,
+    sealed_plan, store, stored, timing_out,
 };
 use ono_change_core::{
     ActionStatus, ChangeCapability, PlanState, RecoveryCapability, VerificationStatus,
@@ -473,7 +473,10 @@ fn should_mark_the_asset_invalid_when_the_validation_check_could_not_be_made() {
     let refusal = prepare(&mut request).expect_err("an unvalidatable asset is not protection");
 
     assert_eq!(
-        request.created().first().map(ono_change_core::RecoveryAsset::state),
+        request
+            .created()
+            .first()
+            .map(ono_change_core::RecoveryAsset::state),
         Some(ono_change_core::AssetState::Invalid),
         "§11.4: an asset is usable only once every check has actually been made"
     );
@@ -531,7 +534,11 @@ fn should_record_the_critical_result_when_a_quiesced_application_will_not_resume
         report.critical().is_some(),
         "§18.4: the critical result is recorded, not folded into another message"
     );
-    assert_eq!(hook.log(), vec!["pause", "resume"], "§18.4 bounds the window");
+    assert_eq!(
+        hook.log(),
+        vec!["pause", "resume"],
+        "§18.4 bounds the window"
+    );
 }
 
 #[test]
@@ -828,10 +835,8 @@ fn should_fail_the_plan_and_keep_its_protection_when_a_required_check_fails() {
 fn should_degrade_the_plan_when_only_an_advisory_check_fails() {
     let now = instant(1_000);
     let (_directory, store) = store();
-    let spec = PlanSpec::default().checking(
-        ono_change_core::VerificationClass::Advisory,
-        "worker count",
-    );
+    let spec =
+        PlanSpec::default().checking(ono_change_core::VerificationClass::Advisory, "worker count");
     let plan = stored(&spec, &store, now);
     let providers = empty_registry();
     let protection = Vec::new();
@@ -920,13 +925,12 @@ fn should_degrade_rather_than_fail_when_the_contract_says_a_timeout_is_unknown()
         .seal(now)
         .expect("re-seals");
     let observe = timing_out();
-    let outcome = ono_change_executor::execute::verify(
-        &ono_change_executor::execute::VerifyRequest {
+    let outcome =
+        ono_change_executor::execute::verify(&ono_change_executor::execute::VerifyRequest {
             plan: &plan,
             now,
             observe: &observe,
-        },
-    );
+        });
 
     assert_eq!(
         outcome.state(),
@@ -946,7 +950,7 @@ fn should_degrade_rather_than_fail_when_the_contract_says_a_timeout_is_unknown()
 fn should_reach_recovery_failed_and_preserve_the_partial_state_when_a_recovery_action_fails() {
     let now = instant(1_000);
     let (_directory, store) = store();
-    let spec = PlanSpec::over(3).as_recovery().chained();
+    let spec = PlanSpec::over(3).recovering().chained();
     let plan = stored(&spec, &store, now);
     let providers = empty_registry();
     let protection = Vec::new();
@@ -996,7 +1000,7 @@ fn should_reach_recovery_failed_and_preserve_the_partial_state_when_a_recovery_a
 fn should_refuse_to_claim_recovery_when_its_verification_did_not_hold() {
     let now = instant(1_000);
     let (_directory, store) = store();
-    let spec = PlanSpec::default().as_recovery();
+    let spec = PlanSpec::default().recovering();
     let plan = stored(&spec, &store, now);
     let providers = empty_registry();
     let protection = Vec::new();
@@ -1040,7 +1044,7 @@ fn should_refuse_to_claim_recovery_when_its_verification_did_not_hold() {
 fn should_reach_recovery_verified_when_a_recovery_plan_verifies() {
     let now = instant(1_000);
     let (_directory, store) = store();
-    let spec = PlanSpec::default().as_recovery();
+    let spec = PlanSpec::default().recovering();
     let plan = stored(&spec, &store, now);
     let providers = empty_registry();
     let protection = Vec::new();
@@ -1233,8 +1237,7 @@ fn should_keep_an_asset_an_earlier_protect_created_for_another_plan() {
     let elsewhere = ono_change_core::PlanId::derive(&["an-earlier-plan"]);
     let providers = registry(FakeRecoveryProvider::healthy());
     let mut protection = five_snapshots(&plan, common::PROVIDER, now);
-    protection[0] =
-        common::protection_owned_by(&elsewhere, common::PROVIDER, "tank/shared", now);
+    protection[0] = common::protection_owned_by(&elsewhere, common::PROVIDER, "tank/shared", now);
     protection[4] = common::protection(&plan, "ono.recovery.absent", "tank/data5", now);
     let mut request = PrepareRequest::new(&plan, &protection, &providers, now)
         .cleaning_up(CleanupDecision::RemoveWherePermitted);

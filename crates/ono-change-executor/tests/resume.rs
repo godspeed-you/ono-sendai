@@ -10,7 +10,7 @@
 
 mod common;
 
-use common::{PlanSpec, instant, stored, store};
+use common::{PlanSpec, instant, store, stored};
 use ono_change_core::{
     ActionStatus, ChangePlan, DriftFinding, DriftVerdict, Idempotency, PlanState, Precondition,
     PreconditionKind,
@@ -405,7 +405,11 @@ fn should_report_the_reconstructed_state_even_when_it_refuses_to_continue() {
         "exists",
         Value::Bool(true),
     );
-    let drift = vec![DriftFinding::new(&precondition, DriftVerdict::Unknown, None)];
+    let drift = vec![DriftFinding::new(
+        &precondition,
+        DriftVerdict::Unknown,
+        None,
+    )];
 
     let outcome = resume_with(&plan, &store, now, &drift);
 

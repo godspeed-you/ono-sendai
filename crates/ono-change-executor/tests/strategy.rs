@@ -12,9 +12,7 @@ mod common;
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use common::{
-    PlanSpec, Script, empty_registry, instant, no_drift, observing, stored, store,
-};
+use common::{PlanSpec, Script, empty_registry, instant, no_drift, observing, store, stored};
 use ono_change_core::{ActionStatus, PlanState, Strategy, Verdict, VerificationStatus, Wave};
 use ono_change_executor::execute::{ApplyRequest, FailurePoint, apply};
 use ono_change_executor::strategy::{TargetResult, run_waves};
