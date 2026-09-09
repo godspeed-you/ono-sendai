@@ -97,9 +97,9 @@ Each [GitHub release](https://github.com/godspeed-you/ono-sendai/releases) carri
 
 ```bash
 # Debian, Ubuntu and relatives
-sudo apt install ./ono_0.4.4_amd64.deb          # or ono_0.4.4_arm64.deb
+sudo apt install ./ono_0.5.0_amd64.deb          # or ono_0.5.0_arm64.deb
 # Fedora, RHEL and relatives
-sudo dnf install ./ono-0.4.4-1.x86_64.rpm       # or ono-0.4.4-1.aarch64.rpm
+sudo dnf install ./ono-0.5.0-1.x86_64.rpm       # or ono-0.5.0-1.aarch64.rpm
 
 chsh -s /usr/bin/ono                             # make it your login shell
 ```
@@ -127,7 +127,7 @@ before you install anything. `cosign` is the one tool you add
 ([sigstore/cosign](https://github.com/sigstore/cosign)); everything else is coreutils.
 
 ```bash
-VERSION=0.4.4; ARCH=amd64
+VERSION=0.5.0; ARCH=amd64
 BASE=https://github.com/godspeed-you/ono-sendai/releases/download/v$VERSION
 curl -fLO $BASE/ono_${VERSION}_${ARCH}.deb
 curl -fLO $BASE/SHA256SUMS
@@ -432,12 +432,13 @@ in this shell is a side effect of telling the truth about the system.
 
 ## Project status
 
-**Current release: v0.4.4.** All ten phases of the specification are implemented, with the
-External Command Adaptation Layer (v0.3) and the Spatial Systems Interface (v0.4) on top of them,
-and every box of `docs/ACCEPTANCE.md` is ticked by a named automated proof. Primary platform is
-Linux (x86_64 and aarch64). Two further enhancement specifications — the Temporal & Causal
-Systems Interface (v0.5) and Prospective Change, Protection & Recovery (v0.6) — are specified but
-not yet implemented.
+**Current release: v0.5.0.** All ten phases of the specification are implemented, with the
+External Command Adaptation Layer (v0.3), the Spatial Systems Interface (v0.4), the hardening
+layer (v0.4.1) and the Temporal & Causal Systems Interface (v0.5) on top of them, and every box of
+`docs/ACCEPTANCE.md` is ticked by a named automated proof. Primary platform is Linux (x86_64 and
+aarch64). Four further enhancement specifications — Prospective Change, Protection & Recovery
+(v0.6), Presentation Consolidation & Rich TTY (v0.7), Deck Workspace Composition (v0.8) and Live
+View Integration (v0.9) — are specified but not yet implemented.
 
 **By the numbers.** These are measured, not typed: `cargo xtask metrics` reads them out of the
 tree and the quality gate fails when this block and the repository disagree. `tests` counts test

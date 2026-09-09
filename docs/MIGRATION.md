@@ -1,11 +1,14 @@
-# Migrating to v0.4.1
+# Migrating
 
-v0.4.1 is a hardening release. It adds no language and changes no schema you can see; what it
-changes is what the shell refuses. **One migration is required, and only for people running a
-directly listening agent over TCP.** Everything else on this page is either automatic or a
-description of a refusal you may now meet.
+One page per thing that could surprise somebody upgrading, added to as tranches land, newest
+section last. **Exactly one migration on it is required**, and only for people running a directly
+listening agent over TCP (§2). Everything else here is either automatic or a description of a
+refusal you may now meet.
 
-The five paths below are v0.4.1 §63's five, in its order.
+Sections 1–5 are v0.4.1's, and they are v0.4.1 §63's five in its order: a hardening release that
+adds no language and changes no schema you can see, and changes what the shell refuses. Sections
+6–8 are the KUANG/11 installation, permission and acquisition layers. Section 9 is v0.5, the
+Temporal & Causal Systems Interface.
 
 ## 1. Ordinary local use — nothing to do
 
@@ -240,6 +243,40 @@ tag. `revoked` works there as it does for a key, and a revocation of either wins
 **Publishing one** needs `kuang-sign describe`, which writes the bytes a signature covers, and
 `cosign sign-blob --bundle signature.sigstore.json <those bytes>` in a workflow with `id-token:
 write` and no secret at all.
+
+## 9. After the temporal tranche — nothing starts watching you, and two names differ from the spec
+
+*(v0.5 §2 invariant 16, §10.2, §33, §34, §35; ADR-0610, ADR-0611, ADR-0775)*
+
+**Nothing to do.** v0.5 adds time as a coordinate, and persistent recording is off until you ask
+for it: §10.2 makes that a MUST, and §32.1 makes the store lazy, so a shell that was never asked
+creates no database and reads none. `get recorder` on a fresh installation says `stopped`.
+
+Three things are worth knowing before you meet them.
+
+**Turning it on is bounded, and it says so.** `start recorder` begins retaining local history under
+`~/.local/share/ono/temporal/`, directory `0700` and database `0600`, capped at 24 hours or
+512 MiB — whichever removes data first. Process command lines are not persisted by default
+(`temporal.record.process_argv`), secrets never enter the ledger, and `remove temporal-history`
+clears it under the ordinary destructive-operation policy. `get recorder` states the policy in
+force and how much is retained now.
+
+**`look`'s recent-change section can now say `unknown`.** In v0.4 it reported what it had; in v0.5
+it is backed by the temporal engine, and §24.3 forbids reporting an absence from a source that was
+not watching. A session-only ledger is `partial` by §8.3 and can prove no absence at all, so where
+v0.4 would have shown nothing you may now read `unknown` with no source named. That is the honest
+answer rather than a regression: `empty` is reserved for a window something actually observed
+(ADR-0775). Scripts that branched on an empty change list should branch on the state instead.
+
+**Two identifiers differ from the specification text, deliberately.** If you are reading v0.5 §34
+or §35 and matching on what the shell emits:
+
+- the temporal error family is **E1301–E1314**, not §34's E1101–E1114. v0.4.1 §21.4 had already
+  spent the first three of that block on the resource family. Every *name* §34 fixes is kept
+  exactly — `temporal.not_recorded`, `temporal.read_only` and the rest — and only the numbers move
+  (ADR-0610). Match on names.
+- §35's `ono.evidence/1` is registered as **`ono.temporal-evidence/1`**, because v0.2 §31.24
+  already holds `ono.evidence/1` for an unrelated record (ADR-0611).
 
 ## What to read next
 
