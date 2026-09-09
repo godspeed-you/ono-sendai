@@ -2,6 +2,7 @@
 # `Stream<TemporalChange>` with the five canonical classes of §13.2, and §28.1 makes it an
 # ordinary pipeline value.
 case: what changed, as typed values a pipeline can group
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
 timeout: 120
 env: NO_COLOR=1
 run: |
@@ -32,7 +33,7 @@ run: |
   prove t6as "\`changes --since 30m | group subject.object_type\` is a pipeline (§28.1)" \
     'ono -c "changes --since 30m | group subject.object_type | to json" 2>&1 | grep -qE "^\[|\{"'
   prove t6at "and so is a \`where\` over it (§28.1)" \
-    'ono -c "changes --since 30m | where class == \"added\" | to json" 2>&1 | grep -qE "^\[|\{"'
+    'ono -c "changes --since 30m | where kind == \"added\" | to json" 2>&1 | grep -qE "^\[|\{"'
 
   echo '== §13.1: `--until` defaults to the active coordinate, and can be named (§13.1) =='
   prove t6au "an explicit window is accepted (§13.1)" \

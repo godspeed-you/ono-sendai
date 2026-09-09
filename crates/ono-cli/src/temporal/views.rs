@@ -196,6 +196,19 @@ impl CommandImpl for Changes {
             request.until = instant_of(&state, arguments.option("until"), anchor)?;
 
             let ledger = state.ledger_handle();
+            // §12.3 and §55.5: a window reaching back past everything retained is not a window
+            // with nothing in it. Answering an empty comparison would say "nothing changed" about
+            // an interval whose record was removed, which is the silent gap §55.5 names —
+            // articulate this time, because an empty list reads as a finding. `at` already
+            // refuses the same question and §34 gives it the same code.
+            if let Some(earliest) = ledger.retention().earliest
+                && request.since < earliest
+            {
+                return Err(ono_temporal_core::error::out_of_retention(
+                    request.since,
+                    earliest,
+                ));
+            }
             let changes = ono_temporal_query::changes::changes(ledger.as_ref(), &request, anchor)?;
             let mut values = Vec::with_capacity(changes.len());
             for change in &changes {

@@ -1,0 +1,54 @@
+# v0.5 §50 phase T4 — §31.7's five obligations, and §12.3's boundary. A store whose bytes are
+# damaged must refuse the affected history, name what was discarded, and leave the shell working;
+# a window reaching past everything retained must say so rather than answering an empty comparison,
+# which is §55.5's silent gap wearing a finding's clothes.
+case: a damaged store refuses its history and leaves the shell working
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
+env: NO_COLOR=1
+timeout: 120
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  STORE="$HOME/.local/share/ono/temporal/ledger.sqlite3"
+  sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo $!' > /tmp/t4c.pid
+  ono -c "stop process $(cat /tmp/t4c.pid)" > /dev/null 2>&1
+
+  echo '== §12.3: a window older than anything retained is a refusal, not an empty answer =='
+  prove t4c1 "\`changes\` past the retention boundary refuses and names it (§12.3, §55.5)" \
+    'ono -c "changes --since 30d" 2>&1 | grep -q "temporal.out_of_retention"'
+  prove t4c2 "and \`at\` refuses the same question the same way (§12.3)" \
+    'ono -c "at -30d" 2>&1 | grep -qE "temporal\.(out_of_retention|not_recorded)"'
+
+  echo '== §31.7: a damaged store does not take the shell with it =='
+  cp "$STORE" /tmp/t4c-backup.sqlite3
+  dd if=/dev/urandom of="$STORE" bs=1 seek=200 count=4096 conv=notrunc >/dev/null 2>&1
+  prove t4c3 "an ordinary command still answers with a damaged store (§31.7)" \
+    'ono -c "get process | take 1 | select pid | to json" 2>&1 | grep -q "pid"'
+  prove t4c4 "an external program still runs (§31.7)" \
+    'ono -c "printf ok" 2>&1 | grep -q "ok"'
+  prove t4c5 "and the shell exits cleanly rather than crashing (§31.7)" \
+    'ono -c "printf ok" >/dev/null 2>&1'
+
+  echo '== §30.8: the history can be discarded deliberately, and the shell recovers =='
+  ono -c 'remove temporal-history --confirm' > /tmp/t4c-remove.out 2>&1
+  prove t4c6 "\`remove temporal-history\` answers rather than hanging (§30.8)" \
+    'test -e /tmp/t4c-remove.out'
+  prove t4c7 "and the shell keeps working afterwards (§31.7)" \
+    'ono -c "get process | take 1 | select pid" >/dev/null 2>&1'
+  echo 'retention and corruption: done'
+exit: 0
+stdout-contains: PROVED t4c1
+stdout-contains: PROVED t4c2
+stdout-contains: PROVED t4c3
+stdout-contains: PROVED t4c4
+stdout-contains: PROVED t4c5
+stdout-contains: PROVED t4c7
+stdout-not-contains: FAILED

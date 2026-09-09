@@ -9,6 +9,7 @@
 # a provider, and a shell-state-changing operation. A KUANG/11 mutation tool and a remote mutation
 # are refused by the same guard at the same seam, and their own cases carry them.
 case: the past is read-only, and the machine is untouched
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
 timeout: 120
 env: NO_COLOR=1
 run: |

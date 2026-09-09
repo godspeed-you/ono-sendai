@@ -2,6 +2,7 @@
 # discover an event." §20.3 adds `find event <predicate>` as a canonical native target that reuses
 # the existing `find` verb and Ono expression semantics rather than inventing a search language.
 case: events are discoverable without knowing when they happened
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
 timeout: 120
 env: NO_COLOR=1
 run: |

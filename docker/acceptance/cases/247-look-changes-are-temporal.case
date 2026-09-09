@@ -6,6 +6,7 @@
 # as recently changed and what `changes` reports over the same window are the same statement about
 # the same machine, and neither claims a comparison it has no source for (§24.3).
 case: the recent-change section and `changes` are one engine
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
 timeout: 120
 env: NO_COLOR=1
 run: |

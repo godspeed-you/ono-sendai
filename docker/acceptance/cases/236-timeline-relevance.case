@@ -6,6 +6,7 @@
 # The failure this guards against is §55.1's pretty log viewer: a timeline that always shows
 # everything is a log tail with a nicer font.
 case: the timeline is scoped to where the session stands
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
 timeout: 120
 env: NO_COLOR=1
 run: |

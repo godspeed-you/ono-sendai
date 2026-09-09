@@ -3,6 +3,7 @@
 # checked beside it, because the two histories are deliberately not one: Ctrl-R is command recall
 # and `timeline` is the system-event browser (§29.4).
 case: an event reference is stable, inspectable and usable
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
 timeout: 120
 env: NO_COLOR=1
 run: |

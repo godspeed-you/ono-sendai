@@ -1,0 +1,54 @@
+# v0.5 §56.4 — "current shell behavior remains functional when temporal persistence is disabled".
+# This is the box that says the tranche cost nothing to anyone who does not want it: a v0.2–v0.4
+# session runs end to end with recording off, and no temporal store is created along the way.
+case: a session with recording off behaves as it did, and creates no store
+env: NO_COLOR=1
+timeout: 120
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  STORE="$HOME/.local/share/ono/temporal"
+
+  echo '== §56.4: the v0.2 object pipeline =='
+  prove t12a "a typed pipeline still answers (v0.2 §5)" \
+    'ono -c "get process | where pid > 0 | take 2 | select pid name | to json" 2>&1 | grep -q "pid"'
+
+  echo '== §56.4: external programs stay first-class (v0.2 §12) =='
+  prove t12b "an external program runs and its output arrives" \
+    'ono -c "printf hello-external" 2>&1 | grep -q "hello-external"'
+  prove t12c "and a pipeline of them still works" \
+    'ono -c "printf one | tr a-z A-Z" 2>&1 | grep -q "ONE"'
+
+  echo '== §56.4: v0.4 spatial navigation =='
+  prove t12d "the session starts at a place and can say where (v0.4 §7)" \
+    'ono -c "look" >/dev/null 2>&1'
+  prove t12e "and a map still draws (v0.4 §22)" \
+    'ono -c "map" >/dev/null 2>&1'
+
+  echo '== §56.4: v0.3 adapters =='
+  prove t12f "a familiar command still gains structure (v0.3 §1.4)" \
+    'ono -c "get command get" >/dev/null 2>&1'
+
+  echo '== §32.1: and none of it touched the filesystem the recorder would use =='
+  prove t12g "no temporal store was created (§32.1, §10.2)" \
+    'test ! -e "'"$STORE"'/ledger.sqlite3"'
+  prove t12h "temporal.recording.enabled is still false (§10.2)" \
+    'ono -c "get config temporal.recording.enabled" 2>&1 | grep -q "false"'
+  echo 'temporal disabled: done'
+exit: 0
+stdout-contains: PROVED t12a
+stdout-contains: PROVED t12b
+stdout-contains: PROVED t12c
+stdout-contains: PROVED t12d
+stdout-contains: PROVED t12f
+stdout-contains: PROVED t12g
+stdout-contains: PROVED t12h
+stdout-not-contains: FAILED

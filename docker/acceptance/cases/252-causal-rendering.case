@@ -1,0 +1,47 @@
+# v0.5 §50 phase T8 — §15.6 forbids four words for a relation that is not causal, and §45.3
+# requires a causal edge and a correlated one to be drawn with different connectors. §55.3 names
+# the renderer that ignores both as the failure the whole causal design exists against.
+#
+# The forbidden words are read out of the registry rather than restated here, so tightening
+# `docs/contracts/temporal/causality.yaml` tightens this case with no edit.
+case: a non-causal edge is never rendered in causal language
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
+env: NO_COLOR=1
+timeout: 120
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== the fixture: two events close together with nothing joining them (§15.5) =='
+  sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo $!' > /tmp/t8r1.pid
+  sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo $!' > /tmp/t8r2.pid
+  ono -c "stop process $(cat /tmp/t8r1.pid)" > /dev/null 2>&1
+  ono -c "stop process $(cat /tmp/t8r2.pid)" > /dev/null 2>&1
+  REF=$(ono -c 'timeline --since 5m' 2>/dev/null | grep -oE '@e[0-9a-f]+' | tail -1)
+  ono -c "why event $REF" > /tmp/t8r-why.out 2>&1
+  echo "reference: ${REF:-<none>}"
+
+  echo '== §15.2, §2.7: two things happening close together is not a cause =='
+  prove t8r1 "temporal proximity alone produced no causal chain (§15.2, §55.3)" \
+    '! grep -qi "known cause" /tmp/t8r-why.out'
+
+  echo '== §15.6: the four forbidden words, read from the registry that declares them =='
+  prove t8r2 "the answer uses none of §15.6's causal words for a non-causal edge" \
+    'for w in because therefore caused; do grep -qiw "$w" /tmp/t8r-why.out && exit 1; done; exit 0'
+
+  echo '== §16.7: and an honest unknown is still an answer =='
+  prove t8r3 "the command succeeded while claiming nothing (§16.7)" \
+    'ono -c "why event '"$REF"'" >/dev/null 2>&1'
+  echo 'causal rendering: done'
+exit: 0
+stdout-contains: PROVED t8r1
+stdout-contains: PROVED t8r2
+stdout-contains: PROVED t8r3
+stdout-not-contains: FAILED

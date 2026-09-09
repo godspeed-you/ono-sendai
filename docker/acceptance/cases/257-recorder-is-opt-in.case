@@ -1,0 +1,54 @@
+# v0.5 §50 phase T4 — §10.2 and §2.16: persistent recording is disabled by default, and §10.5
+# forbids the recorder gaining any visibility the user does not already have. Both are about what
+# a fresh installation does *before* anybody asks it for anything.
+#
+# This case deliberately carries no `ONO_TEMPORAL_RECORDING_ENABLED`: the default state is the
+# subject.
+case: a fresh shell records nothing, and the recorder gains no privilege
+env: NO_COLOR=1
+timeout: 90
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  STORE="$HOME/.local/share/ono/temporal/ledger.sqlite3"
+  echo "== §10.2: nothing is retained until somebody says so =="
+  ono -c 'get recorder' > /tmp/t4-status.out 2>&1
+  prove t4a "a fresh shell reports the recorder stopped (§10.2)" \
+    'grep -qi "stopped\|disabled" /tmp/t4-status.out'
+  prove t4b "and no store exists on disk (§10.2, §32.1)" \
+    'test ! -e "'"$STORE"'"'
+
+  echo '== §32.1: the disabled path costs no filesystem access =='
+  ono -c 'get process | take 1 | select pid' > /dev/null 2>&1
+  prove t4c "an ordinary command created no temporal store (§32.1)" \
+    'test ! -e "'"$STORE"'"'
+
+  echo '== §10.5: the recorder never elevates =='
+  prove t4d "the shell runs unprivileged, and says so (§10.5)" \
+    'test "$(id -u)" -ne 0'
+  prove t4e "no setuid helper ships beside the binary (§10.5)" \
+    '! find /usr/local/bin -perm -4000 -type f | grep -q .'
+
+  echo '== §10.3: the recorder is a target with three verbs, and they are discoverable =='
+  prove t4f "\`get recorder\` is a registered command (§10.3)" \
+    'ono -c "help get recorder" 2>&1 | grep -qi "recorder"'
+  prove t4g "and so are \`start recorder\` and \`stop recorder\` (§10.3)" \
+    'ono -c "help start recorder" 2>&1 | grep -qi "recorder" && ono -c "help stop recorder" 2>&1 | grep -qi "recorder"'
+  echo 'recorder opt-in: done'
+exit: 0
+stdout-contains: PROVED t4a
+stdout-contains: PROVED t4b
+stdout-contains: PROVED t4c
+stdout-contains: PROVED t4d
+stdout-contains: PROVED t4e
+stdout-contains: PROVED t4f
+stdout-contains: PROVED t4g
+stdout-not-contains: FAILED

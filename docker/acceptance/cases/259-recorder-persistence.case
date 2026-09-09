@@ -1,0 +1,50 @@
+# v0.5 §50 phase T4 — §56.6: "retained events survive restart". This is the case that decides
+# whether the ledger is a ledger. One `ono` process writes §17.2's action lifecycle; a second,
+# entirely separate process reads it back as a typed timeline with the references §11.6 requires.
+#
+# Nothing is shared between the two but the file, which is the point.
+case: events recorded by one shell are queryable from the next
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
+env: NO_COLOR=1
+timeout: 120
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== process one: a real Ono mutation against a real process =='
+  sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo $!' > /tmp/t4p.pid
+  ono -c "stop process $(cat /tmp/t4p.pid)" > /dev/null 2>&1
+
+  echo '== process two: a different shell, reading what the first one left =='
+  ono -c 'timeline --since 5m | to json' > /tmp/t4p-timeline.json 2>&1
+  prove t4p1 "the second process reads the first one's events (§56.6, §31)" \
+    'grep -q "action.completed" /tmp/t4p-timeline.json'
+  prove t4p2 "and the action it performed is named (§17.4)" \
+    'grep -q "ono.process.stop" /tmp/t4p-timeline.json'
+
+  echo '== §11.6: the reference a row prints is one a later process accepts =='
+  REF=$(ono -c 'timeline --since 5m' 2>/dev/null | grep -oE '@e[0-9a-f]+' | head -1)
+  echo "reference: ${REF:-<none>}"
+  prove t4p3 "a rendered row carries a reference (§11.6)" \
+    'test -n "'"$REF"'"'
+  prove t4p4 "and a third process resolves the same reference (§11.6)" \
+    'ono -c "inspect event '"$REF"'" >/dev/null 2>&1'
+
+  echo '== §10.3: the store the events are in is the one `get recorder` names =='
+  prove t4p5 "the recorder reports the store it is writing to (§10.3, §30.2)" \
+    'ono -c "get recorder" 2>&1 | grep -q "ledger.sqlite3"'
+  echo 'recorder persistence: done'
+exit: 0
+stdout-contains: PROVED t4p1
+stdout-contains: PROVED t4p2
+stdout-contains: PROVED t4p3
+stdout-contains: PROVED t4p4
+stdout-contains: PROVED t4p5
+stdout-not-contains: FAILED

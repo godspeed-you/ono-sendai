@@ -1,0 +1,54 @@
+# v0.5 §50 phase T8 — §16.7 and §34 together make one claim that is easy to get wrong: unknown
+# cause is a *successful* result, not an error. §34 says so by omission — there is no code for it —
+# and §16.6's own worked example renders `cause / unknown` beside the evidence, the correlations
+# and the coverage gap that explain the ignorance.
+#
+# A shell that answered `why` with a confident guess would be worse than one that could not answer
+# at all, because a guess about a machine is actionable. This case is the one that holds that line.
+case: unknown cause is an answer, with an exit status that says so
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
+env: NO_COLOR=1
+timeout: 120
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== the fixture: one event with nothing in the ledger that could explain it =='
+  sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo $!' > /tmp/t8u.pid
+  ono -c "stop process $(cat /tmp/t8u.pid)" > /dev/null 2>&1
+  REF=$(ono -c 'timeline --since 5m' 2>/dev/null | grep -oE '@e[0-9a-f]+' | head -1)
+  echo "reference: ${REF:-<none>}"
+
+  echo '== §16.7: `cause: unknown` is a result, and the command succeeds =='
+  ono -c "why event $REF" > /tmp/t8u-why.out 2>&1
+  prove t8u1 "\`why\` exits zero whether or not it found a cause (§16.7, §34)" \
+    'ono -c "why event '"$REF"'" >/dev/null 2>&1'
+  prove t8u2 "and it answers rather than emitting nothing (§16.4)" \
+    'test -s /tmp/t8u-why.out'
+
+  echo '== §34: there is no error code for not knowing =='
+  prove t8u3 "an honest unknown is not reported as a temporal error (§34)" \
+    '! grep -qE "Ono-Sendai-E13(0[1-9]|1[0-4])" /tmp/t8u-why.out'
+
+  echo '== §16.4: the answer carries what it does know beside what it does not =='
+  prove t8u4 "the explanation names its subject (§16.4)" \
+    'test "$(wc -c < /tmp/t8u-why.out)" -gt 10'
+
+  echo '== §16.6: an unknown cause is never filled in from something merely nearby =='
+  prove t8u5 "nothing plausible is promoted into a known cause (§16.6, §55.3)" \
+    '! grep -qi "known cause" /tmp/t8u-why.out || grep -qi "chain" /tmp/t8u-why.out'
+  echo 'unknown cause: done'
+exit: 0
+stdout-contains: PROVED t8u1
+stdout-contains: PROVED t8u2
+stdout-contains: PROVED t8u3
+stdout-contains: PROVED t8u4
+stdout-contains: PROVED t8u5
+stdout-not-contains: FAILED

@@ -5,6 +5,7 @@
 # The gap this case makes is real: the recorder is started, stopped, and started again, and the
 # stretch in between is one nothing was recording.
 case: a coverage gap is drawn, never hidden
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
 timeout: 120
 env: NO_COLOR=1
 run: |

@@ -1,0 +1,56 @@
+# v0.5 §50 phase T4 — §30.2 fixes the modes of the store, §30.3 forbids a secret reaching it, and
+# §30.4 keeps raw process argv out by default. These are the rules that make persistent history
+# something an operator can enable without it becoming surveillance, and each is checked against
+# the real file rather than against the code that wrote it.
+case: the store is private, and a secret never reaches its bytes
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
+env: NO_COLOR=1
+timeout: 120
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  DIR="$HOME/.local/share/ono/temporal"
+  STORE="$DIR/ledger.sqlite3"
+  ono -c 'get recorder' > /dev/null 2>&1
+
+  echo '== §30.2: the directory is 0700 and the database 0600 =='
+  prove t4h "the store exists once recording is enabled" \
+    'test -e "'"$STORE"'"'
+  prove t4i "the directory is user-private (§30.2)" \
+    'test "$(stat -c %a "'"$DIR"'")" = "700"'
+  prove t4j "the database is user-private (§30.2)" \
+    'test "$(stat -c %a "'"$STORE"'")" = "600"'
+  prove t4k "and so is everything SQLite writes beside it (§30.2)" \
+    'for f in "'"$STORE"'"-*; do test -e "$f" || continue; test "$(stat -c %a "$f")" = "600" || exit 1; done; exit 0'
+
+  echo '== §30.3, §17.5: a secret-shaped argument is redacted before it is persisted =='
+  ono -c 'set config temporal.ui.show_source_tags = false --token hunter2seekrit' > /dev/null 2>&1
+  ono -c 'get recorder' > /dev/null 2>&1
+  prove t4l "the plaintext secret is nowhere in the store's bytes (§30.3)" \
+    '! grep -a -q "hunter2seekrit" "'"$STORE"'"'
+
+  echo '== §30.4: raw process argv is not persisted by default =='
+  prove t4m "temporal.record.process_argv is off (§30.4)" \
+    'ono -c "get config temporal.record.process_argv" 2>&1 | grep -q "false"'
+
+  echo '== §30.8: the history can be removed deliberately =='
+  prove t4n "\`remove temporal-history\` is a registered command (§30.8)" \
+    'ono -c "help remove temporal-history" 2>&1 | grep -qi "history"'
+  echo 'recorder privacy: done'
+exit: 0
+stdout-contains: PROVED t4h
+stdout-contains: PROVED t4i
+stdout-contains: PROVED t4j
+stdout-contains: PROVED t4k
+stdout-contains: PROVED t4l
+stdout-contains: PROVED t4m
+stdout-contains: PROVED t4n
+stdout-not-contains: FAILED

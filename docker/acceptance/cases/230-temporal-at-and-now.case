@@ -9,6 +9,7 @@
 # Everything is built by the case: a session's own coverage begins when the session does, so the
 # script sleeps to make an instant it can honestly reach and reaches for one it cannot.
 case: the temporal coordinate resolves, moves, and reaches the data
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
 timeout: 120
 env: NO_COLOR=1
 run: |

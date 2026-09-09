@@ -2807,10 +2807,10 @@ Conventions this subsection relies on:
 - [ ] **An Ono `restart service` creates an ActionId and records the systemd job it became.**
       The mapping `ono:a91f -> /org/freedesktop/systemd1/job/4821` is in the ledger (§17.3) —
       `crates/ono-provider-systemd/tests/jobs.rs`, `crates/ono-cli/tests/action_causality.rs`,
-      case 248-action-causality.
+      case `248-action-causality`.
 - [ ] **`why` on the resulting transition returns a causal chain.** Every edge names its rule,
       its source and its evidence (§16.5, §15.8) — `crates/ono-temporal-query/tests/why.rs`,
-      case 248-action-causality.
+      case `248-action-causality`.
 - [ ] **A config change shortly before a failure is correlation and stays correlation.** It
       appears under `correlated`, never under `known cause`, and no registered rule promotes it
       (§16.6, §55.3) — `crates/ono-temporal-query/tests/correlation.rs`,
@@ -2819,23 +2819,23 @@ Conventions this subsection relies on:
       `crates/ono-temporal-query/tests/correlation.rs`, case 249-correlation-is-not-causation.
 - [ ] **Unknown cause is a successful typed explanation.** `cause: null` with evidence,
       correlations and gaps, and no error code (§16.7, §34) —
-      `crates/ono-temporal-query/tests/why.rs`, case 250-unknown-cause.
+      `crates/ono-temporal-query/tests/why.rs`, case `250-unknown-cause`.
 - [ ] **Every causal edge names its rule, source and evidence.** A `CausalLink` cannot be
       constructed without them — `crates/ono-temporal-core/tests/causality.rs`,
       `crates/ono-temporal-query/tests/why.rs`, case 251-causal-evidence.
 - [ ] **`why` works without a model configured.** No AI is required for any core temporal
-      feature (§16.1, §55.8) — `crates/ono-cli/tests/why.rs`, case 250-unknown-cause.
+      feature (§16.1, §55.8) — `crates/ono-cli/tests/why.rs`, case `250-unknown-cause`.
 - [ ] **`why` refuses ambiguity rather than choosing.** Several equally relevant transitions
       answer `temporal.ambiguous_event` listing the references (§16.3) —
       `crates/ono-temporal-query/tests/why.rs`, case 251-causal-evidence.
 - [ ] **The three forms of `why` all work.** `why <target> <selector>`, `why event <ref>` and
-      `why field <name>` (§16.2) — `crates/ono-cli/tests/why.rs`, case 248-action-causality.
+      `why field <name>` (§16.2) — `crates/ono-cli/tests/why.rs`, case `248-action-causality`.
 - [ ] **Temporal proximity alone never produces `caused_by`.** A property test over generated
       event pairs with no shared evidence — `crates/ono-temporal-query/tests/correlation.rs`.
 - [ ] **The renderer never uses causal wording for a non-causal edge.** `because`, `therefore`,
       `led to` and `caused` do not appear on a `preceded_by` or `correlated_with` edge, and the
       connector style differs (§15.6, §45.3) — `crates/ono-temporal-render/tests/causal.rs`,
-      case 252-causal-rendering.
+      case `252-causal-rendering`.
 - [ ] **An AI hypothesis cannot become a canonical causal edge.** It is an `Inference` with its
       model, inputs and confidence, and no registered rule accepts it (§38.2) —
       `crates/ono-model-broker/tests/inference.rs`, case `268-kuang-causality-is-bounded`.
@@ -2869,40 +2869,40 @@ Conventions this subsection relies on:
 #### 4.11.8 Recorder, storage, privacy (§10, §30, §31, §43, §44, §48.7 scenarios 34–39)
 
 - [ ] **The recorder is disabled by default.** A fresh installation retains nothing and creates
-      no store (§10.2) — `crates/ono-cli/tests/recorder.rs`, case 257-recorder-is-opt-in.
+      no store (§10.2) — `crates/ono-cli/tests/recorder.rs`, case `257-recorder-is-opt-in`.
 - [ ] **`start recorder` creates a private ledger with the specified permissions.** `0700` on the
       directory and `0600` on the database (§30.2) —
-      `crates/ono-temporal-ledger/tests/permissions.rs`, case 258-recorder-privacy.
+      `crates/ono-temporal-ledger/tests/permissions.rs`, case `258-recorder-privacy`.
 - [ ] **Events survive a shell restart.** Appended before, queryable after (§56.6) —
-      `crates/ono-temporal-ledger/tests/persistence.rs`, case 259-recorder-persistence.
+      `crates/ono-temporal-ledger/tests/persistence.rs`, case `259-recorder-persistence`.
 - [ ] **A recorder restart marks its downtime as a gap.** Never as continuity (§44.1, §55.5) —
       `crates/ono-recorder/tests/downtime.rs`, case 260-recorder-gap.
 - [ ] **Retention expires old data and leaves no dangling reference.** Age and size bounds, and
       no orphaned evidence, checkpoint or causal link (§31.8) —
-      `crates/ono-temporal-ledger/tests/retention.rs`, case 261-retention-and-corruption.
+      `crates/ono-temporal-ledger/tests/retention.rs`, case `261-retention-and-corruption`.
 - [ ] **A secret never appears in the ledger's bytes.** A byte scan of the database file after a
       command carrying a secret (§30.3, §17.5) — `crates/ono-temporal-ledger/tests/privacy.rs`,
-      case 258-recorder-privacy.
+      case `258-recorder-privacy`.
 - [ ] **Process argv is not persisted by default.** `temporal.record.process_argv` is `false` and
       the stored process record carries executable and identity without raw argv (§30.4) —
-      `crates/ono-recorder/tests/redaction.rs`, case 258-recorder-privacy.
+      `crates/ono-recorder/tests/redaction.rs`, case `258-recorder-privacy`.
 - [ ] **A corrupted ledger disables the affected history and leaves the shell working.** The
       affected segment is named, the interval becomes a gap, and no command outside the temporal
       layer fails (§31.7) — `crates/ono-temporal-ledger/tests/corruption.rs`,
-      case 261-retention-and-corruption.
+      case `261-retention-and-corruption`.
 - [ ] **The store migrates, and every shipped version's fixture is tested.** Migration preserves
       `EventId`, `EvidenceId`, `ActionId` and causal references (§31.6) —
-      `crates/ono-temporal-ledger/tests/migration.rs`, case 259-recorder-persistence.
+      `crates/ono-temporal-ledger/tests/migration.rs`, case `259-recorder-persistence`.
 - [ ] **The recorder gains no visibility the user does not already have.** No setuid, no sudo, no
       privileged daemon (§10.5) — `crates/ono-recorder/tests/privilege.rs`,
-      case 257-recorder-is-opt-in.
+      case `257-recorder-is-opt-in`.
 - [ ] **Every ingestion path is bounded and an overflow becomes a gap.** No unbounded channel
       exists (`xtask` refuses one), and a source exceeding its capacity produces an explicit
       coverage gap rather than pretended continuity (§43.1, §43.2) —
       `crates/ono-recorder/tests/backpressure.rs`,
       `xtask/src/scan.rs::check_bounded_channels`, case 260-recorder-gap.
 - [ ] **`remove temporal-history` clears the local store under destructive-operation policy.**
-      (§30.8) — `crates/ono-cli/tests/recorder.rs`, case 261-retention-and-corruption.
+      (§30.8) — `crates/ono-cli/tests/recorder.rs`, case `261-retention-and-corruption`.
 - [ ] **The in-memory session ledger is bounded and its eviction is visible.** 100 000 events by
       default, oldest first, and the boundary recorded rather than silent (§10.7) —
       `crates/ono-temporal-core/tests/session_ledger.rs`.
@@ -3039,7 +3039,7 @@ Conventions this subsection relies on:
       case `046-live-system-semantics`, case `074-adapters-util-linux-end-to-end`,
       case `090-spatial-cold-start-discovery`, case `108-spatial-live`, case `049-remote-link`,
       case `050-kuang-plugin` — and by one case that asserts the default state itself,
-      case 273-temporal-disabled-changes-nothing, which runs a v0.4 session end to end with
+      case `273-temporal-disabled-changes-nothing`, which runs a v0.4 session end to end with
       `temporal.recording.enabled` false and shows no temporal store was created.
 - [ ] **`ono-cli` is not the temporal engine.** The crate layering forbids it and the module
       inventory records the temporal modules — `xtask/src/architecture.rs`,

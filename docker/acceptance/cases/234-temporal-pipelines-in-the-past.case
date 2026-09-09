@@ -6,6 +6,7 @@
 # context refers to real current time only in expression semantics; historical query time is
 # exposed as `context.time`. This distinction MUST be documented and testable."
 case: pipelines and expressions under a historical coordinate
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
 timeout: 120
 env: NO_COLOR=1
 run: |

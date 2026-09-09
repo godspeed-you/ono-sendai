@@ -7,6 +7,7 @@
 # a real Ono mutation against a real Linux process, and §17.1's whole point is that the shell
 # knows it did.
 case: the timeline is typed, and an Ono action leaves its lifecycle on it
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
 timeout: 120
 env: NO_COLOR=1
 run: |

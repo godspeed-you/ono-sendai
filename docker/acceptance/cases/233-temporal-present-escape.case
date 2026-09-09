@@ -6,6 +6,7 @@
 # The refusal is checked by its effect and not only by its words: the refused program would have
 # written a file, and the file is not there.
 case: an external program refuses in the past, and `present` is the way through
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
 timeout: 120
 env: NO_COLOR=1
 run: |

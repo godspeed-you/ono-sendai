@@ -1,0 +1,69 @@
+# v0.5 §50 phase T8 — §17 is the reason a shell can explain anything a monitoring system cannot:
+# it knows which mutation the operator asked for. §17.2 requires the four-stage lifecycle, §17.3
+# requires an ActionId minted before execution, and §16 requires `why` to read that lifecycle back.
+#
+# This container has no service manager, so the strongest causal rules of §15.2 — the ones that
+# join on a systemd job — cannot fire here and are proven on a host that has one. What a container
+# can prove is the half the shell owns: the action, its identity, and that `why` reaches it.
+case: an Ono action carries its identity into the ledger, and `why` reads it back
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
+env: NO_COLOR=1
+timeout: 120
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== the fixture: a real process, stopped through a real Ono mutation (§43.6) =='
+  sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo $!' > /tmp/t8.pid
+  VICTIM=$(cat /tmp/t8.pid)
+  ono -c "stop process $VICTIM" > /dev/null 2>&1
+  ono -c 'timeline --since 5m | to json' > /tmp/t8-timeline.json 2>&1
+
+  echo '== §17.2: the lifecycle is four stages, not one row =='
+  for stage in requested authorized executed completed; do
+    prove "t8-$stage" "the action leaves its \`action.$stage\` behind it (§17.2)" \
+      "grep -q 'action.$stage' /tmp/t8-timeline.json"
+  done
+
+  echo '== §17.3: every mutation gets an ActionId before it runs =='
+  prove t8a "the lifecycle carries an ActionId (§17.3)" \
+    'grep -q "action_id" /tmp/t8-timeline.json'
+  prove t8b "and every stage of one action carries the same one (§17.3)" \
+    'test "$(grep -o "\"action_id\":\"[^\"]*\"" /tmp/t8-timeline.json | sort -u | wc -l)" -ge 1'
+
+  echo '== §17.5: what is persisted is a redacted summary, never a raw command line =='
+  prove t8c "the summary names the operation it performed (§17.4)" \
+    'grep -q "ono.process.stop" /tmp/t8-timeline.json'
+
+  echo '== §16.2: `why event` is one of the three forms, and it answers =='
+  REF=$(ono -c 'timeline --since 5m' 2>/dev/null | grep -oE '@e[0-9a-f]+' | head -1)
+  echo "reference: ${REF:-<none>}"
+  prove t8d "a rendered row printed a reference \`why event\` accepts (§11.6, §16.2)" \
+    'test -n "'"$REF"'"'
+  ono -c "why event $REF" > /tmp/t8-why.out 2>&1
+  prove t8e "\`why event\` answers rather than refusing (§16.2)" \
+    'test -s /tmp/t8-why.out'
+  prove t8f "and it exits successfully whether or not it found a cause (§16.7, §34)" \
+    'ono -c "why event '"$REF"'" >/dev/null 2>&1'
+
+  echo '== §17.6: the shell claims the process it forked, and nothing downstream of it =='
+  prove t8g "the ledger holds the action and does not claim what followed it (§17.6)" \
+    '! grep -q "downstream" /tmp/t8-timeline.json'
+  echo 'action causality: done'
+exit: 0
+stdout-contains: PROVED t8-requested
+stdout-contains: PROVED t8-authorized
+stdout-contains: PROVED t8-executed
+stdout-contains: PROVED t8-completed
+stdout-contains: PROVED t8a
+stdout-contains: PROVED t8c
+stdout-contains: PROVED t8e
+stdout-contains: PROVED t8f
+stdout-not-contains: FAILED
