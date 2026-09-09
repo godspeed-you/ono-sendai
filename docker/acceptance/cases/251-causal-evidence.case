@@ -1,0 +1,146 @@
+# v0.5 §50 phase T8 — two sentences, one case.
+#
+# §15.8: "Every built-in rule that emits `caused_by`, `triggered_by` or `resulted_in` MUST be
+# machine-readable and inspectable", and a rule records its id, its inputs, the evidence
+# strengths it requires and the relation it emits. `ono.causal-link/1` turns that into a
+# constructor: `rule`, `evidence`, `strength` and `source` are required fields, so a link that
+# cannot say where it came from is not a weak link, it is not a link. The place a container can
+# watch one being refused is the contribution boundary of §37.4, where a package hands the host
+# a causal claim and the host decides what may become an edge.
+#
+# §16.3: "If multiple equally relevant transitions exist, Ono MUST refuse ambiguity and list event
+# references rather than choose arbitrarily." That refusal has one error — `temporal.ambiguous_
+# event`, §34's E1306 — and one shape: the candidates, listed, so the operator picks. A reference
+# that names several of the ledger's events is the reachable form of it here, and the contrast
+# that makes the proof a proof is that the unambiguous reference answers.
+case: a causal edge names its rule and its evidence, and ambiguity is refused rather than resolved
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
+env: NO_COLOR=1
+timeout: 180
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== the fixture: enough recorded events that one short reference names several (§11.6) =='
+  # Each mutation leaves §17.2's four events behind it, so ten leave forty — more than the
+  # sixteen buckets a one-digit reference has, which makes a collision a fact rather than a hope.
+  script=''
+  for i in 1 2 3 4 5 6 7 8 9 10; do script="$script
+  stop process 99999$i"; done
+  ono -c "$script" > /dev/null 2>&1
+  ono -c 'timeline --since 5m | to json' > /tmp/t8v-timeline.json 2>&1
+  grep -o '"event_id":"[a-f0-9]*"' /tmp/t8v-timeline.json | cut -d'"' -f4 | sort -u > /tmp/t8v-ids
+  echo "events recorded: $(wc -l < /tmp/t8v-ids)"
+
+  AMBIGUOUS=$(cut -c1-2 /tmp/t8v-ids | sort | uniq -c | sort -rn | head -1 | sed 's/^ *[0-9]* //')
+  UNIQUE=$(head -1 /tmp/t8v-ids)
+  echo "shared prefix: @${AMBIGUOUS:-<none>}   whole reference: @$UNIQUE"
+  prove t8v1 "the ledger holds several events one shortened reference names (§11.6)" \
+    'test "$(grep -c "^'"$AMBIGUOUS"'" /tmp/t8v-ids)" -ge 2'
+
+  echo '== §16.3, §34 E1306: `why` refuses to choose between them =='
+  ono -c "why event @$AMBIGUOUS" > /tmp/t8v-ambiguous.out 2>&1
+  cat /tmp/t8v-ambiguous.out
+  prove t8v2 "\`why\` on an ambiguous reference raises \`temporal.ambiguous_event\` (§16.3, §34)" \
+    'grep -q "temporal.ambiguous_event" /tmp/t8v-ambiguous.out'
+  prove t8v3 "and it lists the references it would not choose between (§16.3)" \
+    'test "$(grep -oE "@e[0-9a-f]{8,}" /tmp/t8v-ambiguous.out | sort -u | wc -l)" -ge 2'
+  prove t8v4 "it names no cause while refusing (§16.3, §55.3)" \
+    '! grep -qi "known cause" /tmp/t8v-ambiguous.out'
+
+  echo '== and the same shell answers the reference that names one event (the contrast) =='
+  ono -c "why event @$UNIQUE" > /tmp/t8v-unique.out 2>&1
+  prove t8v5 "an unambiguous reference is explained rather than refused (§16.2)" \
+    'test -s /tmp/t8v-unique.out && ! grep -q "temporal.ambiguous_event" /tmp/t8v-unique.out'
+
+  echo '== §11.6: one resolution rule, so `inspect event` refuses the same reference the same way =='
+  ono -c "inspect event @$AMBIGUOUS" > /tmp/t8v-inspect.out 2>&1
+  prove t8v6 "\`inspect event\` refuses the ambiguity too, with the same error (§11.6, §34)" \
+    'grep -q "temporal.ambiguous_event" /tmp/t8v-inspect.out'
+
+  echo '== §35.5, §16.4: an explanation keeps its causal and non-causal sides in separate fields =='
+  ono -c "why event @$UNIQUE | type | to json" > /tmp/t8v-type.json 2>&1
+  for section in cause causal_chain correlations preceding gaps; do
+    prove "t8v-$section" "\`$section\` is a field of the published contract, not a rank in one list (§35.5)" \
+      'grep -q "\"name\":\"'"$section"'\"" /tmp/t8v-type.json'
+  done
+  prove t8v7 "and the chain is declared as a list of \`ono.causal-link/1\` steps (§16.4, §15.8)" \
+    'grep -q "ono.causal-link/1" /tmp/t8v-type.json'
+
+  echo '== §15.8, §37.4: a link that cannot name its rule or its evidence is not constructed =='
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/state/ono"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - object.read
+      - temporal.read.current
+      - temporal.read.history
+      - temporal.contribute.events
+      - temporal.contribute.causality
+  network:
+    outbound: none
+  MANIFEST
+
+  grants='grant capability temporal.contribute.causality --plugin dev.example.echo | count; load plugin dev.example.echo; '
+  ono -c "$grants try { echo:temporal-causality --strength \"very-sure\" } catch e { \$e | select message | to json }" > /tmp/t8v-strength.out 2>&1
+  ono -c "$grants try { echo:temporal-causality --rule \"\" } catch e { \$e | select message | to json }" > /tmp/t8v-rule.out 2>&1
+  tail -1 /tmp/t8v-strength.out
+  tail -1 /tmp/t8v-rule.out
+  prove t8v8 "a causal link stating no evidence strength is refused, not weakened (§7.2, §15.8)" \
+    'grep -qi "evidence strength" /tmp/t8v-strength.out'
+  prove t8v9 "and one naming no registered rule is refused rather than believed (§15.8, §37.4)" \
+    'grep -q "causal_rules" /tmp/t8v-rule.out && grep -qi "a reader can go and read" /tmp/t8v-rule.out'
+  prove t8v10 "neither refusal took the shell with it (§31.7)" \
+    'ono -c "printf ok" 2>&1 | grep -q "ok"'
+
+  echo 'causal evidence: done'
+exit: 0
+stdout-contains: PROVED t8v1
+stdout-contains: PROVED t8v2
+stdout-contains: PROVED t8v3
+stdout-contains: PROVED t8v4
+stdout-contains: PROVED t8v5
+stdout-contains: PROVED t8v6
+stdout-contains: PROVED t8v-cause
+stdout-contains: PROVED t8v-causal_chain
+stdout-contains: PROVED t8v-correlations
+stdout-contains: PROVED t8v-preceding
+stdout-contains: PROVED t8v-gaps
+stdout-contains: PROVED t8v7
+stdout-contains: PROVED t8v8
+stdout-contains: PROVED t8v9
+stdout-contains: PROVED t8v10
+stdout-contains: causal evidence: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

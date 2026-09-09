@@ -30,6 +30,7 @@ commands:
       - {name: listening, type: bool, doc: "Restrict to listening sockets."}
       - {name: protocol, type: string, doc: "Restrict to one transport protocol."}
       - {name: resolve, type: bool, doc: "Reverse-resolve endpoint host names. Off by default: §22.2 classes the result as derived, and resolution can block."}
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: conditional
     streaming: true
     phase: C
@@ -56,6 +57,7 @@ commands:
       - {name: remote, type: ip, doc: "Restrict to connections with this peer address."}
       - {name: resolve, type: bool, doc: "Reverse-resolve peer host names."}
       - {name: process, type: bool, doc: "Join each connection to the process holding it. Off by default: the join scans every open descriptor on the machine, which the interactive budget of spec §34 cannot absorb on every call. Without it the `process` field is null rather than invented."}
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: conditional
     streaming: true
     phase: C
@@ -74,7 +76,8 @@ commands:
     provider_capability: interface.list
     selectors:
       - {name: name, type: string, doc: "Resolve one interface by name."}
-    options: []
+    options:
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: none
     streaming: true
     phase: C
@@ -96,6 +99,7 @@ commands:
       - {name: table, type: string, doc: "Query one routing table instead of the main one."}
       - {name: family, type: string, doc: "Restrict to one address family."}
       - {name: interface, type: string, doc: "Restrict to routes over this interface — what `enter interface` fills in (spec §14.3)."}
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: none
     streaming: true
     phase: C
@@ -115,6 +119,7 @@ commands:
     selectors: []
     options:
       - {name: interface, type: string, doc: "Restrict to one interface."}
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: none
     streaming: true
     phase: C

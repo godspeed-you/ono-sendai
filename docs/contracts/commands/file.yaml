@@ -26,6 +26,7 @@ commands:
     options:
       - {name: recursive, type: bool, doc: "Descend into directories (spec §11.6, §6.2)."}
       - {name: follow-symlinks, type: bool, doc: "Describe the symlink target rather than the link itself."}
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: conditional
     streaming: true
     phase: C
@@ -49,6 +50,7 @@ commands:
       - {name: name, type: string, doc: "Match entry names against a glob."}
       - {name: kind, type: string, doc: "Restrict to one file kind."}
       - {name: follow-symlinks, type: bool, doc: "Follow symlinks while walking; off by default, because it can cycle."}
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: conditional
     streaming: true
     phase: C
@@ -292,6 +294,7 @@ commands:
     options:
       - {name: all, type: bool, doc: "Include entries whose name begins with a dot."}
       - {name: recursive, type: bool, doc: "Descend into subdirectories."}
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: conditional
     streaming: true
     phase: C

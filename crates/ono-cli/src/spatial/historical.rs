@@ -70,6 +70,21 @@ pub trait TemporalEvidence: Send + Sync + std::fmt::Debug {
 
     /// The ledger a historical world is reconstructed from (§3.1).
     fn ledger(&self) -> Arc<dyn LedgerRead>;
+
+    /// What the session's sources cover over `range` in `scope` (§8.2, §8.5).
+    ///
+    /// Asked rather than composed here, because the session's own observation window is temporal
+    /// state and §55.7 keeps temporal state out of the spatial layer. The one caller that needs
+    /// it is §24.3's change section, which may report an absence only where coverage supports it.
+    ///
+    /// # Errors
+    ///
+    /// Whatever §34 refusal the ledger raises.
+    fn coverage(
+        &self,
+        scope: &SpatialScope,
+        range: ono_temporal_core::TimeRange,
+    ) -> Result<CoverageSummary, ErrorValue>;
 }
 
 static EVIDENCE: OnceLock<Arc<dyn TemporalEvidence>> = OnceLock::new();
@@ -105,6 +120,12 @@ pub fn active() -> Option<Active> {
 #[must_use]
 pub fn ledger() -> Option<Arc<dyn LedgerRead>> {
     EVIDENCE.get().map(|evidence| evidence.ledger())
+}
+
+/// The installed evidence itself, for a caller that needs its coverage as well as its ledger.
+#[must_use]
+pub fn evidence() -> Option<&'static Arc<dyn TemporalEvidence>> {
+    EVIDENCE.get()
 }
 
 /// The session's historical coordinate, and the ledger that can answer about it.

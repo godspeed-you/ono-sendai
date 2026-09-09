@@ -213,20 +213,24 @@ pub struct Timeline {
 }
 
 impl Timeline {
-    /// Mints a session reference for every event in the window (§11.6, ADR-0660).
+    /// Mints a session reference for every event in the window (§11.6, ADR-0660, ADR-0783).
     ///
     /// The reference a row prints and the reference `at event`, `inspect event` and `why event`
     /// accept are then the same string, because both come out of `references`. Minting is in
-    /// presentation order, so the shortest references go to the events read first.
+    /// presentation order, so the shortest references go to the events read first, and `ledger`
+    /// is the one the window was read from: a printed reference has to name one event *there*,
+    /// because the command the reader types next is a session that issued nothing.
     #[must_use]
-    pub fn with_references(mut self, references: &mut EventReferences) -> Self {
+    pub fn with_references(
+        mut self,
+        ledger: &dyn LedgerRead,
+        references: &mut EventReferences,
+    ) -> Self {
         self.references = self
             .events
             .iter()
-            .map(|event| {
-                let minted = references.reference(event);
-                (event.event_id.clone(), Arc::from(minted.as_str()))
-            })
+            .zip(references.reference_all(ledger, &self.events))
+            .map(|(event, minted)| (event.event_id.clone(), Arc::from(minted.as_str())))
             .collect();
         self
     }

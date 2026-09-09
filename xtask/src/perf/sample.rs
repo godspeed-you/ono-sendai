@@ -17,6 +17,8 @@ use std::path::Path;
 use std::time::Instant;
 
 use jiff::Span;
+use ono_cli::spatial::HistoricalWorld;
+use ono_spatial_query::MapRequest;
 use ono_temporal_core::{
     EventKind, EventQuery, LedgerRead, QueryOrder, SpatialRef, TemporalContext, TimeRange,
 };
@@ -53,11 +55,7 @@ pub fn take(
     match operation {
         TemporalOperation::StartupWithLedgerPresent => startup(fixture, binary),
         TemporalOperation::RecorderIdle => recorder_idle(fixture, index),
-        TemporalOperation::HistoricalMapL1 => Err(
-            "no historical spatial world is in the tree, so there is no L1 map to draw at a past \
-             instant"
-                .to_owned(),
-        ),
+        TemporalOperation::HistoricalMapL1 => map_historical_l1(fixture, index),
         TemporalOperation::Timeline15m => timeline_15m(fixture, index),
         TemporalOperation::Changes1h => changes_1h(fixture, index),
         TemporalOperation::RecentReconstruction => reconstruct_recent(fixture, index),
@@ -203,6 +201,36 @@ fn reconstruct_recent(fixture: &FixtureLedger, index: u32) -> Result<Sample, Str
     Ok(Sample {
         elapsed_ms: elapsed.as_secs_f64() * 1000.0,
         values: world.objects().count() as f64,
+    })
+}
+
+/// v0.5 §32.3: a cached historical L0/L1 map.
+///
+/// §32.3 calls the row "map historical L0/L1 cached", and `Temperature::CacheHit` is what
+/// "cached" means here: the reconstruction is the cache. `HistoricalWorld::reconstruct` builds the
+/// index once — that is the expensive half, and it is the half a session pays once per coordinate
+/// — and the figure is the projection that draws the map from it, which is what a second `map` at
+/// the same instant costs. Timing the reconstruction as well would report a cold figure under a
+/// cache-hit label, which §37.3 forbids.
+///
+/// It is the shipped path: `crates/ono-cli/src/spatial/map.rs` draws a historical map by calling
+/// exactly this method on exactly this type (§32.2).
+fn map_historical_l1(fixture: &FixtureLedger, index: u32) -> Result<Sample, String> {
+    let store = open(fixture, RetentionPolicy::unlimited())?;
+    let at = coordinate(fixture, index)?;
+    let scope = fixture.root_scope();
+    let world = HistoricalWorld::reconstruct(&store, &scope, at)
+        .map_err(|error| format!("the reconstruction refused: {error}"))?;
+    let center = ono_spatial_core::space::root().spatial_id_in(Some(&scope));
+    // §8.1's L1: the place and one hierarchy hop out of it, which is the frame a session lands on.
+    let request = MapRequest::new().zoom(1).depth(1);
+
+    let started = Instant::now();
+    let map = world.map(&center, &request, ono_spatial_query::MAP_NODE_BUDGET);
+    let elapsed = started.elapsed();
+    Ok(Sample {
+        elapsed_ms: elapsed.as_secs_f64() * 1000.0,
+        values: map.nodes.len() as f64,
     })
 }
 

@@ -1,0 +1,238 @@
+# v0.5 §50 phase T9 — §19. The full-screen timeline, from outside the binary, at a real terminal.
+#
+# §19.1 names the door this case drives: `timeline --view`. §19.2 fixes what has to be on the
+# screen — the place and the window across the top, a row per event, the evidence and coverage
+# behind them, the keys underneath — and says the information architecture is normative while the
+# border style is not, so every assertion here is about a component and none about box drawing.
+# §19.3 fixes the keys, and this case drives the ones that navigate: the selection moves, `Enter`
+# inspects what the cursor is on, `?` names what the view answers. ADR-0781 records that `M` and
+# `C` are deliberately not built in this view; nothing below asserts that either of them works,
+# and nothing below asserts their absence as though that were the contract.
+#
+# The exit paths are the part that matters most. A full-screen view that does not hand the
+# terminal back ruins the session it was opened from, so both paths are driven — `Esc` and the
+# `Ctrl-C` of v0.4 §43.4 — and after each one an ordinary external program reports the line
+# discipline it inherited (v0.4 §44.10, §49.8, §52.2).
+#
+# The last proof is the one a script sees: v0.2 §50 requires deterministic behaviour when output
+# is redirected, so `timeline --view` with nowhere to draw must answer with the window itself and
+# put no escape sequence into the pipe.
+#
+# The sessions are driven through a pseudo-terminal by a keystroke script written into a fifo, so
+# the keys arrive with the pauses a person would leave between them, exactly as cases 253 and 254
+# drive the map. The events the window is a statement about are the session's own actions (§11.3):
+# a fixture process is started here, because Ono has no command substitution (ADR-0019) and a
+# `$(…)` inside an Ono script is the literal `$` followed by a sub-pipeline.
+case: the full-screen timeline opens, navigates and exits cleanly
+pty: true
+columns: 100
+lines: 30
+timeout: 300
+env: NO_COLOR=1
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  drive() {
+    local keys="$1" out="$2" writer="$3" typist
+    rm -f "$keys" "$out"
+    mkfifo "$keys"
+    ( eval "$writer" ) > "$keys" &
+    typist=$!
+    script --quiet --return --command 'ono' "$out" < "$keys" > /dev/null 2>&1 || true
+    wait "$typist" 2>/dev/null || true
+    rm -f "$keys"
+  }
+
+  victim() { sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo $!'; }
+
+  # A full-screen frame carries no newlines: it addresses the cursor before each row, so the
+  # escape byte is where one row ends and the next begins. Splitting there is the only way to
+  # read a transcript of the view as lines.
+  rows() { tr '\033' '\n' < "$1"; }
+
+  # The events the window drew, by the reference each row carries: a row is its clock, what
+  # happened, and the `@e…` §11.6 makes every command accept, so counting the distinct references
+  # on rows counts the events on the screen rather than every `@e…` in the transcript.
+  event_references() {
+    rows "$1" \
+      | grep -oaE '[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9][0-9][0-9].*@e[0-9a-f]+' \
+      | grep -oaE '@e[0-9a-f]+$' | sort -u
+  }
+
+  # The rows §19.2's cursor stood on, one line per distinct selection. The cursor is a `>` in the
+  # first column followed by the row's own clock, which is what tells it apart from the shell's
+  # `> ` prompt everywhere else in the transcript.
+  cursor_rows() { rows "$1" | grep -oaE '>[0-9][0-9]:[0-9][0-9]:[0-9][0-9].*' | sort -u; }
+
+  # The reference an inspection names its event by. A row of §19.2 prints the reference last and
+  # the renderer trims the line there, so a reference followed by the event's canonical kind is
+  # the inspection of §19.3 and nothing else on the screen.
+  overlay_reference() {
+    rows "$1" \
+      | grep -oaE '@e[0-9a-f]+  (action|object|relation|provider)\.[a-z_]+' \
+      | head -1 | grep -oaE '@e[0-9a-f]+'
+  }
+
+  ESC=$(printf '\033')
+  CR=$(printf '\r')
+  CTRL_C=$(printf '\003')
+  UP="${ESC}[A"
+  ALT_ON="${ESC}[?1049h"
+  ALT_OFF="${ESC}[?1049l"
+
+  echo '== the view opens on the window, the rows, the evidence and the keys (§19.1, §19.2) =='
+  V1=$(victim)
+  drive /tmp/keys-276a /tmp/session-276a "
+    sleep 3
+    printf 'stty rows 30 cols 100\n'; sleep 2
+    printf 'echo AT-PROMPT\n';        sleep 2
+    printf 'home\n';                  sleep 2
+    printf 'stop process ${V1}\n';    sleep 4
+    printf 'timeline --view\n';       sleep 12
+    printf '%s' '${ESC}';             sleep 4
+    printf 'echo AFTER-VIEW\n';       sleep 2
+    printf 'stty -a\n';               sleep 3
+    printf 'exit\n';                  sleep 2
+  "
+
+  prove t9ae "the session reached its prompt (v0.4 §29.1)" \
+    "grep -qaF 'AT-PROMPT' /tmp/session-276a"
+  prove t9af "\`timeline --view\` opens a full-screen view (§19.1)" \
+    "grep -qaF '${ALT_ON}' /tmp/session-276a"
+  prove t9ag "the header states the window the rows are a statement about (§19.2)" \
+    "rows /tmp/session-276a | grep -qaE '[0-9][0-9]:[0-9][0-9] -{3,} [0-9][0-9]:[0-9][0-9]'"
+  prove t9ah "there is a row per event, each carrying the reference the next command accepts (§19.2, §11.6)" \
+    "test \$(event_references /tmp/session-276a | wc -l) -ge 2"
+  prove t9ai "the cursor stands on one of those rows (§19.2)" \
+    "test \$(cursor_rows /tmp/session-276a | wc -l) -ge 1"
+  prove t9aj "the evidence the window rests on and the coverage over it are on the screen (§19.2, §8.5)" \
+    "rows /tmp/session-276a | grep -qaE 'evidence: .*coverage:'"
+  prove t9ak "the legend names the keys the view answers (§19.2, §19.3)" \
+    "grep -qaF 'Enter inspect' /tmp/session-276a && grep -qaF 'W why' /tmp/session-276a &&
+     grep -qaF 'A at' /tmp/session-276a && grep -qaF 'Esc exit' /tmp/session-276a"
+  prove t9al "Esc restores the shell's own screen (§19.3, v0.4 §49.8, §52.2)" \
+    "grep -qaF '${ALT_OFF}' /tmp/session-276a"
+  prove t9am "the shell is alive after the view closes (v0.4 §43.4)" \
+    "grep -qaF 'AFTER-VIEW' /tmp/session-276a"
+  prove t9an "an external program inherits a cooked terminal after Esc (v0.4 §44.10)" \
+    "grep -qa 'icanon' /tmp/session-276a && ! grep -qa -- '-icanon' /tmp/session-276a"
+
+  # `Enter` is pressed twice on purpose. A key that reaches the terminal before the view has
+  # taken it is processed by the line discipline the shell left behind, and a carriage return is
+  # the one key that arrives as a different key when it does (ICRNL). The second press either
+  # dismisses what the first opened or opens it, and the sequence lands the same way either way.
+  echo '== the keys of §19.3 navigate what the view is showing =='
+  V2=$(victim)
+  V3=$(victim)
+  drive /tmp/keys-276b /tmp/session-276b "
+    sleep 3
+    printf 'stty rows 30 cols 100\n'; sleep 2
+    printf 'echo AT-PROMPT\n';        sleep 2
+    printf 'home\n';                  sleep 2
+    printf 'stop process ${V2}\n';    sleep 4
+    printf 'stop process ${V3}\n';    sleep 4
+    printf 'timeline --view\n';       sleep 12
+    printf '%s' '${UP}';              sleep 4
+    printf '%s' '${CR}';              sleep 5
+    printf '%s' '${CR}';              sleep 4
+    printf ' ';                       sleep 3
+    printf '?';                       sleep 5
+    printf ' ';                       sleep 3
+    printf '%s' '${ESC}';             sleep 4
+    printf 'echo AFTER-KEYS\n';       sleep 2
+    printf 'exit\n';                  sleep 2
+  "
+
+  # §19.3: "Up/Down or j/k    select event". The view opens on the most recent row, so `Up` is
+  # the key with somewhere to go, and a selection on a screen is exactly the row the cursor is
+  # drawn on. Two different cursor rows in a transcript that pressed one navigation key is the
+  # selection having moved; the view repaints only when the frame changes, so a view that ignored
+  # the key would leave one.
+  prove t9ao "Up moves the selection to a different event (§19.3)" \
+    "test \$(cursor_rows /tmp/session-276b | wc -l) -ge 2"
+  # §19.3: "Enter    inspect event". What comes up names an event by the reference §11.6 makes
+  # every command accept and by its canonical kind of §6.1, and that event is one the cursor
+  # stood on — an inspection of something else would be an inspection of the wrong event.
+  INSPECTED=$(overlay_reference /tmp/session-276b)
+  prove t9ap "Enter inspects the event the cursor is on, by its own reference and kind (§19.3, §11.6)" \
+    "test -n '${INSPECTED}' && cursor_rows /tmp/session-276b | grep -qaF '${INSPECTED}'"
+  prove t9aq "? names the keys the view answers (§19.3)" \
+    "grep -qaF 'select the event above' /tmp/session-276b &&
+     grep -qaF 'inspect the selected event' /tmp/session-276b &&
+     grep -qaF 'leave the view' /tmp/session-276b"
+  prove t9ar "the view still leaves cleanly after the keys, and the shell outlives it (v0.4 §49.8)" \
+    "grep -qaF '${ALT_OFF}' /tmp/session-276b && grep -qaF 'AFTER-KEYS' /tmp/session-276b"
+
+  echo '== Ctrl-C leaves the view and not the session (v0.4 §43.4) =='
+  V4=$(victim)
+  drive /tmp/keys-276c /tmp/session-276c "
+    sleep 3
+    printf 'stty rows 30 cols 100\n'; sleep 2
+    printf 'echo AT-PROMPT\n';        sleep 2
+    printf 'home\n';                  sleep 2
+    printf 'stop process ${V4}\n';    sleep 4
+    printf 'timeline --view\n';       sleep 12
+    printf '%s' '${CTRL_C}';          sleep 4
+    printf 'echo AFTER-INTERRUPT\n';  sleep 2
+    printf 'stty -a\n';               sleep 3
+    printf 'exit\n';                  sleep 2
+  "
+
+  prove t9as "Ctrl-C hands the shell's own screen back and the session survives it (v0.4 §43.4, §49.8)" \
+    "grep -qaF '${ALT_ON}' /tmp/session-276c && grep -qaF '${ALT_OFF}' /tmp/session-276c &&
+     grep -qaF 'AFTER-INTERRUPT' /tmp/session-276c"
+  prove t9at "the terminal is usable again after the interrupted view (v0.4 §44.10)" \
+    "grep -qa 'icanon' /tmp/session-276c && ! grep -qa -- '-icanon' /tmp/session-276c"
+
+  echo '== without a terminal the view degrades to the window itself (§19.1, v0.2 §50) =='
+  V5=$(victim)
+  ono -c "home
+  stop process ${V5}
+  timeline --view" > /tmp/t9-redirected.out 2>&1
+  echo "$?" > /tmp/t9-redirected.code
+
+  prove t9au "a redirected \`timeline --view\` answers rather than failing (§19.1, v0.2 §50)" \
+    "test \"\$(cat /tmp/t9-redirected.code)\" = 0"
+  prove t9av "and writes no escape sequence into the pipe (v0.2 §50)" \
+    "! grep -qaF '${ESC}' /tmp/t9-redirected.out"
+  prove t9aw "and what it wrote is the window as text, with its rows and its coverage (§11.5, §11.6, §8.5)" \
+    "grep -qa 'coverage:' /tmp/t9-redirected.out &&
+     test \$(event_references /tmp/t9-redirected.out | wc -l) -ge 2"
+
+  prove t9ax "none of the three sessions ended in a panic" \
+    "! grep -qai 'panicked' /tmp/session-276a /tmp/session-276b /tmp/session-276c"
+
+  echo 'the full-screen timeline: done'
+exit: 0
+stdout-contains: PROVED t9ae
+stdout-contains: PROVED t9af
+stdout-contains: PROVED t9ag
+stdout-contains: PROVED t9ah
+stdout-contains: PROVED t9ai
+stdout-contains: PROVED t9aj
+stdout-contains: PROVED t9ak
+stdout-contains: PROVED t9al
+stdout-contains: PROVED t9am
+stdout-contains: PROVED t9an
+stdout-contains: PROVED t9ao
+stdout-contains: PROVED t9ap
+stdout-contains: PROVED t9aq
+stdout-contains: PROVED t9ar
+stdout-contains: PROVED t9as
+stdout-contains: PROVED t9at
+stdout-contains: PROVED t9au
+stdout-contains: PROVED t9av
+stdout-contains: PROVED t9aw
+stdout-contains: PROVED t9ax
+stdout-contains: the full-screen timeline: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

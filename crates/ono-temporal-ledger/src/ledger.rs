@@ -127,6 +127,17 @@ impl LedgerRead for Ledger {
         }
     }
 
+    fn shortest_unique_prefixes(
+        &self,
+        ids: &[EventId],
+        minimum: usize,
+    ) -> Result<Vec<usize>, ErrorValue> {
+        match self {
+            Ledger::Session(ledger) => ledger.shortest_unique_prefixes(ids, minimum),
+            Ledger::Persistent(store) => store.shortest_unique_prefixes(ids, minimum),
+        }
+    }
+
     fn evidence(&self, ids: &[EvidenceId]) -> Result<Vec<Evidence>, ErrorValue> {
         match self {
             Ledger::Session(ledger) => ledger.evidence(ids),

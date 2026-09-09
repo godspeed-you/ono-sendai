@@ -10,7 +10,7 @@
 //! quiet morning where there was a full one, so eviction leaves a [`TemporalGap`] with the reason
 //! §7.5 gives it and a coverage interval that composes into that gap (§8.5).
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use jiff::Timestamp;
@@ -26,7 +26,7 @@ use crate::evidence::Evidence;
 use crate::id::{EventId, EvidenceId};
 use crate::ledger::{
     Appended, Checkpoint, CoverageQuery, EventQuery, LedgerRead, LedgerWrite, QueryOrder,
-    RetentionState, TimeRange,
+    RetentionState, TimeRange, distinguishing_length,
 };
 use crate::order::presentation_order;
 use crate::source::EvidenceSource;
@@ -255,6 +255,41 @@ impl LedgerRead for SessionLedger {
                     .collect::<Vec<_>>(),
             )),
         }
+    }
+
+    fn shortest_unique_prefixes(
+        &self,
+        ids: &[EventId],
+        minimum: usize,
+    ) -> Result<Vec<usize>, ErrorValue> {
+        // One pass over the ledger rather than one lookup per asked-for identity: the identities
+        // are bucketed by the `minimum` characters every answer starts with anyway, so a retained
+        // event that shares nothing with any of them costs one hash and nothing else (§32.3).
+        let floor = minimum.max(1);
+        let mut lengths: Vec<usize> = ids.iter().map(|id| floor.min(id.as_str().len())).collect();
+        let mut buckets: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (index, id) in ids.iter().enumerate() {
+            let text = id.as_str();
+            buckets
+                .entry(&text[..floor.min(text.len())])
+                .or_default()
+                .push(index);
+        }
+        let state = self.locked();
+        for event in &state.events {
+            let held = event.event_id.as_str();
+            let Some(indexes) = buckets.get(&held[..floor.min(held.len())]) else {
+                continue;
+            };
+            for &index in indexes {
+                let text = ids[index].as_str();
+                if held == text {
+                    continue;
+                }
+                lengths[index] = lengths[index].max(distinguishing_length(text, held));
+            }
+        }
+        Ok(lengths)
     }
 
     fn evidence(&self, ids: &[EvidenceId]) -> Result<Vec<Evidence>, ErrorValue> {

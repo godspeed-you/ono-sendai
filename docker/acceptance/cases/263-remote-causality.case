@@ -1,0 +1,127 @@
+# v0.5 §26.4, with §24.1, §24.2, §17.3 and §26.1 underneath it.
+#
+#   "A causal explanation can cross hosts only when the evidence chain actually crosses the
+#    boundary… Mere temporal proximity between events on different hosts is correlation at most."
+#
+# §26.4 is one rule with two sides, and the two are proven in two places for one reason: the
+# positive side needs a provider that publishes the same transaction token on both sides of a link
+# — §26.4's own `web01 request @r42 → db01 accepted connection @r42` — and nothing in this image
+# is such a provider. That side is `crates/ono-temporal-query/tests/cross_host.rs`, where the
+# engine is handed two events carrying one provider's token across a host boundary and answers
+# with `ono.provider-causal-token`, and where the same two events without the token answer with
+# nothing at all. The two halves together are the evidence; neither alone is.
+#
+# What a container can prove is the half that lives in the shell, and all three parts of it are
+# here. The far side is this very machine reached over `--transport local`, so the case needs no
+# network and no second host (ADR-0037 §2), exactly as cases 262 and 264 do.
+#
+#   - **The boundary is real in the data.** A reading taken across the link is attributed to the
+#     link; the same object read here is attributed to this machine. Two evidence domains, one
+#     machine, and nothing merges them (§24.1, §24.2).
+#   - **The identity a chain would follow is written and visible.** §17.3 mints an `ActionId`
+#     before a mutation executes and §26.1 makes "action → provider transaction" one of the five
+#     things that can order two events; the shell writes that identity into the ledger as
+#     authoritative evidence on `action.executed` and carries it on every stage of that one action.
+#     A join key that did not exist could not be the thing a chain follows.
+#   - **Proximity is not that identity.** Two mutations twenty milliseconds apart, the second of
+#     them issued after the session had entered the link, get two different identifiers — the
+#     identifier belongs to the action, never to the moment. So nothing joins them: no event
+#     acquires a causal parent from the event beside it, and `why` answers a complete explanation
+#     with no cause and an empty chain rather than promoting the neighbour into one (§15.7, §16.7,
+#     §55.3, §55.6).
+case: a shared identity is what crosses a boundary, and the moment two events share is not one
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
+env: NO_COLOR=1
+timeout: 120
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== §24.1: there is a far side, and it is a domain of its own =='
+  ono -c 'link host testbox --transport local
+          get link | select name state | to json' > /tmp/t11x-link.json 2>&1
+  ono -c 'link host testbox --transport local
+          enter link testbox
+          get process | where pid == 1 | take 1 | inspect | to json' > /tmp/t11x-far.json 2>&1
+  ono -c 'get process | where pid == 1 | take 1 | inspect | to json' > /tmp/t11x-near.json 2>&1
+
+  prove t11x1 "the link is established, so there is a boundary to cross (§24.1)" \
+    "grep -q '\"state\":\"connected\"' /tmp/t11x-link.json"
+  prove t11x2 "a reading taken across it is attributed to the far side (§24.2)" \
+    "tail -1 /tmp/t11x-far.json | grep -q '\"link\":\"testbox\"'"
+  prove t11x3 "and the same object read here is attributed to this machine (§24.2, §26.4)" \
+    "tail -1 /tmp/t11x-near.json | grep -q '\"link\":\"local\"'"
+
+  echo '== the fixture: two real mutations, milliseconds apart, one of them through the link =='
+  sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo $!' > /tmp/t11x-a.pid
+  sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo $!' > /tmp/t11x-b.pid
+  FIRST=$(cat /tmp/t11x-a.pid)
+  SECOND=$(cat /tmp/t11x-b.pid)
+  STARTED=$(date +%s%N)
+  ono -c "stop process $FIRST
+          link host testbox --transport local
+          enter link testbox
+          stop process $SECOND" >/dev/null 2>&1
+  APART=$(( ( $(date +%s%N) - STARTED ) / 1000000 ))
+  ono -c 'timeline --since 5m | to json' > /tmp/t11x-timeline.json 2>&1
+  echo "the two mutations were at most ${APART}ms apart"
+  prove t11x4 "the two are as close in time as two separate actions get (§26.4)" \
+    "test $APART -lt 2000"
+
+  echo '== §17.3, §26.1: the identity a chain follows is written, and it belongs to the action =='
+  # The identities of the two `stop process` actions and nothing else, read out of the payload
+  # each event carries, so another event in the same window cannot be counted as one of them.
+  STOPS=$(grep -oE '"action_id":"[a-f0-9]+","actor":"[^"]*","session_id":"[^"]*","command":"stop process[^"]*"' \
+            /tmp/t11x-timeline.json | grep -oE '"action_id":"[a-f0-9]+"')
+  ACTIONS=$(printf '%s\n' "$STOPS" | sort -u | wc -l)
+  STAGES=$(printf '%s\n' "$STOPS" | sort | uniq -c | tr -s ' ' | cut -d' ' -f2 | sort -u | tr '\n' ' ')
+  echo "distinct action identities: ${ACTIONS}; stages carrying each: ${STAGES}"
+  prove t11x5 "\`action.executed\` carries the transaction evidence §17.3 requires" \
+    "grep -q '\"kind\":\"action.executed\"' /tmp/t11x-timeline.json &&
+     grep -q '\"evidence\":\[\"@v' /tmp/t11x-timeline.json"
+  prove t11x6 "every stage of one action carries one and the same identity (§17.2, §17.3)" \
+    "test \"\$(echo $STAGES)\" = 4"
+  prove t11x7 "and the two actions carry two identities, not one shared by their moment (§26.4)" \
+    "test \"$ACTIONS\" -eq 2"
+
+  echo '== §26.4: adjacency across the boundary creates nothing =='
+  prove t11x8 "no event was given a causal parent by the event beside it (§26.4, §55.6)" \
+    "! grep -q '\"causal_parents\":\[[^]]' /tmp/t11x-timeline.json"
+
+  LATER=$(ono -c 'timeline --since 5m' 2>/dev/null | grep -oE '@e[0-9a-f]+' | tail -1)
+  echo "the later event: ${LATER:-<none>}"
+  ono -c "why event $LATER | to json" > /tmp/t11x-why.json 2>&1
+  prove t11x9 "a rendered row carries the reference \`why\` is asked with (§11.6, §16.2)" \
+    "test -n '$LATER'"
+  prove t11x10 "\`why\` answers a complete explanation over the pair (§16.4)" \
+    "tail -1 /tmp/t11x-why.json | grep -q 'ono.causal-explanation/1'"
+  prove t11x11 "and it claims no cause from the neighbour twenty milliseconds away (§26.4, §55.3)" \
+    "tail -1 /tmp/t11x-why.json | grep -q '\"cause\":null' &&
+     tail -1 /tmp/t11x-why.json | grep -q '\"causal_chain\":\[\]'"
+  prove t11x12 "not knowing is an answer rather than an error (§15.7, §16.7, §34)" \
+    "ono -c 'why event $LATER' >/dev/null 2>&1 &&
+     ! grep -qE 'Ono-Sendai-E13(0[1-9]|1[0-4])' /tmp/t11x-why.json"
+  echo 'remote causality: done'
+exit: 0
+stdout-contains: PROVED t11x1
+stdout-contains: PROVED t11x2
+stdout-contains: PROVED t11x3
+stdout-contains: PROVED t11x4
+stdout-contains: PROVED t11x5
+stdout-contains: PROVED t11x6
+stdout-contains: PROVED t11x7
+stdout-contains: PROVED t11x8
+stdout-contains: PROVED t11x9
+stdout-contains: PROVED t11x10
+stdout-contains: PROVED t11x11
+stdout-contains: PROVED t11x12
+stdout-contains: remote causality: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

@@ -343,9 +343,23 @@ fn should_neutralise_control_characters_when_a_subject_label_carries_them() {
         !rendered.contains('\u{7}'),
         "no bell reaches the terminal, got {rendered:?}"
     );
+    // Against a benign label rather than against a constant: the timeline states its coverage on
+    // a line of its own (§8.5), and what this test is about is that a hostile label adds no row
+    // the benign one does not.
+    let benign = support::timeline_record(
+        vec![event(
+            "e99990000000000000000009",
+            "object.changed",
+            "12:00:00.000",
+            "nginx",
+            &[("subject", subject("nginx", "service"))],
+        )],
+        Vec::new(),
+    );
+    let expected = timeline(&benign, 200, &RenderOptions::default()).len();
     assert_eq!(
         lines.len(),
-        1,
+        expected,
         "a newline in a label does not become a second row, got {lines:?}"
     );
 }

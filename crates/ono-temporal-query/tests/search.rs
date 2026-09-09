@@ -50,6 +50,20 @@ fn colliding_pair() -> (TemporalEvent, TemporalEvent, String) {
     unreachable!("256 two-digit prefixes cannot hold 300 distinct events")
 }
 
+/// A ledger crowded enough that two hex digits cannot tell its events apart.
+fn crowd(count: usize) -> Vec<TemporalEvent> {
+    (0..count)
+        .map(|index| {
+            event(
+                EventKind::ObjectObserved,
+                &format!("2026-08-31T12:{:02}:{:02}Z", index / 60, index % 60),
+                "linux.procfs",
+                Some(subject(SpatialType::Process, &format!("p{index}"))),
+            )
+        })
+        .collect()
+}
+
 #[test]
 fn should_resolve_a_short_reference_back_to_the_event_when_one_was_issued() {
     let shown = event(
@@ -60,7 +74,7 @@ fn should_resolve_a_short_reference_back_to_the_event_when_one_was_issued() {
     );
     let held = ledger(std::slice::from_ref(&shown));
     let mut references = EventReferences::new();
-    let reference = references.reference(&shown);
+    let reference = references.reference(&held, &shown);
 
     assert!(
         reference.to_string().starts_with("@e"),
@@ -85,9 +99,10 @@ fn should_issue_the_same_reference_when_the_same_event_is_shown_twice() {
         "linux.procfs",
         Some(subject(SpatialType::Process, "nginx")),
     );
+    let held = ledger(std::slice::from_ref(&shown));
     let mut references = EventReferences::new();
-    let first = references.reference(&shown);
-    let again = references.reference(&shown);
+    let first = references.reference(&held, &shown);
+    let again = references.reference(&held, &shown);
     assert_eq!(first, again);
     assert_eq!(references.len(), 1);
 }
@@ -95,9 +110,14 @@ fn should_issue_the_same_reference_when_the_same_event_is_shown_twice() {
 #[test]
 fn should_keep_the_first_reference_when_a_later_event_shares_its_prefix() {
     let (earlier, later, _) = colliding_pair();
+    let held = ledger(std::slice::from_ref(&earlier));
     let mut references = EventReferences::new();
-    let first = references.reference(&earlier);
-    let second = references.reference(&later);
+    let first = references.reference(&held, &earlier);
+    // The colliding event arrives after the reader was shown the first reference, which is the
+    // only way a session table can be asked to hold a reference the ledger would now spell longer.
+    held.append(std::slice::from_ref(&later), &[])
+        .expect("the ledger appends");
+    let second = references.reference(&held, &later);
 
     assert_ne!(first, second, "one reference names one event");
     assert_eq!(
@@ -440,12 +460,109 @@ fn should_carry_the_full_identity_when_a_reference_is_asked_for_it() {
         "linux.procfs",
         Some(subject(SpatialType::Process, "nginx")),
     );
+    let held = ledger(std::slice::from_ref(&shown));
     let mut references = EventReferences::new();
-    let reference = references.reference(&shown);
+    let reference = references.reference(&held, &shown);
     assert_eq!(reference.event_id(), &shown.event_id);
     assert_eq!(
         EventId::parse(reference.as_str()).map(|id| id.as_str().to_owned()),
         Some(reference.as_str().to_owned()),
         "a short reference is itself an event reference"
+    );
+}
+
+#[test]
+fn should_mint_a_reference_a_later_session_resolves_when_another_event_shares_its_prefix() {
+    // §11.6: "Rendered events MUST expose stable references usable in subsequent commands." The
+    // session that printed the reference is gone by the time the reader types it back, so the
+    // prefix has to name one event in the *ledger*, not merely one the session had shown.
+    let (earlier, later, _) = colliding_pair();
+    let held = ledger(&[earlier.clone(), later.clone()]);
+    let mut printing = EventReferences::new();
+    let printed = printing.reference(&held, &earlier).to_string();
+
+    let later_session = EventReferences::new();
+    let found = later_session
+        .resolve(&printed, &held)
+        .expect("a printed reference resolves in a later session");
+    assert_eq!(
+        found.map(|event| event.event_id),
+        Some(earlier.event_id),
+        "the reference a row printed names exactly one retained event"
+    );
+}
+
+#[test]
+fn should_mint_references_a_later_session_resolves_for_every_row_of_a_rendering() {
+    // §11.6 promises the reference on *every* rendered row, and a timeline renders up to
+    // `DEFAULT_LIMIT` of them. Each has to name one event in the ledger the row was read from,
+    // and each has to stay short enough to be typed back.
+    let shown = crowd(300);
+    let held = ledger(&shown);
+    let mut printing = EventReferences::new();
+    let printed = printing.reference_all(&held, &shown);
+    assert_eq!(printed.len(), shown.len(), "one reference per rendered row");
+
+    let later_session = EventReferences::new();
+    for (event, reference) in shown.iter().zip(&printed) {
+        let found = later_session
+            .resolve(&reference.to_string(), &held)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "§11.6: {reference} is on the reader's screen and must resolve: {}",
+                    error.message()
+                )
+            });
+        assert_eq!(
+            found.map(|found| found.event_id),
+            Some(event.event_id.clone()),
+            "the reference names the event whose row printed it"
+        );
+    }
+    assert!(
+        printed
+            .iter()
+            .all(|reference| reference.as_str().len() <= 6),
+        "§11.6 spells a reference short: 300 events need four hex digits at most, not the digest"
+    );
+}
+
+#[test]
+fn should_issue_the_same_reference_whether_a_row_is_minted_alone_or_in_a_rendering() {
+    let shown = crowd(300);
+    let held = ledger(&shown);
+    let mut batched = EventReferences::new();
+    let all = batched.reference_all(&held, &shown);
+    let mut singly = EventReferences::new();
+    for (event, batched) in shown.iter().zip(&all) {
+        assert_eq!(
+            &singly.reference(&held, event),
+            batched,
+            "one event has one reference, however many rows were rendered with it"
+        );
+    }
+}
+
+#[test]
+fn should_keep_a_digit_in_hand_so_an_event_recorded_after_the_row_cannot_take_it_back() {
+    // The ledger is alive: the shell that printed the row appends its own coverage and action
+    // events as it exits, and the shell the reader hands the reference to appends more before it
+    // resolves anything. §11.6's reference has to survive that, so it is minted one digit longer
+    // than the ledger strictly needed at the moment it was printed (ADR-0783).
+    let (printed_event, appended_later, _) = colliding_pair();
+    let held = ledger(std::slice::from_ref(&printed_event));
+    let mut printing = EventReferences::new();
+    let printed = printing.reference(&held, &printed_event).to_string();
+
+    held.append(std::slice::from_ref(&appended_later), &[])
+        .expect("the ledger appends");
+    let later_session = EventReferences::new();
+    let found = later_session
+        .resolve(&printed, &held)
+        .expect("a reference on the reader's screen survives the next event");
+    assert_eq!(
+        found.map(|event| event.event_id),
+        Some(printed_event.event_id),
+        "the event that shares the ledger's shortest prefix does not take the printed one back"
     );
 }

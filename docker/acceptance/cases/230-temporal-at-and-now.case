@@ -57,7 +57,10 @@ run: |
     'ono -c "at event @edeadbeef" 2>&1 | grep -q "temporal.invalid_time"'
 
   echo '== history nothing can reach is a refusal that lists what each source can (§12.3) =='
-  ono -c 'at -3d' > /tmp/t2-far.out 2>&1
+  # With the recorder off, which §10.2 makes the default: the refusal has to name it as a source
+  # that is switched off rather than leave it out, because "no recorder" and "a recorder that
+  # reaches nothing" are different answers to "how far back can you see?" (§12.3, §7.5).
+  ONO_TEMPORAL_RECORDING_ENABLED=false ono -c 'at -3d' > /tmp/t2-far.out 2>&1
   prove t2k "three days back is temporal.not_recorded on a session that has none (§12.3)" \
     'grep -q "temporal.not_recorded" /tmp/t2-far.out'
   prove t2l "and the refusal says what each source can reach (§12.3)" \

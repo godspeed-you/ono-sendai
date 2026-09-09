@@ -18,7 +18,8 @@ run: |
   export ONO_PLUGIN_PATH="$home/plugins"
   export XDG_STATE_HOME="$home/state"
   export XDG_CONFIG_HOME="$home/config"
-  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/state/ono"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" \
+           "$home/plugins/dev.example.echo/contributions" "$home/state/ono"
   cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
   cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
   format: kuang-package/1
@@ -49,16 +50,45 @@ run: |
       - temporal.contribute.causality
   network:
     outbound: none
+  contributions:
+    commands: [contributions/commands.yaml]
   MANIFEST
+  cat > "$home/plugins/dev.example.echo/contributions/commands.yaml" <<'COMMANDS'
+  commands:
+    - id: dev.example.echo.command.emit
+      verb: get
+      target: echo-item
+      summary: Emit a counted stream of integers.
+      output: stream<int>
+      argument_mode: expression
+      capabilities: []
+      options:
+        - name: count
+          type: int
+          doc: How many integers to emit.
+          default: 2
+      examples:
+        - get echo-item --count 3
+  COMMANDS
+
+  # The five capabilities the history provider needs are optional, and default-deny denies them
+  # (§31.17). A package running with a denied optional capability is `degraded` rather than
+  # `loaded` — a fact about the grant, not about the source resolving — so the grants come first
+  # and `loaded` then means what this case reads it as.
+  grants='grant capability object.read --plugin dev.example.echo | count;
+  grant capability temporal.read.current --plugin dev.example.echo | count;
+  grant capability temporal.read.history --plugin dev.example.echo | count;
+  grant capability temporal.contribute.events --plugin dev.example.echo | count;
+  grant capability temporal.contribute.causality --plugin dev.example.echo | count;'
 
   echo "== the package loads, so its temporal source resolved to a schema it contributes =="
-  ono -c 'load plugin dev.example.echo; get plugin | where id == "dev.example.echo" | select id state | to json' | tail -1
+  ono -c "$grants load plugin dev.example.echo; get plugin | where id == \"dev.example.echo\" | select id state | to json" | tail -1
 
   echo "== and the target that schema belongs to still answers =="
-  ono -c 'load plugin dev.example.echo; get echo-item --count 2 | count | to json' | grep -q '^\[2\]$' && echo "contributed-target-answers"
+  ono -c "$grants load plugin dev.example.echo; get echo-item --count 2 | count | to json" | grep -q '^\[2\]$' && echo "contributed-target-answers"
 
   echo "== a historical query provider is bounded, so its answer is collected rather than followed =="
-  ono -c 'load plugin dev.example.echo; get echo-item --count 1 | to json' | tail -1
+  ono -c "$grants load plugin dev.example.echo; get echo-item --count 1 | to json" | tail -1
 exit: 0
 stdout-contains: "id":"dev.example.echo","state":"loaded"
 stdout-contains: contributed-target-answers

@@ -6,52 +6,27 @@
 //! a recorder that is not running, and nothing here touches the filesystem until `start recorder`
 //! is typed.
 //!
-//! The controller that subscribes to providers, schedules checkpoints and buffers under §43's
-//! bounds is `ono-recorder`'s. What lives here is the command surface: the ledger the session
-//! reads history from is swapped between §10.7's in-memory one and §31's persistent store, and
-//! the status is reported from what the ledger itself knows.
+//! What sits behind these commands is [`ono_recorder::Recorder`], not a stand-in. §44.1's five
+//! start steps, §43.2's coverage declarations and §31.8's bounded retention are that component's,
+//! and the command layer's job is the one `crates/ono-recorder/src/lib.rs` documents: build the
+//! [`RecorderOptions`] this host can honestly offer, call `start`, `status` and `stop`, and give
+//! `maintenance` a turn whenever the shell has one to give (ADR-0777).
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, RwLock};
 
 use jiff::Timestamp;
 use ono_command::{CommandImpl, Invocation, Outcome, OutcomeFuture};
 use ono_core::ErrorCode;
 use ono_pipeline::ValueStream;
-use ono_temporal_core::{LedgerRead, LedgerWrite, RetentionState, error};
-use ono_temporal_ledger::{Ledger, StoreOptions};
+use ono_recorder::{Recorder, RecorderOptions, RecorderSettings, SourceProfile};
+use ono_spatial_core::SpatialType;
+use ono_temporal_core::{ClockDomain, EvidenceSource, LedgerRead, error};
+use ono_temporal_ledger::Ledger;
 use ono_value::{
-    ActionResult, ActionStatus, ByteSize, Duration, ErrorValue, MapValue, Provenance, RecordValue,
-    SchemaId, Value, ValueRef, builtin_schemas,
+    ActionResult, ActionStatus, ByteSize, Duration, ErrorValue, MapValue, SchemaId, Value, ValueRef,
 };
 
 use super::session::{TemporalState, temporal_session};
-
-/// `temporal.retention.max_age`, `temporal.retention.max_size`, `temporal.checkpoint.interval`,
-/// `temporal.flush.interval` and `temporal.session.max_events` as §33 defaults them.
-///
-/// The recorder status states the policy in force, and a policy nobody could name would make
-/// §30.1's "the user must know how much it retains" unanswerable.
-#[derive(Debug, Clone, Copy)]
-struct Policy {
-    max_age: Duration,
-    max_size: ByteSize,
-    checkpoint_interval: Duration,
-    flush_interval: Duration,
-    session_max_events: i128,
-}
-
-impl Default for Policy {
-    fn default() -> Self {
-        Self {
-            max_age: Duration::from_nanoseconds(24 * 3_600_000_000_000),
-            max_size: ByteSize::from_bytes(512 * 1024 * 1024),
-            checkpoint_interval: Duration::from_nanoseconds(300_000_000_000),
-            flush_interval: Duration::from_nanoseconds(2_000_000_000),
-            session_max_events: i128::try_from(ono_temporal_core::DEFAULT_SESSION_MAX_EVENTS)
-                .unwrap_or(100_000),
-        }
-    }
-}
 
 /// Where this user's ledger lives (§31.1, §30.2).
 pub(crate) fn store_path() -> Result<std::path::PathBuf, ErrorValue> {
@@ -68,128 +43,186 @@ pub(crate) fn store_path() -> Result<std::path::PathBuf, ErrorValue> {
     })
 }
 
-/// The `ono.recorder-status/1` record of §10.3.
-fn status_record(state: &TemporalState, since: Option<Timestamp>) -> Result<Value, ErrorValue> {
-    let schema_id = SchemaId::new("ono.recorder-status", 1);
-    let schema = builtin_schemas().get(&schema_id).ok_or_else(|| {
-        ErrorValue::new(
-            ErrorCode::ProviderSchemaViolation,
-            "the `ono.recorder-status/1` contract is not in this build",
-        )
-    })?;
-    let provenance = Provenance::local("ono.temporal", schema_id);
-    let policy = Policy::default();
-    let retention: RetentionState = state.ledger().retention();
-    let running = state.ledger().is_persistent();
-    let builder = RecordValue::builder(schema, provenance);
-    let builder = put(builder, "running", Value::Bool(running));
-    let builder = put(builder, "enabled", Value::Bool(running));
-    let builder = put(
-        builder,
-        "since",
-        since.map_or(Value::Null, Value::Timestamp),
-    );
-    let builder = put(
-        builder,
-        "store",
-        match store_path() {
-            Ok(path) if running => Value::Path(Arc::from(path)),
-            _ => Value::Null,
-        },
-    );
-    let builder = put(
-        builder,
-        "max_age",
-        Value::Duration(retention.max_age.unwrap_or(policy.max_age)),
-    );
-    let builder = put(
-        builder,
-        "max_size",
-        Value::ByteSize(retention.max_size.unwrap_or(policy.max_size)),
-    );
-    let builder = put(
-        builder,
-        "checkpoint_interval",
-        Value::Duration(policy.checkpoint_interval),
-    );
-    let builder = put(
-        builder,
-        "flush_interval",
-        Value::Duration(policy.flush_interval),
-    );
-    let builder = put(
-        builder,
-        "session_max_events",
-        Value::Int(policy.session_max_events),
-    );
-    let builder = put(builder, "events", Value::Int(i128::from(retention.events)));
-    let builder = put(
-        builder,
-        "size",
-        retention.stored_size.map_or(Value::Null, Value::ByteSize),
-    );
-    let builder = put(
-        builder,
-        "earliest",
-        retention.earliest.map_or(Value::Null, Value::Timestamp),
-    );
-    let builder = put(
-        builder,
-        "latest",
-        retention.latest.map_or(Value::Null, Value::Timestamp),
-    );
-    // §10.6: what the recorder collects is visible. Without the controller running there is one
-    // honest answer, and it is the session's own ingest — never a list of what it might collect.
-    let sources = if running {
-        vec![
-            Value::string(ono_temporal_core::EvidenceSource::recorder().as_str()),
-            Value::string(ono_temporal_core::EvidenceSource::session().as_str()),
-        ]
-    } else {
-        vec![Value::string(
-            ono_temporal_core::EvidenceSource::session().as_str(),
-        )]
-    };
-    let builder = put(builder, "sources", Value::list(sources));
-    let builder = put(
-        builder,
-        "dropped",
-        Value::Int(i128::from(retention.evicted)),
-    );
-    // §21.8 forbids freezing a last known state and calling it current, and §43.4 makes health a
-    // fact rather than a mood: a recorder that is not running is `stopped`, and one that has
-    // dropped events is `degraded`.
-    let health = if !running {
-        "stopped"
-    } else if retention.evicted > 0 {
-        "degraded"
-    } else {
-        "healthy"
-    };
-    let builder = put(builder, "health", Value::string(health));
-    Ok(Value::Record(Arc::new(builder.build())))
+/// The one recorder of this process (§10, §39.2).
+///
+/// Built on first use and never before: [`Recorder::new`] opens nothing, but the scope it is built
+/// from reads the host's identity, and §32.1 budgets a disabled shell at no cost at all. Every
+/// caller below is a command the user typed or a setting they switched on.
+pub(crate) fn recorder() -> &'static Recorder {
+    static RECORDER: OnceLock<Recorder> = OnceLock::new();
+    RECORDER.get_or_init(|| Recorder::new(options()))
 }
 
-/// Sets a field, keeping a schema refusal rather than swallowing it.
-fn put(builder: ono_value::RecordBuilder, field: &str, value: Value) -> ono_value::RecordBuilder {
-    builder.set(field, value).unwrap_or_else(|_| {
-        // Unreachable while the embedded contract and this code agree, and the `ono-value`
-        // contract test plus `xtask spec-check` are what keep them agreeing. Returning an
-        // incomplete builder rather than panicking keeps a contract drift a failed validation
-        // instead of a crashed shell.
-        ono_value::RecordValue::builder(
-            builtin_schemas()
-                .get(&SchemaId::new("ono.recorder-status", 1))
-                .unwrap_or_else(|| {
-                    builtin_schemas()
-                        .schemas()
-                        .next()
-                        .cloned()
-                        .unwrap_or_else(|| unreachable!("the builtin registry is never empty"))
-                }),
-            Provenance::local("ono.temporal", SchemaId::new("ono.recorder-status", 1)),
-        )
-    })
+/// How this host's recorder is configured (§10.4, §10.6, §31.1).
+fn options() -> RecorderOptions {
+    let scope = crate::spatial::local_scope();
+    let host = scope.host_scope().id().to_owned();
+    let domain = ClockDomain::new(&host, boot_id().as_deref());
+    let options = RecorderOptions::new(scope, domain).with_sources(profiles());
+    match store_path() {
+        Ok(path) => options.with_store(path),
+        // §44.3: a shell with nowhere to keep history still works, with persistence off and an
+        // explicit diagnostic. `Recorder::start` produces exactly that from a store-less option
+        // set, so the refusal is carried rather than raised here.
+        Err(_) => options,
+    }
+}
+
+/// The kernel's boot identity, which is what makes two observations comparable (§25.5).
+fn boot_id() -> Option<String> {
+    std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
+        .ok()
+        .map(|text| text.trim().to_owned())
+        .filter(|text| !text.is_empty())
+}
+
+/// What this shell can honestly say it collects from (§10.6, §21.5, §22.1).
+///
+/// One profile per kind of place the session's own sweeps yield, all of them sourced `ono.session`
+/// — because that is what the evidence actually is. §21.5 forbids advertising `exhaustive_events`
+/// for a source that is asked rather than subscribed to, and §6.3 forbids reading a missing object
+/// as a disappearance unless the source promised a complete snapshot; a shell that observes when a
+/// command is typed promises neither, so both are declined here rather than in a comment.
+///
+/// `ono.recorder` is not among them: the recorder is not a source of system observations, it is
+/// what writes down the coverage and the gaps of the ones it holds (§44.1).
+fn profiles() -> Vec<SourceProfile> {
+    [SpatialType::Process, SpatialType::Service]
+        .into_iter()
+        .map(|object_type| {
+            SourceProfile::new(EvidenceSource::session(), "ono.session", object_type)
+                .polled(observation_interval())
+                .exhaustive(false)
+                .meaningful_disappearance(false)
+        })
+        .collect()
+}
+
+/// How often the shell's own observation refreshes, as §33.3's freshness policy fixes it.
+///
+/// It is the sampling interval §22.1 requires a snapshot source's coverage to carry: a reader of
+/// that coverage learns that between two commands nobody looked.
+fn observation_interval() -> Duration {
+    Duration::from_nanoseconds(5_000_000_000)
+}
+
+/// When the running recorder was started, so `get recorder` can report it (§10.3).
+///
+/// One slot, in one place. Two function-local statics of the same name are two different statics,
+/// and a writer and a reader that each declared their own could never agree.
+fn started() -> &'static RwLock<Option<Timestamp>> {
+    static STARTED: OnceLock<RwLock<Option<Timestamp>>> = OnceLock::new();
+    STARTED.get_or_init(|| RwLock::new(None))
+}
+
+/// When the running recorder was started, for `since` (§10.3).
+fn started_at() -> Option<Timestamp> {
+    started().read().ok().and_then(|held| *held)
+}
+
+/// Records that the recorder started, or stopped.
+pub(crate) fn note_started(at: Option<Timestamp>) {
+    if let Ok(mut held) = started().write() {
+        *held = at;
+    }
+}
+
+/// The §10.4 and §10.7 limits this session was configured with (§33).
+///
+/// Read once, from the resolved settings, and kept for every later `start recorder`: the settings
+/// a start applies are the session's, and a recorder that used the built-in defaults would report
+/// a `session_max_events` nobody asked for as though it were in force.
+fn settings() -> &'static RwLock<RecorderSettings> {
+    static SETTINGS: OnceLock<RwLock<RecorderSettings>> = OnceLock::new();
+    SETTINGS.get_or_init(|| RwLock::new(RecorderSettings::default()))
+}
+
+/// The settings in force for this session (§10.4, §33).
+pub(crate) fn configured_settings() -> RecorderSettings {
+    settings()
+        .read()
+        .map_or_else(|_| RecorderSettings::default(), |held| held.clone())
+}
+
+/// Applies the `temporal.*` limits the session resolved (§10.4, §10.7, §33).
+pub(crate) fn configure(resolved: RecorderSettings) {
+    if let Ok(mut held) = settings().write() {
+        *held = resolved;
+    }
+}
+
+/// The bounded in-memory ledger of §10.7, at the capacity this session was configured with.
+pub(crate) fn session_ledger() -> Ledger {
+    Ledger::session_with_capacity(configured_settings().session_max_events)
+}
+
+/// Starts the recorder and gives the session the ledger it writes to (§10.8, §44.1).
+///
+/// Every one of §44.1's five steps runs inside [`Recorder::start`], which is the whole reason this
+/// is a call rather than a ledger swap: the interval between the last retained event and this
+/// start is filed as a gap under the `<type>.existence` capability a reconstruction gates object
+/// presence on, and the coverage each source declares is written down beside it.
+///
+/// # Errors
+///
+/// Returns `temporal.recorder_already_running` where a second start asks for settings the running
+/// recorder is not using (§10.8, ADR-0640).
+pub(crate) fn start_recorder(
+    state: &mut TemporalState,
+    now: Timestamp,
+) -> Result<ono_recorder::StartOutcome, ErrorValue> {
+    let outcome = recorder().start(&configured_settings(), now)?;
+    state.set_shared_ledger(recorder().ledger());
+    note_started(outcome.status.since);
+    Ok(outcome)
+}
+
+/// One turn of the recorder's own maintenance, where the shell has a turn to give (§10.4, §31.8).
+///
+/// §39.2 keeps every timer in this system a caller's call, and a command that has just finished
+/// its work is the caller with a moment to spare. A refusal is dropped rather than raised: losing
+/// a flush is not a reason to lose the answer the user asked for (§16.5).
+pub(crate) fn maintain(now: Timestamp) {
+    if started_at().is_none() {
+        return;
+    }
+    let _ = recorder().maintenance(now);
+}
+
+/// The `ono.recorder-status/1` record of §10.3, as the running recorder answers it.
+///
+/// The retention figures are read from the ledger the *session* holds, because that is the ledger
+/// every command in this shell reads and writes: §10.7's in-memory one while nothing is recording,
+/// and the recorder's own store once something is. `sources` is §10.6's list, and it names only
+/// what actually collects — the shell's own observations always, and the recorder itself once it
+/// is writing coverage and gaps of its own (ADR-0777).
+fn status_record(state: &TemporalState, now: Timestamp) -> Result<Value, ErrorValue> {
+    let mut status = recorder().status(now);
+    let retention = state.ledger().retention();
+    status.events = retention.events;
+    status.size = retention.stored_size;
+    status.earliest = retention.earliest;
+    status.latest = retention.latest;
+    status.since = status.since.or_else(started_at);
+    // §33: the limits the status states are the session's resolved ones. A recorder nobody has
+    // started is still holding a session ledger bounded by `temporal.session.max_events`, and
+    // reporting the built-in default there would state a ceiling that is not the one in force.
+    if !status.running {
+        status.settings = configured_settings();
+    }
+    // §10.6: the list names what collects, and nothing else. One profile per kind of place is one
+    // source seen twice, not two sources; and a shell that is not recording still collects its own
+    // observations into §10.7's session ledger, so the list is the same list either way.
+    status
+        .sources
+        .sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    status
+        .sources
+        .dedup_by(|left, right| left.as_str() == right.as_str());
+    if status.sources.is_empty() {
+        status.sources = vec![EvidenceSource::session()];
+    }
+    Ok(Value::Record(std::sync::Arc::new(status.to_record()?)))
 }
 
 /// `get recorder` (§10.3).
@@ -208,33 +241,17 @@ impl CommandImpl for GetRecorder {
     fn invoke_async<'a>(&'a self, _ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
         Box::pin(async move {
             let state = temporal_session().await;
-            let record = status_record(&state, started_at())?;
+            let now = Timestamp::now();
+            // §10.4, §31.8, §31.9: asking what the recorder is doing is a turn the shell can spare,
+            // and the recorder has no thread of its own to take one on.
+            maintain(now);
+            let record = status_record(&state, now)?;
             Ok(Outcome::Values(ValueStream::from_values([record])))
         })
     }
 }
 
-/// When the running recorder was started, for `since` (§10.3).
-fn started_at() -> Option<Timestamp> {
-    static STARTED: std::sync::OnceLock<std::sync::RwLock<Option<Timestamp>>> =
-        std::sync::OnceLock::new();
-    STARTED
-        .get_or_init(|| std::sync::RwLock::new(None))
-        .read()
-        .ok()
-        .and_then(|held| *held)
-}
-
-/// Records that the recorder started, or stopped.
-pub(crate) fn note_started(at: Option<Timestamp>) {
-    static STARTED: std::sync::OnceLock<std::sync::RwLock<Option<Timestamp>>> =
-        std::sync::OnceLock::new();
-    if let Ok(mut held) = STARTED.get_or_init(|| std::sync::RwLock::new(None)).write() {
-        *held = at;
-    }
-}
-
-/// `start recorder` (§10.3, §10.8).
+/// `start recorder` (§10.3, §10.8, §44.1).
 #[derive(Debug)]
 pub struct StartRecorder;
 
@@ -250,16 +267,21 @@ impl CommandImpl for StartRecorder {
     fn invoke_async<'a>(&'a self, _ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
         Box::pin(async move {
             let mut state = temporal_session().await;
-            if state.ledger().is_persistent() {
-                // §10.8: starting is idempotent as a lifecycle, and §34 gives the second start
-                // its own code so a script can tell "already on" from "failed to start".
-                return Err(error::recorder_already_running());
+            let now = Timestamp::now();
+            // §10.8 makes the lifecycle idempotent and ADR-0640 draws the one line inside it: a
+            // start that asks for settings the running recorder is not using answers E1314 rather
+            // than silently ignoring what the operator asked for. Both are `Recorder::start`'s.
+            let outcome = start_recorder(&mut state, now)?;
+            // §44.3: persistence that could not be brought up leaves the shell working and says
+            // so, on the diagnostic stream, once — the status carries the same words afterwards.
+            if let Some(diagnostic) = outcome.diagnostic.as_ref() {
+                crate::report::Reporter::new(ono_render::Presentation::choose(
+                    std::io::IsTerminal::is_terminal(&std::io::stderr()),
+                    &[],
+                ))
+                .note(&diagnostic.render_terse());
             }
-            let path = store_path()?;
-            let ledger = Ledger::persistent(&StoreOptions::at(&path))?;
-            state.set_ledger(ledger);
-            note_started(Some(Timestamp::now()));
-            let record = status_record(&state, started_at())?;
+            let record = status_record(&state, now)?;
             Ok(Outcome::Values(ValueStream::from_values([record])))
         })
     }
@@ -281,15 +303,14 @@ impl CommandImpl for StopRecorder {
     fn invoke_async<'a>(&'a self, _ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
         Box::pin(async move {
             let mut state = temporal_session().await;
-            if !state.ledger().is_persistent() {
-                return Err(error::recorder_not_running());
-            }
-            // §10.8: the stop is clean. What was buffered is written before the store is let go,
-            // so the interval that follows is a declared gap rather than lost events (§44.1).
-            state.ledger().flush()?;
-            state.set_ledger(Ledger::default());
+            let now = Timestamp::now();
+            // §10.8: the stop is clean. The coverage the recorder opened is closed at this
+            // instant and what was buffered is written before the store is let go, so the
+            // interval that follows is a declared gap rather than lost events (§44.1).
+            recorder().stop(now)?;
+            state.set_shared_ledger(recorder().ledger());
             note_started(None);
-            let record = status_record(&state, None)?;
+            let record = status_record(&state, now)?;
             Ok(Outcome::Values(ValueStream::from_values([record])))
         })
     }
@@ -344,8 +365,12 @@ impl CommandImpl for RemoveTemporalHistory {
                 ));
             }
             {
+                // The recorder lets the store go before the file does: §30.8 destroys the
+                // retained history, and a recorder still holding an open handle to it would keep
+                // writing into a database nobody can find.
                 let mut state = temporal_session().await;
-                state.set_ledger(Ledger::default());
+                let _ = recorder().stop(Timestamp::now());
+                state.set_ledger(session_ledger());
                 note_started(None);
             }
             let removed = remove_store(&path);

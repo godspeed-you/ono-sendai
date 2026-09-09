@@ -22,6 +22,15 @@ use ono_value::{ErrorValue, Value};
 
 use super::session::{TemporalState, temporal_session};
 
+/// The terminal side of §19's full-screen timeline.
+///
+/// It lives in a file of its own — `crate::temporal::timeline_view` on disk — because it is the
+/// one part of `timeline` that needs a terminal, and everything here is meant to stay testable
+/// without one. It is declared from this module rather than beside it so that the view and the
+/// command that opens it are one unit (ADR-0781).
+#[path = "timeline_view.rs"]
+pub mod timeline_view;
+
 /// How many events `find event` answers with when the user names no limit.
 const FIND_LIMIT: usize = 500;
 
@@ -115,18 +124,55 @@ impl CommandImpl for Timeline {
                 request.kinds.push(kind);
             }
 
-            let timeline = {
-                let ledger = state.ledger_handle();
-                ono_temporal_query::timeline::timeline(ledger.as_ref(), &request, &context, now)?
-            };
-            let timeline = timeline.with_references(state.references());
+            // §19.1: `timeline --view` opens the full-screen timeline over exactly this request.
+            // It is a presentation of the values this command answers with, so it reads the same
+            // window through the same query and this command answers with nothing further —
+            // the view showed it. Where no terminal can be taken the option degrades to the text
+            // timeline below, which is what keeps `timeline --view` in a pipe deterministic and
+            // free of escape sequences (v0.2 §50, v0.4 §29.1).
+            if arguments.flag("view") && timeline_view::may_open(ctx) {
+                let request = match arguments.flag("all") {
+                    // §11.3: with `--all` the window is the whole scope rather than a place, so
+                    // there is no place for §19.2's header to name.
+                    true => request,
+                    false => {
+                        let spatial = crate::spatial::spatial_session().await;
+                        let label = ono_spatial_query::resolve::concise_path(
+                            spatial.index(),
+                            spatial.current_place(),
+                        );
+                        drop(spatial);
+                        request.labelled(&label)
+                    }
+                };
+                let context = state.shared_context();
+                drop(state);
+                timeline_view::open(request, context).await?;
+                return Ok(Outcome::Values(ValueStream::from_values(Vec::new())));
+            }
+
+            let ledger = state.ledger_handle();
+            let timeline =
+                ono_temporal_query::timeline::timeline(ledger.as_ref(), &request, &context, now)?;
+            // §11.6: the reference a row prints has to name one event in the ledger it was read
+            // from, because the command the reader types next is a shell that issued none.
+            let timeline = timeline.with_references(ledger.as_ref(), state.references());
             let record = timeline.to_record()?;
+            // §11.4 fixes the value: `Stream<TemporalEvent>`, and "this MUST work" —
+            // `timeline --since 1h | where kind == "object.changed"`. So the events are the
+            // stream, and everything the window is a statement *about* — its bounds, its
+            // coverage, its gaps, whether a limit cut it — is published for the renderer instead
+            // of wrapped around them, because §11.7 makes drawing a gap the renderer's obligation
+            // and §11.4 makes the renderer "only a presentation" (ADR-0778).
+            let events = match record.get("events") {
+                Some(Value::List(items)) => items.to_vec(),
+                _ => Vec::new(),
+            };
+            crate::sink::publish_timeline(record);
             // §11.5's default rendering is a row per event, so `RenderOptions::group_repeats`
             // stays off in `crate::sink`. §19.4's grouping belongs to the full-screen timeline of
             // §19, which has its own invocation and its own key handling.
-            Ok(Outcome::Values(ValueStream::from_values([Value::Record(
-                Arc::new(record),
-            )])))
+            Ok(Outcome::Values(ValueStream::from_values(events)))
         })
     }
 }
@@ -196,18 +242,18 @@ impl CommandImpl for Changes {
             request.until = instant_of(&state, arguments.option("until"), anchor)?;
 
             let ledger = state.ledger_handle();
-            // §12.3 and §55.5: a window reaching back past everything retained is not a window
-            // with nothing in it. Answering an empty comparison would say "nothing changed" about
-            // an interval whose record was removed, which is the silent gap §55.5 names —
-            // articulate this time, because an empty list reads as a finding. `at` already
-            // refuses the same question and §34 gives it the same code.
-            if let Some(earliest) = ledger.retention().earliest
-                && request.since < earliest
-            {
-                return Err(ono_temporal_core::error::out_of_retention(
-                    request.since,
-                    earliest,
-                ));
+            // §10.4 and §34: `temporal.retention.max_age` is a floor under every comparison —
+            // nothing older is kept, so a `--since` reaching past it asks about an interval whose
+            // record was deliberately removed. An empty stream would read as "nothing changed"
+            // over it, which is exactly §55.5's silent gap, so the boundary is named instead.
+            //
+            // Inside the window a thin record stays §13.4's business rather than a refusal: a
+            // side without evidence is reported unknown and the command answers.
+            if let Some(max_age) = ledger.retention().max_age {
+                let horizon = now.as_nanosecond().saturating_sub(max_age.nanoseconds());
+                if request.since.as_nanosecond() < horizon {
+                    return Err(super::coordinate::unreachable(&state, request.since, now));
+                }
             }
             let changes = ono_temporal_query::changes::changes(ledger.as_ref(), &request, anchor)?;
             let mut values = Vec::with_capacity(changes.len());
@@ -253,20 +299,28 @@ impl CommandImpl for Why {
 
             let ledger = state.ledger_handle();
             let window = TimeRange::until(anchor);
-            let events = ledger.events(&ono_temporal_core::EventQuery {
+            // §33's `temporal.why.max_candidates` bounds the question, so it has to bound the
+            // read. The engine caps the candidate set as well, but a cap applied after the ledger
+            // has handed over every event it holds is a cap on the explanation rather than on the
+            // work — on §49's million-event fixture that is the whole store in memory to explain
+            // one transition. Descending takes the *most recent* candidates, which is the set the
+            // engine would have kept, and the engine orders them for itself (§16.3, §32.3).
+            let max_candidates = super::session::why_max_candidates();
+            let mut events = ledger.events(&ono_temporal_core::EventQuery {
                 scope: Some(crate::spatial::local_scope()),
                 subjects: Vec::new(),
                 kinds: Vec::new(),
                 range: window,
-                limit: None,
-                order: ono_temporal_core::QueryOrder::Ascending,
+                limit: Some(max_candidates),
+                order: ono_temporal_core::QueryOrder::Descending,
             })?;
+            events.reverse();
             let evidence_ids: Vec<ono_temporal_core::EvidenceId> = events
                 .iter()
                 .flat_map(|event| event.evidence.iter().cloned())
                 .collect();
             let causal = CausalContext::new(ledger.evidence(&evidence_ids)?);
-            let mut options = WhyOptions::at(anchor);
+            let mut options = WhyOptions::at(anchor).with_max_candidates(max_candidates);
             if let Some(Value::Int(depth)) = arguments.option("depth") {
                 options = options.with_depth(usize::try_from(*depth).unwrap_or(usize::MAX));
             }
@@ -366,10 +420,8 @@ impl CommandImpl for FindEvent {
                 }),
                 order: ono_temporal_core::QueryOrder::Ascending,
             };
-            let events = {
-                let ledger = state.ledger_handle();
-                ono_temporal_query::search::find_events(ledger.as_ref(), &hints)?
-            };
+            let ledger = state.ledger_handle();
+            let events = ono_temporal_query::search::find_events(ledger.as_ref(), &hints)?;
 
             // §20.3 reuses Ono expression semantics rather than inventing a search language, so
             // the predicate is compiled by the parser and evaluated by `ono-command` against each
@@ -384,9 +436,10 @@ impl CommandImpl for FindEvent {
             };
 
             let scope = ono_command::Scope::new();
+            // One batched lookup for the whole answer rather than one per row (§32.3).
+            let references = state.references().reference_all(ledger.as_ref(), &events);
             let mut values = Vec::with_capacity(events.len());
-            for event in &events {
-                let reference = state.references().reference(event);
+            for (event, reference) in events.iter().zip(references) {
                 let record = ono_temporal_core::value::event_record_with_reference(
                     event,
                     Some(reference.as_str()),

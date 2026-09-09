@@ -17,18 +17,21 @@ run: |
     fi
   }
 
+  # `$(…)` is bash's. Ono has no command substitution (ADR-0019), so a `$(cat …)` inside an Ono
+  # script is the literal `$` followed by a sub-pipeline, and the mutation never runs. The fixture
+  # process is started here instead, and its pid is interpolated into the script the shell runs.
+  victim() { sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo $!'; }
+
   echo '== a session that made events, and the reference one of its rows printed (§11.6) =='
   # Everything happens in one shell, because a reference is one session's word for an event
   # (§11.6): the row prints it and the next command in the same session reads it back.
-  ono -c "sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo \$! > /tmp/t6r.pid'
-  stop process \$(cat /tmp/t6r.pid)
+  ono -c "stop process $(victim)
   timeline --since 5m | to json" > /tmp/t6r-timeline.json 2>&1
   prove t6m "the timeline record carries a reference per event (§11.6)" \
     'grep -q "\"reference\":\"e" /tmp/t6r-timeline.json'
 
   echo '== the same reference reaches `inspect event`, `why event` and `at event` (§11.6) =='
-  ono -c "sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo \$! > /tmp/t6s.pid'
-  stop process \$(cat /tmp/t6s.pid)
+  ono -c "stop process $(victim)
   timeline --since 5m
   inspect event @REF | to json" > /tmp/t6r-probe.out 2>&1
   # The reference is read from the rendering the same session produced, then fed back in.
@@ -37,8 +40,7 @@ run: |
   prove t6n "a rendered row printed a reference this case could read back (§11.6)" \
     'test -n "$REF"'
 
-  ono -c "sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo \$! > /tmp/t6t.pid'
-  stop process \$(cat /tmp/t6t.pid)
+  ono -c "stop process $(victim)
   timeline --since 5m > /dev/null
   find event 'kind == \"action.executed\"' | select reference | to json" > /tmp/t6r-ref.json 2>&1
   MINTED=$(grep -oE '"reference":"e[0-9a-f]+"' /tmp/t6r-ref.json | head -1 | sed 's/.*:"//; s/"//')

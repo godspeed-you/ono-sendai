@@ -1,0 +1,122 @@
+# v0.5 §50 phase T8 — §55.3 names the failure this case exists against: "A renderer or AI that
+# says 'the config change caused the outage' because it happened first violates the core
+# contract." §15.2 states the rule it breaks — temporal proximity is insufficient — and §16.6
+# states it again for the renderer: "The renderer MUST NOT move the config change into the
+# `known cause` section because it appears plausible."
+#
+# The fixture is §16.6's own example, built from what a container can hold: a configuration file
+# is changed through Ono, and a second later an unrelated mutation fails. Nothing joins them —
+# no job, no action id, no published transaction — so the only thing an engine could join them on
+# is that one came first, which is exactly what it may not do. Both events are really in the
+# ledger and really a second apart, which is what makes the refusal to connect them a finding
+# rather than an empty answer.
+#
+# The strongest correlation rules of §15.5 need a `service` and a spatial relation between the
+# changed file and the failing unit, so a host with a service manager is where `ono.change-before-
+# failure` is shown emitting an edge; `crates/ono-temporal-query/tests/correlation.rs` holds that.
+# What the container settles is the half that must hold everywhere: whatever else the answer
+# carries, nothing reaches the causal side of it without a rule.
+case: a config change before a failure stays correlation, never a cause
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
+env: NO_COLOR=1
+timeout: 120
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== the fixture: a config file changed, and an unrelated failure a second later =='
+  printf 'worker_processes 1;\n' > /tmp/t8k-app.conf
+  ono -c 'printf "worker_processes 2;" | write file /tmp/t8k-app.conf --overwrite' > /dev/null 2>&1
+  sleep 1
+  # A mutation into a directory this unprivileged user does not own: a real failure, with no
+  # relation of any kind to the file changed a second earlier.
+  ono -c 'remove file /root/t8k-nothing --confirm' > /dev/null 2>&1
+  ono -c 'timeline --since 5m' > /tmp/t8k-timeline.out 2>&1
+  cat /tmp/t8k-timeline.out
+
+  CHANGE=$(grep 'ono.file.write completed' /tmp/t8k-timeline.out | grep -oE '@e[0-9a-f]+' | tail -1)
+  # §17.2 ends a mutation that did not succeed as `action.failed`, so the row reads `failed`
+  # rather than `completed` — the lifecycle says what happened rather than that it finished.
+  FAILURE=$(grep 'ono.file.remove failed' /tmp/t8k-timeline.out | grep -oE '@e[0-9a-f]+' | tail -1)
+  echo "change: ${CHANGE:-<none>}  failure: ${FAILURE:-<none>}"
+
+  echo '== the fixture is real, and it is the shape §16.6 describes =='
+  prove t8k1 "the config change is in the ledger (§17.2)" \
+    'test -n "'"$CHANGE"'"'
+  prove t8k2 "the later failure is in the ledger too (§17.2)" \
+    'test -n "'"$FAILURE"'"'
+  prove t8k3 "and the change really does precede the failure (§15.5's window)" \
+    'test "$(grep -n "ono.file.write completed" /tmp/t8k-timeline.out | cut -d: -f1 | tail -1)" -lt "$(grep -n "ono.file.remove failed" /tmp/t8k-timeline.out | cut -d: -f1 | tail -1)"'
+
+  ono -c "why event $FAILURE" > /tmp/t8k-why.out 2>&1
+  ono -c "why event $FAILURE | to json" > /tmp/t8k-why.json 2>&1
+  cat /tmp/t8k-why.out
+
+  echo '== §16.6, §55.3: what came first is not moved into `known cause` =='
+  prove t8k4 "the explanation opens no \`known cause\` section (§16.6)" \
+    '! grep -qi "known cause" /tmp/t8k-why.out'
+  prove t8k5 "and the typed answer states \`cause: null\` rather than the nearest event (§15.7)" \
+    'grep -q "\"cause\":null" /tmp/t8k-why.json'
+  prove t8k6 "no rule matched, so the chain is empty rather than filled in (§15.8)" \
+    'grep -q "\"causal_chain\":\[\]" /tmp/t8k-why.json'
+
+  # The identity of the preceding event, taken from the shell rather than assembled here: `why`
+  # on the change reports the very id the ledger holds for it.
+  CHANGE_ID=$(ono -c "why event $CHANGE | to json" 2>/dev/null | sed -e 's/.*"explained_event":"//' -e 's/".*//')
+  echo "preceding event id: ${CHANGE_ID:-<none>}"
+  prove t8k7 "the preceding event has an identity the answer could have named (§3.3)" \
+    'test -n "'"$CHANGE_ID"'"'
+  sed -e 's/.*"cause":/"cause":/' -e 's/"correlations":.*//' /tmp/t8k-why.json > /tmp/t8k-causal.json
+  prove t8k8 "and it appears nowhere on the causal side of the answer (§16.6, §55.3)" \
+    'grep -q "\"cause\"" /tmp/t8k-causal.json && ! grep -q "'"$CHANGE_ID"'" /tmp/t8k-causal.json'
+
+  echo '== §15.6: and nothing about the pair is written in causal words =='
+  prove t8k9 "the answer uses none of §15.6's four words for a non-causal edge" \
+    'for w in because therefore caused; do grep -qiw "$w" /tmp/t8k-why.out && exit 1; done; ! grep -qi "led to" /tmp/t8k-why.out'
+
+  echo '== §35.5: the four sides of an explanation are four fields, so nothing can be promoted =='
+  ono -c "why event $FAILURE | type | to json" > /tmp/t8k-type.json 2>&1
+  for section in cause causal_chain correlations preceding; do
+    prove "t8k-$section" "the published contract keeps \`$section\` a field of its own (§35.5, §16.4)" \
+      'grep -q "\"name\":\"'"$section"'\"" /tmp/t8k-type.json'
+  done
+
+  echo '== and the same refusal holds read forwards: no `resulted_in` either (§15.4) =='
+  ono -c "why event $CHANGE | to json" > /tmp/t8k-forward.json 2>&1
+  prove t8k10 "the change claims no result it has no evidence for (§15.4, §17.6)" \
+    'grep -q "\"cause\":null" /tmp/t8k-forward.json && ! grep -q "resulted_in" /tmp/t8k-forward.json'
+
+  echo '== §15.7, §34: refusing to guess is a successful answer, not an error =='
+  prove t8k11 "\`why\` exits zero having claimed nothing (§15.7, §34)" \
+    'ono -c "why event '"$FAILURE"'" >/dev/null 2>&1'
+  prove t8k12 "and no temporal error code is raised for not knowing (§34)" \
+    '! grep -qE "Ono-Sendai-E13(0[1-9]|1[0-4])" /tmp/t8k-why.out'
+
+  echo 'correlation is not causation: done'
+exit: 0
+stdout-contains: PROVED t8k1
+stdout-contains: PROVED t8k2
+stdout-contains: PROVED t8k3
+stdout-contains: PROVED t8k4
+stdout-contains: PROVED t8k5
+stdout-contains: PROVED t8k6
+stdout-contains: PROVED t8k7
+stdout-contains: PROVED t8k8
+stdout-contains: PROVED t8k9
+stdout-contains: PROVED t8k-cause
+stdout-contains: PROVED t8k-causal_chain
+stdout-contains: PROVED t8k-correlations
+stdout-contains: PROVED t8k-preceding
+stdout-contains: PROVED t8k10
+stdout-contains: PROVED t8k11
+stdout-contains: PROVED t8k12
+stdout-contains: correlation is not causation: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

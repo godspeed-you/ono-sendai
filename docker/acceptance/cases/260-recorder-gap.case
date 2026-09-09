@@ -1,0 +1,120 @@
+# v0.5 §50 phase T4 — §44.1 step 3: on restart the recorder MUST "mark any unobserved downtime as
+# a coverage gap", and step 5: "continue without pretending the gap was covered". §55.5 says what
+# is at stake — "a recorder restart or dropped event stream that is not represented as a coverage
+# gap destroys operator trust" — because a silent gap reads exactly like a quiet morning.
+#
+# §43 is the same rule for the other direction of loss. §43.1: every event ingestion path MUST be
+# bounded. §43.2: when a source exceeds its capacity, Ono MUST "prefer an explicit coverage gap
+# over pretending continuity". Both halves are the same promise: what the shell did not see, it
+# says it did not see.
+#
+# The downtime here is real rather than simulated. Each `ono -c` is a shell that opens the store,
+# records, and lets it go again; the seconds between two of them are seconds in which nothing was
+# observing this machine. The proof is the contrast: an instant inside that stretch is answered
+# with a gap, and an instant inside the stretch a running session did observe is not.
+case: downtime and overflow are gaps, never continuity
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
+env: NO_COLOR=1
+timeout: 180
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  victim() { sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo $!'; }
+
+  echo '== the fixture: something recorded, then four seconds in which nothing was recording =='
+  ono -c "stop process $(victim)" > /dev/null 2>&1
+  ono -c 'get recorder | to json' > /tmp/t4g-before.json 2>&1
+  prove t4g1 "the recorder was running and retaining, so the downtime has two sides (§10.3)" \
+    'grep -q "\"running\":true" /tmp/t4g-before.json && grep -q "\"latest\":\"20" /tmp/t4g-before.json'
+  sleep 4
+
+  echo '== §44.1, §55.5: an instant inside the downtime is answered with a gap =='
+  ono -c 'at -2s' > /tmp/t4g-downtime.out 2>&1
+  cat /tmp/t4g-downtime.out
+  prove t4g2 "the coordinate resolves rather than being refused — history reaches it (§12.3)" \
+    'grep -q "\-2s" /tmp/t4g-downtime.out'
+  prove t4g3 "and the coverage behind it names the stretch nothing was watching (§44.1, §55.5)" \
+    'grep -qi "gap" /tmp/t4g-downtime.out'
+
+  echo '== the contrast: an instant a running session did observe carries no gap =='
+  ono -c 'sleep 2
+  at -1s' > /tmp/t4g-observed.out 2>&1
+  cat /tmp/t4g-observed.out
+  prove t4g4 "an instant inside the session's own observation reports no gap (§8.3, §8.5)" \
+    'grep -qi "coverage" /tmp/t4g-observed.out && ! grep -qi "gap" /tmp/t4g-observed.out'
+
+  echo '== §8.6, §55.5: downtime is never dressed as continuity =='
+  prove t4g5 "the marker stays \`[PAST?]\` over an interval with a hole in it (§8.6)" \
+    'grep -q "\[PAST?\]" /tmp/t4g-downtime.out'
+  prove t4g6 "and no answer over that window claims complete coverage (§8.2, §55.5)" \
+    '! grep -qi "complete" /tmp/t4g-downtime.out'
+  ono -c 'timeline --since 5m | to json' > /tmp/t4g-timeline.json 2>&1
+  ono -c 'timeline --since 5m' > /tmp/t4g-timeline.txt 2>&1
+  prove t4g7 "no rendering of that window describes its coverage as complete (§8.2, §55.5)" \
+    '! grep -qiE "coverage[: ]+complete" /tmp/t4g-timeline.txt && ! grep -q "\"headline\":\"complete\"" /tmp/t4g-timeline.json'
+
+  echo '== §43.1, §43.2: every intake is bounded, and what a bound discarded is counted =='
+  ono -c 'get recorder | to json' > /tmp/t4g-status.json 2>&1
+  prove t4g9 "the recorder states how many events its bounded queues discarded (§43.1, §43.2)" \
+    'grep -qE "\"dropped\":[0-9]+" /tmp/t4g-status.json'
+  prove t4g10 "it states the ceiling the session ledger is bounded by (§10.7, §2.15)" \
+    'grep -qE "\"session_max_events\":[1-9][0-9]*" /tmp/t4g-status.json'
+  prove t4g11 "and its own health is part of the answer, not a log line (§43.4, §21.8)" \
+    'grep -qE "\"health\":\"(healthy|degraded|stopped|failed)\"" /tmp/t4g-status.json'
+
+  echo '== a burst through the intake is either wholly accounted for or explicitly lost (§43.2) =='
+  # Either terminal kind counts. §17.2 ends an action that did not succeed as `action.failed`, and
+  # a `stop process` against a pid nobody owns is exactly that — what §43.2 asks is that every one
+  # of the forty reached the record, not that every one of them worked.
+  BEFORE=$(grep -oE '"kind":"action\.(completed|failed)"' /tmp/t4g-timeline.json | wc -l)
+  script=''
+  for i in $(seq 1 40); do script="$script
+  stop process 9999$i"; done
+  ono -c "$script" > /dev/null 2>&1
+  ono -c 'timeline --since 5m | to json' > /tmp/t4g-burst.json 2>&1
+  ono -c 'get recorder | to json' > /tmp/t4g-after.json 2>&1
+  AFTER=$(grep -oE '"kind":"action\.(completed|failed)"' /tmp/t4g-burst.json | wc -l)
+  DROPPED=$(sed -e 's/.*"dropped"://' -e 's/,.*//' /tmp/t4g-after.json)
+  echo "terminal action events before: $BEFORE   after: $AFTER   dropped: $DROPPED"
+  prove t4g12 "forty mutations are all in the record, or the loss is counted — never silent (§43.2, §55.5)" \
+    'test "$(( '"$AFTER"' - '"$BEFORE"' ))" -eq 40 || test "'"$DROPPED"'" -gt 0'
+  prove t4g14 "a recorder that lost nothing does not report itself degraded (§43.4)" \
+    'test "'"$DROPPED"'" -gt 0 || grep -q "\"health\":\"healthy\"" /tmp/t4g-after.json'
+  prove t4g15 "and one that lost something would say so in the same record (§43.2, §43.4)" \
+    'test "'"$DROPPED"'" -eq 0 || grep -q "\"health\":\"degraded\"" /tmp/t4g-after.json'
+
+  echo '== §10.8, §31.7: the stop is clean and the shell survives the restart =='
+  ono -c 'stop recorder' > /tmp/t4g-stop.out 2>&1
+  prove t4g16 "\`stop recorder\` flushes and reports itself stopped (§10.8)" \
+    'grep -qi "stopped" /tmp/t4g-stop.out'
+  prove t4g17 "and what was recorded before the stop is still there after the restart (§56.6)" \
+    'ono -c "timeline --since 5m | to json" 2>&1 | grep -q "action.completed"'
+
+  echo 'recorder gap: done'
+exit: 0
+stdout-contains: PROVED t4g1
+stdout-contains: PROVED t4g2
+stdout-contains: PROVED t4g3
+stdout-contains: PROVED t4g4
+stdout-contains: PROVED t4g5
+stdout-contains: PROVED t4g6
+stdout-contains: PROVED t4g7
+stdout-contains: PROVED t4g9
+stdout-contains: PROVED t4g10
+stdout-contains: PROVED t4g11
+stdout-contains: PROVED t4g12
+stdout-contains: PROVED t4g14
+stdout-contains: PROVED t4g15
+stdout-contains: PROVED t4g16
+stdout-contains: PROVED t4g17
+stdout-contains: recorder gap: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

@@ -22,10 +22,20 @@ run: |
   ono -c "stop process $(cat /tmp/t4c.pid)" > /dev/null 2>&1
 
   echo '== §12.3: a window older than anything retained is a refusal, not an empty answer =='
+  # What §12.3 and §55.5 ask for is a *refusal* rather than an empty answer. Which of §34's two
+  # refusals it is depends on what this store can prove: `temporal.out_of_retention` is worded
+  # "known to have expired", and a store minutes old never held thirty days ago to lose it, so on
+  # this fixture the honest one is `temporal.not_recorded` (ADR-0786). Pinning either would make
+  # the case a test of how long the container has been running.
   prove t4c1 "\`changes\` past the retention boundary refuses and names it (§12.3, §55.5)" \
-    'ono -c "changes --since 30d" 2>&1 | grep -q "temporal.out_of_retention"'
+    'ono -c "changes --since 30d" 2>&1 | grep -qE "temporal\.(out_of_retention|not_recorded)"'
   prove t4c2 "and \`at\` refuses the same question the same way (§12.3)" \
     'ono -c "at -30d" 2>&1 | grep -qE "temporal\.(out_of_retention|not_recorded)"'
+  # §13.4 and §12.3 answer the same instant, so they must answer it for the same reason.
+  prove t4c1b "and both name the same reason, because it is the same instant (§12.3, §13.4)" \
+    'c=$(ono -c "changes --since 30d" 2>&1 | grep -o "temporal\.[a-z_]*" | head -1) &&
+     a=$(ono -c "at -30d" 2>&1 | grep -o "temporal\.[a-z_]*" | head -1) &&
+     [ -n "$c" ] && [ "$c" = "$a" ]'
 
   echo '== §31.7: a damaged store does not take the shell with it =='
   cp "$STORE" /tmp/t4c-backup.sqlite3
@@ -46,6 +56,7 @@ run: |
   echo 'retention and corruption: done'
 exit: 0
 stdout-contains: PROVED t4c1
+stdout-contains: PROVED t4c1b
 stdout-contains: PROVED t4c2
 stdout-contains: PROVED t4c3
 stdout-contains: PROVED t4c4

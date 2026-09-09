@@ -6,6 +6,7 @@
 //! nothing about the values themselves changes either way.
 
 use std::io::{IsTerminal, Write};
+use std::sync::Arc;
 
 use ono_pipeline::{StreamEvent, ValueStream};
 use ono_render::{Layout, Presentation, Renderer, Theme, View};
@@ -161,6 +162,13 @@ impl Sink {
         {
             return ono_temporal_render::changes(&changes, self.width, &temporal_options());
         }
+        // §11.4 makes `timeline` a stream of events and the renderer "only a presentation"; §11.7
+        // obliges that presentation to draw a coverage gap inside the window. The window is not in
+        // the stream, so the command published it and this is where the two meet again: the events
+        // at hand — filtered or not — are drawn against the interval they came from (ADR-0778).
+        if let Some(view) = timeline_view_of(values) {
+            return ono_temporal_render::timeline(&view, self.width, &temporal_options());
+        }
         // The temporal views are presentation over one record each, and the renderer that knows
         // them is `ono-temporal-render` (v0.5 §39.3). Every arm is keyed on one schema id, and
         // the options — the session's UTC offset and `temporal.ui.show_source_tags` — are handed
@@ -267,12 +275,67 @@ pub fn map_charset() -> ono_spatial_render::Charset {
     }
 }
 
+/// The window the last `timeline` in this process was a statement about (§11.2, §11.7, §8.5).
+///
+/// §11.4 makes the value a stream of events and the renderer "only a presentation", which leaves
+/// the presentation needing something the stream does not carry: the bounds of the window, the
+/// coverage behind it and the gaps §11.7 obliges a renderer to draw. The command publishes it here
+/// rather than wrapping it around the events, which is what lets both rules hold at once — the
+/// pipeline filters events, and this file still knows what interval it is drawing.
+///
+/// One slot per process, written by `timeline` and read on the same turn. A stage that filters the
+/// stream narrows what is drawn and leaves the window it was drawn from intact, which is the
+/// honest reading: the gap was in the interval whether or not a `where` kept the events on either
+/// side of it.
+fn published_timeline() -> &'static std::sync::RwLock<Option<Arc<RecordValue>>> {
+    static PUBLISHED: std::sync::OnceLock<std::sync::RwLock<Option<Arc<RecordValue>>>> =
+        std::sync::OnceLock::new();
+    PUBLISHED.get_or_init(|| std::sync::RwLock::new(None))
+}
+
+/// Records the window `timeline` just answered over, for the renderer that draws it.
+pub fn publish_timeline(record: RecordValue) {
+    if let Ok(mut held) = published_timeline().write() {
+        *held = Some(Arc::new(record));
+    }
+}
+
+/// The `ono.temporal-timeline/1` these values are a window on, where they are a timeline's.
+///
+/// Every value has to be an `ono.temporal-event/1` and the last `timeline` in this process has to
+/// have published its window; anything else is a stream of events from somewhere else — `find
+/// event`, a `--kind` filter over a saved list — and the ordinary renderer draws it as rows.
+fn timeline_view_of(values: &[Value]) -> Option<RecordValue> {
+    if values.is_empty() {
+        return None;
+    }
+    if !values.iter().all(|value| {
+        value
+            .as_record()
+            .is_ok_and(|record| record.schema_id().to_string() == "ono.temporal-event/1")
+    }) {
+        return None;
+    }
+    let published = published_timeline().read().ok()?.clone()?;
+    let schema = Arc::clone(published.schema());
+    let mut builder = RecordValue::builder(Arc::clone(&schema), published.provenance().clone());
+    for (index, field) in schema.fields().iter().enumerate() {
+        let held = if field.name() == "events" {
+            Value::list(values.to_vec())
+        } else {
+            published.field_at(index).cloned().unwrap_or(Value::Null)
+        };
+        builder = builder.set(field.name(), held).ok()?;
+    }
+    Some(builder.build())
+}
+
 /// The render options the temporal renderers are handed (v0.5 §39.2, §33).
 ///
 /// The session's zone offset and `temporal.ui.show_source_tags` reach the renderer as data. §39.2
 /// keeps the clock out of pure logic and the same discipline applies to settings: a renderer that
 /// read the configuration itself could not be tested and could not be told what to draw.
-fn temporal_options() -> ono_temporal_render::RenderOptions {
+pub(crate) fn temporal_options() -> ono_temporal_render::RenderOptions {
     let now = jiff::Timestamp::now();
     let offset = i128::from(jiff::tz::TimeZone::system().to_offset(now).seconds());
     ono_temporal_render::RenderOptions {

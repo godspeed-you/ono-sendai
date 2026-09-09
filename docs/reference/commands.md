@@ -32,6 +32,7 @@ Enumerate containers through the installed provider or providers.
 | name | type | meaning |
 |---|---|---|
 | `--provider` | `string` | Query one named container provider. |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
 **Examples**
 
@@ -840,6 +841,7 @@ Return file metadata records for the given paths.
 |---|---|---|
 | `--recursive` | `bool` | Descend into directories (spec §11.6, §6.2). |
 | `--follow-symlinks` | `bool` | Describe the symlink target rather than the link itself. |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
 **Examples**
 
@@ -877,6 +879,7 @@ Discover files by walking a root, or through a provider index.
 | `--name` | `string` | Match entry names against a glob. |
 | `--kind` | `string` | Restrict to one file kind. |
 | `--follow-symlinks` | `bool` | Follow symlinks while walking; off by default, because it can cycle. |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
 **Examples**
 
@@ -1282,6 +1285,7 @@ List directory entries as File records.
 |---|---|---|
 | `--all` | `bool` | Include entries whose name begins with a dot. |
 | `--recursive` | `bool` | Descend into subdirectories. |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
 **Examples**
 
@@ -1411,6 +1415,12 @@ Enumerate or resolve user accounts.
 | `uid` | `int` | Resolve one account by numeric id. Declared before `name` so that `get user 0` binds the number (ADR-0095). |
 | `name` | `string` | Resolve one account by login name. |
 
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
+
 **Examples**
 
 ```text
@@ -1440,6 +1450,12 @@ Enumerate or resolve group accounts.
 | `gid` | `int` | Resolve one group by numeric id. Declared before `name` so that `get group 0` binds the number (ADR-0095). |
 | `name` | `string` | Resolve one group by name. |
 
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
+
 **Examples**
 
 ```text
@@ -1467,6 +1483,7 @@ Enumerate local, login and seat sessions.
 | name | type | meaning |
 |---|---|---|
 | `--user` | `ref<ono.user/1>` | Restrict to one user's sessions. |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
 **Examples**
 
@@ -2858,6 +2875,7 @@ Enumerate sockets as structured records.
 | `--listening` | `bool` | Restrict to listening sockets. |
 | `--protocol` | `string` | Restrict to one transport protocol. |
 | `--resolve` | `bool` | Reverse-resolve endpoint host names. Off by default: §22.2 classes the result as derived, and resolution can block. |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
 **Examples**
 
@@ -2889,6 +2907,7 @@ Enumerate connection-oriented socket views.
 | `--remote` | `ip` | Restrict to connections with this peer address. |
 | `--resolve` | `bool` | Reverse-resolve peer host names. |
 | `--process` | `bool` | Join each connection to the process holding it. Off by default: the join scans every open descriptor on the machine, which the interactive budget of spec §34 cannot absorb on every call. Without it the `process` field is null rather than invented. |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
 **Examples**
 
@@ -2917,6 +2936,12 @@ Enumerate interfaces, their addresses and their state.
 | name | type | meaning |
 |---|---|---|
 | `name` | `string` | Resolve one interface by name. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
 **Examples**
 
@@ -2947,6 +2972,7 @@ Enumerate routing table entries.
 | `--table` | `string` | Query one routing table instead of the main one. |
 | `--family` | `string` | Restrict to one address family. |
 | `--interface` | `string` | Restrict to routes over this interface — what `enter interface` fills in (spec §14.3). |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
 **Examples**
 
@@ -2975,6 +3001,7 @@ Enumerate ARP and NDP neighbours.
 | name | type | meaning |
 |---|---|---|
 | `--interface` | `string` | Restrict to one interface. |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
 **Examples**
 
@@ -3872,6 +3899,7 @@ Enumerate or resolve processes.
 | `--group` | `ref<ono.group/1>` | Restrict to processes whose effective group is this one. |
 | `--tree` | `bool` | Emit the parent/child structure rather than a flat stream. |
 | `--sample` | `duration` | Measure `cpu` over this interval instead of over each process's lifetime: the provider reads the CPU counters, waits, and answers the rate over exactly that window (ADR-0232). The invocation takes at least this long. |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
 **Examples**
 
@@ -4070,6 +4098,12 @@ Enumerate the session's jobs — backgrounded pipelines and detached live views.
 |---|---|---|
 | `id` | `int` | Resolve one job by its job number. |
 
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
+
 **Examples**
 
 ```text
@@ -4192,6 +4226,7 @@ Enumerate known hosts from the configured providers and sources.
 | name | type | meaning |
 |---|---|---|
 | `--source` | `string` | Query one named host source. |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
 **Examples**
 
@@ -4984,6 +5019,7 @@ List or resolve service-manager units through the active provider.
 | name | type | meaning |
 |---|---|---|
 | `--provider` | `string` | Query one named service provider instead of the active one. |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
 **Examples**
 
@@ -5733,6 +5769,12 @@ Enumerate mounted filesystems.
 |---|---|---|
 | `target` | `path` | Resolve the mount at this mount point. |
 
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
+
 **Examples**
 
 ```text
@@ -5760,6 +5802,7 @@ Enumerate filesystems and their capacity, mounted or not.
 | name | type | meaning |
 |---|---|---|
 | `--mounted` | `bool` | Restrict to filesystems that are or are not currently mounted. |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
 **Examples**
 
@@ -5788,6 +5831,7 @@ Enumerate block and character devices.
 | name | type | meaning |
 |---|---|---|
 | `--kind` | `string` | Restrict to block or character devices. |
+| `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
 **Examples**
 
@@ -6198,6 +6242,7 @@ The ordered event view over a scope and a window.
 | `--kind` | `string` | Restrict to one canonical event kind — `object.changed`, `relation.added`, `action.failed` (v0.5 §6.1, §11.2). |
 | `--all` | `bool` | Widen to the whole visible scope rather than the current place, subject to retention and permission (v0.5 §11.3). |
 | `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
+| `--view` | `bool` | Open the full-screen timeline over the same window (v0.5 §19.1). It is a presentation of the values `timeline` already answers with; where no terminal can be taken — a script, a pipe, a redirected stream, `TERM=dumb` — the ordinary text timeline answers instead, so the option never writes escape sequences into a pipe (v0.2 §50, ADR-0781). |
 
 **Examples**
 
@@ -6206,6 +6251,7 @@ timeline
 timeline --since 30m
 timeline service nginx
 timeline --kind object.changed
+timeline --view
 timeline --since 1h | where kind == "object.changed"
 ```
 

@@ -180,6 +180,19 @@ pub fn stream(
                 previous = Some(shape);
                 opened = true;
 
+                // v0.5 §39.1: what the live view compared is what the ledger records. The same
+                // `ChangeSet` the frame is drawn from becomes the `object.appeared`,
+                // `object.disappeared` and `object.changed` events of §6.1, and the window it
+                // covers becomes the session's own partial coverage of that stretch (§8.3). A
+                // live view that showed a connection arriving and left no trace of it would be a
+                // session that watched and remembered nothing.
+                crate::temporal::events::observe_sweep(
+                    &crate::spatial::local_scope(),
+                    &[ono_spatial_core::SpatialType::Socket],
+                    &changes,
+                    now,
+                );
+
                 if emit {
                     // The record is built once the diff is known, so a live value carries both
                     // the picture and what moved to produce it (§45.5).

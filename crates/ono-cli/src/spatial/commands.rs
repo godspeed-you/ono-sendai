@@ -269,7 +269,7 @@ fn place_view(
     neighborhood: &ono_spatial_core::Neighborhood,
     permission: PermissionState,
     all: bool,
-    changes: Option<(ono_value::Duration, Option<Vec<TemporalChange>>)>,
+    changes: Option<(ono_value::Duration, RecentChanges)>,
     cached: bool,
     clock: Timestamp,
 ) -> Result<RecordValue, ErrorValue> {
@@ -452,10 +452,15 @@ fn source_freshness(
 ///
 /// - **`unsupported`** — this session holds no temporal evidence, so nothing was watching. Not
 ///   "nothing changed".
-/// - **`empty`** — the ledger was asked and nothing in the window differs.
+/// - **`unknown`** — the ledger was asked, found nothing, and its coverage of the window does not
+///   support a statement of absence (§8.2). Reporting `empty` there would be the fake summary
+///   §24.3 forbids: a session-only ledger is `partial` by §8.3 and cannot prove that nothing
+///   happened. Coverage is required for *absence* only — a change that was observed is evidence
+///   of itself, whatever else the window is missing.
+/// - **`empty`** — the window is covered, and nothing in it differs.
 /// - **`available`** — the ledger was asked and these are the differences.
 fn change_summary(
-    changes: Option<(ono_value::Duration, Option<Vec<TemporalChange>>)>,
+    changes: Option<(ono_value::Duration, RecentChanges)>,
 ) -> Result<Value, ErrorValue> {
     let Some((window, answered)) = changes else {
         return Ok(Value::Null);
@@ -469,13 +474,17 @@ fn change_summary(
             )
         })?;
     let (state, source, entries) = match &answered {
-        None => ("unsupported", Value::Null, Vec::new()),
-        Some(changed) if changed.is_empty() => {
-            ("empty", Value::string("ono.temporal-ledger"), Vec::new())
+        RecentChanges::Unwatched => ("unsupported", Value::Null, Vec::new()),
+        RecentChanges::Found { changes, covered } if changes.is_empty() => {
+            if *covered {
+                ("empty", Value::string("ono.temporal-ledger"), Vec::new())
+            } else {
+                ("unknown", Value::Null, Vec::new())
+            }
         }
-        Some(changed) => {
-            let mut rows = Vec::with_capacity(changed.len());
-            for change in changed {
+        RecentChanges::Found { changes, .. } => {
+            let mut rows = Vec::with_capacity(changes.len());
+            for change in changes {
                 rows.push(Value::Record(Arc::new(change.to_record()?)));
             }
             ("available", Value::string("ono.temporal-ledger"), rows)
@@ -493,31 +502,52 @@ fn change_summary(
     Ok(Value::Record(Arc::new(record)))
 }
 
+/// What §24.3's change section can honestly say about the window it was asked for.
+#[derive(Debug)]
+enum RecentChanges {
+    /// No temporal evidence is installed at all: nothing was watching (§24.3).
+    Unwatched,
+    /// The ledger answered, and `covered` says whether its sources cover the whole window.
+    ///
+    /// The two are kept apart rather than collapsed because they answer different questions:
+    /// what was found is evidence of itself, and whether *nothing* was found is a claim only
+    /// complete coverage can support (§8.2).
+    Found {
+        /// What differs across the window.
+        changes: Vec<TemporalChange>,
+        /// Whether the window is covered end to end (§8.2, §8.5).
+        covered: bool,
+    },
+}
+
 /// What changed around the current place in the last `window`, from the ledger (v0.5 §13.5).
 ///
-/// `None` where this session holds no temporal evidence: §24.3 forbids rendering that as
-/// "nothing changed", and [`change_summary`] spells it `unsupported`.
+/// The coverage question comes first, because §24.3's rule is about what may be *said* rather
+/// than about what was found: "No fake change summary may be generated when no event source or
+/// comparison snapshot exists." A ledger that answers with an empty list over a window it did not
+/// cover has found nothing and observed nothing, and reporting that as `empty` would state that
+/// nothing happened (§8.2, §35.3).
 fn recent_changes(
     session: &SpatialSessionState,
     window: ono_value::Duration,
     now: Timestamp,
-) -> Result<Option<Vec<TemporalChange>>, ErrorValue> {
-    let Some(ledger) = crate::spatial::historical::ledger() else {
-        return Ok(None);
+) -> Result<RecentChanges, ErrorValue> {
+    let Some(evidence) = crate::spatial::historical::evidence() else {
+        return Ok(RecentChanges::Unwatched);
     };
     let since = now
         .checked_sub(
             jiff::Span::new().nanoseconds(i64::try_from(window.nanoseconds()).unwrap_or(i64::MAX)),
         )
         .unwrap_or(now);
+    let scope = session.current_scope().clone();
+    let coverage = evidence.coverage(&scope, ono_temporal_core::TimeRange::between(since, now))?;
     let here = session.current_place().clone();
-    let request = ChangesRequest::new(session.current_scope().clone(), since)
-        .about(subjects_around(session, &here));
-    Ok(Some(ono_temporal_query::changes::changes(
-        ledger.as_ref(),
-        &request,
-        now,
-    )?))
+    let request = ChangesRequest::new(scope, since).about(subjects_around(session, &here));
+    Ok(RecentChanges::Found {
+        changes: ono_temporal_query::changes::changes(evidence.ledger().as_ref(), &request, now)?,
+        covered: coverage.headline() == ono_temporal_core::HeadlineCoverage::Complete,
+    })
 }
 
 /// The place and the objects directly around it — §24.3's "changes relevant to the current place".
@@ -571,15 +601,26 @@ fn historical_look(
                         .nanoseconds(i64::try_from(window.nanoseconds()).unwrap_or(i64::MAX)),
                 )
                 .unwrap_or_else(|_| world.at());
-            let request = ChangesRequest::new(world.scope().clone(), since);
-            Some((
-                window,
-                Some(ono_temporal_query::changes::changes(
-                    active.ledger(),
-                    &request,
-                    world.at(),
-                )?),
-            ))
+            // The same rule as the present-day section: an absence is a finding only where
+            // coverage backs it (§8.2, §24.3). A historical window is if anything more exposed to
+            // it, because the only source is what was written down at the time.
+            let range = ono_temporal_core::TimeRange::between(since, world.at());
+            let answered = match crate::spatial::historical::evidence() {
+                Some(evidence) => {
+                    let request = ChangesRequest::new(world.scope().clone(), since);
+                    RecentChanges::Found {
+                        changes: ono_temporal_query::changes::changes(
+                            active.ledger(),
+                            &request,
+                            world.at(),
+                        )?,
+                        covered: evidence.coverage(world.scope(), range)?.headline()
+                            == ono_temporal_core::HeadlineCoverage::Complete,
+                    }
+                }
+                None => RecentChanges::Unwatched,
+            };
+            Some((window, answered))
         }
         None => None,
     };

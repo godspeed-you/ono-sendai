@@ -1,0 +1,86 @@
+# v0.5 §50 phase T6 — §13.4: "If one side lacks enough evidence, the field MUST be reported as
+# unknown rather than fabricated", rendered as `from unknown` above the `coverage` line that
+# explains it. v0.2 §35.3 is the same rule for every value the shell holds: unknown data is null,
+# never a fabricated zero and never an empty list read as "nothing".
+#
+# A container session's only evidence source is the session ledger of §10.7, and §8.3 makes that
+# `partial` by construction — which is precisely the situation §13.4 legislates for: a window
+# whose earlier end nothing observed. So what this case holds is the distinction the change
+# section is built on: `unknown` (the ledger was asked and its coverage cannot carry a statement
+# of absence), `empty` (the window is covered and nothing differs) and a refusal (nothing reaches
+# the earlier end at all) are three different answers, and the first is never rendered as the
+# second.
+case: an unobserved earlier side is unknown, never zero and never empty
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
+env: NO_COLOR=1
+timeout: 120
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== the fixture: a session whose coverage of the last minute is partial (§8.3) =='
+  ono -c 'home
+  look --changes 1m' > /tmp/t6cu-look.out 2>&1
+  ono -c 'home
+  look --json --changes 1m' > /tmp/t6cu-look.json 2>&1
+  sed -e 's/.*"changed"://' -e 's/,"generated_at".*//' /tmp/t6cu-look.json > /tmp/t6cu-section.json
+  cat /tmp/t6cu-section.json
+
+  echo '== §13.4: the earlier side is the word `unknown`, not an absence to be read as zero =='
+  prove t6cu1 "the rendered change section says \`unknown\` rather than showing nothing (§13.4, §13.5)" \
+    'grep -A 2 "changed" /tmp/t6cu-look.out | grep -qw "unknown"'
+  prove t6cu2 "and the typed section states it as data a pipeline can read (§13.2, v0.4 §24.3)" \
+    'grep -q "\"state\":\"unknown\"" /tmp/t6cu-section.json'
+
+  echo '== §2.17, v0.4 §24.3: `unknown` is not `empty`, and partial coverage may not claim absence =='
+  prove t6cu3 "a window nothing could prove empty is never reported empty (§8.2, v0.4 §24.3)" \
+    '! grep -q "\"state\":\"empty\"" /tmp/t6cu-section.json'
+  prove t6cu4 "and no source is credited for a comparison the shell did not make (§25.4)" \
+    'grep -q "\"source\":null" /tmp/t6cu-section.json'
+
+  echo '== v0.2 §35.3: unknown is null, never a fabricated zero or an invented before =='
+  prove t6cu5 "the unknown side is not written as a zero (§13.4, v0.2 §35.3)" \
+    '! grep -qE "\"(before|from|state)\":(0|\"\"|\"0\")" /tmp/t6cu-section.json'
+  prove t6cu6 "and no entry is invented to fill the section (§13.4)" \
+    'grep -q "\"entries\":\[\]" /tmp/t6cu-section.json'
+
+  echo '== §13.4: the coverage that explains the unknown is stated, and it is not completeness =='
+  ono -c 'sleep 1
+  at -1s' > /tmp/t6cu-at.out 2>&1
+  prove t6cu7 "the shell reports the coverage behind the answer (§13.4, §8.5)" \
+    'grep -qi "coverage" /tmp/t6cu-at.out'
+  prove t6cu8 "the coverage is partial, which is why the earlier side is unknown (§8.3, §8.6)" \
+    'grep -q "\[PAST?\]" /tmp/t6cu-at.out && grep -qi "partial" /tmp/t6cu-at.out'
+  ono -c 'timeline --since 5m | to json' > /tmp/t6cu-timeline.json 2>&1
+  prove t6cu9 "and nothing claims complete coverage of a window it only sampled (§8.2, §55.5)" \
+    '! grep -q "\"headline\":\"complete\"" /tmp/t6cu-timeline.json'
+
+  echo '== §12.3: an earlier end nothing reaches is a refusal, not a page of unknown befores =='
+  prove t6cu10 "\`changes\` answers over a window its evidence reaches (§13.1)" \
+    'ono -c "changes --since 1m | to json" 2>&1 | grep -qE "^\["'
+  prove t6cu11 "and refuses one it does not, naming the boundary (§12.3, §34, §55.5)" \
+    'ono -c "changes --since 3d" 2>&1 | grep -qE "temporal\.(not_recorded|out_of_retention)"'
+
+  echo 'changes unknown before: done'
+exit: 0
+stdout-contains: PROVED t6cu1
+stdout-contains: PROVED t6cu2
+stdout-contains: PROVED t6cu3
+stdout-contains: PROVED t6cu4
+stdout-contains: PROVED t6cu5
+stdout-contains: PROVED t6cu6
+stdout-contains: PROVED t6cu7
+stdout-contains: PROVED t6cu8
+stdout-contains: PROVED t6cu9
+stdout-contains: PROVED t6cu10
+stdout-contains: PROVED t6cu11
+stdout-contains: changes unknown before: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

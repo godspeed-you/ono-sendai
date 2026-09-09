@@ -167,7 +167,12 @@ pub(super) fn run_native_segment(
     // for the kernel to interrupt — so whatever this thread waits on races the interrupt note and
     // loses to it (spec §18.5). Dropping the futures drops every stream receiver, which closes
     // the bounded channels and stops every producer at its next send.
-    let _ = ono_process::take_interrupt();
+    //
+    // The note is dropped by entering the foreground line rather than by reading it away here: a
+    // block runs one of these per item, and a bare `take_interrupt()` at each of them discards the
+    // Ctrl-C aimed at the line around them, whichever item happened to start next (ADR-0782). The
+    // outermost run still clears what the prompt left behind; a nested one clears nothing.
+    let _running = crate::eval::pipeline::ForegroundRun::begin();
 
     // One request in flight. §25.3 keeps `each` serial, so a queue of items waiting to be run
     // would buy nothing, and §65.7 forbids the shape it would take: "replacing a foreground
@@ -256,12 +261,17 @@ pub(super) fn run_native_segment(
                     stream = Some(values.with_materialization_limits(materialization));
                 }
                 Ok(Outcome::Actions(outcomes)) => {
+                    // v0.5 §17.2, §17.4: what is recorded is what the rows say. The outcomes are
+                    // handed over whole rather than counted, because `action.completed` and
+                    // `action.failed` are different kinds and the `ActionResult` is what tells
+                    // them apart — and because §17.3's external transaction identity is carried on
+                    // the outcome and nowhere else.
                     crate::temporal::record_action(
                         &contract.spelling(),
                         contract.id(),
                         &words,
                         requested_at,
-                        Ok(outcomes.len()),
+                        crate::temporal::Outcome::Acted(&outcomes),
                     )
                     .await;
                     // Spec §11.5: one record per target, so `97 succeeded, 3 failed` stays two
@@ -285,7 +295,7 @@ pub(super) fn run_native_segment(
                             contract.id(),
                             &words,
                             requested_at,
-                            Err(&error),
+                            crate::temporal::Outcome::Refused(&error),
                         )
                         .await;
                     }

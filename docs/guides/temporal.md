@@ -156,6 +156,25 @@ normally — `get process | where cpu > 20 | select pid name` reads the past and
 timeline --since 1h | where kind == "object.changed" | where subject.type == "service"
 ```
 
+The pipeline is not a courtesy: the value `timeline` produces *is* the stream of events, so
+`where`, `take` and `group` are ordinary stages over it and the renderer is only a presentation.
+
+That leaves the presentation with something the stream does not carry — which interval the rows
+are a statement about, and what was watching over it — so the rendering says so on a line of its
+own:
+
+```text
+ window: 12:17 - 13:17  evidence: procfs, systemd   coverage: partial, 1 gap
+```
+
+A reader who sees rows and no interval has been told the rows are everything. Inside the window, a
+stretch nothing observed is drawn where it falls, between the events on either side of it:
+
+```text
+12:20:00        ---- coverage gap: recorder offline 4m12s ----
+12:24:12
+```
+
 Without a selector it is scoped to where you are standing and the events relevant to it; `--all`
 widens it. Each row carries a stable reference — `@e42` — that works in `inspect event @e42`,
 `at event @e42` and `why event @e42`.
@@ -189,6 +208,28 @@ filesystem/data.used
   to        94.1%
   coverage  partial before 12:00
 ```
+
+`--since` is required, because a comparison needs two ends and defaulting one of them would make
+the answer depend on a figure nobody named. A `--since` that reaches back past
+`temporal.retention.max_age` — 24 hours by default — is refused rather than answered:
+
+```text
+local:// > changes --since 3d
+
+temporal.out_of_retention
+2026-09-06T06:19:26Z is older than the retained history, which starts at 2026-09-09T06:19:26Z
+```
+
+Nothing that old is kept, so an empty answer would be a statement that nothing changed over an
+interval whose record was removed. Where the store has never retained anything at all, the same
+question answers `temporal.not_recorded` and lists how far back each source can see.
+
+The change section `look` prints follows the same rule from the other direction. It reports
+`empty` — "nothing changed" — only where coverage of the window is complete. A shell with the
+recorder off has only its own session as a source, and a session sees every action taken through
+it and whatever a provider happened to report besides, which is not enough to prove that nothing
+happened; there the section reads `unknown` with no source rather than `empty`. Changes that *were*
+observed are reported whatever the coverage: a change is evidence of itself.
 
 ## Historical navigation
 
@@ -355,6 +396,12 @@ sees no more because it persists.
 Bounded by age and by size, whichever removes data first — 24 hours or 512 MiB by default.
 Expired history answers `temporal.out_of_retention` and names the earliest instant still held,
 which is a different fact from "nothing was recorded" and gets a different code.
+
+The difference is one the shell will not guess at. A recorder started this morning holds a 24-hour
+policy, and `at -3d` is outside that window — but it is also outside everything that store ever
+saw, so nothing expired and the answer is `temporal.not_recorded` with the reach of each source
+beside it. `temporal.out_of_retention` waits until the record itself begins at or before the
+policy's horizon, which is when an instant below it is one this store held and dropped.
 
 ### Privacy of the store
 

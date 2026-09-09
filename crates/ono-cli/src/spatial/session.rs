@@ -28,6 +28,7 @@ use ono_spatial_core::{
     Liveness, NavigationTrail, Projection, SpatialId, SpatialScope, Tombstone, TombstoneRegistry,
     space,
 };
+use ono_spatial_events::{ChangeKind, ChangeSet, ObservationWindow, ObservedAt, SpatialChange};
 use ono_spatial_index::{Absorbed, FreshnessPolicy, PinRegistry, ProviderBridge, SpatialIndex};
 use ono_value::RecordValue;
 use tokio::sync::{Mutex, MutexGuard};
@@ -594,9 +595,93 @@ impl SpatialSessionState {
     }
 
     /// Records what a provider query answered, so the next command can read it (§33.1).
+    ///
+    /// A target this session has already asked is also a target it can *compare*, and v0.5 §39.1
+    /// makes that comparison the shell's own evidence: an object in the new answer that was not in
+    /// the old one appeared while the session was watching, and one that has gone disappeared. The
+    /// changes travel through `crate::temporal::events` and become the `object.appeared`,
+    /// `object.disappeared` and `object.changed` events of §6.1, dated over the interval between
+    /// the two observations because §9.2 forbids naming a moment inside an interval nobody watched.
     pub fn remember(&mut self, key: impl Into<String>, observation: TargetObservation) {
         let key = self.scoped(&key.into());
+        let observed = self.compare_target(self.targets.get(&key), &observation);
         self.targets.insert(key, observation);
+        if let Some((types, changes)) = observed {
+            crate::temporal::events::observe_sweep(
+                self.current_scope(),
+                &types,
+                &changes,
+                Timestamp::now(),
+            );
+        }
+    }
+
+    /// What differs between two answers of one target, and which kinds of place they were about.
+    ///
+    /// `None` where no comparison may be made, and the two cases are different refusals of the
+    /// same rule (§6.3, §21.5): there is no earlier answer to compare to, or one of the two
+    /// stopped at the orientation bound and is therefore a *sample* rather than a snapshot. A
+    /// sample cannot support an appearance and it certainly cannot support a disappearance —
+    /// §6.3 requires the source to make missing-from-a-complete-snapshot meaningful, and a bounded
+    /// read makes it meaningless.
+    fn compare_target(
+        &self,
+        previous: Option<&TargetObservation>,
+        fresh: &TargetObservation,
+    ) -> Option<(Vec<ono_spatial_core::SpatialType>, ChangeSet)> {
+        let previous = previous?;
+        if previous.bounded || fresh.bounded || !previous.served || !fresh.served {
+            return None;
+        }
+        let window = ObservationWindow::new(previous.at, fresh.at);
+        let observed = ObservedAt::Between {
+            from: window.since(),
+            until: window.until(),
+        };
+        let mut changes = ChangeSet::new(
+            ono_spatial_events::ChangeSource::SnapshotComparison,
+            ono_spatial_events::Freshness::Polled,
+            window,
+        );
+        let mut types: Vec<ono_spatial_core::SpatialType> = Vec::new();
+        for (object_type, places) in &fresh.places {
+            types.push(*object_type);
+            let before = previous.places.get(object_type);
+            for id in places {
+                if before.is_none_or(|seen| !seen.contains(id)) {
+                    changes.push(SpatialChange::to_node(
+                        ChangeKind::NodeAppeared,
+                        id.clone(),
+                        self.label_of(id),
+                        observed,
+                    ));
+                }
+            }
+        }
+        for (object_type, places) in &previous.places {
+            let after = fresh.places.get(object_type);
+            for id in places {
+                if after.is_none_or(|seen| !seen.contains(id)) {
+                    changes.push(SpatialChange::to_node(
+                        ChangeKind::NodeRemoved,
+                        id.clone(),
+                        self.label_of(id),
+                        observed,
+                    ));
+                }
+            }
+        }
+        types.sort_by_key(|object_type: &ono_spatial_core::SpatialType| object_type.as_str());
+        types.dedup_by_key(|object_type| object_type.as_str());
+        Some((types, changes))
+    }
+
+    /// The name a reader knows a place by, or its identity where the session has no name for it.
+    fn label_of(&self, id: &SpatialId) -> String {
+        self.index.get(id).map_or_else(
+            || id.as_str().to_owned(),
+            |entry| entry.object().display_name().to_owned(),
+        )
     }
 
     /// Drops what the queries last answered, so the next observation asks them again (§33.2).

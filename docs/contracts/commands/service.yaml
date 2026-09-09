@@ -19,6 +19,7 @@ commands:
       - {name: name, type: string, doc: "Resolve one unit by name, as in `get service nginx` (spec §6.1)."}
     options:
       - {name: provider, type: string, doc: "Query one named service provider instead of the active one."}
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: none
     streaming: true
     phase: C

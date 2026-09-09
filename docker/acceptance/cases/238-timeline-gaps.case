@@ -19,6 +19,11 @@ run: |
     fi
   }
 
+  # `$(…)` is bash's. Ono has no command substitution (ADR-0019), so a `$(cat …)` inside an Ono
+  # script is the literal `$` followed by a sub-pipeline, and the mutation never runs. The fixture
+  # process is started here instead, and its pid is interpolated into the script the shell runs.
+  victim() { sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo $!'; }
+
   echo '== a session says what its coverage is, rather than implying completeness (§8.5, §8.6) =='
   ono -c 'sleep 1
   at -1s' > /tmp/t6g-at.out 2>&1
@@ -28,26 +33,49 @@ run: |
     'grep -q "\[PAST?\]" /tmp/t6g-at.out'
 
   echo '== §8.6: `[PAST]` is not claimed merely because some event exists near that time =='
-  ono -c "sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo \$! > /tmp/t6g.pid'
-  stop process \$(cat /tmp/t6g.pid)
+  ono -c "stop process $(victim)
   sleep 1
   at -1s" > /tmp/t6g-events.out 2>&1
   prove t6aj "an event near the coordinate does not upgrade the marker (§8.6)" \
     'grep -q "\[PAST?\]" /tmp/t6g-events.out'
 
-  echo '== §11.7: the timeline record carries its gaps as data a renderer must draw =='
+  echo '== §11.4, §11.7: the value is a stream of events and the renderer draws the gaps =='
+  # §11.4 fixes the value as `Stream<TemporalEvent>` and makes the renderer "only a presentation",
+  # so what a pipeline receives is events and what a reader sees is the interval they came from,
+  # with any coverage gap inside it drawn rather than inferred (ADR-0778).
   ono -c 'timeline --since 5m | to json' > /tmp/t6g-timeline.json 2>&1
-  prove t6ak "a timeline states its gaps rather than leaving them to be inferred (§11.7)" \
-    'grep -q "\"gaps\"" /tmp/t6g-timeline.json'
-  prove t6al "and it says whether the limit cut the answer or the window did (§11.2)" \
-    'grep -q "\"truncated\"" /tmp/t6g-timeline.json'
+  prove t6ak "the value a pipeline receives is the events, not a wrapper around them (§11.4)" \
+    'head -c 1 /tmp/t6g-timeline.json | grep -q "\[" &&
+     ! grep -q "\"events\":" /tmp/t6g-timeline.json'
+  prove t6ak2 "and \`where\` over it is an ordinary stage, which §11.4 makes a MUST" \
+    'ono -c "timeline --since 5m | where kind == \"action.executed\" | to json" 2>&1 |
+       tail -1 | grep -qE "^\[" '
+  ono -c 'timeline --since 5m' > /tmp/t6g-timeline.txt 2>&1
+  prove t6al "and the rendering says which interval the rows are a statement about (§11.2, §8.5)" \
+    'grep -q "window:" /tmp/t6g-timeline.txt && grep -q "coverage:" /tmp/t6g-timeline.txt'
 
-  echo '== §12.3: an interval nothing recorded is a refusal that names the boundary (§55.5) =='
-  ono -c 'at -3d' > /tmp/t6g-far.out 2>&1
+  echo '== §12.3, §34: an interval nothing recorded is a refusal that names the boundary (§55.5) =='
+  # §34 keeps two reasons apart, and each needs a session of its own to be the true one. A home
+  # nothing has ever recorded into has no boundary to name: three days back was never observed,
+  # and the refusal says so and lists what each source *can* reach.
+  fresh=$(mktemp -d)
+  HOME=$fresh XDG_CONFIG_HOME=$fresh/config XDG_DATA_HOME=$fresh/data XDG_STATE_HOME=$fresh/state \
+    ono -c 'at -3d' > /tmp/t6g-far.out 2>&1
   prove t6am "unrecorded history is named, not silently empty (§12.3, §55.5)" \
     'grep -q "temporal.not_recorded" /tmp/t6g-far.out'
   prove t6an "and the answer says how far each source can reach (§12.3, §7.5)" \
     'grep -q "ono.session" /tmp/t6g-far.out'
+
+  # §34 words `temporal.out_of_retention` as history "known to have expired", and this store began
+  # recording minutes ago: three days back is outside its 24h window and was never inside it, so
+  # nothing expired. Claiming otherwise would be the shape §35.3 forbids — a policy that *could*
+  # have held something reported as a policy that *did*.
+  ono -c 'at -3d' > /tmp/t6g-expired.out 2>&1
+  prove t6am2 "a store younger than its own window says \`not_recorded\`, never \`out_of_retention\` (§34, §35.3)" \
+    '! grep -q "temporal.out_of_retention" /tmp/t6g-expired.out &&
+     grep -q "temporal.not_recorded" /tmp/t6g-expired.out'
+  prove t6an2 "and it names how far each source does reach (§12.3, §7.5)" \
+    'grep -q "reaches back to" /tmp/t6g-expired.out'
 
   echo 'timeline gaps: done'
 exit: 0
@@ -55,9 +83,12 @@ stdout-contains: PROVED t6ah
 stdout-contains: PROVED t6ai
 stdout-contains: PROVED t6aj
 stdout-contains: PROVED t6ak
+stdout-contains: PROVED t6ak2
 stdout-contains: PROVED t6al
 stdout-contains: PROVED t6am
 stdout-contains: PROVED t6an
+stdout-contains: PROVED t6am2
+stdout-contains: PROVED t6an2
 stdout-contains: timeline gaps: done
 stdout-not-contains: FAILED
 stdout-not-contains: panicked

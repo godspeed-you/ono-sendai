@@ -316,32 +316,30 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [lead `v05` | 2026-09-09] **The v0.5 Temporal & Causal Systems Interface**, in its release
-  loop. The implementation is delivered and every engine crate is green; what remains is the
-  acceptance evidence and the checklist that names it.
-  - Done: the vocabulary and its contracts (T1), the canonical event bridge and the session
-    coordinate (T2, T3), the persistent ledger and the recorder (T4), checkpoints and
-    reconstruction (T5), timeline and changes (T6), the historical spatial world (T7), the causal
-    engine (T8), the temporal TUI (T9), the Linux history sources (T10), remote and KUANG/11
-    (T11), and the fuzzing, documentation and review passes of T12.
-  - Open: the container's verdict on the v0.5 cases, and the §4.11 boxes those cases close. Two
-    reviews have run and their findings are fixed; a third pass over the shell integration has
-    not.
-
 ## What is left, and why
 
-**The v0.5 Temporal & Causal Systems Interface's acceptance evidence.** The implementation is
-delivered: six crates, the machine-readable registries and their drift gate, the ledger, the
-recorder, reconstruction, the query and causal engines, the renderers, the Linux sources, remote
-and KUANG/11, and the shell integration that makes `at`, `now`, `present`, `timeline`, `changes`,
-`why` and `find event` real commands.
+**The v0.5 Temporal & Causal Systems Interface is delivered.** Six crates, the machine-readable
+registries and their drift gate, the ledger, the recorder, reconstruction, the query and causal
+engines, the renderers, the Linux sources, remote and KUANG/11, and the shell integration that
+makes `at`, `now`, `present`, `timeline`, `changes`, `why` and `find event` real commands.
 
-What is left is the part only the container can settle. `docs/ACCEPTANCE.md` §4.11 holds the
-definition of done — boxes derived from the specification's forty-seven acceptance scenarios, its
-performance evidence, its twenty core invariants and its twenty-three release criteria — and a box
-is ticked when a case or a test that runs in the gate proves it, never before.
-`docs/releases/v0.5.0.md` enumerates every open one, which is what
-`xtask::scan::check_release_notes` requires of an in-progress tranche.
+**All 120 boxes of `docs/ACCEPTANCE.md` §4.11 are ticked**, each by a named automated proof that
+`xtask/tests/temporal_evidence.rs` resolves against the tree on every gate run, so a proof that
+stopped existing turns the gate red rather than leaving a box ticked by nothing. The boxes are
+derived from the specification's forty-seven acceptance scenarios, its performance evidence, its
+twenty core invariants and its twenty-three release criteria. §66.9 permits an open box only as a
+recorded exclusion; the two this tranche records are `M` and `C` in the full-screen timeline, and
+ADR-0781 is where they are written down.
+
+The §49 fixture — 1,000,000 events, 400,000 evidence records, 10,000 actions, 288 checkpoints,
+1,820.7 MiB, seed 327753, digest `b67d6b28…` — is measured into
+`docs/contracts/hardening/performance_baseline.json`, and every §32.3 budget holds with room:
+`timeline` 6.6 ms of 100, `changes` 39.3 ms of 150, reconstruction 57.0 ms of 150, historical map
+0.2 ms of 150, `why` 1.9 ms of 200, `find event` 36.2 ms of 150. Startup with recording off adds
+nothing measurable (6.5 ms against a 7.1 ms cold start).
+
+What is left is promotion, and that is the user's call (AGENTS.md §12.1). The branch is
+`implementation`; nothing has been merged, tagged or released.
 
 The v0.4.1 tranche before it is delivered and released. **All 118 boxes of `docs/ACCEPTANCE.md`
 §4.8 are ticked**, each by a named automated proof that `xtask/tests/hardening_evidence.rs`
@@ -2279,32 +2277,100 @@ the provider samples — and no assertion changed.
 
 ## Found, not yet filed
 
-- **An exit nobody may read reports `empty` where the contract wants `permission_denied`
-  (2026-09-09, found while building the historical spatial world).** On this host `/proc/1/ns/` is
-  unreadable for an ordinary user, and the `namespaces` group of `enter process/1; look` composes
-  to `empty` rather than to `permission_denied`. v0.4 §35.2 keeps those two apart on purpose:
-  `empty` says the group was read and held nothing, `permission_denied` says it was not read.
-  Collapsing them is the shape §35.3 exists against — a refusal presented as an absence. It is
-  also why `spatial_contracts.rs::should_serve_every_relation_it_declares_and_declare_every_relation_it_serves`
-  fails here: `follow namespace` finds no members and answers `spatial.no_relation` instead of a
-  permission refusal. Reproduction, as an unprivileged user on a host whose `/proc/1/ns` is
-  restricted: `ono -c 'enter process/1; look --json'` and read the `namespaces` group's `state`.
-  What closes it: the group builder must distinguish a read that returned nothing from a read the
-  kernel refused, and carry `permission_denied` up. Pre-existing; the temporal tranche only made
-  the failure legible.
+- **A second release run compares a fresh package against the previous release's manifest
+  (2026-09-09, found running `release-check.sh` for v0.5.0).** `scripts/package.sh` writes into a
+  `dist/` it does not clear, so the v0.4.1 `.deb`, `.rpm` and `SHA256SUMS` of 2026-09-05 were still
+  lying beside the v0.5.0 pair it had just built. `scripts/package-check.sh` then compared the new
+  digests against the old manifest and refused: `dist/SHA256SUMS does not match the packages that
+  were validated (spec §48.2)`. The guard is right — the manifest genuinely did not describe those
+  bytes — and the situation is one only a repeat run on one machine can produce, which is why it
+  never appeared in CI. Reproduction: run `scripts/release-check.sh` twice at different workspace
+  versions without emptying `dist/` in between. What closes it: `scripts/package.sh` builds into a
+  `dist/` holding one build — either by clearing it, or by refusing to write beside artefacts of a
+  version it is not building.
 
-- **A KUANG/11 failure-class test reads the memory ceiling differently under load (2026-09-09, found
-  while adding the temporal host calls).**
-  `crates/ono-kuang-sdk/tests/failure_classes.rs::should_distinguish_a_launch_failure_from_a_quarantine_a_resource_kill_and_a_crash`
-  expects `runtime.memory_limit` from a plugin that allocates past its ceiling. Under a
-  full-parallel `cargo test` on a loaded machine the allocator aborts at about 62 MB of the 64 MB
-  ceiling and the supervisor reports `runtime.trap` instead — SIGABRT rather than the cgroup's own
-  kill, which is a different failure class and the one the test exists to distinguish. It passes
-  in isolation and three times running at `--test-threads=2`. Reproduction: run the whole
-  workspace suite at full parallelism on a machine with other builds going. What closes it: give
-  the probe enough headroom that the allocator cannot beat the ceiling to the kill, or assert on
-  the class the kernel actually delivered rather than on the one the test hoped for. Pre-existing;
-  nothing in the temporal tranche touches that path.
+- **The RPM is not byte-reproducible across two clean builds; the `.deb` is (2026-09-09).**
+  `xtask/tests/packaging.rs::should_produce_identical_hashes_for_two_clean_builds_of_one_commit`
+  builds the same commit twice in environments that disagree about locale, timezone and umask
+  (v0.4.1 §46.5). The Debian package came out byte-identical at 14,706,872 bytes both times; the
+  RPM differed by eighteen bytes — 15,229,350 against 15,229,332. The likely suspect is the umask:
+  build b runs at `umask=077`, so files created during it are `0600` where build a's are `0644`,
+  and `cargo generate-rpm` reads file modes off the disk into the header. Reproduction:
+  `cargo test -p xtask --test packaging should_produce_identical_hashes` on an otherwise idle
+  machine. What closes it: state the file modes in the packaging configuration rather than
+  inheriting them from whatever umask the build ran under. Not yet confirmed as pre-existing —
+  this run is the first in which it was observed, and the machine was building several things at
+  once.
+
+- **A ledger-backed query is not cancellable, and that is why Ctrl-C stops working once recording
+  is on (2026-09-09).** `crates/ono-cli/src/eval/native/drive.rs::interrupted()` races the
+  cancellation token against an *await*, so a provider-streamed query yields and cancels while a
+  synchronous SQLite read never yields: the work runs to completion and only the answer is
+  discarded. Measured on an 80,000-event ledger: `find event --limit 100000 | count` takes about
+  80 s, the interrupt is noted, nothing is printed, and the prompt returns 80 s later. Reproduction
+  at a terminal: `ONO_TEMPORAL_RECORDING_ENABLED=true`, then
+  `get process | each { get process | count } | count | to json` and Ctrl-C — with recording off the
+  same line answers `130`, with it on it runs to completion. v0.5 §32.6 and v0.2 §18.5 both require
+  the interrupt to reach the work rather than the result. What closes it: a long ledger read that
+  checks the token between batches, or one the driver can abandon.
+  `crates/ono-cli/tests/temporal_cancellation.rs::should_return_to_the_prompt_with_the_interrupt_status_when_a_long_historical_query_is_cancelled`
+  is red over it, and `docker/acceptance/cases/275-temporal-cancellation.case` passes only because
+  it uses a filesystem walk instead.
+
+- **The whole-process temporal path grows with the store where the engine does not (2026-09-09).**
+  §32.3's budgets hold comfortably at the engine level against §49's million-event fixture — `why`
+  1.9 ms, `reconstruct_recent` 54.4 ms, `changes_1h` 38.0 ms, `timeline_15m` 6.0 ms, one process per
+  sample, release build (ADR-0776). Whole-process CLI medians over a store the shell itself built
+  tell a different story two orders of magnitude earlier: `changes --since 1h` is 124 ms at 7,000
+  events, 271 ms at 15,000 and 351 ms at 20,000 against a 150 ms budget, with `timeline` at 105 ms
+  against 100 ms. Store *open* alone grows linearly — 16 / 21 / 38 / 67 ms at 1k / 3k / 7k / 15k
+  events — which is the part that should be constant and is the likely cause. Reproduction:
+  `ono --no-config -c 'start recorder; <query>'` over stores of those sizes, timed whole-process.
+  What closes it: find what opening a store reads that scales with its contents, and stop reading it
+  at open. §32.2's rule that a benchmark exercise production logic is what makes the gap matter —
+  the benchmark measures the engine and the person measures the shell.
+
+- **`why <target>` reports a constant subject identity (2026-09-09).** `why process 1`,
+  `why process 9` and `why link testbox` all answer
+  `"subject":"ono:stable:241accd898e18ecb3852398a06e31a68"`. §16.2's first form names a target and
+  the explanation is meant to be about that target. What closes it: resolve the target to its
+  spatial identity before the request is built, the way `at event` resolves a reference.
+
+- **Nothing checks that a command produces the schema it declares (2026-09-09, found while making
+  `timeline` pipeline-compatible).** `docs/contracts/commands/temporal.yaml` declared
+  `output: stream<ono.temporal-event/1>` for `timeline` from the day the command was registered,
+  and the implementation answered with one `ono.temporal-timeline/1` record for just as long. The
+  v0.2 §11.3 pre-flight type check validates a pipeline against the *declared* type, so it passed;
+  `spec-check` compares the registry against the command's declaration rather than against the
+  value it builds, so it passed too. The drift was found by a person reading the spec, which is the
+  one method that does not scale. Reproduction, before ADR-0778:
+  `ono -c 'timeline --since 1h | where kind == "object.changed"'` → `Ono-Sendai-E0202`, on a
+  pipeline the command's own contract lists as an example. What closes it: a conformance check that
+  runs each command's declared examples and validates the value against the declared output schema
+  — the machinery exists in `xtask/src/conformance.rs` for providers and would need the same for
+  commands.
+
+- **`temporal.why.max_candidates` was a cap on the explanation rather than on the work
+  (2026-09-09, found while measuring §32.3 against the §49 fixture).** Fixed in this increment, and
+  recorded here because the *shape* is worth filing against the rest of the tranche: `why` read
+  every event its scope held up to the coordinate — `limit: None` — and the engine then dropped
+  all but the last thousand. On the million-event fixture that is the whole store in memory to
+  explain one transition. `crates/ono-cli/src/temporal/views.rs` now passes the ceiling to the
+  ledger as well as to the engine. What is *not* closed: nothing checks that a command's declared
+  bound reaches the query rather than only the answer, and `timeline`, `changes` and `find event`
+  should each be read against that question. Reproduction of the class: grep the temporal commands
+  for `limit: None`.
+
+- **The §49 perf harness can label a debug figure as a release one (2026-09-09, found while
+  reproducing the two missed budgets).** `xtask perf` takes the build profile from
+  `target/{release,debug}/ono`, but a temporal row is sampled by re-running the *xtask* binary
+  (`perf::Runner::run_temporal` → `std::env::current_exe`), whose profile can differ. A
+  `cargo run -p xtask -- perf` with a release `ono` present reports "release build" over figures
+  measured by a debug xtask — 419 ms against 220 ms for `temporal.why`, which is the difference
+  between a missed budget and a held one. Reproduction: build `--release` for `ono` only, then run
+  the perf task through `cargo run` without `--release`. What closes it: sample through the
+  built binary's own profile, or refuse to record a temporal row when `current_exe` is not the
+  profile the run claims.
 
 - **A backward wall-clock step splits one process into two spatial identities (2026-09-08, found
   while giving the process provider the kernel's boot id, ADR-0713).** Half of a process's

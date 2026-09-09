@@ -169,3 +169,72 @@ fn should_keep_command_recall_and_the_event_browser_apart() {
         run.output()
     );
 }
+
+#[test]
+fn should_report_what_each_source_can_reach_when_nothing_was_ever_recorded() {
+    // v0.5 §12.3, §34, §55.5: the two refusals §34 keeps apart are reached on different ground.
+    // `temporal.not_recorded` is the answer where nothing was ever observed, and the only shell
+    // that can be in that state is one with the recorder off — a running recorder writes §8.1's
+    // coverage markers as it starts, so its store has a boundary from its first second
+    // (ADR-0777). The refusal lists how far back each source reaches, which is what makes it a
+    // finding rather than a shrug.
+    let run = support::ono("at -3d");
+    let output = run.output();
+    assert!(
+        output.contains("temporal.not_recorded"),
+        "v0.5 §12.3, §34: an instant nothing ever observed is named, never silently answered. \
+         Got {output:?}"
+    );
+    for source in ["ono.session", "ono.recorder"] {
+        assert!(
+            output.contains(source),
+            "v0.5 §12.3, §7.5: the refusal says how far `{source}` can reach. Got {output:?}"
+        );
+    }
+}
+
+#[test]
+fn should_refuse_with_what_was_never_observed_when_the_store_is_younger_than_its_own_window() {
+    // The other half of §34's split, and the side of it that is easy to get wrong. §34 words
+    // `temporal.out_of_retention` as history "known to have expired", which is a stronger claim
+    // than "older than `temporal.retention.max_age`". This store began recording seconds ago:
+    // three days back is outside its 24h window and was never inside it, so nothing expired and
+    // §12.3's refusal — naming how far each source does reach — is the honest one (ADR-0786).
+    let home = ono_testkit::scratch();
+    // A real mutation, so the store holds something: §17.2's lifecycle is what a session records
+    // about itself, and it is recorded because the shell made the change rather than watched it.
+    let mut victim = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("a fixture process");
+    let script = format!("stop process {}\nchanges --since 3d", victim.id());
+    let run = support::recording_shell(&home, &script);
+    let _ = victim.kill();
+    let _ = victim.wait();
+    let output = run.output();
+    assert!(
+        !output.contains("temporal.out_of_retention"),
+        "v0.5 §34, §35.3: a store that has retained nothing long enough to drop it must not claim \
+         history expired; a policy that *could* have held something is not one that *did*. Got \
+         {output:?}"
+    );
+    assert!(
+        output.contains("temporal.not_recorded") && output.contains("reaches back to"),
+        "v0.5 §12.3, §7.5: the refusal names the instant nothing observed and says how far each \
+         source does reach. Got {output:?}"
+    );
+}
+
+#[test]
+fn should_answer_a_comparison_that_stays_inside_the_retention_window() {
+    // The other side of the same rule, and §13.4's: a window nothing was observed in is thin
+    // rather than unanswerable, so `changes` answers it — with unknowns, not with a refusal.
+    let home = ono_testkit::scratch();
+    let run = support::recording_shell(&home, "changes --since 10m | to json");
+    assert!(
+        run.stdout().trim().starts_with('['),
+        "v0.5 §13.2, §13.4: a `--since` inside the retention window answers with a stream. Got \
+         {:?}",
+        run.output()
+    );
+}

@@ -19,7 +19,7 @@ use ono_spatial_core::{PermissionState, SpatialScope};
 use ono_temporal_core::{
     ActionEvent, Appended, CausalLink, Checkpoint, CoverageQuery, EventId, EventQuery, Evidence,
     EvidenceId, EvidenceSource, GapReason, LedgerRead, LedgerWrite, QueryOrder, RetentionState,
-    TemporalCompleteness, TemporalCoverage, TemporalEvent, TimeRange, error,
+    TemporalCompleteness, TemporalCoverage, TemporalEvent, TimeRange, distinguishing_length, error,
 };
 use ono_value::{ByteSize, ErrorValue, SchemaRegistry, builtin_schemas};
 use rusqlite::types::Value::{Integer, Text};
@@ -1105,9 +1105,30 @@ fn event_selection(query: &EventQuery) -> Decoded<Selection> {
         }
         None => String::new(),
     };
+    // A scope is a *prefix range* — a place includes everything under it — so `events_by_place`,
+    // which leads on `scope_path`, gives no usable order for the `ORDER BY presentation_nanos`
+    // that follows. Left to itself SQLite reads every event in the place, sorts all of them and
+    // then takes the few that were asked for: on §49's fixture, 62,500 rows sorted to answer a
+    // question about a hundred, which is 83 ms of pure sorting and the whole of why §32.3's `why`
+    // row missed its budget. `events_by_time_place` leads on the instant and carries the scope
+    // beside it, so the walk is already in the order the query wants, the scope is tested from the
+    // index, and the walk stops when the limit is full — 0.3 ms for the same answer (ADR-0776).
+    //
+    // Only where the question names an instant or a count. Then the walk can seek to the window
+    // and stop at its end, and the cost is the window rather than the store: `changes --since 1h`
+    // costs an hour of events whatever the ledger holds. A question that names neither — every
+    // event of a place, unbounded — has to read the place whatever the order, and the planner's
+    // own choice is the right one there.
+    let bounded =
+        query.limit.is_some() || query.range.from.is_some() || query.range.until.is_some();
+    let index = if query.scope.is_some() && bounded {
+        " INDEXED BY events_by_time_place"
+    } else {
+        ""
+    };
     Ok(Selection {
         sql: format!(
-            "SELECT {EVENT_COLUMNS} FROM events{where_clause} \
+            "SELECT {EVENT_COLUMNS} FROM events{index}{where_clause} \
              ORDER BY presentation_nanos {order}, event_id {order}{limit}"
         ),
         binds,
@@ -1126,7 +1147,14 @@ impl LedgerRead for LedgerStore {
             .query_map(binds, read_event_row)
             .map_err(|error| self.unavailable(&error))?;
         let mut events = Vec::new();
-        for row in rows {
+        for (read, row) in rows.enumerate() {
+            // v0.5 §32.6: this scan is the whole of a long historical query, and the shell that
+            // asked for it is inside this call until it returns. A batch boundary is where it can
+            // be told the answer is no longer wanted; the partial read is dropped rather than
+            // returned, because half a query is not a smaller query.
+            if read % crate::cancel::BATCH == 0 && crate::cancel::cancelled() {
+                return Err(crate::cancel::cancelled_read());
+            }
             let columns = row.map_err(|error| self.unavailable(&error))?;
             // §31.7's first obligation: a row that does not decode is refused rather than
             // rendered with its broken fields blanked. The query still answers (§31.7's third),
@@ -1173,6 +1201,49 @@ impl LedgerRead for LedgerStore {
                     .collect::<Vec<_>>(),
             )),
         }
+    }
+
+    fn shortest_unique_prefixes(
+        &self,
+        ids: &[EventId],
+        minimum: usize,
+    ) -> Result<Vec<usize>, ErrorValue> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // The identity is the table's primary key, so the retained identities either side of one
+        // in identity order are two index seeks, and the shortest prefix nothing else answers to
+        // follows from those two alone: everything sharing a prefix with an identity is
+        // contiguous with it. That is two seeks per rendered row, over two statements prepared
+        // once for the whole batch, rather than a query per row per lengthening step (§32.3).
+        let floor = minimum.max(1);
+        let connection = self.locked();
+        let mut below = connection
+            .prepare(
+                "SELECT event_id FROM events WHERE event_id < ?1 ORDER BY event_id DESC LIMIT 1",
+            )
+            .map_err(|error| self.unavailable(&error))?;
+        let mut above = connection
+            .prepare(
+                "SELECT event_id FROM events WHERE event_id > ?1 ORDER BY event_id ASC LIMIT 1",
+            )
+            .map_err(|error| self.unavailable(&error))?;
+        let mut lengths = Vec::with_capacity(ids.len());
+        for id in ids {
+            let text = id.as_str();
+            let mut length = floor.min(text.len());
+            for statement in [&mut below, &mut above] {
+                let neighbour: Option<String> = statement
+                    .query_row(params![text], |row| row.get(0))
+                    .optional()
+                    .map_err(|error| self.unavailable(&error))?;
+                if let Some(neighbour) = neighbour {
+                    length = length.max(distinguishing_length(text, &neighbour));
+                }
+            }
+            lengths.push(length);
+        }
+        Ok(lengths)
     }
 
     fn evidence(&self, ids: &[EvidenceId]) -> Result<Vec<Evidence>, ErrorValue> {

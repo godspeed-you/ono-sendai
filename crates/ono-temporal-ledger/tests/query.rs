@@ -264,3 +264,82 @@ fn should_answer_nothing_when_a_reference_names_no_event() {
     let missing = EventId::parse("@eaaaaaaaaaaaaaaaaaaaaaaa").expect("a well-formed reference");
     assert_eq!(store.event(&missing).expect("the lookup answers"), None);
 }
+
+#[test]
+fn should_shorten_an_identity_only_as_far_as_the_store_can_still_tell_it_apart() {
+    // §11.6's references are prefixes of the identity, so whoever prints one has to know where
+    // this store starts calling a prefix ambiguous. The answer is the inverse of `event`: a
+    // prefix of the length returned resolves to exactly one event, and a shorter one does not.
+    let home = tempfile::tempdir().expect("a temporary home");
+    let store = store_in(home.path());
+    let held: Vec<_> = (0..400)
+        .map(|pid| event_about(EventKind::ObjectObserved, "2026-08-31T13:00:00Z", pid))
+        .collect();
+    store.append(&held, &[]).expect("an append succeeds");
+
+    let ids: Vec<EventId> = held.iter().map(|event| event.event_id.clone()).collect();
+    let lengths = store
+        .shortest_unique_prefixes(&ids, 3)
+        .expect("the store answers");
+    assert_eq!(
+        lengths.len(),
+        ids.len(),
+        "one answer per identity asked for"
+    );
+
+    let mut shortened = 0_usize;
+    for (id, length) in ids.iter().zip(lengths) {
+        assert!(length >= 3, "no answer is shorter than §11.6's own `@e42`");
+        let prefix = EventId::parse(&id.as_str()[..length]).expect("a prefix is a reference");
+        assert_eq!(
+            store
+                .event(&prefix)
+                .expect("a unique prefix is not ambiguous")
+                .map(|event| event.event_id),
+            Some(id.clone()),
+            "a prefix of the length the store named resolves to exactly one event"
+        );
+        if length > 3 {
+            shortened += 1;
+            let shorter = EventId::parse(&id.as_str()[..length - 1]).expect("a shorter prefix");
+            assert_eq!(
+                store.event(&shorter).map(|_| ()).unwrap_err().code(),
+                ErrorCode::TemporalAmbiguousEvent,
+                "the answer is the shortest such prefix, so one character less is ambiguous"
+            );
+        }
+    }
+    assert!(
+        shortened > 0,
+        "400 events do not fit in 256 two-digit prefixes, so some are spelled longer"
+    );
+}
+
+#[test]
+fn should_spell_a_lonely_identity_at_the_shortest_length_a_caller_would_print() {
+    let home = tempfile::tempdir().expect("a temporary home");
+    let store = store_in(home.path());
+    let only = event(
+        EventKind::ObjectAppeared,
+        "2026-08-31T13:00:00Z",
+        "linux.procfs",
+    );
+    store
+        .append(std::slice::from_ref(&only), &[])
+        .expect("an append succeeds");
+
+    assert_eq!(
+        store
+            .shortest_unique_prefixes(std::slice::from_ref(&only.event_id), 3)
+            .expect("the store answers"),
+        vec![3],
+        "§11.6 keeps `@e42` where nothing else in the ledger answers to it"
+    );
+    assert!(
+        store
+            .shortest_unique_prefixes(&[], 3)
+            .expect("the store answers")
+            .is_empty(),
+        "asking about nothing reads nothing"
+    );
+}

@@ -74,6 +74,7 @@ pub use id::{ActionId, CausalLinkId, CheckpointId, EventId, EvidenceId};
 pub use ledger::{
     Appended, Checkpoint, CoverageQuery, EventQuery, LedgerRead, LedgerWrite, ObjectState,
     QueryOrder, RelationState, RetentionState, SourceAvailability, TimeRange,
+    distinguishing_length,
 };
 pub use order::{OrderEvidence, Ordering, happens_before, presentation_order};
 pub use session::{DEFAULT_SESSION_MAX_EVENTS, SessionLedger};

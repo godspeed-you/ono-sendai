@@ -27,8 +27,89 @@ use super::materialize::captured_text;
 use super::statement::{expand_alias, is_job_kill, prefix_assignments};
 use super::{Eval, Flow};
 
+thread_local! {
+    /// Ctrl-C, remembered for as long as the line that received it is still running.
+    static REACHED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// How many pipelines of one line this thread is inside, an `each` body's counted (ADR-0782).
+    static RUNNING: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether Ctrl-C has reached the shell since the line now running began (spec §18.5).
+///
+/// `ono_process::take_interrupt` reads the note *and clears it*, which is right for one waiter and
+/// wrong for a nest of them. `each { … }` runs a pipeline per item, and every one of those is a
+/// foreground run that drops the note before it assembles — so the first item to start after a
+/// Ctrl-C swallowed the interrupt meant for the line around it, after which nothing was left to
+/// cancel and the query ran to its end (ADR-0782). Taking the note once and remembering it here
+/// for the rest of the line lets every level of the nest see the same interrupt, so every level
+/// unwinds.
+///
+/// The memory is per thread because the foreground driver is one thread: the evaluator owns the
+/// session, `block_on` runs its futures on the calling thread, and a synchronous read a command
+/// makes happens there too. A background job on a runtime worker has a memory of its own that
+/// nothing ever sets, so a foreground Ctrl-C cannot reach into it (spec §18.4).
+pub(crate) fn interrupt_reached() -> bool {
+    REACHED.with(|reached| {
+        if ono_process::take_interrupt() {
+            reached.set(true);
+        }
+        reached.get()
+    })
+}
+
+/// The interrupt, as the flow that carries 128 + SIGINT out of wherever it was noticed (ADR-0008).
+pub(crate) fn interrupted_flow_now() -> Flow {
+    Flow::FailedWith(
+        ErrorValue::new(ErrorCode::StreamCancelled, "interrupted"),
+        ExitStatus::from_signal(2),
+    )
+}
+
+/// What a synchronous ledger read asks between batches (v0.5 §32.6).
+///
+/// Only a thread actually running a foreground pipeline may answer yes: a recorder flush or a
+/// background job reading the same store is nobody's Ctrl-C to cancel.
+fn cancelled_inside_a_long_read() -> bool {
+    RUNNING.with(std::cell::Cell::get) > 0 && interrupt_reached()
+}
+
+/// Held for as long as one pipeline of the foreground line is running.
+///
+/// The outermost one begins the line: it drops whatever note was left over from the prompt, so a
+/// Ctrl-C typed at an idle shell never cancels the command typed after it. The nested ones — the
+/// pipelines a block runs, one per item — begin nothing and clear nothing, which is the point.
+pub(crate) struct ForegroundRun(());
+
+impl ForegroundRun {
+    /// Enters a foreground pipeline, beginning the line where none was running.
+    pub(crate) fn begin() -> Self {
+        RUNNING.with(|running| {
+            if running.get() == 0 {
+                let _ = ono_process::take_interrupt();
+                REACHED.with(|reached| reached.set(false));
+                // The shell is the only place that knows both how a long read is asked for and
+                // how it is told to stop, so it is the shell that tells the store what to poll
+                // between batches of a scan (v0.5 §32.6).
+                ono_temporal_ledger::watch_for_cancellation(cancelled_inside_a_long_read);
+            }
+            running.set(running.get() + 1);
+        });
+        Self(())
+    }
+}
+
+impl Drop for ForegroundRun {
+    fn drop(&mut self) {
+        RUNNING.with(|running| running.set(running.get().saturating_sub(1)));
+    }
+}
+
 /// Runs a pipeline, honouring `&&`, `||` and a trailing `&`.
 pub fn run_pipeline(session: &mut Session, pipeline: &Pipeline, source: &str) -> Eval<ExitStatus> {
+    // The outermost of these begins the foreground line and drops the interrupt note the prompt
+    // may have left behind; the nested ones — a pipeline per item of an `each { … }` — keep the
+    // one the line is being cancelled by, which used to be lost here (ADR-0782).
+    let _running = ForegroundRun::begin();
     // Spec §11.3: field names are checked against the declared schemas before anything runs, so
     // a typo costs one message instead of one per object.
     super::native::check(session, pipeline, source).map_err(Flow::Failed)?;
@@ -458,6 +539,12 @@ pub(super) fn run_stage_list(
     if super::native::claims(session, list)
         || (!background && !session.capturing() && super::native::adapts_at_terminal(session, list))
     {
+        // A pipeline the shell has already been told to abandon is not started. Inside a block
+        // this is the cancellation point between two items: the driver is away from its runtime
+        // while an item runs, so the item itself has to be the thing that looks (v0.5 §32.6).
+        if !background && interrupt_reached() {
+            return Err(interrupted_flow_now());
+        }
         // A native command is as much "running something" as a child process is: `set file`
         // reaches the registry now (ADR-0068), and a configuration file that could change a
         // file's mode would be a startup script wearing a settings file's name (ADR-0010).

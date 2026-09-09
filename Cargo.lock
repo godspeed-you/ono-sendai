@@ -1640,6 +1640,7 @@ dependencies = [
  "ono-provider-net",
  "ono-provider-netlink",
  "ono-provider-systemd",
+ "ono-recorder",
  "ono-remote",
  "ono-render",
  "ono-spatial-core",

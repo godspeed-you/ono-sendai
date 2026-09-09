@@ -18,7 +18,8 @@ commands:
     provider_capability: mount.list
     selectors:
       - {name: target, type: path, doc: "Resolve the mount at this mount point."}
-    options: []
+    options:
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: none
     streaming: true
     phase: C
@@ -38,6 +39,7 @@ commands:
     selectors: []
     options:
       - {name: mounted, type: bool, doc: "Restrict to filesystems that are or are not currently mounted."}
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: conditional
     streaming: true
     phase: C
@@ -57,6 +59,7 @@ commands:
     selectors: []
     options:
       - {name: kind, type: string, doc: "Restrict to block or character devices."}
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: none
     streaming: true
     phase: C

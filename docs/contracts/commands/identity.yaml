@@ -19,7 +19,8 @@ commands:
     selectors:
       - {name: uid, type: int, doc: "Resolve one account by numeric id. Declared before `name` so that `get user 0` binds the number (ADR-0095)."}
       - {name: name, type: string, doc: "Resolve one account by login name."}
-    options: []
+    options:
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: none
     streaming: true
     phase: C
@@ -39,7 +40,8 @@ commands:
     selectors:
       - {name: gid, type: int, doc: "Resolve one group by numeric id. Declared before `name` so that `get group 0` binds the number (ADR-0095)."}
       - {name: name, type: string, doc: "Resolve one group by name."}
-    options: []
+    options:
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: none
     streaming: true
     phase: C
@@ -59,6 +61,7 @@ commands:
     selectors: []
     options:
       - {name: user, type: "ref<ono.user/1>", doc: "Restrict to one user's sessions."}
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: none
     streaming: true
     phase: C

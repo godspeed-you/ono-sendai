@@ -21,7 +21,7 @@
 //! system's randomness. The instants come from [`ono_testkit::temporal::Clock`]'s fixed origin,
 //! the variation comes from [`ono_testkit::Rng`] seeded with the number the profile declares, and
 //! the identities are content digests over those. The same seed therefore produces the same
-//! events with the same [`EventId`]s on any machine in any year, which is what makes two
+//! events with the same `EventId`s on any machine in any year, which is what makes two
 //! measurements a fortnight apart comparable at all.
 //!
 //! **It is honest.** A builder here fills every field the contract requires and none that the
@@ -334,7 +334,7 @@ pub fn resolved(id: SpatialId, label: &str) -> SpatialRef {
 /// Evidence for one field reading, with the identity §7.1 derives from its content.
 ///
 /// The identity is a digest over source, instant, scope, subject and claim, so two sources
-/// reporting the same reading collide rather than double-count — the same rule [`EventId`]
+/// reporting the same reading collide rather than double-count — the same rule `EventId`
 /// follows for events.
 #[must_use]
 pub fn field_evidence(

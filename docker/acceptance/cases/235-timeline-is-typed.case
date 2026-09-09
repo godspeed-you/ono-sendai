@@ -21,15 +21,18 @@ run: |
     fi
   }
 
+  # `$(…)` is bash's. Ono has no command substitution (ADR-0019), so a `$(cat …)` inside an Ono
+  # script is the literal `$` followed by a sub-pipeline, and the mutation never runs. The fixture
+  # process is started here instead, and its pid is interpolated into the script the shell runs.
+  victim() { sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo $!'; }
+
   echo '== the fixture: a real process the shell stops through a real Ono mutation (§43.6) =='
-  sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo $!' > /tmp/t6.pid
-  VICTIM=$(cat /tmp/t6.pid)
+  VICTIM=$(victim)
   echo "fixture: process $VICTIM"
 
   ono -c "stop process $VICTIM
   timeline --since 5m | to json" > /tmp/t6-timeline.json 2>&1
-  ono -c "sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo \$! > /tmp/t6b.pid'
-  stop process \$(cat /tmp/t6b.pid)
+  ono -c "stop process $(victim)
   timeline --since 5m" > /tmp/t6-timeline.txt 2>&1
 
   echo '== §17.2: the four-stage lifecycle is on the timeline =='
@@ -49,8 +52,7 @@ run: |
     'grep -q "\"source\":\"ono.session\"" /tmp/t6-timeline.json'
 
   echo '== §11.4: the value is typed, and a pipeline filters it =='
-  ono -c "sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo \$! > /tmp/t6c.pid'
-  stop process \$(cat /tmp/t6c.pid)
+  ono -c "stop process $(victim)
   find event 'kind == \"action.executed\"' | to json" > /tmp/t6-filtered.json 2>&1
   prove t6e "a predicate over \`kind\` selects exactly the executed actions (§11.4, §28.1)" \
     'grep -q "action.executed" /tmp/t6-filtered.json && ! grep -q "action.requested" /tmp/t6-filtered.json'

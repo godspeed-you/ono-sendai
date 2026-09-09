@@ -50,7 +50,12 @@ pub(super) fn report_failures(values: &[Value], failures: Vec<ErrorValue>) -> Ev
         for failure in remaining {
             reporter.error(&failure);
         }
-        return Err(Flow::Failed(first));
+        // A stage that refused because the line was interrupted ends the way an interrupted
+        // foreground job ends, whoever noticed the interrupt. A long ledger scan is asked every
+        // 256 rows whether anybody still wants the answer and refuses with `stream.cancelled`
+        // when nobody does (§32.6, ADR-0782); reporting that as an ordinary failure would give
+        // Ctrl-C the status of a command that went wrong rather than of one that was stopped.
+        return Err(super::segment::interrupted_flow(first));
     }
     for failure in &failures {
         reporter.error(failure);

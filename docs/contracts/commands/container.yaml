@@ -20,6 +20,7 @@ commands:
       - {name: id, type: string, doc: "Resolve one container by id or name."}
     options:
       - {name: provider, type: string, doc: "Query one named container provider."}
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: conditional
     streaming: true
     phase: C

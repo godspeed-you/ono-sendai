@@ -53,21 +53,33 @@ run: |
   echo '== §10.8: starting is idempotent, and stopping an absent recorder says so =='
   prove t2aq "stopping a recorder that is not running is temporal.recorder_not_running (§34)" \
     'ono -c "stop recorder" 2>&1 | grep -q "temporal.recorder_not_running"'
-  prove t2ar "starting twice is temporal.recorder_already_running (§34, §10.8)" \
+  # §10.8 states it as a MUST — "`start recorder` MUST be idempotent" — so a second start is a
+  # success, not a refusal. §34's E1114 `temporal.recorder_already_running` is reserved for the
+  # case §34 words as "where idempotency cannot absorb it", which a second start by the same
+  # session is not: the recorder it would start is the one already running.
+  prove t2ar "starting an already running recorder succeeds rather than refusing (§10.8)" \
     'ono -c "start recorder
-     start recorder" 2>&1 | grep -q "temporal.recorder_already_running"'
+     start recorder" > /tmp/t2c-twice.out 2>&1 &&
+     ! grep -q "temporal.recorder_already_running" /tmp/t2c-twice.out &&
+     ! grep -q "Ono-Sendai-E" /tmp/t2c-twice.out &&
+     grep -q "recorder running" /tmp/t2c-twice.out'
   prove t2as "a started recorder reports itself running and names its store (§10.3, §30.2)" \
     'ono -c "start recorder
-     get recorder | to json" 2>&1 | grep -q "\"running\": true"'
+     get recorder | to json" 2>&1 | tail -1 > /tmp/t2c-started.json &&
+     grep -q "\"running\":true" /tmp/t2c-started.json &&
+     grep -q "\"store\":\"/" /tmp/t2c-started.json'
 
   echo '== §30.8: history deletion is destructive and takes the existing policy =='
   prove t2at "\`remove temporal-history\` without a confirmation refuses (§30.8, v0.2 §17.4)" \
     'ono -c "remove temporal-history" 2>&1 | grep -qi "confirm"'
   prove t2au "a dry run says what it would destroy (§30.8)" \
     'ono -c "remove temporal-history --dry-run | to json" 2>&1 | grep -qi "would"'
+  # Through `to json`, because the outcome the proof reads is the ActionResult's `message` and
+  # the default table renders a truncated column rather than the sentence (v0.2 §11.5).
   prove t2av "and a confirmed removal leaves nothing behind (§30.8)" \
     'ono -c "start recorder
-     remove temporal-history --confirm" 2>&1 | grep -qi "gone"'
+     remove temporal-history --confirm | to json" 2>&1 | tail -1 |
+       grep -qi "\"status\":\"success\".*gone"'
 
   echo '== v0.2 §50: every temporal command answers help and explain from the registry =='
   for spelling in "at" "now" "present" "timeline" "changes" "why" "find event" \

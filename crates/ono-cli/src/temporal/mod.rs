@@ -2,7 +2,7 @@
 //!
 //! §55.7 forbids the ledger, the reconstruction and the causal engine from being built into this
 //! crate, and the module boundary here is that rule made structural. `ono-cli` parses, dispatches,
-//! owns the active [`TemporalContext`], and integrates the current spatial place with the temporal
+//! owns the active `TemporalContext`, and integrates the current spatial place with the temporal
 //! query — "nothing more", in §39's words. Every answer below is composed out of
 //! `ono-temporal-core`, `-ledger`, `-query`, `-reconstruct` and `-render`.
 //!
@@ -315,37 +315,81 @@ pub fn configure_from(settings: &crate::settings::Settings) {
         .flag("temporal.ui.show_source_tags")
         .unwrap_or(true);
     session::set_show_source_tags(show_source_tags);
+    // §33's ceiling on how much work one `why` may do, and therefore on how long it may hold the
+    // prompt (§32.3). It bounds the *query*, not only the engine: reading every event in the
+    // scope and then dropping all but the last thousand would already have cost the read.
+    if let Some(max) = settings.int("temporal.why.max_candidates")
+        && let Ok(max) = usize::try_from(max)
+    {
+        session::set_why_max_candidates(max);
+    }
+    recorder::configure(recorder_settings(settings));
     let zone = jiff::tz::TimeZone::system();
     let recording = settings.flag("temporal.recording.enabled").unwrap_or(false);
     if let Ok(mut state) = session::session_state().try_lock() {
         state.configure(zone, show_source_tags);
+        // §10.7: the in-memory ledger is bounded by `temporal.session.max_events`, and the bound
+        // is the configured one rather than the built-in default — `get recorder` states it as a
+        // fact, so it has to be one.
+        state.set_ledger(recorder::session_ledger());
         // §10.2 makes persistent recording opt-in and off by default, and §33 makes
-        // `temporal.recording.enabled` the switch. A session that finds it on opens the store,
-        // which is what makes §56.6 true: events recorded by one `ono` are queryable from the
-        // next. `start recorder` turns it on for the running session; the setting is how a user
-        // says "and for the next one too".
+        // `temporal.recording.enabled` the switch. A session that finds it on starts the
+        // recorder, which is what makes §56.6 true: events recorded by one `ono` are queryable
+        // from the next. `start recorder` turns it on for the running session; the setting is how
+        // a user says "and for the next one too".
         //
-        // The store is opened only when the setting says so, so §32.1's disabled path still
+        // The recorder is built only when the setting says so, so §32.1's disabled path still
         // touches no filesystem: below this line, a shell with recording off has done nothing.
-        if recording && !state.ledger().is_persistent() {
-            match recorder::store_path().and_then(|path| {
-                ono_temporal_ledger::Ledger::persistent(&ono_temporal_ledger::StoreOptions::at(
-                    &path,
-                ))
-            }) {
-                Ok(ledger) => {
-                    state.set_ledger(ledger);
-                    recorder::note_started(Some(jiff::Timestamp::now()));
-                }
+        if recording {
+            match recorder::start_recorder(&mut state, jiff::Timestamp::now()) {
                 // §31.7 and §44.3: a store that cannot be opened leaves the shell working with
                 // persistence off. The session ledger of §10.7 is what remains, and `get
                 // recorder` reports the health rather than the prompt reporting a failure the
                 // user did not ask for.
-                Err(_) => recorder::note_started(None),
+                Ok(_) | Err(_) => {}
             }
         }
     }
     session::install_evidence();
+}
+
+/// The §10.4 and §10.7 limits, as the resolved configuration states them (§33).
+fn recorder_settings(settings: &crate::settings::Settings) -> ono_recorder::RecorderSettings {
+    let mut resolved = ono_recorder::RecorderSettings {
+        record_process_argv: settings
+            .flag(ono_recorder::SETTING_PROCESS_ARGV)
+            .unwrap_or(false),
+        ..ono_recorder::RecorderSettings::default()
+    };
+    if let Some(Value::Duration(max)) = value_of(settings, ono_recorder::SETTING_MAX_AGE) {
+        resolved.max_age = max;
+    }
+    if let Some(Value::ByteSize(max)) = value_of(settings, ono_recorder::SETTING_MAX_SIZE) {
+        resolved.max_size = max;
+    }
+    if let Some(Value::Duration(interval)) =
+        value_of(settings, ono_recorder::SETTING_CHECKPOINT_INTERVAL)
+    {
+        resolved.checkpoint_interval = interval;
+    }
+    if let Some(Value::Duration(interval)) =
+        value_of(settings, ono_recorder::SETTING_FLUSH_INTERVAL)
+    {
+        resolved.flush_interval = interval;
+    }
+    if let Some(max) = settings.int(ono_recorder::SETTING_SESSION_MAX_EVENTS)
+        && let Ok(max) = usize::try_from(max)
+    {
+        resolved.session_max_events = max.max(1);
+    }
+    resolved
+}
+
+/// The effective value of `key`, whatever type the catalogue declared it as.
+fn value_of(settings: &crate::settings::Settings, key: &str) -> Option<Value> {
+    settings
+        .effective(key)
+        .map(|resolved| resolved.value.clone())
 }
 
 /// The temporal coordinate one stage evaluates at (§4, §4.5).
@@ -392,7 +436,7 @@ pub async fn record_action(
     operation: &str,
     arguments: &[String],
     requested_at: Timestamp,
-    outcome: Result<usize, &ono_value::ErrorValue>,
+    outcome: Outcome<'_>,
 ) {
     let scope = crate::spatial::local_scope();
     let actor = format!("uid:{}", ono_process::effective_uid());
@@ -417,14 +461,102 @@ pub async fn record_action(
         },
         requested_at,
     );
+    // §17.3: "if an external authority returns its own transaction/job ID, the event ledger MUST
+    // record the mapping". The authority hands it up on the outcome and nowhere else, so it is
+    // read before the outcome becomes a row a person looks at.
+    if let Outcome::Acted(outcomes) = outcome
+        && let Some(token) = external_transaction(outcomes)
+    {
+        lifecycle.external_transaction(&token);
+    }
     lifecycle.executed(requested_at);
     match outcome {
-        Ok(count) => lifecycle.completed(now, Some(&format!("{count} target(s)"))),
-        Err(error) => lifecycle.failed(now, Some(error.message()), Some(error.code().name())),
+        Outcome::Acted(outcomes) => match verdict(outcomes) {
+            Verdict::Failed { detail, code } => {
+                lifecycle.failed(now, Some(&detail), code.as_deref());
+            }
+            Verdict::Completed { detail } => lifecycle.completed(now, Some(&detail)),
+        },
+        Outcome::Refused(error) => {
+            lifecycle.failed(now, Some(error.message()), Some(error.code().name()));
+        }
     }
     // A session ledger is what §10.7 gives every session, recording or not, so this costs no
     // filesystem access when `temporal.recording.enabled` is false (§32.1).
     let _ = record_into(state.ledger(), &lifecycle);
+    recorder::maintain(now);
+}
+
+/// What became of one Ono mutation, as the seam that ran it saw it (§17.2, §17.4).
+#[derive(Debug, Clone, Copy)]
+pub enum Outcome<'a> {
+    /// The command ran and answered with one result row per target (spec §11.5).
+    Acted(&'a [ono_provider_api::ActionOutcome]),
+    /// The command refused before any target was touched.
+    Refused(&'a ErrorValue),
+}
+
+/// Whether the action succeeded or failed, and what to say about it (§17.2, §17.4).
+enum Verdict {
+    Completed {
+        detail: String,
+    },
+    Failed {
+        detail: String,
+        code: Option<String>,
+    },
+}
+
+/// §17.2's two terminal kinds, decided by §17.4's `ActionResult` rather than by the call returning.
+///
+/// A mutation whose every target failed did not succeed, whatever the call answered: `Ok` here
+/// means the command ran, not that it worked. A mutation that changed *something* is completed,
+/// because §11.5 keeps `97 succeeded, 3 failed` as two readable numbers rather than one verdict,
+/// and the rows carry the detail. The line between them is "did anything at all go through".
+fn verdict(outcomes: &[ono_provider_api::ActionOutcome]) -> Verdict {
+    let failed: Vec<&ono_provider_api::ActionOutcome> = outcomes
+        .iter()
+        .filter(|outcome| outcome.status() == ActionStatus::Failed)
+        .collect();
+    let detail = format!(
+        "{} of {} target(s) failed",
+        failed.len(),
+        outcomes.len().max(failed.len())
+    );
+    if failed.is_empty() || failed.len() < outcomes.len() {
+        return Verdict::Completed {
+            detail: format!("{} target(s)", outcomes.len()),
+        };
+    }
+    Verdict::Failed {
+        code: failed
+            .first()
+            .and_then(|outcome| outcome.error())
+            .map(|error| error.code().name().to_owned()),
+        detail,
+    }
+}
+
+/// The external authority's own identity for this mutation, where one was returned (§17.3).
+///
+/// A provider hands it up as namespaced metadata — `systemd.job` is the D-Bus object path
+/// `StartUnit` answered with — and the join key §17.3 asks the ledger to record is that value.
+/// Any authority may play: a key whose last segment is `job` or `transaction` is a transaction
+/// identity by that name, and nothing else on an outcome is one.
+fn external_transaction(outcomes: &[ono_provider_api::ActionOutcome]) -> Option<String> {
+    outcomes
+        .iter()
+        .flat_map(|outcome| outcome.metadata())
+        .find(|(key, _)| {
+            matches!(
+                key.rsplit('.').next(),
+                Some("job") | Some("transaction") | Some("txn")
+            )
+        })
+        .and_then(|(_, value)| match value {
+            Value::String(text) => Some(text.to_string()),
+            other => ono_value::canonical_text(other).ok(),
+        })
 }
 
 /// Appends a lifecycle to a ledger, discarding the refusal a full or unavailable store raises.
@@ -433,4 +565,83 @@ fn record_into(
     lifecycle: &events::ActionLifecycle,
 ) -> Result<(), ErrorValue> {
     lifecycle.record(ledger)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ono_provider_api::{Action, ObjectId};
+
+    fn action() -> Action {
+        Action::new(
+            "service",
+            "restart",
+            ObjectId::new(
+                SchemaId::new("ono.service", 1),
+                [Value::string("linux.systemd"), Value::string("nginx")],
+            ),
+        )
+    }
+
+    #[test]
+    fn should_record_the_authority_job_identity_when_a_provider_returned_one() {
+        // §17.3: "If an external authority returns its own transaction/job ID, the event ledger
+        // MUST record the mapping." systemd returns the D-Bus object path of the job it queued,
+        // and that path is the join key `ono.systemd-job-to-unit-state` matches a transition on.
+        let action = action();
+        let outcomes = [ono_provider_api::ActionOutcome::succeeded(&action, true)
+            .with_metadata(
+                "systemd.job",
+                Value::string("/org/freedesktop/systemd1/job/4821"),
+            )
+            .with_metadata("systemd.job_id", Value::Int(4821))];
+
+        assert_eq!(
+            external_transaction(&outcomes).as_deref(),
+            Some("/org/freedesktop/systemd1/job/4821")
+        );
+    }
+
+    #[test]
+    fn should_record_no_transaction_when_the_authority_returned_none() {
+        // §35.3: unknown is null, never fabricated. A provider that answered without a job has
+        // given the ledger nothing to map, and inventing a token would make the join meaningless.
+        let action = action();
+        let outcomes = [ono_provider_api::ActionOutcome::succeeded(&action, true)
+            .with_metadata("systemd.unit", Value::string("nginx.service"))];
+
+        assert_eq!(external_transaction(&outcomes), None);
+    }
+
+    #[test]
+    fn should_close_the_action_as_failed_when_no_target_went_through() {
+        // §17.2's two terminal kinds, told apart by §17.4's result rather than by the call having
+        // returned `Ok`: a command that ran and failed on every target did not succeed.
+        let action = action();
+        let outcomes = [ono_provider_api::ActionOutcome::failed(
+            &action,
+            ErrorValue::new(ErrorCode::ProviderUnavailable, "no service manager"),
+        )];
+
+        let Verdict::Failed { code, .. } = verdict(&outcomes) else {
+            panic!("v0.5 §17.2: a mutation whose every target failed is `action.failed`");
+        };
+        assert_eq!(code.as_deref(), Some("provider.unavailable"));
+    }
+
+    #[test]
+    fn should_close_the_action_as_completed_when_one_target_went_through() {
+        // §11.5 keeps `97 succeeded, 3 failed` as two readable numbers rather than one verdict,
+        // and the rows carry the detail. The action itself reached the system.
+        let action = action();
+        let outcomes = [
+            ono_provider_api::ActionOutcome::succeeded(&action, true),
+            ono_provider_api::ActionOutcome::failed(
+                &action,
+                ErrorValue::new(ErrorCode::ProviderUnavailable, "no service manager"),
+            ),
+        ];
+
+        assert!(matches!(verdict(&outcomes), Verdict::Completed { .. }));
+    }
 }

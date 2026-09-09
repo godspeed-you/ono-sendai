@@ -1,0 +1,171 @@
+# v0.5 §49 and §32.3, and the line between what a container can measure and what it cannot.
+#
+# §49 requires release evidence to be measured against a deterministic fixture ledger of at least
+# a million events, a hundred thousand object lifetimes, half a million relation changes and ten
+# thousand action records. That ledger is about four hundred seconds of writing and 1.6 GiB on
+# disk. `cargo xtask perf` builds it on the reference environment, `xtask/src/perf/fixture.rs`
+# writes it through the production `LedgerWrite` from one declared seed, `xtask/tests/perf.rs`
+# holds the generator against its declaration in both directions, and the eight measurements land
+# in `docs/contracts/hardening/performance_baseline.json`. A case that built it here would spend
+# the whole suite's time budget and most of the image's disk on one row, so it does not.
+#
+# Two halves of the box are provable from outside, and those are the two this case makes:
+#
+#   - **the cardinality is declared, and the declaration ships inside the tool that measures
+#     against it.** `docs/contracts/hardening/performance_profiles.yaml` is compiled into
+#     `ono_testkit` with `include_str!` and from there into the release tool this image installs
+#     as `ono-release-tool`, so the four numbers of §49 and the generator's seed are in the shipped
+#     bytes rather than in a document beside them. The seed is the load-bearing one: "deterministic"
+#     is a claim about one specific stream of events, and a seed chosen at a call site would make
+#     two runs incomparable.
+#   - **the shell answers every §32.3 query inside its budget over a real ledger of a stated
+#     cardinality, which this case builds itself**, at two sizes a factor of four apart. Each is a
+#     real SQLite store at §31.1's canonical path, written by the shipped recorder through the
+#     production write path out of real Ono mutations against real files — not a file handed to a
+#     provider (v0.4.1 §32.2's rule).
+#
+# What it does not prove is behaviour at §49's cardinality. Four thousand action events over a
+# thousand action records are not a million events, a hundred thousand lifetimes or half a million
+# relation changes, and no arithmetic here turns one into the other (§65.10). §49 says why the
+# large one exists: "the purpose is to catch architectural scaling failures". Only the measurement
+# over the million-event fixture can catch those; this case catches a regression at the size it
+# names, and says nothing about any other size.
+case: §49's fixture cardinality is declared where it is measured, and the budgets hold over a ledger this case builds
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
+env: NO_COLOR=1
+timeout: 300
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  TOOL=/usr/local/bin/ono-release-tool
+
+  echo '== §49: the fixture cardinality is declared, inside the tool that measures against it =='
+  prove t12s1 "the release tool carries the fixture registry (§49)" \
+    "grep -aq 'temporal_profiles:' $TOOL"
+  prove t12s2 "which declares §49's 1 000 000 events" \
+    "grep -aq 'events: 1000000' $TOOL"
+  prove t12s3 "§49's 100 000 objects and lifetimes" \
+    "grep -aq 'objects: 100000' $TOOL"
+  prove t12s4 "§49's 500 000 relation changes" \
+    "grep -aq 'relation_changes: 500000' $TOOL"
+  prove t12s5 "§49's 10 000 action records" \
+    "grep -aq 'actions: 10000' $TOOL"
+  prove t12s6 "and the generator seed, so \`deterministic\` names one stream of events (§49)" \
+    "grep -aq 'seed: 327753' $TOOL"
+  prove t12s7 "the declaration names §49 as the section that fixes those numbers" \
+    "grep -aq 'v0.5 §49' $TOOL"
+
+  echo '== the ledger this case builds: real mutations, the real store, a stated cardinality =='
+  # One mutation per file, each against a distinct object, each writing §17.2's four-stage
+  # lifecycle into the store the recorder opened at §31.1's canonical path.
+  build() {
+    local from="$1" to="$2" index
+    mkdir -p /tmp/t12s
+    for index in $(seq "$from" "$to"); do : > "/tmp/t12s/f$index"; done
+    ono -c 'get dir /tmp/t12s | each { remove file @.path --confirm } | count' >/dev/null 2>&1
+  }
+  events() {
+    ono -c 'get recorder | to json' 2>/dev/null | tail -1 |
+      grep -oE '"events":[0-9]+' | head -1 | cut -d: -f2
+  }
+  executed() {
+    ono -c "find event 'kind == \"action.executed\"' --limit 100000 | count" 2>/dev/null | tail -1
+  }
+
+  STORE="$HOME/.local/share/ono/temporal/ledger.sqlite3"
+
+  build 1 250
+  SMALL_EVENTS=$(events)
+  SMALL_ACTIONS=$(executed)
+  echo "small ledger: ${SMALL_EVENTS} events, ${SMALL_ACTIONS} action records"
+
+  prove t12s8 "the store the recorder wrote is at §31.1's canonical path" \
+    "test -f \"$STORE\""
+  prove t12s9 "and it is 0600, as §30.2 requires of retained history" \
+    "test \"\$(stat -c %a \"$STORE\")\" = 600"
+  prove t12s10 "the small ledger holds the four-stage lifecycle of every action (§17.2)" \
+    "test \"$SMALL_ACTIONS\" -ge 250 && test \"$SMALL_EVENTS\" -ge 1000"
+
+  # The median whole-process cost of one §32.3 query against that store: startup, store open,
+  # migration, query, render and teardown together, which is strictly harsher than the moment
+  # §32.3 budgets. `--no-config` keeps the config read out of the figure and `start recorder`
+  # opens the persistent store in the same process, exactly as case 271 measures it.
+  measure() {
+    local label="$1" limit_ms="$2" script="$3" runs=10 start end each
+    ono --no-config -c "start recorder; $script" >/dev/null 2>&1
+    start=$(date +%s%N)
+    for _ in $(seq $runs); do ono --no-config -c "start recorder; $script" >/dev/null 2>&1; done
+    end=$(date +%s%N)
+    each=$(( (end - start) / 1000000 / runs ))
+    echo "$label: ${each}ms (target ${limit_ms}ms, ${runs} runs)"
+    if [ "$each" -le "$limit_ms" ]; then echo "$label: within budget"; else echo "$label: OVER BUDGET"; fi
+  }
+
+  echo "== §32.3's budgets over ${SMALL_EVENTS} events =="
+  measure "timeline small" 100 'timeline --since 15m | count'
+  measure "changes small" 150 'changes --since 1h | count'
+  measure "find-event small" 150 'find event | count'
+  measure "why small" 200 'why process 1 | count'
+
+  echo '== the same ledger, four times as large =='
+  build 251 1000
+  LARGE_EVENTS=$(events)
+  LARGE_ACTIONS=$(executed)
+  SIZE=$(stat -c %s "$STORE")
+  echo "large ledger: ${LARGE_EVENTS} events, ${LARGE_ACTIONS} action records, ${SIZE} bytes on disk"
+
+  prove t12s11 "the ledger grew to the cardinality the case wrote, and lost nothing (§31)" \
+    "test \"$LARGE_ACTIONS\" -ge 1000 && test \"$LARGE_EVENTS\" -ge 4000"
+  prove t12s12 "the store on disk grew with it (§31.1, §31.2)" \
+    "test \"$SIZE\" -gt 100000"
+  prove t12s13 "and the recorder is still healthy at that size (§43.4)" \
+    "ono -c 'get recorder | to json' | tail -1 | grep -q '\"health\":\"healthy\"'"
+  prove t12s14 "nothing was dropped on the way in (§43.1, §43.2)" \
+    "ono -c 'get recorder | to json' | tail -1 | grep -q '\"dropped\":0'"
+
+  echo "== §32.3's budgets over ${LARGE_EVENTS} events =="
+  measure "timeline large" 100 'timeline --since 15m | count'
+  measure "changes large" 150 'changes --since 1h | count'
+  measure "find-event large" 150 'find event | count'
+  measure "why large" 200 'why process 1 | count'
+
+  echo '== and the history is still readable afterwards, by a process that wrote none of it =='
+  prove t12s15 "a separate shell reads every event back out of the store (§56.6)" \
+    "test \"\$(ono -c 'find event --limit 100000 | count' | tail -1)\" -ge \"$LARGE_EVENTS\""
+  echo 'temporal scale: done'
+exit: 0
+stdout-contains: PROVED t12s1
+stdout-contains: PROVED t12s2
+stdout-contains: PROVED t12s3
+stdout-contains: PROVED t12s4
+stdout-contains: PROVED t12s5
+stdout-contains: PROVED t12s6
+stdout-contains: PROVED t12s7
+stdout-contains: PROVED t12s8
+stdout-contains: PROVED t12s9
+stdout-contains: PROVED t12s10
+stdout-contains: PROVED t12s11
+stdout-contains: PROVED t12s12
+stdout-contains: PROVED t12s13
+stdout-contains: PROVED t12s14
+stdout-contains: PROVED t12s15
+stdout-contains: timeline small: within budget
+stdout-contains: changes small: within budget
+stdout-contains: find-event small: within budget
+stdout-contains: why small: within budget
+stdout-contains: timeline large: within budget
+stdout-contains: changes large: within budget
+stdout-contains: find-event large: within budget
+stdout-contains: why large: within budget
+stdout-contains: temporal scale: done
+stdout-not-contains: OVER BUDGET
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

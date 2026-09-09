@@ -1,0 +1,206 @@
+# v0.5 §32.6, on a real terminal, against a real ledger.
+#
+#   "Long historical queries MUST be cancellable using normal Ono cancellation semantics.
+#    Ctrl-C MUST not corrupt the ledger or leave locks held."
+#
+# Two sentences, two halves, and both need a query that is long because of the work it asks for
+# rather than because something made it wait. The query is the one
+# `crates/ono-cli/tests/temporal_cancellation.rs` uses at the crate boundary — a whole-filesystem
+# walk evaluated from a historical coordinate — and this image is far too small for that to take
+# any time at all, so the case gives it something to walk: a million files, made in about half a
+# minute, which turns the walk into seconds of work rather than a fraction of one, and the
+# interrupt into something that has to land in the middle of it. The case measures that duration
+# itself and states it, rather than assuming it.
+#
+# The interrupt is a real Ctrl-C: `script(1)` gives `ono` a terminal of its own and the case writes
+# the byte 0x03 into it, which the line discipline turns into the signal a terminal sends to its
+# foreground process group. What is asserted is a status rather than a duration (ADR-0459):
+# `alive-130` is 128 + SIGINT, the status of a command that was abandoned, and a query that had
+# been allowed to finish would say `alive-0` instead. The interrupt is sent only once the shell has
+# said out loud that it is executing the line — `present echo under-way-$?` prints `under-way-0`
+# from the running shell, which the echo of a line being typed can never produce — so a slow
+# terminal cannot turn Ctrl-C into an editing key.
+#
+# The second half is the one that outlives the process. A held lock is invisible to another reader
+# and fatal to the next writer, so the case reads the store while the interrupted session still
+# holds it open, makes the next writer a real mutation and times it, and then destroys the history
+# (§30.8) — the one operation a stale lock or a damaged store would defeat.
+case: Ctrl-C stops a long historical query, and leaves the ledger readable, writable and intact
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
+env: NO_COLOR=1
+env: TERM=xterm
+timeout: 300
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  STORE="$HOME/.local/share/ono/temporal/ledger.sqlite3"
+  # §32.6 is about a long *historical* query, so the subject has to be one the past can answer.
+  # A filesystem walk is not: under a historical coordinate §14.5 refuses `find file` outright —
+  # "current directory contents are not the past" — and a query that refuses in a millisecond has
+  # no middle for an interrupt to land in. This one reads the retained ledger, once per retained
+  # event, which is work the store really does and work the interrupt really has to reach.
+  # Deliberately unbounded, so the work scales with the ledger rather than with a number written
+  # here: one scan of the retained events per retained event. Over the two thousand this fixture
+  # records that is four million reads — tens of seconds in the release build the container runs,
+  # and longer on a slower machine, which is the direction a floor of four seconds needs.
+  QUERY='find event | each { find event | count } | count | to json'
+  events() {
+    ono -c 'get recorder | to json' 2>/dev/null | tail -1 |
+      grep -oE '"events":[0-9]+' | head -1 | cut -d: -f2
+  }
+
+  echo '== the fixture: retained history, and a query over it long enough to interrupt =='
+  mkdir -p /tmp/t12c-seed
+  for index in $(seq 1 500); do : > "/tmp/t12c-seed/f$index"; done
+  ono -c 'get dir /tmp/t12c-seed | each { remove file @.path --confirm } | count' >/dev/null 2>&1
+  BEFORE=$(events)
+  # Timed under the coordinate it is later interrupted at, because that is the query under test.
+  # The historical instant is inside the stretch the mutations above were recorded in, so the
+  # coordinate resolves and the ledger has something to answer with.
+  START=$(date +%s)
+  ono -c "at -5s
+  $QUERY" >/dev/null 2>&1
+  WALK=$(( $(date +%s) - START ))
+  echo "ledger: ${BEFORE} events; the uninterrupted query takes ${WALK}s"
+  prove t12c1 "the mutations reached the persistent store, so there is a ledger to hold (§31)" \
+    "test \"$BEFORE\" -ge 2000"
+  prove t12c2 "and the query is long enough that an interrupt can land inside it (§32.6)" \
+    "test $WALK -ge 4"
+
+  echo '== §32.6: Ctrl-C on a real terminal, in the middle of a historical query =='
+  session() {
+    script --quiet --return --command 'stty rows 30 cols 100 2>/dev/null; ono' /dev/null
+  }
+  await() {
+    local marker="$1" tries
+    for tries in $(seq 150); do
+      grep -aq "$marker" /tmp/t12c-session.out && return 0
+      sleep 0.2
+    done
+    return 1
+  }
+  : > /tmp/t12c-session.out
+  {
+    sleep 3
+    # §4.2: the query has to be a historical one, so the session enters the past first.
+    printf 'at -5s\n'
+    await 'PAST' || true
+    sleep 1
+    printf 'present echo under-way-$? ; %s\n' "$QUERY"
+    # The interrupt waits for the shell to say it is running the line, never for a clock.
+    await 'under-way-0' || true
+    sleep 2
+    printf '\003'
+    sleep 2
+    printf 'present echo alive-$?\n'
+    await 'alive-1' || true
+    sleep 1
+    printf 'now\n'
+    printf 'present echo after-$?\n'
+    sleep 2
+    printf 'exit\n'
+    sleep 1
+  } | session > /tmp/t12c-session.out 2>&1
+
+  prove t12c3 "the session was standing in the past when the query ran (§4.2, §4.6)" \
+    "grep -aq 'PAST' /tmp/t12c-session.out"
+  prove t12c4 "and the shell had begun executing the query when the interrupt arrived (§32.6)" \
+    "grep -aq '^under-way-0' /tmp/t12c-session.out"
+  prove t12c5 "Ctrl-C ended it with 128 + SIGINT rather than letting it finish (§32.6, §18.1)" \
+    "grep -aq '^alive-130' /tmp/t12c-session.out"
+  prove t12c6 "the query never printed the answer it was working towards (§32.6)" \
+    "! grep -aqE '^\[[0-9]+\]' /tmp/t12c-session.out"
+  prove t12c7 "the shell kept taking commands, including the return to now (§4.3, §32.6)" \
+    "grep -aq '^after-0' /tmp/t12c-session.out"
+  prove t12c8 "and nothing of that session is left running" \
+    "! pgrep -x ono >/dev/null"
+
+  echo '== §32.6: the same interrupt, and what it leaves in the store behind it =='
+  # Job control, so the query runs in a process group of its own with the signal disposition a
+  # terminal's foreground job has: a background job of a non-interactive shell inherits SIG_IGN
+  # for SIGINT and could not be interrupted at all.
+  set -m
+  ono -c "at -5s
+  $QUERY" > /tmp/t12c-background.out 2>&1 &
+  QPID=$!
+  set +m
+  sleep 3
+
+  READING_START=$(date +%s%N)
+  ono -c 'get recorder | to json' > /tmp/t12c-during.json 2>&1
+  READING_MS=$(( ( $(date +%s%N) - READING_START ) / 1000000 ))
+  prove t12c9 "another shell reads the ledger while the query holds it open (§32.6)" \
+    "grep -q '\"health\":\"healthy\"' /tmp/t12c-during.json && test $READING_MS -lt 5000"
+
+  # `kill -0` still succeeds for a child nobody has reaped, so the process's own state is what
+  # says whether it ended.
+  state() { awk '{print $3}' "/proc/$1/stat" 2>/dev/null; }
+  kill -INT "$QPID" 2>/dev/null
+  ENDED=no
+  for _ in $(seq 100); do
+    QSTATE=$(state "$QPID")
+    if [ -z "$QSTATE" ] || [ "$QSTATE" = Z ]; then ENDED=yes; break; fi
+    sleep 0.2
+  done
+  wait "$QPID" 2>/dev/null
+  QSTATUS=$?
+  echo "the interrupted query ended: ${ENDED} (status ${QSTATUS})"
+  prove t12c10 "the interrupted query ends instead of grinding on (§32.6)" \
+    "test \"$ENDED\" = yes"
+  prove t12c11 "with the interrupt status, not success it never earned (§32.6, §18.1)" \
+    "test $QSTATUS -eq 130"
+  prove t12c12 "and without printing the answer it was interrupted out of (§32.6)" \
+    "! grep -qE '^\[[0-9]+\]' /tmp/t12c-background.out"
+
+  AFTER=$(events)
+  : > /tmp/t12c-witness
+  WRITE_START=$(date +%s%N)
+  ono -c 'remove file /tmp/t12c-witness --confirm | to json' > /tmp/t12c-write.json 2>&1
+  WRITE_MS=$(( ( $(date +%s%N) - WRITE_START ) / 1000000 ))
+  WRITTEN=$(events)
+  echo "after the interrupt: ${AFTER} events; the next writer finished in ${WRITE_MS}ms, leaving ${WRITTEN}"
+
+  prove t12c13 "the ledger still holds everything it held before the interrupt (§31.5, §32.6)" \
+    "test \"$AFTER\" -ge \"$BEFORE\""
+  prove t12c14 "it is neither corrupt nor unavailable (§31.7, §34)" \
+    "! grep -qE 'temporal\.(store_corrupt|store_unavailable)' /tmp/t12c-during.json /tmp/t12c-write.json"
+  prove t12c15 "the next mutation is written rather than blocked, so no lock was left held (§32.6)" \
+    "grep -q '\"status\":\"success\"' /tmp/t12c-write.json && test \"$WRITTEN\" -ge \$(( AFTER + 4 )) && test $WRITE_MS -lt 5000"
+  prove t12c16 "the store is still the private file §30.2 requires" \
+    "test \"\$(stat -c %a \"$STORE\")\" = 600"
+  prove t12c17 "a historical query still answers over it (§31.7)" \
+    "ono -c 'timeline --since 15m | count' >/dev/null 2>&1"
+  # §30.8's deletion is the operation a stale lock or a damaged store would defeat, so it is last.
+  prove t12c18 "and the history can still be destroyed deliberately (§30.8, §32.6)" \
+    "ono -c 'remove temporal-history --confirm | to json' 2>&1 | tail -1 | grep -qi 'success'"
+  echo 'temporal cancellation: done'
+exit: 0
+stdout-contains: PROVED t12c1
+stdout-contains: PROVED t12c2
+stdout-contains: PROVED t12c3
+stdout-contains: PROVED t12c4
+stdout-contains: PROVED t12c5
+stdout-contains: PROVED t12c6
+stdout-contains: PROVED t12c7
+stdout-contains: PROVED t12c8
+stdout-contains: PROVED t12c9
+stdout-contains: PROVED t12c10
+stdout-contains: PROVED t12c11
+stdout-contains: PROVED t12c12
+stdout-contains: PROVED t12c13
+stdout-contains: PROVED t12c14
+stdout-contains: PROVED t12c15
+stdout-contains: PROVED t12c16
+stdout-contains: PROVED t12c17
+stdout-contains: PROVED t12c18
+stdout-contains: temporal cancellation: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

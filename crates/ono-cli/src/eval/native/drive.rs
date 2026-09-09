@@ -17,8 +17,7 @@ use crate::session::Session;
 
 use super::result::action_records;
 use super::segment::{
-    Segment, head_name, interrupted_flow, native_contract, produces_bytes,
-    refuse_switched_off_spatial, segments,
+    Segment, head_name, native_contract, produces_bytes, refuse_switched_off_spatial, segments,
 };
 use super::{implementations, registry};
 
@@ -135,7 +134,7 @@ pub(super) async fn interrupted() {
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tick.tick().await;
-        if ono_process::take_interrupt() {
+        if crate::eval::pipeline::interrupt_reached() {
             return;
         }
     }
@@ -173,6 +172,14 @@ pub(super) fn drive_segment(
     let mut drained = Drained::default();
     let mut asking = true;
     while draining.is_some() || showing.is_some() {
+        // Between two items, and before the first. `select!` below only reaches the interrupt
+        // branch when nothing else is ready, and a stage running a block is never idle for long
+        // enough: the driver leaves the runtime to run the item, and while it is away nothing it
+        // waits on can be polled at all (spec §18.5, v0.5 §32.6). Asking here is a load and a
+        // branch, and it is the only cancellation point a pipeline of many small reads has.
+        if crate::eval::pipeline::interrupt_reached() {
+            return Err(crate::eval::pipeline::interrupted_flow_now());
+        }
         let driven = handle.block_on(async {
             tokio::select! {
                 biased;
@@ -231,12 +238,7 @@ pub(super) fn drive_segment(
                 draining = None;
                 showing = None;
             }
-            Driven::Interrupted => {
-                return Err(interrupted_flow(ErrorValue::new(
-                    ErrorCode::StreamCancelled,
-                    "interrupted",
-                )));
-            }
+            Driven::Interrupted => return Err(crate::eval::pipeline::interrupted_flow_now()),
         }
     }
     Ok(drained)

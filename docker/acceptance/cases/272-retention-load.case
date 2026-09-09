@@ -1,0 +1,144 @@
+# v0.5 §31.8 and §31.9, and what a container can honestly say about them.
+#
+#   §31.8: "Retention cleanup MUST run in bounded background work. Deleting expired events MUST
+#           also handle orphaned evidence/checkpoints/causal links without leaving invalid
+#           references."
+#   §31.9: "Checkpoints MUST not block the interactive prompt."
+#
+# The sweep itself is a loop with a bound written into it: `RetentionPolicy::batch` removes one
+# batch of events per call and reports whether more remains, and `RecorderSettings::max_sweep_passes`
+# is how many of those one drive performs before it yields. Driving it needs a retention window to
+# age past, which is hours of wall clock — so it is measured where hours can be handed to it as a
+# parameter: `crates/ono-recorder/tests/retention_load.rs` drives it against both bounds of §10.4
+# and asserts §31.8's second sentence by looking for dangling references afterwards, and
+# `cargo xtask perf`'s `temporal.retention_sweep` row measures its cost over §49's fixture ledger.
+# A case that faked the age of an event to make a sweep fire would be measuring the fake.
+#
+# What a container can prove is the obligation both sections exist to protect, and it is the half
+# a user actually meets: **the prompt is not where any of that work happens.** So this case puts
+# the ledger under a real write load — a second shell performing thousands of Ono mutations against
+# the same store at §31.1's canonical path — and measures, while that is in flight, the two things
+# §31.9 names: the shell's startup to a usable prompt, and the recorder status the prompt segment
+# of §8.6 draws. Both are held to §32.2's own figure for a usable prompt, and both are printed
+# either way so a regression that stays inside the budget is still visible in a diff.
+#
+# The bounds themselves are proven where they are visible: `get recorder` states the retention
+# policy and the checkpoint cadence in force, which is §30.1's requirement that a user can know
+# what Ono keeps — and a bound nobody can name is not a bound.
+#
+# What this case does not prove is that expired data has been removed. Nothing here ages past
+# §10.4's twenty-four hours, and the retained window is the one the case itself wrote (§65.10).
+case: a ledger under a real write load keeps its bounds and leaves the prompt free
+env: ONO_TEMPORAL_RECORDING_ENABLED=true
+env: NO_COLOR=1
+timeout: 300
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  events() {
+    ono -c 'get recorder | to json' 2>/dev/null | tail -1 |
+      grep -oE '"events":[0-9]+' | head -1 | cut -d: -f2
+  }
+
+  # The median whole-process cost of one `ono` run, in milliseconds: startup, store open,
+  # migration, the statement, render and teardown. `--no-config` keeps the config read out of the
+  # figure and `start recorder` opens the persistent store in the same process, which is how case
+  # 271 measures a shell that has a ledger.
+  measure() {
+    local label="$1" limit_ms="$2" script="$3" runs=10 start end each
+    ono --no-config -c "start recorder; $script" >/dev/null 2>&1
+    start=$(date +%s%N)
+    for _ in $(seq $runs); do ono --no-config -c "start recorder; $script" >/dev/null 2>&1; done
+    end=$(date +%s%N)
+    each=$(( (end - start) / 1000000 / runs ))
+    echo "$label: ${each}ms (target ${limit_ms}ms, ${runs} runs)"
+    if [ "$each" -le "$limit_ms" ]; then echo "$label: within budget"; else echo "$label: OVER BUDGET"; fi
+  }
+
+  echo '== the fixture: a real store with real history in it =='
+  mkdir -p /tmp/t12r-seed /tmp/t12r-load
+  for index in $(seq 1 500); do : > "/tmp/t12r-seed/f$index"; done
+  for index in $(seq 1 4000); do : > "/tmp/t12r-load/f$index"; done
+  ono -c 'get dir /tmp/t12r-seed | each { remove file @.path --confirm } | count' >/dev/null 2>&1
+  SEEDED=$(events)
+  ono -c 'get recorder | to json' > /tmp/t12r-idle.json 2>&1
+  echo "seeded ledger: ${SEEDED} events"
+  prove t12r1 "the seed reached the persistent store (§31, §17.2)" \
+    "test \"$SEEDED\" -ge 2000"
+
+  echo '== §10.4, §30.1: the bounds the work is done under are stated, and finite =='
+  prove t12r2 "the age bound in force is named (§10.4, §31.8)" \
+    "grep -q '\"max_age\":\"86400000000000ns\"' /tmp/t12r-idle.json"
+  prove t12r3 "so is the size bound (§10.4, §31.8)" \
+    "grep -q '\"max_size\":536870912' /tmp/t12r-idle.json"
+  prove t12r4 "and the checkpoint cadence §31.9 fixes at five minutes (§31.9, §33)" \
+    "grep -q '\"checkpoint_interval\":\"300000000000ns\"' /tmp/t12r-idle.json"
+
+  echo '== §32.2: the prompt of a shell whose store is idle =='
+  measure "prompt idle" 150 'true'
+  measure "status idle" 150 'get recorder | to json'
+
+  echo '== the same two, while a second shell writes to the same ledger =='
+  ono -c 'get dir /tmp/t12r-load | each { remove file @.path --confirm } | count' >/dev/null 2>&1 &
+  LOADER=$!
+  sleep 1
+  measure "prompt under load" 150 'true'
+  measure "status under load" 150 'get recorder | to json'
+  ono -c 'get process | take 1 | select pid | to json' > /tmp/t12r-during.json 2>&1
+  ono -c 'changes --since 30d' > /tmp/t12r-boundary.out 2>&1
+  LOADING=$(kill -0 "$LOADER" 2>/dev/null && echo yes || echo no)
+  echo "the writer was still running when the measurements ended: ${LOADING}"
+
+  prove t12r5 "the measurements were taken while the writer was still writing (§31.8)" \
+    "test \"$LOADING\" = yes"
+  prove t12r6 "ordinary work answers during the load, off the ledger's back (§31.9)" \
+    "grep -q '\"pid\"' /tmp/t12r-during.json"
+  prove t12r7 "and the retention boundary stays honest under it (§12.3, §55.5)" \
+    "grep -qE 'temporal\.(out_of_retention|not_recorded)' /tmp/t12r-boundary.out"
+
+  wait "$LOADER" 2>/dev/null
+  LOADED=$(events)
+  ono -c 'get recorder | to json' > /tmp/t12r-loaded.json 2>&1
+  echo "after the load: ${LOADED} events"
+
+  echo '== §43.1, §43.2: bounded work that loses nothing and says so =='
+  prove t12r8 "every mutation the writer made is in the store — four events each (§17.2)" \
+    "test \"$LOADED\" -ge \$(( SEEDED + 16000 ))"
+  prove t12r9 "nothing was dropped on the way in (§43.1, §43.2)" \
+    "grep -q '\"dropped\":0' /tmp/t12r-loaded.json"
+  prove t12r10 "the recorder is healthy rather than degraded afterwards (§43.4)" \
+    "grep -q '\"health\":\"healthy\"' /tmp/t12r-loaded.json"
+  prove t12r11 "the store is intact and still readable by another shell (§31.7)" \
+    "test \"\$(ono -c 'find event --limit 100000 | count' | tail -1)\" -ge \"$LOADED\""
+  prove t12r12 "and it is still the private file §30.2 requires" \
+    "test \"\$(stat -c %a \"\$HOME/.local/share/ono/temporal/ledger.sqlite3\")\" = 600"
+  echo 'retention load: done'
+exit: 0
+stdout-contains: PROVED t12r1
+stdout-contains: PROVED t12r2
+stdout-contains: PROVED t12r3
+stdout-contains: PROVED t12r4
+stdout-contains: PROVED t12r5
+stdout-contains: PROVED t12r6
+stdout-contains: PROVED t12r7
+stdout-contains: PROVED t12r8
+stdout-contains: PROVED t12r9
+stdout-contains: PROVED t12r10
+stdout-contains: PROVED t12r11
+stdout-contains: PROVED t12r12
+stdout-contains: prompt idle: within budget
+stdout-contains: status idle: within budget
+stdout-contains: prompt under load: within budget
+stdout-contains: status under load: within budget
+stdout-contains: retention load: done
+stdout-not-contains: OVER BUDGET
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

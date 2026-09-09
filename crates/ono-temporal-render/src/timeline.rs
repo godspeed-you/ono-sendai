@@ -47,6 +47,11 @@ pub fn timeline(view: &RecordValue, width: usize, options: &RenderOptions) -> Ve
         // §19.4: a reader must be able to tell a quiet interval from a truncated one.
         lines.push(fit("  … the list was truncated by a limit", width));
     }
+    // §11.2 and §8.5: a view says which interval it is a statement about and what its coverage
+    // over that interval was, rather than implying completeness by saying nothing. §11.4 makes
+    // the value a stream of events, so this line is the only place the default rendering can say
+    // either — the full-screen timeline of §19.2 says it in a header instead.
+    lines.push(fit(&window_line(view, options), width));
     lines
 }
 
@@ -91,6 +96,22 @@ fn header(view: &RecordValue, width: usize, options: &RenderOptions) -> String {
         return format!("{head}{} {until}", "-".repeat(width - taken - 1));
     }
     format!("{head}- {until}")
+}
+
+/// `window: 12:00 - 12:15   evidence: procfs   coverage: partial, 1 gap` (§11.2, §8.5).
+///
+/// What §19.2's header and evidence line say between them, on one line, for the default rendering
+/// that has neither.
+fn window_line(view: &RecordValue, options: &RenderOptions) -> String {
+    let from = record_instant(view, "from").map(|at| clock(at, options, Precision::Minute));
+    let until = record_instant(view, "until").map(|at| clock(at, options, Precision::Minute));
+    let evidence = evidence_line(view);
+    match (from, until) {
+        (Some(from), Some(until)) => {
+            format!(" window: {from} - {until}  {}", evidence.trim_start())
+        }
+        _ => evidence,
+    }
 }
 
 /// `evidence: procfs, systemd     coverage: complete` (§19.2, §8.5).

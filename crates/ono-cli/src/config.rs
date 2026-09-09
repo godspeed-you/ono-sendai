@@ -158,4 +158,14 @@ pub fn load(session: &mut Session, options: &Options, reporter: &Reporter) {
     // `theme.name` can now be resolved into the theme the renderers paint with (spec §44,
     // ADR-0332). A theme that cannot be found never stops the shell.
     crate::theme::load(session, reporter);
+
+    // v0.5 §10.7: the session's own ledger is evidence for the stretch the session has been
+    // alive, so the session has to start observing when the session starts — not when the first
+    // temporal command happens to be dispatched. Reading it lazily made `at -1s` refuse in a
+    // shell that had been up for a minute, because the origin moved to the instant of the
+    // question. It also read `temporal.recording.enabled` before Layer 4 had been applied, so a
+    // setting given in the environment opened no store (§10.2, §33).
+    //
+    // §32.1 is unaffected: with recording off this opens nothing and touches no filesystem.
+    crate::temporal::configure_from(session.settings());
 }

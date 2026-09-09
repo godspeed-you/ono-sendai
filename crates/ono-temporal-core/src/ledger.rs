@@ -326,6 +326,31 @@ pub trait LedgerRead: Send + Sync + std::fmt::Debug {
     /// store refusal otherwise. A reference that names none is `Ok(None)`.
     fn event(&self, id: &EventId) -> Result<Option<TemporalEvent>, ErrorValue>;
 
+    /// How long a prefix of each of `ids` has to be to name at most one retained event (§11.6).
+    ///
+    /// The answer is a length in characters of [`EventId::as_str`] — `4` is `e34b` — parallel to
+    /// `ids` and never below `minimum`, and it is the inverse of the question
+    /// [`LedgerRead::event`] answers: whoever prints a reference the reader can type back has to
+    /// know which prefixes this store would call ambiguous, and only the store knows that. It is
+    /// batched because a timeline mints one reference per rendered event and asks once for all of
+    /// them, and `minimum` is what lets a store stop distinguishing below the shortest length its
+    /// caller would ever print.
+    ///
+    /// The default answers with the whole identity, which is always unambiguous and never short.
+    /// A store that can order identities overrides it with something a person can type.
+    ///
+    /// # Errors
+    ///
+    /// Returns a §34 store refusal.
+    fn shortest_unique_prefixes(
+        &self,
+        ids: &[EventId],
+        minimum: usize,
+    ) -> Result<Vec<usize>, ErrorValue> {
+        let _ = minimum;
+        Ok(ids.iter().map(|id| id.as_str().len()).collect())
+    }
+
     /// The evidence records behind `ids` (§7.3).
     ///
     /// # Errors
@@ -419,6 +444,21 @@ pub trait LedgerWrite: Send + Sync + std::fmt::Debug {
     ///
     /// Returns a §34 store refusal.
     fn flush(&self) -> Result<(), ErrorValue>;
+}
+
+/// How long a prefix of `id` has to be for `neighbour` not to share it (§11.6).
+///
+/// One character more than the two have in common, and never more than `id` itself is: the rule
+/// every [`LedgerRead::shortest_unique_prefixes`] implementation applies to whichever retained
+/// identities it found nearest.
+#[must_use]
+pub fn distinguishing_length(id: &str, neighbour: &str) -> usize {
+    let shared = id
+        .chars()
+        .zip(neighbour.chars())
+        .take_while(|(left, right)| left == right)
+        .count();
+    shared.saturating_add(1).min(id.chars().count())
 }
 
 #[cfg(test)]

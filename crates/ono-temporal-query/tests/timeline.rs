@@ -571,7 +571,7 @@ fn should_print_the_reference_the_session_minted_when_a_timeline_becomes_a_recor
         instant("2026-08-31T13:00:00Z"),
     )
     .expect("the timeline is planned")
-    .with_references(&mut references);
+    .with_references(&held, &mut references);
     let record = answer.to_record().expect("the timeline record is built");
 
     let Some(Value::List(events)) = record.get("events") else {

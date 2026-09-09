@@ -186,7 +186,10 @@ pub fn live_by_default() -> bool {
 
 /// A terminal that cannot be driven at all. `TERM=dumb` is the honest case: no cursor
 /// addressing, no alternate screen, so §23.2's text map is the whole answer (§39.2).
-fn terminal_is_dumb() -> bool {
+///
+/// Shared with the full-screen timeline of v0.5 §19, which asks the same question about the same
+/// terminal and must not answer it a second way.
+pub(crate) fn terminal_is_dumb() -> bool {
     std::env::var("TERM").is_ok_and(|term| term.is_empty() || term == "dumb")
 }
 
@@ -644,15 +647,62 @@ pub async fn run_map_view(
                 Ok(changed) => view.show_detail(returned_frame(&changed, columns)),
                 Err(error) => view.say(error.message().to_owned()),
             },
-            // §19.1: `T` opens the full-screen timeline at the cursor. The view that draws it is
-            // the shell's timeline view, which is not this one; until it takes this terminal the
-            // honest answer is the command that opens it (§2.17).
-            Effect::OpenTimeline => view.say(match cursor.at() {
-                Some(at) => format!("`timeline --view --at {at}` opens the timeline at the cursor"),
-                None => "`timeline --view` opens the timeline at this place".to_owned(),
-            }),
+            // §19.1: `T` opens the full-screen timeline at the cursor. It draws itself over this
+            // terminal and hands it back, so the map's own guards stay held and the frame is
+            // painted again from scratch when it returns.
+            Effect::OpenTimeline => {
+                if let Err(error) = open_timeline(session, &center, &cursor).await {
+                    view.say(error.message().to_owned());
+                }
+                painted = Vec::new();
+            }
         }
     }
+}
+
+/// Opens the full-screen timeline of v0.5 §19 at the cursor's instant (§18.3, §19.1).
+///
+/// The window is the one `timeline` itself would answer for this place — the same
+/// [`ono_temporal_query::timeline::TimelineRequest`], built from the horizon of §11.3 — and the
+/// coordinate is the cursor's, spelled and resolved through the one function `at` and `--at` both
+/// use, because §4.5 forbids a second historical code path (ADR-0781).
+///
+/// The timeline draws over this terminal rather than taking one of its own: the map already holds
+/// raw mode and the alternate buffer, and entering the one alternate screen twice would leave it
+/// once.
+async fn open_timeline(
+    session: &SpatialSessionState,
+    center: &SpatialId,
+    cursor: &crate::spatial::TemporalCursor,
+) -> Result<(), ErrorValue> {
+    let scope = session.current_scope().clone();
+    let horizon = if center == &ono_spatial_core::space::root().spatial_id_in(Some(&scope)) {
+        // §11.3: at the root place a timeline is high-significance events and this session's own
+        // actions, rather than every event from every object.
+        ono_temporal_query::relevance::Horizon::at_root(scope)
+    } else {
+        let neighbours = ono_spatial_query::resolve::parent_of(session.index(), center)
+            .into_iter()
+            .collect();
+        ono_temporal_query::relevance::Horizon::at_place(scope, center.clone(), neighbours)
+    };
+    let request = ono_temporal_query::timeline::TimelineRequest::new(horizon)
+        .labelled(&place_path(session, center));
+
+    // §18.3: the timeline opens *at the cursor*. A cursor following the present has no instant of
+    // its own, and the session's coordinate is then what the window is read at (§11.8).
+    let context = match cursor.at() {
+        Some(at) => {
+            let spelling = at.to_string();
+            let now = Timestamp::now();
+            let state = crate::temporal::session::temporal_session().await;
+            std::sync::Arc::new(crate::temporal::coordinate::resolve(
+                &state, &spelling, now,
+            )?)
+        }
+        None => crate::temporal::session::coordinate(),
+    };
+    crate::temporal::views::timeline_view::drive(request, context).await
 }
 
 /// The places around `center` this session knows, as the stepper's horizon (§18.4, §11.3).

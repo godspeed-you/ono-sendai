@@ -309,11 +309,21 @@ pub(super) fn each_needs_a_stream() -> ErrorValue {
 }
 
 /// The flow a pipeline error becomes, with an interrupted run reported as every shell reports one.
+///
+/// Two things make a run an interrupted one, and the second is why the latch is consulted here
+/// rather than only the error. A stage may refuse *with* `stream.cancelled` — a ledger scan that
+/// was told to stop does (§32.6) — but a stage may also have been accumulating ordinary failures
+/// when the Ctrl-C landed: `find file /` walks a filesystem and collects an `io.permission_denied`
+/// for every directory this user may not read, and the first of those would otherwise become the
+/// answer, hiding the interrupt behind a refusal the user never asked about. A line the shell was
+/// told to stop ends because it was stopped, whatever else it had gathered on the way (ADR-0782).
 pub(super) fn interrupted_flow(error: ErrorValue) -> Flow {
     if error.code() == ErrorCode::StreamCancelled {
         // 128 + SIGINT, the status every shell reports for an interrupted foreground job
         // (ADR-0008); the message would only repeat what the ^C on the terminal already says.
         Flow::FailedWith(error, ExitStatus::from_signal(2))
+    } else if crate::eval::pipeline::interrupt_reached() {
+        crate::eval::pipeline::interrupted_flow_now()
     } else {
         Flow::Failed(error)
     }

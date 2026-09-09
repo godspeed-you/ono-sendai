@@ -35,6 +35,7 @@ commands:
       - {name: group, type: "ref<ono.group/1>", repeatable: false, doc: "Restrict to processes whose effective group is this one."}
       - {name: tree, type: bool, doc: "Emit the parent/child structure rather than a flat stream."}
       - {name: sample, type: duration, doc: "Measure `cpu` over this interval instead of over each process's lifetime: the provider reads the CPU counters, waits, and answers the rate over exactly that window (ADR-0232). The invocation takes at least this long."}
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: none
     streaming: true
     phase: C
@@ -157,7 +158,8 @@ commands:
     provider_capability: job.list
     selectors:
       - {name: id, type: int, doc: "Resolve one job by its job number."}
-    options: []
+    options:
+      - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: none
     streaming: true
     phase: F

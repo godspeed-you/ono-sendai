@@ -10,7 +10,6 @@
 use std::sync::Arc;
 
 use jiff::Timestamp;
-use ono_spatial_core::{PermissionState, SpatialScope};
 use ono_temporal_core::{
     CoverageQuery, CoverageSummary, EventAnchors, EventId, EventQuery, LedgerRead, QueryOrder,
     SourceAvailability, TemporalContext, TimeRange, TimeResolution, TimeSelector, error,
@@ -90,7 +89,11 @@ pub fn resolve(
     // taken through the shell and only what a provider happened to report besides. Declaring it
     // `partial` is what puts `[PAST?]` on the prompt rather than `[PAST]` (§8.6).
     if state.started_at() <= now {
-        intervals.push(session_coverage(&scope, state.started_at(), now));
+        intervals.push(super::session::session_coverage(
+            &scope,
+            state.started_at(),
+            now,
+        ));
     }
     let coverage = CoverageSummary::compose(&intervals, window);
 
@@ -98,15 +101,7 @@ pub fn resolve(
     // reach, and the session stays where it was. §34 keeps "never recorded" and "expired" apart,
     // and the ledger's own retention boundary is what tells them apart.
     if !reachable(state, resolved_at)? {
-        let retained = ledger.retention().earliest;
-        if let Some(earliest) = retained {
-            return Err(error::out_of_retention(resolved_at, earliest));
-        }
-        return Err(error::not_recorded(
-            &scope,
-            resolved_at,
-            &availability(state, now),
-        ));
+        return Err(unreachable(state, resolved_at, now));
     }
 
     Ok(TemporalContext::Historical {
@@ -118,24 +113,6 @@ pub fn resolve(
     })
 }
 
-/// The session's own coverage of its own lifetime (§8.3, §10.7).
-fn session_coverage(
-    scope: &SpatialScope,
-    from: Timestamp,
-    until: Timestamp,
-) -> ono_temporal_core::TemporalCoverage {
-    ono_temporal_core::TemporalCoverage {
-        scope: scope.clone(),
-        capability: Arc::from("session.events"),
-        from,
-        until,
-        completeness: ono_temporal_core::TemporalCompleteness::Partial,
-        sampling_interval: None,
-        source: ono_temporal_core::EvidenceSource::session(),
-        permission: PermissionState::Available,
-    }
-}
-
 /// Whether any evidence at all reaches `at` (§12.3).
 ///
 /// Three things count, and all three are facts rather than judgements: the instant falls inside
@@ -143,6 +120,11 @@ fn session_coverage(
 /// the ledger holds a coverage interval that spans it. A coverage interval alone is enough —
 /// §8.2's "complete coverage" of an interval in which nothing happened is exactly the case where
 /// an empty answer is the true one.
+/// Whether any source can answer about `at`.
+///
+/// §12.3 is about the coordinate a session moves to. `changes` asks a different question and
+/// §13.4 answers it differently — a side without evidence is reported unknown, with the coverage
+/// that made it unknown — so this stays `at`'s rule rather than becoming a shared one.
 fn reachable(state: &TemporalState, at: Timestamp) -> Result<bool, ErrorValue> {
     if at >= state.started_at() {
         return Ok(true);
@@ -165,6 +147,37 @@ fn reachable(state: &TemporalState, at: Timestamp) -> Result<bool, ErrorValue> {
         range: TimeRange::at(at),
     })?;
     Ok(!covering.is_empty())
+}
+
+/// §34's refusal for an instant no source can reach, of the two kinds §34 keeps apart.
+///
+/// §34 words `temporal.out_of_retention` as "requested history is **known to have expired**", and
+/// that is a stronger claim than "older than the policy window". A store that began recording five
+/// seconds ago has a `max_age` of 24h and an `earliest` of five seconds ago; three days back is
+/// outside its window and was never inside it, so nothing expired and §12.3's
+/// `temporal.not_recorded` — with the list of what each source *can* reach — is the honest answer.
+/// §12.3's own worked example is exactly that shell asking `at -3d`.
+///
+/// So retention is the reason only once the policy has demonstrably swept: the retained record has
+/// to begin at or before the horizon, which is another way of saying the store has been keeping
+/// history for longer than it keeps history. Then an instant below the horizon is one this store
+/// held and discarded, and "the earliest instant still retained" is a boundary it can name.
+///
+/// Shared with `changes`, so the two commands give the same reason for the same instant (§12.3,
+/// §13.4, §55.5).
+pub(crate) fn unreachable(state: &TemporalState, at: Timestamp, now: Timestamp) -> ErrorValue {
+    let retention = state.ledger().retention();
+    if let (Some(max_age), Some(earliest)) = (retention.max_age, retention.earliest) {
+        let horizon = now.as_nanosecond().saturating_sub(max_age.nanoseconds());
+        if at.as_nanosecond() < horizon && earliest.as_nanosecond() <= horizon {
+            return error::out_of_retention(at, earliest);
+        }
+    }
+    error::not_recorded(
+        &crate::spatial::local_scope(),
+        at,
+        &availability(state, now),
+    )
 }
 
 /// What each source can reach, as §12.3's refusal lists it.

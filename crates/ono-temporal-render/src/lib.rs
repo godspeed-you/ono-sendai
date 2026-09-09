@@ -38,7 +38,9 @@ mod timeline;
 
 pub use causal::{causal_explanation, causal_graph};
 pub use changes::changes;
-pub use hud::{gap_frame, paused_marker, recorder_status, return_to_now, temporal_hud};
+pub use hud::{
+    gap_frame, past_marker, paused_marker, recorder_status, return_to_now, temporal_hud,
+};
 pub use timeline::{timeline, timeline_view};
 
 /// The session settings and view state a temporal rendering honours.

@@ -11,10 +11,13 @@
 //! is also what §32.3's 150 ms budget for an indexed predicate rests on.
 //!
 //! §11.6's short references live here too. The full [`EventId`] is a 24-digit digest, unusable at
-//! a prompt, so [`EventReferences`] issues the shortest prefix that names one event in this
-//! session and never lets an issued reference change meaning. A reference is resolvable outside
-//! the session as well, by the ledger's own prefix lookup, which raises
-//! `temporal.ambiguous_event` where a prefix has since come to name two events (§34).
+//! a prompt, so [`EventReferences`] issues the shortest prefix that names one event *in the
+//! ledger it was printed from*, and never lets an issued reference change meaning inside the
+//! session. Both halves are needed, and the ledger half is the load-bearing one: "rendered events
+//! MUST expose stable references usable in subsequent commands" (§11.6), and the next command
+//! runs in a shell whose session table is empty, so it resolves the printed prefix through the
+//! ledger's own prefix lookup. A prefix that named one event only among the handful this session
+//! had shown would meet `temporal.ambiguous_event` there (§34, ADR-0783).
 //!
 //! §14.4 is the subtle one. Searching for a place at a historical instant may legitimately use a
 //! present-day name to reach a candidate, and doing so "MUST distinguish resolution aid from
@@ -39,9 +42,20 @@ pub const DEFAULT_LIMIT: usize = 500;
 
 /// The shortest reference §11.6 issues, in hex digits.
 ///
-/// Two digits is what `@e42` is, and it is enough for a session that shows a handful of events.
-/// A session that shows more takes longer prefixes, one event at a time.
+/// Two digits is what `@e42` is, and it is the floor rather than the answer: a reference is
+/// spelled this short only where the ledger holds no second event whose identity begins the same
+/// way. Anything the ledger cannot tell apart at two digits is spelled longer (ADR-0783).
 pub const MIN_REFERENCE_DIGITS: usize = 2;
+
+/// How many hex digits a reference carries beyond the shortest one the ledger can tell apart.
+///
+/// The ledger is append-only and alive: the shell that printed the row records its own coverage
+/// and action events as it exits, and the shell the reader types the reference into records more
+/// before it resolves anything. A prefix that named one event the instant it was printed can
+/// therefore be taken back by an event nobody had seen yet, and the reader meets
+/// `temporal.ambiguous_event` for a reference that was correct on screen. One digit of headroom
+/// divides that chance by sixteen and costs one character (ADR-0783).
+pub const REFERENCE_HEADROOM: usize = 1;
 
 /// What a caller could read off an ordinary Ono predicate without evaluating it (§20.3).
 ///
@@ -122,9 +136,14 @@ impl std::fmt::Display for EventRef {
 ///
 /// A reference is a prefix of the event's own content digest, so it needs no counter, no shared
 /// state and no allocation table in the ledger: it resolves in a later session, on another host,
-/// against the same events. What the session table adds is *stability* — once a reference has
-/// been shown to the reader, a later event that shares its prefix takes a longer one, and the
-/// reference the reader can see keeps meaning the event they saw.
+/// against the same events. Two rules decide how long a prefix is, and they are checked in this
+/// order (ADR-0783):
+///
+/// 1. it names at most one event in the ledger it is minted from, which is what makes it usable
+///    in the *subsequent command* §11.6 promises, run from a shell with an empty session table;
+/// 2. it carries [`REFERENCE_HEADROOM`] beyond that, because the ledger is append-only and alive;
+/// 3. it collides with no reference this session has already shown, which is what makes it
+///    *stable* — a reference the reader can still see on screen never changes meaning.
 #[derive(Debug, Clone, Default)]
 pub struct EventReferences {
     issued: Vec<EventRef>,
@@ -157,15 +176,91 @@ impl EventReferences {
     /// The reference for `event`, minting one where the session has not shown it before.
     ///
     /// The same event always gets the same reference inside one session, so a reader who scrolls
-    /// back sees the reference they were given.
-    pub fn reference(&mut self, event: &TemporalEvent) -> EventRef {
-        if let Some(held) = self.issued.iter().find(|held| held.full == event.event_id) {
-            return held.clone();
+    /// back sees the reference they were given, and `ledger` is asked how short that reference
+    /// may be spelled without naming a second retained event. Rendering several events at once
+    /// goes through [`EventReferences::reference_all`], which asks once for all of them.
+    pub fn reference(&mut self, ledger: &dyn LedgerRead, event: &TemporalEvent) -> EventRef {
+        if let Some(held) = self.held(&event.event_id) {
+            return held;
         }
+        let length = self.unique_lengths(ledger, std::slice::from_ref(event));
+        self.mint(event, length.first().copied())
+    }
+
+    /// The references for `events`, asking the ledger once for the whole rendering (§32.3).
+    ///
+    /// A timeline mints one reference per rendered row, up to §11.4's limit, so the lengths come
+    /// back in one batched lookup rather than one lookup per row per lengthening step.
+    pub fn reference_all(
+        &mut self,
+        ledger: &dyn LedgerRead,
+        events: &[TemporalEvent],
+    ) -> Vec<EventRef> {
+        let unseen: Vec<&TemporalEvent> = events
+            .iter()
+            .filter(|event| self.held(&event.event_id).is_none())
+            .collect();
+        let lengths = self.unique_lengths_of(ledger, unseen.iter().map(|event| &event.event_id));
+        let mut lengths = unseen
+            .iter()
+            .map(|event| event.event_id.clone())
+            .zip(lengths)
+            .collect::<Vec<_>>();
+        lengths.dedup_by(|left, right| left.0 == right.0);
+        events
+            .iter()
+            .map(|event| match self.held(&event.event_id) {
+                Some(held) => held,
+                None => {
+                    let length = lengths
+                        .iter()
+                        .find(|(id, _)| id == &event.event_id)
+                        .map(|(_, length)| *length);
+                    self.mint(event, length)
+                }
+            })
+            .collect()
+    }
+
+    /// The reference this session already shows for `id`, where it shows one.
+    fn held(&self, id: &EventId) -> Option<EventRef> {
+        self.issued.iter().find(|held| &held.full == id).cloned()
+    }
+
+    /// How long a prefix of each event's identity the ledger needs to tell it apart (§11.6).
+    fn unique_lengths(&self, ledger: &dyn LedgerRead, events: &[TemporalEvent]) -> Vec<usize> {
+        self.unique_lengths_of(ledger, events.iter().map(|event| &event.event_id))
+    }
+
+    /// The same question, for identities the caller has already gathered.
+    ///
+    /// A store that cannot answer leaves the answer empty, and [`EventReferences::mint`] then
+    /// spells the whole identity: long, and still exactly one event.
+    fn unique_lengths_of<'a>(
+        &self,
+        ledger: &dyn LedgerRead,
+        ids: impl Iterator<Item = &'a EventId>,
+    ) -> Vec<usize> {
+        let ids: Vec<EventId> = ids.cloned().collect();
+        ledger
+            .shortest_unique_prefixes(&ids, MIN_REFERENCE_DIGITS + 1)
+            .unwrap_or_default()
+    }
+
+    /// Issues the reference for `event`, `length` being the shortest the ledger can tell apart.
+    ///
+    /// What is issued is that length plus [`REFERENCE_HEADROOM`], lengthened again where the
+    /// session has already shown a reference that shares it.
+    ///
+    /// `None` is the answer of a ledger that could not be asked, and it spells the whole identity.
+    fn mint(&mut self, event: &TemporalEvent, length: Option<usize>) -> EventRef {
         // The identity reads `e` followed by hex, so a reference of `n` hex digits is the first
         // `n + 1` characters of it: `MIN_REFERENCE_DIGITS` of 2 is `@e42`.
         let identity = event.event_id.as_str();
-        let mut length = (MIN_REFERENCE_DIGITS + 1).min(identity.len());
+        let floor = (MIN_REFERENCE_DIGITS + 1).min(identity.len());
+        let mut length = length
+            .map_or(identity.len(), |length| length + REFERENCE_HEADROOM)
+            .clamp(floor, identity.len());
         while length < identity.len()
             && self
                 .issued
@@ -279,10 +374,12 @@ pub fn completions(
     });
     candidates.truncate(limit);
 
+    let minted = references.reference_all(ledger, &candidates);
     Ok(candidates
         .iter()
-        .map(|event| EventCompletion {
-            reference: references.reference(event),
+        .zip(minted)
+        .map(|(event, reference)| EventCompletion {
+            reference,
             at: event.times.presentation_instant(),
             kind: event.kind,
             label: event

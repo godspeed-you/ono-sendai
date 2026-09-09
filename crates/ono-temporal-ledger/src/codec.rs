@@ -67,27 +67,36 @@ pub(crate) fn seal(body: Cbor) -> Decoded<Vec<u8>> {
 }
 
 /// Reads a payload blob back, refusing one that names a schema or a version this Ono cannot read.
+///
+/// The body is taken out of the frame rather than copied out of it. Cloning it deep-copied every
+/// value of every event on the way out of the store, which is most of what a reconstruction that
+/// replays a few thousand events spends its time on (ADR-0776).
 pub(crate) fn unseal(bytes: &[u8]) -> Decoded<Cbor> {
     let framed: Cbor = ciborium::from_reader(bytes)
         .map_err(|error| format!("a payload did not decode as CBOR: {error}"))?;
-    let parts = array(&framed)?;
-    let [schema, version, body] = parts else {
+    let Cbor::Array(mut parts) = framed else {
+        return Err(format!("expected an array, found {}", shape(&framed)));
+    };
+    if parts.len() != 3 {
         return Err(format!(
             "a payload frame carries {} fields rather than three",
             parts.len()
         ));
-    };
-    let schema = text(schema)?;
+    }
+    let body = parts.pop().unwrap_or(Cbor::Null);
+    let version = parts.pop().unwrap_or(Cbor::Null);
+    let schema = parts.pop().unwrap_or(Cbor::Null);
+    let schema = text(&schema)?;
     if schema != PAYLOAD_SCHEMA {
         return Err(format!("a payload names the unknown schema `{schema}`"));
     }
-    let version = unsigned(version)?;
+    let version = unsigned(&version)?;
     if version > PAYLOAD_VERSION {
         return Err(format!(
             "a payload was written at version {version}; this Ono reads up to {PAYLOAD_VERSION}"
         ));
     }
-    Ok(body.clone())
+    Ok(body)
 }
 
 // ---- primitives ------------------------------------------------------------------------------
@@ -556,7 +565,7 @@ fn read_record(body: &Cbor, schemas: &SchemaRegistry) -> Decoded<RecordValue> {
     let contract = schemas
         .get(&id)
         .ok_or_else(|| format!("no schema `{id}` is registered, so the record cannot be read"))?;
-    let mut builder = RecordValue::builder(contract, read_provenance(provenance)?);
+    let mut builder = RecordValue::builder(Arc::clone(&contract), read_provenance(provenance)?);
     for entry in array(fields)? {
         let parts = array(entry)?;
         let [name, held] = parts else {
@@ -564,10 +573,16 @@ fn read_record(body: &Cbor, schemas: &SchemaRegistry) -> Decoded<RecordValue> {
         };
         let name = text(name)?;
         let held = read_value(held, schemas)?;
-        let attempt = builder.clone();
-        builder = match attempt.set(name, held.clone()) {
-            Ok(filled) => filled,
-            Err(_) => builder.set_extra(name, held),
+        // `set` refuses exactly one thing — a name the schema does not declare — so asking the
+        // schema first is the same decision, made without speculating. The speculative form
+        // cloned the half-built record and the value once per field, which on a record of twenty
+        // fields is four hundred value clones to read one record (ADR-0776).
+        builder = if contract.position_of(name).is_some() {
+            builder.set(name, held).unwrap_or_else(|_| {
+                unreachable!("the schema was asked for `{name}` before it was set")
+            })
+        } else {
+            builder.set_extra(name, held)
         };
     }
     for (name, held) in read_map(extra, schemas)?.iter() {

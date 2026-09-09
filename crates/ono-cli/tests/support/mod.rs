@@ -138,6 +138,64 @@ pub fn ono(script: &str) -> ono_testkit::Run {
         .run()
 }
 
+/// A shell whose history is persisted under `home`, as `temporal.recording.enabled` makes it.
+///
+/// Every XDG root is inside the scratch directory, so the store the recorder opens is the test's
+/// own and the developer's history is neither read nor written. `ONO_TEMPORAL_RECORDING_ENABLED`
+/// is the environment spelling of the setting (`crates/ono-cli/src/settings.rs`), which is how a
+/// test asks for v0.5 §10.2's opt-in without writing a configuration file.
+pub fn recording_shell(home: &Scratch, script: &str) -> ono_testkit::Run {
+    let root = home.path().to_string_lossy().into_owned();
+    Shell::new()
+        .env("NO_COLOR", "1")
+        .env("HOME", root.clone())
+        .env("XDG_CONFIG_HOME", format!("{root}/config"))
+        .env("XDG_DATA_HOME", format!("{root}/data"))
+        .env("XDG_STATE_HOME", format!("{root}/state"))
+        .env("ONO_TEMPORAL_RECORDING_ENABLED", "true")
+        .args(["-c", script])
+        .timeout(Duration::from_secs(60))
+        .run()
+}
+
+/// A background `sleep` this process owns, for a test that needs a real process to act on.
+///
+/// Started here rather than through the shell, so stopping it is a mutation Ono makes against a
+/// process it did not create — which is what §17.1's action lifecycle is about.
+pub fn fixture_process() -> std::process::Child {
+    std::process::Command::new("sleep")
+        .arg("120")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("a fixture process starts")
+}
+
+/// A recording home whose ledger already holds one Ono action's four lifecycle events (§17.2).
+///
+/// The mutation runs in an invocation of its own, so a query asked afterwards is asked in a
+/// *later* shell and can only answer from what was retained — which is what makes it a test of the
+/// store rather than of the session that filled it.
+///
+/// # Panics
+///
+/// Panics if the mutation did not happen, because every assertion built on it would otherwise be
+/// a statement about an empty ledger.
+pub fn home_with_a_recorded_action() -> Scratch {
+    let home = ono_testkit::scratch();
+    let mut victim = fixture_process();
+    let run = recording_shell(&home, &format!("stop process {}", victim.id()));
+    let _ = victim.kill();
+    let _ = victim.wait();
+    assert!(
+        run.status().is_success(),
+        "the fixture needs one real Ono mutation to have happened; `stop process` said {:?}",
+        run.output()
+    );
+    home
+}
+
 pub fn ono_at_home(home: &Scratch, script: &str) -> ono_testkit::Run {
     Shell::new()
         .env("HOME", home.path().to_string_lossy().into_owned())

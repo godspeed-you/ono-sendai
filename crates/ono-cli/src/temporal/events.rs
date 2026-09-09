@@ -544,3 +544,51 @@ pub fn redact(verb: &str, target: Option<&str>, arguments: &[String]) -> Redacte
         .collect();
     RedactedCommandSummary::of(verb, target, &words)
 }
+
+/// Files what one sweep of the providers observed as history (§39.1, §6.1, §8.1, §8.3).
+///
+/// This is the second half of §39.1's "small adapter seam": [`ingest_changes`] turns the canonical
+/// change output into canonical events, and this writes them down together with the coverage that
+/// backs them. Both halves are needed and neither is enough alone — an event nobody recorded
+/// coverage for is a fact with no statement about what else might have happened beside it, and
+/// §8.2 builds every absence claim on the difference.
+///
+/// The coverage is `partial` and cannot be anything else: §8.3 defines partial as a source that
+/// saw some of what happened, and a shell that looks when a command is typed is exactly that. It
+/// is recorded even for a sweep that found nothing, because "we were watching and nothing moved"
+/// is the fact a later reader needs and the one a silent ledger cannot supply (§55.5).
+pub fn observe_sweep(
+    scope: &SpatialScope,
+    observed_types: &[SpatialType],
+    changes: &ChangeSet,
+    ingested_at: Timestamp,
+) {
+    let ledger = crate::temporal::session::writable_ledger();
+    let window = changes.window();
+    let coverage: Vec<ono_temporal_core::TemporalCoverage> = observed_types
+        .iter()
+        .map(|object_type| ono_temporal_core::TemporalCoverage {
+            scope: scope.clone(),
+            capability: ono_temporal_reconstruct::capability::existence(*object_type),
+            from: window.since(),
+            until: window.until(),
+            completeness: ono_temporal_core::TemporalCompleteness::Partial,
+            sampling_interval: None,
+            source: EvidenceSource::session(),
+            permission: ono_spatial_core::PermissionState::Available,
+        })
+        .collect();
+    if !coverage.is_empty() {
+        let _ = ledger.record_coverage(&coverage);
+    }
+    if changes.is_empty() {
+        return;
+    }
+    let (events, evidence) = ingest_changes(scope, changes, ingested_at);
+    if events.is_empty() {
+        return;
+    }
+    // §16.5: an observation that could not be written down is not a reason to lose the answer the
+    // user asked for. `get recorder` reports the health; the command reports the system.
+    let _ = ledger.append(&events, &evidence);
+}

@@ -145,11 +145,20 @@ run: |
     'grep -qF "\"state\":\"unknown\"" /tmp/s7-change1.out'
   prove s7t "and it lists no change at all where it has no source for one (§24.3, §25.4)" \
     'grep -qF "\"entries\":[]" /tmp/s7-change1.out && grep -qF "\"source\":null" /tmp/s7-change1.out'
+  # v0.5 §13.5 replaced the answer this proof used to read. The v0.4 shell answered a second
+  # `look` from an ad-hoc snapshot comparison and named `snapshot_comparison` as the source;
+  # §13.5 makes that implementation prohibited — "It MUST NOT retain a separate ad-hoc snapshot
+  # comparison implementation once the temporal engine is available" — and the one engine that
+  # remains is the ledger's. With recording off the session's own coverage is `partial` (§8.3),
+  # so a second look still cannot prove that nothing changed, and it says so rather than
+  # inventing a comparison to name (ADR-0775).
   ono -c 'home
   look --json --changes 1m
   look --json --changes 1m' > /tmp/s7-change2.out 2>&1
-  prove s7s "a second look has a comparison snapshot and names it as its source (§25.4)" \
-    'tail -1 /tmp/s7-change2.out | grep -qF "\"source\":\"snapshot_comparison\""'
+  prove s7s "a second look invents no comparison the sources cannot back (§13.5, §24.3)" \
+    'tail -1 /tmp/s7-change2.out | grep -o "\"changed\":{[^}]*}" |
+       grep -qF "\"state\":\"unknown\",\"source\":null" &&
+     ! grep -qF "snapshot_comparison" /tmp/s7-change2.out'
 
   kill $FIXTURE_WEB_MAIN $FIXTURE_WEB_WORKERS "$CLIENT" 2>/dev/null
   echo "fixture: stopped"

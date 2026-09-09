@@ -57,12 +57,16 @@ impl TemporalCursor {
     /// A cursor for `scope`, starting wherever the session's temporal coordinate is (§4, §18.1).
     #[must_use]
     pub fn of(scope: SpatialScope) -> Self {
+        // The coordinate comes from `active()`, which is `None` in the present — that is §4.1 and
+        // it is right. The *ledger* must not: §18.2 and §18.4 are written for a live map, where
+        // `Space` freezes the view and `[` walks back through the events behind it, and a cursor
+        // that only holds a ledger once the session has already moved answers "this session has
+        // recorded no events" to every step key in exactly the case the keys exist for. The
+        // session's ledger is the same ledger either way (ADR-0779).
         let evidence = active();
         Self::over(
             scope,
-            evidence
-                .as_ref()
-                .map(super::historical::Active::ledger_handle),
+            super::historical::ledger(),
             evidence.as_ref().map(super::historical::Active::at),
         )
     }
@@ -256,14 +260,16 @@ impl TemporalCursor {
     #[must_use]
     pub fn marker(&self) -> Option<String> {
         let at = self.at?;
-        let options = ono_temporal_render::RenderOptions::default();
+        // §25.3: interactive display is in the session's own zone, and the prompt already renders
+        // the coordinate that way. Formatting straight off the `Timestamp` printed UTC, so one
+        // instant read as two different times depending on which of the two markers you looked at
+        // (ADR-0779).
+        let options = crate::sink::temporal_options();
+        let value = ono_value::Value::Timestamp(at);
         if self.paused {
-            return Some(ono_temporal_render::paused_marker(
-                &ono_value::Value::Timestamp(at),
-                &options,
-            ));
+            return Some(ono_temporal_render::paused_marker(&value, &options));
         }
-        Some(format!("@{} [PAST]", at.strftime("%H:%M:%S")))
+        Some(ono_temporal_render::past_marker(&value, &options))
     }
 
     /// §18.6's gap frame, as lines the view draws instead of the map.

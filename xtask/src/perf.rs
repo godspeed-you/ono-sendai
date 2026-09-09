@@ -1730,12 +1730,7 @@ pub const TEMPORAL_BENCHMARKS: &[TemporalBenchmark] = &[
         temperature: Temperature::CacheHit,
         spec: "v0.5 §32.3, §49",
         operation: TemporalOperation::HistoricalMapL1,
-        blocked_on: Some(
-            "the historical spatial world (work package SPA-001…SPA-006, ADR range 0680–0689) is \
-             not in the tree, so there is no second `SpatialIndex` to draw an L1 map from. The \
-             row stays declared and `Unmeasured`, which `perf::verdicts` reports as a failure \
-             rather than a pass.",
-        ),
+        blocked_on: None,
     },
     TemporalBenchmark {
         id: "temporal.why",

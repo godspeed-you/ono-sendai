@@ -19,7 +19,7 @@
 //! [`crate::spatial::TemporalEvidence`] is synchronous — a spatial command asks what time it is
 //! while it is already inside the async runtime — and a `tokio::sync::Mutex` cannot be read from
 //! there without risking a deadlock. So every committed transition writes the context into
-//! [`published`] as well, under the same lock, and the synchronous readers read that. It is a
+//! `published` as well, under the same lock, and the synchronous readers read that. It is a
 //! projection with one writer, never a second coordinate: nothing writes it except
 //! [`TemporalState::commit`].
 //!
@@ -76,7 +76,7 @@ impl TemporalState {
     pub fn new(zone: TimeZone) -> Self {
         Self {
             context: Arc::new(TemporalContext::Present),
-            started_at: Timestamp::now(),
+            started_at: observation_origin(),
             trail: Vec::new(),
             ledger: Arc::new(Ledger::default()),
             references: EventReferences::new(),
@@ -122,7 +122,7 @@ impl TemporalState {
 
     /// Moves the session to `context` and records the move on the temporal trail (§12.4).
     ///
-    /// This is the only writer of [`published`], which is what keeps the synchronous readers and
+    /// This is the only writer of `published`, which is what keeps the synchronous readers and
     /// the asynchronous ones from ever disagreeing about what time it is.
     pub fn commit(&mut self, context: TemporalContext, requested: &str, moved_at: Timestamp) {
         self.trail.push(TemporalStep {
@@ -160,10 +160,18 @@ impl TemporalState {
 
     /// Replaces the ledger, which is what `start recorder` and `stop recorder` do (§10.8).
     pub fn set_ledger(&mut self, ledger: Ledger) {
-        let shared = Arc::new(ledger);
-        self.ledger = Arc::clone(&shared);
+        self.set_shared_ledger(Arc::new(ledger));
+    }
+
+    /// Takes the recorder's own ledger as the session's (§10.8, §39.3).
+    ///
+    /// The recorder owns the store and the bounded in-memory ledger behind it; the session reads
+    /// and writes the same handle rather than a second one, so `get recorder` and `timeline`
+    /// cannot disagree about how much history there is.
+    pub fn set_shared_ledger(&mut self, ledger: Arc<Ledger>) {
+        self.ledger = Arc::clone(&ledger);
         if let Ok(mut held) = published_ledger().write() {
-            *held = shared;
+            *held = ledger;
         }
     }
 
@@ -256,10 +264,19 @@ pub fn coordinate() -> Arc<TemporalContext> {
 /// The ledger behind the current coordinate, without taking the lock.
 #[must_use]
 pub fn ledger_handle() -> Arc<dyn LedgerRead> {
+    writable_ledger() as Arc<dyn LedgerRead>
+}
+
+/// The same ledger, as the thing an observation is appended to (§3.4, §6.7).
+///
+/// A sweep of the providers happens inside a spatial command that holds the spatial lock, so the
+/// temporal lock is not available to it; this is the projection [`TemporalState::set_shared_ledger`]
+/// keeps for exactly that reader, the same one [`ledger_handle`] answers with.
+#[must_use]
+pub fn writable_ledger() -> Arc<Ledger> {
     published_ledger()
         .read()
         .map_or_else(|_| Arc::new(Ledger::default()), |held| Arc::clone(&held))
-        as Arc<dyn LedgerRead>
 }
 
 /// `temporal.ui.show_source_tags` (§33), readable by a renderer that has no session in hand.
@@ -271,10 +288,58 @@ pub fn set_show_source_tags(show: bool) {
     SHOW_SOURCE_TAGS.store(show, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// `temporal.why.max_candidates` (§33), readable where the command runs.
+static WHY_MAX_CANDIDATES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(ono_temporal_query::causal::DEFAULT_MAX_CANDIDATES);
+
+/// Records the resolved `temporal.why.max_candidates` (§33).
+pub fn set_why_max_candidates(max: usize) {
+    WHY_MAX_CANDIDATES.store(max, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// How many candidate events one `why` may consider (§33, §32.3).
+#[must_use]
+pub fn why_max_candidates() -> usize {
+    WHY_MAX_CANDIDATES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Whether a rendered event carries its abbreviated source tag (§11.5, §33).
 #[must_use]
 pub fn show_source_tags() -> bool {
     SHOW_SOURCE_TAGS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// When this process started observing, readable without the lock (§10.7).
+///
+/// The first call fixes it, so every later reader — the coordinate, the coverage the change
+/// section composes, `get recorder` — agrees about when the session's own evidence begins. A
+/// second [`TemporalState`] in one process would otherwise carry a second origin.
+fn observation_origin() -> Timestamp {
+    static ORIGIN: OnceLock<Timestamp> = OnceLock::new();
+    *ORIGIN.get_or_init(Timestamp::now)
+}
+
+/// The session's own coverage of its own lifetime (§8.3, §10.7).
+///
+/// `Partial` is the honest word and not a placeholder: §8.3 defines it as a source that saw some
+/// of what happened, and the session saw every action taken through the shell and only what a
+/// provider happened to report besides. That is why a session-only ledger can never prove an
+/// absence (§8.2) and why `look --changes` says `unknown` rather than "nothing changed" (§24.3).
+pub fn session_coverage(
+    scope: &ono_spatial_core::SpatialScope,
+    from: Timestamp,
+    until: Timestamp,
+) -> ono_temporal_core::TemporalCoverage {
+    ono_temporal_core::TemporalCoverage {
+        scope: scope.clone(),
+        capability: Arc::from("session.events"),
+        from,
+        until,
+        completeness: ono_temporal_core::TemporalCompleteness::Partial,
+        sampling_interval: None,
+        source: ono_temporal_core::EvidenceSource::session(),
+        permission: ono_spatial_core::PermissionState::Available,
+    }
 }
 
 /// The bridge §14.1 reads the coordinate through, so the spatial layer keeps no second one.
@@ -288,6 +353,53 @@ impl crate::spatial::TemporalEvidence for SessionEvidence {
 
     fn ledger(&self) -> Arc<dyn LedgerRead> {
         ledger_handle()
+    }
+
+    fn coverage(
+        &self,
+        scope: &ono_spatial_core::SpatialScope,
+        range: ono_temporal_core::TimeRange,
+    ) -> Result<ono_temporal_core::CoverageSummary, ono_value::ErrorValue> {
+        let ledger = ledger_handle();
+        let mut intervals = ledger.coverage(&ono_temporal_core::CoverageQuery {
+            scope: Some(scope.clone()),
+            capabilities: Vec::new(),
+            range,
+        })?;
+        // §10.7: the session is a source about its own lifetime, and it is the only source a
+        // shell with recording disabled has. Composing without it would report a window nothing
+        // covers where the session was in fact watching part of it.
+        //
+        // It joins the capabilities the record already speaks about rather than bringing one of
+        // its own. §8.3 fixes the session at `partial` for ever, and `CoverageSummary::headline`
+        // is `complete` only when *every* composed capability is — so a capability nobody but the
+        // session claims would hold the composition below `complete` whatever any recorder wrote,
+        // and ADR-0775's `empty` would be unreachable from any real shell (ADR-0777). A partial
+        // interval under a capability a complete source already covers weakens nothing: it adds a
+        // source, which is what the session is.
+        if let Some(until) = range.until {
+            let started = observation_origin();
+            if started <= until {
+                let mut capabilities: Vec<Arc<str>> = intervals
+                    .iter()
+                    .map(|interval| Arc::clone(&interval.capability))
+                    .collect();
+                capabilities.sort_unstable();
+                capabilities.dedup();
+                if capabilities.is_empty() {
+                    intervals.push(session_coverage(scope, started, until));
+                } else {
+                    for capability in capabilities {
+                        let mut interval = session_coverage(scope, started, until);
+                        interval.capability = capability;
+                        intervals.push(interval);
+                    }
+                }
+            }
+        }
+        Ok(ono_temporal_core::CoverageSummary::compose(
+            &intervals, range,
+        ))
     }
 }
 

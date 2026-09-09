@@ -15,6 +15,7 @@
     reason = "AGENTS.md §16: a helper shared by tests states its preconditions the same way a test does"
 )]
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use ono_testkit::{Scratch, scratch};
@@ -219,6 +220,102 @@ fn should_report_a_new_dependency_edge_that_inverts_a_declared_boundary() {
 }
 
 #[test]
+fn should_hold_every_crate_to_the_layer_it_is_declared_in() {
+    // v0.5 §39.3: "Renderers MUST consume canonical query output and MUST NOT query providers,
+    // the ledger or the network directly", and §2's last invariant makes that a release
+    // criterion: machine-readable semantics precede rendering.
+    //
+    // The layering is where that rule lives — a renderer sits in `runtime`, and the providers,
+    // the ledger and the transports sit in the layers above it — so the rule holds only if two
+    // things are true at once, and this test asserts both against the real tree rather than
+    // against the declaration alone.
+    //
+    // First, every crate the workspace ships is placed by the declaration, and placed exactly
+    // once. A crate nobody placed is a crate the rule cannot reach; a crate placed twice has two
+    // answers to "which layer is it in", and the more permissive one always wins by accident.
+    //
+    // Second, no renderer's manifest names a crate the declaration puts above it. That is read
+    // off the manifests themselves, so it is a statement about the dependency graph the compiler
+    // sees and not about the layering's own consistency. The named families are asserted to be
+    // above a renderer first, because a declaration that quietly moved the ledger down into
+    // `runtime` would leave the loop below true and meaningless.
+    let layers = declared_layers();
+    let ranks = crate_ranks(&layers);
+
+    for krate in workspace_crates() {
+        let placed: Vec<&str> = layers
+            .iter()
+            .filter(|(_, members)| members.contains(&krate))
+            .map(|(layer, _)| layer.as_str())
+            .collect();
+        assert_eq!(
+            placed.len(),
+            1,
+            "§56: `{krate}` is placed in {placed:?}. Every crate belongs to exactly one layer — \
+             an unplaced crate is outside the rule, and a crate in two layers makes `may I depend \
+             on this` a question with two answers"
+        );
+    }
+
+    let renderers: Vec<String> = workspace_crates()
+        .into_iter()
+        .filter(|krate| krate.ends_with("-render"))
+        .collect();
+    assert!(
+        !renderers.is_empty(),
+        "v0.5 §39.3 is a rule about renderers, and this workspace ships none to hold it against"
+    );
+    for renderer in &renderers {
+        let own = ranks
+            .get(renderer)
+            .copied()
+            .unwrap_or_else(|| panic!("`{renderer}` is placed by the layering"));
+        // A provider, the ledger and the network, named one each, so the assertion below is
+        // known to be about the things §39.3 names.
+        for named in ["ono-provider-linux", "ono-temporal-ledger", "ono-protocol"] {
+            let rank = ranks
+                .get(named)
+                .copied()
+                .unwrap_or_else(|| panic!("`{named}` is placed by the layering"));
+            assert!(
+                rank > own,
+                "v0.5 §39.3: `{named}` must sit above the renderer layer `{renderer}` is in, or \
+                 the layering stops forbidding a renderer from reaching it"
+            );
+        }
+        for dependency in dependencies_of(renderer) {
+            let Some(rank) = ranks.get(&dependency).copied() else {
+                continue;
+            };
+            assert!(
+                rank <= own,
+                "v0.5 §39.3: `{renderer}` depends on `{dependency}`, which the layering places \
+                 above it. A renderer consumes canonical query output and reaches no provider, no \
+                 ledger and no network — that is what makes a renderer testable from a value \
+                 built by hand"
+            );
+        }
+    }
+
+    // And the rule bites: a renderer that reaches the ledger is reported, so the two loops above
+    // are held by a check that runs in the gate rather than by this test alone.
+    let repo = fixture(&[(
+        "crates/ono-temporal-render/Cargo.toml",
+        "[package]\nname = \"ono-temporal-render\"\n\n[dependencies]\nono-value.workspace = true\n\
+         ono-temporal-ledger.workspace = true\n",
+    )]);
+    let problems = check(repo.path());
+    assert!(
+        problems.iter().any(|problem| {
+            problem.location == "crates/ono-temporal-render/Cargo.toml"
+                && problem.detail.contains("ono-temporal-ledger")
+        }),
+        "v0.5 §39.3: a renderer that reaches the ledger is reported by name:\n{}",
+        report(&problems)
+    );
+}
+
+#[test]
 fn should_report_a_crate_the_layering_does_not_place() {
     let repo = fixture(&[(
         "crates/ono-newcomer/Cargo.toml",
@@ -232,6 +329,70 @@ fn should_report_a_crate_the_layering_does_not_place() {
         "a crate outside the layering is a crate the rule cannot hold:\n{}",
         report(&problems)
     );
+}
+
+// --- the declared layering, as data ---------------------------------------------------------------
+
+/// The layers the declaration writes, in order, with the crates each one holds.
+///
+/// The order is the rule: an edge may point into its own layer or into any layer before it, and
+/// never after it (§56).
+fn declared_layers() -> Vec<(String, Vec<String>)> {
+    let document: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&registry()).expect("the architecture registry is YAML");
+    document["layering"]["layers"]
+        .as_sequence()
+        .expect("the layering declares its layers")
+        .iter()
+        .map(|layer| {
+            let name = layer["layer"].as_str().unwrap_or_default().to_owned();
+            let members = layer["crates"]
+                .as_sequence()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default();
+            (name, members)
+        })
+        .collect()
+}
+
+/// How deep each declared crate sits, so two crates can be compared.
+fn crate_ranks(layers: &[(String, Vec<String>)]) -> BTreeMap<String, usize> {
+    let mut ranks = BTreeMap::new();
+    for (depth, (_, members)) in layers.iter().enumerate() {
+        for member in members {
+            ranks.insert(member.clone(), depth);
+        }
+    }
+    ranks
+}
+
+/// The crate directories this workspace actually ships.
+fn workspace_crates() -> Vec<String> {
+    let mut found: Vec<String> = std::fs::read_dir(repository().join("crates"))
+        .expect("the workspace has a `crates` directory")
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    found.sort();
+    found
+}
+
+/// The workspace crates `krate`'s own manifest depends on.
+fn dependencies_of(krate: &str) -> Vec<String> {
+    let manifest = repository().join("crates").join(krate).join("Cargo.toml");
+    let text = std::fs::read_to_string(&manifest)
+        .unwrap_or_else(|_| panic!("`{krate}` has a manifest at {}", manifest.display()));
+    text.lines()
+        .filter_map(|line| line.trim().strip_suffix(".workspace = true"))
+        .filter(|name| name.starts_with("ono-") && *name != krate)
+        .map(str::to_owned)
+        .collect()
 }
 
 // --- fixture material ----------------------------------------------------------------------------

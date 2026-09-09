@@ -68,6 +68,21 @@ pub fn paused_marker(at: &Value, options: &RenderOptions) -> String {
     }
 }
 
+/// §4.6's historical marker, for a view standing at a coordinate rather than following the clock.
+///
+/// The companion of [`paused_marker`], and it exists for the same reason: the coordinate is one
+/// instant, and every rendering of it has to be the same wall clock. §25.3 defaults interactive
+/// display to the session's configured zone, so the offset arrives in `options` rather than being
+/// assumed — a marker formatted straight off a `Timestamp` reads as UTC and makes one instant
+/// look like two (ADR-0779).
+#[must_use]
+pub fn past_marker(at: &Value, options: &RenderOptions) -> String {
+    match nanos(at) {
+        Some(at) => format!("@{} [PAST]", clock(at, options, Precision::Second)),
+        None => "[PAST]".to_owned(),
+    }
+}
+
 /// §18.6's gap frame, for a cursor that stepped into a coverage gap.
 ///
 /// ```text

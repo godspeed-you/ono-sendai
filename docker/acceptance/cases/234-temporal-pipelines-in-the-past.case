@@ -30,14 +30,18 @@ run: |
     '! grep -q "temporal.read_only" /tmp/t2t-transform.out'
 
   echo '== §28.3: `now()` is real current time even under a historical coordinate =='
+  # The comparison is rendered through the pipeline rather than through `echo`, because `echo` is
+  # an external program and §4.7 refuses one in historical context — which case 233 proves and
+  # this case must not accidentally re-prove. What is under test here is §28.3's rule that `now()`
+  # keeps reading the clock after the coordinate has moved.
   ono -c 'let before = now()
   sleep 1
   at -1s
   let after = now()
   let moved = after > before
-  echo $moved' > /tmp/t2t-now.out 2>&1
+  $moved | to json' > /tmp/t2t-now.out 2>&1
   prove t2ay "\`now()\` still reads the clock in historical context (§28.3)" \
-    'grep -q "true" /tmp/t2t-now.out'
+    'grep -q "true" /tmp/t2t-now.out && ! grep -q "temporal.present_only" /tmp/t2t-now.out'
 
   echo '== §28.3 adds two typed helpers, and they answer =='
   prove t2az "\`age(timestamp)\` is how long ago an instant was (§28.3)" \
@@ -56,8 +60,16 @@ run: |
   echo '== §4.5: `--at` uses the same engine as `at`, and refuses the same things =='
   ono -c 'at -3d' > /tmp/t2t-at-ctx.out 2>&1
   ono -c 'timeline --at -3d' > /tmp/t2t-at-opt.out 2>&1
-  prove t2bd "an instant \`at\` refuses is one \`--at\` refuses (§4.5)" \
-    'grep -q "temporal.not_recorded" /tmp/t2t-at-ctx.out && grep -q "temporal.not_recorded" /tmp/t2t-at-opt.out'
+  # §4.5 says `--at` is the same engine, so what the case pins is that the two answer the *same*
+  # refusal — not which one. With the recorder running, three days ago is outside a 24h retention
+  # policy and §34's E1103 `temporal.out_of_retention` ("requested history is known to have
+  # expired") is the precise refusal; with the recorder off, nothing covers the instant and §12.3's
+  # `temporal.not_recorded` is. Pinning either one would make this case a test of the container's
+  # recorder settings rather than of §4.5.
+  prove t2bd "an instant \`at\` refuses is one \`--at\` refuses, with the same refusal (§4.5)" \
+    'ctx=$(grep -o "temporal\.[a-z_]*" /tmp/t2t-at-ctx.out | head -1) &&
+     opt=$(grep -o "temporal\.[a-z_]*" /tmp/t2t-at-opt.out | head -1) &&
+     [ -n "$ctx" ] && [ "$ctx" = "$opt" ]'
   prove t2be "and \`--at\` did not change the session coordinate (§4.5)" \
     '! ono -c "timeline --at -0s
      look" 2>&1 | grep -q "\[PAST"'

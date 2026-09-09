@@ -22,7 +22,7 @@ pub(crate) struct Step {
 }
 
 /// The version a freshly created store carries, and the version every older store migrates to.
-pub const STORE_VERSION: u32 = 2;
+pub const STORE_VERSION: u32 = 3;
 
 /// The metadata key holding the store's schema version.
 pub(crate) const VERSION_KEY: &str = "store_version";
@@ -237,6 +237,24 @@ ALTER TABLE events ADD COLUMN significance INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX events_by_significance ON events (scope_path, significance, presentation_nanos);
 ";
 
+/// Version 3: the index that lets a place-scoped query walk time instead of sorting it.
+///
+/// `events_by_place` leads on `scope_path`, and every scoped query bounds the scope as a *prefix
+/// range* rather than an equality, because a place includes everything under it. An index leading
+/// on a range gives no usable order for the `ORDER BY presentation_nanos` that follows, so SQLite
+/// answered §32.3's queries with `USE TEMP B-TREE FOR ORDER BY`: it read every event in the place,
+/// sorted all of them, and then took the hundred it had been asked for. On the §49 fixture that
+/// was 62,500 rows sorted to answer a `why` about a hundred, and it is the whole of why the row
+/// missed its budget.
+///
+/// Leading on `presentation_nanos` and carrying `scope_path` beside it inverts that: the walk is
+/// in the order the query asks for, the scope is tested from the index rather than from the table,
+/// and the walk stops at the limit. Both indexes stay — `events_by_place` still serves a query
+/// that wants everything about a place regardless of order (ADR-0776).
+const V3: &str = "
+CREATE INDEX events_by_time_place ON events (presentation_nanos, scope_path);
+";
+
 /// Every migration, in order.
 pub(crate) const STEPS: &[Step] = &[
     Step {
@@ -246,5 +264,9 @@ pub(crate) const STEPS: &[Step] = &[
     Step {
         version: 2,
         sql: V2,
+    },
+    Step {
+        version: 3,
+        sql: V3,
     },
 ];

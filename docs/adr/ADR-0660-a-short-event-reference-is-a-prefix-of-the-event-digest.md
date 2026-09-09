@@ -1,6 +1,6 @@
 # ADR-0660: A short event reference is a prefix of the event digest
 
-- Status: accepted
+- Status: accepted; clause 1 of the Decision (how long a minted prefix is) superseded by ADR-0783
 - Date: 2026-09-09
 - Spec refs: v0.5 §11.6, §12.2, §20.4, §34; ADR-0620
 - Decided by: agent (autonomous)

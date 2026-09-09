@@ -43,6 +43,7 @@
 
 #![forbid(unsafe_code)]
 
+mod cancel;
 mod codec;
 mod integrity;
 mod ledger;
@@ -53,6 +54,7 @@ mod rows;
 mod sequences;
 mod store;
 
+pub use cancel::watch_for_cancellation;
 pub use codec::decode_payload;
 pub use integrity::{IntegrityFinding, IntegrityReport};
 pub use ledger::Ledger;

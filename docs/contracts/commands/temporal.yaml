@@ -108,18 +108,21 @@ commands:
       - {name: kind, type: string, repeatable: true, doc: "Restrict to one canonical event kind — `object.changed`, `relation.added`, `action.failed` (v0.5 §6.1, §11.2)."}
       - {name: all, type: bool, doc: "Widen to the whole visible scope rather than the current place, subject to retention and permission (v0.5 §11.3)."}
       - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
+      - {name: view, type: bool, doc: "Open the full-screen timeline over the same window (v0.5 §19.1). It is a presentation of the values `timeline` already answers with; where no terminal can be taken — a script, a pipe, a redirected stream, `TERM=dumb` — the ordinary text timeline answers instead, so the option never writes escape sequences into a pipe (v0.2 §50, ADR-0781)."}
     privilege: none
     streaming: true
     phase: T
     note: >-
       §11.4: the value is a stream of `ono.temporal-event/1`, and the renderer is presentation
       over it. §11.8: in historical context the default window centres on the coordinate rather
-      than on now.
+      than on now. §19.1: `--view` and `T` in the map open the same full-screen presentation of
+      that stream, and neither builds a timeline of its own.
     examples:
       - timeline
       - timeline --since 30m
       - timeline service nginx
       - timeline --kind object.changed
+      - timeline --view
       - timeline --since 1h | where kind == "object.changed"
 
   - id: ono.temporal.changes
