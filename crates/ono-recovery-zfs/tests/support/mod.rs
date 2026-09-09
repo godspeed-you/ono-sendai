@@ -20,8 +20,10 @@
 use std::sync::Arc;
 
 use jiff::Timestamp;
-use ono_change_core::{PlanId, ScriptedRunner, ToolOutput, ToolRunner};
-use ono_recovery_zfs::{CP, MountTable, ZFS, ZPOOL, ZfsProvider};
+use ono_change_core::{
+    PlanId, RecoveryAsset, RecoveryAssetType, RecoveryScope, ScriptedRunner, ToolOutput, ToolRunner,
+};
+use ono_recovery_zfs::{CP, GUID_FINGERPRINT, MountTable, ZFS, ZPOOL, ZfsProvider};
 
 /// The instant every deterministic test stamps its work with.
 ///
@@ -245,4 +247,17 @@ pub fn blocked_facts(error: &ono_value::ErrorValue) -> Vec<String> {
             .collect(),
         _ => Vec::new(),
     }
+}
+
+pub fn asset() -> RecoveryAsset {
+    RecoveryAsset::proposed(
+        ono_recovery_zfs::PROVIDER_ID,
+        RecoveryAssetType::ZfsSnapshot,
+        ROOT_SNAPSHOT,
+        RecoveryScope::new("zfs-dataset", ROOT_DATASET, "localhost")
+            .covering(ROOT_DATASET)
+            .covering("/altroot/debian/etc/nginx/nginx.conf"),
+        instant(),
+    )
+    .capturing(format!("{GUID_FINGERPRINT}{ROOT_SNAPSHOT_GUID}"))
 }

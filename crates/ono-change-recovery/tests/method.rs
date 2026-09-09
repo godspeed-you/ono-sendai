@@ -73,7 +73,11 @@ fn should_say_which_method_the_chosen_one_beat() {
         &candidates,
     ))
     .expect("two methods reach the goal");
-    assert_eq!(selection.rejected().len(), 1, "§20.1: the loser stays visible");
+    assert_eq!(
+        selection.rejected().len(),
+        1,
+        "§20.1: the loser stays visible"
+    );
     assert_eq!(
         selection.rejected()[0].reason(),
         MethodRejection::Dominated,
@@ -201,7 +205,11 @@ fn should_name_the_metadata_the_skipped_method_could_not_restore() {
         .find(|rejection| rejection.method() == RestoreMethod::SelectiveFileRestore)
         .expect("the skipped method stays visible");
     assert_eq!(skipped.reason(), MethodRejection::MetadataShortfall);
-    let unmet: Vec<&str> = skipped.unmet().iter().map(std::convert::AsRef::as_ref).collect();
+    let unmet: Vec<&str> = skipped
+        .unmet()
+        .iter()
+        .map(std::convert::AsRef::as_ref)
+        .collect();
     assert!(
         unmet.contains(&"mode") && unmet.contains(&"owner/group"),
         "Appendix C.7: missing metadata support MUST be visible, and it named {unmet:?}"
@@ -316,9 +324,9 @@ fn should_explain_that_merge_belongs_to_a_provider_with_its_own_verification() {
     )
     .expect_err("Appendix C.5");
     assert!(
-        error
-            .help()
-            .is_some_and(|help| help.contains("distinct RecoveryPlan action with its own verification")),
+        error.help().is_some_and(
+            |help| help.contains("distinct RecoveryPlan action with its own verification")
+        ),
         "Appendix C.5: a KUANG/11 provider MAY offer merge support, presented as its own action"
     );
 }
@@ -391,7 +399,11 @@ fn should_ask_only_the_planning_half_of_a_provider_when_gathering_offers() {
         RecoveryGoal::RestoreChangedObjects,
     );
     assert_eq!(answer.offers().len(), 1);
-    assert_eq!(calls.planning(), 1, "§12.1: plan_recovery is the planning half");
+    assert_eq!(
+        calls.planning(),
+        1,
+        "§12.1: plan_recovery is the planning half"
+    );
     assert_eq!(
         calls.mutating(),
         0,
@@ -447,7 +459,11 @@ fn should_record_a_refusal_when_no_provider_with_the_assets_id_is_registered() {
         RecoveryGoal::RestoreChangedObjects,
     );
     assert!(answer.offers().is_empty());
-    assert_eq!(answer.refusals().len(), 1, "§11.1: an asset's provenance is its provider");
+    assert_eq!(
+        answer.refusals().len(),
+        1,
+        "§11.1: an asset's provenance is its provider"
+    );
 }
 
 #[test]

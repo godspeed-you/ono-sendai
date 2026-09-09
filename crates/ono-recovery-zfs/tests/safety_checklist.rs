@@ -27,21 +27,8 @@ use ono_value::ErrorValue;
 
 use support::{
     NEWER_BOOKMARK, NEWER_SNAPSHOT, ROOT_DATASET, ROOT_SNAPSHOT, ROOT_SNAPSHOT_GUID, Script, Slot,
-    blocked_facts, code, instant, out, provider,
+    asset, blocked_facts, code, instant, out, provider,
 };
-
-fn asset() -> RecoveryAsset {
-    RecoveryAsset::proposed(
-        ono_recovery_zfs::PROVIDER_ID,
-        RecoveryAssetType::ZfsSnapshot,
-        ROOT_SNAPSHOT,
-        RecoveryScope::new("zfs-dataset", ROOT_DATASET, "localhost")
-            .covering(ROOT_DATASET)
-            .covering("/altroot/debian/etc/nginx/nginx.conf"),
-        instant(),
-    )
-    .capturing(format!("{GUID_FINGERPRINT}{ROOT_SNAPSHOT_GUID}"))
-}
 
 /// The checklist the recorded pool proves, with every query answered as it really answered.
 fn proven() -> SafetyChecklist {

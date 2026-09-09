@@ -13,24 +13,9 @@ use ono_value::{RecordValue, Value};
 
 mod support;
 use support::{
-    contains, protected_exclusions, protected_rows, ready_asset, record, s, sealed_nginx_plan,
+    contains, plan_with, protected_exclusions, protected_rows, ready_asset, sealed_nginx_plan,
     unprotected_rows, zfs_asset,
 };
-
-/// A plan carrying exactly a protection matrix, its level and its exclusions (§10.3).
-fn plan_with(level: &str, rows: Value, exclusions: Value) -> RecordValue {
-    record(
-        "ono.change-plan",
-        &[
-            ("id", s("a82f1c0d9e4b7a63")),
-            ("state", s("sealed")),
-            ("intent", s("replace nginx configuration")),
-            ("protection", rows),
-            ("protection_level", s(level)),
-            ("coverage_exclusions", exclusions),
-        ],
-    )
-}
 
 /// §64's plan: PROTECTED, with the exclusions Appendix A.6 keeps beside the word.
 fn protected_plan() -> RecordValue {

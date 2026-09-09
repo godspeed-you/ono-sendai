@@ -7,15 +7,16 @@
 //! since phase D; this is the check that finally runs it against the real registry.
 //!
 //! The yardstick is [`ono_command::builtin_commands`] — the table the *library* assembles, with
-//! no providers and no shell around it. Fifty-two stable commands are deliberately not in it,
+//! no providers and no shell around it. Sixty-five stable commands are deliberately not in it,
 //! because their implementation lives somewhere the library cannot reach: a provider, the
 //! evaluator, or `ono-cli` itself. `BOUND_ELSEWHERE` below names every one of them together with what
 //! does bind it, and each group is exercised end to end by the suite that owns it —
 //! `crates/ono-cli/tests/files.rs`, `storage.rs`,
 //! `containers_packages.rs`, `processes.rs` for the provider-bound verbs,
 //! `context.rs` for `enter`/`leave`, `meta_config.rs` for configuration, `plugins.rs`
-//! and `plugin_commands.rs` for KUANG/11, `remote_commands.rs` for the link table, and the
-//! `spatial_*` suites for the fourteen spatial verbs.
+//! and `plugin_commands.rs` for KUANG/11, `remote_commands.rs` for the link table, the
+//! `spatial_*` suites for the fourteen spatial verbs, and `change_*` for the thirteen v0.6
+//! change and recovery verbs.
 
 use std::collections::BTreeSet;
 
@@ -253,6 +254,63 @@ const BOUND_ELSEWHERE: &[(&str, &str)] = &[
     (
         "ono.temporal-history.remove",
         "`ono-cli`'s temporal dispatch (v0.5 §30.8, §39)",
+    ),
+    // --- `ono-cli` binds the change dispatch, v0.6 §50 -----------------------------------------
+    // Every one of the thirteen needs session state the library cannot reach: the plan store of
+    // §36.1, the recovery provider registry, the spatial index the impact graph is derived over,
+    // and the v0.5 ledger the lifecycle events go to. §62.10 forbids the plan semantics living in
+    // `ono-cli` — they live in `ono-change-*`, and what `ono-cli` binds is the wiring.
+    (
+        "ono.change.plan",
+        "`ono-cli`'s change dispatch (v0.6 §5.1–§5.3, §50)",
+    ),
+    (
+        "ono.change-plan.get",
+        "`ono-cli`'s change dispatch (v0.6 §36.4, §50)",
+    ),
+    (
+        "ono.change-plan.inspect",
+        "`ono-cli`'s change dispatch (v0.6 §5, Appendix B.10, §50)",
+    ),
+    (
+        "ono.change-plan.rebase",
+        "`ono-cli`'s change dispatch (v0.6 §7.5, §50)",
+    ),
+    (
+        "ono.change-plan.resume",
+        "`ono-cli`'s change dispatch (v0.6 §41.3, §50)",
+    ),
+    (
+        "ono.change.impact",
+        "`ono-cli`'s change dispatch (v0.6 §5.4, §50)",
+    ),
+    (
+        "ono.change.protect",
+        "`ono-cli`'s change dispatch (v0.6 §5.5, §50)",
+    ),
+    (
+        "ono.change.apply",
+        "`ono-cli`'s change dispatch (v0.6 §5.6, §50)",
+    ),
+    (
+        "ono.change.verify",
+        "`ono-cli`'s change dispatch (v0.6 §5.7, §50)",
+    ),
+    (
+        "ono.change.recover",
+        "`ono-cli`'s change dispatch (v0.6 §5.8, §50)",
+    ),
+    (
+        "ono.recovery.get",
+        "`ono-cli`'s change dispatch (v0.6 §37.5, §50)",
+    ),
+    (
+        "ono.recovery.inspect",
+        "`ono-cli`'s change dispatch (v0.6 §11.1, §50)",
+    ),
+    (
+        "ono.recovery.remove",
+        "`ono-cli`'s change dispatch (v0.6 §37.3, §50)",
     ),
 ];
 

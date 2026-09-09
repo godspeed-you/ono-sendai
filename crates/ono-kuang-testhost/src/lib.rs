@@ -756,3 +756,427 @@ impl ono_kuang_supervisor::ViewHost for RecordingViews {
         })))
     }
 }
+
+/// What the test host found in a package that contributes change or recovery (v0.6 §48).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangePackageReport {
+    /// Everything wrong, in order; empty when the package may be loaded.
+    pub problems: Vec<String>,
+    /// The ids of the recovery providers the package would contribute (§48.2, §12.1).
+    pub recovery_providers: Vec<String>,
+    /// The ids of the impact providers (§48.2, §9.4).
+    pub impact_providers: Vec<String>,
+    /// The ids of the verification providers (§48.2, §25.1).
+    pub verification_providers: Vec<String>,
+    /// The ids of the risk rules (§48.2, §19.2).
+    pub risk_rules: Vec<String>,
+    /// The ids of the plan views (§48.2, §45).
+    pub change_views: Vec<String>,
+    /// Whether any contributed provider can put state back (§12.2, §62.1).
+    ///
+    /// The question §62.1 makes the important one: a package whose candidates nobody can use is
+    /// snapshot theatre with a discovery step, and a publisher should learn that here.
+    pub can_restore: bool,
+    /// The strongest consistency any contributed provider may claim once §39.2 has been applied
+    /// (§11.3). `None` when the package contributes no recovery provider.
+    pub consistency_ceiling: Option<String>,
+    /// Whether any contributed provider may execute a mutating plan action (§48.3, §48.4).
+    ///
+    /// False for a package that describes impact and contributes to plans, which is exactly the
+    /// separation §48.4 exists to make visible.
+    pub may_execute: bool,
+    /// Whether recovery restoration reaches the package under the default policy: never
+    /// (§31.19, Appendix H).
+    pub restore_by_default: bool,
+}
+
+/// Validates a package's change and recovery contributions as the shell would before loading it.
+///
+/// The counterpart of [`check_temporal_package`] for v0.6 §48, and it answers what §48 makes a
+/// package author responsible for **before** the package runs: which providers this would
+/// contribute, whether any of them can actually restore, what the strongest consistency claim it
+/// could ever make is, and whether it may execute anything at all.
+///
+/// The three refusals §48.4 turns on are checked here exactly as the supervisor checks them at
+/// load, because a publisher should meet them before a user does: a provider that offers to
+/// restore while holding no destructive authority, a provider claiming `application-consistent`
+/// with no way to quiesce (§39.2), and a transaction reaching past the resources the provider
+/// itself covers (§27.3).
+#[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one report over five contribution types reads better whole than split by type"
+)]
+pub fn check_change_package(directory: &std::path::Path) -> ChangePackageReport {
+    let mut report = ChangePackageReport {
+        problems: Vec::new(),
+        recovery_providers: Vec::new(),
+        impact_providers: Vec::new(),
+        verification_providers: Vec::new(),
+        risk_rules: Vec::new(),
+        change_views: Vec::new(),
+        can_restore: false,
+        consistency_ceiling: None,
+        may_execute: false,
+        restore_by_default: Policy::deny_all().grants_capability(Capability::RecoveryRestore),
+    };
+    let manifest = match std::fs::read_to_string(directory.join("manifest.yaml"))
+        .map_err(|error| error.to_string())
+        .and_then(|text| Manifest::parse(&text).map_err(|error| error.to_string()))
+    {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            report.problems.push(format!("manifest.yaml: {error}"));
+            return report;
+        }
+    };
+    let contributions = manifest.contributions.clone().unwrap_or_default();
+    let recovery_paths = contributions.recovery_providers.unwrap_or_default();
+    let impact_paths = contributions.impact_providers.unwrap_or_default();
+    let verification_paths = contributions.verification_providers.unwrap_or_default();
+    let rule_paths = contributions.risk_rules.unwrap_or_default();
+    let view_paths = contributions.change_views.unwrap_or_default();
+    if recovery_paths.is_empty()
+        && impact_paths.is_empty()
+        && verification_paths.is_empty()
+        && rule_paths.is_empty()
+        && view_paths.is_empty()
+    {
+        report.problems.push(
+            "the package declares none of `contributions.recovery_providers`, \
+             `contributions.impact_providers`, `contributions.verification_providers`, \
+             `contributions.risk_rules` or `contributions.change_views`, so it contributes \
+             nothing to a change plan"
+                .to_owned(),
+        );
+        return report;
+    }
+    let package = manifest.package.id.clone();
+    let own_schemas = declared_schemas(directory, &manifest);
+
+    let mut ceiling: Option<ono_change_core::ConsistencyClass> = None;
+    for path in &recovery_paths {
+        let document = match read_document(directory, path, &mut report.problems, |text| {
+            ono_kuang_protocol::RecoveryProviderDocument::parse(text)
+        }) {
+            Some(document) => document,
+            None => continue,
+        };
+        for provider in document.recovery_providers {
+            let expected = format!("{package}.recovery-provider.");
+            if !provider.id.starts_with(&expected) {
+                report.problems.push(format!(
+                    "`{}` is not `<package.id>.recovery-provider.<kebab-name>` (spec section \
+                     31.5)",
+                    provider.id
+                ));
+                continue;
+            }
+            if provider.domain_kinds.is_empty() {
+                report.problems.push(format!(
+                    "`{}` covers no persistence domain kind, so nothing it discovers could be \
+                     mapped to a path (v0.6 section 11.2)",
+                    provider.id
+                ));
+            }
+            let consistency = ono_change_core::ConsistencyClass::from_name(&provider.consistency);
+            if consistency.is_none() {
+                report.problems.push(format!(
+                    "`{}` claims the consistency class `{}`, which is not one of the six of v0.6 \
+                     section 11.3",
+                    provider.id, provider.consistency
+                ));
+            }
+            for method in &provider.restore_methods {
+                if ono_change_core::RestoreMethod::from_name(method).is_none() {
+                    report.problems.push(format!(
+                        "`{}` offers the restore method `{method}`, which is not one of Appendix \
+                         C.1's",
+                        provider.id
+                    ));
+                }
+            }
+            let mut declared = Vec::new();
+            for id in &provider.capabilities {
+                match Capability::from_id(id) {
+                    Some(capability)
+                        if ono_change_core::RecoveryCapability::from_name(id).is_some() =>
+                    {
+                        declared.push(capability);
+                    }
+                    _ => report.problems.push(format!(
+                        "`{}` declares `{id}`, which is not one of the seven recovery \
+                         capabilities of v0.6 section 12.2",
+                        provider.id
+                    )),
+                }
+            }
+            let offers_restore = !provider.restore_methods.is_empty()
+                || provider
+                    .capabilities
+                    .iter()
+                    .any(|id| id == ono_change_core::RecoveryCapability::Restore.as_str());
+            if offers_restore {
+                if declared
+                    .iter()
+                    .any(|capability| capability.risk() == ono_kuang_protocol::Risk::Destructive)
+                {
+                    report.can_restore = true;
+                } else {
+                    report.problems.push(format!(
+                        "`{}` offers to restore and declares no capability of destructive risk; \
+                         v0.6 section 48.4 refuses that at load, and section 43.4 is why \
+                         restoring may need a stronger privilege than the mutation it undoes",
+                        provider.id
+                    ));
+                }
+            }
+            let can_quiesce = provider
+                .capabilities
+                .iter()
+                .any(|id| id == ono_change_core::RecoveryCapability::Quiesce.as_str());
+            if consistency == Some(ono_change_core::ConsistencyClass::ApplicationConsistent)
+                && !can_quiesce
+            {
+                report.problems.push(format!(
+                    "`{}` claims `application-consistent` and declares no `recovery.quiesce`; \
+                     v0.6 section 39.2 and section 16.4 put the claim with the provider that can \
+                     quiesce the application, and `crash-consistent` is the claim this one can \
+                     own",
+                    provider.id
+                ));
+            }
+            if let Some(transaction) = &provider.transaction {
+                if !provider
+                    .capabilities
+                    .iter()
+                    .any(|id| id == ono_change_core::RecoveryCapability::Transaction.as_str())
+                {
+                    report.problems.push(format!(
+                        "`{}` states an atomicity guarantee and declares no \
+                         `recovery.transaction` (v0.6 section 12.2, section 27.1)",
+                        provider.id
+                    ));
+                }
+                for resource in &transaction.resources {
+                    if !provider.domain_kinds.iter().any(|kind| kind == resource) {
+                        report.problems.push(format!(
+                            "`{}` states atomicity over `{resource}`, which is not one of the \
+                             domain kinds it covers; v0.6 section 27.1 scopes a provider \
+                             transaction to its own resources and section 27.3 makes generic \
+                             two-phase commit a non-goal",
+                            provider.id
+                        ));
+                    }
+                }
+            }
+            // The strongest claim the package could make, after section 39.2 has been applied: a
+            // claim it cannot own is not part of the answer.
+            if let Some(class) = consistency
+                && (class != ono_change_core::ConsistencyClass::ApplicationConsistent
+                    || can_quiesce)
+            {
+                ceiling = Some(match ceiling {
+                    None => class,
+                    Some(current) if class.weakest_of(current) == current => class,
+                    Some(current) => current,
+                });
+            }
+            report.recovery_providers.push(provider.id);
+        }
+    }
+    report.consistency_ceiling = ceiling.map(|class| class.as_str().to_owned());
+
+    for path in &impact_paths {
+        let document = match read_document(directory, path, &mut report.problems, |text| {
+            ono_kuang_protocol::ImpactProviderDocument::parse(text)
+        }) {
+            Some(document) => document,
+            None => continue,
+        };
+        for provider in document.impact_providers {
+            if !provider
+                .id
+                .starts_with(&format!("{package}.impact-provider."))
+            {
+                report.problems.push(format!(
+                    "`{}` is not `<package.id>.impact-provider.<kebab-name>` (spec section 31.5)",
+                    provider.id
+                ));
+                continue;
+            }
+            for schema in &provider.object_types {
+                if !own_schemas.contains(schema) && !schema.starts_with("ono.") {
+                    report.problems.push(format!(
+                        "`{}` relates `{schema}`, which is neither a core schema nor one this \
+                         package declares a target for",
+                        provider.id
+                    ));
+                }
+            }
+            if let Some(ceiling) = &provider.confidence_ceiling
+                && ono_change_core::EffectConfidence::from_name(ceiling).is_none()
+            {
+                report.problems.push(format!(
+                    "`{}` declares the confidence ceiling `{ceiling}`, which is not one of the \
+                     four of v0.6 section 8.1",
+                    provider.id
+                ));
+            }
+            report.impact_providers.push(provider.id);
+        }
+    }
+
+    for path in &verification_paths {
+        let document = match read_document(directory, path, &mut report.problems, |text| {
+            ono_kuang_protocol::VerificationProviderDocument::parse(text)
+        }) {
+            Some(document) => document,
+            None => continue,
+        };
+        for provider in document.verification_providers {
+            if !provider
+                .id
+                .starts_with(&format!("{package}.verification-provider."))
+            {
+                report.problems.push(format!(
+                    "`{}` is not `<package.id>.verification-provider.<kebab-name>` (spec section \
+                     31.5)",
+                    provider.id
+                ));
+                continue;
+            }
+            for check in &provider.checks {
+                if ono_change_core::EquivalenceDomain::from_name(&check.equivalence).is_none() {
+                    report.problems.push(format!(
+                        "`{}` says its `{}` check is evidence about `{}`, which is not one of the \
+                         three equivalence domains of v0.6 section 25.1; section 25.3 forbids a \
+                         claim of recovery success without one of them",
+                        provider.id, check.kind, check.equivalence
+                    ));
+                }
+            }
+            report.verification_providers.push(provider.id);
+        }
+    }
+
+    for path in &rule_paths {
+        let document = match read_document(directory, path, &mut report.problems, |text| {
+            ono_kuang_protocol::RiskRuleDocument::parse(text)
+        }) {
+            Some(document) => document,
+            None => continue,
+        };
+        for rule in document.risk_rules {
+            if !rule.rule_id.starts_with(&format!("{package}.")) {
+                report.problems.push(format!(
+                    "`{}` is not namespaced under `{package}`; a contributed rule is a rule, and \
+                     v0.6 section 19.2 makes it inspectable exactly as a built-in one is",
+                    rule.rule_id
+                ));
+                continue;
+            }
+            if ono_change_core::RiskDimension::from_name(&rule.dimension).is_none() {
+                report.problems.push(format!(
+                    "`{}` emits into `{}`, which is not one of the ten risk dimensions of v0.6 \
+                     section 19.1",
+                    rule.rule_id, rule.dimension
+                ));
+            }
+            if ono_change_core::RiskClass::from_name(&rule.emits).is_none() {
+                report.problems.push(format!(
+                    "`{}` declares that it emits `{}`, which is not one of the five risk classes \
+                     of v0.6 section 19.2",
+                    rule.rule_id, rule.emits
+                ));
+            }
+            report.risk_rules.push(rule.rule_id);
+        }
+    }
+
+    for path in &view_paths {
+        let document = match read_document(directory, path, &mut report.problems, |text| {
+            ono_kuang_protocol::ChangeViewDocument::parse(text)
+        }) {
+            Some(document) => document,
+            None => continue,
+        };
+        for view in document.change_views {
+            if !view.id.starts_with(&format!("{package}.change-view.")) {
+                report.problems.push(format!(
+                    "`{}` is not `<package.id>.change-view.<kebab-name>` (spec section 31.5)",
+                    view.id
+                ));
+                continue;
+            }
+            for state in &view.plan_states {
+                if ono_change_core::PlanState::from_name(state).is_none() {
+                    report.problems.push(format!(
+                        "`{}` renders the plan state `{state}`, which is not one a plan can be \
+                         in (v0.6 section 4.1)",
+                        view.id
+                    ));
+                }
+            }
+            report.change_views.push(view.id);
+        }
+    }
+
+    let requests = |capability: Capability| {
+        manifest
+            .required_capabilities
+            .iter()
+            .chain(&manifest.optional_capabilities)
+            .chain(&manifest.runtime_requested_capabilities)
+            .any(|request| request.capability == capability)
+    };
+    report.may_execute = requests(Capability::ChangeActionExecute);
+    if report.can_restore && !requests(Capability::RecoveryRestore) {
+        report.problems.push(
+            "the package requests no recovery.restore, so nothing it protected could ever be \
+             put back (v0.6 section 48.4)"
+                .to_owned(),
+        );
+        report.can_restore = false;
+    }
+    if !report.recovery_providers.is_empty() && !requests(Capability::RecoveryDiscover) {
+        report.problems.push(
+            "the package requests no recovery.discover, so none of its candidates could ever \
+             reach a plan"
+                .to_owned(),
+        );
+    }
+    if (!report.risk_rules.is_empty() || !report.impact_providers.is_empty())
+        && !requests(Capability::ChangePlanContribute)
+    {
+        report.problems.push(
+            "the package requests no change.plan.contribute, so none of its rules or edges \
+             could ever reach a plan"
+                .to_owned(),
+        );
+    }
+    report
+}
+
+/// Reads one on-disk contribution document, recording a read or parse failure as a problem.
+fn read_document<T>(
+    directory: &std::path::Path,
+    path: &str,
+    problems: &mut Vec<String>,
+    parse: impl Fn(&str) -> Result<T, KuangError>,
+) -> Option<T> {
+    let text = match std::fs::read_to_string(directory.join(path)) {
+        Ok(text) => text,
+        Err(error) => {
+            problems.push(format!("{path}: {error}"));
+            return None;
+        }
+    };
+    match parse(&text) {
+        Ok(document) => Some(document),
+        Err(error) => {
+            problems.push(format!("{path}: {}", error.message()));
+            None
+        }
+    }
+}

@@ -44,10 +44,14 @@ fn detail_of(impact: &NewerStateImpact, object: &str) -> String {
 fn should_report_a_conflict_when_the_restored_object_was_edited_again_after_the_plan() {
     let observations = appendix_c4();
     let impact = analyse(
-        &ConflictRequest::new(RestoreMethod::SelectiveFileRestore, at(14, 2), &observations)
-            .applied_at(at(14, 3))
-            .restoring("/etc/nginx/nginx.conf")
-            .captured("/etc/nginx/nginx.conf", "sha256:before-the-plan"),
+        &ConflictRequest::new(
+            RestoreMethod::SelectiveFileRestore,
+            at(14, 2),
+            &observations,
+        )
+        .applied_at(at(14, 3))
+        .restoring("/etc/nginx/nginx.conf")
+        .captured("/etc/nginx/nginx.conf", "sha256:before-the-plan"),
     );
     assert_eq!(
         class_of(&impact, "/etc/nginx/nginx.conf"),
@@ -60,10 +64,14 @@ fn should_report_a_conflict_when_the_restored_object_was_edited_again_after_the_
 fn should_name_the_instant_of_the_edit_recovery_would_discard() {
     let observations = appendix_c4();
     let impact = analyse(
-        &ConflictRequest::new(RestoreMethod::SelectiveFileRestore, at(14, 2), &observations)
-            .applied_at(at(14, 3))
-            .restoring("/etc/nginx/nginx.conf")
-            .captured("/etc/nginx/nginx.conf", "sha256:before-the-plan"),
+        &ConflictRequest::new(
+            RestoreMethod::SelectiveFileRestore,
+            at(14, 2),
+            &observations,
+        )
+        .applied_at(at(14, 3))
+        .restoring("/etc/nginx/nginx.conf")
+        .captured("/etc/nginx/nginx.conf", "sha256:before-the-plan"),
     );
     assert!(
         detail_of(&impact, "/etc/nginx/nginx.conf").contains("15:12"),
@@ -75,9 +83,13 @@ fn should_name_the_instant_of_the_edit_recovery_would_discard() {
 fn should_count_a_conflict_as_a_loss_that_recovery_would_take_away() {
     let observations = appendix_c4();
     let impact = analyse(
-        &ConflictRequest::new(RestoreMethod::SelectiveFileRestore, at(14, 2), &observations)
-            .applied_at(at(14, 3))
-            .restoring("/etc/nginx/nginx.conf"),
+        &ConflictRequest::new(
+            RestoreMethod::SelectiveFileRestore,
+            at(14, 2),
+            &observations,
+        )
+        .applied_at(at(14, 3))
+        .restoring("/etc/nginx/nginx.conf"),
     );
     assert_eq!(impact.losses().len(), 1, "§24.3: newer state discarded");
     assert_eq!(impact.losses()[0].object(), "/etc/nginx/nginx.conf");
@@ -87,9 +99,13 @@ fn should_count_a_conflict_as_a_loss_that_recovery_would_take_away() {
 fn should_record_the_instant_of_a_conflicting_change_on_the_item() {
     let observations = appendix_c4();
     let impact = analyse(
-        &ConflictRequest::new(RestoreMethod::SelectiveFileRestore, at(14, 2), &observations)
-            .applied_at(at(14, 3))
-            .restoring("/etc/nginx/nginx.conf"),
+        &ConflictRequest::new(
+            RestoreMethod::SelectiveFileRestore,
+            at(14, 2),
+            &observations,
+        )
+        .applied_at(at(14, 3))
+        .restoring("/etc/nginx/nginx.conf"),
     );
     assert_eq!(
         impact.items()[0].changed_instant(),
@@ -105,9 +121,13 @@ fn should_not_report_a_loss_when_the_only_change_since_the_asset_is_the_plans_ow
         ObservedState::changed(at(14, 3), "sha256:written-by-the-plan"),
     )];
     let impact = analyse(
-        &ConflictRequest::new(RestoreMethod::SelectiveFileRestore, at(14, 2), &observations)
-            .applied_at(at(14, 3))
-            .restoring("/etc/nginx/nginx.conf"),
+        &ConflictRequest::new(
+            RestoreMethod::SelectiveFileRestore,
+            at(14, 2),
+            &observations,
+        )
+        .applied_at(at(14, 3))
+        .restoring("/etc/nginx/nginx.conf"),
     );
     assert!(
         impact.losses().is_empty(),
@@ -120,8 +140,12 @@ fn should_not_report_a_loss_when_the_only_change_since_the_asset_is_the_plans_ow
 fn should_treat_a_change_to_the_restored_object_as_a_conflict_when_the_plan_instant_is_unknown() {
     let observations = appendix_c4();
     let impact = analyse(
-        &ConflictRequest::new(RestoreMethod::SelectiveFileRestore, at(14, 2), &observations)
-            .restoring("/etc/nginx/nginx.conf"),
+        &ConflictRequest::new(
+            RestoreMethod::SelectiveFileRestore,
+            at(14, 2),
+            &observations,
+        )
+        .restoring("/etc/nginx/nginx.conf"),
     );
     assert_eq!(
         class_of(&impact, "/etc/nginx/nginx.conf"),
@@ -139,16 +163,23 @@ fn should_preserve_unrelated_newer_state_when_a_selective_restore_touches_one_fi
             "/etc/nginx/nginx.conf",
             ObservedState::changed(at(14, 3), "sha256:written-by-the-plan"),
         ),
-        ObjectObservation::new("/etc/hosts", ObservedState::changed(at(15, 0), "sha256:hosts")),
+        ObjectObservation::new(
+            "/etc/hosts",
+            ObservedState::changed(at(15, 0), "sha256:hosts"),
+        ),
         ObjectObservation::new(
             "/etc/ssh/sshd_config",
             ObservedState::changed(at(15, 30), "sha256:sshd"),
         ),
     ];
     let impact = analyse(
-        &ConflictRequest::new(RestoreMethod::SelectiveFileRestore, at(14, 2), &observations)
-            .applied_at(at(14, 3))
-            .restoring("/etc/nginx/nginx.conf"),
+        &ConflictRequest::new(
+            RestoreMethod::SelectiveFileRestore,
+            at(14, 2),
+            &observations,
+        )
+        .applied_at(at(14, 3))
+        .restoring("/etc/nginx/nginx.conf"),
     );
     assert_eq!(
         class_of(&impact, "/etc/hosts"),
@@ -169,12 +200,19 @@ fn should_need_no_destructive_acceptance_when_a_selective_restore_loses_nothing(
             "/etc/nginx/nginx.conf",
             ObservedState::changed(at(14, 3), "sha256:written-by-the-plan"),
         ),
-        ObjectObservation::new("/etc/hosts", ObservedState::changed(at(15, 0), "sha256:hosts")),
+        ObjectObservation::new(
+            "/etc/hosts",
+            ObservedState::changed(at(15, 0), "sha256:hosts"),
+        ),
     ];
     let impact = analyse(
-        &ConflictRequest::new(RestoreMethod::SelectiveFileRestore, at(14, 2), &observations)
-            .applied_at(at(14, 3))
-            .restoring("/etc/nginx/nginx.conf"),
+        &ConflictRequest::new(
+            RestoreMethod::SelectiveFileRestore,
+            at(14, 2),
+            &observations,
+        )
+        .applied_at(at(14, 3))
+        .restoring("/etc/nginx/nginx.conf"),
     );
     assert!(
         !impact.requires_destructive_acceptance(),
@@ -185,15 +223,24 @@ fn should_need_no_destructive_acceptance_when_a_selective_restore_loses_nothing(
 #[test]
 fn should_discard_every_newer_object_in_the_domain_when_the_method_is_a_dataset_rollback() {
     let observations = vec![
-        ObjectObservation::new("/var/lib/app/db", ObservedState::changed(at(15, 0), "sha256:db")),
-        ObjectObservation::new("/var/log/app.log", ObservedState::changed(at(15, 5), "sha256:log")),
+        ObjectObservation::new(
+            "/var/lib/app/db",
+            ObservedState::changed(at(15, 0), "sha256:db"),
+        ),
+        ObjectObservation::new(
+            "/var/log/app.log",
+            ObservedState::changed(at(15, 5), "sha256:log"),
+        ),
     ];
     let impact = analyse(&ConflictRequest::new(
         RestoreMethod::DatasetRollback,
         at(14, 2),
         &observations,
     ));
-    assert_eq!(class_of(&impact, "/var/lib/app/db"), Some(NewerStateClass::DiscardedByMethod));
+    assert_eq!(
+        class_of(&impact, "/var/lib/app/db"),
+        Some(NewerStateClass::DiscardedByMethod)
+    );
     assert_eq!(
         class_of(&impact, "/var/log/app.log"),
         Some(NewerStateClass::DiscardedByMethod),
@@ -313,8 +360,12 @@ fn should_report_nothing_for_an_object_whose_content_still_matches_the_asset() {
         ObservedState::changed(at(15, 0), "sha256:motd"),
     )];
     let impact = analyse(
-        &ConflictRequest::new(RestoreMethod::SelectiveFileRestore, at(14, 2), &observations)
-            .captured("/etc/motd", "sha256:motd"),
+        &ConflictRequest::new(
+            RestoreMethod::SelectiveFileRestore,
+            at(14, 2),
+            &observations,
+        )
+        .captured("/etc/motd", "sha256:motd"),
     );
     assert!(
         impact.items().is_empty(),
@@ -346,8 +397,12 @@ fn should_keep_a_newer_extra_file_when_a_directory_restore_uses_the_default_poli
         ObservedState::changed(at(15, 0), "sha256:new-site"),
     )];
     let impact = analyse(
-        &ConflictRequest::new(RestoreMethod::SelectiveFileRestore, at(14, 2), &observations)
-            .restoring("/etc/nginx/conf.d"),
+        &ConflictRequest::new(
+            RestoreMethod::SelectiveFileRestore,
+            at(14, 2),
+            &observations,
+        )
+        .restoring("/etc/nginx/conf.d"),
     );
     assert_eq!(
         class_of(&impact, "/etc/nginx/conf.d/new-site.conf"),
@@ -363,9 +418,13 @@ fn should_discard_a_newer_extra_file_when_the_objective_requires_an_exact_tree()
         ObservedState::changed(at(15, 0), "sha256:new-site"),
     )];
     let impact = analyse(
-        &ConflictRequest::new(RestoreMethod::SelectiveFileRestore, at(14, 2), &observations)
-            .restoring("/etc/nginx/conf.d")
-            .directory_policy(DirectoryRestorePolicy::ExactTree),
+        &ConflictRequest::new(
+            RestoreMethod::SelectiveFileRestore,
+            at(14, 2),
+            &observations,
+        )
+        .restoring("/etc/nginx/conf.d")
+        .directory_policy(DirectoryRestorePolicy::ExactTree),
     );
     assert_eq!(
         class_of(&impact, "/etc/nginx/conf.d/new-site.conf"),
@@ -381,9 +440,13 @@ fn should_not_treat_a_sibling_directory_as_being_inside_the_restored_one() {
         ObservedState::changed(at(15, 0), "sha256:old"),
     )];
     let impact = analyse(
-        &ConflictRequest::new(RestoreMethod::SelectiveFileRestore, at(14, 2), &observations)
-            .restoring("/etc/nginx/conf.d")
-            .directory_policy(DirectoryRestorePolicy::ExactTree),
+        &ConflictRequest::new(
+            RestoreMethod::SelectiveFileRestore,
+            at(14, 2),
+            &observations,
+        )
+        .restoring("/etc/nginx/conf.d")
+        .directory_policy(DirectoryRestorePolicy::ExactTree),
     );
     assert_eq!(
         class_of(&impact, "/etc/nginx/conf.d-backup/old.conf"),
@@ -462,7 +525,10 @@ fn i5_request(method: RestoreMethod, observations: &[ObjectObservation]) -> Conf
 #[test]
 fn should_achieve_the_goal_with_a_selective_restore_when_a_later_package_changed_other_files() {
     let observations = appendix_i5();
-    let impact = analyse(&i5_request(RestoreMethod::SelectiveFileRestore, &observations));
+    let impact = analyse(&i5_request(
+        RestoreMethod::SelectiveFileRestore,
+        &observations,
+    ));
     assert!(
         impact.losses().is_empty(),
         "Appendix I.5: selective file restore satisfies the objective and takes nothing else"
@@ -478,11 +544,7 @@ fn should_achieve_the_goal_with_a_selective_restore_when_a_later_package_changed
 fn should_show_that_a_full_root_rollback_would_discard_the_later_package_changes() {
     let observations = appendix_i5();
     let impact = analyse(&i5_request(RestoreMethod::DatasetRollback, &observations));
-    let discarded: Vec<&str> = impact
-        .losses()
-        .iter()
-        .map(|item| item.object())
-        .collect();
+    let discarded: Vec<&str> = impact.losses().iter().map(|item| item.object()).collect();
     assert!(
         discarded.contains(&"/etc/ld.so.conf")
             && discarded.contains(&"/etc/ssl/openssl.cnf")
@@ -495,7 +557,10 @@ fn should_show_that_a_full_root_rollback_would_discard_the_later_package_changes
 #[test]
 fn should_prefer_the_method_whose_impact_is_smaller_when_both_reach_the_goal() {
     let observations = appendix_i5();
-    let selective = analyse(&i5_request(RestoreMethod::SelectiveFileRestore, &observations));
+    let selective = analyse(&i5_request(
+        RestoreMethod::SelectiveFileRestore,
+        &observations,
+    ));
     let rollback = analyse(&i5_request(RestoreMethod::DatasetRollback, &observations));
     assert!(
         selective.losses().len() < rollback.losses().len(),

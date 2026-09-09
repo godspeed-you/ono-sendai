@@ -247,7 +247,10 @@ impl RecoveryProvider for TestProvider {
     }
 
     fn validate(&self, _asset: &RecoveryAsset) -> Result<RecoveryValidation, ErrorValue> {
-        Ok(RecoveryValidation::complete(EPOCH, "the fixture checked it"))
+        Ok(RecoveryValidation::complete(
+            EPOCH,
+            "the fixture checked it",
+        ))
     }
 
     fn plan_recovery(
@@ -260,8 +263,10 @@ impl RecoveryProvider for TestProvider {
         if let Some(failure) = &self.failure {
             return Err(failure.clone());
         }
-        let plan = source
-            .map_or_else(|| PlanId::of("fixture", "0", asset.reference()), |plan| plan.id().clone());
+        let plan = source.map_or_else(
+            || PlanId::of("fixture", "0", asset.reference()),
+            |plan| plan.id().clone(),
+        );
         let mut fragment = RecoveryPlanFragment::new(&*self.id, self.method)
             .restoring_metadata(self.metadata)
             .restoring_directories(self.directory_policy);
@@ -284,8 +289,13 @@ impl RecoveryProvider for TestProvider {
         }
         for (subject, expression, class, domain) in &self.contracts {
             fragment = fragment.verifying(
-                VerificationContract::new(&plan, *class, Arc::clone(subject), Arc::clone(expression))
-                    .about(*domain),
+                VerificationContract::new(
+                    &plan,
+                    *class,
+                    Arc::clone(subject),
+                    Arc::clone(expression),
+                )
+                .about(*domain),
             );
         }
         if self.requires_reboot {

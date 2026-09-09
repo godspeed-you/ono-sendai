@@ -27,7 +27,7 @@
 //!    through the same lifecycle as any other change.
 //! 4. [`gate`] turns the analysis into §24.5's explicit acceptance, or into the refusal that names
 //!    every object the recovery would destroy.
-//! 5. [`verify`] answers §25's question per equivalence domain, and [`auto`] answers §26.3's.
+//! 5. [`mod@verify`] answers §25's question per equivalence domain, and [`auto`] answers §26.3's.
 //! 6. [`remote`] plans §29.4's per-host recovery, and says which hosts it cannot proceed on.
 //!
 //! # The invariants this crate keeps

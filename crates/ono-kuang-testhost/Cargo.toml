@@ -11,6 +11,10 @@ authors.workspace = true
 [dependencies]
 tokio.workspace = true
 ono-adapter.workspace = true
+# The change and recovery vocabulary of v0.6: the package report settles a contributed provider's
+# consistency class, restore methods and capabilities against the one definition of each, and the
+# round-trip test holds the wire shapes against the domain types they mirror (§48.2, §12.2).
+ono-change-core.workspace = true
 ono-spatial-core.workspace = true
 ono-temporal-core.workspace = true
 ono-kuang-protocol.workspace = true

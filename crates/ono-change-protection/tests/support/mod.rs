@@ -18,12 +18,13 @@ use std::sync::Arc;
 
 use jiff::Timestamp;
 use ono_change_core::{
-    ChangePlan, ConsistencyClass, PlanAction, ProtectionAction, ProtectionMode,
+    ChangePlan, ConsistencyClass, EffectKind, PlanAction, ProtectionAction, ProtectionMode,
     ProviderAvailability, ProviderCapabilities, RecoveryAsset, RecoveryAssetType,
     RecoveryCandidate, RecoveryCapability, RecoveryCost, RecoveryGoal, RecoveryObjective,
     RecoveryPlanFragment, RecoveryProvider, RecoveryScope, RecoveryValidation, RestoreMethod,
 };
 use ono_change_core::{EffectDomain, PersistenceDomain};
+use ono_change_protection::coverage::MutationDomain;
 use ono_value::{ByteSize, ErrorValue};
 
 /// The instant every fixture is dated at, so nothing depends on a wall clock.
@@ -347,4 +348,13 @@ pub fn ready_asset(reference: &str) -> RecoveryAsset {
     .costing(snapshot_cost())
     .creating()
     .validated(RecoveryValidation::complete(NOW, "the fixture checked it"))
+}
+
+pub fn config_mutation() -> MutationDomain {
+    MutationDomain::new(
+        EffectDomain::FilesystemPersistent,
+        EffectKind::Replace,
+        "/etc/nginx/nginx.conf",
+        "the configuration file is replaced",
+    )
 }

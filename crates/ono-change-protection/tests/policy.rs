@@ -24,19 +24,10 @@ use ono_value::{ByteSize, Percent};
 
 mod support;
 
-use support::{TestProvider, ZFS_ROOT, candidate, snapshot_cost};
+use support::{TestProvider, ZFS_ROOT, candidate, config_mutation, snapshot_cost};
 
 fn plan() -> PlanId {
     PlanId::of("session-1", "2026-09-09T10:00:00Z", "replace nginx.conf")
-}
-
-fn config_mutation() -> MutationDomain {
-    MutationDomain::new(
-        EffectDomain::FilesystemPersistent,
-        EffectKind::Replace,
-        "/etc/nginx/nginx.conf",
-        "the configuration file is replaced",
-    )
 }
 
 fn protecting_registry() -> ProviderRegistry {

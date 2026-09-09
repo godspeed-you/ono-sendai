@@ -15,29 +15,14 @@ use ono_change_render::{
     Charset, collapsed_plan, coverage_matrix, plan_view, protection_block, recovery_asset_block,
     recovery_verification, recovery_view, verification_view,
 };
-use ono_value::{RecordValue, Value};
+use ono_value::Value;
 
 mod support;
 use support::{
-    contains, nginx_results, protected_exclusions, protected_rows, ready_asset, record,
-    recovery_results, rollback_recovery, s, sealed_nginx_plan, selective_recovery,
+    contains, nginx_results, plan_with, protected_exclusions, protected_rows, ready_asset,
+    recovery_results, rollback_recovery, sealed_nginx_plan, selective_recovery,
     unanalysed_recovery, unprotected_rows, zfs_asset,
 };
-
-/// A plan carrying exactly a protection matrix, its level and its exclusions (§10.3).
-fn plan_with(level: &str, rows: Value, exclusions: Value) -> RecordValue {
-    record(
-        "ono.change-plan",
-        &[
-            ("id", s("a82f1c0d9e4b7a63")),
-            ("state", s("sealed")),
-            ("intent", s("replace nginx configuration")),
-            ("protection", rows),
-            ("protection_level", s(level)),
-            ("coverage_exclusions", exclusions),
-        ],
-    )
-}
 
 /// The words §25.3 and §62.2 forbid: each of them claims a scope nothing established.
 const FORBIDDEN: [&str; 4] = [

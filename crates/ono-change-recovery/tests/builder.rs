@@ -321,7 +321,10 @@ fn should_carry_the_metadata_coverage_the_chosen_provider_declared() {
             .shared(),
     ]);
     let recovery = nginx_recovery(&registry, &assets());
-    assert!(recovery.metadata().owner, "Appendix C.7: owner/group is restored");
+    assert!(
+        recovery.metadata().owner,
+        "Appendix C.7: owner/group is restored"
+    );
     assert!(!recovery.metadata().acl);
 }
 
@@ -346,7 +349,11 @@ fn should_record_that_recovery_needs_the_filesystem_offline_when_the_provider_sa
 fn should_raise_the_risk_when_the_recovery_needs_the_filesystem_offline() {
     let registry = registry(vec![TestProvider::new(PROVIDER).needing_offline().shared()]);
     let recovery = nginx_recovery(&registry, &assets());
-    assert_eq!(recovery.plan().risk().classify(), RiskClass::High, "§19.1's downtime dimension");
+    assert_eq!(
+        recovery.plan().risk().classify(),
+        RiskClass::High,
+        "§19.1's downtime dimension"
+    );
 }
 
 #[test]
@@ -389,9 +396,15 @@ fn refusal_for_asset(asset: RecoveryAsset) -> ErrorValue {
 #[test]
 fn should_refuse_to_plan_recovery_from_an_expired_asset() {
     let error = refusal_for_asset(
-        ready_asset(PROVIDER, SNAPSHOT, "rpool/ROOT/debian", &[NGINX_CONF], at(14, 2))
-            .expiring_at(at(15, 0))
-            .expired(),
+        ready_asset(
+            PROVIDER,
+            SNAPSHOT,
+            "rpool/ROOT/debian",
+            &[NGINX_CONF],
+            at(14, 2),
+        )
+        .expiring_at(at(15, 0))
+        .expired(),
     );
     assert_eq!(
         error.code().name(),
@@ -403,8 +416,14 @@ fn should_refuse_to_plan_recovery_from_an_expired_asset() {
 #[test]
 fn should_refuse_to_plan_recovery_from_an_invalid_asset() {
     let error = refusal_for_asset(
-        ready_asset(PROVIDER, SNAPSHOT, "rpool/ROOT/debian", &[NGINX_CONF], at(14, 2))
-            .invalidated(),
+        ready_asset(
+            PROVIDER,
+            SNAPSHOT,
+            "rpool/ROOT/debian",
+            &[NGINX_CONF],
+            at(14, 2),
+        )
+        .invalidated(),
     );
     assert_eq!(
         error.code().name(),
@@ -416,7 +435,14 @@ fn should_refuse_to_plan_recovery_from_an_invalid_asset() {
 #[test]
 fn should_refuse_to_plan_recovery_from_a_removed_asset() {
     let error = refusal_for_asset(
-        ready_asset(PROVIDER, SNAPSHOT, "rpool/ROOT/debian", &[NGINX_CONF], at(14, 2)).removed(),
+        ready_asset(
+            PROVIDER,
+            SNAPSHOT,
+            "rpool/ROOT/debian",
+            &[NGINX_CONF],
+            at(14, 2),
+        )
+        .removed(),
     );
     assert_eq!(error.code().name(), "recovery.asset_not_found", "§37");
 }
@@ -424,7 +450,14 @@ fn should_refuse_to_plan_recovery_from_a_removed_asset() {
 #[test]
 fn should_refuse_to_plan_recovery_from_an_asset_whose_creation_failed() {
     let error = refusal_for_asset(
-        ready_asset(PROVIDER, SNAPSHOT, "rpool/ROOT/debian", &[NGINX_CONF], at(14, 2)).failed(),
+        ready_asset(
+            PROVIDER,
+            SNAPSHOT,
+            "rpool/ROOT/debian",
+            &[NGINX_CONF],
+            at(14, 2),
+        )
+        .failed(),
     );
     assert_eq!(error.code().name(), "recovery.asset_invalid", "§11.1");
 }
@@ -581,7 +614,9 @@ fn seal(plan: ChangePlan, actions: Vec<PlanAction>) -> ChangePlan {
     ));
     let mut sealed = plan;
     for action in actions {
-        sealed = sealed.with_action(action).expect("a draft accepts an action");
+        sealed = sealed
+            .with_action(action)
+            .expect("a draft accepts an action");
     }
     sealed
         .with_verification(verification)
@@ -647,7 +682,10 @@ fn should_report_a_partial_recovery_as_incomplete() {
 /// A plan that posts a deployment webhook, for which the provider declares a compensation.
 fn emitting_plan() -> ChangePlan {
     let plan = ChangePlan::draft(
-        Intent::new("write config and notify the deployment hook", "plan { ... }"),
+        Intent::new(
+            "write config and notify the deployment hook",
+            "plan { ... }",
+        ),
         "session-emit",
         EPOCH,
     );

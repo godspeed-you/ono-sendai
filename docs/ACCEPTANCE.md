@@ -3663,9 +3663,12 @@ Conventions this subsection relies on:
 - [ ] **`ono-cli` is not the change engine.** §62.10: the crate layering forbids it and the module
       inventory records the change modules — `xtask/src/architecture.rs`,
       `docs/contracts/hardening/module_architecture.yaml`.
-- [ ] **The v0.6 documentation exists and matches the implementation.** The guide, the reference
-      pages generated from the registries, and the recovery limitations stated explicitly —
-      `docs/guides/change.md`, `docs/reference/`, `xtask/src/reference.rs`.
+- [ ] **The v0.6 documentation exists and matches the implementation.** `docs/guides/change.md`
+      states the recovery limitations explicitly — a snapshot is not a backup, a parent's snapshot
+      does not cover a child, a Btrfs snapshot is not recursive, and runtime and external effects
+      are never covered by storage — and `docs/reference/commands.md`, `verbs.md`, `targets.md`,
+      `schemas.md`, `errors.md` and `capabilities.md` carry the v0.6 surface, checked against the
+      registries that produce them by `xtask/src/reference.rs::check_committed`.
 - [ ] **`scripts/release-check.sh` is green.**
 
 ## 5. Stopping rule

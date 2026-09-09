@@ -1038,3 +1038,18 @@ pub fn index_of(lines: &[String], needle: &str) -> Option<usize> {
 pub fn contains(lines: &[String], needle: &str) -> bool {
     index_of(lines, needle).is_some()
 }
+
+/// A plan carrying exactly a protection matrix, its level and its exclusions (§10.3).
+pub fn plan_with(level: &str, rows: Value, exclusions: Value) -> RecordValue {
+    record(
+        "ono.change-plan",
+        &[
+            ("id", s("a82f1c0d9e4b7a63")),
+            ("state", s("sealed")),
+            ("intent", s("replace nginx configuration")),
+            ("protection", rows),
+            ("protection_level", s(level)),
+            ("coverage_exclusions", exclusions),
+        ],
+    )
+}

@@ -144,17 +144,25 @@ pub fn recovery_failed(plan: &RecoveryPlan, action: &str, detail: &str) -> Error
 }
 
 /// What one observed check says happened to its subject (§25.2).
+///
+/// A contract that declines to say which equivalence it establishes answers `UNKNOWN` whatever it
+/// observed. §25.1 requires a recovery verification to make the distinction, and a check that does
+/// not make it cannot support a claim about any of the three domains — which is exactly the
+/// unscoped sentence §25.3 forbids.
 fn equivalence_state(
     contract: &VerificationContract,
     status: VerificationStatus,
 ) -> EquivalenceState {
+    let Some(domain) = contract.equivalence() else {
+        return EquivalenceState::Unknown;
+    };
     match status {
         VerificationStatus::Passed => EquivalenceState::Restored,
         VerificationStatus::Unknown | VerificationStatus::Skipped => EquivalenceState::Unknown,
         VerificationStatus::Failed => {
-            if contract.class() == VerificationClass::Required {
-                EquivalenceState::NotRestored
-            } else if contract.equivalence() == Some(EquivalenceDomain::RuntimeState) {
+            if contract.class() != VerificationClass::Required
+                && domain == EquivalenceDomain::RuntimeState
+            {
                 EquivalenceState::DifferentAsExpected
             } else {
                 EquivalenceState::NotRestored

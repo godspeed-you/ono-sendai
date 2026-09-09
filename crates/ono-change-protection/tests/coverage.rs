@@ -23,7 +23,9 @@ use ono_value::ByteSize;
 
 mod support;
 
-use support::{TestProvider, ZFS_ROOT, archive_cost, candidate, file_archive, snapshot_cost};
+use support::{
+    TestProvider, ZFS_ROOT, archive_cost, candidate, config_mutation, file_archive, snapshot_cost,
+};
 
 fn nginx_conf() -> PersistenceDomain {
     MountTable::from_text(ZFS_ROOT).resolve(Path::new("/etc/nginx/nginx.conf"))
@@ -41,15 +43,6 @@ fn dataset_snapshot() -> RecoveryCandidate {
     .at_consistency(ConsistencyClass::FilesystemConsistent)
     .restored_by(RestoreMethod::DatasetRollback)
     .costing(snapshot_cost())
-}
-
-fn config_mutation() -> MutationDomain {
-    MutationDomain::new(
-        EffectDomain::FilesystemPersistent,
-        EffectKind::Replace,
-        "/etc/nginx/nginx.conf",
-        "the configuration file is replaced",
-    )
 }
 
 fn registry_with(

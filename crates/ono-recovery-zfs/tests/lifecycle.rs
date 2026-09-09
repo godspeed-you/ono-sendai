@@ -18,21 +18,8 @@ use ono_value::ByteSize;
 
 use support::{
     CLONE, PARENT_DATASET, RECURSIVE_SNAPSHOT, ROOT_DATASET, ROOT_SNAPSHOT, ROOT_SNAPSHOT_GUID,
-    Script, code, instant, out, provider, runner,
+    Script, asset, code, instant, out, provider, runner,
 };
-
-fn asset() -> RecoveryAsset {
-    RecoveryAsset::proposed(
-        ono_recovery_zfs::PROVIDER_ID,
-        RecoveryAssetType::ZfsSnapshot,
-        ROOT_SNAPSHOT,
-        RecoveryScope::new("zfs-dataset", ROOT_DATASET, "localhost")
-            .covering(ROOT_DATASET)
-            .covering("/altroot/debian/etc/nginx/nginx.conf"),
-        instant(),
-    )
-    .capturing(format!("{GUID_FINGERPRINT}{ROOT_SNAPSHOT_GUID}"))
-}
 
 #[test]
 fn should_remove_exactly_the_snapshot_the_asset_names() {
