@@ -6,7 +6,7 @@
 //! separate from restore because compensating is not putting the prior bytes back.
 //!
 //! §20.3 permits better glyphs "when terminal support is known" and requires the ASCII fallback
-//! to exist, which is the same contract [`ono_spatial_render::Charset`] carries for the map. A
+//! to exist, which is the same contract `ono_spatial_render::Charset` carries for the map. A
 //! [`Charset`] therefore chooses between two complete alphabets rather than between decorated and
 //! undecorated output: nothing is dropped in ASCII, and no meaning lives in a glyph one of the
 //! two alphabets lacks.

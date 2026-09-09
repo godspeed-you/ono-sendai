@@ -14,7 +14,7 @@
 //! | §15.3 storage: a private store other users cannot read | [`store`] |
 //! | §15.4 replacement: temp file, fsync, atomic rename | [`restore`] |
 //! | §15.5 and §44.2 secrets: contents are never rendered | the absence of an accessor |
-//! | §11.4 validation: existence, identity, scope, restore path, permissions | [`FileRecoveryProvider::validate`] |
+//! | §11.4 validation: existence, identity, scope, restore path, permissions | [`RecoveryProvider::validate`][ono_change_core::RecoveryProvider::validate] |
 //! | §43.5 TOCTOU: identity recorded, identity re-checked | [`identity::ObjectIdentity`] |
 //! | Appendix C.6 directory restore: newer files are kept by default | [`restore`] |
 //! | Appendix C.7 metadata coverage: measured, and its gaps made visible | [`coverage`] |

@@ -10,8 +10,11 @@
 //!   with a [`RiskAssessment`]. §19.2 says the classes are rule-based and not AI-generated, and
 //!   §62.11 repeats it, so every finding names the rule that made it and the reason §40.2 prints
 //!   in place of "Are you sure?".
-//! - **What state does it change?** [`mutation_domains`] derives Appendix A.1's records, which is
-//!   what the protection engine takes as the input to its coverage algorithm.
+//! - **What state does it change?** `ono_change_protection::coverage::mutation_domains` derives
+//!   Appendix A.1's records from the effects this crate produced, and they are what the coverage
+//!   algorithm takes as its input. It lives with the coverage algorithm rather than here, because
+//!   §13.4 makes two files in one domain two coverage answers and the record has to be
+//!   per-object to say so.
 //!
 //! Two rules run through all three:
 //!

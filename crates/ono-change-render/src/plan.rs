@@ -13,7 +13,7 @@
 //!   verification, and [`plan_view`] has no verbosity parameter that could hide it.
 //! - **§2.1 and §62.3: planning is side-effect free.** The view closes with
 //!   [`PLAN_NOT_EXECUTED`] for every state before the first mutation. Appendix F makes that
-//!   predicate — [`ono_change_core::PlanState::has_mutated`] — the boundary, and the line
+//!   predicate — `PlanState::has_mutated` — the boundary, and the line
 //!   disappears the moment something may have happened.
 //! - **§50.1: a renderer computes nothing.** The risk class, the protection level, the impact
 //!   counts and the outstanding acknowledgements are all read off the plan.
