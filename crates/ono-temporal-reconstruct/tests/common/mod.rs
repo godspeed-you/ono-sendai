@@ -374,3 +374,66 @@ pub fn relation_event(
     }
     .seal()
 }
+
+/// A `changed` event citing evidence of a stated strength, so a test can put two readings of one
+/// field at two strengths and see which the reconstruction takes.
+///
+/// Every fixture event here carried an empty `evidence` list before this existed, so
+/// `strength_of` answered `Observational` for all of them and the comparator that chooses between
+/// readings was dead code in the whole suite. A fixture that makes the interesting case
+/// impossible is how a defect survives a green run.
+#[must_use]
+pub fn changed_with_strength(
+    at: &str,
+    subject: SpatialRef,
+    field: &str,
+    before: Value,
+    after: Value,
+    strength: ono_temporal_core::EvidenceStrength,
+    source: &str,
+) -> (TemporalEvent, ono_temporal_core::Evidence) {
+    let class = ono_temporal_core::EvidenceSource::builtin(source)
+        .unwrap_or_else(ono_temporal_core::EvidenceSource::recorder);
+    let claim = ono_temporal_core::EvidenceClaim::FieldValue {
+        field: Arc::from(field),
+        value: after.clone(),
+        at: instant(at),
+    };
+    let record = ono_temporal_core::Evidence {
+        evidence_id: ono_temporal_core::EvidenceId::of(
+            &class,
+            instant(at),
+            &scope(),
+            subject.spatial_id(),
+            &claim,
+        ),
+        source: class,
+        observed_at: instant(at),
+        source_time: Some(instant(at)),
+        scope: scope(),
+        subject: subject.spatial_id().cloned(),
+        claim,
+        strength,
+        raw_ref: None,
+        derived_from: Vec::new(),
+        provenance: provenance(source),
+    };
+    let mut built = changed(at, subject, field, before, after);
+    let mut seed = EventSeed {
+        kind: built.kind,
+        subtype: built.subtype.take(),
+        scope: built.scope.clone(),
+        subject: built.subject.clone(),
+        related: built.related.clone(),
+        times: built.times.clone(),
+        before: built.before.clone(),
+        after: built.after.clone(),
+        changed_fields: built.changed_fields.clone(),
+        evidence: vec![record.evidence_id.clone()],
+        causal_parents: Vec::new(),
+        payload: built.payload.clone(),
+        provenance: provenance(source),
+    };
+    seed.evidence = vec![record.evidence_id.clone()];
+    (seed.seal(), record)
+}

@@ -810,18 +810,29 @@ fn reconstruct_field(
         .into_iter()
         .collect();
 
+    // §9.1 applies events forward from a checkpoint, so what a field *is* at `at` is what was
+    // observed most recently at or before it. Strength decides how far to trust a reading and
+    // travels with it into the field's provenance; it does not decide which observation is
+    // current. Sorting by strength first put an `authoritative` reading from 12:00 ahead of an
+    // `asserted` one from 12:09 and reported a service active nine minutes after a source had
+    // seen it fail — a state no evidence supported, which is what §9.2 forbids. Where two
+    // readings share an instant, strength is the right tiebreak and is where it now sits.
     let mut past: Vec<&Reading> = readings.iter().filter(|reading| reading.at <= at).collect();
     past.sort_by(|left, right| {
-        left.strength
-            .cmp(&right.strength)
+        left.at
+            .cmp(&right.at)
+            .then_with(|| left.strength.cmp(&right.strength))
             .then_with(|| left.answered.cmp(&right.answered))
-            .then_with(|| left.at.cmp(&right.at))
             .then_with(|| left.source.cmp(&right.source))
     });
     let chosen = past.last().copied();
+    // "The next observation" is the next one after the reading being reported, not the next one
+    // after the requested instant. §9.2's "next observed failed at 12:10" is the reading that
+    // ends the chosen one's validity, and a reading between the two would end it sooner.
+    let after = chosen.map_or(at, |reading| reading.at);
     let next = readings
         .iter()
-        .filter(|reading| reading.at > at)
+        .filter(|reading| reading.at > after)
         .min_by(|left, right| {
             left.at
                 .cmp(&right.at)

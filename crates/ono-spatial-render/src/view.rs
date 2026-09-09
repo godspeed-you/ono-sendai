@@ -603,7 +603,7 @@ impl MapView {
             _ => self.zoom,
         };
         self.freshness = match map.get("freshness") {
-            Some(ono_value::Value::String(text)) => text.to_string(),
+            Some(ono_value::Value::String(text)) => ono_render::sanitise(text),
             _ => String::new(),
         };
     }

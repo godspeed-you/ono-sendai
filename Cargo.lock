@@ -2093,6 +2093,7 @@ dependencies = [
 name = "ono-spatial-render"
 version = "0.5.0"
 dependencies = [
+ "ono-render",
  "ono-value",
 ]
 
@@ -2155,6 +2156,7 @@ dependencies = [
 name = "ono-temporal-render"
 version = "0.5.0"
 dependencies = [
+ "ono-render",
  "ono-testkit",
  "ono-value",
 ]

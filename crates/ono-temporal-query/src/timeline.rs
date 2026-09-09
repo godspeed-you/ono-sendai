@@ -311,13 +311,19 @@ pub fn timeline(
     let window = window_of(request, context, now);
     let query = plan(request, context, now);
     let found = ledger.events(&query)?;
+    // The query asks for one more than the limit, so the ledger returning that many means it had
+    // more to give. That is the question `truncated` answers, and it has to be asked *here*:
+    // relevance filtering runs next and can drop the count below the limit, at which point a
+    // count taken afterwards would report a complete window for one the ledger had cut. The
+    // shape that breaks it is a window whose first `limit + 1` events are all irrelevant to the
+    // place — the reader would be shown an empty timeline and told it was the whole story.
+    let truncated = found.len() > request.limit;
 
     let mut events: Vec<TemporalEvent> = found
         .into_iter()
         .filter(|event| is_default_scope(event, &request.horizon))
         .collect();
     presentation_order(&mut events);
-    let truncated = events.len() > request.limit;
     events.truncate(request.limit);
 
     let intervals = ledger.coverage(&CoverageQuery {

@@ -115,11 +115,30 @@ pub(crate) fn field<'a>(value: &'a Value, name: &str) -> Option<&'a Value> {
 }
 
 /// A text field, absent where it is null or empty — an empty string is never a value (§35.3).
+///
+/// Sanitised on the way out. See [`safe`].
 pub(crate) fn text(value: &Value, name: &str) -> Option<String> {
     match field(value, name) {
-        Some(Value::String(text)) if !text.is_empty() => Some(text.to_string()),
+        Some(Value::String(text)) if !text.is_empty() => Some(safe(text)),
         _ => None,
     }
+}
+
+/// Every string this crate puts on a line, with its control characters neutralised.
+///
+/// A historical event's label is a service's name, a container's label, a file's path or a
+/// KUANG/11 package's own rule id — data the machine was given rather than data Ono chose, and
+/// v0.2 §49 assumes it is hostile. An `ESC` reaching a terminal retitles a window or repaints a
+/// row; a newline forges a second timeline row indistinguishable from a real one, which is worse
+/// here than in a table because a forged row carries a forged instant.
+///
+/// `ono_render::sanitise` is the one implementation of that rule in the tree and the same one
+/// every other renderer uses (ADR-0015 T1). This crate reaches it and nothing else in
+/// `ono-render`; the dependency does not widen what a renderer may do, because §39.3's rule is
+/// about providers, ledgers and networks, and `ono-render` is none of those and sits in the same
+/// layer.
+pub(crate) fn safe(text: &str) -> String {
+    ono_render::sanitise(text)
 }
 
 /// A list field, empty where the record carries none.
@@ -141,7 +160,7 @@ pub(crate) fn record_items<'a>(record: &'a RecordValue, name: &str) -> &'a [Valu
 /// A text field of a record.
 pub(crate) fn record_text(record: &RecordValue, name: &str) -> Option<String> {
     match record.get(name) {
-        Some(Value::String(text)) if !text.is_empty() => Some(text.to_string()),
+        Some(Value::String(text)) if !text.is_empty() => Some(safe(text)),
         _ => None,
     }
 }
@@ -227,8 +246,11 @@ pub(crate) fn value_text(value: &Value) -> String {
         // `to json` and `to text` write.
         Value::ByteSize(size) => size.to_string(),
         Value::Duration(span) => span.to_string(),
-        Value::Path(path) => path.display().to_string(),
-        other => canonical_text(other).unwrap_or_else(|_| other.type_name().to_owned()),
+        Value::Path(path) => safe(&path.display().to_string()),
+        Value::String(text) => safe(text),
+        other => canonical_text(other)
+            .map(|text| safe(&text))
+            .unwrap_or_else(|_| other.type_name().to_owned()),
     }
 }
 

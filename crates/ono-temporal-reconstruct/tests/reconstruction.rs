@@ -11,7 +11,8 @@ mod common;
 
 use ono_spatial_core::SpatialType;
 use ono_temporal_core::{
-    EventKind, LedgerWrite, SessionLedger, TemporalCompleteness, value::temporal_metadata,
+    EventKind, EvidenceStrength, LedgerWrite, SessionLedger, TemporalCompleteness,
+    value::temporal_metadata,
 };
 use ono_temporal_reconstruct::{
     FieldKnowledge, Presence, ReconstructionRequest, Reconstructor, capability,
@@ -347,4 +348,73 @@ fn should_carry_the_temporal_metadata_of_the_specification_when_an_object_is_rec
     )
     .expect("the metadata builds");
     assert_eq!(object.temporal_metadata().expect("the metadata"), expected);
+}
+
+#[test]
+fn should_report_the_most_recent_reading_when_an_earlier_one_carries_stronger_evidence() {
+    // §16.5's own scenario with §7.2's own strengths: systemd D-Bus is authoritative for a unit's
+    // state, a journald-sourced unit result is asserted. If strength decided which reading is
+    // current, the authoritative 12:00 `active` would beat the asserted 12:09 `failed` and the
+    // reconstruction would report the service running nine minutes after a source watched it
+    // fail — a state no evidence supports, which §9.2 forbids.
+    //
+    // Strength says how far to trust a reading and travels into the field's provenance. Recency
+    // says which reading is current. They are different questions.
+    let record = service_record("nginx.service", "active", Some(1842));
+    let id = common::identity_of(&record, SpatialType::Service, "2026-08-31T12:00:00Z");
+    let subject = resolved(&id, SpatialType::Service, "nginx.service");
+
+    let (earlier, earlier_evidence) = common::changed_with_strength(
+        "2026-08-31T12:00:00Z",
+        subject.clone(),
+        "active_state",
+        Value::string("activating"),
+        Value::string("active"),
+        EvidenceStrength::Authoritative,
+        "linux.systemd-dbus",
+    );
+    let (later, later_evidence) = common::changed_with_strength(
+        "2026-08-31T12:09:00Z",
+        subject.clone(),
+        "active_state",
+        Value::string("active"),
+        Value::string("failed"),
+        EvidenceStrength::Asserted,
+        "linux.journald",
+    );
+
+    let ledger = SessionLedger::new();
+    ledger
+        .append(&[earlier, later], &[earlier_evidence, later_evidence])
+        .expect("the append succeeds");
+    // §9.2 lets a reading be carried forward only where a source declared complete coverage over
+    // the interval; without it the honest answer is `unknown`, which is a different test. Here
+    // the question is which of two readings is current, so the window is covered.
+    ledger
+        .record_coverage(&[coverage(
+            &capability::field(SpatialType::Service, "active_state"),
+            "2026-08-31T11:00:00Z",
+            "2026-08-31T13:00:00Z",
+            TemporalCompleteness::Complete,
+            systemd(),
+        )])
+        .expect("coverage records");
+
+    let world = Reconstructor::new(&ledger)
+        .reconstruct(&ReconstructionRequest::new(
+            common::scope(),
+            instant("2026-08-31T12:10:00Z"),
+        ))
+        .expect("the reconstruction answers");
+
+    let service = world.object(&id).expect("the service is reconstructed");
+    let state = service
+        .field("active_state")
+        .expect("the field was observed");
+    assert_eq!(
+        state.knowledge().value(),
+        Some(&Value::string("failed")),
+        "§9.2: the most recent observation is what the field is, whatever strength an earlier \
+         reading carried"
+    );
 }

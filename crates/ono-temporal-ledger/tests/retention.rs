@@ -12,7 +12,9 @@ mod common;
 
 use jiff::Timestamp;
 use ono_temporal_core::{
-    EventKind, EventQuery, LedgerRead, LedgerWrite, RedactedCommandSummary, TimeRange,
+    CausalLink, CausalLinkId, CausalRelation, CausalRuleId, CoverageQuery, EventKind, EventQuery,
+    EvidenceSource, EvidenceStrength, LedgerRead, LedgerWrite, RedactedCommandSummary,
+    TemporalCompleteness, TimeRange,
 };
 use ono_temporal_ledger::{LedgerStore, RetentionPolicy, StoreOptions};
 use ono_value::{ByteSize, Duration};
@@ -200,9 +202,15 @@ fn should_leave_nothing_pointing_at_what_is_gone_when_retention_has_run() {
             RedactedCommandSummary::of("restart", Some("service"), &[]),
         ))
         .expect("an action records");
+    // Two checkpoints below the boundary, so the sweep has a choice to make: the older is
+    // superseded by the newer and goes, the newer is the base state §9.1 reconstructs the
+    // earliest retained instants from and stays.
     store
         .write_checkpoint(&checkpoint("2026-08-30T00:00:00Z"))
         .expect("a checkpoint writes");
+    store
+        .write_checkpoint(&checkpoint("2026-08-30T00:20:00Z"))
+        .expect("a second checkpoint writes");
 
     let now = instant("2026-08-30T10:30:00Z");
     let swept = store.sweep(now).expect("a sweep succeeds");
@@ -236,12 +244,25 @@ fn should_leave_nothing_pointing_at_what_is_gone_when_retention_has_run() {
         1,
         "evidence a surviving event cites stays"
     );
+    // §9.1 selects the nearest checkpoint at or before the requested instant and applies events
+    // forward from it, so the newest checkpoint below the boundary is exactly what reconstructs
+    // the earliest instants the store still holds. Deleting it would leave the store unable to
+    // answer inside its own retention window (ADR-0773).
+    let base = store
+        .checkpoint_before(&scope(), instant("2026-08-30T09:00:00Z"))
+        .expect("checkpoints answer")
+        .expect("the newest checkpoint below the boundary is the base state and stays");
+    assert_eq!(
+        base.captured_at,
+        instant("2026-08-30T00:20:00Z"),
+        "the surviving checkpoint is the newest of those below the boundary"
+    );
     assert!(
         store
-            .checkpoint_before(&scope(), instant("2026-08-30T09:00:00Z"))
+            .checkpoint_before(&scope(), instant("2026-08-30T00:10:00Z"))
             .expect("checkpoints answer")
             .is_none(),
-        "a checkpoint older than the retained boundary goes"
+        "§31.8: a checkpoint a newer one below the boundary has superseded goes"
     );
     assert!(
         store
@@ -249,11 +270,16 @@ fn should_leave_nothing_pointing_at_what_is_gone_when_retention_has_run() {
             .expect("actions answer")
             .is_empty()
     );
+    // What is left is the boundary itself: one `unavailable` interval per scope that lost
+    // coverage, saying the window expired rather than leaving a composition to conclude that
+    // nothing was ever watching (§7.5, §55.5).
+    let left = store
+        .coverage(&ono_temporal_core::CoverageQuery::default())
+        .expect("coverage answers");
     assert!(
-        store
-            .coverage(&ono_temporal_core::CoverageQuery::default())
-            .expect("coverage answers")
-            .is_empty()
+        left.iter()
+            .all(|interval| interval.completeness == TemporalCompleteness::Unavailable),
+        "only the retention boundary survives a sweep, got {left:?}"
     );
 }
 
@@ -328,5 +354,109 @@ fn should_hold_nothing_when_the_whole_local_ledger_is_removed() {
             .checkpoint_before(&scope(), instant("2030-01-01T00:00:00Z"))
             .expect("checkpoints answer")
             .is_none()
+    );
+}
+
+#[test]
+fn should_say_the_history_expired_when_a_swept_window_is_asked_about() {
+    // §55.5 names a silent gap as trust-destroying, and this is the subtlest way to make one: a
+    // window that *was* recorded and *was* complete, whose coverage rows retention then deleted,
+    // composes to "no source covered this" — which renders as `recorder not running`, an
+    // affirmative claim about a period the recorder was in fact covering. §7.5 has a reason for
+    // what actually happened and §34 has the code; the sweep must leave one behind.
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let store = store_with(
+        scratch.path(),
+        RetentionPolicy::unlimited().with_max_age(Some(hours(1))),
+    );
+
+    store
+        .record_coverage(&[coverage("2026-08-30T00:00:00Z", "2026-08-30T00:30:00Z")])
+        .expect("coverage records");
+    store
+        .append(
+            &[event(
+                EventKind::ObjectChanged,
+                "2026-08-30T00:00:01Z",
+                "linux.procfs",
+            )],
+            &[],
+        )
+        .expect("an append succeeds");
+
+    store
+        .sweep(instant("2026-08-30T10:30:00Z"))
+        .expect("a sweep succeeds");
+
+    let left = store
+        .coverage(&CoverageQuery {
+            scope: None,
+            capabilities: Vec::new(),
+            range: TimeRange::all(),
+        })
+        .expect("coverage answers");
+    let expired: Vec<_> = left
+        .iter()
+        .filter(|interval| interval.completeness == TemporalCompleteness::Unavailable)
+        .collect();
+    assert!(
+        !expired.is_empty(),
+        "the swept window leaves an `unavailable` interval saying history expired, got {left:?}"
+    );
+}
+
+#[test]
+fn should_refuse_a_causal_link_with_no_evidence_when_something_other_than_the_engine_writes_one() {
+    // §15.2 and §15.8: the causal engine refuses to emit a causal link without evidence and a
+    // registered rule, but the engine is not the only holder of a `LedgerWrite`. A KUANG/11
+    // contribution seam, a remote ingest path and the recorder all have one, and a link written
+    // straight into the table is read back by `causal_links` and rendered as a cause. The store
+    // is the second door (ADR-0773).
+    let home = tempfile::tempdir().expect("a temporary home");
+    let store = store_with(home.path(), RetentionPolicy::unlimited());
+    let cause = event(
+        EventKind::ActionExecuted,
+        "2026-08-30T00:00:00Z",
+        "ono.session",
+    );
+    let effect = event(
+        EventKind::ObjectChanged,
+        "2026-08-30T00:00:01Z",
+        "linux.procfs",
+    );
+    store
+        .append(&[cause.clone(), effect.clone()], &[])
+        .expect("an append succeeds");
+
+    let rule = CausalRuleId::new("dev.example.whatever");
+    let unfounded = CausalLink {
+        link_id: CausalLinkId::of(
+            &rule,
+            CausalRelation::CausedBy,
+            &cause.event_id,
+            &effect.event_id,
+        ),
+        relation: CausalRelation::CausedBy,
+        cause: cause.event_id.clone(),
+        effect: effect.event_id.clone(),
+        rule,
+        evidence: Vec::new(),
+        strength: EvidenceStrength::Authoritative,
+        source: EvidenceSource::session(),
+    };
+
+    let refused = store
+        .append_links(&[unfounded])
+        .expect_err("§15.2: a causal claim arrives with its evidence or it does not arrive");
+    assert_eq!(
+        refused.code(),
+        ono_core::ErrorCode::TemporalUnsupportedSource
+    );
+    assert!(
+        store
+            .causal_links(&effect.event_id)
+            .expect("links answer")
+            .is_empty(),
+        "nothing was stored, so nothing can be read back and rendered as a cause"
     );
 }

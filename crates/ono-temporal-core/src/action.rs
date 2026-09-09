@@ -37,6 +37,21 @@ const SECRET_WORDS: &[&str] = &[
 ];
 
 /// Whether an argument name means its value must not be persisted.
+/// A URL's password, replaced. `postgres://user:pw@host` keeps everything a reader needs to
+/// recognise the connection and loses the one part §30.3 forbids persisting.
+fn strip_userinfo(text: &str) -> String {
+    let Some((scheme, rest)) = text.split_once("://") else {
+        return text.to_owned();
+    };
+    let Some((authority, tail)) = rest.split_once('@') else {
+        return text.to_owned();
+    };
+    match authority.split_once(':') {
+        Some((user, _)) => format!("{scheme}://{user}:{REDACTED}@{tail}"),
+        None => text.to_owned(),
+    }
+}
+
 fn is_secret_name(name: &str) -> bool {
     let lowered = name.trim_start_matches('-').to_ascii_lowercase();
     SECRET_WORDS.iter().any(|word| lowered.contains(word))
@@ -94,12 +109,32 @@ impl Redactable {
         Redactable::Secret { name: None }
     }
 
+    /// Whether this word is a bare value rather than a flag, so a preceding secret-named flag
+    /// takes it as its value.
+    fn is_bare_value(&self) -> bool {
+        match self {
+            Redactable::Plain(text) => !text.starts_with('-'),
+            Redactable::Option { .. } | Redactable::Secret { .. } => false,
+        }
+    }
+
+    /// Whether this word names a secret and does not already carry its value, so the next bare
+    /// word is that value.
+    fn names_a_secret_without_carrying_one(&self) -> bool {
+        match self {
+            Redactable::Plain(text) => !text.contains('=') && is_secret_name(text),
+            // An option that carries its own value has already been redacted by `render`, and a
+            // typed secret says so itself; neither reaches forward.
+            Redactable::Option { .. } | Redactable::Secret { .. } => false,
+        }
+    }
+
     /// What this argument reads as once persisted.
     fn render(&self) -> String {
         match self {
             Redactable::Plain(text) => match text.split_once('=') {
                 Some((name, _)) if is_secret_name(name) => format!("{name}={REDACTED}"),
-                _ => text.to_string(),
+                _ => strip_userinfo(text),
             },
             Redactable::Option { name, value } => {
                 if is_secret_name(name) {
@@ -131,10 +166,22 @@ impl RedactedCommandSummary {
         let mut rendered = String::from(verb);
         if let Some(target) = target {
             rendered.push(' ');
-            rendered.push_str(target);
+            rendered.push_str(&strip_userinfo(target));
         }
+        // §17.5 and §30.6: a secret is not always joined to its name. `--token abc` is two words,
+        // and a rule that only understands `--token=abc` would persist the second of them in
+        // clear. So the sequence is what is walked, not each word alone: a word that names a
+        // secret redacts the word after it, unless that word is itself a flag — `--token
+        // --verbose` names no secret and the flag that follows is not one.
+        let mut swallow_next = false;
         for argument in arguments {
             rendered.push(' ');
+            if swallow_next && argument.is_bare_value() {
+                rendered.push_str(REDACTED);
+                swallow_next = false;
+                continue;
+            }
+            swallow_next = argument.names_a_secret_without_carrying_one();
             rendered.push_str(&argument.render());
         }
         Self(rendered.into())

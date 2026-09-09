@@ -313,3 +313,39 @@ fn should_tag_a_row_from_its_evidence_source_class_when_the_event_declares_one()
         "`provenance.source` is what the observation was read from, not an evidence class, got {rendered}"
     );
 }
+
+#[test]
+fn should_neutralise_control_characters_when_a_subject_label_carries_them() {
+    // v0.2 §49 and ADR-0015 T1: a label is a service's name, a container's label or a path — data
+    // the machine was given. An `ESC` reaching a terminal retitles a window; a newline forges a
+    // second timeline row, and a forged row here carries a forged instant. The renderer is the
+    // last place that can stop either, because the sink writes what it returns.
+    let hostile = "nginx\u{1b}]0;PWNED\u{7}\u{1b}[31m\nFORGED 12:00:00 root";
+    let view = support::timeline_record(
+        vec![event(
+            "e99990000000000000000009",
+            "object.changed",
+            "12:00:00.000",
+            hostile,
+            &[("subject", subject(hostile, "service"))],
+        )],
+        Vec::new(),
+    );
+
+    let lines = timeline(&view, 200, &RenderOptions::default());
+
+    let rendered = lines.join("\n");
+    assert!(
+        !rendered.contains('\u{1b}'),
+        "no escape reaches the terminal, got {rendered:?}"
+    );
+    assert!(
+        !rendered.contains('\u{7}'),
+        "no bell reaches the terminal, got {rendered:?}"
+    );
+    assert_eq!(
+        lines.len(),
+        1,
+        "a newline in a label does not become a second row, got {lines:?}"
+    );
+}

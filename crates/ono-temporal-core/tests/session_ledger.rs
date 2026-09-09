@@ -240,3 +240,33 @@ fn should_report_what_it_holds_when_the_retention_state_is_read() {
     assert_eq!(retention.latest, Some(instant("2026-08-31T12:00:02Z")));
     assert_eq!(retention.evicted, 0);
 }
+
+#[test]
+fn should_bound_every_collection_when_a_session_ingests_past_its_ceiling() {
+    // §10.7 asks for a bounded in-memory ledger and §2.15 forbids one that silently becomes an
+    // unlimited archive. The event deque was bounded and nothing else was: evidence arrives with
+    // the events that cite it and is strictly larger than an event, so the ceiling was bounding
+    // the smaller half of what a session holds.
+    let ledger = SessionLedger::with_capacity(4);
+    let events: Vec<_> = (0..64).map(numbered).collect();
+    for event in &events {
+        ledger
+            .append(std::slice::from_ref(event), &[common::evidence()])
+            .expect("an append succeeds");
+    }
+
+    let held = ledger
+        .events(&EventQuery::default())
+        .expect("the query succeeds");
+    assert_eq!(held.len(), 4, "the event ceiling holds");
+
+    let covered = ledger
+        .coverage(&ono_temporal_core::CoverageQuery::default())
+        .expect("coverage answers");
+    assert!(
+        covered.len() <= 4,
+        "§10.7: coverage is bounded too — one interval per flush for a session's life is an \
+         archive with extra steps; got {}",
+        covered.len()
+    );
+}

@@ -223,3 +223,51 @@ fn should_never_read_the_system_clock_when_resolving_a_relative_selector() {
         TimeResolution::Resolved(instant("2029-12-31T23:00:00Z"))
     );
 }
+
+#[test]
+fn should_refuse_a_local_time_later_today_when_it_is_still_morning() {
+    // §4.2 makes `at` the way into *historical* context and §2.1 requires Ono to say whether a
+    // query is at `now` or at a historical coordinate — a future instant is neither. §4.4 states
+    // the rule for the relative form and the reason is the same for the others: `at 23:59` typed
+    // at breakfast resolved sixteen hours ahead, reported `[PAST?]`, reconstructed nothing and
+    // refused every mutation, all of it looking like a working feature.
+    let morning = instant("2026-08-31T08:00:00Z");
+    let selector = TimeSelector::parse("23:59:00").expect("a local time parses");
+
+    let refused = selector
+        .resolve(&TimeZone::UTC, morning, &NoAnchors)
+        .expect_err("§4.4: a coordinate in the future is not a historical one");
+
+    assert_eq!(refused.code(), ono_core::ErrorCode::TemporalInvalidTime);
+}
+
+#[test]
+fn should_refuse_an_absolute_instant_in_the_future_whatever_form_it_was_written_in() {
+    let now = instant("2026-08-31T08:00:00Z");
+    for spelling in ["2027-01-01T00:00:00Z", "2027-01-01 00:00:00"] {
+        let selector = TimeSelector::parse(spelling).expect("the selector parses");
+        let refused = selector
+            .resolve(&TimeZone::UTC, now, &NoAnchors)
+            .err()
+            .unwrap_or_else(|| panic!("`{spelling}` resolved to a future coordinate"));
+        assert_eq!(refused.code(), ono_core::ErrorCode::TemporalInvalidTime);
+    }
+}
+
+#[test]
+fn should_refuse_a_wall_time_no_instant_answers_to_rather_than_substituting_one() {
+    // The wall-time-to-instant conversion is fallible: a date near the end of the representable
+    // range leaves it in any negative-offset zone. Every arm used to substitute the epoch, so
+    // `at 9999-12-31 23:00:00` in New York resolved to 1970-01-01 and reported it as a
+    // successfully resolved historical coordinate. §12.1 requires an invalid selector to leave
+    // the coordinate untouched, and a plausible-looking wrong instant is the one answer that
+    // cannot do that.
+    let zone = TimeZone::get("America/New_York").expect("the zone is in the database");
+    let selector = TimeSelector::parse("9999-12-31 23:00:00").expect("the selector parses");
+
+    let refused = selector
+        .resolve(&zone, instant("2026-08-31T08:00:00Z"), &NoAnchors)
+        .expect_err("§12.1: an unresolvable selector is a refusal, not the epoch");
+
+    assert_eq!(refused.code(), ono_core::ErrorCode::TemporalInvalidTime);
+}

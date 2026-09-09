@@ -138,3 +138,69 @@ fn should_name_the_authorisation_decision_when_an_action_is_recorded() {
     };
     assert_eq!(result.outcome.as_str(), "succeeded");
 }
+
+#[test]
+fn should_redact_a_secret_written_as_a_separate_word_when_a_command_is_summarised() {
+    // §17.5 and §30.6: `--token abc` is two words and neither contains `=`, so a rule that only
+    // understands `--token=abc` persists the second of them in clear. The sequence is what has to
+    // be read, not each word alone.
+    let summary = RedactedCommandSummary::of(
+        "set",
+        Some("credential"),
+        &[
+            Redactable::plain("registry"),
+            Redactable::plain("--token"),
+            Redactable::plain("hunter2"),
+        ],
+    );
+
+    assert!(
+        !summary.as_str().contains("hunter2"),
+        "the value of a secret-named flag does not reach the ledger, got {:?}",
+        summary.as_str()
+    );
+    assert!(
+        summary.as_str().contains("--token"),
+        "the flag stays, so the summary still says what was set: {:?}",
+        summary.as_str()
+    );
+}
+
+#[test]
+fn should_keep_a_following_flag_when_a_secret_named_flag_carries_no_value() {
+    // `--token --verbose` names no secret value; swallowing the next word would lose an argument
+    // that was never one.
+    let summary = RedactedCommandSummary::of(
+        "set",
+        None,
+        &[Redactable::plain("--token"), Redactable::plain("--verbose")],
+    );
+
+    assert!(
+        summary.as_str().contains("--verbose"),
+        "a flag after a secret-named flag is not its value, got {:?}",
+        summary.as_str()
+    );
+}
+
+#[test]
+fn should_redact_a_password_inside_a_url_when_it_is_the_target() {
+    // §30.3: a connection string carries its password in the authority. Everything that
+    // identifies the connection survives; the one part that must not be persisted does not.
+    let summary = RedactedCommandSummary::of(
+        "connect",
+        Some("postgres://deploy:hunter2@db01:5432/app"),
+        &[],
+    );
+
+    assert!(
+        !summary.as_str().contains("hunter2"),
+        "the password does not reach the ledger, got {:?}",
+        summary.as_str()
+    );
+    assert!(
+        summary.as_str().contains("db01") && summary.as_str().contains("deploy"),
+        "the host and the user survive, so the record still names the connection: {:?}",
+        summary.as_str()
+    );
+}

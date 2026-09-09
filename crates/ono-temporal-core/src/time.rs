@@ -158,6 +158,42 @@ impl TimeSelector {
         now: Timestamp,
         anchors: &dyn EventAnchors,
     ) -> Result<TimeResolution, ErrorValue> {
+        let resolved = self.resolve_unchecked(zone, now, anchors)?;
+        // §4.2 makes `at` the command for entering *historical* context and §2.1 requires Ono to
+        // be able to say whether a query is at `now` or at a historical coordinate. A future
+        // instant is neither. §4.4 states the rule for the relative form — the reason applies
+        // identically to an absolute one, and `at 23:59` typed at breakfast was resolving to
+        // sixteen hours ahead, reporting `[PAST?]`, reconstructing nothing and refusing every
+        // mutation (ADR-0774).
+        if let TimeResolution::Resolved(instant) = resolved
+            && instant > now
+        {
+            return Err(error::invalid_time(
+                &self.spelling(),
+                "that instant is in the future, and historical context is somewhere Ono has been",
+            ));
+        }
+        Ok(resolved)
+    }
+
+    /// How this selector was written, for a refusal that quotes the user back to themselves.
+    fn spelling(&self) -> String {
+        match self {
+            TimeSelector::Absolute(instant) => instant.to_string(),
+            TimeSelector::LocalDateTime(local) => local.to_string(),
+            TimeSelector::LocalTime(local) => local.to_string(),
+            TimeSelector::Relative(span) => span.exact(),
+            TimeSelector::Event(id) => id.to_string(),
+        }
+    }
+
+    /// The selector resolved against its zone and anchors, before the future is refused.
+    fn resolve_unchecked(
+        &self,
+        zone: &TimeZone,
+        now: Timestamp,
+        anchors: &dyn EventAnchors,
+    ) -> Result<TimeResolution, ErrorValue> {
         match self {
             TimeSelector::Absolute(instant) => Ok(TimeResolution::Resolved(*instant)),
             TimeSelector::Relative(span) => {
@@ -185,10 +221,20 @@ impl TimeSelector {
                         )
                     })
             }
-            TimeSelector::LocalDateTime(local) => Ok(resolve_local(zone, *local)),
+            TimeSelector::LocalDateTime(local) => resolve_local(zone, *local).ok_or_else(|| {
+                error::invalid_time(
+                    &local.to_string(),
+                    "no instant answers to that wall time in this zone",
+                )
+            }),
             TimeSelector::LocalTime(local) => {
                 let today = Zoned::new(now, zone.clone()).date();
-                Ok(resolve_local(zone, today.to_datetime(*local)))
+                resolve_local(zone, today.to_datetime(*local)).ok_or_else(|| {
+                    error::invalid_time(
+                        &local.to_string(),
+                        "no instant answers to that wall time in this zone",
+                    )
+                })
             }
             TimeSelector::Event(id) => anchors
                 .instant_of(id)
@@ -207,34 +253,40 @@ impl TimeSelector {
 }
 
 /// Reads a local wall time in `zone`, reporting a fold or a gap rather than picking one (§25.6).
-fn resolve_local(zone: &TimeZone, local: civil::DateTime) -> TimeResolution {
+/// A local wall time resolved against its zone, or `None` where no instant answers to it.
+///
+/// The conversion is fallible — a wall time near the end of the representable range leaves it in
+/// any negative-offset zone — and every arm used to substitute the epoch for a failure. §12.1
+/// requires an invalid selector to leave the session's coordinate where it was, so a substituted
+/// instant is the one answer that must not be given: `at 9999-12-31 23:00:00` resolved to
+/// 1970-01-01 and reported it as a successfully resolved historical coordinate (ADR-0774).
+fn resolve_local(zone: &TimeZone, local: civil::DateTime) -> Option<TimeResolution> {
     match zone.to_ambiguous_timestamp(local).offset() {
         AmbiguousOffset::Unambiguous { offset } => offset
             .to_timestamp(local)
-            .map_or(TimeResolution::Resolved(Timestamp::UNIX_EPOCH), |instant| {
-                TimeResolution::Resolved(instant)
-            }),
+            .ok()
+            .map(TimeResolution::Resolved),
         AmbiguousOffset::Fold { before, after } => {
             match (before.to_timestamp(local), after.to_timestamp(local)) {
-                (Ok(first), Ok(second)) => TimeResolution::Ambiguous {
+                (Ok(first), Ok(second)) => Some(TimeResolution::Ambiguous {
                     earlier: first.min(second),
                     later: first.max(second),
-                },
+                }),
                 // A fold whose own offsets cannot be applied to the wall time it folds is not
                 // reachable through the tz database; treating it as unambiguous keeps the
                 // caller answering rather than panicking.
-                (Ok(only), Err(_)) | (Err(_), Ok(only)) => TimeResolution::Resolved(only),
-                (Err(_), Err(_)) => TimeResolution::Resolved(Timestamp::UNIX_EPOCH),
+                (Ok(only), Err(_)) | (Err(_), Ok(only)) => Some(TimeResolution::Resolved(only)),
+                (Err(_), Err(_)) => None,
             }
         }
         AmbiguousOffset::Gap { before, after } => {
             match (before.to_timestamp(local), after.to_timestamp(local)) {
-                (Ok(first), Ok(second)) => TimeResolution::Skipped {
+                (Ok(first), Ok(second)) => Some(TimeResolution::Skipped {
                     gap_from: first.min(second),
                     gap_until: first.max(second),
-                },
-                (Ok(only), Err(_)) | (Err(_), Ok(only)) => TimeResolution::Resolved(only),
-                (Err(_), Err(_)) => TimeResolution::Resolved(Timestamp::UNIX_EPOCH),
+                }),
+                (Ok(only), Err(_)) | (Err(_), Ok(only)) => Some(TimeResolution::Resolved(only)),
+                (Err(_), Err(_)) => None,
             }
         }
     }

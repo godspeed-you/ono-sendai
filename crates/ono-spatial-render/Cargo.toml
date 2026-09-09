@@ -9,6 +9,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+ono-render.workspace = true
 ono-value.workspace = true
 
 [lints]

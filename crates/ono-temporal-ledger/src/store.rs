@@ -15,11 +15,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use jiff::Timestamp;
-use ono_spatial_core::SpatialScope;
+use ono_spatial_core::{PermissionState, SpatialScope};
 use ono_temporal_core::{
     ActionEvent, Appended, CausalLink, Checkpoint, CoverageQuery, EventId, EventQuery, Evidence,
     EvidenceId, EvidenceSource, GapReason, LedgerRead, LedgerWrite, QueryOrder, RetentionState,
-    TemporalCoverage, TemporalEvent, TimeRange, error,
+    TemporalCompleteness, TemporalCoverage, TemporalEvent, TimeRange, error,
 };
 use ono_value::{ByteSize, ErrorValue, SchemaRegistry, builtin_schemas};
 use rusqlite::types::Value::{Integer, Text};
@@ -40,6 +40,9 @@ use crate::sequences::SourceSequence;
 
 /// How long a writer waits for another process's transaction before refusing (§32.6).
 const BUSY_TIMEOUT_MS: u32 = 5_000;
+
+/// The capability a retention boundary covers: all of them, which is what expiry removes.
+const RETENTION_CAPABILITY: &str = "*";
 
 /// How the store trades durability for speed (§31.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -606,13 +609,22 @@ impl LedgerStore {
         // §31.8: nothing may point at what has gone. Causal links and the join tables went with
         // their events by cascade; evidence, checkpoints, actions and coverage are swept against
         // the boundary the surviving events now define.
-        let boundary: Option<i64> = connection
+        let surviving: Option<i64> = connection
             .query_row("SELECT MIN(presentation_nanos) FROM events", [], |row| {
                 row.get(0)
             })
             .optional()
             .map_err(|error| self.unavailable(&error))?
             .flatten();
+        // The boundary is normally the oldest event still held. Where retention removed *every*
+        // event, that answer is `None` and the whole sweep below would be skipped — leaving
+        // coverage rows that go on claiming `complete` for a window whose record has been
+        // deleted. A reconstruction reading them concludes that nothing happened in that window,
+        // which is a stronger and worse claim than §55.5's silent gap: it is a confident wrong
+        // answer where §7.5 has a word for the truth. So a sweep that emptied the store falls
+        // back to the age boundary, and the coverage goes with the events it described.
+        let boundary: Option<i64> =
+            surviving.or_else(|| (swept.events > 0 && policy.max_age.is_some()).then_some(horizon));
         let transaction = connection
             .transaction()
             .map_err(|error| self.unavailable(&error))?;
@@ -637,7 +649,20 @@ impl LedgerStore {
             swept.checkpoints = u64::try_from(
                 transaction
                     .execute(
-                        "DELETE FROM checkpoints WHERE captured_nanos < ?1",
+                        // §9.1 reconstructs by selecting the nearest checkpoint *at or before*
+                        // the requested instant and applying events forward from it, so the
+                        // newest checkpoint below the boundary is exactly the base state for the
+                        // earliest instants still retained. Deleting it destroys the store's
+                        // ability to answer inside its own retention window. What goes is every
+                        // checkpoint below the boundary that a newer one below the boundary has
+                        // already superseded (ADR-0773 supersedes ADR-0634 §3's reasoning).
+                        "DELETE FROM checkpoints \
+                          WHERE captured_nanos < ?1 \
+                            AND EXISTS ( \
+                              SELECT 1 FROM checkpoints AS newer \
+                               WHERE newer.scope_path = checkpoints.scope_path \
+                                 AND newer.captured_nanos > checkpoints.captured_nanos \
+                                 AND newer.captured_nanos < ?1)",
                         params![boundary],
                     )
                     .map_err(|error| self.unavailable(&error))?,
@@ -652,6 +677,25 @@ impl LedgerStore {
                     .map_err(|error| self.unavailable(&error))?,
             )
             .unwrap_or_default();
+            // One boundary row per scope that lost coverage, because a composition for a place
+            // has to find an interval whose scope contains it. A store-wide row would decode
+            // into no scope at all and be dropped on the way back out.
+            let expiring: Vec<(String, i64)> = {
+                let mut statement = transaction
+                    .prepare(
+                        "SELECT scope_path, MIN(from_nanos) FROM coverage_intervals \
+                          WHERE until_nanos < ?1 GROUP BY scope_path",
+                    )
+                    .map_err(|error| self.unavailable(&error))?;
+                let rows = statement
+                    .query_map(params![boundary], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .map_err(|error| self.unavailable(&error))?;
+                let mut collected = Vec::new();
+                for row in rows {
+                    collected.push(row.map_err(|error| self.unavailable(&error))?);
+                }
+                collected
+            };
             swept.coverage = u64::try_from(
                 transaction
                     .execute(
@@ -661,6 +705,31 @@ impl LedgerStore {
                     .map_err(|error| self.unavailable(&error))?,
             )
             .unwrap_or_default();
+            // §55.5 and §7.5: a window that was recorded, was complete, and was then removed by
+            // retention must not compose to "nothing was watching". Deleting the intervals and
+            // leaving nothing behind is exactly that — the composed reason falls back to
+            // `not_recorded`, which renders as `recorder not running` and is an affirmative claim
+            // about a period the recorder was in fact covering. One `unavailable` interval over
+            // the swept span says what actually happened, and §34 has the word for it.
+            for (scope_path, from) in expiring {
+                transaction
+                    .execute(
+                        "INSERT OR REPLACE INTO coverage_intervals \
+                            (scope_path, capability, from_nanos, until_nanos, completeness, \
+                             sampling_nanos, source, permission) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7)",
+                        params![
+                            scope_path,
+                            RETENTION_CAPABILITY,
+                            from,
+                            boundary,
+                            TemporalCompleteness::Unavailable.as_str(),
+                            EvidenceSource::recorder().as_str(),
+                            PermissionState::Available.as_str(),
+                        ],
+                    )
+                    .map_err(|error| self.unavailable(&error))?;
+            }
         }
         swept.links = u64::try_from(
             transaction
@@ -1544,6 +1613,28 @@ impl LedgerWrite for LedgerStore {
             .map_err(|error| self.unavailable(&error))?;
         let mut stored = 0;
         for link in links {
+            // §15.2 permits `caused_by` only where evidence supports a direct causal statement,
+            // and §15.8 requires every rule that emits one to be inspectable. The causal engine
+            // enforces both before it hands a link out — but the engine is not the only way into
+            // this table. A KUANG/11 contribution seam, a remote ingest path or the recorder all
+            // hold a `LedgerWrite`, and a link written here is read back by `causal_links` and
+            // rendered as a cause like any other. So the store is the second door and it needs
+            // the same guard: a causal claim arrives with its evidence and its rule or it does
+            // not arrive (ADR-0773).
+            if link.relation.is_causal() {
+                if link.evidence.is_empty() {
+                    return Err(error::unsupported_source(
+                        &link.source,
+                        "a causal link with no evidence",
+                    ));
+                }
+                if link.rule.as_str().trim().is_empty() {
+                    return Err(error::unsupported_source(
+                        &link.source,
+                        "a causal link naming no rule",
+                    ));
+                }
+            }
             let columns = link_columns(link);
             let inserted = transaction
                 .execute(

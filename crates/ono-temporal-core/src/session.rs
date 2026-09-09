@@ -36,6 +36,16 @@ use crate::time::EventAnchors;
 pub const DEFAULT_SESSION_MAX_EVENTS: usize = 100_000;
 
 /// The capability an evicted stretch of the session ledger stops covering.
+/// How many evidence records one event may bring before the oldest are dropped.
+///
+/// An event cites the evidence behind it, and a rich one cites several. Four is generous enough
+/// that ordinary ingestion never reaches it and small enough that the ceiling is a ceiling.
+const EVIDENCE_PER_EVENT: usize = 4;
+
+/// How many checkpoints a session keeps. §9.1 reads the nearest one at or before an instant, so a
+/// session needs a handful rather than a history of them; the store is where a history lives.
+const CHECKPOINT_CEILING: usize = 32;
+
 const LEDGER_CAPABILITY: &str = "temporal.events";
 
 /// The in-memory ledger a session keeps whether or not the recorder runs (§10.7).
@@ -144,6 +154,33 @@ impl State {
                     });
                 }
             }
+        }
+        // §10.7 asks for a *bounded* in-memory ledger and §2.15 forbids one that silently
+        // becomes an unlimited archive. The event deque was the only bounded half: evidence
+        // arrives one record per event and is strictly larger, so a hundred thousand events came
+        // with a million evidence records nothing ever dropped, and coverage grew by one interval
+        // per flush for the life of the session. Each of these is now held to a ceiling derived
+        // from the event one, and what goes is the oldest, which is what the events did.
+        let evidence_ceiling = capacity.saturating_mul(EVIDENCE_PER_EVENT);
+        if self.evidence.len() > evidence_ceiling {
+            let excess = self.evidence.len() - evidence_ceiling;
+            self.evidence.drain(..excess);
+        }
+        if self.links.len() > capacity {
+            let excess = self.links.len() - capacity;
+            self.links.drain(..excess);
+        }
+        if self.actions.len() > capacity {
+            let excess = self.actions.len() - capacity;
+            self.actions.drain(..excess);
+        }
+        if self.coverage.len() > capacity {
+            let excess = self.coverage.len() - capacity;
+            self.coverage.drain(..excess);
+        }
+        if self.checkpoints.len() > CHECKPOINT_CEILING {
+            let excess = self.checkpoints.len() - CHECKPOINT_CEILING;
+            self.checkpoints.drain(..excess);
         }
         if let Some(gap) = &self.eviction {
             let boundary = TemporalCoverage {

@@ -262,9 +262,17 @@ pub(crate) fn fit(line: &str, width: usize) -> String {
         .to_owned()
 }
 
+/// A text field of a record, with its control characters neutralised.
+///
+/// A place's display name is a service's name, a container's label or a path — data the machine
+/// was given rather than data Ono chose, and v0.2 §49 assumes it is hostile. An `ESC` here
+/// retitles a terminal window; a newline forges a row of a place view or a node of a map. This
+/// crate is handed a record and returns lines, and the sink writes those lines directly, so it is
+/// the last place either can be stopped. `ono_render::sanitise` is the one implementation of the
+/// rule in the tree (ADR-0015 T1).
 pub(crate) fn text(record: &RecordValue, field: &str) -> Option<String> {
     match record.get(field) {
-        Some(Value::String(text)) => Some(text.to_string()),
+        Some(Value::String(text)) => Some(ono_render::sanitise(text)),
         _ => None,
     }
 }
