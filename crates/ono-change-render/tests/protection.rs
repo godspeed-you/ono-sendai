@@ -13,8 +13,8 @@ use ono_value::{RecordValue, Value};
 
 mod support;
 use support::{
-    contains, plan_with, protected_exclusions, protected_rows, ready_asset, sealed_nginx_plan,
-    unprotected_rows, zfs_asset,
+    contains, nested, plan_with, protected_exclusions, protected_rows, ready_asset, s,
+    sealed_nginx_plan, unprotected_rows, zfs_asset,
 };
 
 /// §64's plan: PROTECTED, with the exclusions Appendix A.6 keeps beside the word.
@@ -225,5 +225,56 @@ fn should_draw_the_unicode_marks_when_the_session_chose_unicode() {
     assert!(
         contains(&lines, "not covered"),
         "Appendix E.8 holds in both alphabets"
+    );
+}
+
+#[test]
+fn should_keep_a_gap_between_two_cells_when_a_word_is_wider_than_its_column() {
+    // `no-recovery-required` is twenty columns. A fixed-width objective field ran it straight
+    // into the level beside it — `no-recovery-requiredUNPROTECTED` — which is two of Appendix
+    // E.8's cells presented as one word.
+    let plan = plan_with(
+        "unprotected",
+        Value::list([nested(
+            "ono.protection-coverage",
+            &[
+                ("domain", s("network-runtime")),
+                ("objective", s("no-recovery-required")),
+                ("protection", s("unprotected")),
+                ("satisfied", Value::Bool(false)),
+                ("required", Value::Bool(true)),
+                ("declared_irrelevant", Value::Bool(false)),
+                ("consistency", Value::Null),
+                ("exclusions", Value::list([])),
+                (
+                    "note",
+                    s("§34: a live session is not restored by a snapshot"),
+                ),
+            ],
+        )]),
+        Value::list([]),
+    );
+    let lines = coverage_matrix(&plan, 120, Charset::Ascii);
+    assert!(
+        contains(&lines, "no-recovery-required  UNPROTECTED"),
+        "Appendix E.8's columns are a reading aid, and two cells with no boundary are not one. \
+         Got {lines:?}"
+    );
+}
+
+#[test]
+fn should_not_head_a_column_of_uncovered_domains_with_the_word_covered() {
+    // §2.5: a level must never overstate coverage, and the heading over the rows is part of what
+    // states it. Every row here reached UNPROTECTED.
+    let lines = protection_block(&unprotected_plan(), &[], 100, Charset::Ascii);
+    let heading = lines.iter().position(|line| line.trim() == "covered");
+    assert_eq!(
+        heading, None,
+        "a matrix of UNPROTECTED rows headed `covered` says the opposite of what it holds. \
+         Got {lines:?}"
+    );
+    assert!(
+        contains(&lines, "by domain"),
+        "§10.3's matrix is one row per mutation domain, whatever each of them reached"
     );
 }

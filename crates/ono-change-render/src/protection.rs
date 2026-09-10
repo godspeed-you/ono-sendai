@@ -69,7 +69,11 @@ pub fn protection_block(
     let rows = items(plan, "protection");
     if !rows.is_empty() {
         lines.push(String::new());
-        lines.push("  covered".to_owned());
+        // §10.3's matrix has one row per mutation domain and says what each one reached, which
+        // is `UNPROTECTED` as often as anything else. Heading it `covered` labelled a column of
+        // `UNPROTECTED` rows as coverage — §2.5's overstatement, written by the renderer rather
+        // than by the engine.
+        lines.push("  by domain".to_owned());
         lines.extend(matrix_rows(&rows, 4, width, charset));
     }
     lines.push(String::new());
@@ -215,13 +219,28 @@ fn weakest_consistency(plan: &RecordValue) -> Option<String> {
 /// One line per domain: what it needs, what covers it, and the mark that says which (§10.3).
 fn matrix_rows(rows: &[Item], indent: usize, width: usize, charset: Charset) -> Vec<String> {
     let pad = " ".repeat(indent);
-    let domain_column = rows
+    // Every column is as wide as its widest word plus a gap, rather than a number chosen against
+    // the words that existed when it was written. `no-recovery-required` is twenty columns and
+    // the objective field was eighteen, so `no-recovery-requiredUNPROTECTED` is what an operator
+    // saw — two of Appendix E.8's cells with no boundary between them.
+    let column = |field: &str, least: usize| {
+        rows.iter()
+            .filter_map(|row| text(row, field))
+            .map(|value| display_width(&value))
+            .max()
+            .unwrap_or(0)
+            .max(least)
+            + 2
+    };
+    let domain_column = column("domain", 20);
+    let objective_column = column("objective", 16);
+    let protection_column = rows
         .iter()
-        .filter_map(|row| text(row, "domain"))
-        .map(|domain| display_width(&domain))
+        .filter_map(|row| text(row, "protection"))
+        .map(|value| display_width(&value))
         .max()
         .unwrap_or(0)
-        .max(20)
+        .max(13)
         + 2;
     rows.iter()
         .map(|row| {
@@ -236,7 +255,8 @@ fn matrix_rows(rows: &[Item], indent: usize, width: usize, charset: Charset) -> 
                 Symbol::for_protection(&protection)
             };
             let mut line = format!(
-                "{pad}{domain:<domain_column$}{objective:<18}{:<15}{}",
+                "{pad}{domain:<domain_column$}{objective:<objective_column$}\
+                 {:<protection_column$}{}",
                 protection.to_uppercase(),
                 mark.glyph(charset),
             );

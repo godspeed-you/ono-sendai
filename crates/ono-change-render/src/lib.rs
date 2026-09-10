@@ -87,26 +87,37 @@ pub(crate) fn display_width(text: &str) -> usize {
     UnicodeWidthStr::width(text)
 }
 
-/// A line cut to `width` cells, with trailing space removed.
+/// The marker a cut line ends with, as `ono-render`'s tables use it (spec v0.2 §13.3).
+const TRUNCATION_MARKER: &str = "...";
+
+/// A line cut to `width` cells, with trailing space removed and the cut made visible.
 ///
 /// Truncation is by display width rather than by byte or `char`, so a wide glyph is never split
 /// across the boundary and the drawn line never exceeds what the caller promised.
+///
+/// v0.2 §13.3 requires the truncation to be visible, and a path is the reason: a plan whose
+/// target is `/srv/app/config` and one whose target is `/srv/app/config.bak` cut to the same
+/// column are the same line, and an operator reading a change before applying it has to be able
+/// to tell them apart. The marker is `ono-render`'s own, so the two agree.
 pub(crate) fn fit(line: &str, width: usize) -> String {
     let width = width.max(MIN_WIDTH);
     if display_width(line) <= width {
         return line.trim_end().to_owned();
     }
+    let budget = width.saturating_sub(display_width(TRUNCATION_MARKER));
     let mut kept = String::with_capacity(line.len());
     let mut used = 0usize;
     for character in line.chars() {
         let cell = display_width(character.encode_utf8(&mut [0u8; 4]));
-        if used + cell > width {
+        if used + cell > budget {
             break;
         }
         kept.push(character);
         used += cell;
     }
-    kept.trim_end().to_owned()
+    let mut cut = kept.trim_end().to_owned();
+    cut.push_str(TRUNCATION_MARKER);
+    cut
 }
 
 /// `  label      value` — the indented two-column shape §20.2 uses inside a block.
@@ -118,7 +129,11 @@ pub(crate) fn labelled(label: &str, value: &str, column: usize) -> String {
 
 /// `label      value` at column zero — the shape Appendix E.2 and E.4 use for a top-level row.
 pub(crate) fn column_pair(label: &str, value: &str, column: usize) -> String {
-    let padding = " ".repeat(column.saturating_sub(display_width(label)));
+    // A label wider than the column still gets a separator: `metadata coverage` is eighteen
+    // columns and the value column is sixteen, and without this the two ran together into
+    // `metadata coverageAppendix C.7: …`. Appendix E's two-column shape is a reading aid, and a
+    // row with no gap in it is not one.
+    let padding = " ".repeat(column.saturating_sub(display_width(label)).max(1));
     format!("{label}{padding}{value}").trim_end().to_owned()
 }
 

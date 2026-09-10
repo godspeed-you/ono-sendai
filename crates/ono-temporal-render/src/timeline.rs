@@ -594,6 +594,13 @@ pub(crate) fn describe(event: &Value) -> String {
     let Some(kind) = text(event, "kind") else {
         return String::new();
     };
+    // §17.2 closes the kinds and extends them by `subtype`, so an event that carries one is
+    // saying something its kind alone does not: five rows reading `action completed` are a plan
+    // being applied, and `ono.plan.action.completed` is what says so. The kind stays visible in
+    // the record and in `find event`; this is the line a person reads.
+    if let Some(subtype) = text(event, "subtype") {
+        return subtype;
+    }
     match kind.as_str() {
         "object.observed" => "observed".to_owned(),
         "object.appeared" => "appeared".to_owned(),
@@ -601,7 +608,7 @@ pub(crate) fn describe(event: &Value) -> String {
         "object.changed" => changed(event),
         "relation.added" => relation(event, "relation added"),
         "relation.removed" => relation(event, "relation removed"),
-        "provider.event" => text(event, "subtype").unwrap_or_else(|| "provider event".to_owned()),
+        "provider.event" => "provider event".to_owned(),
         other if other.starts_with("action.") => action(event, other),
         other => other.replace('.', " "),
     }
