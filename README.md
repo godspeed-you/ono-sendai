@@ -451,10 +451,10 @@ canonical CI environment expects to.
 ```text
 crates=37
 workspace_members=39
-tests=4591
+tests=4594
 tests_that_can_skip=92
 expected_ci_skips=3
-acceptance_cases=204
+acceptance_cases=205
 adrs=529
 command_contract_files=14
 commands=209

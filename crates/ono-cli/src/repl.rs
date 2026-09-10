@@ -96,7 +96,7 @@ impl ono_command::ValueCompleter for SelectorCompleter {
                 .fields
                 .iter()
                 .filter(|field| field.starts_with(prefix))
-                .map(ono_command::Candidate::value)
+                .map(ono_command::Candidate::field)
                 .collect();
         }
         self.values
@@ -203,6 +203,9 @@ impl Completer for ShellCompleter {
         };
 
         let mut candidates: Vec<String> = Vec::new();
+        // A verb's targets and the fields flowing into a filter are vocabulary only the registry
+        // has; where it offers some, the working directory's entries would only bury it.
+        let mut vocabulary = false;
 
         if let Ok(registry) = crate::eval::native::registry() {
             let context = ono_command::StageContext::from_line(line, cursor);
@@ -214,11 +217,13 @@ impl Completer for ShellCompleter {
                 },
                 values: if is_head { None } else { self.values.clone() },
             };
-            candidates.extend(
-                ono_command::complete(registry, &context, Some(&fields))
-                    .into_iter()
-                    .map(|candidate| candidate.text().to_owned()),
-            );
+            for candidate in ono_command::complete(registry, &context, Some(&fields)) {
+                vocabulary |= matches!(
+                    candidate.kind(),
+                    ono_command::CandidateKind::Target | ono_command::CandidateKind::Field
+                );
+                candidates.push(candidate.text().to_owned());
+            }
         }
 
         if is_head {
@@ -236,7 +241,7 @@ impl Completer for ShellCompleter {
                     .into_iter()
                     .filter(|flag| flag.starts_with(prefix)),
             );
-        } else {
+        } else if !vocabulary {
             // An option is the registry's business; a path is the filesystem's.
             candidates.extend(path_candidates(prefix));
         }
@@ -921,6 +926,54 @@ mod tests {
                 .candidates
                 .iter()
                 .all(|candidate| !candidate.contains('/')),
+            "got {:?}",
+            completion.candidates
+        );
+    }
+
+    #[test]
+    fn should_offer_only_targets_when_a_verb_waits_for_its_target() {
+        // Spec §15.1: `get <tab>` shows the targets. Sorted in among the working directory's
+        // entries they were lost in any directory holding more than a screenful of files. The
+        // tests run in the crate's directory, so `Cargo.toml` and `src/` are always there to leak.
+        let completion = completer().complete("get ", 4);
+        assert!(
+            completion.candidates.contains(&"process".to_owned()),
+            "got {:?}",
+            completion.candidates
+        );
+        assert!(
+            !completion.candidates.contains(&"Cargo.toml".to_owned())
+                && !completion.candidates.contains(&"src/".to_owned()),
+            "a target position is not a path, got {:?}",
+            completion.candidates
+        );
+    }
+
+    #[test]
+    fn should_offer_only_fields_when_a_filter_waits_for_one() {
+        // Spec §15.1: `get process | where <tab>` shows Process fields, and nothing from the disk.
+        let line = "get process | where ";
+        let completion = completer().complete(line, line.len());
+        assert!(
+            completion.candidates.contains(&"pid".to_owned()),
+            "got {:?}",
+            completion.candidates
+        );
+        assert!(
+            !completion.candidates.contains(&"Cargo.toml".to_owned())
+                && !completion.candidates.contains(&"src/".to_owned()),
+            "a field position is not a path, got {:?}",
+            completion.candidates
+        );
+    }
+
+    #[test]
+    fn should_still_offer_paths_where_the_registry_has_no_vocabulary() {
+        // `get file` takes a path; the registry declares no word for it, so the disk answers.
+        let completion = completer().complete("get file sr", 11);
+        assert!(
+            completion.candidates.contains(&"src/".to_owned()),
             "got {:?}",
             completion.candidates
         );

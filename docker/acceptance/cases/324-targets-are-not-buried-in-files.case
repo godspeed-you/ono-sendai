@@ -1,0 +1,19 @@
+# Spec §15.1: `get <tab>` shows the targets `get` takes. Offered beside the working directory's
+# entries and sorted in among them, they were lost in any directory with more than a screenful of
+# files. From `/`, two Tabs list what `get` can read, and no directory of the root filesystem.
+case: a verb's Tab lists its targets and nothing from the disk
+pty: true
+columns: 100
+lines: 40
+timeout: 60
+stdin: |
+  cd /
+  get 		process | count
+  exit
+run: |
+  ono
+exit: 0
+stdout-contains: interface
+stdout-contains: VALUE
+stdout-not-contains: etc/
+stdout-not-contains: usr/
