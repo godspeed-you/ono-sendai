@@ -334,12 +334,15 @@ showcase: a live view of the machine should feel like instrumentation, not like 
     be chosen;
   - the recovery builder ignored the newer state the ZFS provider established, so every dataset
     rollback was blocked as unestablished and §13.6's acceptance was unreachable (ADR-0849).
-  §13.4's `NOT PROTECTED BY` reaches the plan view (ADR-0845), and `plan` refuses inside a link
-  (ADR-0844). Open in §4.12: the five boxes §29 needs through the shell — cases 307 and 308 —
-  recorded as exclusions in `docs/releases/v0.6.0.md`, and the box that closes last. Next: ADR-0848's
-  design (freezing through the link's providers, protection and recovery per host, a disconnect left
-  unknown), then `scripts/release-check.sh`. Files: `crates/ono-cli/src/change`,
-  `crates/ono-change-*`, `docker/acceptance/cases/307-*`, `308-*`.
+  §13.4's `NOT PROTECTED BY` reaches the plan view (ADR-0845). §29 runs through the shell: inside
+  `enter link` a plan freezes through the link's providers, runs only where its host is, is
+  protected and recovered per host, and an action whose link drops is left unknown (ADR-0848,
+  superseding ADR-0844); a plan that stops the interface a network link leaves by is CRITICAL
+  (ADR-0850). Cases 307 and 308 drive a live link and take no declared skip, and the five §29
+  boxes are ticked. Wiring it found that a piped object was acted on by its label (fixed,
+  `f8fb9d8f`) and that `apply` wraps an unknown outcome's refusal twice. Next: that fix, then the
+  box that closes last and `scripts/release-check.sh`. Files: `crates/ono-change-executor`,
+  `docs/ACCEPTANCE.md`.
 
 ## What is left, and why
 

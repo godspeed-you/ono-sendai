@@ -2,12 +2,13 @@
 # unknown.
 #
 # §29.3 is the rule this case exists for: a host whose outcome could not be established is
-# `UNKNOWN`, not a failure and not a success, and Appendix F.2 says the same of an action. Watching
-# a link drop mid-plan needs a linked host, and the suite runs with `--network=none`, so that
-# scenario is announced as a declared skip. What is proved here is what the container can
-# present: a host nobody linked is refused with a code and changes nothing, and the shell's
-# vocabulary has a word for an outcome nobody established.
-case: an unlinked remote is refused, unknown is a word the shell has, and the disconnect is declared unobserved
+# `UNKNOWN`, not a failure and not a success, and Appendix F.2 says the same of an action. The
+# link's local transport makes a second host of the same container, and a plan made through it
+# that kills the agent answering for the link drops the link in the middle of its own action: the
+# request goes out and its answer never comes back. §29.4's per-host recovery then says which host
+# it cannot proceed on, and §34.2's link-loss landmark is proved over a loopback `tcp` link, the
+# one network the container has.
+case: an unlinked remote is refused, a link that drops mid-action leaves it unknown, and a plan that would cut the link is critical
 timeout: 180
 env: NO_COLOR=1
 run: |
@@ -58,7 +59,42 @@ run: |
   prove rd3c "every verification contract says a timeout is failed or unknown, never passed (§23.5)" \
     "ono -c 'plan copy file $HOME/etc/a $HOME/etc/b --overwrite | to json' 2>&1 | grep -qE '\"timeout_status\":\"(failed|unknown)\"'"
 
-  echo 'SKIPPED remote-disconnect: fixture_not_applicable: nothing can be linked with --network=none, so a link dropping mid-plan (v0.6 §55.10 case 45) cannot be observed'
+  echo '== §29.3 and Appendix F.2: a link that drops under an action leaves it unknown =='
+  # A home of its own: the plan below stays `applying` by design, and no later case should find it.
+  HOME=$(mktemp -d)
+  export HOME
+  unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME
+  cd "$HOME"
+  ono -c "link host l1 --transport local; enter link l1; get process | where \"--agent\" in command | where cwd == \"$HOME\" | plan kill process | apply --accept-risk --accept-irreversible --confirm" > /tmp/rd6.txt 2>&1
+  prove rd4a "the action whose answer never came back is unknown, never failed (§29.3, Appendix F.2)" \
+    'grep -q "change.remote_state_unknown" /tmp/rd6.txt && ! grep -q "change.apply_failed" /tmp/rd6.txt'
+  ono -c 'get plan | select id state | to json' > /tmp/rd7.json 2>&1
+  prove rd4b "and the plan stays applying until the host can be asked again (Appendix F.2, §63.15)" \
+    'grep -q "\"state\":\"applying\"" /tmp/rd7.json'
+
+  echo '== §29.4: recovery is planned per host, and says where it cannot proceed =='
+  plan=$(sed -n 's/^\[{"id":"\([0-9a-f]\{8\}\).*/\1/p' /tmp/rd7.json)
+  ono -c "link host l1 --transport local; enter link l1; recover $plan" > /tmp/rd8.txt 2>&1
+  status=$?
+  prove rd5a "recovery refuses on the host whose state could not be established, and names it (§29.4, §29.3)" \
+    "[ $status -ne 0 ] && grep -q 'change.remote_state_unknown' /tmp/rd8.txt && grep -q 'l1' /tmp/rd8.txt"
+
+  echo '== §34.2: a network plan threatening the active remote link is CRITICAL =='
+  CLIENT_KEY=$(ono --print-peer-key)
+  HOST_KEY=$(ono --agent --host-key "$HOME/agent.pem" --print-host-key)
+  ono -c "add host-key 127.0.0.1 --fingerprint $HOST_KEY" > /dev/null 2>&1
+  ono -c "add client-key $CLIENT_KEY --label case-308" > /dev/null 2>&1
+  ono --agent --listen 127.0.0.1:7743 --host-key "$HOME/agent.pem" 2> "$HOME/agent.log" &
+  AGENT=$!
+  for _ in $(seq 1 50); do grep -q 'listening on' "$HOME/agent.log" && break; sleep 0.2; done
+  ono -c 'link host 127.0.0.1:7743 --transport tcp; plan stop interface lo | to json' > /tmp/rd9.json 2>&1
+  prove rd6a "stopping the interface the active link leaves by is a CRITICAL landmark (§34.2, Appendix I.3)" \
+    'grep -q "\"class\":\"critical\",\"rule\":\"risk.remote.link-loss\"" /tmp/rd9.json && grep -q "\"risk\":\"critical\"" /tmp/rd9.json'
+  ono -c 'plan stop interface lo | to json' > /tmp/rd10.json 2>&1
+  prove rd6b "and with no link held the same plan makes no such claim (§34.2)" \
+    'grep -q "\"risk_findings\"" /tmp/rd10.json && ! grep -q "risk.remote.link-loss" /tmp/rd10.json'
+  kill "$AGENT" 2>/dev/null || true
+  wait "$AGENT" 2>/dev/null || true
   echo 'remote-disconnect: done'
 exit: 0
 stdout-contains: PROVED rd1a
@@ -68,6 +104,12 @@ stdout-contains: PROVED rd2a
 stdout-contains: PROVED rd3a
 stdout-contains: PROVED rd3b
 stdout-contains: PROVED rd3c
+stdout-contains: PROVED rd4a
+stdout-contains: PROVED rd4b
+stdout-contains: PROVED rd5a
+stdout-contains: PROVED rd6a
+stdout-contains: PROVED rd6b
 stdout-contains: remote-disconnect: done
 stdout-not-contains: FAILED
+stdout-not-contains: SKIPPED
 stdout-not-contains: panicked

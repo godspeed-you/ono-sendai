@@ -1,13 +1,14 @@
 # v0.6 §50 phase P2 — §29.1, §29.2 and §10.3: a remote change is a plan like any other, and its
 # coverage matrix is per host.
 #
-# §29.2's worked matrix — twelve ZFS hosts, six Btrfs, two unprotected, composing to PARTIALLY
-# PROTECTED — needs linked remote hosts. The suite runs with `--network=none` in one container, so
-# there is nobody to link, and the case says so with a declared skip rather than pretending. What
-# it proves is the local half every per-host answer is built from: coverage names the host it is
-# about, no link exists that could make a remote claim, and nothing claims coverage on a host
-# nobody reached.
-case: coverage is per host, and a host nobody reached claims nothing
+# The link's local transport makes a second host of the same container: `link host l1
+# --transport local` starts an agent the shell speaks the link protocol to, exactly as it would
+# over ssh, and `enter link l1` sends every provider call there (ADR-0848). §29.2's worked matrix —
+# twelve ZFS hosts, six Btrfs, two unprotected, composing to PARTIALLY PROTECTED — is the
+# composition rule, proved at `crates/ono-change-protection/tests/remote.rs`; what the container
+# proves is that a plan made through a link is about the linked host, says so in its matrix, and
+# runs only where that host is.
+case: coverage is per host, and a plan about a linked host runs only where that host is
 timeout: 180
 env: NO_COLOR=1
 run: |
@@ -21,7 +22,6 @@ run: |
     fi
   }
   plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
-  count_of() { ono -c "$1 | count | to json" 2>&1 | tr -d '[:space:]' | sed 's/^\[//; s/\]$//'; }
 
   mkdir -p "$HOME/etc"
   for n in 1 2; do printf 'target %s\n' "$n" > "$HOME/etc/target$n"; done
@@ -36,28 +36,46 @@ run: |
   prove rp1a "both assets name a host, and it is the same one (§11.1, §29.2)" \
     "[ \"\$(grep -o '{\"host\":\"[^\"]\{1,\}\"}' /tmp/rp1.json | wc -l)\" -eq 2 ] && [ \"\$(grep -o '{\"host\":\"[^\"]*\"}' /tmp/rp1.json | sort -u | wc -l)\" -eq 1 ]"
 
-  echo '== §29.1: a remote link is what makes a remote plan possible =='
-  prove rp2a "the host registry answers with a list (v0.4.1 §9)" \
-    "ono -c 'get host | to json' 2>&1 | grep -qx '\[.*\]'"
-  prove rp2b "and there is no link, so no plan here can be about another host (§29.1)" \
-    "[ \"\$(count_of 'get link')\" = '0' ]"
+  # A home of its own for the linked plans, so no later case finds a plan about a host it never
+  # linked.
+  HOME=$(mktemp -d)
+  export HOME
+  unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME
+  mkdir -p "$HOME/etc"
+  printf 'a\n' > "$HOME/etc/a"
+  printf 'b\n' > "$HOME/etc/b"
+  sleep 300 > /dev/null 2>&1 &
+  SLEEPER=$!
 
-  echo '== §29.3 and §2.5: nothing claims coverage on a host nobody reached =='
-  prove rp3a "no plan names a host of its own on any target, because no remote target was resolved (§7.1, §29.1)" \
-    "ono -c 'get plan | select targets | to json' 2>&1 | grep -q '\"host\":null' && ! ono -c 'get plan | select targets | to json' 2>&1 | grep -q '\"host\":\"'"
+  echo '== §7.1 and §29.1: a plan made through a link is about the linked host =='
+  ono -c "link host l1 --transport local; enter link l1; plan kill process $SLEEPER | to json" > /tmp/rp2.json 2>&1
+  prove rp2a "the target is frozen as the linked host's (§7.1, §29.1)" \
+    'grep -q "\"host\":\"l1\"" /tmp/rp2.json'
+  prove rp2b "and the protection matrix names the host it is about (§29.2)" \
+    'grep -q "\"subject\":\"l1\"" /tmp/rp2.json'
+
+  echo '== §29.1: a plan runs only where its host is =='
+  ono -c "apply $(plan_id /tmp/rp2.json) --accept-risk --accept-irreversible --confirm" > /tmp/rp3.txt 2>&1
+  prove rp3a "outside the link the plan about l1 is refused, naming the host, and nothing ran (§29.1, §2.3)" \
+    "grep -q 'change.precondition_failed' /tmp/rp3.txt && grep -q 'l1' /tmp/rp3.txt && kill -0 $SLEEPER"
+  ono -c "link host l1 --transport local; enter link l1; plan copy file $HOME/etc/a $HOME/etc/b --overwrite" > /tmp/rp4.txt 2>&1
+  prove rp3b "a file inside the link is refused rather than resolved against this machine (ADR-0848)" \
+    "grep -q 'change.action_not_plannable' /tmp/rp4.txt && [ \"\$(ono -c 'get plan | count | to json' 2>&1 | tr -d '[:space:]')\" = '[1]' ]"
+  kill "$SLEEPER" 2>/dev/null || true
 
   echo '== §28.3: the bulk thresholds a per-host plan is measured against are configured =='
   prove rp4a "\`change.bulk.high_risk_targets\` defaults to fifty (§28.3, §53)" \
     "ono -c 'get config change.bulk.high_risk_targets | to json' 2>&1 | grep -q '^\[{\"key\":\"change.bulk.high_risk_targets\",\"value\":50,'"
 
-  echo 'SKIPPED remote-protection-matrix: fixture_not_applicable: no second host can be linked with --network=none, so the per-host matrix of v0.6 §55.10 case 44 has no hosts to compose'
   echo 'remote-protection-matrix: done'
 exit: 0
 stdout-contains: PROVED rp1a
 stdout-contains: PROVED rp2a
 stdout-contains: PROVED rp2b
 stdout-contains: PROVED rp3a
+stdout-contains: PROVED rp3b
 stdout-contains: PROVED rp4a
 stdout-contains: remote-protection-matrix: done
 stdout-not-contains: FAILED
+stdout-not-contains: SKIPPED
 stdout-not-contains: panicked

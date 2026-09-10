@@ -479,6 +479,134 @@ pub fn file_domain(
     recovery.resolve_at(&path.display().to_string(), &fallback)
 }
 
+/// The host the innermost `enter link` frame stands on, where the session stands on one (§14.4).
+#[must_use]
+pub fn linked_host(context: &[ono_command::ContextFrame]) -> Option<String> {
+    context
+        .iter()
+        .rev()
+        .find(|frame| matches!(frame.kind(), ono_command::FrameKind::Link))
+        .map(|frame| frame.identity().to_string())
+}
+
+/// The refusal for a link whose connection is not held (§29.3): nothing can reach its host, so
+/// `command` changes nothing rather than answering from this machine under the host's name.
+#[must_use]
+pub fn link_down(host: &str, command: &str) -> ErrorValue {
+    ErrorValue::new(
+        ono_core::ErrorCode::RemoteUnreachable,
+        format!("`{command}` needs the link to {host}, and it is not connected"),
+    )
+    .with_help(
+        "v0.6 §29.1 and §29.3: a linked host's objects are reached through its link, and a link \
+         that is down reaches nothing. `link host` connects it again. Nothing was changed"
+            .to_owned(),
+    )
+    .with_metadata("host", Value::string(host))
+}
+
+/// Whether `plan` may run where the session stands (§29.1, §14.4, ADR-0848).
+///
+/// A plan whose targets carry a host runs only inside `enter link` to that host with the link
+/// connected, because that frame is what routes provider calls there. A plan frozen on this
+/// machine does not run inside a link: its actions would reach the linked host instead.
+///
+/// # Errors
+///
+/// `change.precondition_failed` naming the host the plan is about and where the session stands,
+/// and `remote.unreachable` when the plan's own link is not connected.
+pub fn route(
+    context: &[ono_command::ContextFrame],
+    plan: &ono_change_core::ChangePlan,
+    command: &str,
+) -> Result<(), ErrorValue> {
+    let wanted = plan
+        .targets()
+        .iter()
+        .find_map(|target| target.host().map(str::to_owned));
+    let standing = linked_host(context);
+    match (wanted, standing) {
+        (None, None) => Ok(()),
+        (Some(wanted), Some(standing)) if wanted == standing => {
+            if crate::spatial::links::facts(&wanted).is_some_and(|facts| facts.connected) {
+                Ok(())
+            } else {
+                Err(link_down(&wanted, command))
+            }
+        }
+        (wanted, standing) => {
+            let expected = wanted
+                .as_deref()
+                .map_or_else(|| "this machine".to_owned(), |host| format!("host {host}"));
+            let found = standing.as_deref().map_or_else(
+                || "this machine".to_owned(),
+                |host| format!("host {host}, through `enter link {host}`"),
+            );
+            let remedy = wanted.as_deref().map_or_else(
+                || "`leave` the link first.".to_owned(),
+                |host| format!("`enter link {host}` first."),
+            );
+            Err(ErrorValue::new(
+                ono_core::ErrorCode::ChangePreconditionFailed,
+                format!(
+                    "plan {} is about {expected}, and the session stands on {found}",
+                    plan.id().short()
+                ),
+            )
+            .with_help(format!(
+                "v0.6 §29.1 and §14.4: provider calls go where the session stands, so `{command}` \
+                 would reach {found} with actions frozen for {expected}. {remedy} Nothing was \
+                 changed"
+            ))
+            .with_metadata("fact", Value::string("host"))
+            .with_metadata("expected", Value::string(&expected))
+            .with_metadata("found", Value::string(&found)))
+        }
+    }
+}
+
+/// `outcome`, read for an action on a linked host (§29.3, Appendix F.2, ADR-0848).
+///
+/// A link that failed under an action leaves the host's side of it unestablished: the request may
+/// have reached the far side and run, or not. §29.3 forbids calling that a failure or a success
+/// without evidence, so it settles `unknown`, and the executor's `remote-disconnect` keeps the
+/// plan applying until the link is back and the host can be asked again. Every other outcome, and
+/// every outcome on this machine, is what it was.
+#[must_use]
+pub fn over_link(
+    plan: &ono_change_core::ChangePlan,
+    action: &PlanAction,
+    outcome: ExecutionOutcome,
+) -> ExecutionOutcome {
+    let host = action
+        .target()
+        .and_then(|identity| {
+            plan.targets()
+                .iter()
+                .find(|target| target.identity() == identity)
+        })
+        .and_then(FrozenTarget::host);
+    match (host, outcome) {
+        (Some(host), ExecutionOutcome::Failed(refusal)) if lost_link(&refusal) => {
+            ExecutionOutcome::Unknown(
+                error::remote_state_unknown(host, action.summary())
+                    .with_metadata("cause", Value::string(refusal.code().name())),
+            )
+        }
+        (_, outcome) => outcome,
+    }
+}
+
+/// Whether `refusal` says the link failed rather than that the far side answered no (§29.3).
+fn lost_link(refusal: &ErrorValue) -> bool {
+    matches!(
+        refusal.code(),
+        ono_core::ErrorCode::RemoteUnreachable
+            | ono_core::ErrorCode::RemoteHandshakeTimeout
+            | ono_core::ErrorCode::RemoteProtocolMismatch
+    )
+}
+
 /// Carries out one action through the provider that owns its target (§4.7).
 ///
 /// An opaque action runs its program with the argument vector it carries and no shell in between

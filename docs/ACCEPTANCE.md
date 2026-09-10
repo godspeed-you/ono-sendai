@@ -3491,16 +3491,16 @@ Conventions this subsection relies on:
       `crates/ono-change-executor/tests/strategy.rs`, case `306-canary`.
 - [x] **No strategy is unbounded.** §28.4: `parallel` carries its width and a width of zero is
       refused rather than read as unlimited — `crates/ono-change-core/src/strategy.rs`.
-- [ ] **A remote per-host protection matrix is accurate.** §55.10 case 44 and §29.2: twelve ZFS,
+- [x] **A remote per-host protection matrix is accurate.** §55.10 case 44 and §29.2: twelve ZFS,
       six Btrfs and two unprotected hosts compose to `PARTIALLY_PROTECTED` —
       `crates/ono-change-protection/tests/remote.rs`, case `307-remote-protection-matrix`.
-- [ ] **A disconnected host is unknown, not automatically failed.** §55.10 case 45, §29.3 and
+- [x] **A disconnected host is unknown, not automatically failed.** §55.10 case 45, §29.3 and
       Appendix F.2 —
-      `crates/ono-change-executor/tests/appendix_f.rs::should_keep_a_vanished_remote_host_unknown_rather_than_failed`,
+      `crates/ono-change-executor/tests/failure_injection.rs::should_keep_a_vanished_remote_host_unknown_rather_than_failed`,
       case `308-remote-disconnect`.
-- [ ] **A network plan threatening the active remote link is CRITICAL.** §55.10 case 46, §34.2 and
+- [x] **A network plan threatening the active remote link is CRITICAL.** §55.10 case 46, §34.2 and
       Appendix I.3 — `crates/ono-change-impact/tests/risk.rs`, case `308-remote-disconnect`.
-- [ ] **Remote recovery is planned per host, and says where it cannot proceed.** §29.4 —
+- [x] **Remote recovery is planned per host, and says where it cannot proceed.** §29.4 —
       `crates/ono-change-recovery/tests/remote.rs`, case `308-remote-disconnect`.
 - [x] **A bulk plan reaching a whole service group is CRITICAL, and three of five members is
       not.** §28.3 and §19.3, derived from the topology rather than from name similarity —
@@ -3651,7 +3651,7 @@ Conventions this subsection relies on:
 - [x] **Recovery verification reports domain-specific equivalence.** §63.13 —
       case `302-recovery-verification`.
 - [x] **Bulk and canary behaviour is deterministic.** §63.14 — case `306-canary`.
-- [ ] **Remote unknown state remains unknown.** §63.15 — case `308-remote-disconnect`.
+- [x] **Remote unknown state remains unknown.** §63.15 — case `308-remote-disconnect`.
 - [x] **KUANG/11 providers cannot escalate capability.** §63.16 —
       case `312-kuang-change-permissions`.
 - [x] **All machine-readable contracts match runtime registration.** §63.17 —

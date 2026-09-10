@@ -1,6 +1,6 @@
 # ADR-0844: A plan inside a link is refused, because this build freezes targets only here
 
-- Status: accepted
+- Status: superseded by ADR-0848
 - Date: 2026-09-10
 - Spec refs: v0.6 §7.1, §29.1, §29.2, §29.3, §29.4, §55.10 cases 44 and 45, §66.9; ADR-0838
 - Decided by: agent (autonomous)

@@ -501,10 +501,4 @@ canonical_ci:
 # announces>`. Nothing goes here because a check is inconvenient — only a situation the
 # container genuinely cannot present, and the sentence that says why.
 acceptance:
-  expected_skips:
-    - id: "307-remote-protection-matrix::remote-protection-matrix"
-      category: fixture_not_applicable
-      prerequisite: "a linked remote host. The suite runs with `--network=none` and one container, so v0.6 §55.10 case 44's per-host matrix has no second host to be about; the case still proves the local half"
-    - id: "308-remote-disconnect::remote-disconnect"
-      category: fixture_not_applicable
-      prerequisite: "a linked remote host whose link can be dropped mid-plan (v0.6 §55.10 case 45). With `--network=none` nothing can be linked, so the case proves the unlinked-host refusal and the `unknown` vocabulary and says it could not observe the disconnect"
+  expected_skips: []

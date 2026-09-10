@@ -54,6 +54,48 @@ impl CommandImpl for Recover {
             // `--to` names the second explicitly. The assets are what a restore can be planned
             // against at all (§11.4), so both spellings end at the same list.
             let (source, assets) = sources(&state, &arguments, &reference)?;
+            // §29.1 (ADR-0848): a plan about a linked host is recovered where that host is.
+            if let Some(plan) = source.as_ref() {
+                super::world::route(ctx.context(), plan, "recover")?;
+            }
+            // §29.4 (ADR-0848): recovery of a plan about a linked host is planned per host, and
+            // it says where it cannot proceed. No recovery provider of this build runs on the far
+            // side of a link, so the host holds nothing to restore from; a host whose action the
+            // link left unestablished is named as such rather than assumed either way (§29.3).
+            if let Some(plan) = source.as_ref()
+                && let Some(host) = plan.targets().iter().find_map(|target| target.host())
+            {
+                let observation = match plan
+                    .actions()
+                    .iter()
+                    .find(|action| action.status() == ono_change_core::ActionStatus::Unknown)
+                {
+                    Some(action) => ono_change_recovery::remote::HostObservation::disconnected(
+                        host,
+                        action.summary(),
+                        "the link dropped while the action ran, so what it did there is not \
+                         established (§29.3)",
+                    ),
+                    None => ono_change_recovery::remote::HostObservation::new(
+                        host,
+                        ono_change_recovery::remote::HostState::Unprotected {
+                            reason: Arc::from(
+                                "no recovery provider of this build runs on the far side of a \
+                                 link, so nothing on this host was captured to restore from \
+                                 (§29.2, ADR-0848)",
+                            ),
+                        },
+                    ),
+                };
+                let recovery = ono_change_recovery::remote::plan_hosts(&[observation]);
+                if let Some(blocked) = recovery.blocked().first()
+                    && let Some(refusal) = blocked.refusal()
+                {
+                    return Err(refusal
+                        .clone()
+                        .with_metadata("host", Value::string(blocked.host())));
+                }
+            }
             if assets.is_empty() {
                 return Err(error::recovery_plan_incomplete(
                     "a recovery asset to restore from",

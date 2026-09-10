@@ -870,8 +870,9 @@ errors:
       v0.6 §6.1: an operation is plannable only where a contract declares its target schema,
       mutation semantics, capabilities, preconditions, effects, execution method, idempotency
       class, recovery semantics and verification options. The metadata names what is missing.
-      Inside an entered link, `plan` answers this too: this build freezes targets only on the
-      machine the shell runs on, and leaving the link plans there (§29.1, ADR-0844).
+      Inside an entered link, `plan` answers this for a file or a directory: this build resolves a
+      path against this machine's filesystem and mount table, and leaving the link plans it here
+      (§29.1, Appendix B, ADR-0848).
   - code: Ono-Sendai-E1714
     name: change.opaque_action_forbidden
     kind: safety

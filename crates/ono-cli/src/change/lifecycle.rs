@@ -108,6 +108,8 @@ impl CommandImpl for Protect {
             super::gates::require_confirmation("protect", given, interactive)?;
             let state = change_session().await?;
             let plan = super::plan_of(&state, &reference)?;
+            // §29.1 (ADR-0848): protection is made where the plan's host is, or not at all.
+            super::world::route(ctx.context(), &plan, "protect")?;
             let now = Timestamp::now();
             let analysis = analysis_of(&state, &plan);
             let mut request =
@@ -172,6 +174,8 @@ impl CommandImpl for Apply {
             let handle = super::runtime_handle()?;
             let state = change_session().await?;
             let plan = super::plan_of(&state, &reference)?;
+            // §29.1 (ADR-0848): the plan runs where its host is, or not at all.
+            super::world::route(ctx.context(), &plan, "apply")?;
             let now = Timestamp::now();
 
             // §19.4, §40.2, §40.3: the gates, before anything is prepared and before the claim is
@@ -336,7 +340,11 @@ impl CommandImpl for Apply {
                 Some((_, assets)) => {
                     super::recovery::restore(&state, plan.id(), assets, &acceptance, action)
                 }
-                None => super::world::execute(&handle, &providers, action),
+                None => super::world::over_link(
+                    &plan,
+                    action,
+                    super::world::execute(&handle, &providers, action),
+                ),
             };
             let clock = Timestamp::now;
             let observe = |contract: &_| super::world::observe(&handle, &providers, contract);
@@ -397,6 +405,8 @@ impl CommandImpl for Verify {
             let handle = super::runtime_handle()?;
             let state = change_session().await?;
             let plan = super::plan_of(&state, &reference)?;
+            // §29.1 (ADR-0848): a check is asked of the host the plan is about.
+            super::world::route(ctx.context(), &plan, "verify")?;
             let now = Timestamp::now();
             // `--timeout` caps every check of this run; a contract's own shorter timeout still wins.
             let cap = ctx

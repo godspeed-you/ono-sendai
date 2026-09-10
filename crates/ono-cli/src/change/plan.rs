@@ -26,7 +26,7 @@ use ono_change_core::{
     VerificationClass, VerificationContract, error,
 };
 use ono_change_impact::derive::ImpactRequest;
-use ono_change_impact::risk::{BulkThresholds, RiskRequest};
+use ono_change_impact::risk::{ActiveLink, BulkThresholds, RiskRequest};
 use ono_change_plan::{BlockPlan, BlockStatement, PlanBuilder, PlanGranularity};
 use ono_change_protection::coverage::{CoverageRequest, MutationDomain, mutation_domains};
 use ono_command::CommandRegistry;
@@ -80,23 +80,18 @@ fn plan(session: &mut Session, stage: &Stage, input: &[Value]) -> Result<Vec<Val
         "plan",
         crate::temporal::session::coordinate().is_historical(),
     )?;
-    // §29.1 and §7.1: a target on another host records that host, and this build freezes targets
-    // only on the machine the shell runs on. Inside `enter link` a plan would seal this machine's
-    // objects while the operator believes they are the linked host's, so it refuses instead.
-    if let Some(link) = session
-        .context()
-        .iter()
-        .find(|frame| matches!(frame.kind(), ono_command::FrameKind::Link))
+    // §29.1 and §7.1: inside `enter link` the plan's objects are the linked host's. They are
+    // resolved through the link's providers and every frozen target records the host (ADR-0848).
+    // A link whose connection is not held has no providers to ask, and resolving on this machine
+    // under the host's name is the mistake §29.1 exists to prevent, so the plan refuses.
+    let host = super::world::linked_host(&session.context());
+    // `plan` is answered before a pipeline asks for its providers, so the link table the check
+    // reads is published here rather than left as it stood at the last pipeline.
+    session.publish_links();
+    if let Some(host) = host.as_deref()
+        && !crate::spatial::links::facts(host).is_some_and(|facts| facts.connected)
     {
-        return Err(ono_change_core::error::action_not_plannable(
-            "plan",
-            &format!(
-                "`plan` inside `enter {}` would freeze this machine's objects and seal them as the \
-                 linked host's (§29.1, §7.1). This build does not orchestrate a plan over a link; \
-                 leave the link to plan on this machine",
-                link.spelling()
-            ),
-        ));
+        return Err(super::world::link_down(host, "plan"));
     }
 
     // §53's settings reach the change layer through `crate::eval::native::implementations`, and
@@ -115,7 +110,14 @@ fn plan(session: &mut Session, stage: &Stage, input: &[Value]) -> Result<Vec<Val
     let statements = statements_of(&rest)?;
     let handle = runtime_handle(session)?;
     let interactive = session.is_interactive();
-    let providers = session.providers().clone();
+    // §14.4: the frame decides where provider calls run, and inside a link that is its registry.
+    let providers = match host.as_deref() {
+        Some(linked) => session
+            .pipeline_context()
+            .map(|(_, registry)| registry.clone())
+            .ok_or_else(|| super::world::link_down(linked, "plan"))?,
+        None => session.providers().clone(),
+    };
     let configured = configured_strategy(session.settings());
     handle.clone().block_on(async move {
         build(
@@ -127,6 +129,7 @@ fn plan(session: &mut Session, stage: &Stage, input: &[Value]) -> Result<Vec<Val
             input,
             interactive,
             configured.as_deref(),
+            host.as_deref(),
             Timestamp::now(),
         )
         .await
@@ -343,6 +346,7 @@ async fn build(
     input: &[Value],
     interactive: bool,
     configured_strategy: Option<&str>,
+    host: Option<&str>,
     now: Timestamp,
 ) -> Result<Vec<Value>, ErrorValue> {
     let state = change_session().await?;
@@ -368,7 +372,7 @@ async fn build(
 
     let intent = Intent::new(intent_text(statements), spelling(statements));
     let mut builder = PlanBuilder::for_intent(intent, state.session_id(), now);
-    let (targets, resolved) = freeze_all(providers, &state, &resolutions).await?;
+    let (targets, resolved) = freeze_all(providers, &state, &resolutions, host).await?;
     builder = builder.resolve(targets.clone())?;
 
     let mut ordinal = 0usize;
@@ -488,6 +492,12 @@ async fn build(
 
     // §9: what else the plan reaches, derived from the v0.4 topology the session already holds.
     // §9.3 keeps an inferred edge inferred, which is the index's business and not this module's.
+    // §34.2: this host's routes say which path a network link leaves by. A plan made inside a link
+    // is about the linked host's objects, and those routes say nothing about them (ADR-0850).
+    let link = match host {
+        None => active_link(providers, builder.targets()).await,
+        Some(_) => None,
+    };
     let spatial = crate::spatial::spatial_session().await;
     let mut impact = ono_change_impact::derive::derive(&ImpactRequest::new(
         spatial.index(),
@@ -516,15 +526,17 @@ async fn build(
             ));
         }
     }
-    let risk = ono_change_impact::risk::assess(
-        &RiskRequest::new(builder.actions(), builder.targets())
-            .over_impact(&impact)
-            .over_topology(spatial.index())
-            .with_thresholds(BulkThresholds {
-                warn_targets: state.settings().bulk_warn_targets(),
-                high_risk_targets: state.settings().bulk_high_risk_targets(),
-            }),
-    );
+    let request = RiskRequest::new(builder.actions(), builder.targets())
+        .over_impact(&impact)
+        .over_topology(spatial.index())
+        .with_thresholds(BulkThresholds {
+            warn_targets: state.settings().bulk_warn_targets(),
+            high_risk_targets: state.settings().bulk_high_risk_targets(),
+        });
+    let risk = ono_change_impact::risk::assess(&match &link {
+        Some(link) => request.over_link(link),
+        None => request,
+    });
     drop(spatial);
     let risk = recursive
         .iter()
@@ -561,7 +573,19 @@ async fn build(
             reporter.note(note);
         }
     }
-    let analysis = ono_change_protection::analyse(&coverage_request(&state, &policy, &builder));
+    // §29.2: a plan about a linked host is analysed with no local recovery provider — none of
+    // them runs on the far side of the link — and its matrix is that host's (ADR-0848).
+    let unreached = ono_change_protection::ProviderRegistry::new();
+    let analysis = match host {
+        None => ono_change_protection::analyse(&coverage_request(&state, &policy, &builder)),
+        Some(_) => {
+            ono_change_protection::analyse(&remote_coverage_request(&unreached, &policy, &builder))
+        }
+    };
+    let protection = match host {
+        None => analysis.summary().clone(),
+        Some(host) => per_host(host, &policy, analysis.summary()),
+    };
 
     let risk = if options.flag("accept-risk") {
         risk.risk_accepted()
@@ -575,7 +599,7 @@ async fn build(
     };
     builder = builder
         .with_impact(impact)
-        .with_protection(analysis.summary().clone())
+        .with_protection(protection)
         .with_protection_mode(policy.mode())
         .with_risk(risk)
         .with_strategy(strategy_of(
@@ -713,6 +737,42 @@ fn coverage_request<'a>(
         }
     }
     request
+}
+
+/// The coverage request for a plan about a linked host (§29.2, ADR-0848): its mutation domains,
+/// and no recovery provider, because none of this build's runs on the far side of the link.
+fn remote_coverage_request<'a>(
+    registry: &'a ono_change_protection::ProviderRegistry,
+    policy: &'a ono_change_protection::ProtectionPolicy,
+    builder: &PlanBuilder,
+) -> CoverageRequest<'a> {
+    let mut request = CoverageRequest::new(registry, policy);
+    for mutation in mutation_domains(builder.actions()) {
+        request = request.mutating(mutation);
+    }
+    request
+}
+
+/// §29.2: a remote plan's matrix is its host's, composed the way every per-host matrix is, and it
+/// names the host whose persistent state nothing here can give back.
+fn per_host(
+    host: &str,
+    policy: &ono_change_protection::ProtectionPolicy,
+    summary: &ono_change_core::ProtectionSummary,
+) -> ono_change_core::ProtectionSummary {
+    ono_change_protection::hosts::compose(
+        &[ono_change_protection::hosts::HostCoverage::analysed(
+            host,
+            summary.clone(),
+        )],
+        policy,
+    )
+    .excluding(ono_change_core::CoverageExclusion::new(
+        ono_change_core::EffectDomain::RemoteSystem,
+        host,
+        "no recovery provider of this build runs on the far side of a link, so what the plan \
+         changes on this host has no recovery point here (§29.2, ADR-0848)",
+    ))
 }
 
 /// One recursive removal a plan carries, measured before it is sealed (§32.2, §32.3).
@@ -913,6 +973,7 @@ async fn freeze_all(
     providers: &ono_provider_api::ProviderRegistry,
     state: &ChangeState,
     resolutions: &[Resolution],
+    host: Option<&str>,
 ) -> Result<(Vec<FrozenTarget>, Resolved), ErrorValue> {
     let mut targets: Vec<FrozenTarget> = Vec::new();
     let mut resolved = Resolved::new();
@@ -929,6 +990,21 @@ async fn freeze_all(
             // The selector name travels beside the value: §4.3 resolves `process 4211` by `pid`
             // and `service nginx` by `name`, and asking a provider for the wrong field is asking
             // it about nothing. It is the contract's own first selector (ADR-0082 §1).
+            // ADR-0848: a file is resolved against this machine's filesystem and mount table
+            // (Appendix B), and they say nothing about a linked host's.
+            if let Some(host) = host
+                && matches!(operation.shape.target_word(), "file" | "dir")
+            {
+                return Err(error::action_not_plannable(
+                    subject,
+                    &format!(
+                        "`plan` inside `enter link {host}` would resolve {subject} against this \
+                         machine's filesystem and mount table and seal it as {host}'s (§29.1, \
+                         §7.1, Appendix B). This build does not resolve a file over a link; leave \
+                         the link to plan a file on this machine"
+                    ),
+                ));
+            }
             let frozen = super::world::freeze(
                 providers,
                 state.mounts(),
@@ -938,6 +1014,11 @@ async fn freeze_all(
                 operation.creates,
             )
             .await?;
+            // §7.1: a target on another host records that host.
+            let frozen = match host {
+                Some(host) => frozen.on_host(host),
+                None => frozen,
+            };
             // §4.3 and §7.2: a removal, a move or a permission change declares that its object
             // exists, and a path with nothing at it can never satisfy that. Sealing it would hand
             // `apply` a plan that can only be refused, so it is refused here, by name.
@@ -1157,6 +1238,92 @@ pub fn uncovered_persistent(plan: &ChangePlan) -> Vec<EffectDomain> {
 /// Whatever the schema refused the record for.
 pub fn record_of(plan: &ChangePlan) -> Result<RecordValue, ErrorValue> {
     ono_change_core::value::plan_record(plan)
+}
+
+/// The connected link whose path this plan touches, as §34.2's rule reads it (ADR-0850).
+///
+/// Only a link that reaches another machine over the network has a path here: a `local` link is
+/// a child process. The path is the interface this host's routes send the far address out of,
+/// named by the identity the plan froze that interface as, because the rule compares identities.
+async fn active_link(
+    providers: &ono_provider_api::ProviderRegistry,
+    targets: &[FrozenTarget],
+) -> Option<ActiveLink> {
+    let links: Vec<_> = crate::spatial::links::all()
+        .into_iter()
+        .filter(|link| link.connected && matches!(link.transport.as_str(), "tcp" | "ssh"))
+        .collect();
+    if links.is_empty() {
+        return None;
+    }
+    let routes = super::world::objects(providers, "route", None).await.ok()?;
+    links.iter().find_map(|link| {
+        let interface = egress(&routes, far_address(&link.host)?)?;
+        let frozen = targets
+            .iter()
+            .find(|target| target.schema() == "ono.interface/1" && target.label() == interface)?;
+        Some(ActiveLink::new(link.name.as_str()).via_interface(frozen.identity()))
+    })
+}
+
+/// The address a link's host names, with any `user@` left out (ADR-0850).
+fn far_address(host: &str) -> Option<std::net::IpAddr> {
+    use std::net::ToSocketAddrs;
+    let host = host.rsplit_once('@').map_or(host, |(_, host)| host);
+    host.to_socket_addrs()
+        .or_else(|_| (host, 0).to_socket_addrs())
+        .ok()?
+        .next()
+        .map(|address| address.ip())
+}
+
+/// The interface this host's routes send `address` out of: the longest matching prefix in any
+/// table, the lower metric between equals — the kernel's choice without policy routing (ADR-0850).
+fn egress(routes: &[RecordValue], address: std::net::IpAddr) -> Option<String> {
+    routes
+        .iter()
+        .filter_map(|route| {
+            let Some(Value::String(interface)) = route.get("interface") else {
+                return None;
+            };
+            let prefix = match route.get("destination") {
+                Some(Value::IpNetwork(network)) if contains(*network, address) => {
+                    network.prefix_len()
+                }
+                Some(Value::Null) if same_family(route, address) => 0,
+                _ => return None,
+            };
+            let metric = match route.get("metric") {
+                Some(Value::Int(metric)) => *metric,
+                _ => 0,
+            };
+            Some((prefix, std::cmp::Reverse(metric), interface.to_string()))
+        })
+        .max()
+        .map(|(_, _, interface)| interface)
+}
+
+/// Whether `network` holds `address`.
+fn contains(network: ono_value::IpNetwork, address: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    let bits = u32::from(network.prefix_len());
+    match (network.address(), address) {
+        (IpAddr::V4(net), IpAddr::V4(host)) => {
+            let mask = u32::MAX.checked_shl(32 - bits).unwrap_or(0);
+            u32::from(net) & mask == u32::from(host) & mask
+        }
+        (IpAddr::V6(net), IpAddr::V6(host)) => {
+            let mask = u128::MAX.checked_shl(128 - bits).unwrap_or(0);
+            u128::from(net) & mask == u128::from(host) & mask
+        }
+        _ => false,
+    }
+}
+
+/// Whether a default route is one `address` could take: the families must agree.
+fn same_family(route: &RecordValue, address: std::net::IpAddr) -> bool {
+    let family = if address.is_ipv4() { "inet" } else { "inet6" };
+    matches!(route.get("family"), Some(Value::String(found)) if found.as_ref() == family)
 }
 
 #[cfg(test)]

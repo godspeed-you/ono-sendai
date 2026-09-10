@@ -62,9 +62,12 @@ commands:
     note: >-
       §2.1: creating or inspecting a plan MUST NOT mutate the target system. §6.4: a plan intended
       for application is resolved against present state, so from a historical coordinate this
-      answers `change.historical_context_read_only` and `now` is the way back. §29.1: this build
-      freezes targets only on the machine the shell runs on, so inside an entered link it answers
-      `change.action_not_plannable`, names the link and seals nothing (ADR-0844).
+      answers `change.historical_context_read_only` and `now` is the way back. §29.1 and §7.1:
+      inside an entered link the targets are frozen through the link's providers and record the
+      link as their host; the plan then applies, protects, verifies, rebases and resumes only
+      inside that link, and a file or a directory there is `change.action_not_plannable` because
+      its path would be resolved against this machine (ADR-0848). §34.2: a plan that stops the
+      interface a connected network link leaves by is CRITICAL (ADR-0850).
     examples:
       - plan restart service nginx
       - plan update package openssl --protection require

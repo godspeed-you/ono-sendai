@@ -265,6 +265,8 @@ impl CommandImpl for RebasePlan {
             let providers = ctx.providers().clone();
             let state = change_session().await?;
             let plan = super::plan_of(&state, &reference)?;
+            // §29.1 (ADR-0848): the plan is resolved again on the host it is about.
+            super::world::route(ctx.context(), &plan, "rebase")?;
             let now = Timestamp::now();
             // §7.5 resolves the plan again against the world as it is now, so the targets are
             // frozen a second time rather than copied: a unit that was restarted since the seal
@@ -333,6 +335,8 @@ impl CommandImpl for ResumePlan {
             let handle = super::runtime_handle()?;
             let state = change_session().await?;
             let plan = super::plan_of(&state, &reference)?;
+            // §29.1 and §29.3 (ADR-0848): a plan is resumed on the host it ran on.
+            super::world::route(ctx.context(), &plan, "resume plan")?;
             let now = Timestamp::now();
             // §7.3 and §62.8: the world may have moved while the plan was interrupted, so the
             // decision is made with revalidation in hand rather than from the records alone.
@@ -397,7 +401,11 @@ impl CommandImpl for ResumePlan {
                 Some((_, assets)) => {
                     super::recovery::restore(&state, plan.id(), assets, &acceptance, action)
                 }
-                None => super::world::execute(&handle, &providers, action),
+                None => super::world::over_link(
+                    &plan,
+                    action,
+                    super::world::execute(&handle, &providers, action),
+                ),
             };
             let observe = |contract: &_| super::world::observe(&handle, &providers, contract);
             let clock = Timestamp::now;
