@@ -85,6 +85,44 @@ fn should_freeze_each_piped_file_by_its_own_path_when_a_pipeline_supplies_the_ob
 }
 
 #[test]
+fn should_act_on_the_piped_process_by_its_pid_when_a_pipeline_supplies_it() {
+    let home = home();
+    // A `sleep` nobody in this process waits for, so the system reaps it once it is killed.
+    let started = std::process::Command::new("sh")
+        .args(["-c", "sleep 300 >/dev/null 2>&1 & echo $!"])
+        .output()
+        .expect("sh starts");
+    let pid: u32 = String::from_utf8_lossy(&started.stdout)
+        .trim()
+        .parse()
+        .expect("sh prints the pid it started");
+
+    let run = ono_at(
+        home.path(),
+        &format!(
+            "get process | where pid == {pid} | plan kill process \
+             | apply --accept-risk --accept-irreversible --confirm"
+        ),
+    );
+
+    let gone = (0..40).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        !Path::new(&format!("/proc/{pid}")).exists()
+    });
+    if !gone {
+        let _ = std::process::Command::new("kill")
+            .arg(pid.to_string())
+            .status();
+    }
+    run.assert_success();
+    assert!(
+        gone,
+        "§5.3 and §4.3: the action acts on the process the pipeline carried, found by the pid it \
+         was frozen by and not by its name"
+    );
+}
+
+#[test]
 fn should_refuse_to_plan_removing_a_file_that_does_not_exist() {
     let home = home();
     let missing = home.path().join("no-such-file-1a2b3c");

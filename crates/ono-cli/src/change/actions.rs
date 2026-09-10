@@ -625,6 +625,8 @@ fn program_on_path(name: &str) -> Option<String> {
 ///
 /// `provider` is the `ono-provider-api` provider that will carry the action out, so §4.4's
 /// provider binding names the mechanism that will act rather than the contract that described it.
+/// `subject` is the object as the statement or the pipeline named it, by the field
+/// `object_selector` names: a piped process is found again by its pid, never by its label.
 #[must_use]
 pub fn fragment_for(
     plan: &PlanId,
@@ -632,6 +634,7 @@ pub fn fragment_for(
     resolution: &Resolution,
     provider: &str,
     target: &ono_change_core::FrozenTarget,
+    subject: &str,
 ) -> PlanFragment {
     match resolution {
         Resolution::Operation {
@@ -655,7 +658,7 @@ pub fn fragment_for(
                         let mut carried = arguments.clone();
                         carried.push((
                             Arc::from("object"),
-                            Value::string(object.as_deref().unwrap_or_else(|| target.label())),
+                            Value::string(object.as_deref().unwrap_or(subject)),
                         ));
                         carried
                             .push((Arc::from("object_selector"), Value::string(object_selector)));

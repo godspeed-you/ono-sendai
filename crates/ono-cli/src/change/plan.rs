@@ -429,6 +429,7 @@ async fn build(
                         resolution,
                         &provider,
                         target,
+                        subject,
                     );
                     builder = builder.contributing(&fragment)?;
                     contracts.extend(super::actions::contracts_for(
@@ -450,6 +451,7 @@ async fn build(
                     resolution,
                     "opaque",
                     target,
+                    target.label(),
                 );
                 builder = builder.contributing(&fragment)?;
                 contracts.push(super::actions::opaque_contract(
