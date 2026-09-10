@@ -2277,6 +2277,21 @@ the provider samples — and no assertion changed.
 
 ## Found, not yet filed
 
+- **`change_gates::should_stream_an_action_result_for_every_action_it_ran` is red in CI
+  (2026-09-10).** It panics at `crates/ono-cli/tests/change_gates.rs:252` in the gate of CI run
+  34515787631 (`implementation` 5dd35264) and of runs 34519670522 and 34521286897 (0519ef6e plus
+  the acceptance-harness commits, which touch no Rust); the test binary took 62 s and 87 s. The
+  gate stops at that binary, so the test binaries after it did not run in those runs. What closes
+  it: the reproduction from those logs, then a fix or a case against the cause.
+
+- **Acceptance case 324 is numbered inside the v0.6 block (2026-09-10).**
+  `docker/acceptance/cases/324-targets-are-not-buried-in-files.case`, merged from
+  `implementation-completion`, proves a completion fix, and §4.12 of `docs/ACCEPTANCE.md` claims
+  280–329 for the v0.6 tranche; `cargo test -p xtask` fails
+  `change_evidence::should_keep_the_case_numbers_of_the_v06_checklist_inside_its_own_block` on
+  0519ef6e. What closes it: a number outside the block — and inside a group of
+  `docker/acceptance/groups`, which the harness checks — or a §4.12 box that names it.
+
 - **`ono_testkit::scratch()` falls back to `/tmp` outside a test binary's own crate.** `Scratch`
   reads `CARGO_TARGET_TMPDIR`, which cargo exports at compile time only, so a helper compiled into
   `ono-testkit` and called from another crate's suite lands in `/tmp`. On this machine `/tmp` is a
@@ -3819,6 +3834,15 @@ records. It was removed from this board rather than carried as an open box.
 ---
 
 ## Done
+
+**The acceptance suite runs in groups, one job each (2026-09-10, ADR-0851).** CI builds the images
+once, with cargo's cache mounts carried between runs, and runs the seven groups of
+`docker/acceptance/groups` in parallel jobs, each case after the other. The acceptance part of CI
+went from 23m13 (run 34515787631) to 15m37 with a cold cache (34519670522) and 12m13 with a warm
+one (34521286897), all 249 cases green, each exactly once; the slowest group is `spatial`, about
+4m40. Locally, `--group`, `--fail-fast` and each case's time are available, and quick cases run
+first. The build is still about 7 minutes warm; the release profile (`lto = "thin"`,
+`codegen-units = 1`) is the likely cause and has not been measured. Developed on `implementation-acceptance-split`.
 
 **A verb's Tab offers its targets again, not the working directory (2026-09-10).** After a verb,
 completion had appended every entry of the working directory to the registry's answer and sorted
