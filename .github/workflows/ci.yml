@@ -49,13 +49,55 @@ jobs:
       - name: run the gate
         run: scripts/gate.sh
 
-  acceptance:
-    name: containerised acceptance
+  # The acceptance images are built once and handed to one job per group of
+  # docker/acceptance/groups, so the suite takes the build plus its slowest group rather than the
+  # build plus every case, and a red job names the area that broke (ADR-0851). Inside a job the
+  # cases still run one after another: many of them measure time or load, and a neighbour on the
+  # same runner would move what they measure.
+  acceptance-image:
+    name: acceptance image
     runs-on: ubuntu-latest
+    outputs:
+      groups: ${{ steps.groups.outputs.groups }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: run the acceptance suite
-        run: scripts/acceptance.sh --keep-image
+      - name: build the images
+        run: scripts/acceptance.sh --build-only
+      - name: pack them
+        run: |
+          docker save $(docker image ls --format '{{.Repository}}:{{.Tag}}' --filter 'reference=ono-sendai:acceptance*') \
+            | zstd --threads=0 > acceptance-images.tar.zst
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: acceptance-images
+          path: acceptance-images.tar.zst
+          # Compressed already, and read only by the group jobs of this run.
+          compression-level: 0
+          retention-days: 1
+      - name: list the groups
+        id: groups
+        run: echo "groups=$(scripts/acceptance.sh --list-groups | jq --raw-input . | jq --compact-output --slurp .)" >> "$GITHUB_OUTPUT"
+
+  acceptance:
+    name: containerised acceptance (${{ matrix.group }})
+    needs: acceptance-image
+    runs-on: ubuntu-latest
+    strategy:
+      # Every group reports, so one push shows every area that broke.
+      fail-fast: false
+      matrix:
+        group: ${{ fromJSON(needs.acceptance-image.outputs.groups) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: acceptance-images
+      - name: load the images
+        run: zstd --decompress --stdout acceptance-images.tar.zst | docker load
+      - name: run the group's cases
+        env:
+          GROUP: ${{ matrix.group }}
+        run: scripts/acceptance.sh --no-build --group "$GROUP"
 
   packaging:
     # The packages must not rot between releases: every push builds and installs them for
