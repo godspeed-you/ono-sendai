@@ -778,6 +778,44 @@ fn should_leave_the_plan_applying_and_the_action_unknown_when_a_remote_link_drop
     );
 }
 
+#[test]
+fn should_say_once_what_could_not_be_established_when_a_remote_link_drops() {
+    let now = instant(1_000);
+    let (_directory, store) = store();
+    let spec = PlanSpec::over(2).on_hosts(&["api-04", "api-05"]).chained();
+    let plan = stored(&spec, &store, now);
+    let providers = empty_registry();
+    let protection = Vec::new();
+    let drift = no_drift();
+    let script = Script::healthy().unknown("svc-1");
+    let execute = script.execute();
+    let observe = observing(VerificationStatus::Passed);
+    let mut request = ApplyRequest::new(
+        &plan,
+        &store,
+        "session-a",
+        now,
+        &protection,
+        &providers,
+        &drift,
+        &execute,
+        &observe,
+    );
+
+    let outcome = apply(&mut request);
+
+    let message = outcome
+        .error()
+        .map(|error| error.message().to_owned())
+        .unwrap_or_default();
+    assert_eq!(
+        message.matches("could not be established").count(),
+        1,
+        "§29.3: the refusal says once what could not be established and where, in the words the \
+         action's outcome gave it — got {message:?}"
+    );
+}
+
 // ---- row 10: verification required failed | yes | FAILED -------------------------------------
 
 #[test]

@@ -510,7 +510,7 @@ canonical CI environment expects to.
 ```text
 crates=48
 workspace_members=50
-tests=6944
+tests=6945
 tests_that_can_skip=126
 expected_ci_skips=15
 acceptance_cases=248

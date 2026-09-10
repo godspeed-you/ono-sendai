@@ -2330,6 +2330,13 @@ fn apply_refusal(
         .filter(|(_, status)| !status.is_settled())
         .count();
     let base = match point {
+        // The outcome already said what could not be established, and on which host. Wrapping it
+        // again would say it about the refusal's own sentence (§29.3, Appendix F.2).
+        FailurePoint::RemoteDisconnect | FailurePoint::UnknownOutcome
+            if cause.code().name() == "change.remote_state_unknown" =>
+        {
+            cause.clone()
+        }
         FailurePoint::RemoteDisconnect | FailurePoint::UnknownOutcome => {
             error::remote_state_unknown(
                 outcome
