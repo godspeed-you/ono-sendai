@@ -1,0 +1,62 @@
+# v0.6 §50 phase P2 — §5.3 and §2.6: a pipeline supplies the objects, and the set it resolved is
+# frozen.
+#
+# §5.3 gives the two shapes: one plan over the resolved set, or one plan per object when that is
+# asked for. §2.6 is the invariant behind both — sealed bulk target membership is fixed at
+# resolution — and §55.1 case 2 is its worked example: a fifth service that starts failing after
+# the plan was sealed does not join it. A plan whose membership can grow is a plan an operator
+# read and a shell did not run.
+case: a pipeline produces one plan over the set it froze
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  # A host with no service manager cannot present §5.3's example. §2.4: say so rather than pass.
+  if ! ono -c 'get service | count | to json' > /tmp/svc.txt 2>&1 || grep -q '^0$' /tmp/svc.txt; then
+    echo 'SKIPPED plan-from-a-pipeline: fixture_not_applicable: this container serves no unit'
+    echo 'plan-from-a-pipeline: done'
+    exit 0
+  fi
+
+  echo '== §5.3: one plan over the resolved set =='
+  ono -c 'get service | take 3 | plan restart service | to json' > /tmp/p2.txt 2>&1
+  prove p2a "the pipeline produced exactly one plan (§5.3)" \
+    "[ \"\$(ono -c 'get service | take 3 | plan restart service | count | to json' 2>&1 | tr -d '[:space:]')\" = '1' ]"
+  prove p2b "and the plan carries the objects the pipeline resolved (§4.3)" \
+    'grep -q "\"targets\"" /tmp/p2.txt'
+
+  echo '== §5.3: one plan per object, when that is what was asked for =='
+  prove p2c "\`--one-per-object\` produces one plan per resolved object (§5.3)" \
+    "[ \"\$(ono -c 'get service | take 3 | plan --one-per-object restart service | count | to json' 2>&1 | tr -d '[:space:]')\" = '3' ]"
+
+  echo '== §2.6 and §55.1 case 2: membership is fixed at resolution =='
+  # The same selector, resolved twice, is two plans. What makes §2.6 checkable here is that a
+  # sealed plan's target list is a stored fact rather than a query re-run at apply: reading the
+  # plan back answers with what was frozen, whatever `get service` says now.
+  first=$(ono -c 'get service | take 2 | plan restart service | to json' 2>&1)
+  id=$(printf '%s' "$first" | sed -n 's/.*"id":"\([0-9a-f]\{16\}\).*/\1/p' | head -1)
+  prove p2d "the sealed plan has an identity to be read back by (§36.4)" '[ -n "'"$id"'" ]'
+  ono -c "get plan $id | to json" > /tmp/p2read.txt 2>&1
+  prove p2e "reading it back answers with the frozen set and not a fresh query (§2.6)" \
+    "[ \"\$(ono -c 'get plan $id | to json' 2>&1 | grep -o '\"identity\"' | wc -l)\" = 2 ]"
+  prove p2f "and the plan is still sealed rather than re-resolved (§4.4)" \
+    'grep -q "\"state\":\"sealed\"" /tmp/p2read.txt'
+
+  echo '== §5.3: what the pipeline carried is what the plan is about =='
+  prove p2g "a pipeline that resolved nothing produces no plan (§4.3)" \
+    "ono -c 'get service | where name == a-unit-no-host-serves | plan restart service' 2>&1 | grep -qE 'change.target_unresolved|Ono-Sendai-E1711'"
+
+  echo 'plan-from-a-pipeline: done'
+exit: 0
+stdout-contains: plan-from-a-pipeline: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

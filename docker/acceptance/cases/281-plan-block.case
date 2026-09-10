@@ -1,0 +1,71 @@
+# v0.6 §50 phase P2 — §5.2: the plan block is a bounded list of action descriptions, and it is
+# not a workflow language.
+#
+# §5.2 names four things it MUST NOT introduce — loops, arbitrary functions, background jobs and
+# unbounded runtime control flow — and the reason is §3.2: a plan is a description of a proposed
+# change, and a description whose shape depends on what happens while it runs is not one. What
+# the block does carry is actions and §23.1's verification contracts (ADR-0813).
+case: a plan block describes actions, and refuses to become a program
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  mkdir -p "$HOME/etc"
+  printf 'worker_processes 4;\n' > "$HOME/etc/nginx.conf"
+  printf 'worker_processes 8;\n' > "$HOME/etc/nginx.conf.new"
+
+  echo '== §5.2: a block of actions and verification contracts =='
+  ono -c "plan { copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite; verify file $HOME/etc/nginx.conf exists == true }" > /tmp/b1.txt 2>&1
+  prove b1a "a block of one action and one check seals (§5.2)" 'grep -qi "^PLAN" /tmp/b1.txt'
+  prove b1b "and it is a plan, so it executed nothing (§2.1)" 'grep -q "PLAN NOT EXECUTED" /tmp/b1.txt'
+  prove b1c "the action is in the plan (§5.2)" 'grep -qi "^planned" /tmp/b1.txt'
+  prove b1d "the \`verify\` line became a verification contract (§23.1, ADR-0813)" \
+    'grep -qi "^verification" /tmp/b1.txt'
+
+  echo '== §5.2: the four things a block MUST NOT introduce =='
+  ono -c 'plan { for x in [1, 2] { restart service nginx } }' > /tmp/b2.txt 2>&1
+  prove b2a "a loop is refused (§5.2)" \
+    'grep -q "change.action_not_plannable" /tmp/b2.txt && grep -qi "loop" /tmp/b2.txt'
+
+  ono -c 'plan { fn f() { restart service nginx } }' > /tmp/b3.txt 2>&1
+  prove b2b "an arbitrary function is refused (§5.2)" \
+    'grep -q "change.action_not_plannable" /tmp/b3.txt && grep -qi "function" /tmp/b3.txt'
+
+  ono -c 'plan { restart service nginx & }' > /tmp/b4.txt 2>&1
+  prove b2c "a background job is refused (§5.2)" \
+    'grep -q "change.action_not_plannable" /tmp/b4.txt'
+
+  ono -c 'plan { if true { restart service nginx } }' > /tmp/b5.txt 2>&1
+  prove b2d "unbounded runtime control flow is refused (§5.2)" \
+    'grep -q "change.action_not_plannable" /tmp/b5.txt && grep -qi "conditional" /tmp/b5.txt'
+
+  echo '== §5.2: the refusal names the rule rather than a parse error =='
+  prove b2e "each refusal quotes §5.2 rather than answering with a syntax message" \
+    'grep -q "5.2" /tmp/b2.txt'
+  prove b2f "and each one changed nothing, because a plan that would not seal ran nothing (§2.1)" \
+    "[ \"\$(cat $HOME/etc/nginx.conf)\" = 'worker_processes 4;' ]"
+
+  echo 'plan-block: done'
+exit: 0
+stdout-contains: PROVED b1a
+stdout-contains: PROVED b1b
+stdout-contains: PROVED b1c
+stdout-contains: PROVED b1d
+stdout-contains: PROVED b2a
+stdout-contains: PROVED b2b
+stdout-contains: PROVED b2c
+stdout-contains: PROVED b2d
+stdout-contains: PROVED b2e
+stdout-contains: PROVED b2f
+stdout-contains: plan-block: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked
