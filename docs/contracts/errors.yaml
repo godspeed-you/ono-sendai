@@ -786,7 +786,7 @@ errors:
     kind: conflict
     summary: A sealed plan cannot be edited.
     help: >-
-      A sealed plan is immutable (v0.6 §4.4). `rebase plan/<id>` opens a new revision against
+      A sealed plan is immutable (v0.6 §4.4). `rebase plan <id>` opens a new revision against
       current state and leaves the sealed one exactly as it is (§7.5).
   - code: Ono-Sendai-E1703
     name: change.plan_expired
@@ -794,7 +794,7 @@ errors:
     summary: The sealed plan's validity window has closed.
     help: >-
       v0.6 §5.6: `apply` refuses an expired plan, because its targets were frozen against a world
-      that has had time to move. `rebase plan/<id>` resolves it again.
+      that has had time to move. `rebase plan <id>` resolves it again.
   - code: Ono-Sendai-E1704
     name: change.plan_already_applying
     kind: conflict
@@ -858,7 +858,7 @@ errors:
     summary: A frozen target is no longer the object the plan resolved.
     help: >-
       v0.6 §7.1 and §55.2 case 7: identity includes generation, inode or unit identity, so a
-      replaced object is a different object. `rebase plan/<id>` resolves against what is there
+      replaced object is a different object. `rebase plan <id>` resolves against what is there
       now.
   - code: Ono-Sendai-E1713
     name: change.action_not_plannable
@@ -905,7 +905,7 @@ errors:
     help: >-
       v0.6 §4.7 and Appendix F: what ran, ran. The metadata names the failed action, the actions
       that completed and the actions that were not executed. Protection created for this plan is
-      retained. `inspect plan`, `recover plan/<id>` and `rebase plan/<id>` are all available; none
+      retained. `inspect plan`, `recover plan/<id>` and `rebase plan <id>` are all available; none
       of them is automatically the right one.
   - code: Ono-Sendai-E1719
     name: change.verification_failed

@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use jiff::Timestamp;
 use ono_change_core::{
-    ActionId, ActionStatus, ChangeCapability, ChangePlan, DriftFinding, DriftVerdict,
+    ActionId, ActionRole, ActionStatus, ChangeCapability, ChangePlan, DriftFinding, DriftVerdict,
     LifecycleEvent, PlanAction, PlanKind, PlanState, ProtectionAction, ProtectionLevel,
     RecoveryAsset, RecoveryAssetId, RecoveryCapability, RecoveryValidation, Verdict,
     VerificationClass, VerificationContract, VerificationResult, VerificationStatus, error,
@@ -970,9 +970,18 @@ impl ApplyOutcome {
     }
 
     /// Whether the target system may already have been changed (Appendix F's second column).
+    ///
+    /// It is a fact about *this run*, not about the plan's history. A plan that already applied
+    /// is refused before anything is prepared, and the refusal leaves the plan in the state it
+    /// was already in — so the state alone would answer "yes, it mutated", about the earlier run.
+    /// Appendix F's column asks what the operator in front of the refusal has to worry about, and
+    /// [`FailurePoint::may_have_mutated`] is what answers that.
     #[must_use]
     pub const fn has_mutated(&self) -> bool {
-        self.state.has_mutated()
+        match self.failure_point {
+            Some(point) => point.may_have_mutated(),
+            None => self.state.has_mutated(),
+        }
     }
 
     /// Every action and what is known about it (§4.7's "every action result MUST be recorded").
@@ -1050,10 +1059,15 @@ impl ApplyOutcome {
     /// Whether the apply reached its intended end.
     #[must_use]
     pub fn is_success(&self) -> bool {
-        matches!(
-            self.state,
-            PlanState::Verified | PlanState::Recovered | PlanState::RecoveryVerified
-        )
+        // A refusal is never a success, whatever state it leaves the plan in. Applying a plan
+        // that already verified is refused *at* `verified`, and reading the state alone would
+        // report the earlier run's success as this run's — §2.14 and §62.9's exact mistake, one
+        // layer up.
+        self.error.is_none()
+            && matches!(
+                self.state,
+                PlanState::Verified | PlanState::Recovered | PlanState::RecoveryVerified
+            )
     }
 
     /// Whether a `RecoveryPlan` may be built from here (§24.1, Appendix F's middle-action row).
@@ -1086,6 +1100,20 @@ impl ApplyOutcome {
 /// target (§2.3); and from the first mutating action onwards the outcome says what ran.
 #[must_use]
 pub fn apply(request: &mut ApplyRequest<'_>) -> ApplyOutcome {
+    let store = request.store;
+    let plan = request.prepare.plan;
+    let outcome = apply_within(request);
+    // §4.1 and §41.2: the state the plan reached is durable, so `apply` on an applied plan is a
+    // refusal rather than a second mutation, and a shell that stopped in the middle is found in
+    // the state it stopped in. It is written last because the states *inside* the run are written
+    // as they are entered — a durable state nobody wrote is a plan that says `sealed` after it
+    // changed the world.
+    let _ = store.record_state(plan.id(), plan.revision(), outcome.state);
+    outcome
+}
+
+/// [`apply`], without the durable state write that wraps every one of its exits.
+fn apply_within(request: &mut ApplyRequest<'_>) -> ApplyOutcome {
     let plan = request.prepare.plan;
     let now = request.prepare.now;
 
@@ -1126,7 +1154,13 @@ pub fn apply(request: &mut ApplyRequest<'_>) -> ApplyOutcome {
         return refused(plan, FailurePoint::Gate, refusal);
     }
 
-    // 5. §4.5: create and validate the recovery assets the policy requires.
+    // 5. §4.5: create and validate the recovery assets the policy requires. The state is written
+    //    before the first asset, because §2.3's rule — mutation MUST NOT begin when a required
+    //    asset could not be created — is only checkable afterwards if the store says preparation
+    //    had begun.
+    let _ = request
+        .store
+        .record_state(plan.id(), plan.revision(), PlanState::Preparing);
     let prepared = if request.prepare.protection.is_empty() {
         Ok(Prepared {
             assets: Vec::new(),
@@ -1154,7 +1188,12 @@ pub fn apply(request: &mut ApplyRequest<'_>) -> ApplyOutcome {
         }
     };
 
-    // 6. §4.7: the mutating actions, in dependency order, by the plan's strategy.
+    // 6. §4.7: the mutating actions, in dependency order, by the plan's strategy. `applying` is
+    //    durable before the first one runs, so a shell killed between here and the end is found
+    //    as a plan that may have mutated rather than as one that never started (§41.1, F.2).
+    let _ = request
+        .store
+        .record_state(plan.id(), plan.revision(), PlanState::Applying);
     let mutation = mutate(request, &prepared);
     drop(claim);
     mutation
@@ -1344,14 +1383,55 @@ fn mutate(request: &mut ApplyRequest<'_>, prepared: &Prepared) -> ApplyOutcome {
         }
     };
 
+    let store_failures: RefCell<Vec<ErrorValue>> = RefCell::new(Vec::new());
+    // §17.1 puts the protection actions in the plan, and §4.5 has already run them by the time
+    // `mutate` starts. An asset whose scope names this action's target is the asset it planned,
+    // so the action is settled here rather than left `pending` beside a recovery point that
+    // demonstrably exists — Appendix E's PREPARE line reads these, and a plan that protected
+    // itself and says `pending` is describing the wrong run.
+    let prepared_domains: Vec<&str> = prepared
+        .assets
+        .iter()
+        .map(|asset| asset.scope().domain())
+        .collect();
     let statuses: RefCell<Vec<(ActionId, ActionStatus)>> = RefCell::new(
         plan.actions()
             .iter()
-            .map(|action| (action.id().clone(), ActionStatus::Pending))
+            .map(|action| {
+                let settled = action.role() == ActionRole::Prepare
+                    && action
+                        .target()
+                        .is_some_and(|target| prepared_domains.contains(&target));
+                (
+                    action.id().clone(),
+                    if settled {
+                        ActionStatus::Succeeded
+                    } else {
+                        ActionStatus::Pending
+                    },
+                )
+            })
             .collect(),
     );
+    for action in plan.actions() {
+        if action.role() == ActionRole::Prepare
+            && action
+                .target()
+                .is_some_and(|target| prepared_domains.contains(&target))
+            && let Err(failure) = request.store.record_action_status(
+                plan.id(),
+                plan.revision(),
+                action.id(),
+                action.ordinal(),
+                ActionStatus::Succeeded,
+                now,
+                None,
+            )
+        {
+            store_failures.borrow_mut().push(failure);
+        }
+    }
     let stop: RefCell<Option<(FailurePoint, ErrorValue, ActionId)>> = RefCell::new(None);
-    let store_failures: RefCell<Vec<ErrorValue>> = RefCell::new(Vec::new());
     let gate_results: RefCell<Vec<VerificationResult>> = RefCell::new(Vec::new());
     let mutating: Vec<&PlanAction> = order
         .iter()

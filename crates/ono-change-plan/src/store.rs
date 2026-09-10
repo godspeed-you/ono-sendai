@@ -687,6 +687,58 @@ impl PlanStore {
             .map_err(|failure| self.unavailable(&failure))
     }
 
+    /// Records the lifecycle state a plan revision has reached (§4.1, §22.2, §41.2).
+    ///
+    /// The state is written where the transition happens rather than at the end, so a shell that
+    /// stops in the middle leaves `applying` behind and not `sealed`. §41.2 reads it back: a plan
+    /// that says `sealed` after it mutated is a plan `apply` would run a second time, and §2.7's
+    /// "a sealed plan applies once" is only true if the store remembers that it did.
+    ///
+    /// The stored record travels with it, because `state` is a column *and* a field of the
+    /// record: [`PlanStore::get_revision`] decodes the record, so a column nobody mirrored into
+    /// it would be read back as the state the plan was written with.
+    ///
+    /// # Errors
+    ///
+    /// `change.plan_store_unavailable` where the store cannot be written, and
+    /// `change.plan_not_found` where no such revision exists.
+    pub fn record_state(
+        &self,
+        plan: &PlanId,
+        revision: u32,
+        state: PlanState,
+    ) -> Result<(), ErrorValue> {
+        let stored: Option<String> = self
+            .locked()
+            .query_row(
+                "SELECT record FROM plans WHERE plan_id = ?1 AND revision = ?2",
+                params![plan.as_str(), i64::from(revision)],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|failure| self.unavailable(&failure))?;
+        let Some(encoded) = stored else {
+            return Err(error::plan_not_found(&render_plan(
+                plan,
+                plan.as_str().len(),
+            )));
+        };
+        let record = self.decode(&encoded, "record")?;
+        let record = rebuild_record(&record, "state", Some(Value::string(state.as_str())))?;
+        self.locked()
+            .execute(
+                "UPDATE plans SET state = ?3, record = ?4 WHERE plan_id = ?1 AND revision = ?2",
+                params![
+                    plan.as_str(),
+                    i64::from(revision),
+                    state.as_str(),
+                    encode(&record)?,
+                ],
+            )
+            .map(|_| ())
+            .map_err(|failure| self.unavailable(&failure))
+    }
+
     /// Every persisted action status of one plan revision, by action identity (§41.2).
     ///
     /// # Errors

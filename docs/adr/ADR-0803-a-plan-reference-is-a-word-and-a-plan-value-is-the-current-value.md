@@ -44,6 +44,19 @@ Both of §36.4's spellings work, and `@plan` is not added to the lexer.
   and §5 itself makes the spelling implementation-defined. §36.4's spellings, which the
   specification states normatively, all work exactly as written.
 
+A second, smaller one in the same family:
+
+- Section: v0.6 §64
+- Text: "`rebase plan/a82f`"
+- Instead: `rebase plan a82f`.
+- Why: `apply` and `recover` take a plan without naming a target, so `plan/a82f` is read there as
+  a reference and works verbatim. `rebase`'s target *is* `plan` (`docs/contracts/commands/change.yaml`),
+  so the word after the verb is the target word, and `plan/a82f` is neither a target nor a
+  reference in that position. Making it one would mean teaching the shell's target resolver that
+  `<target>/<reference>` is a target — a change to every command's grammar for one example, where
+  the spelling the grammar already has is one character different. §36.4, which is where the
+  specification states the reference forms normatively, does not include this one.
+
 ## Consequences
 
 §64's end-to-end interaction reads with `@a82f` replaced by `a82f`, and `map --plan @a82f` by

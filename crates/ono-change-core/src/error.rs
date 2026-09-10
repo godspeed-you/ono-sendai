@@ -31,7 +31,7 @@ pub fn plan_not_editable(plan: &PlanId, state: PlanState) -> ErrorValue {
             format!("plan {} is {state} and cannot be edited", plan.short()),
         )
         .with_help(format!(
-            "a sealed plan is immutable (v0.6 §4.4). `rebase plan/{}` opens a new revision \
+            "a sealed plan is immutable (v0.6 §4.4). `rebase plan {}` opens a new revision \
              against current state and leaves this one exactly as it is",
             plan.short()
         )),
@@ -51,13 +51,31 @@ pub fn plan_not_sealed(plan: &PlanId, state: PlanState) -> ErrorValue {
                 plan.short()
             ),
         )
-        .with_help(
-            "v0.6 §4.2 keeps a draft out of the executor deliberately. Nothing was changed."
-                .to_owned(),
-        ),
+        .with_help(help_for_unappliable(state)),
         plan,
     )
     .with_metadata("state", Value::string(state.as_str()))
+}
+
+/// Why a plan in this state cannot be applied, in the words of the state it is actually in.
+///
+/// §4.2's draft is one of three quite different situations, and telling an operator about a draft
+/// when the plan already applied is worse than saying nothing: §2.7 makes a sealed plan apply
+/// once, and the next step after "it already ran" is `inspect` or `recover`, not `seal`.
+fn help_for_unappliable(state: PlanState) -> String {
+    if state.has_mutated() {
+        return "v0.6 §2.7: a sealed plan applies once, and this one already did. `inspect plan` \
+                shows what it did and `recover` plans the way back. Nothing was changed."
+            .to_owned();
+    }
+    if state.is_editable() {
+        return "v0.6 §4.2 keeps a draft out of the executor deliberately: a plan is sealed, and \
+                therefore digest-bearing and immutable, before it may apply. Nothing was changed."
+            .to_owned();
+    }
+    "v0.6 §4.1 draws no edge from this state to APPLYING. `inspect plan` shows where the plan is \
+     and what may follow it. Nothing was changed."
+        .to_owned()
 }
 
 /// The plan's validity window has closed (§5.6).
@@ -70,7 +88,7 @@ pub fn plan_expired(plan: &PlanId) -> ErrorValue {
         )
         .with_help(format!(
             "its targets were frozen against a world that has had time to move (v0.6 §5.6). \
-             `rebase plan/{}` resolves it again. Nothing was changed",
+             `rebase plan {}` resolves it again. Nothing was changed",
             plan.short()
         )),
         plan,
@@ -319,7 +337,7 @@ pub fn drift_detected(plan: &PlanId, findings: &[(String, String, String)]) -> E
         )
         .with_help(format!(
             "v0.6 §7.3: material drift stops execution before anything is prepared or mutated. \
-             Nothing was changed. `rebase plan/{}` creates a new revision against the world as it \
+             Nothing was changed. `rebase plan {}` creates a new revision against the world as it \
              is now",
             plan.short()
         )),

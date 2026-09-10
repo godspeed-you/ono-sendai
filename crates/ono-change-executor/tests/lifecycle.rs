@@ -66,6 +66,50 @@ fn should_walk_a_healthy_plan_to_verified() {
 }
 
 #[test]
+fn should_remember_that_a_plan_applied_so_the_next_apply_refuses_it() {
+    // §2.7: a sealed plan applies once. That is a statement about the store, not about one
+    // process: without a durable state the second `apply` reads the plan back as `sealed` and
+    // mutates the world a second time, which is the failure this test exists to catch.
+    let now = instant(1_000);
+    let (_directory, store) = store();
+    let plan = stored(&PlanSpec::default(), &store, now);
+    let script = Script::healthy();
+    let observe = observing(VerificationStatus::Passed);
+
+    let first = plain_apply!(&plan, &store, script, &observe, now);
+    assert_eq!(first.state(), PlanState::Verified);
+
+    let read_back = store.get(plan.id()).expect("the plan is in the store");
+    assert_eq!(
+        read_back.state(),
+        PlanState::Verified,
+        "§4.1 and §41.2: the state a plan reached is durable, so the store answers with what \
+         happened rather than with what was sealed"
+    );
+
+    let again = plain_apply!(&read_back, &store, script, &observe, now);
+    assert_eq!(
+        again
+            .error()
+            .map(|error| error.code().name().to_owned())
+            .unwrap_or_default(),
+        "change.plan_not_sealed",
+        "§5.6: applying a plan that already applied is refused, and §2.7 is why"
+    );
+    assert!(!again.has_mutated());
+    assert!(
+        !again.is_success(),
+        "§2.14: a refusal is not a success, and the state it was refused at belongs to the run \
+         that reached it"
+    );
+    assert_eq!(
+        script.calls(),
+        vec!["nginx.service".to_owned()],
+        "the refusal reached no provider, so the world was touched exactly once"
+    );
+}
+
+#[test]
 fn should_reach_protected_only_when_every_required_asset_validated() {
     let now = instant(1_000);
     let plan = PlanSpec::default().seal(now);
