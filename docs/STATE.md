@@ -3820,6 +3820,14 @@ records. It was removed from this board rather than carried as an open box.
 
 ## Done
 
+**A verb's Tab offers its targets again, not the working directory (2026-09-10).** After a verb,
+completion had appended every entry of the working directory to the registry's answer and sorted
+the two together, so `get <Tab>` in any sizeable directory buried `process` and `service` among
+file names. Where the registry answers with targets or with the fields flowing into a filter, the
+filesystem is no longer asked; elsewhere paths are offered as before. Developed on
+`implementation-completion` (commit 339506e, CI run 34457050938 green: gate, acceptance,
+packages) and merged here. Proven by the three new `repl::tests` and acceptance case 324.
+
 **The v0.6 tranche is finished, §29 included (2026-09-10, ADR-0822 … ADR-0850).** The audit round
 of ADR-0822 … ADR-0837 and this session's corrections are in the tree, and the whole acceptance
 suite passes in the container, the ZFS and Btrfs cases against real loop filesystems in an image
