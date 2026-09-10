@@ -116,11 +116,10 @@ pub fn apply_progress(plan: &RecordValue, results: &[RecordValue], width: usize)
     lines
 }
 
-/// Appendix E.5's failure display, in Appendix E.5's block order.
+/// Appendix E.5's failure display for a run whose verification was not observed.
 ///
-/// The `protection` block is not decoration: §37.2 keeps a failed plan's recovery assets past the
-/// ordinary retention window, and an operator deciding what to do next needs to know the way back
-/// still exists. The `next` block is [`next_steps`], which never offers recovery alone.
+/// [`failure_display`] with no verification results. A caller that ran verification passes its
+/// `ono.change-verification/1` records there instead, and never in `assets`.
 #[must_use]
 pub fn apply_failure(
     plan: &RecordValue,
@@ -128,9 +127,37 @@ pub fn apply_failure(
     width: usize,
     charset: Charset,
 ) -> Vec<String> {
+    failure_display(plan, assets, &[], width, charset)
+}
+
+/// Appendix E.5's failure display, in Appendix E.5's block order.
+///
+/// `plan` is the `ono.change-plan/1` with each action's status as the run left it, `assets` the
+/// `ono.recovery-asset/1` records the run created, and `results` the `ono.change-verification/1`
+/// records verification observed. Only a record of the asset schema counts as an asset, so a
+/// result handed over in the wrong slice cannot be counted as protection.
+///
+/// The title follows what actually failed (§4.8): every action ran and a check did not hold is
+/// `PLAN VERIFICATION FAILED`, whatever lifecycle state the record was sealed in. The `protection`
+/// block is not decoration: §37.2 keeps a failed plan's recovery assets past the ordinary
+/// retention window, and an operator deciding what to do next needs to know the way back still
+/// exists. The `next` block offers `recover` when the run may have changed something and a ready
+/// asset exists to recover with, and never offers it alone.
+#[must_use]
+pub fn failure_display(
+    plan: &RecordValue,
+    assets: &[RecordValue],
+    results: &[RecordValue],
+    width: usize,
+    charset: Charset,
+) -> Vec<String> {
+    let assets: Vec<&RecordValue> = assets
+        .iter()
+        .filter(|record| record.schema_id().to_string() == "ono.recovery-asset/1")
+        .collect();
     let actions = items(plan, "actions");
     let state = text(plan, "state").unwrap_or_else(|| "apply-failed".to_owned());
-    let mut lines = vec![fit(failure_title(&state), width)];
+    let mut lines = vec![fit(title(&state, &actions, results), width)];
 
     heading(&mut lines, "completed");
     let completed = completed_by_role(&actions);
@@ -143,7 +170,11 @@ pub fn apply_failure(
 
     heading(&mut lines, "failed");
     let failed = with_status(&actions, "failed");
-    if failed.is_empty() {
+    let failed_checks: Vec<&RecordValue> = results
+        .iter()
+        .filter(|result| text(*result, "status").as_deref() == Some("failed"))
+        .collect();
+    if failed.is_empty() && failed_checks.is_empty() {
         lines.push(fit("  no action reported failure", width));
     }
     for action in failed {
@@ -152,6 +183,16 @@ pub fn apply_failure(
                 "  {} {}",
                 Symbol::Risk.glyph(charset),
                 action_reference(action)
+            ),
+            width,
+        ));
+    }
+    for check in failed_checks {
+        lines.push(fit(
+            &format!(
+                "  {} check {}",
+                Symbol::Risk.glyph(charset),
+                check_line(check)
             ),
             width,
         ));
@@ -190,13 +231,40 @@ pub fn apply_failure(
     ));
 
     heading(&mut lines, "protection");
-    lines.push(fit(&format!("  {}", retention(&state, assets)), width));
+    lines.push(fit(&format!("  {}", retention(&state, &assets)), width));
 
     heading(&mut lines, "next");
-    for step in next_steps(plan) {
+    for step in steps(plan, Some(&assets)) {
         lines.push(fit(&format!("  {step}"), width));
     }
     lines
+}
+
+/// The title of the failure display: what failed, not merely which state the record is in.
+fn title(state: &str, actions: &[Item], results: &[RecordValue]) -> &'static str {
+    let action_failed = actions.iter().any(|action| {
+        matches!(
+            text(action, "status").as_deref(),
+            Some("failed" | "unknown")
+        )
+    });
+    let verification_failed = !results.is_empty() && crate::verify::verdict(results) != "VERIFIED";
+    if verification_failed
+        && !action_failed
+        && !matches!(state, "prepare-failed" | "recovery-failed")
+    {
+        return "PLAN VERIFICATION FAILED";
+    }
+    failure_title(state)
+}
+
+/// `nginx.service == running` — the check as the contract states it (§23.4).
+fn check_line(check: &RecordValue) -> String {
+    let subject = text(check, "subject").unwrap_or_else(|| "unnamed".to_owned());
+    match text(check, "expression").filter(|expression| !expression.is_empty()) {
+        Some(expression) => format!("{subject} {expression}"),
+        None => subject,
+    }
 }
 
 /// The steps an operator may take after a failed apply (Appendix E.5).
@@ -209,6 +277,12 @@ pub fn apply_failure(
 /// would rather the operator read than type a flag.
 #[must_use]
 pub fn next_steps(plan: &RecordValue) -> Vec<String> {
+    steps(plan, None)
+}
+
+/// [`next_steps`], answering "is there something to recover with" from the created assets where
+/// the caller has them, and from the plan's protection level where it does not.
+fn steps(plan: &RecordValue, assets: Option<&[&RecordValue]>) -> Vec<String> {
     let reference = format!("plan/{}", crate::plan::short(plan, "id"));
     let actions = items(plan, "actions");
     let mut steps = vec![format!("inspect {reference}")];
@@ -227,11 +301,24 @@ pub fn next_steps(plan: &RecordValue) -> Vec<String> {
                 | "recovery-failed"
         )
     );
-    let covers_something = !matches!(
-        text(plan, "protection_level").as_deref(),
-        Some("unprotected") | None
-    );
-    if recoverable && covers_something {
+    let offer = match assets {
+        // Appendix F: whatever state the record was sealed in, an action that ran may have
+        // changed the system, and a ready asset is what a recovery would restore from.
+        Some(assets) => {
+            (recoverable || actions.iter().any(may_have_mutated))
+                && assets
+                    .iter()
+                    .any(|asset| text(*asset, "state").as_deref() == Some("ready"))
+        }
+        None => {
+            recoverable
+                && !matches!(
+                    text(plan, "protection_level").as_deref(),
+                    Some("unprotected") | None
+                )
+        }
+    };
+    if offer {
         steps.push(format!("recover {reference}"));
     }
     if actions
@@ -241,6 +328,17 @@ pub fn next_steps(plan: &RecordValue) -> Vec<String> {
         steps.push(format!("rebase {reference}"));
     }
     steps
+}
+
+/// Whether an action may have changed the system: it mutates or recovers, and it ran (§4.7).
+fn may_have_mutated(action: &Item) -> bool {
+    matches!(
+        text(action, "role").as_deref(),
+        Some("mutate" | "recover") | None
+    ) && matches!(
+        text(action, "status").as_deref(),
+        Some("succeeded" | "failed" | "unknown" | "running")
+    )
 }
 
 /// Whether resume may rerun an action, given its status and its §41.1 idempotency class.
@@ -351,12 +449,12 @@ fn action_reference(action: &Item) -> String {
 }
 
 /// What happens to the assets the failed apply created (§37.2).
-fn retention(state: &str, assets: &[RecordValue]) -> String {
+fn retention(state: &str, assets: &[&RecordValue]) -> String {
     let created = assets
         .iter()
         .filter(|asset| {
             matches!(
-                text(*asset, "state").as_deref(),
+                text(**asset, "state").as_deref(),
                 Some("creating" | "ready" | "invalid" | "expired")
             )
         })
@@ -364,7 +462,7 @@ fn retention(state: &str, assets: &[RecordValue]) -> String {
     if created == 0 {
         return "no recovery asset was created".to_owned();
     }
-    let held = assets.iter().any(|asset| flag(asset, "held"));
+    let held = assets.iter().any(|asset| flag(*asset, "held"));
     let retains = held
         || matches!(
             state,

@@ -1,6 +1,6 @@
 # ADR-0819: §17.1's protection actions are in the plan
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0833
 - Date: 2026-09-10
 - Spec refs: v0.6 §2.1, §3.3, §4.5, §4.7, §5.2, §12.2, §12.3, §17.1, §46.1, Appendix E
 - Decided by: agent (autonomous)

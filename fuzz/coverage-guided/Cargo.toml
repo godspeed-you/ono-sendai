@@ -100,3 +100,38 @@ path = "fuzz_targets/storage-tool-output.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "plan-grammar"
+path = "fuzz_targets/plan-grammar.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "provider-messages"
+path = "fuzz_targets/provider-messages.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "snapshot-paths"
+path = "fuzz_targets/snapshot-paths.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "impact-graph"
+path = "fuzz_targets/impact-graph.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "recovery-metadata"
+path = "fuzz_targets/recovery-metadata.rs"
+test = false
+doc = false
+bench = false

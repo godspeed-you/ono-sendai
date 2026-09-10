@@ -322,17 +322,61 @@ fn should_declare_the_tolerance_a_service_restart_lives_with() {
 }
 
 #[test]
-fn should_give_a_verification_class_every_row_can_be_read_by() {
-    for operation in registry().operations() {
-        let required = operation
+fn should_read_every_verification_row_at_the_class_its_contract_declares() {
+    let yaml = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/contracts/change/actions.yaml"
+    ))
+    .expect("the contract document is in the tree");
+    let document: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&yaml).expect("the document is valid YAML");
+    let rows = document["plannable_operations"]
+        .as_sequence()
+        .expect("§6.1's rows are a list");
+    let mut advisory = 0;
+    for row in rows {
+        let id = row["id"].as_str().expect("a row names its operation");
+        let declared: Vec<&str> = row["verification"]
+            .as_sequence()
+            .expect("a row lists its verification")
+            .iter()
+            .map(|spec| spec["class"].as_str().expect("a contract names its class"))
+            .collect();
+        let operation = registry()
+            .get(id)
+            .unwrap_or_else(|| panic!("`{id}` is plannable"));
+        let read: Vec<&str> = operation
             .verification()
             .iter()
-            .filter(|spec| spec.class() == VerificationClass::Required)
-            .count();
+            .map(|spec| spec.class().as_str())
+            .collect();
         assert!(
-            required <= operation.verification().len(),
-            "`{}` declares more required contracts than contracts",
-            operation.id()
+            !read.is_empty(),
+            "§23.1: `{id}` carries at least one contract"
         );
+        assert_eq!(
+            read, declared,
+            "§23.2: `{id}` is read at the class each of its contracts declares"
+        );
+        advisory += read
+            .iter()
+            .filter(|class| **class == VerificationClass::Advisory.as_str())
+            .count();
     }
+    assert!(
+        advisory > 0,
+        "precondition: the contract declares advisory rows, so a reader that read every row as \
+         required would be told apart"
+    );
+}
+
+#[test]
+fn should_refuse_a_row_whose_verification_class_is_not_a_class() {
+    let document = r#"{"plannable_operations":[{"id":"ono.service.restart","role":"mutate",
+        "idempotency":"idempotent","recovery_semantics":"none",
+        "effects":[{"domain":"process-runtime","kind":"replace","confidence":"expected",
+        "irreversible":false,"explanation":"x"}],
+        "verification":[{"class":"mandatory","subject":"s","expression":"exists"}]}]}"#;
+    OperationRegistry::load(document)
+        .expect_err("§23.2 draws two classes, and a row naming a third is not read as either");
 }

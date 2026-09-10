@@ -84,6 +84,22 @@ pub fn resolve_plan(store: &PlanStore, reference: &str) -> Result<PlanId, ErrorV
     store.resolve(parsed.body())
 }
 
+/// The plan identity a `--plan` word names, with `"@"` read as the plan this shell just produced.
+///
+/// ADR-0803 spells "the current plan" `"@"` because v0.2 §6.4 gives the bare `@` to the current
+/// value, and a filter that compared `"@"` against plan identities would match none of them. A
+/// word that is not `"@"`, or an `"@"` in a shell that has produced no plan, is returned as it
+/// was written: the filter then matches what it names, which may be nothing.
+#[must_use]
+pub fn plan_reference(text: &str) -> String {
+    if text.trim() == "@"
+        && let Some(plan) = session::last_plan()
+    {
+        return plan.as_str().to_owned();
+    }
+    text.to_owned()
+}
+
 /// The recovery asset a command was pointed at (§37.5).
 ///
 /// # Errors
@@ -182,10 +198,12 @@ pub fn plan_of(state: &ChangeState, reference: &str) -> Result<ChangePlan, Error
 /// §40.3 forbids a script waiting for a question, so this decides which of the two paths a gate
 /// takes: a terminal is asked, and everything else is refused with the structured error and the
 /// machine-readable plan on its metadata. Both halves are needed — values about to be consumed by
-/// another stage are values whatever terminal the shell is attached to (v0.4 §29.1).
+/// another stage are values whatever terminal the shell is attached to (v0.4 §29.1). The third is
+/// Appendix H.4: under the `scripted` profile nothing prompts, at a terminal or not, so every gate
+/// is answered by its flag.
 #[must_use]
 pub fn is_interactive(ctx: &Invocation<'_>) -> bool {
-    ctx.displays() && crate::spatial::at_terminal()
+    ctx.displays() && crate::spatial::at_terminal() && session::configured().prompts()
 }
 
 /// The runtime handle a command's synchronous seams run on.
@@ -266,6 +284,35 @@ pub fn plan_value(plan: &ChangePlan) -> Result<Value, ErrorValue> {
     )))
 }
 
+/// A plan as `get plan` answers it: a recovery plan carries the analysis stored beside it.
+///
+/// `ono.change-plan/1` has no field for what a recovery will restore and by which method, and
+/// §24.3's answer to that is the `ono.recovery-plan/1` `recover` stored (§24.1, §36.1). It travels
+/// as the namespaced extension `ono.change/recovery` (v0.2 §10.4), so the plan a later process
+/// reads is the plan it will apply.
+///
+/// # Errors
+///
+/// Returns `ono.provider_schema_violation` where a contract of §46 is not in this build.
+pub fn stored_plan_value(
+    state: &session::ChangeState,
+    plan: &ChangePlan,
+) -> Result<Value, ErrorValue> {
+    let record = ono_change_core::value::plan_record(plan)?;
+    if plan.kind() != ono_change_core::PlanKind::Recovery {
+        return Ok(Value::Record(Arc::new(record)));
+    }
+    let Ok(stored) = state.store().get_recovery(plan.id()) else {
+        return Ok(Value::Record(Arc::new(record)));
+    };
+    let analysis = ono_change_core::value::recovery_plan_record(&stored)?;
+    Ok(Value::Record(Arc::new(extended(
+        &record,
+        "ono.change/recovery",
+        Value::Record(Arc::new(analysis)),
+    ))))
+}
+
 /// The map with a plan overlaid on it (§21.2, §21.3, §21.4).
 ///
 /// Three rules shape what this attaches, and all three are §21's:
@@ -287,13 +334,14 @@ pub async fn overlay(
     let state = change_session().await?;
     let plan = plan_of(&state, reference)?;
     let assets = state.store().assets_for(plan.id()).unwrap_or_default();
-    let mut covered: Vec<String> = Vec::new();
+    // Each covered object beside the reference of the asset that covers it (§21.3).
+    let mut covered: Vec<(String, String)> = Vec::new();
     for id in &assets {
         let Ok(asset) = state.store().get_asset(id) else {
             continue;
         };
         for object in asset.scope().covers() {
-            covered.push(object.to_string());
+            covered.push((object.to_string(), asset.reference().to_owned()));
         }
     }
     let mut rows = Vec::new();
@@ -305,10 +353,14 @@ pub async fn overlay(
             "place".into(),
             target.spatial_id().map_or(Value::Null, Value::string),
         );
-        row.insert(
-            "covered".into(),
-            Value::Bool(covered.iter().any(|object| object == target.label())),
-        );
+        let covered_by: Vec<Value> = covered
+            .iter()
+            .filter(|(object, _)| object == target.label())
+            .map(|(_, reference)| Value::string(reference))
+            .collect();
+        row.insert("covered".into(), Value::Bool(!covered_by.is_empty()));
+        // §21.3: `<-> <asset>` names what covers the object, not only that something does.
+        row.insert("covered_by".into(), Value::list(covered_by));
         // §21.4: the word is what the plan expects to happen to the object, never a name for an
         // object that does not exist. `replacement expected` is the honest form of a restart.
         row.insert(

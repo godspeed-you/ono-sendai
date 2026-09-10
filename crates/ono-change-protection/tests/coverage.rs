@@ -11,8 +11,8 @@ use std::path::Path;
 
 use ono_change_core::{
     ActionId, ConsistencyClass, EffectConfidence, EffectDomain, EffectKind, PersistenceDomain,
-    PlanId, ProposedEffect, ProtectionLevel, ProtectionMode, RecoveryCandidate, RecoveryExclusion,
-    RecoveryObjective, RestoreMethod,
+    PlanId, ProposedEffect, ProtectionLevel, ProtectionMode, RecoveryAssetType, RecoveryCandidate,
+    RecoveryExclusion, RecoveryObjective, RestoreMethod,
 };
 use ono_change_protection::coverage::{
     CoverageRequest, MutationDomain, RejectionReason, analyse, objective_for, ranked,
@@ -24,7 +24,8 @@ use ono_value::ByteSize;
 mod support;
 
 use support::{
-    TestProvider, ZFS_ROOT, archive_cost, candidate, config_mutation, file_archive, snapshot_cost,
+    CONTAINER, EXT4_ROOT, TestProvider, ZFS_ROOT, archive_cost, candidate, config_mutation,
+    file_archive, snapshot_cost,
 };
 
 fn nginx_conf() -> PersistenceDomain {
@@ -102,6 +103,40 @@ fn should_reproduce_the_appendix_a_6_example_when_a_config_change_restarts_a_ser
     assert!(
         !analysis.summary().exclusions().is_empty(),
         "Appendix A.6 forbids a global green safe indicator, so the exclusions travel with the word"
+    );
+}
+
+#[test]
+fn should_name_on_the_row_the_enclosing_snapshots_that_do_not_protect_the_target() {
+    // §13.4: the chosen snapshot's provider names what encloses the target without reaching it;
+    // an object the chosen candidate itself captures is not among them.
+    let registry = registry_with(vec![
+        TestProvider::new("ono.recovery.zfs")
+            .offering(
+                dataset_snapshot()
+                    .restored_by(RestoreMethod::SelectiveFileRestore)
+                    .outside_of("rpool/ROOT")
+                    .outside_of("rpool/ROOT/debian"),
+            )
+            .shared(),
+    ]);
+    let policy = ProtectionPolicy::default();
+    let analysis = analyse(
+        &CoverageRequest::new(&registry, &policy)
+            .over(nginx_conf())
+            .mutating(config_mutation()),
+    );
+    let row = analysis
+        .summary()
+        .rows()
+        .iter()
+        .find(|row| row.domain() == EffectDomain::FilesystemPersistent)
+        .expect("the persistent domain has a row");
+    let named: Vec<&str> = row.not_protected_by().iter().map(AsRef::as_ref).collect();
+    assert_eq!(
+        named,
+        ["rpool/ROOT"],
+        "§13.4 and §2.5: the row names the enclosing dataset, and never the one it rests on"
     );
 }
 
@@ -771,5 +806,277 @@ fn should_compose_the_cost_of_everything_it_proposes() {
     assert!(
         cost.is_estimated(),
         "§37.5: a figure that came from an estimate stays labelled as one"
+    );
+}
+
+#[test]
+fn should_record_every_refused_target_domain_as_an_exclusion_with_its_reason() {
+    let table = MountTable::from_text(ZFS_ROOT);
+    let registry = registry_with(vec![
+        TestProvider::new("ono.recovery.zfs")
+            .offering(dataset_snapshot())
+            .shared(),
+    ]);
+    let policy = ProtectionPolicy::default();
+    let analysis = analyse(
+        &CoverageRequest::new(&registry, &policy)
+            .over(table.resolve(Path::new("/run/app/state")))
+            .over(table.resolve(Path::new("/var/lib/nfs-data/export.csv")))
+            .mutating(MutationDomain::new(
+                EffectDomain::FilesystemPersistent,
+                EffectKind::Modify,
+                "/run/app/state",
+                "the runtime state file is rewritten",
+            ))
+            .mutating(MutationDomain::new(
+                EffectDomain::FilesystemPersistent,
+                EffectKind::Modify,
+                "/var/lib/nfs-data/export.csv",
+                "the export is rewritten",
+            )),
+    );
+
+    let exclusions = analysis.summary().exclusions();
+    let tmpfs = exclusions
+        .iter()
+        .find(|exclusion| exclusion.subject() == "/run/app/state")
+        .expect("§32.4: a volatile target is named as an exclusion, not left unexplained");
+    assert!(tmpfs.reason().contains("tmpfs"), "{}", tmpfs.reason());
+    let nfs = exclusions
+        .iter()
+        .find(|exclusion| exclusion.subject() == "/var/lib/nfs-data/export.csv")
+        .expect("Appendix B.6: a network target is named as an exclusion");
+    assert!(nfs.reason().contains("nfs4"), "{}", nfs.reason());
+}
+
+#[test]
+fn should_let_only_a_copy_protect_an_overlay_whose_writable_layer_is_hidden() {
+    // §55.5 case 23 inside a container: the home directory is on an overlay whose upper layer is
+    // a host path, and the file provider is what protects a small configuration change there.
+    let path = "/home/ono/etc/source";
+    let merged = MountTable::from_text(CONTAINER).resolve(Path::new(path));
+    let snapshot = candidate(
+        "ono.recovery.zfs",
+        "zfs-dataset",
+        "tank/docker",
+        &[path],
+        EffectDomain::FilesystemPersistent,
+        RecoveryObjective::PreserveExact,
+    )
+    .at_consistency(ConsistencyClass::FilesystemConsistent)
+    .restored_by(RestoreMethod::SelectiveFileRestore)
+    .costing(snapshot_cost());
+    let registry = registry_with(vec![
+        TestProvider::new("ono.recovery.zfs")
+            .offering(snapshot)
+            .shared(),
+        TestProvider::new("ono.recovery.file-copy")
+            .producing(RecoveryAssetType::FileArchive)
+            .offering(file_archive("ono.recovery.file-copy", path))
+            .shared(),
+    ]);
+    let policy = ProtectionPolicy::default();
+    let analysis = analyse(
+        &CoverageRequest::new(&registry, &policy)
+            .over(merged)
+            .mutating(MutationDomain::new(
+                EffectDomain::FilesystemPersistent,
+                EffectKind::Replace,
+                path,
+                "the configuration file is replaced",
+            )),
+    );
+
+    let providers: Vec<&str> = analysis
+        .actions()
+        .iter()
+        .map(|action| action.provider())
+        .collect();
+    assert_eq!(
+        providers,
+        vec!["ono.recovery.file-copy"],
+        "§55.5 case 23: the file provider protects the target on a non-snapshot filesystem"
+    );
+    let refused = analysis
+        .rejected()
+        .iter()
+        .find(|rejected| rejected.candidate().provider() == "ono.recovery.zfs")
+        .expect("the snapshot candidate is kept as a refusal, so inspect plan can say why");
+    assert_eq!(refused.reason(), RejectionReason::SnapshotOfMergedView);
+    assert!(
+        refused.detail().contains("Appendix B.4"),
+        "the refusal carries B.4's reason: {}",
+        refused.detail()
+    );
+    let note = analysis.summary().rows()[0].note();
+    assert!(
+        note.contains("container-local"),
+        "Appendix B.5 and §11.5: the row says the protection lives and dies with the container: \
+         {note}"
+    );
+}
+
+#[test]
+fn should_let_a_snapshot_protect_an_overlay_whose_writable_layer_it_can_follow() {
+    let path = "/var/lib/docker/overlay2/9f3a/merged/etc/app.conf";
+    let upper = MountTable::from_text(support::EXT4_ROOT).resolve(Path::new(path));
+    let snapshot = candidate(
+        "ono.recovery.lvm",
+        "filesystem",
+        "/dev/sda2",
+        &[path],
+        EffectDomain::FilesystemPersistent,
+        RecoveryObjective::PreserveExact,
+    )
+    .at_consistency(ConsistencyClass::FilesystemConsistent)
+    .restored_by(RestoreMethod::SelectiveFileRestore)
+    .costing(snapshot_cost());
+    let registry = registry_with(vec![
+        TestProvider::new("ono.recovery.lvm")
+            .producing(RecoveryAssetType::LvmSnapshot)
+            .offering(snapshot)
+            .shared(),
+    ]);
+    let policy = ProtectionPolicy::default();
+    let analysis = analyse(
+        &CoverageRequest::new(&registry, &policy)
+            .over(upper)
+            .mutating(MutationDomain::new(
+                EffectDomain::FilesystemPersistent,
+                EffectKind::Replace,
+                path,
+                "the configuration file is replaced",
+            )),
+    );
+    assert_eq!(
+        analysis.actions().len(),
+        1,
+        "Appendix B.4: a visible writable layer is the domain, and a snapshot of it may protect it"
+    );
+    assert!(
+        !analysis.summary().rows()[0]
+            .note()
+            .contains("container-local"),
+        "only a copy-only overlay is called container-local"
+    );
+}
+
+// -- Appendix G.2's adversarial layouts, held at the matrix (§63.10) ----------------------------
+
+/// A provider that resolves `path` to `domain` itself, as a real one does, and offers `offered`.
+fn resolving_provider(
+    path: &str,
+    domain: &PersistenceDomain,
+    offered: RecoveryCandidate,
+) -> std::sync::Arc<dyn ono_change_core::RecoveryProvider> {
+    TestProvider::new("ono.recovery.test-snapshot")
+        .resolving(path, domain.clone())
+        .offering(offered)
+        .shared()
+}
+
+/// A filesystem snapshot over `object` that names `path` among what it covers.
+fn filesystem_snapshot(object: &str, path: &str) -> RecoveryCandidate {
+    candidate(
+        "ono.recovery.test-snapshot",
+        "filesystem",
+        object,
+        &[path],
+        EffectDomain::FilesystemPersistent,
+        RecoveryObjective::PreserveExact,
+    )
+    .at_consistency(ConsistencyClass::FilesystemConsistent)
+    .restored_by(RestoreMethod::SelectiveFileRestore)
+    .costing(snapshot_cost())
+}
+
+fn replacing(path: &str) -> MutationDomain {
+    MutationDomain::new(
+        EffectDomain::FilesystemPersistent,
+        EffectKind::Replace,
+        path,
+        "the file is replaced",
+    )
+}
+
+#[test]
+fn should_not_let_a_snapshot_of_another_filesystem_cover_a_bind_mounted_path_it_names() {
+    // Appendix G.2 truth test: bind-mount-crossing. `/etc/app-config` is sda2's
+    // `/srv/exports/config`, so a snapshot of sda1 protects nothing there however it is labelled.
+    let path = "/etc/app-config/app.toml";
+    let domain = MountTable::from_text(EXT4_ROOT).resolve(Path::new(path));
+    let registry = registry_with(vec![resolving_provider(
+        path,
+        &domain,
+        filesystem_snapshot("/dev/sda1", path),
+    )]);
+    let policy = ProtectionPolicy::default();
+
+    let analysis = analyse(
+        &CoverageRequest::new(&registry, &policy)
+            .over(domain)
+            .mutating(replacing(path)),
+    );
+
+    assert_eq!(
+        analysis.level(),
+        ProtectionLevel::Unprotected,
+        "§63.10 and Appendix G.2: a snapshot of a filesystem the path does not land on covers \
+         nothing, whatever paths it names"
+    );
+    assert!(
+        analysis.actions().is_empty(),
+        "§2.2: no protection action is proposed from a candidate that does not reach the target"
+    );
+}
+
+#[test]
+fn should_cover_a_bind_mounted_path_only_by_a_candidate_on_the_filesystem_it_lands_on() {
+    let path = "/etc/app-config/app.toml";
+    let domain = MountTable::from_text(EXT4_ROOT).resolve(Path::new(path));
+    let registry = registry_with(vec![resolving_provider(
+        path,
+        &domain,
+        filesystem_snapshot("/dev/sda2", path),
+    )]);
+    let policy = ProtectionPolicy::default();
+
+    let analysis = analyse(
+        &CoverageRequest::new(&registry, &policy)
+            .over(domain)
+            .mutating(replacing(path)),
+    );
+
+    assert_eq!(
+        analysis.level(),
+        ProtectionLevel::Protected,
+        "Appendix B.3: the bind mount resolves to sda2, and a candidate there does cover the path"
+    );
+}
+
+#[test]
+fn should_not_let_a_snapshot_of_the_merged_view_cover_a_container_path() {
+    // Appendix G.2 truth test: container-bind-mount. The merged overlay is not where the write
+    // lands; the upper layer on sda2 is (Appendix B.4).
+    let path = "/var/lib/docker/overlay2/9f3a/merged/etc/app.conf";
+    let domain = MountTable::from_text(EXT4_ROOT).resolve(Path::new(path));
+    let registry = registry_with(vec![resolving_provider(
+        path,
+        &domain,
+        filesystem_snapshot("overlay", path),
+    )]);
+    let policy = ProtectionPolicy::default();
+
+    let analysis = analyse(
+        &CoverageRequest::new(&registry, &policy)
+            .over(domain)
+            .mutating(replacing(path)),
+    );
+
+    assert_ne!(
+        analysis.level(),
+        ProtectionLevel::Protected,
+        "§63.10 and Appendix B.4: a snapshot of the merged view is not a snapshot of the layer the \
+         write lands in, so the matrix does not call the path protected"
     );
 }

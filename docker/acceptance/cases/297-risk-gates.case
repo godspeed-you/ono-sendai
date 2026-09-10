@@ -1,0 +1,99 @@
+# v0.6 §50 phase P2 — §19 and §40: risk is rule-based, and a gate is a flag.
+#
+# §19.2 makes the classes rule-based and not AI-generated, and §62.11 repeats it. §40.2 fixes
+# what a gate says: the rule's own reason, not "Are you sure?". §40.3 fixes who may be asked — a
+# non-interactive run never waits, so every acknowledgement is a flag and every refusal is
+# structured. §19.4 stores the acknowledgement in the sealed revision, and makes an irreversible
+# action need its own acknowledgement whatever the class.
+#
+# The gate is forced rather than hoped for: SIGKILL on a process this case started is HIGH risk
+# and irreversible by §33.1 on every host.
+case: a risk gate names its rule, takes a flag, and never waits
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+
+  mkdir -p "$HOME/etc"
+  printf 'a\n' > "$HOME/etc/source"
+  printf 'b\n' > "$HOME/etc/target"
+
+  echo '== §19.2: every finding names the rule that made it =='
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/target --overwrite | to json" > /tmp/g1.json 2>&1
+  id=$(plan_id /tmp/g1.json)
+  prove g1a "the plan carries one of §19.2's classes (§19.2)" \
+    'grep -qE "\"risk\":\"(low|moderate|high|critical|unknown)\"" /tmp/g1.json'
+  prove g1b "and every finding names a registered rule, a §19.1 dimension and a reason (§19.2, §62.11)" \
+    "[ \"\$(grep -o '\"risk_findings\":\[[^]]*\]' /tmp/g1.json | grep -o '{\"dimension\":\"[a-z-]*\",\"class\":\"[a-z]*\",\"rule\":\"risk\.[a-z.-]*\",\"reason\":\"[^\"]\{8,\}\"}' | wc -l)\" -ge 1 ] && [ \"\$(grep -o '\"risk_findings\":\[[^]]*\]' /tmp/g1.json | grep -o '\"dimension\"' | wc -l)\" = \"\$(grep -o '\"risk_findings\":\[[^]]*\]' /tmp/g1.json | grep -o '\"rule\":\"risk\.' | wc -l)\" ]"
+
+  echo '== §40.1: an ordinary plan applies on `apply` alone =='
+  ono -c "apply $id" > /tmp/g2.txt 2>&1
+  prove g2a "an ordinary file copy needs no acknowledgement (§40.1, §2.18)" \
+    '! grep -qE "change\.(risk|irreversible)_not_accepted|safety\.confirmation_required" /tmp/g2.txt'
+  prove g2b "and it applied" "[ \"\$(cat $HOME/etc/target)\" = 'a' ]"
+
+  echo '== §40.3: a script never waits =='
+  printf 'c\n' > "$HOME/etc/target"
+  timeout 60 ono -c "plan copy file $HOME/etc/source $HOME/etc/target --overwrite | apply" < /dev/null > /tmp/g3.txt 2>&1
+  status=$?
+  prove g3a "a piped run returns rather than waiting for a terminal (§17.4, §40.3)" "[ $status -ne 124 ]"
+
+  echo '== §40.2 and §19.4: a HIGH, irreversible plan is gated, and the gate quotes its rule =='
+  sleep 600 &
+  victim=$!
+  ono -c "plan kill process $victim --signal SIGKILL | to json" > /tmp/g5.json 2>&1
+  kill_plan=$(plan_id /tmp/g5.json)
+  prove g5pre "SIGKILL is HIGH risk, found by the irreversibility rule (§19.3, §33.1)" \
+    'grep -q "\"risk\":\"high\"" /tmp/g5.json && grep -q "\"rule\":\"risk.irreversibility.effect\"" /tmp/g5.json'
+  ono -c "apply $kill_plan" > /tmp/g5.txt 2>&1
+  prove g5a "\`apply\` alone is refused with the risk gate's code (§40.2)" \
+    'grep -q "Ono-Sendai-E1723 change.risk_not_accepted" /tmp/g5.txt'
+  prove g5b "the refusal quotes the rule that fired and its reason, not a question (§40.2, §19.2)" \
+    'grep -q "risk.irreversibility.effect: [0-9]* effect(s) cannot be undone" /tmp/g5.txt && ! grep -qiE "are you sure|\[y/n\]" /tmp/g5.txt'
+  prove g5c "and names the flag that answers it (§40.3)" 'grep -q -- "--accept-risk" /tmp/g5.txt'
+  prove g5d "the process is untouched by the refusal (§40.2)" "kill -0 $victim"
+
+  ono -c "apply $kill_plan --accept-risk --confirm" > /tmp/g6.txt 2>&1
+  prove g6a "accepting the risk is not accepting the irreversibility: that needs its own flag (§19.4)" \
+    'grep -q "change.irreversible_not_accepted" /tmp/g6.txt && grep -q -- "--accept-irreversible" /tmp/g6.txt'
+  prove g6b "and the process is still untouched (§19.4)" "kill -0 $victim"
+
+  echo '== §19.4: the acknowledgement is stored in the sealed revision =='
+  ono -c "plan --accept-risk --accept-irreversible kill process $victim --signal SIGKILL | select accepted_risk_overrides | to json" > /tmp/g4.json 2>&1
+  prove g4a "a plan sealed with its acknowledgements records them (§19.4)" \
+    'grep -q "^\[{\"accepted_risk_overrides\":\[." /tmp/g4.json && ! grep -q "\"accepted_risk_overrides\":\[\]" /tmp/g4.json'
+
+  ono -c "apply $kill_plan --accept-risk --accept-irreversible --confirm" > /tmp/g7.txt 2>&1
+  sleep 0.5
+  prove g7a "with every acknowledgement given as a flag, the plan applies (§19.4, §40.3)" \
+    "! kill -0 $victim 2>/dev/null"
+  kill -9 "$victim" 2>/dev/null
+
+  echo 'risk-gates: done'
+exit: 0
+stdout-contains: PROVED g1a
+stdout-contains: PROVED g1b
+stdout-contains: PROVED g2a
+stdout-contains: PROVED g2b
+stdout-contains: PROVED g3a
+stdout-contains: PROVED g5pre
+stdout-contains: PROVED g5a
+stdout-contains: PROVED g5b
+stdout-contains: PROVED g5c
+stdout-contains: PROVED g5d
+stdout-contains: PROVED g6a
+stdout-contains: PROVED g6b
+stdout-contains: PROVED g4a
+stdout-contains: PROVED g7a
+stdout-contains: risk-gates: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

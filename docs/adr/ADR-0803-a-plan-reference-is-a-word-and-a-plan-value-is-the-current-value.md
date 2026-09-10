@@ -1,6 +1,6 @@
 # ADR-0803: A plan reference is a word, and `@plan` is spelled `@`
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0833
 - Date: 2026-09-09
 - Spec refs: v0.6 §5, §5.8, §36.4, §64; v0.2 §19.4, §12.3; ADR-0071
 - Decided by: agent (autonomous)

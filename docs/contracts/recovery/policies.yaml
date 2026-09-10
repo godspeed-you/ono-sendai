@@ -71,6 +71,14 @@ freshness:
     requires fresh protection.
 
 # Appendix H's profiles. They expand to the inspectable settings below and hide nothing.
+#
+# `change.profile` (plans.yaml's settings, an extension to §53) selects one. `ChangeSettings::read`
+# applies it by tightening only: protection is the stricter of the configured mode and the
+# profile's (`mode_rank`), retention the longer, the free-space floor the stricter, opaque actions
+# disabled, and §19.4's acknowledgement required from the profile's risk gate up. `prompts: false`
+# makes every gate a flag even at a terminal (§40.3). The strategy is a default the planner applies
+# where neither `--strategy` nor the configuration states one, and `remote_unknown` is the
+# executor's. `ChangeSettings::profile_expansion` reports each value in force with its source.
 profiles:
   - id: interactive
     protection: prefer
@@ -138,11 +146,15 @@ auto_recovery:
   conditions_doc: >-
     §26.3: a plan MAY declare auto-recovery only when **all** of these are true. Otherwise the
     declaration MUST be rejected at seal time, which is what keeps it from being discovered at the
-    moment it would have run.
+    moment it would have run. `plan --auto-recover` is the declaration. In this build no
+    configuration key enables it and no recovery plan can exist before the plan's protection is
+    created, so every declaration is rejected at seal, naming the conditions it failed
+    (ADR-0832).
 
-# §38.3's limits on automatic protection are declared once, in `assets.yaml`'s `limits`, and read
-# from there by `ono_change_protection::policy::CostLimits`. They were declared here too under a
-# second spelling, which is a drift surface rather than a contract.
+# §38.3's limits on automatic protection are declared once, in `assets.yaml`'s `limits`, and
+# `xtask/src/change.rs::check_assets` compares those keys with
+# `ono_change_protection::policy::CostLimits::KEYS`; nothing reads them from YAML at runtime. They
+# were declared here too under a second spelling, which is a drift surface rather than a contract.
 
 # §44's six rules about recovery data that may hold credentials, private keys, database files,
 # shell configuration or application secrets. Each names the mechanism that answers it, because a
@@ -173,10 +185,11 @@ privacy:
   - id: remote-metadata-bounded
     rule: "§44.5: remote recovery metadata MUST NOT disclose paths or secrets beyond policy."
     mechanism: >-
-      A recovery asset record crossing a link is redacted by the same pass the recorder applies
-      before writing one to the ledger, so a path or an argument the local policy withholds is
-      withheld in both directions. The link's own authorization decides whether the record crosses
-      at all (v0.4.1 §9, §10).
+      In this build no recovery asset record crosses a remote link: no code path sends an
+      `ono.recovery-asset/1` over one, and `ono-remote` has no reference to it, so nothing redacts
+      one for a link. If one ever crosses, §44.5 applies as written — every path and secret the
+      local policy withholds stays withheld — and the link's own authorization decides whether it
+      crosses at all (v0.4.1 §9, §10).
   - id: deletion-is-real
     rule: "§44.6: deletion MUST remove Ono-owned copies according to provider guarantees."
     mechanism: >-

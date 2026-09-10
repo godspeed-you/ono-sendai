@@ -1,6 +1,6 @@
 # ADR-0809: A consistency class has an owner, and a storage provider does not own the application's
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0833
 - Date: 2026-09-09
 - Spec refs: v0.6 §11.3, §16.4, §18.4, §39.1, §39.2, §39.3, Appendix D.7
 - Decided by: agent (autonomous)

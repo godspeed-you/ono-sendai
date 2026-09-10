@@ -1,6 +1,6 @@
 # ADR-0821: One ledger per process, and the subtype is visible
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0833
 - Date: 2026-09-10
 - Spec refs: v0.6 §22.1, §22.4, §29.2; v0.5 §6.8, §10.2, §10.7, §17.2, §33
 - Decided by: agent (autonomous)

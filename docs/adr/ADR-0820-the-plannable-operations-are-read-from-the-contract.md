@@ -1,6 +1,6 @@
 # ADR-0820: The plannable operations are read from the contract
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0833
 - Date: 2026-09-10
 - Spec refs: v0.6 §4.3, §6.1, §6.2, §7.1, §8.2, §23.1, §47; v0.2 §36.5
 - Decided by: agent (autonomous)

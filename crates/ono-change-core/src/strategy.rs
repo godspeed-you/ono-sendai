@@ -88,7 +88,8 @@ impl Strategy {
     ///
     /// Every strategy answers in waves, including the sequential one, so the executor has a
     /// single shape to schedule and §28.6's "required verification must pass before the
-    /// remaining batches continue" is one rule rather than four.
+    /// remaining batches continue" is one rule rather than four. A bound of zero, which only a
+    /// record can carry, is read as one, so every schedule advances and ends.
     #[must_use]
     pub fn waves(self, count: usize) -> Vec<Wave> {
         let mut waves = Vec::new();
@@ -107,7 +108,7 @@ impl Strategy {
             }
             Strategy::Batch { size } => {
                 while start < count {
-                    let len = size.min(count - start);
+                    let len = size.max(1).min(count - start);
                     waves.push(Wave {
                         start,
                         len,
@@ -119,7 +120,7 @@ impl Strategy {
             }
             Strategy::Canary { canary, batch } => {
                 if count > 0 {
-                    let len = canary.min(count);
+                    let len = canary.max(1).min(count);
                     waves.push(Wave {
                         start: 0,
                         len,
@@ -129,7 +130,7 @@ impl Strategy {
                     start = len;
                 }
                 while start < count {
-                    let len = batch.min(count - start);
+                    let len = batch.max(1).min(count - start);
                     waves.push(Wave {
                         start,
                         len,
@@ -140,6 +141,7 @@ impl Strategy {
                 }
             }
             Strategy::Parallel { width } => {
+                let width = width.max(1);
                 while start < count {
                     let len = width.min(count - start);
                     waves.push(Wave {
@@ -202,6 +204,33 @@ mod tests {
     )]
 
     use super::*;
+
+    /// A bound of zero cannot be built through the constructors, but the variants' fields are
+    /// public and a record can carry one. A wave of zero targets never advances, so such a
+    /// schedule runs one target at a time — the most conservative — and never hangs.
+    #[test]
+    fn should_schedule_a_zero_bound_one_target_at_a_time_rather_than_forever() {
+        for strategy in [
+            Strategy::Batch { size: 0 },
+            Strategy::Canary {
+                canary: 0,
+                batch: 0,
+            },
+            Strategy::Parallel { width: 0 },
+        ] {
+            let waves = strategy.waves(3);
+            assert_eq!(
+                waves.iter().map(|wave| wave.len).sum::<usize>(),
+                3,
+                "{strategy:?}: every target is scheduled exactly once"
+            );
+            assert!(
+                waves
+                    .iter()
+                    .all(|wave| wave.len >= 1 && wave.concurrency >= 1)
+            );
+        }
+    }
 
     #[test]
     fn should_refuse_an_unbounded_parallel_strategy() {

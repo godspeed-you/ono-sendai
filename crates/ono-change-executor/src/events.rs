@@ -80,6 +80,8 @@ pub const PLAN_VERIFIED: &str = "ono.plan.verified";
 pub const PLAN_DEGRADED: &str = "ono.plan.degraded";
 /// The subtype a plan that reached §4.8's `FAILED` is written under.
 pub const PLAN_FAILED: &str = "ono.plan.failed";
+/// The subtype §22.2's semantic checkpoint of one target is written under, before mutation.
+pub const PLAN_CHECKPOINT: &str = "ono.plan.checkpoint";
 /// The subtype §22.1's `RecoveryPlanned` is written under.
 pub const RECOVERY_PLANNED: &str = "ono.recovery.planned";
 /// The subtype §22.1's `RecoveryStarted` is written under.
@@ -235,6 +237,21 @@ impl PlanLifecycle {
                 ("status", Value::string(result.status().as_str())),
                 ("expression", Value::string(result.expression())),
             ],
+        );
+    }
+
+    /// Records §22.2's semantic checkpoint of `target`, as observed immediately before mutation.
+    ///
+    /// The ledger's own checkpoint (`checkpoint_before_mutation`) serves reconstruction. This is
+    /// the event a reader finds on the plan's timeline beside its `verification.observed`, so
+    /// §22.3's comparison of pre-plan and post-plan state is a comparison of two events.
+    pub fn target_checkpointed(&mut self, target: &str, observed: &str, at: Timestamp) {
+        self.stage(
+            EventKind::ObjectObserved,
+            PLAN_CHECKPOINT,
+            at,
+            Some(target),
+            vec![("observed", Value::string(observed))],
         );
     }
 

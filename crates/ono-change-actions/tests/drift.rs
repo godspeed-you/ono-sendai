@@ -10,6 +10,7 @@ mod support;
 
 use std::sync::Arc;
 
+use ono_change_actions::registry::OperationRegistry;
 use ono_change_core::{
     ChangeProvider, DriftVerdict, Intent, PlanAction, PreconditionKind, VerificationClass,
 };
@@ -227,16 +228,30 @@ fn should_carry_the_provider_availability_on_the_fragment_as_well_as_the_action(
 #[test]
 fn should_default_every_frozen_fact_to_material() {
     let (action, _) = restart_action(FakeObserver::nginx());
-    let material = action
-        .preconditions()
+    let tolerated: Vec<&str> = OperationRegistry::embedded()
+        .expect("the embedded registry typechecks")
+        .get("ono.service.restart")
+        .expect("plannable")
+        .tolerances()
         .iter()
-        .filter(|p| p.is_material())
-        .count();
+        .map(|tolerance| tolerance.field())
+        .collect();
     assert!(
-        material >= 3,
-        "§7.4: tolerance is contract-declared, so the safe reading is the one you get by saying \
-         nothing"
+        !action.preconditions().is_empty(),
+        "precondition: a restart freezes facts"
     );
+    for precondition in action.preconditions() {
+        let declared_tolerant = tolerated.contains(&precondition.field())
+            && precondition.kind() == PreconditionKind::Field;
+        assert_eq!(
+            precondition.is_material(),
+            !declared_tolerant,
+            "§7.4: tolerance is contract-declared, so every fact the contract did not tolerate is \
+             material, and `{}` on `{}` reads otherwise",
+            precondition.field(),
+            precondition.subject()
+        );
+    }
 }
 
 #[test]
@@ -278,6 +293,10 @@ fn should_keep_verification_separate_from_the_preconditions() {
         )
         .expect("plannable");
     assert!(
+        !fragment.verification().is_empty(),
+        "§23.1: a restart carries its postcondition as a verification contract"
+    );
+    assert!(
         fragment
             .verification()
             .iter()
@@ -285,4 +304,24 @@ fn should_keep_verification_separate_from_the_preconditions() {
         "§23.2: a restart's postcondition is required, and §2.14 keeps it apart from execution \
          success"
     );
+    let preconditions: Vec<_> = fragment
+        .preconditions()
+        .iter()
+        .chain(
+            fragment
+                .actions()
+                .iter()
+                .flat_map(|action| action.preconditions()),
+        )
+        .collect();
+    for contract in fragment.verification() {
+        assert!(
+            preconditions
+                .iter()
+                .all(|precondition| precondition.field() != contract.expression()
+                    && !precondition.detail().contains(contract.expression())),
+            "§2.14: the postcondition `{}` is checked after the action, not frozen before it",
+            contract.expression()
+        );
+    }
 }

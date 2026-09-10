@@ -1,0 +1,117 @@
+# v0.6 §50 phase P2 — §12.3, §43, §44 and §63.18: what the change layer must never do.
+#
+# §12.3 forbids generating shell command strings from user-controlled values, and §2.17 makes it
+# a property of the type rather than of a review. §44 keeps what a recovery asset holds out of the
+# rendering, the record and the plan. §62's list is the rest.
+#
+# The hostile names carry shell syntax and no slash, so each one is a single, legal file name —
+# if anything interpolated it into a command line, the command would run in this directory.
+case: the change layer generates no command lines and leaks no contents
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  count_of() { ono -c "$1 | count | to json" 2>&1 | tr -d '[:space:]' | sed 's/^\[//; s/\]$//'; }
+
+  store="${XDG_DATA_HOME:-$HOME/.local/share}/ono/change"
+  mkdir -p "$HOME/etc"
+  cd "$HOME/etc"
+
+  echo '== §12.3 and §2.17: a value containing shell syntax is a value =='
+  printf 'safe\n' > plain
+  printf 'canary\n' > canary
+  n=0
+  for hostile in 'a;rm -rf canary;b' '$(touch PWNED)' '`touch PWNED`' 'x&&touch PWNED||y'; do
+    n=$((n + 1))
+    printf 'before\n' > "$HOME/etc/$hostile"
+    ono -c "plan copy file $HOME/etc/plain '$HOME/etc/$hostile' --overwrite | to json" > "/tmp/sec1-$n.json" 2>&1
+    ono -c "apply $(plan_id "/tmp/sec1-$n.json")" > "/tmp/sec1-$n.txt" 2>&1
+    # Single-quoted, so the name is only ever expanded as a variable, never evaluated by this case.
+    prove "sec1a-$n" "the name \`$hostile\` reached the provider as one argument and nothing else (§12.3, §2.17, §43.6)" \
+      '[ "$(cat "$HOME/etc/$hostile")" = safe ]'
+  done
+  prove sec1b "the canary survived, so no command line ran \`rm\` (§12.3)" "[ \"\$(cat $HOME/etc/canary)\" = 'canary' ]"
+  prove sec1c "and nothing ran \`touch\`: no PWNED file exists anywhere the shell could reach (§12.3)" \
+    "[ -z \"\$(find $HOME /tmp -name PWNED 2>/dev/null)\" ]"
+
+  echo '== §2.17: no execution method carries a command line =='
+  ono -c "plan copy file $HOME/etc/plain '$HOME/etc/a;rm -rf canary;b' --overwrite | select actions | to json" > /tmp/sec3.json 2>&1
+  prove sec2a "every action executes as a provider action or a recovery operation (§6.1, §12.2)" \
+    "[ \"\$(grep -o '\"execution\":{\"method\":\"[a-z-]*\"' /tmp/sec3.json | sort -u | tr '\n' ' ')\" = '\"execution\":{\"method\":\"provider-action\" \"execution\":{\"method\":\"recovery-operation\" ' ]"
+  prove sec2b "with no program and no argument string — the arguments are named values (§2.17)" \
+    "! grep -q '\"program\":\"' /tmp/sec3.json && ! grep -q '\"argv\":\[\"' /tmp/sec3.json && grep -q '\"arguments\":\[{\"name\":' /tmp/sec3.json"
+  prove sec2c "and the hostile name is one of those values, whole (§12.3)" \
+    "grep -qF '\"value\":\"$HOME/etc/a;rm -rf canary;b\"' /tmp/sec3.json"
+
+  echo '== §6.2: an arbitrary external command is not plannable by default =='
+  plans=$(count_of 'get plan')
+  ono -c "plan --opaque sh -c 'true'" > /tmp/sec4.txt 2>&1
+  prove sec3a "§6.3's escape is refused unless the host permits it (§6.2, §53)" \
+    'grep -q "change.opaque_action_forbidden" /tmp/sec4.txt'
+  prove sec3b "the refusal names the setting that would permit it, and sealed nothing (§53)" \
+    "grep -q 'change.allow_opaque_actions' /tmp/sec4.txt && [ \"\$(count_of 'get plan')\" = '$plans' ]"
+
+  echo '== §44.2 and §44.3: a recovery asset does not leak what it holds =='
+  printf 'api_key = sk-live-supersecret\n' > "$HOME/etc/creds.conf"
+  printf 'api_key = sk-live-rotated\n' > "$HOME/etc/creds.new"
+  ono -c "plan copy file $HOME/etc/creds.new $HOME/etc/creds.conf --overwrite | to json" > /tmp/sec5.json 2>&1
+  creds=$(plan_id /tmp/sec5.json)
+  ono -c "apply $creds" > /dev/null 2>&1
+  asset=$(ono -c 'get recovery | select id scope | to json' 2>/dev/null | grep -o "{\"id\":\"[0-9a-f]*\",\"scope\":{[^}]*\"covers\":\[\"$HOME/etc/creds.conf\"\]" | sed -n 's/^{"id":"\([0-9a-f]*\)".*/\1/p' | head -1)
+  prove sec4pre "the asset holding the old secret exists, so what follows is about a real asset" \
+    "[ -n '$asset' ] && find '$store/recovery' -type f -exec grep -l 'supersecret' {} + | grep -q ."
+  prove sec4a "the secret is not in the rendered assets (§44.2)" "! ono -c 'get recovery' 2>&1 | grep -q 'supersecret'"
+  prove sec4b "nor in the machine-readable ones (§44.1)" "! ono -c 'get recovery | to json' 2>&1 | grep -q 'supersecret'"
+  prove sec4c "nor in the inspector (§44.2)" "! ono -c 'inspect recovery $asset' 2>&1 | grep -q 'supersecret'"
+  prove sec4d "nor in the plan, rendered or recorded (§36.3)" \
+    "! ono -c 'get plan $creds' 2>&1 | grep -q 'supersecret' && ! ono -c 'get plan $creds | to json' 2>&1 | grep -q 'supersecret'"
+
+  echo '== §44.3: the store is private =='
+  prove sec5a "the change directory and every directory under it are 0700 (§44.3, §15.3)" \
+    "[ \"\$(stat -c %a '$store')\" = '700' ] && [ -z \"\$(find '$store' -type d ! -perm 700)\" ]"
+  prove sec5b "and every file under it is 0600 (§44.3)" \
+    "[ -n \"\$(find '$store' -type f)\" ] && [ -z \"\$(find '$store' -type f ! -perm 600)\" ]"
+
+  echo '== §1.2 and §62: the anti-patterns =='
+  prove sec6a "a plan does not call itself a dry run (§1.2, §62.1)" \
+    "ono -c 'help plan' 2>&1 | grep -q '^SYNOPSIS' && ! ono -c 'help plan' 2>&1 | grep -qi 'dry.run'"
+  prove sec6b "and \`apply\` has no --dry-run, because that is a different command (§1.2)" \
+    "ono -c 'help apply' 2>&1 | grep -q '^SYNOPSIS' && ! ono -c 'help apply' 2>&1 | grep -q -- '--dry-run'"
+  prove sec6c "nothing offers a universal rollback verb (§62.2, §14.4)" \
+    "ono -c 'get command | to json' 2>&1 | grep -q '\"spelling\":\"recover\"' && ! ono -c 'get command | to json' 2>&1 | grep -q '\"spelling\":\"rollback\"'"
+
+  echo 'change-security: done'
+exit: 0
+stdout-contains: PROVED sec1a-1
+stdout-contains: PROVED sec1a-2
+stdout-contains: PROVED sec1a-3
+stdout-contains: PROVED sec1a-4
+stdout-contains: PROVED sec1b
+stdout-contains: PROVED sec1c
+stdout-contains: PROVED sec2a
+stdout-contains: PROVED sec2b
+stdout-contains: PROVED sec2c
+stdout-contains: PROVED sec3a
+stdout-contains: PROVED sec3b
+stdout-contains: PROVED sec4pre
+stdout-contains: PROVED sec4a
+stdout-contains: PROVED sec4b
+stdout-contains: PROVED sec4c
+stdout-contains: PROVED sec4d
+stdout-contains: PROVED sec5a
+stdout-contains: PROVED sec5b
+stdout-contains: PROVED sec6a
+stdout-contains: PROVED sec6b
+stdout-contains: PROVED sec6c
+stdout-contains: change-security: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

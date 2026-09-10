@@ -26,7 +26,7 @@ use std::sync::Arc;
 use ono_core::ErrorCode;
 use ono_value::{ErrorValue, Value};
 
-use crate::parse::FS_TREE_ID;
+use crate::parse::{FS_TREE_ID, FilesystemInfo};
 
 /// The kernel mount table Appendix B.1 resolves against.
 pub const MOUNTINFO: &str = "/proc/self/mountinfo";
@@ -42,6 +42,7 @@ pub struct BtrfsMount {
     subvolume_id: Option<u64>,
     subvolume: Option<Arc<str>>,
     read_only: bool,
+    filesystem_uuid: Option<Arc<str>>,
 }
 
 impl BtrfsMount {
@@ -92,6 +93,18 @@ impl BtrfsMount {
     #[must_use]
     pub const fn is_read_only(&self) -> bool {
         self.read_only
+    }
+
+    /// The UUID of the filesystem this mount shows, once [`BtrfsMounts::identified_by`] tied it to
+    /// one (§56.2).
+    ///
+    /// `mountinfo(5)` carries a device and a superblock number, never the UUID an asset's scope
+    /// names, and subvolume ids start at 256 on every Btrfs filesystem. So a mount that has not
+    /// been identified is not matched against any scope at all: `None` is "unknown", and §56.3
+    /// makes unknown a refusal.
+    #[must_use]
+    pub fn filesystem_uuid(&self) -> Option<&str> {
+        self.filesystem_uuid.as_deref()
     }
 
     /// Whether this mount shows the top level of the filesystem rather than a named subvolume.
@@ -187,6 +200,85 @@ impl BtrfsMounts {
     #[must_use]
     pub fn mounts(&self) -> &[BtrfsMount] {
         &self.mounts
+    }
+
+    /// Ties each mount to the filesystem `btrfs filesystem show` lists its device under (§56.2).
+    ///
+    /// A mount whose source is one of a filesystem's devices gets that filesystem's UUID, and so
+    /// does every other mount of the same superblock (`major:minor`), which is how a mount whose
+    /// source the listing spells differently is still tied to the right filesystem. A mount that
+    /// matches nothing stays unidentified, and nothing is matched against it.
+    #[must_use]
+    pub fn identified_by(mut self, filesystems: &[FilesystemInfo]) -> Self {
+        for mount in &mut self.mounts {
+            if let Some(filesystem) = filesystems.iter().find(|filesystem| {
+                filesystem
+                    .devices()
+                    .iter()
+                    .any(|device| device.as_ref() == mount.source())
+            }) {
+                mount.filesystem_uuid = Some(Arc::from(filesystem.uuid()));
+            }
+        }
+        let known: Vec<(Arc<str>, Arc<str>)> = self
+            .mounts
+            .iter()
+            .filter_map(|mount| {
+                mount
+                    .filesystem_uuid
+                    .as_ref()
+                    .map(|uuid| (Arc::clone(&mount.device), Arc::clone(uuid)))
+            })
+            .collect();
+        for mount in &mut self.mounts {
+            if mount.filesystem_uuid.is_none()
+                && let Some((_, uuid)) = known.iter().find(|(device, _)| *device == mount.device)
+            {
+                mount.filesystem_uuid = Some(Arc::clone(uuid));
+            }
+        }
+        self
+    }
+
+    /// Whether every mount carries the UUID of its filesystem.
+    #[must_use]
+    pub fn is_identified(&self) -> bool {
+        self.mounts
+            .iter()
+            .all(|mount| mount.filesystem_uuid.is_some())
+    }
+
+    /// The mounts of the filesystem with this UUID, in the order the kernel listed them (§56.2).
+    #[must_use]
+    pub fn of_filesystem(&self, uuid: &str) -> Vec<&BtrfsMount> {
+        self.mounts
+            .iter()
+            .filter(|mount| mount.filesystem_uuid() == Some(uuid))
+            .collect()
+    }
+
+    /// The mounts of the filesystem `mount` shows, as a table of their own (§14.3).
+    ///
+    /// Two mounts show one filesystem when they share a superblock, or when both were identified
+    /// as the same UUID. A subvolume layout is one filesystem's, and a mount of another
+    /// filesystem that happens to show a subvolume with the same id or the same tree path is a
+    /// different subvolume.
+    #[must_use]
+    pub fn same_filesystem_as(&self, mount: &BtrfsMount) -> Self {
+        Self {
+            mounts: self
+                .mounts
+                .iter()
+                .filter(|other| {
+                    other.device() == mount.device()
+                        || other
+                            .filesystem_uuid()
+                            .zip(mount.filesystem_uuid())
+                            .is_some_and(|(left, right)| left == right)
+                })
+                .cloned()
+                .collect(),
+        }
     }
 
     /// Whether any Btrfs mount is visible at all.
@@ -307,6 +399,7 @@ fn parse_mount_line(line: &str) -> Option<BtrfsMount> {
         subvolume_id,
         subvolume,
         read_only: has_flag(mount_options, "ro") || has_flag(options, "ro"),
+        filesystem_uuid: None,
     })
 }
 

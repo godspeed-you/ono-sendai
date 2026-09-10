@@ -20,7 +20,7 @@
 
 use ono_value::RecordValue;
 
-use crate::{display_width, fit, heading, text};
+use crate::{display_width, fit, heading, items, strings, text};
 
 /// §25.2's second closing sentence, which every recovery verification carries.
 ///
@@ -80,9 +80,27 @@ pub fn verification_view(plan: &RecordValue, results: &[RecordValue], width: usi
 /// the identity changed, which is a success in the runtime domain and would be a failure in the
 /// persistent one. §25.3 forbids collapsing all of that into one word, and the `result` block
 /// names the scope it verified and the scope it did not.
+///
+/// `recovery` is the plan the results verify: the `ono.recovery-plan/1` that `recover` produced,
+/// or the recovery's own `ono.change-plan/1` that `apply` and `verify` hold. Either names the
+/// objects the recovery restored — `restores` on the one, `targets` on the other — and §25.3's
+/// verified scope is all of them: a restored object no result speaks about is listed as `NOT
+/// VERIFIED`, and one of those is enough to deny the persistent claim. A claim built only from the
+/// results that happened to come back would verify whatever was checked and call that the scope.
 #[must_use]
-pub fn recovery_verification(results: &[RecordValue], width: usize) -> Vec<String> {
-    let mut lines = vec![fit("RECOVERY VERIFICATION", width)];
+pub fn recovery_verification(
+    recovery: &RecordValue,
+    results: &[RecordValue],
+    width: usize,
+) -> Vec<String> {
+    let mut lines = vec![fit(
+        &format!(
+            "RECOVERY VERIFICATION / {}",
+            crate::plan::short(recovery, "id")
+        ),
+        width,
+    )];
+    let restored = restored_objects(recovery);
     let mut persistent_states: Vec<&'static str> = Vec::new();
     let mut unrecoverable = false;
     for (domain, title) in [
@@ -95,7 +113,20 @@ pub fn recovery_verification(results: &[RecordValue], width: usize) -> Vec<Strin
             .iter()
             .filter(|result| text(*result, "equivalence_domain").as_deref() == Some(domain))
             .collect();
-        if of_domain.is_empty() {
+        let unchecked: Vec<&String> = if domain == "persistent-state" {
+            restored
+                .iter()
+                .filter(|object| {
+                    !of_domain.iter().any(|result| {
+                        text(*result, "subject")
+                            .is_some_and(|subject| names_object(&subject, object))
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if of_domain.is_empty() && unchecked.is_empty() {
             lines.push(fit("  nothing was observed in this domain", width));
         }
         for result in of_domain {
@@ -105,6 +136,10 @@ pub fn recovery_verification(results: &[RecordValue], width: usize) -> Vec<Strin
             }
             unrecoverable |= word == "NOT RECOVERABLE";
             lines.push(fit(&row(&subject_of(result), word), width));
+        }
+        for object in unchecked {
+            persistent_states.push("NOT VERIFIED");
+            lines.push(fit(&row(object, "NOT VERIFIED"), width));
         }
     }
     heading(&mut lines, "result");
@@ -121,6 +156,17 @@ pub fn recovery_verification(results: &[RecordValue], width: usize) -> Vec<Strin
     }
     lines.push(fit(&format!("  {NO_FULL_EQUIVALENCE}"), width));
     lines
+}
+
+/// The objects the recovery restored: `restores` on a recovery plan, `targets` on a change plan.
+fn restored_objects(recovery: &RecordValue) -> Vec<String> {
+    if recovery.get("restores").is_some() {
+        return strings(recovery, "restores");
+    }
+    items(recovery, "targets")
+        .iter()
+        .filter_map(|target| text(target, "label").or_else(|| text(target, "identity")))
+        .collect()
 }
 
 /// `nginx.service == running` — what the check was about, as §23.4's example writes it.
@@ -157,7 +203,7 @@ const fn status_word(status: &str) -> &'static str {
 /// `DEGRADED`; an observation changes nothing. An unanswerable *required* check is `DEGRADED`
 /// rather than `VERIFIED`, because §23.5 forbids reading it as a pass and §2.4 forbids promoting
 /// it to one.
-fn verdict(results: &[RecordValue]) -> &'static str {
+pub(crate) fn verdict(results: &[RecordValue]) -> &'static str {
     let mut degraded = false;
     for result in results {
         let class = text(result, "class").unwrap_or_else(|| "observational".to_owned());
@@ -192,4 +238,13 @@ fn equivalence_word(result: &RecordValue) -> &'static str {
         Some("skipped") => "NOT RECOVERABLE",
         _ => "UNKNOWN",
     }
+}
+
+/// Whether a check's `subject` is about `object`: the object itself, or `<target> <object>` as a
+/// contract names it for the provider that answers (`file /etc/app.conf`).
+fn names_object(subject: &str, object: &str) -> bool {
+    subject == object
+        || subject
+            .split_once(' ')
+            .is_some_and(|(_, named)| named == object)
 }

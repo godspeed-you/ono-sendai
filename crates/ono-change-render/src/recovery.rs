@@ -18,7 +18,10 @@
 use ono_value::RecordValue;
 
 use crate::symbols::{Charset, Symbol};
-use crate::{Item, byte_size, counted, fit, flag, heading, items, list_len, strings, text};
+use crate::{
+    Fields, Item, byte_size, counted, fit, flag, heading, items, join_fitted, list_len, strings,
+    text,
+};
 
 /// The line that closes a recovery view, for the reason `PLAN NOT EXECUTED` closes a plan.
 ///
@@ -75,11 +78,10 @@ pub fn recovery_view(recovery: &RecordValue, width: usize, charset: Charset) -> 
         lines.push(fit("  no recovery asset was named", width));
     }
     for asset in &assets {
-        // §36.4: the reference an operator types back is the short one, and it is the same short
-        // one `get recovery` printed.
-        let body = asset.rsplit('/').next().unwrap_or(asset);
-        let short: String = body.chars().take(crate::SHORT).collect();
-        lines.push(fit(&format!("  recovery asset recovery/{short}"), width));
+        lines.push(fit(
+            &format!("  recovery asset recovery/{}", short_asset(asset)),
+            width,
+        ));
     }
     lines.push(fit(
         &format!(
@@ -95,6 +97,12 @@ pub fn recovery_view(recovery: &RecordValue, width: usize, charset: Charset) -> 
             lines.push(fit(&format!("  {value}"), width));
         }
     }
+
+    // Appendix I.5: the method chosen is read beside the ones it was chosen over, and what each
+    // of those would have discarded. Recovery is goal-oriented only if the operator can see that
+    // the convenient rollback would have taken the later changes with it.
+    heading(&mut lines, "methods not chosen");
+    lines.extend(rejected_lines(recovery, width, charset));
 
     let newer = items(recovery, "newer_state");
     let preserved: Vec<&Item> = newer
@@ -131,6 +139,28 @@ pub fn recovery_view(recovery: &RecordValue, width: usize, charset: Charset) -> 
                 width,
             ));
         }
+    }
+
+    // §24.3's list, in its order: services, reboot, assets consumed, then what nothing restores.
+    heading(&mut lines, "services");
+    lines.extend(service_lines(recovery, width, charset));
+
+    heading(&mut lines, "reboot");
+    lines.push(if flag(recovery, "requires_reboot") {
+        "  yes".to_owned()
+    } else {
+        "  no".to_owned()
+    });
+
+    heading(&mut lines, "assets consumed");
+    if assets.is_empty() {
+        lines.push(fit("  no recovery asset was named", width));
+    }
+    for asset in &assets {
+        lines.push(fit(&format!("  recovery/{}", short_asset(asset)), width));
+    }
+    if let Some(state) = text(recovery, "target_state") {
+        lines.push(fit(&format!("  restores from {state}"), width));
     }
 
     heading(&mut lines, "not recoverable");
@@ -333,4 +363,95 @@ fn requirements(recovery: &RecordValue) -> Vec<String> {
             .push("acceptance that the whole dataset returns to the captured point".to_owned());
     }
     requirements
+}
+
+/// The reference an operator types back for an asset (§36.4) — the same short one `get
+/// recovery` printed.
+pub(crate) fn short_asset(id: &str) -> String {
+    let body = id.rsplit('/').next().unwrap_or(id);
+    body.chars().take(crate::SHORT).collect()
+}
+
+/// Appendix I.5's alternatives: each method not chosen, why, and what it would have discarded.
+///
+/// Three answers are kept apart because §10.5 keeps them apart: a record that does not carry the
+/// alternatives, a planner that was offered nothing else, and a method whose losses nobody
+/// analysed.
+fn rejected_lines(recovery: &RecordValue, width: usize, charset: Charset) -> Vec<String> {
+    let unknown = Symbol::Unknown.glyph(charset);
+    match recovery.get("rejected_methods") {
+        Some(ono_value::Value::List(list)) if list.is_empty() => {
+            return vec![fit("  no other method was offered", width)];
+        }
+        Some(ono_value::Value::List(_)) => {}
+        _ => {
+            return vec![fit(
+                &format!("  {unknown} the methods not chosen were not recorded"),
+                width,
+            )];
+        }
+    }
+    let mut lines = Vec::new();
+    for rejected in items(recovery, "rejected_methods") {
+        let method = text(&rejected, "method").unwrap_or_else(|| "unknown".to_owned());
+        let reason = text(&rejected, "reason").unwrap_or_else(|| "unknown".to_owned());
+        let mut head = format!("  {method}  {reason}");
+        if let Some(detail) = text(&rejected, "detail") {
+            head.push_str(&format!(" - {detail}"));
+        }
+        lines.push(fit(&head, width));
+        let unmet = strings(&rejected, "unmet");
+        if !unmet.is_empty() {
+            lines.push(fit(
+                &format!("    cannot restore {}", join_fitted(&unmet, width)),
+                width,
+            ));
+        }
+        match rejected.field("would_discard") {
+            Some(ono_value::Value::List(list)) if list.is_empty() => {
+                lines.push(fit("    would discard no newer state", width));
+            }
+            Some(ono_value::Value::List(_)) => {
+                let discarded = strings(&rejected, "would_discard");
+                let mark = Symbol::Risk.glyph(charset);
+                let budget = width.saturating_sub(20);
+                lines.push(fit(
+                    &format!(
+                        "    {mark} would discard {}",
+                        join_fitted(&discarded, budget)
+                    ),
+                    width,
+                ));
+            }
+            _ => lines.push(fit(
+                &format!("    {unknown} what it would discard was not analysed"),
+                width,
+            )),
+        }
+    }
+    lines
+}
+
+/// §24.3's services stopped and restarted, or §10.5's admission that nobody established them.
+fn service_lines(recovery: &RecordValue, width: usize, charset: Charset) -> Vec<String> {
+    match recovery.get("services_affected") {
+        Some(ono_value::Value::List(list)) if list.is_empty() => {
+            vec![fit("  no service is stopped or restarted", width)]
+        }
+        Some(ono_value::Value::List(_)) => items(recovery, "services_affected")
+            .iter()
+            .map(|service| {
+                let action = text(service, "action").unwrap_or_else(|| "affect".to_owned());
+                let name = text(service, "service").unwrap_or_else(|| "unnamed".to_owned());
+                fit(&format!("  {action} {name}"), width)
+            })
+            .collect(),
+        _ => vec![fit(
+            &format!(
+                "  {} which services stop or restart was not established",
+                Symbol::Unknown.glyph(charset)
+            ),
+            width,
+        )],
+    }
 }

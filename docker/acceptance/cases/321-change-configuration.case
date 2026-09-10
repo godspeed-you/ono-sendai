@@ -1,0 +1,89 @@
+# v0.6 §50 phase P2 — §53: the reference configuration, and its closing line.
+#
+# §53 prints seventeen keys with their defaults and ends with one sentence that outranks the
+# rest: configuration MUST NOT silently weaken explicit plan requirements. A configuration the
+# shell obeys and cannot show is not inspectable, and one that could lower a plan's own
+# requirement would make every `--protection require` a suggestion.
+case: the seventeen settings of §53 are typed, inspectable and cannot weaken a plan
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  setting() { ono -c "get config $1 | to json" 2>/dev/null; }
+
+  echo '== §53: every key is a setting the shell can show =='
+  ono -c 'get config | to json' > /tmp/c1.txt 2>&1
+  for key in change.default_protection change.default_strategy change.high_risk_requires_ack \
+             change.critical_risk_requires_ack change.allow_opaque_actions \
+             change.bulk.warn_targets change.bulk.high_risk_targets \
+             recovery.retention recovery.max_auto_snapshot_count recovery.min_filesystem_free \
+             recovery.prefer_read_only_snapshots recovery.zfs.enabled \
+             recovery.zfs.prefer_selective_restore recovery.zfs.allow_destructive_rollback \
+             recovery.btrfs.enabled recovery.btrfs.prefer_read_only_snapshots \
+             recovery.btrfs.root_recovery; do
+    prove "c1-$key" "\`$key\` is inspectable (§53)" "grep -q '\"$key\"' /tmp/c1.txt"
+  done
+
+  echo '== §53: the defaults are the ones §53 prints =='
+  prove c2a "protection defaults to \`prefer\` (§17.1)" \
+    "grep -q '\"change.default_protection\",\"value\":\"prefer\"' /tmp/c1.txt"
+  prove c2b "the strategy defaults to \`sequential\` (§28.4)" \
+    "grep -q '\"change.default_strategy\",\"value\":\"sequential\"' /tmp/c1.txt"
+  prove c2c "opaque actions are off (§6.2)" \
+    "grep -q '\"change.allow_opaque_actions\",\"value\":false' /tmp/c1.txt"
+  prove c2d "destructive ZFS rollback is off (§13.6)" \
+    "grep -q '\"recovery.zfs.allow_destructive_rollback\",\"value\":false' /tmp/c1.txt"
+  prove c2e "the bulk high-risk threshold is fifty (§28.3)" \
+    "grep -q '\"change.bulk.high_risk_targets\",\"value\":50' /tmp/c1.txt"
+  prove c2f "the free-space floor is ten percent (Appendix D.3)" \
+    "grep -q '\"recovery.min_filesystem_free\",\"value\":\"10%\"' /tmp/c1.txt"
+
+  echo '== §53: each one is typed, so a wrong value is a refusal rather than a silent default =='
+  prove c3a "the booleans are declared bool" \
+    "grep -q '\"change.allow_opaque_actions\",\"value\":false,\"type\":\"bool\"' /tmp/c1.txt"
+  prove c3b "the counts are declared int" \
+    "grep -q '\"change.bulk.warn_targets\",\"value\":10,\"type\":\"int\"' /tmp/c1.txt"
+  prove c3c "the retention is declared duration, not a number of seconds in a name" \
+    "grep -q '\"recovery.retention\".*\"type\":\"duration\"' /tmp/c1.txt"
+
+  echo '== §53: a configured value reaches a plan =='
+  mkdir -p "$HOME/.config/ono" "$HOME/etc"
+  printf 'set config change.default_protection require\n' > "$HOME/.config/ono/config.ono"
+  printf 'a\n' > "$HOME/etc/a"; printf 'b\n' > "$HOME/etc/b"
+  ono -c "plan copy file $HOME/etc/a $HOME/etc/b --overwrite | to json" > /tmp/c4.txt 2>&1
+  prove c4a "the configured mode is the one the plan runs under (§17.1)" \
+    'grep -q "\"protection_mode\":\"require\"" /tmp/c4.txt'
+  prove c4b "and \`get config\` says which layer set it (§53, v0.2 §29)" \
+    "ono -c 'get config change.default_protection | to json' 2>&1 | grep -q '\"layer\":\"user\"'"
+
+  echo '== §53: configuration MUST NOT silently weaken an explicit plan requirement =='
+  printf 'set config change.default_protection off\n' > "$HOME/.config/ono/config.ono"
+  ono -c "plan --protection require copy file $HOME/etc/a $HOME/etc/b --overwrite | to json" > /tmp/c5.txt 2>&1
+  prove c5a "a plan that asked for \`require\` keeps it under an \`off\` configuration (§53)" \
+    'grep -q "\"protection_mode\":\"require\"" /tmp/c5.txt'
+
+  echo 'change-configuration: done'
+exit: 0
+stdout-contains: PROVED c2a
+stdout-contains: PROVED c2b
+stdout-contains: PROVED c2c
+stdout-contains: PROVED c2d
+stdout-contains: PROVED c2e
+stdout-contains: PROVED c2f
+stdout-contains: PROVED c3a
+stdout-contains: PROVED c3b
+stdout-contains: PROVED c3c
+stdout-contains: PROVED c4a
+stdout-contains: PROVED c4b
+stdout-contains: PROVED c5a
+stdout-contains: change-configuration: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

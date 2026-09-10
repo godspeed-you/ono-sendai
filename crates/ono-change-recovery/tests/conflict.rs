@@ -12,7 +12,7 @@ mod support;
 use ono_change_core::{DirectoryRestorePolicy, NewerStateClass, NewerStateImpact, RestoreMethod};
 use ono_change_recovery::conflict::{ConflictRequest, ObjectObservation, ObservedState, analyse};
 use ono_value::ByteSize;
-use support::at;
+use support::{at, class_of};
 
 /// Appendix C.4's own example: the plan wrote at 14:03, the user edited again at 15:12, and the
 /// recovery target is the 14:02 snapshot.
@@ -21,14 +21,6 @@ fn appendix_c4() -> Vec<ObjectObservation> {
         "/etc/nginx/nginx.conf",
         ObservedState::changed(at(15, 12), "sha256:user-edit"),
     )]
-}
-
-fn class_of(impact: &NewerStateImpact, object: &str) -> Option<NewerStateClass> {
-    impact
-        .items()
-        .iter()
-        .find(|item| item.object() == object)
-        .map(ono_change_core::NewerStateItem::class)
 }
 
 fn detail_of(impact: &NewerStateImpact, object: &str) -> String {

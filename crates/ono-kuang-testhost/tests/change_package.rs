@@ -20,7 +20,7 @@ recovery_providers:
   - id: dev.example.pg.recovery-provider.database
     summary: Point-in-time protection for the databases this package fronts.
     domain_kinds: [postgres-database]
-    asset_type: database-dump
+    asset_type: database-checkpoint
     consistency: application-consistent
     restore_methods: [provider-native-restore]
     shares_failure_domain: false
@@ -294,6 +294,75 @@ fn should_refuse_a_consistency_class_v0_6_does_not_define() {
             .iter()
             .any(|problem| problem.contains("perfectly-consistent")),
         "§11.3 is a closed list, got {:?}",
+        report.problems
+    );
+}
+
+#[test]
+fn should_refuse_an_asset_type_the_asset_registry_does_not_define() {
+    // §11.1 makes the asset the thing a person inspects, so the type it is created as is one the
+    // registry defines; the shell refuses any other at load, and so does the conformance host.
+    let document = RECOVERY.replace(
+        "asset_type: database-checkpoint",
+        "asset_type: database-dump",
+    );
+    let scratch = package(Some(&document), CAPABILITIES);
+    let report = check_change_package(scratch.path());
+    assert!(
+        report
+            .problems
+            .iter()
+            .any(|problem| problem.contains("database-dump")),
+        "the asset types are a closed list, got {:?}",
+        report.problems
+    );
+}
+
+#[test]
+fn should_refuse_a_vm_snapshot_provider_that_does_not_state_its_memory_inclusion() {
+    // v0.6 §16.2: a VM provider MUST distinguish memory-inclusive from disk-only snapshots.
+    let document = RECOVERY.replace("asset_type: database-checkpoint", "asset_type: vm-snapshot");
+    let scratch = package(Some(&document), CAPABILITIES);
+    let report = check_change_package(scratch.path());
+    assert!(
+        report
+            .problems
+            .iter()
+            .any(|problem| problem.contains("§16.2") && problem.contains("memory_inclusion")),
+        "§16.2: the refusal names the rule and the field that answers it, got {:?}",
+        report.problems
+    );
+}
+
+#[test]
+fn should_accept_a_vm_snapshot_provider_that_states_its_memory_inclusion() {
+    let document = RECOVERY.replace(
+        "asset_type: database-checkpoint",
+        "asset_type: vm-snapshot\n    memory_inclusion: disk-only",
+    );
+    let scratch = package(Some(&document), CAPABILITIES);
+    let report = check_change_package(scratch.path());
+    assert!(
+        report.problems.is_empty(),
+        "§16.2: a VM provider that distinguishes its snapshots passes, got {:?}",
+        report.problems
+    );
+}
+
+#[test]
+fn should_refuse_a_memory_inclusion_stated_for_an_asset_that_is_not_a_vm_snapshot() {
+    let document = RECOVERY.replace(
+        "asset_type: database-checkpoint",
+        "asset_type: database-checkpoint\n    memory_inclusion: memory-inclusive",
+    );
+    let scratch = package(Some(&document), CAPABILITIES);
+    let report = check_change_package(scratch.path());
+    assert!(
+        report
+            .problems
+            .iter()
+            .any(|problem| problem.contains("§16.2") && problem.contains("database-checkpoint")),
+        "a database checkpoint has no guest memory to include, got {:?}",
         report.problems
     );
 }

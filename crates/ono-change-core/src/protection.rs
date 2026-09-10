@@ -269,6 +269,7 @@ pub struct DomainCoverage {
     consistency: Option<ConsistencyClass>,
     transaction_scope: Option<Arc<str>>,
     exclusions: Vec<CoverageExclusion>,
+    not_protected_by: Vec<Arc<str>>,
     note: Arc<str>,
     policy_irrelevant: bool,
 }
@@ -290,9 +291,23 @@ impl DomainCoverage {
             consistency: None,
             transaction_scope: None,
             exclusions: Vec::new(),
+            not_protected_by: Vec::new(),
             note: note.into(),
             policy_irrelevant: false,
         }
+    }
+
+    /// Names an object that encloses this domain and whose snapshot does not reach it (§13.4).
+    #[must_use]
+    pub fn outside_of(mut self, object: impl Into<Arc<str>>) -> Self {
+        self.not_protected_by.push(object.into());
+        self
+    }
+
+    /// §13.4's `NOT PROTECTED BY`: the enclosing objects whose snapshot would not cover this domain.
+    #[must_use]
+    pub fn not_protected_by(&self) -> &[Arc<str>] {
+        &self.not_protected_by
     }
 
     /// Names a validated asset that covers this domain (§11.4).
@@ -455,6 +470,15 @@ impl ProtectionSummary {
             .collect()
     }
 
+    /// The exclusions that belong to the plan rather than to one row (§10.3).
+    ///
+    /// [`ProtectionSummary::exclusions`] is the one to render. This is the one to carry when a
+    /// summary is composed into a wider one (§29.2), whose rows bring their own exclusions along.
+    #[must_use]
+    pub fn plan_exclusions(&self) -> &[CoverageExclusion] {
+        &self.exclusions
+    }
+
     /// The rows a plan must cover before it may be called protected.
     pub fn required_rows(&self) -> impl Iterator<Item = &DomainCoverage> {
         self.rows.iter().filter(|row| row.is_required())
@@ -489,6 +513,14 @@ impl ProtectionSummary {
         if satisfied < required.len() {
             return ProtectionLevel::PartiallyProtected;
         }
+        // Appendix A.7: an unknown domain caps the answer, even when everything else lines up —
+        // including a provider that claims a transaction over it.
+        if required
+            .iter()
+            .any(|row| row.domain() == EffectDomain::Unknown)
+        {
+            return ProtectionLevel::PartiallyProtected;
+        }
         // Everything required is satisfied. §27.1 lets one provider claim atomicity for its own
         // scope, and §27.2 forbids the word the moment a second boundary is involved.
         let scopes: Vec<&str> = required
@@ -503,19 +535,18 @@ impl ProtectionSummary {
         if transactional {
             return ProtectionLevel::Transactional;
         }
-        // Appendix A.7: an unknown domain caps the answer, even when everything else lines up.
-        if required
-            .iter()
-            .any(|row| row.domain() == EffectDomain::Unknown)
-        {
-            return ProtectionLevel::PartiallyProtected;
-        }
         let mut persistent = required
             .iter()
             .filter(|row| row.domain().is_persistent())
             .peekable();
         if persistent.peek().is_some() {
-            return if persistent.all(|row| row.protection.is_state_image()) {
+            // §10.2 and §11.4: a state image covers a domain only through a validated asset, or a
+            // provider's own transaction over it (§27.1). A row that says protected and names
+            // neither is a claim with nothing behind it.
+            return if persistent.all(|row| {
+                row.protection.is_state_image()
+                    && (!row.assets.is_empty() || row.transaction_scope.is_some())
+            }) {
                 ProtectionLevel::Protected
             } else {
                 ProtectionLevel::PartiallyProtected
@@ -576,7 +607,19 @@ mod tests {
         objective: RecoveryObjective,
         protection: DomainProtection,
     ) -> DomainCoverage {
-        DomainCoverage::new(domain, objective, protection, "test row")
+        let row = DomainCoverage::new(domain, objective, protection, "test row");
+        // §11.4: a row that says protected names the validated asset that covers it; the fixture
+        // is a matrix the coverage algorithm could have produced.
+        if protection == DomainProtection::Protected {
+            row.by_asset(crate::RecoveryAssetId::of(
+                "ono.recovery.zfs",
+                None,
+                "rpool/etc",
+                "0",
+            ))
+        } else {
+            row
+        }
     }
 
     #[test]

@@ -1,0 +1,3 @@
+$ btrfs subvolume create /mnt/top/@snapshots
+Create subvolume '/mnt/top/@snapshots'
+[exit 0]

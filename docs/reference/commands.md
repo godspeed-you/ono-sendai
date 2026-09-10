@@ -4,6 +4,453 @@
 
 Every command Ono defines, grouped by family. `stability` says whether the contract is a promise; `phase` says which phase of spec §37 delivers it.
 
+## change
+
+### `plan`
+
+Describe a proposed change as an inspectable object, and change nothing.
+
+| | |
+|---|---|
+| id | `ono.change.plan` |
+| stability | stable |
+| phase | P |
+| input | `null | stream<any>` |
+| output | `ono.change-plan/1` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `action` | `value` | The change to plan. Either a mutation written as words — `plan restart service nginx` (§5.1) — or a `{ ... }` block of them (§5.2). The block describes actions; §5.2 forbids it becoming a workflow language with loops, functions or background jobs. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--protection` | `string` | Override the protection policy for this plan: `off`, `prefer`, `require` or `maximize` (§17.2, §17.3). Defaults to `change.default_protection`, which is `prefer` (§17.1). |
+| `--strategy` | `string` | The execution strategy: `sequential`, `batch <n>`, `canary <n> <n>` or `parallel <n>` (§28.4). Part of the seal, because it changes operational risk (§28.5). Unlimited parallel mutation is not offered. |
+| `--accept-irreversible` | `bool` | Acknowledge the plan's irreversible actions (§19.4). Stored in the sealed revision, so giving it re-seals the plan. |
+| `--accept-risk` | `bool` | Acknowledge the plan's HIGH or CRITICAL risk class (§19.4). A script supplies this rather than waiting for a prompt (§40.3). |
+| `--opaque` | `bool` | Permit an action Ono cannot reason about, as §6.3's explicit escape. Its impact and reversibility are classified unknown, and Appendix A.7 caps the plan's protection at partially protected. Refused unless `change.allow_opaque_actions` is set (§53). |
+| `--expires` | `duration` | How long the sealed plan stays appliable (§4.1's `EXPIRED`). After it, `apply` refuses and `rebase` resolves the plan again. |
+| `--one-per-object` | `bool` | Produce one plan per input object rather than one plan over the frozen set (§5.3). The default is one plan, because §2.6 freezes membership and a single plan is what carries that. |
+| `--auto-recover` | `bool` | Declare §26.3 automatic recovery after verification failure. Rejected at seal unless all six of §26.3's conditions hold — which, in this build, they cannot: no recovery plan can be built before the plan's protection exists, and no policy enables it (§26.1: off by default). |
+
+**Examples**
+
+```text
+plan restart service nginx
+plan update package openssl --protection require
+get service | where state == failed | plan restart service
+plan replace file /etc/nginx/nginx.conf from ./nginx.conf
+```
+
+### `get plan`
+
+The plans this shell holds, with their state, protection and risk.
+
+| | |
+|---|---|
+| id | `ono.change-plan.get` |
+| stability | stable |
+| phase | P |
+| input | `null` |
+| output | `stream<ono.change-plan/1>` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `reference` | `string` | A plan identity or an unambiguous prefix of one (§36.4). Without it, every retained plan. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--state` | `string` | Restrict to plans in these lifecycle states (§4.1), such as `failed` or `verified`. |
+| `--all` | `bool` | Include closed and expired plans, which are hidden by default. |
+| `--since` | `duration` | Restrict to plans created within this window. |
+| `--revision` | `int` | One earlier revision of a named plan (§7.5). A rebase leaves the revision it came from exactly as it was, and this is how it is read: the plan that was refused is the evidence for why it was. |
+
+**Examples**
+
+```text
+get plan
+get plan a82f
+get plan --state failed
+get plan a82f --revision 1
+```
+
+### `inspect plan`
+
+Everything one plan knows — its actions, impact, coverage, resolution and verification.
+
+| | |
+|---|---|
+| id | `ono.change-plan.inspect` |
+| stability | stable |
+| phase | P |
+| input | `null | ono.change-plan/1` |
+| output | `ono.change-plan/1` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `reference` | `ref<ono.change-plan/1>` | The plan to inspect (§36.4). |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--protection` | `bool` | Expand the coverage matrix: one row per mutation domain, with what covers it and what it excludes (§10.3). |
+| `--impact` | `bool` | Expand the impact graph rather than its summary (§9.5). |
+| `--actions` | `bool` | Expand every action with its execution, preconditions, effects and idempotency class (§46.2). |
+| `--resolution` | `bool` | Expand the persistence resolution for each target — mount, filesystem, dataset or subvolume, recovery boundary (Appendix B.10). This is the view that explains why several recovery assets are planned. |
+| `--verification` | `bool` | Expand the verification contracts (§23.1). |
+| `--recovery` | `bool` | Expand the recovery assets the plan proposes or has created (§11.1). |
+
+**Examples**
+
+```text
+inspect plan a82f
+inspect plan a82f --resolution
+inspect plan a82f --protection
+```
+
+### `rebase plan`
+
+Resolve a sealed plan again against the world as it is now, as a new revision.
+
+| | |
+|---|---|
+| id | `ono.change-plan.rebase` |
+| stability | stable |
+| phase | P |
+| input | `null | ono.change-plan/1` |
+| output | `ono.change-plan/1` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `reference` | `ref<ono.change-plan/1>` | The plan to rebase (§7.5). |
+
+**Examples**
+
+```text
+rebase plan a82f
+```
+
+### `resume plan`
+
+Continue an interrupted plan, for the actions whose recorded state permits it.
+
+| | |
+|---|---|
+| id | `ono.change-plan.resume` |
+| stability | stable |
+| phase | P |
+| input | `null | ono.change-plan/1` |
+| output | `stream<ono.action-result/1>` |
+| privilege | conditional |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `reference` | `ref<ono.change-plan/1>` | The plan to resume (§41.3). |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--accept-newer-state-loss` | `bool` | For a recovery plan: acknowledge the newer state and provider-native history the resumed recovery would destroy (§24.5, §13.6). A resumed recovery passes the same gate as its first run. |
+| `--confirm` | `bool` | Required outside an interactive session, because resuming is a commitment like `apply` (§40.3). |
+
+**Examples**
+
+```text
+resume plan a82f --confirm
+```
+
+### `impact`
+
+What a plan could touch, directly and indirectly, and where Ono stops knowing.
+
+| | |
+|---|---|
+| id | `ono.change.impact` |
+| stability | stable |
+| phase | P |
+| input | `null | ono.change-plan/1` |
+| output | `ono.impact-graph/1` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `plan` | `ref<ono.change-plan/1>` | The plan to analyse (§5.4). |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--depth` | `int` | How many relations out to follow. Beyond the interactive budget the answer is bounded and says so (§9.5, §52.2). |
+| `--all` | `bool` | Follow every relation, including the expensive classes, rather than the bounded default. |
+
+**Examples**
+
+```text
+impact a82f
+impact a82f --depth 3
+```
+
+### `protect`
+
+Create the recovery points a plan describes, before the change window.
+
+| | |
+|---|---|
+| id | `ono.change.protect` |
+| stability | stable |
+| phase | P |
+| input | `null | ono.change-plan/1` |
+| output | `stream<ono.recovery-asset/1>` |
+| privilege | conditional |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `plan` | `ref<ono.change-plan/1>` | The plan whose protection to materialise (§5.5). |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--confirm` | `bool` | Required outside an interactive session. §5.5: protection is a real mutation of the storage or control plane, and it is visible in history. |
+
+**Examples**
+
+```text
+protect a82f --confirm
+```
+
+### `apply`
+
+Carry out a sealed plan, with its protection created first.
+
+| | |
+|---|---|
+| id | `ono.change.apply` |
+| stability | stable |
+| phase | P |
+| input | `null | ono.change-plan/1` |
+| output | `stream<ono.action-result/1>` |
+| privilege | conditional |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `plan` | `ref<ono.change-plan/1>` | The plan to apply (§5.6). |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--accept-risk` | `bool` | Acknowledge a HIGH or CRITICAL risk class (§19.4). The refusal names the actual reason rather than asking a generic question (§40.2). |
+| `--accept-irreversible` | `bool` | Acknowledge the plan's irreversible actions (§19.4). |
+| `--accept-service-outage` | `bool` | Acknowledge that no healthy serving member of a targeted group is excluded (§40.2's worked gate, §28.3). |
+| `--accept-newer-state-loss` | `bool` | For a recovery plan: acknowledge the newer state and the provider-native history the recovery would destroy (§24.5, §13.6). Nothing destructive runs without it. |
+| `--accept-stale-protection` | `bool` | Accept a recovery asset captured before the state drifted, rather than creating a fresh one (§18.3). |
+| `--confirm` | `bool` | Required outside an interactive session for a plan carrying any gate (§40.3). |
+
+**Examples**
+
+```text
+apply a82f
+apply a82f --accept-risk --confirm
+```
+
+### `verify`
+
+Whether a plan achieved what it intended, asked of the world rather than of an exit status.
+
+| | |
+|---|---|
+| id | `ono.change.verify` |
+| stability | stable |
+| phase | P |
+| input | `null | ono.change-plan/1` |
+| output | `stream<ono.change-verification/1>` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `plan` | `ref<ono.change-plan/1>` | The plan to verify (§5.7). |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--timeout` | `duration` | Bound every check of this run: each waits at most this long, or its own contract's timeout where that is shorter. §23.5 forbids infinite waiting either way, and a check that runs out is TIMED_OUT, never a pass. |
+
+**Examples**
+
+```text
+verify a82f
+```
+
+### `recover`
+
+Plan the way back from a change. Nothing is restored until the recovery plan is applied.
+
+| | |
+|---|---|
+| id | `ono.change.recover` |
+| stability | stable |
+| phase | P |
+| input | `null | ono.change-plan/1 | ono.recovery-asset/1` |
+| output | `ono.recovery-plan/1` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `source` | `string` | The plan to recover from, or a recovery asset to recover toward (§5.8). |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--to` | `string` | Recover toward a specific recovery asset rather than the one the plan created. |
+| `--goal` | `string` | What recovery should achieve: `restore-changed-objects` (the default), `restore-domain`, `compensate-semantics` or `restore-service-health` (Appendix C.2). |
+| `--method` | `string` | Force a restore method rather than taking the least destructive one that meets the goal (Appendix C.1). Refused when the method cannot meet the goal. |
+
+**Examples**
+
+```text
+recover a82f
+recover a82f --goal restore-changed-objects
+```
+
+### `get recovery`
+
+The recovery assets this shell knows about, with their scope, cost and retention.
+
+| | |
+|---|---|
+| id | `ono.recovery.get` |
+| stability | stable |
+| phase | P |
+| input | `null` |
+| output | `stream<ono.recovery-asset/1>` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `reference` | `string` | An asset identity or an unambiguous prefix of one. Without it, every retained asset. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--plan` | `string` | Restrict to the assets one plan created. |
+| `--state` | `string` | Restrict to assets in these states (§11.1), such as `ready` or `invalid`. |
+| `--all` | `bool` | Include removed and expired assets, which are hidden by default. |
+
+**Examples**
+
+```text
+get recovery
+get recovery --plan a82f
+```
+
+### `inspect recovery`
+
+What one recovery asset holds, what it excludes, and what restoring from it would need.
+
+| | |
+|---|---|
+| id | `ono.recovery.inspect` |
+| stability | stable |
+| phase | P |
+| input | `null | ono.recovery-asset/1` |
+| output | `ono.recovery-asset/1` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `reference` | `ref<ono.recovery-asset/1>` | The asset to inspect. |
+
+**Examples**
+
+```text
+inspect recovery r-a82f
+```
+
+### `remove recovery`
+
+Delete a recovery asset, once nothing still depends on it.
+
+| | |
+|---|---|
+| id | `ono.recovery.remove` |
+| stability | stable |
+| phase | P |
+| input | `null | ono.recovery-asset/1` |
+| output | `stream<ono.action-result/1>` |
+| privilege | conditional |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `reference` | `ref<ono.recovery-asset/1>` | The asset to remove. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--confirm` | `bool` | Required: removal is irreversible and a script never waits for a prompt (§40.3). Without it nothing is removed. |
+| `--dry-run` | `bool` | Report which plans would become unrecoverable, and remove nothing (§37.3). |
+| `--force` | `bool` | Remove an asset a retained plan still depends on. §2.15 blocks that by default, and this is the explicit override. |
+
+**Examples**
+
+```text
+remove recovery r-a82f --dry-run
+remove recovery r-a82f --confirm
+```
+
 ## container
 
 ### `get container`
@@ -2730,6 +3177,7 @@ Return resolved configuration settings with the layer and file that set each one
 |---|---|---|
 | `--problems` | `bool` | Return the diagnostics from loading the config layers instead of the settings, as `ono.error/1` values (ADR-0218). A bad setting never stops the shell from starting (ADR-0010), so the diagnostics stay available as values. |
 | `--overridden` | `bool` | Include the values of the layers each setting overrides. |
+| `--profile` | `bool` | Return the v0.6 Appendix H profile in force, expanded: one row per setting with what the configuration wrote, what the profile asks for, the value in force and which of them supplied it (ADR-0836). |
 
 **Examples**
 
@@ -5533,6 +5981,7 @@ Project the bounded, ranked graph around a place — as text, or as a `SpatialMa
 | `--type` | `string` | Keep only nodes of these spatial types, comma-separated — `process`, `service`, `listener`. It narrows the bounded map rather than re-selecting what fills it, so the answer is always a subset of the same map without it, and what it removed is counted in `hidden` (v0.4 §6.9, §3.3, §43.2). |
 | `--all` | `bool` | The explicit larger bound the default is not, still inside `spatial.map.node_budget` (v0.4 §6.9, §34.2, §47). |
 | `--live` | `bool` | Keep the map current. At an interactive terminal it is the full-screen view of §23.3, redrawn from a polling source and saying so in §25.3's vocabulary; where the values are consumed instead, it is a stream that subscribes to the change events of everything this place is drawn from — the first value is the current state, every value after it is something that moved (v0.4 §25.1, §25.2, §25.3, §29.1). |
+| `--plan` | `string` | Overlay a v0.6 change plan on the map: which drawn objects it would touch, and which of them a recovery asset covers (v0.6 §21.2, §21.3). The overlay names the objects the plan resolved and fabricates no future identity — a restarted service shows that a replacement worker is expected, never a PID that does not exist yet (v0.6 §21.4). |
 
 **Examples**
 
@@ -6243,6 +6692,7 @@ The ordered event view over a scope and a window.
 | `--all` | `bool` | Widen to the whole visible scope rather than the current place, subject to retention and permission (v0.5 §11.3). |
 | `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 | `--view` | `bool` | Open the full-screen timeline over the same window (v0.5 §19.1). It is a presentation of the values `timeline` already answers with; where no terminal can be taken — a script, a pipe, a redirected stream, `TERM=dumb` — the ordinary text timeline answers instead, so the option never writes escape sequences into a pipe (v0.2 §50, ADR-0781). |
+| `--plan` | `string` | Restrict the window to one v0.6 change plan's own events (v0.6 §22.4). The plan identity is the causal anchor: the executor writes it into the payload of every `ono.plan.*` event it records, and this filters on it rather than opening a second history (v0.6 §22.1). |
 
 **Examples**
 

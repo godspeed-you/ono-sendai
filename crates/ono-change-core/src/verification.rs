@@ -119,6 +119,16 @@ impl VerificationContract {
         self
     }
 
+    /// Restores the identity the check was stored under (§36.1).
+    ///
+    /// A result names the check it answered by this identity, so a contract read back from the
+    /// store keeps the one it was written with rather than one derived again.
+    #[must_use]
+    pub(crate) fn identified_as(mut self, id: CheckId) -> Self {
+        self.id = id;
+        self
+    }
+
     /// The check's identity.
     #[must_use]
     pub const fn id(&self) -> &CheckId {

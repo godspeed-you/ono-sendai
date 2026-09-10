@@ -34,13 +34,11 @@
 //! - [`strategy`] — §28.4's waves and §28.6's canary gate.
 //! - [`mod@resume`] — §41.2's reconstruction and §41.3's per-action decision.
 //! - [`events`] — §22.1's thirteen ledger events and §22.2's pre-plan checkpoint.
-//! - [`remote`] — §29.1's per-host fragments and §29.3's link failure.
 
 #![forbid(unsafe_code)]
 
 pub mod events;
 pub mod execute;
-pub mod remote;
 pub mod resume;
 pub mod strategy;
 
@@ -48,8 +46,8 @@ pub use events::{PlanLifecycle, checkpoint_before_mutation};
 pub use execute::{
     ApplyOutcome, ApplyRequest, Authority, CleanupDecision, CleanupReport, CloseOutcome,
     CloseRequest, ExecutionOutcome, FailurePoint, Observation, PrepareRequest, Prepared,
-    QuiesceReport, Quiescing, VerifyOutcome, VerifyRequest, apply, close, prepare, verify,
+    ProtectionShortfall, QuiesceReport, Quiescing, VerifyOutcome, VerifyRequest, apply, close,
+    prepare, verify,
 };
-pub use remote::{HostFragment, HostOutcome, LinkState, RemoteRun, decompose, run_fragments};
 pub use resume::{BlockedAction, ResumeDecision, ResumeOutcome, resume, resume_with};
 pub use strategy::{StrategyRun, TargetResult, run_waves};

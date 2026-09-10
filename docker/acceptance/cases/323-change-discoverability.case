@@ -1,0 +1,91 @@
+# v0.6 §50 phase P2 — §36 and v0.2 §50: every v0.6 command is machine-registered and
+# discoverable.
+#
+# v0.2 §50 fixes what "delivered" means for a capability: help is complete, completion metadata
+# exists, the output schema is inspectable, error cases are structured, and behaviour is
+# deterministic when output is redirected. §36.2 makes the registry the source of all of it, so
+# a command a person can run and cannot discover is a command that half exists.
+case: the thirteen v0.6 commands answer help, explain and inspect from the registry
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== §36.2: every id is in the command registry =='
+  ono -c 'get command | to json' > /tmp/dc1.txt 2>&1
+  for id in ono.change.plan ono.change.impact ono.change.protect ono.change.apply \
+            ono.change.verify ono.change.recover ono.change-plan.get ono.change-plan.inspect \
+            ono.change-plan.rebase ono.change-plan.resume ono.recovery.get \
+            ono.recovery.inspect ono.recovery.remove; do
+    prove "dc1-$id" "\`$id\` is registered (§36.2)" "grep -q '\"$id\"' /tmp/dc1.txt"
+  done
+
+  echo '== v0.2 §50: help is complete =='
+  for spelling in plan impact protect apply recover; do
+    ono -c "help $spelling" > "/tmp/dc-help-$spelling.txt" 2>&1
+    prove "dc2-$spelling" "\`help $spelling\` answers with a synopsis and a description" \
+      "grep -qi 'SYNOPSIS' /tmp/dc-help-$spelling.txt && grep -qi 'DESCRIPTION' /tmp/dc-help-$spelling.txt"
+  done
+
+  echo '== §36.3: the output schema is inspectable before the command is run =='
+  ono -c 'explain apply' > /tmp/dc3.txt 2>&1
+  prove dc3a "\`explain apply\` names the command id it resolves to (§36.2)" \
+    'grep -q "ono.change.apply" /tmp/dc3.txt'
+  prove dc3b "and the input it accepts, which includes a plan from the pipe (§5.3)" \
+    'grep -q "ono.change-plan/1" /tmp/dc3.txt'
+  prove dc3c "and the output it emits, by schema (v0.2 §50)" 'grep -qE "^ +output +stream<ono\.action-result/1>" /tmp/dc3.txt'
+
+  echo '== §46: the v0.6 output schemas are declared, and `explain` reads them =='
+  # v0.2 §50 asks for the output schema to be inspectable before the command runs, and `explain`
+  # is where a pipeline's types are answered from the registry.
+  for pair in 'plan:ono.change-plan/1' 'impact:ono.impact-graph/1' 'protect:ono.recovery-asset/1' \
+              'verify:ono.change-verification/1' 'recover:ono.recovery-plan/1' \
+              'get recovery:ono.recovery-asset/1'; do
+    spelling=${pair%%:*}; schema=${pair##*:}
+    ono -c "explain $spelling" > /tmp/dc4.txt 2>&1
+    prove "dc4-$schema" "\`explain $spelling\` names \`$schema\` as its output (§46, v0.2 §50)" \
+      "grep -q '$schema' /tmp/dc4.txt"
+  done
+
+  echo '== §45: a refusal is structured, with a code a script can match on =='
+  # §45's families are E17/E18/E19. Each refusal carries its code, its name and a help line, so a
+  # script matches on the name and a person reads the sentence (v0.2 §43, §40.3).
+  ono -c 'apply 0000' > /tmp/dc5a.txt 2>&1
+  prove dc5a "an unknown reference refuses with a named code (§45)" \
+    'grep -qE "Ono-Sendai-E17[0-9]{2} change\." /tmp/dc5a.txt'
+  ono -c 'plan get process' > /tmp/dc5b.txt 2>&1
+  prove dc5b "an unplannable operation refuses with §6.2's code" \
+    'grep -q "change.action_not_plannable" /tmp/dc5b.txt'
+  prove dc5c "and every refusal carries a help line rather than a bare code (v0.2 §43)" \
+    "[ \"\$(wc -l < /tmp/dc5b.txt)\" -ge 2 ]"
+
+  echo '== v0.2 §50: behaviour is deterministic when output is redirected =='
+  mkdir -p "$HOME/etc"; printf 'a\n' > "$HOME/etc/a"; printf 'b\n' > "$HOME/etc/b"
+  ono -c "plan copy file $HOME/etc/a $HOME/etc/b --overwrite | to json" > /tmp/dc6a.txt 2>&1
+  ono -c "plan copy file $HOME/etc/a $HOME/etc/b --overwrite | to json" > /tmp/dc6b.txt 2>&1
+  prove dc6a "the machine-readable answer carries no escape sequences (v0.2 §50)" \
+    "! grep -qP '\\x1b\\[' /tmp/dc6a.txt"
+  prove dc6b "and two runs of the same plan agree on everything but the identity and the clock" \
+    "[ \"\$(sed -e 's/\"id\":\"[0-9a-f]*\"//' -e 's/\"[a-z_]*_at\":\"[^\"]*\"//g' -e 's/\"digest\":\"[0-9a-f]*\"//' -e 's/\"session\":\"[^\"]*\"//' -e 's/\"[0-9a-f]\{16\}\"//g' /tmp/dc6a.txt | md5sum)\" = \"\$(sed -e 's/\"id\":\"[0-9a-f]*\"//' -e 's/\"[a-z_]*_at\":\"[^\"]*\"//g' -e 's/\"digest\":\"[0-9a-f]*\"//' -e 's/\"session\":\"[^\"]*\"//' -e 's/\"[0-9a-f]\{16\}\"//g' /tmp/dc6b.txt | md5sum)\" ]"
+
+  echo 'change-discoverability: done'
+exit: 0
+stdout-contains: PROVED dc3a
+stdout-contains: PROVED dc3b
+stdout-contains: PROVED dc3c
+stdout-contains: PROVED dc5a
+stdout-contains: PROVED dc5b
+stdout-contains: PROVED dc5c
+stdout-contains: PROVED dc6a
+stdout-contains: PROVED dc6b
+stdout-contains: change-discoverability: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

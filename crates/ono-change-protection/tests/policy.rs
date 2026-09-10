@@ -22,6 +22,8 @@ use ono_change_protection::{MountTable, ProviderRegistry};
 use ono_core::ErrorCode;
 use ono_value::{ByteSize, Percent};
 
+const GIB: u128 = 1024 * 1024 * 1024;
+
 mod support;
 
 use support::{TestProvider, ZFS_ROOT, candidate, config_mutation, snapshot_cost};
@@ -329,8 +331,12 @@ fn should_take_the_stricter_of_two_free_space_floors() {
     );
     assert_eq!(
         FreeSpaceFloor::Absolute(ByteSize::from_bytes(10)).stricter_of(ten),
-        ten,
-        "§53 states the floor as a share, and that is the form that survives a comparison"
+        FreeSpaceFloor::Both {
+            share: Percent::new(10.0),
+            absolute: ByteSize::from_bytes(10)
+        },
+        "Appendix H.5: without a size neither a share nor a quantity is the stricter one, so \
+         both stay in force"
     );
 }
 
@@ -344,4 +350,47 @@ fn should_bound_nothing_when_the_limits_are_explicitly_unbounded() {
         limits.breaches(&cost, 10_000, 10_000).is_empty(),
         "§38.3: the bounds are configuration, and a caller may state that there are none"
     );
+}
+
+#[test]
+fn should_pick_whichever_floor_demands_more_room_on_a_filesystem_of_known_size() {
+    let share = FreeSpaceFloor::Share(Percent::new(10.0));
+    let absolute = FreeSpaceFloor::Absolute(ByteSize::from_bytes(50 * GIB));
+
+    assert_eq!(
+        share.stricter_at(absolute, ByteSize::from_bytes(100 * GIB)),
+        absolute,
+        "Appendix H.5: on 100 GiB, 50 GiB free is stricter than ten percent"
+    );
+    assert_eq!(
+        absolute.stricter_at(share, ByteSize::from_bytes(2048 * GIB)),
+        share,
+        "Appendix H.5: on 2 TiB, ten percent is stricter than 50 GiB"
+    );
+}
+
+#[test]
+fn should_keep_both_floors_in_force_when_no_filesystem_size_is_known() {
+    let combined = FreeSpaceFloor::Share(Percent::new(10.0))
+        .stricter_of(FreeSpaceFloor::Absolute(ByteSize::from_bytes(50 * GIB)));
+
+    assert!(
+        !combined.is_cleared_by(
+            ByteSize::from_bytes(20 * GIB),
+            ByteSize::from_bytes(100 * GIB)
+        ),
+        "Appendix H.5: twenty percent free clears the share and not the 50 GiB floor, and a \
+         profile may not weaken either"
+    );
+    assert!(
+        !combined.is_cleared_by(
+            ByteSize::from_bytes(60 * GIB),
+            ByteSize::from_bytes(1024 * GIB)
+        ),
+        "Appendix H.5: 60 GiB clears the absolute floor and not ten percent of 1 TiB"
+    );
+    assert!(combined.is_cleared_by(
+        ByteSize::from_bytes(60 * GIB),
+        ByteSize::from_bytes(100 * GIB)
+    ));
 }

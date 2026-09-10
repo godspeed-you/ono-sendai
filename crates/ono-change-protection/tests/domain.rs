@@ -16,10 +16,11 @@ use std::path::Path;
 
 use ono_change_core::{FilesystemKind, NonPersistentReason};
 use ono_change_protection::MountTable;
+use ono_change_protection::domain::{DomainReach, recorded_domain};
 
 mod support;
 
-use support::{BTRFS_ROOT, EXT4_ROOT, ZFS_ROOT};
+use support::{BTRFS_ROOT, CONTAINER, EXT4_ROOT, ZFS_ROOT};
 
 fn zfs() -> MountTable {
     MountTable::from_text(ZFS_ROOT)
@@ -383,4 +384,108 @@ fn should_keep_the_read_only_option_of_a_snapshot_subvolume() {
         "§14.2: a read-only snapshot subvolume is where a restore reads from, never writes to"
     );
     assert_eq!(domain.object(), Some("/@snapshots"));
+}
+
+/// The same two mounts as a host kernel prints them, read off a developer machine.
+const HOST_VOLATILE_AND_PSEUDO: &str = "\
+44 1 8:2 / / rw,relatime shared:1 - ext4 /dev/sda2 rw
+43 41 0:27 / /dev/shm rw,nosuid,nodev shared:3 - tmpfs tmpfs rw,inode64,usrquota
+53 44 0:25 / /proc rw,nosuid,nodev,noexec,relatime shared:12 - proc proc rw
+";
+
+#[test]
+fn should_resolve_an_overlay_whose_writable_layer_is_hidden_to_a_copy_only_domain() {
+    let domain = MountTable::from_text(CONTAINER).resolve(Path::new("/home/ono/etc/source"));
+    assert!(
+        domain.is_protectable(),
+        "Appendix B.4 as decided: the visible bytes can still be copied and written back through \
+         the merged view: {}",
+        domain.detail()
+    );
+    assert_eq!(
+        DomainReach::of(&domain),
+        DomainReach::CopyOnly,
+        "Appendix B.4: a snapshot of the merged mount would not hold the hidden writable layer"
+    );
+    assert!(!DomainReach::of(&domain).admits_snapshot());
+    assert!(DomainReach::of(&domain).admits_copy());
+    assert!(
+        domain.detail().contains("Appendix B.4"),
+        "the resolution says why only a copy may protect it: {}",
+        domain.detail()
+    );
+}
+
+#[test]
+fn should_still_follow_a_visible_writable_layer_rather_than_calling_the_overlay_copy_only() {
+    let domain = ext4().resolve(Path::new(
+        "/var/lib/docker/overlay2/9f3a/merged/etc/app.conf",
+    ));
+    assert_eq!(
+        DomainReach::of(&domain),
+        DomainReach::Any,
+        "Appendix B.4: an upper layer this namespace can see is the domain, and it is the ext4 \
+         root's to protect however that filesystem allows"
+    );
+    assert_eq!(domain.mount().kind(), FilesystemKind::Ext4);
+}
+
+#[test]
+fn should_keep_refusing_an_overlay_whose_visible_writable_layer_is_volatile() {
+    let domain = ext4().resolve(Path::new(
+        "/run/containers/storage/overlay/1b2c/merged/var/lib/app",
+    ));
+    assert_eq!(
+        DomainReach::of(&domain),
+        DomainReach::Refused,
+        "Appendix B.4 and B.7: a writable layer on a tmpfs is followed, and it holds nothing"
+    );
+}
+
+#[test]
+fn should_record_no_persistence_domain_for_a_container_tmpfs_or_procfs_path() {
+    let table = MountTable::from_text(CONTAINER);
+    for (path, reason) in [
+        ("/dev/shm/ono-volatile", NonPersistentReason::Volatile),
+        ("/proc/self/comm", NonPersistentReason::Pseudo),
+    ] {
+        let domain = table.resolve(Path::new(path));
+        assert_eq!(domain.refusal(), Some(reason), "Appendix B.7: {path}");
+        assert_eq!(
+            recorded_domain(&domain),
+            None,
+            "Appendix B.7: {path} has no persistence domain, and its mount source `{}` is not one",
+            domain.mount().source()
+        );
+    }
+}
+
+#[test]
+fn should_record_no_persistence_domain_for_a_host_tmpfs_or_procfs_path() {
+    let table = MountTable::from_text(HOST_VOLATILE_AND_PSEUDO);
+    for path in ["/dev/shm/ono-truth", "/proc/self/comm"] {
+        let domain = table.resolve(Path::new(path));
+        assert!(!domain.is_protectable(), "Appendix B.7: {path}");
+        assert_eq!(recorded_domain(&domain), None, "Appendix B.7: {path}");
+    }
+}
+
+#[test]
+fn should_record_the_persistence_object_of_a_protectable_path() {
+    assert_eq!(
+        recorded_domain(&zfs().resolve(Path::new("/etc/nginx/nginx.conf"))),
+        Some("rpool/ROOT/debian"),
+        "Appendix B.8: a ZFS path records its dataset"
+    );
+    assert_eq!(
+        recorded_domain(&ext4().resolve(Path::new("/srv/app.conf"))),
+        Some("/dev/sda2"),
+        "a filesystem without snapshots records the device it lives on"
+    );
+    let container = MountTable::from_text(CONTAINER).resolve(Path::new("/home/ono/etc/source"));
+    assert_eq!(
+        recorded_domain(&container),
+        Some("/var/lib/docker/overlay2/5e1c/diff"),
+        "Appendix B.4: a copy-only overlay records the writable layer its bytes land in"
+    );
 }

@@ -24,6 +24,21 @@ use jiff::Timestamp;
 use ono_change_core::{ConsistencyClass, RecoveryAsset};
 use ono_value::ErrorValue;
 
+/// The subject of the exclusion every snapshot this provider creates carries (Appendix D.7).
+///
+/// `create` makes one snapshot and cannot see the others a plan makes, so the fact Appendix D.7
+/// requires a set to record travels on each member instead: whoever composes several of them into
+/// a set finds, on every one, that it shares no proven atomic point with the rest. Matching the
+/// subject exactly is how a composer recognises it.
+pub const SEQUENTIAL_CREATION: &str =
+    "a common point in time with any other subvolume snapshot of the same plan";
+
+/// The reason that exclusion gives (Appendix D.7).
+pub const SEQUENTIAL_CREATION_REASON: &str = "Appendix D.7: Btrfs snapshots one subvolume at a \
+     time, so the snapshots a plan takes of several subvolumes are created one after another and \
+     nothing proves a common atomic point across them. Composed with another member of the same \
+     plan, this snapshot is crash-consistent at best";
+
 /// Whether anything proved the members share one point in time (Appendix D.7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SetAtomicity {

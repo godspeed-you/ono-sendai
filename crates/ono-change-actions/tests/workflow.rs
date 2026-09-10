@@ -419,7 +419,10 @@ fn should_keep_the_reboot_answer_out_of_the_effect_of_the_package_itself() {
 
 // --- §51: `supports` and `resolve` mutate nothing --------------------------------------------------
 
-/// A provider that fails loudly if anything reads it in a way it did not expect.
+/// A provider that forwards every call to the fake it wraps and declares `service.manage` as a
+/// mutating capability, so the change provider treats it as one that can act.
+///
+/// It checks nothing itself: the §51 tests read the wrapped fake's act count afterwards.
 #[derive(Debug)]
 struct CountingProvider(Arc<FakeProvider>);
 

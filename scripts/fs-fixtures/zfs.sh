@@ -64,7 +64,49 @@ emit get-used-by-snapshots zfs get -H -p -o name,property,value usedbysnapshots,
 emit unprivileged-snapshot su -s /bin/sh -c "zfs snapshot rpool/ROOT/debian@nope" nobody
 emit unprivileged-list su -s /bin/sh -c "zfs list -H -o name" nobody
 
+# --- Recorded after everything above, so none of the files above changes shape. ---
+# A clone of a snapshot newer than the recovery point: `zfs rollback -R` would destroy it, and a
+# clone of the recovery point itself is untouched (§13.6, Appendix D.5).
+zfs snapshot tank/home@point
+zfs snapshot tank/home@newer
+zfs clone tank/home@newer tank/home-clone
+emit list-clones-of-newer zfs list -H -p -t filesystem -o name,origin
+emit get-clones-of-newer zfs get -H -p -o name,property,value clones tank/home@point tank/home@newer
+emit destroy-newer-clone-held zfs destroy tank/home@newer
+# Bookmarks whose source snapshots are gone, one older and one newer than the recovery point:
+# only the newer one is in a rollback's way, and createtxg is what says which is which.
+zfs snapshot tank/data/customer@gone-old
+zfs bookmark tank/data/customer@gone-old tank/data/customer#orphan-old
+zfs destroy tank/data/customer@gone-old
+zfs snapshot tank/data/customer@point
+zfs snapshot tank/data/customer@gone-new
+zfs bookmark tank/data/customer@gone-new tank/data/customer#orphan-new
+zfs destroy tank/data/customer@gone-new
+emit list-bookmarks-orphaned zfs list -H -p -t bookmark -o name,creation,guid
+emit get-createtxg-orphaned zfs get -H -p -o name,property,value createtxg tank/data/customer@point tank/data/customer#orphan-old tank/data/customer#orphan-new
+emit rollback-refused-orphan zfs rollback tank/data/customer@point
+# `written` for a dataset whose newest snapshot is the recovery point: nothing written since, then
+# something (ADR-0829 decision 1). And `written@<snapshot>`, which is what a rollback past newer
+# snapshots discards — plain `written` counts only since the newest one.
+emit get-written-data-none zfs get -H -p -o name,property,value written tank/data
+dd if=/dev/urandom of=/tank/data/after.bin bs=1M count=1 2>/dev/null
+emit get-written-data zfs get -H -p -o name,property,value written tank/data
+emit get-written-since zfs get -H -p -o name,property,value written@ono-a82f-20260909T194500Z rpool/ROOT/debian
+# `zfs allow`, with a delegation and without one (§43.4).
+zfs allow -u nobody destroy,mount,rollback,snapshot rpool/ROOT/debian
+emit allow-delegated zfs allow rpool/ROOT/debian
+emit allow-none zfs allow tank/home
+# A degraded pool: a two-way mirror with one side offline (§13.1's pool health).
+truncate -s 256M /pool/img3.zfs; truncate -s 256M /pool/img4.zfs
+L3=$(losetup --find --show /pool/img3.zfs); L4=$(losetup --find --show /pool/img4.zfs)
+zpool create -f degraded mirror "$L3" "$L4"
+zpool offline degraded "$L4"
+emit zpool-list-degraded zpool list -H -p -o name,size,alloc,free,capacity,fragmentation,health degraded
+emit zpool-status-degraded zpool status degraded
+
 zfs destroy -r tank/cloned 2>/dev/null || true
+zfs destroy -r tank/home-clone 2>/dev/null || true
+zpool destroy degraded; losetup -d "$L3"; losetup -d "$L4"; rm -f /pool/img3.zfs /pool/img4.zfs
 zpool destroy rpool; zpool destroy tank
 losetup -d "$L1"; losetup -d "$L2"; rm -f /pool/img1.zfs /pool/img2.zfs
 echo "ZFS FIXTURES DONE"

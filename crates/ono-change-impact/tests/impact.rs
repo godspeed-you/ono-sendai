@@ -925,3 +925,65 @@ fn should_reach_the_whole_role_from_one_member_through_the_group() {
         "§9.5: the other four members of the role, reached through the group"
     );
 }
+
+#[test]
+fn should_end_the_graph_at_an_unknown_boundary_where_an_effects_domain_is_unknown() {
+    let index = world(&[], &[]);
+    let action = opaque(0, "opaque action: touch work/opq", "touch work/opq");
+    // §6.3's escape, as `plan --opaque` builds it: an effect in a domain Ono cannot classify,
+    // naming no object, because what the command touches is exactly what nobody knows.
+    let unknown = ono_change_core::ProposedEffect::new(
+        action.id().clone(),
+        EffectDomain::Unknown,
+        EffectKind::Unknown,
+        EffectConfidence::Unknown,
+        "Ono cannot reason about what this command touches",
+    );
+    let actions = vec![action.effecting(unknown)];
+    let request = ImpactRequest::new(&index, &[], &actions, NOW);
+    let graph = derive(&request);
+    let boundary = graph.boundaries().first().expect(
+        "§6.3 classifies an opaque action's impact as unknown, and §9.6 requires the place the \
+         graph ends to be visible rather than absent",
+    );
+    assert!(
+        boundary.beyond().contains("touch work/opq") || boundary.at().contains("touch work/opq"),
+        "the boundary names the action whose effects Ono cannot follow — got at `{}`, beyond `{}`",
+        boundary.at(),
+        boundary.beyond()
+    );
+    assert!(
+        !graph.is_complete(),
+        "§2.4: an impact Ono cannot establish MUST NOT be reported as a complete graph"
+    );
+    assert!(
+        graph.nodes().is_empty(),
+        "§1.3: the effect names no object, so impact may not invent one"
+    );
+}
+
+#[test]
+fn should_end_the_graph_at_an_unknown_boundary_where_an_effects_confidence_is_unknown() {
+    let index = world(&[], &[]);
+    let action = mutate(0, "reload vendor agent", "vendor-agent");
+    let action = action.clone().effecting(effect(
+        &action,
+        EffectDomain::ProcessRuntime,
+        EffectKind::Modify,
+        EffectConfidence::Unknown,
+        "the agent may re-read configuration nobody declared",
+        "vendor-agent",
+    ));
+    let actions = vec![action];
+    let request = ImpactRequest::new(&index, &[], &actions, NOW);
+    let graph = derive(&request);
+    assert_eq!(
+        graph.blast_radius().boundaries,
+        1,
+        "§8.1: an UNKNOWN effect remains visible, and in the graph that is a boundary (§9.6)"
+    );
+    assert!(
+        !graph.is_complete(),
+        "§2.4: an UNKNOWN effect is not silently promoted to a complete impact"
+    );
+}

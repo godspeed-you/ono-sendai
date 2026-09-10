@@ -3088,7 +3088,7 @@ Conventions this subsection relies on:
 - A case that does not exist yet is named in plain text without backticks, so
   `xtask/src/scan.rs::check_acceptance_case_references` does not resolve a file that is not there;
   it gains its backticks in the increment that writes it (ADR-0401).
-- The change, recovery and transaction error families are `Ono-Sendai-E1701`…`E1727`,
+- The change, recovery and transaction error families are `Ono-Sendai-E1701`…`E1729`,
   `E1801`…`E1820` and `E1901`…`E1902`. §45 fixes the names and leaves the numbers open; ADR-0801
   records the blocks and the fourteen refusals beyond §45's list, each with the sentence that
   required it.
@@ -3128,10 +3128,10 @@ Conventions this subsection relies on:
       side, and a registry nothing in `xtask` validates — each has a test that copies this
       repository's own registries, breaks one thing and asserts the refusal —
       `xtask/tests/change_contracts.rs`.
-- [ ] **The seventeen configuration settings of §53 are typed, inspectable and default as
+- [x] **The seventeen configuration settings of §53 are typed, inspectable and default as
       specified.** `change.default_protection` is `prefer` and
       `recovery.zfs.allow_destructive_rollback` is `false` —
-      `crates/ono-change-protection/tests/settings.rs`, case 321-change-configuration.
+      `crates/ono-change-protection/tests/settings.rs`, case `321-change-configuration`.
 - [x] **Nothing can raise a confidence, a consistency or a risk class by combining.**
       `EffectConfidence::weakest_of` and `ConsistencyClass::weakest_of` have no counterpart, and
       the registries declare `lattice.strengthening_operation: null`, checked —
@@ -3140,29 +3140,30 @@ Conventions this subsection relies on:
 
 #### 4.12.2 Planning (§5, §6, §55.1)
 
-- [ ] **`plan restart service nginx` creates no mutation.** §55.1 case 1 and §2.1: the service is
+- [x] **`plan restart service nginx` creates no mutation.** §55.1 case 1 and §2.1: the service is
       untouched, its generation is unchanged, and the plan says `PLAN NOT EXECUTED` —
       case `280-plan-creates-nothing`.
-- [ ] **A plan block describes actions and is not a workflow language.** §5.2: loops, functions,
+- [x] **A plan block describes actions and is not a workflow language.** §5.2: loops, functions,
       background jobs and unbounded control flow are each refused —
-      `crates/ono-change-plan/tests/builder.rs`, case 281-plan-block.
-- [ ] **A pipeline produces one plan with frozen targets.**
+      `crates/ono-change-plan/src/builder.rs`, `crates/ono-cli/tests/change_planning.rs`, case `281-plan-block`.
+- [x] **A pipeline produces one plan with frozen targets.**
       `get service | where state == failed | plan restart service` is one plan over the resolved
       set, unless one plan per object is asked for (§5.3) —
-      `crates/ono-change-plan/tests/builder.rs`, case 282-plan-from-a-pipeline.
-- [ ] **Sealed bulk target membership stays fixed after new objects appear.** §55.1 case 2 and
+      `crates/ono-change-plan/src/builder.rs`, `crates/ono-cli/tests/change_planning.rs`, case `282-plan-from-a-pipeline`.
+- [x] **Sealed bulk target membership stays fixed after new objects appear.** §55.1 case 2 and
       §2.6: a fifth service that starts failing after resolution does not join the plan —
-      `crates/ono-change-plan/tests/freeze.rs`, case 282-plan-from-a-pipeline.
-- [ ] **The plan digest changes when strategy or target changes.** §55.1 case 3 and §28.5 —
+      `crates/ono-change-plan/src/builder.rs`,
+      `crates/ono-change-plan/tests/sealed_plan_properties.rs`, case `282-plan-from-a-pipeline`.
+- [x] **The plan digest changes when strategy or target changes.** §55.1 case 3 and §28.5 —
       `crates/ono-change-core/src/plan.rs`, `crates/ono-change-plan/src/builder.rs`.
-- [ ] **A historical context cannot create an executable plan.** §55.1 case 4 and §6.4: the refusal
+- [x] **A historical context cannot create an executable plan.** §55.1 case 4 and §6.4: the refusal
       is `change.historical_context_read_only`, it names `now` as the way back, and the historical
       coordinate is unchanged — `crates/ono-cli/tests/change_planning.rs`,
       case `283-plan-refuses-the-past`.
-- [ ] **Opaque external mutation is rejected by default.** §55.1 case 5 and §6.2:
+- [x] **Opaque external mutation is rejected by default.** §55.1 case 5 and §6.2:
       `plan sh -c 'rm -rf /somewhere'` answers `change.opaque_action_forbidden` —
       `crates/ono-cli/tests/change_planning.rs`, case `284-opaque-actions`.
-- [ ] **§6.3's explicit escape classifies impact and reversibility as unknown.** An opaque action
+- [x] **§6.3's explicit escape classifies impact and reversibility as unknown.** An opaque action
       admitted deliberately caps the plan at partially protected however much of the filesystem is
       snapshotted — `crates/ono-change-protection/tests/coverage.rs`, case `284-opaque-actions`.
 - [x] **A plan that changes the system cannot be sealed without a verification contract.** §23.1 —
@@ -3174,63 +3175,69 @@ Conventions this subsection relies on:
 
 #### 4.12.3 Drift, rebase and resolution (§7, §55.2)
 
-- [ ] **A file changed after seal makes apply refuse.** §55.2 case 6 and §7.3: the refusal is
+- [x] **A file changed after seal makes apply refuse.** §55.2 case 6 and §7.3: the refusal is
       `change.plan_drift_detected`, it names the fact that moved, and nothing was prepared or
-      mutated — `crates/ono-change-plan/src/drift.rs`, case 285-drift-stops-apply.
-- [ ] **A service target that disappeared makes apply refuse.** §55.2 case 7:
+      mutated — `crates/ono-change-plan/src/drift.rs`, case `285-drift-stops-apply`.
+- [x] **A service target that disappeared makes apply refuse.** §55.2 case 7:
       `change.target_changed` — `crates/ono-change-plan/src/drift.rs`,
-      case 285-drift-stops-apply.
-- [ ] **Non-material drift leaves the plan valid.** §55.2 case 8 and §7.4: CPU usage moving while
+      case `285-drift-stops-apply`.
+- [x] **Non-material drift leaves the plan valid.** §55.2 case 8 and §7.4: CPU usage moving while
       a service restart is planned is a contract-declared tolerance —
-      `crates/ono-change-plan/src/drift.rs`, case 285-drift-stops-apply.
+      `crates/ono-change-plan/src/drift.rs`, case `285-drift-stops-apply`.
 - [x] **A precondition that could not be observed blocks rather than passing.** §2.4 —
       `crates/ono-change-core/src/target.rs`, `crates/ono-change-plan/src/drift.rs`.
-- [ ] **Rebase creates a new revision and leaves the original unchanged.** §55.2 case 9 and §7.5:
-      the sealed original keeps its digest and its state — `crates/ono-change-plan/tests/rebase.rs`,
-      case 286-rebase.
-- [ ] **A path resolves to the persistence domain that actually holds its state.** Appendix B's
+- [x] **Rebase creates a new revision and leaves the original unchanged.** §55.2 case 9 and §7.5:
+      the sealed original keeps its digest and its state — `crates/ono-change-plan/src/rebase.rs`,
+      `crates/ono-change-plan/tests/plan_store.rs`,
+      case `286-rebase`.
+- [x] **A path resolves to the persistence domain that actually holds its state.** Appendix B's
       pipeline: mount, filesystem type, filesystem root, backing object, snapshot boundary, and the
       namespace it was read in — `crates/ono-change-protection/tests/domain.rs`,
-      case 287-persistence-resolution.
-- [ ] **A pseudo or volatile filesystem is never a persistence domain.** Appendix B.7 and §32.4:
+      case `287-persistence-resolution`.
+- [x] **A pseudo or volatile filesystem is never a persistence domain.** Appendix B.7 and §32.4:
       procfs, sysfs, devtmpfs, cgroupfs, tracefs, debugfs and a tmpfs mounted beneath a snapshotted
-      `/` — `crates/ono-change-protection/tests/domain.rs`, case 287-persistence-resolution.
-- [ ] **A network filesystem is refused by a local snapshot provider.** Appendix B.6 —
-      `crates/ono-change-protection/tests/domain.rs`, case 287-persistence-resolution.
+      `/` — `crates/ono-change-protection/tests/domain.rs`, case `287-persistence-resolution`.
+- [x] **A network filesystem is refused by a local snapshot provider.** Appendix B.6 —
+      `crates/ono-change-protection/tests/domain.rs`, case `287-persistence-resolution`.
 - [x] **An overlay's writable layer is resolved or the claim is refused.** Appendix B.4 —
       `crates/ono-change-protection/tests/domain.rs`.
-- [ ] **`inspect plan --resolution` shows why several recovery assets are planned.** Appendix
-      B.10's expansion — `crates/ono-cli/tests/change_inspect.rs`, case 288-inspect-plan.
+- [x] **`inspect plan --resolution` shows why several recovery assets are planned.** Appendix
+      B.10's expansion — `crates/ono-cli/tests/change_inspect.rs`, case `288-inspect-plan`.
 
 #### 4.12.4 ZFS (§13, §55.3, §56.1, Appendix D.1–D.5)
 
-- [ ] **A file target resolves to the correct dataset.** §55.3 case 10, and Appendix B.8: the
+- [x] **A file target resolves to the correct dataset.** §55.3 case 10, and Appendix B.8: the
       dataset comes from mount metadata, never from a path naming convention —
       `crates/ono-recovery-zfs/tests/discovery.rs`.
-- [ ] **A separate child dataset is not falsely covered.** §55.3 case 11 and §13.4: a snapshot of
+- [x] **A separate child dataset is not falsely covered.** §55.3 case 11 and §13.4: a snapshot of
       `rpool/ROOT/debian` is offered as covering nothing in `tank/data`, and the plan renders
-      §13.4's `NOT PROTECTED BY` — `crates/ono-recovery-zfs/tests/boundaries.rs`,
-      case 289-zfs-dataset-boundaries.
+      §13.4's `NOT PROTECTED BY` (ADR-0845) — `crates/ono-recovery-zfs/tests/discovery.rs`
+      (the candidate names the enclosing datasets and never its own),
+      `crates/ono-change-protection/tests/coverage.rs` (the row carries them, less what is
+      captured), `crates/ono-change-core/tests/value_records.rs` (the list survives the store, and
+      an older record reads), `crates/ono-change-render/tests/protection.rs` (the view draws the
+      block), case `289-zfs-dataset-boundaries` where a pool can be created.
 - [x] **A recursive snapshot records each dataset individually.** §13.3: one `zfs snapshot -r`
       produces one asset entry per dataset covered —
       `crates/ono-recovery-zfs/tests/protection.rs`.
-- [ ] **The snapshot is created before the first mutation.** §55.3 case 12 and §4.5 —
-      `crates/ono-change-executor/tests/appendix_f.rs`, case 294-prepare-before-mutate.
-- [ ] **Snapshot creation failure prevents mutation.** §55.3 case 13 and §2.3: zero mutate actions
+- [x] **The snapshot is created before the first mutation.** §55.3 case 12 and §4.5 —
+      `crates/ono-change-executor/tests/appendix_f.rs`, case `294-prepare-before-mutate`.
+- [x] **Snapshot creation failure prevents mutation.** §55.3 case 13 and §2.3: zero mutate actions
       execute and the plan is `PREPARE_FAILED` — `crates/ono-change-executor/tests/appendix_f.rs`,
-      case 294-prepare-before-mutate.
-- [ ] **Selective restore recovers one changed file without reverting unrelated later files.**
-      §55.3 case 14 and §13.5 — `crates/ono-recovery-zfs/tests/restore.rs`,
-      case 298-selective-restore.
-- [ ] **A full rollback requiring newer snapshot destruction is blocked without acceptance.**
+      `crates/ono-cli/tests/change_prepare_failure.rs`, case `294-prepare-before-mutate`.
+- [x] **Selective restore recovers one changed file without reverting unrelated later files.**
+      §55.3 case 14 and §13.5 — `crates/ono-recovery-zfs/tests/recovery.rs`, `crates/ono-recovery-zfs/tests/real_zfs.rs`,
+      case `298-selective-restore`.
+- [x] **A full rollback requiring newer snapshot destruction is blocked without acceptance.**
       §55.3 case 15 and §13.6: every newer snapshot, bookmark and clone is enumerated, and the
       refusal is `recovery.destructive_history_not_accepted` —
-      `crates/ono-recovery-zfs/tests/recovery.rs`, case 299-destructive-rollback-is-gated.
+      `crates/ono-recovery-zfs/tests/recovery.rs`, case `299-destructive-rollback-is-gated`.
 - [x] **No argument vector this provider produces carries a recursive destructive flag.** §13.6
       forbids silently adding flags equivalent to removing newer history —
       `crates/ono-recovery-zfs/tests/recovery.rs`.
-- [ ] **A root rollback requiring a reboot is reported before execution.** §55.3 case 16 and
-      §13.7 — `crates/ono-recovery-zfs/tests/root.rs`, case 300-recovery-needs-a-reboot.
+- [x] **A root rollback requiring a reboot is reported before execution.** §55.3 case 16 and
+      §13.7 — `crates/ono-recovery-zfs/tests/recovery.rs`,
+      `crates/ono-recovery-zfs/tests/safety_checklist.rs`, case `300-recovery-needs-a-reboot`.
 - [x] **The twelve facts of §56.1 each have a proof, and each is fail-closed.** Exact dataset and
       snapshot identity, the snapshot still existing, whether it is the latest, newer snapshots and
       bookmarks, clones, child dataset boundaries, mount and unmount requirement, reboot or offline
@@ -3249,36 +3256,36 @@ Conventions this subsection relies on:
       stdout, stderr and exit status of OpenZFS 2.4.1 against a real pool, including the refusal
       ZFS itself gives when a rollback would destroy newer history —
       `crates/ono-recovery-zfs/tests/fixtures/`, `scripts/fs-fixtures.sh`.
-- [ ] **The same code passes against a live pool.** The gated suite builds a disposable pool on a
+- [x] **The same code passes against a live pool.** The gated suite builds a disposable pool on a
       loop file, runs the same scenarios and destroys it, refusing to run against a pool it did not
       create (Appendix G.3) — `crates/ono-recovery-zfs/tests/real_zfs.rs`,
-      case 318-zfs-against-a-real-pool.
+      case `318-zfs-against-a-real-pool`.
 
 #### 4.12.5 Btrfs (§14, §55.4, §56.2, Appendix D.6–D.9)
 
-- [ ] **A target resolves to the correct subvolume.** §55.4 case 17, and Appendix B.9: the
+- [x] **A target resolves to the correct subvolume.** §55.4 case 17, and Appendix B.9: the
       subvolume comes from the mount root and the `subvol=` option, and a subdirectory named like a
       subvolume is not evidence of one — `crates/ono-recovery-btrfs/tests/identity.rs`.
-- [ ] **A nested subvolume boundary is detected.** §55.4 case 18 and §14.3 —
-      `crates/ono-recovery-btrfs/tests/boundaries.rs`, case 290-btrfs-nested-subvolumes.
-- [ ] **A required nested subvolume receives its own snapshot.** §55.4 case 19 and §14.3's worked
+- [x] **A nested subvolume boundary is detected.** §55.4 case 18 and §14.3 —
+      `crates/ono-recovery-btrfs/tests/boundaries.rs`, case `290-btrfs-nested-subvolumes`.
+- [x] **A required nested subvolume receives its own snapshot.** §55.4 case 19 and §14.3's worked
       example: a plan changing `/etc/nginx/nginx.conf` and `/var/lib/app/state.db` snapshots
       `@root` and `@var` and leaves `@home` alone —
-      `crates/ono-recovery-btrfs/tests/protection.rs`, case 290-btrfs-nested-subvolumes.
+      `crates/ono-recovery-btrfs/tests/protection.rs`, case `290-btrfs-nested-subvolumes`.
 - [x] **A parent snapshot's coverage excludes every nested subvolume beneath it.** §14.3 and
       §60's decision table: nested subvolumes are never recursively protected, and each exclusion
       names the subvolume it is about — `crates/ono-recovery-btrfs/tests/boundaries.rs`.
-- [ ] **A read-only snapshot is created and retained read-only.** §55.4 case 20 and §14.5, with
+- [x] **A read-only snapshot is created and retained read-only.** §55.4 case 20 and §14.5, with
       the flag verified after creation rather than assumed —
       `crates/ono-recovery-btrfs/tests/protection.rs`.
 - [x] **A derived writable subvolume is tracked as its own asset.** §14.5 —
       `crates/ono-recovery-btrfs/tests/recovery_workflow.rs`.
-- [ ] **The recovery plan describes the real method rather than a fake in-place rollback.**
+- [x] **The recovery plan describes the real method rather than a fake in-place rollback.**
       §55.4 case 21 and §14.4: selective restore, subvolume replacement or next-boot, named
       explicitly, and nothing the crate emits claims Btrfs performs a rollback —
-      `crates/ono-recovery-btrfs/tests/recovery_workflow.rs`, case 291-btrfs-recovery-is-a-workflow.
-- [ ] **Root recovery requiring a reboot is explicit.** §55.4 case 22 and §14.6's three methods —
-      `crates/ono-recovery-btrfs/tests/root.rs`, case 300-recovery-needs-a-reboot.
+      `crates/ono-recovery-btrfs/tests/recovery_workflow.rs`, case `291-btrfs-recovery-is-a-workflow`.
+- [x] **Root recovery requiring a reboot is explicit.** §55.4 case 22 and §14.6's three methods —
+      `crates/ono-recovery-btrfs/tests/root_recovery.rs`, case `300-recovery-needs-a-reboot`.
 - [x] **A multi-subvolume set does not claim cross-subvolume atomicity.** Appendix D.7: members
       created sequentially compose to the weakest consistency, and the set records that they were —
       `crates/ono-recovery-btrfs/tests/protection.rs`.
@@ -3294,54 +3301,54 @@ Conventions this subsection relies on:
       output of btrfs-progs 6.16 against a real filesystem, including the pair that demonstrates
       §14.3: a nested subvolume with contents, and the same path inside a snapshot of its parent,
       empty — `crates/ono-recovery-btrfs/tests/fixtures/`, `scripts/fs-fixtures.sh`.
-- [ ] **The same code passes against a live filesystem.** The gated suite builds a disposable
+- [x] **The same code passes against a live filesystem.** The gated suite builds a disposable
       loop-backed filesystem, runs the same scenarios and tears it down —
-      `crates/ono-recovery-btrfs/tests/real_btrfs.rs`, case 319-btrfs-against-a-real-filesystem.
+      `crates/ono-recovery-btrfs/tests/real_btrfs.rs`, case `319-btrfs-against-a-real-filesystem`.
 
 #### 4.12.6 Generic file and configuration recovery (§15, §44, §55.5)
 
-- [ ] **A non-snapshot filesystem uses file protection for a small config mutation.** §55.5
-      case 23 — `crates/ono-recovery-files/tests/protection.rs`, case 292-file-recovery.
-- [ ] **A secret configuration recovery asset is not rendered.** §55.5 case 24, §15.5 and §44.2:
+- [x] **A non-snapshot filesystem uses file protection for a small config mutation.** §55.5
+      case 23 — `crates/ono-recovery-files/tests/protection.rs`, case `292-file-recovery`.
+- [x] **A secret configuration recovery asset is not rendered.** §55.5 case 24, §15.5 and §44.2:
       no accessor returns the bytes, and the asset's rendering carries metadata only —
-      `crates/ono-recovery-files/tests/store.rs`, case 292-file-recovery.
+      `crates/ono-recovery-files/tests/store.rs`, case `292-file-recovery`.
 - [x] **The recovery store is private.** §15.3 and §44.3: directory `0700`, files `0600`, applied
       in the creating syscall — `crates/ono-recovery-files/tests/store.rs`.
 - [x] **Restoration is atomic.** §15.4: temp file, fsync, rename — never a truncation in place,
       and an interrupted restore leaves the original intact —
       `crates/ono-recovery-files/tests/restore.rs`.
-- [ ] **A symlink swapped between protection and restore is refused.** §43.5 —
-      `crates/ono-recovery-files/tests/restore.rs`, case 313-change-security.
+- [x] **A symlink swapped between protection and restore is refused.** §43.5 —
+      `crates/ono-recovery-files/tests/restore.rs`, case `313-change-security`.
 - [x] **Sockets, devices, pseudo-filesystems and oversized trees are refused rather than
       truncated.** §15.2, each with the limit and the measurement named —
       `crates/ono-recovery-files/tests/scope.rs`.
 - [x] **The metadata a restore actually returns is measured rather than asserted.** Appendix C.7:
       an unprivileged process reports that ownership does not come back, and the gap is visible on
       the candidate, the asset and the plan — `crates/ono-recovery-files/tests/protection.rs`.
-- [ ] **`get recovery` shows retention and scope.** §55.5 case 25 and §37.5, with cost figures
+- [x] **`get recovery` shows retention and scope.** §55.5 case 25 and §37.5, with cost figures
       labelled estimated where filesystem accounting is not exact —
-      `crates/ono-cli/tests/change_recovery_assets.rs`, case 315-get-recovery.
-- [ ] **Cleanup refuses to remove an asset a failed plan requires.** §55.5 case 26, §2.15 and
+      `crates/ono-cli/tests/change_recovery_assets.rs`, case `315-get-recovery`.
+- [x] **Cleanup refuses to remove an asset a failed plan requires.** §55.5 case 26, §2.15 and
       §37.2: the refusal is `recovery.cleanup_blocked` and it names the plans that would become
       unrecoverable — `crates/ono-change-protection/tests/retention.rs`,
-      case 316-cleanup-is-blocked.
-- [ ] **A cleanup preview shows which plans become unrecoverable, and removes nothing.** §37.3 —
-      `crates/ono-cli/tests/change_recovery_assets.rs`, case 316-cleanup-is-blocked.
-- [ ] **Storage pressure surfaces and never deletes early.** §37.4 —
-      `crates/ono-change-protection/tests/retention.rs`, case 317-storage-pressure.
+      `crates/ono-cli/tests/change_recovery_assets.rs`, case `316-cleanup-is-blocked`.
+- [x] **A cleanup preview shows which plans become unrecoverable, and removes nothing.** §37.3 —
+      `crates/ono-cli/tests/change_recovery_assets.rs`, case `316-cleanup-is-blocked`.
+- [x] **Storage pressure surfaces and never deletes early.** §37.4 —
+      `crates/ono-change-protection/tests/retention.rs`, case `317-storage-pressure`.
 
 #### 4.12.7 Protection truth (§10, §55.6, Appendix A)
 
-- [ ] **A filesystem-protected plan with a SIGKILL stays unprotected for process runtime.**
+- [x] **A filesystem-protected plan with a SIGKILL stays unprotected for process runtime.**
       §55.6 case 27, §33.1 and §59.4: even on ZFS —
       `crates/ono-change-protection/tests/coverage.rs`, case `293-protection-is-a-matrix`.
-- [ ] **A local snapshot beside an HTTP POST leaves the external effect irreversible.** §55.6
+- [x] **A local snapshot beside an HTTP POST leaves the external effect irreversible.** §55.6
       case 28 and §35.2, and the webhook stays in the plan's `not recoverable` block —
       `crates/ono-change-protection/tests/coverage.rs`, case `293-protection-is-a-matrix`.
-- [ ] **Unknown provider recovery semantics remain unknown.** §55.6 case 29: a candidate whose
+- [x] **Unknown provider recovery semantics remain unknown.** §55.6 case 29: a candidate whose
       consistency could not be established leaves the domain `UNKNOWN` rather than `UNPROTECTED`,
       and the two are different answers — `crates/ono-change-protection/tests/coverage.rs`.
-- [ ] **Transactional status appears only inside one provider's boundary.** §55.6 case 30, §27.1
+- [x] **Transactional status appears only inside one provider's boundary.** §55.6 case 30, §27.1
       and §27.2: two boundaries compose to `PROTECTED` and never to `TRANSACTIONAL` —
       `crates/ono-change-core/src/protection.rs`.
 - [x] **A plan is protected only when every required persistent domain has a validated path.**
@@ -3355,7 +3362,7 @@ Conventions this subsection relies on:
 - [x] **The smallest sufficient scope wins, not the largest snapshot.** Appendix A.4: a
       configuration-file backup dominates a root-dataset rollback for one file —
       `crates/ono-change-protection/tests/coverage.rs`.
-- [ ] **The plan-level summary never hides the matrix.** §10.3 and §62.6: a protected plan renders
+- [x] **The plan-level summary never hides the matrix.** §10.3 and §62.6: a protected plan renders
       its exclusions, and there is no rendering path that emits a protection indicator without them
       — `crates/ono-change-render/tests/protection.rs`, case `293-protection-is-a-matrix`.
 - [x] **There is no green shield.** Appendix E.8: no single glyph or badge means safe —
@@ -3364,9 +3371,9 @@ Conventions this subsection relies on:
       mutation scope — `crates/ono-change-protection/tests/policy.rs`.
 - [x] **`off` still reports the protection that was available.** §17.2 —
       `crates/ono-change-protection/tests/policy.rs`.
-- [ ] **`require` refuses to apply on a coverage shortfall.** §17.2: the refusal is
+- [x] **`require` refuses to apply on a coverage shortfall.** §17.2: the refusal is
       `recovery.coverage_insufficient` and it carries the matrix —
-      `crates/ono-change-protection/tests/policy.rs`, case 296-require-refuses.
+      `crates/ono-change-protection/tests/policy.rs`, case `296-require-refuses`.
 - [x] **A stale recovery asset is not presented as a just-before-change recovery point.** §18.3,
       and an asset with no recorded fingerprint is never fresh —
       `crates/ono-change-protection/tests/freshness.rs`.
@@ -3375,38 +3382,38 @@ Conventions this subsection relies on:
 
 #### 4.12.8 Apply and verify (§4, §23, §40, §55.7, Appendix F)
 
-- [ ] **A required PREPARE failure means zero mutate actions executed.** §55.7 case 31, §2.3 and
+- [x] **A required PREPARE failure means zero mutate actions executed.** §55.7 case 31, §2.3 and
       Appendix F: the plan is `PREPARE_FAILED`, the target is byte-for-byte as it was, and the
       refusal says so — `crates/ono-change-executor/tests/appendix_f.rs`,
-      case 294-prepare-before-mutate.
+      `crates/ono-cli/tests/change_prepare_failure.rs`, case `294-prepare-before-mutate`.
 - [x] **A partial prepare retains the assets it created and mutates nothing.** Appendix F.1: four
       snapshots created and a fifth failing leaves the plan targets untouched, and cleanup failure
       does not obscure the original failure — `crates/ono-change-executor/tests/appendix_f.rs`.
-- [ ] **Mutation succeeding and required verification failing makes the plan FAILED.** §55.7
-      case 32 and §2.14 — `crates/ono-change-executor/tests/appendix_f.rs`, case 295-apply-and-verify.
-- [ ] **An advisory verification failure makes the plan DEGRADED.** §55.7 case 33 —
-      `crates/ono-change-executor/tests/appendix_f.rs`, case 295-apply-and-verify.
-- [ ] **A successful service and configuration workflow verifies.** §55.7 case 34 and §31's
-      reference workflow, end to end in the container — case 295-apply-and-verify.
+- [x] **Mutation succeeding and required verification failing makes the plan FAILED.** §55.7
+      case 32 and §2.14 — `crates/ono-change-executor/tests/appendix_f.rs`, case `295-apply-and-verify`.
+- [x] **An advisory verification failure makes the plan DEGRADED.** §55.7 case 33 —
+      `crates/ono-change-executor/tests/appendix_f.rs`, case `295-apply-and-verify`.
+- [x] **A successful service and configuration workflow verifies.** §55.7 case 34 and §31's
+      reference workflow, end to end in the container — case `295-apply-and-verify`.
 - [x] **A verification timeout is never read as success.** §23.5 —
       `crates/ono-change-core/src/verification.rs`, `crates/ono-change-executor/tests/appendix_f.rs`.
-- [ ] **Apply refuses a draft and an expired plan.** §5.6 —
-      `crates/ono-change-executor/tests/lifecycle.rs`, case 295-apply-and-verify.
+- [x] **Apply refuses a draft and an expired plan.** §5.6 —
+      `crates/ono-change-executor/tests/lifecycle.rs`, case `295-apply-and-verify`.
 - [x] **Apply revalidates a sealed plan before mutation.** §5.6 and §7.3 —
       `crates/ono-change-executor/tests/lifecycle.rs`.
-- [ ] **A HIGH or CRITICAL plan requires an acknowledgement that names the actual reason.** §19.4
+- [x] **A HIGH or CRITICAL plan requires an acknowledgement that names the actual reason.** §19.4
       and §40.2: the refusal carries the rule's own sentence rather than a generic question —
-      `crates/ono-cli/tests/change_gates.rs`, case 297-risk-gates.
-- [ ] **An irreversible plan requires its own acknowledgement, whatever its class.** §19.4 —
-      `crates/ono-cli/tests/change_gates.rs`, case 297-risk-gates.
-- [ ] **A LOW or MODERATE plan with no irreversible action applies on `apply` alone.** §40.1: the
-      normal path stays usable — `crates/ono-cli/tests/change_gates.rs`, case 295-apply-and-verify.
-- [ ] **A script never waits for a prompt.** §17.4 and §40.3: every acknowledgement has a flag,
+      `crates/ono-cli/tests/change_gates.rs`, case `297-risk-gates`.
+- [x] **An irreversible plan requires its own acknowledgement, whatever its class.** §19.4 —
+      `crates/ono-cli/tests/change_gates.rs`, case `297-risk-gates`.
+- [x] **A LOW or MODERATE plan with no irreversible action applies on `apply` alone.** §40.1: the
+      normal path stays usable — `crates/ono-cli/tests/change_gates.rs`, case `295-apply-and-verify`.
+- [x] **A script never waits for a prompt.** §17.4 and §40.3: every acknowledgement has a flag,
       and a policy that cannot be satisfied fails with a structured error —
       `crates/ono-cli/tests/change_scripting.rs`, case `322-change-in-a-script`.
-- [ ] **The apply progress preserves lifecycle boundaries.** Appendix E.4: PREPARE, APPLY and
+- [x] **The apply progress preserves lifecycle boundaries.** Appendix E.4: PREPARE, APPLY and
       VERIFY are separately visible, and no single bar hides whether protection completed —
-      `crates/ono-change-render/tests/progress.rs`, case 295-apply-and-verify.
+      `crates/ono-change-render/tests/progress.rs`, case `295-apply-and-verify`.
 - [x] **The failure display does not present recovery as the only next step.** Appendix E.5 —
       `crates/ono-change-render/tests/progress.rs`.
 - [x] **An auto-recovery declaration that does not meet §26.3's six conditions is rejected at
@@ -3414,111 +3421,114 @@ Conventions this subsection relies on:
 
 #### 4.12.9 Recovery (§24, §25, §55.8, Appendix C)
 
-- [ ] **`recover` does not immediately mutate state.** §55.8 case 35 and §24.1: it produces a
+- [x] **`recover` does not immediately mutate state.** §55.8 case 35 and §24.1: it produces a
       RecoveryPlan and the system is unchanged — `crates/ono-change-recovery/tests/builder.rs`,
-      case 298-selective-restore.
-- [ ] **The recovery plan shows the newer state that would be lost.** §55.8 case 36 and §24.3 —
-      `crates/ono-change-recovery/tests/conflict.rs`, case 299-destructive-rollback-is-gated.
+      case `298-selective-restore`.
+- [x] **The recovery plan shows the newer state that would be lost.** §55.8 case 36 and §24.3 —
+      `crates/ono-change-recovery/tests/conflict.rs`, case `299-destructive-rollback-is-gated`.
 - [x] **A recovery whose drift analysis did not run is gated rather than waved through.** §62.8
       and §56.3 — `crates/ono-change-core/src/recovery.rs`,
       `crates/ono-change-recovery/tests/gate.rs`.
-- [ ] **Selective recovery preserves an unrelated newer file.** §55.8 case 37 and §59.6 —
-      `crates/ono-change-recovery/tests/conflict.rs`, case 298-selective-restore.
-- [ ] **A file edited again after the plan is reported as a conflict.** Appendix C.4's worked
-      example — `crates/ono-change-recovery/tests/conflict.rs`, case 301-recovery-conflicts.
-- [ ] **Recovery after an unrelated later package update prefers selective restore.** Appendix I.5,
+- [x] **Selective recovery preserves an unrelated newer file.** §55.8 case 37 and §59.6 —
+      `crates/ono-change-recovery/tests/conflict.rs`, case `298-selective-restore`.
+- [x] **A file edited again after the plan is reported as a conflict.** Appendix C.4's worked
+      example — `crates/ono-change-recovery/tests/conflict.rs`, case `301-recovery-conflicts`.
+- [x] **Recovery after an unrelated later package update prefers selective restore.** Appendix I.5,
       which §I.5 calls a core acceptance scenario: the analysis shows that a full root rollback
       would discard the later changes and that selective restore achieves the goal —
-      `crates/ono-change-recovery/tests/conflict.rs`, case 301-recovery-conflicts.
+      `crates/ono-change-recovery/tests/conflict.rs`, case `301-recovery-conflicts`.
 - [x] **The least-destructive method that satisfies the goal is chosen.** Appendix C.1 and §62.5 —
       `crates/ono-change-core/src/recovery.rs`, `crates/ono-change-recovery/tests/method.rs`.
 - [x] **Automatic semantic merging is not a method this engine can choose.** Appendix C.5 —
       `crates/ono-change-recovery/tests/method.rs`.
 - [x] **A directory restore does not delete newer extra files by default.** Appendix C.6 —
       `crates/ono-recovery-files/tests/restore.rs`.
-- [ ] **Recovery verification distinguishes persistent from runtime equivalence.** §55.8 case 38
+- [x] **Recovery verification distinguishes persistent from runtime equivalence.** §55.8 case 38
       and §25.1: new worker PIDs are `DIFFERENT / EXPECTED` and not a failure —
-      `crates/ono-change-recovery/tests/verify.rs`, case 302-recovery-verification.
+      `crates/ono-change-recovery/tests/verify.rs`, case `302-recovery-verification`.
 - [x] **Nothing claims a rollback succeeded.** §25.3: the words `rollback successful`, `fully
       recovered`, `fully restored` and `undone` appear in no string the recovery and rendering
       crates can emit — `crates/ono-change-recovery/tests/verify.rs`,
       `crates/ono-change-render/tests/verify.rs`.
-- [ ] **An external side effect stays unrecoverable even where a compensation exists.** §35.3 and
+- [x] **An external side effect stays unrecoverable even where a compensation exists.** §35.3 and
       §27.4: compensation is `COMPENSATABLE` and is not rollback —
-      `crates/ono-change-recovery/tests/builder.rs`, case 302-recovery-verification.
-- [ ] **Recovery failure retains the assets and the exact partial state.** §55.8 case 39 and
-      Appendix F — `crates/ono-change-executor/tests/recovery.rs`.
-- [ ] **A recovery plan goes through the same lifecycle as any other plan.** §2.12: it is
+      `crates/ono-change-recovery/tests/builder.rs`, case `302-recovery-verification`.
+- [x] **Recovery failure retains the assets and the exact partial state.** §55.8 case 39 and
+      Appendix F — `crates/ono-change-executor/tests/failure_injection.rs`,
+      `crates/ono-change-executor/tests/appendix_f.rs`, `crates/ono-change-recovery/tests/verify.rs`.
+- [x] **A recovery plan goes through the same lifecycle as any other plan.** §2.12: it is
       inspected, its impact is shown, it is applied and it is verified —
-      `crates/ono-cli/tests/change_recovery.rs`, case 302-recovery-verification.
+      `crates/ono-cli/tests/change_recovery.rs`, case `302-recovery-verification`.
 - [x] **The recovery plan view shows newer-state impact above the restore detail.** Appendix E.6 —
       `crates/ono-change-render/tests/recovery.rs`.
 
 #### 4.12.10 Resume, idempotency and concurrency (§41, §42, §55.9)
 
-- [ ] **A crash after an idempotent action can resume safely.** §55.9 case 40 —
-      `crates/ono-change-executor/tests/resume.rs`, case 303-resume-after-a-crash.
-- [ ] **A crash after an unknown or non-idempotent action does not blindly retry.** §55.9 case 41
-      and §41.2 — `crates/ono-change-executor/tests/resume.rs`, case 303-resume-after-a-crash.
-- [ ] **Plan state is reconstructable from persisted action records.** §41.2: a store reopened
+- [x] **A crash after an idempotent action can resume safely.** §55.9 case 40 —
+      `crates/ono-change-executor/tests/resume.rs`, `crates/ono-cli/tests/change_claims.rs`, case `303-resume-after-a-crash`.
+- [x] **A crash after an unknown or non-idempotent action does not blindly retry.** §55.9 case 41
+      and §41.2 — `crates/ono-change-executor/tests/resume.rs`, case `303-resume-after-a-crash`.
+- [x] **Plan state is reconstructable from persisted action records.** §41.2: a store reopened
       after a crash reports the same per-action statuses, including an `unknown` that comes back
       neither failed nor succeeded (Appendix F.2) — `crates/ono-change-plan/tests/plan_store.rs`,
-      case 303-resume-after-a-crash.
-- [ ] **The same plan cannot apply concurrently from two sessions.** §55.9 case 42 and §42.4: the
+      case `303-resume-after-a-crash`.
+- [x] **The same plan cannot apply concurrently from two sessions.** §55.9 case 42 and §42.4: the
       refusal is `change.plan_already_applying` and it names the holder —
-      `crates/ono-change-plan/tests/plan_store.rs`, case 304-concurrent-apply.
-- [ ] **An apply claim is bounded and released on failure.** §42.3: a crashed session's claim
+      `crates/ono-change-plan/tests/plan_store.rs`, `crates/ono-cli/tests/change_claims.rs`, case `304-concurrent-apply`.
+- [x] **An apply claim is bounded and released on failure.** §42.3: a crashed session's claim
       expires and can be taken over; a live one cannot —
-      `crates/ono-change-plan/tests/plan_store.rs`, case 304-concurrent-apply.
-- [ ] **A sealed plan survives shell exit.** §36.1 —
-      `crates/ono-cli/tests/change_store.rs`, case 305-plans-survive-a-restart.
-- [ ] **A plan reference resolves on an unambiguous prefix, and refuses an ambiguous one.**
-      §36.4 — `crates/ono-change-plan/tests/references.rs`, case 305-plans-survive-a-restart.
+      `crates/ono-change-plan/tests/plan_store.rs`, `crates/ono-cli/tests/change_claims.rs`, case `304-concurrent-apply`.
+- [x] **A sealed plan survives shell exit.** §36.1 —
+      `crates/ono-change-plan/tests/plan_store.rs`, `crates/ono-cli/tests/change_gates.rs`, case `305-plans-survive-a-restart`.
+- [x] **A plan reference resolves on an unambiguous prefix, and refuses an ambiguous one.**
+      §36.4 — `crates/ono-change-plan/tests/plan_store.rs`, case `305-plans-survive-a-restart`.
 - [x] **A secret is not persisted in raw form.** §36.3: the store holds an opaque handle, and the
       seal still verifies over it — `crates/ono-change-plan/src/secrets.rs`.
 
 #### 4.12.11 Bulk and remote (§28, §29, §55.10)
 
-- [ ] **A canary stops after the first batch's verification fails.** §55.10 case 43 and §28.6 —
-      `crates/ono-change-executor/tests/strategy.rs`, case 306-canary.
+- [x] **A canary stops after the first batch's verification fails.** §55.10 case 43 and §28.6 —
+      `crates/ono-change-executor/tests/strategy.rs`, case `306-canary`.
 - [x] **No strategy is unbounded.** §28.4: `parallel` carries its width and a width of zero is
       refused rather than read as unlimited — `crates/ono-change-core/src/strategy.rs`.
 - [ ] **A remote per-host protection matrix is accurate.** §55.10 case 44 and §29.2: twelve ZFS,
       six Btrfs and two unprotected hosts compose to `PARTIALLY_PROTECTED` —
-      `crates/ono-change-protection/tests/remote.rs`, case 307-remote-protection-matrix.
+      `crates/ono-change-protection/tests/remote.rs`, case `307-remote-protection-matrix`.
 - [ ] **A disconnected host is unknown, not automatically failed.** §55.10 case 45, §29.3 and
-      Appendix F.2 — `crates/ono-change-executor/tests/remote.rs`, case 308-remote-disconnect.
+      Appendix F.2 —
+      `crates/ono-change-executor/tests/appendix_f.rs::should_keep_a_vanished_remote_host_unknown_rather_than_failed`,
+      case `308-remote-disconnect`.
 - [ ] **A network plan threatening the active remote link is CRITICAL.** §55.10 case 46, §34.2 and
-      Appendix I.3 — `crates/ono-change-impact/tests/risk.rs`, case 308-remote-disconnect.
+      Appendix I.3 — `crates/ono-change-impact/tests/risk.rs`, case `308-remote-disconnect`.
 - [ ] **Remote recovery is planned per host, and says where it cannot proceed.** §29.4 —
-      `crates/ono-change-recovery/tests/remote.rs`, case 308-remote-disconnect.
-- [ ] **A bulk plan reaching a whole service group is CRITICAL, and three of five members is
+      `crates/ono-change-recovery/tests/remote.rs`, case `308-remote-disconnect`.
+- [x] **A bulk plan reaching a whole service group is CRITICAL, and three of five members is
       not.** §28.3 and §19.3, derived from the topology rather than from name similarity —
-      `crates/ono-change-impact/tests/risk.rs`, case 306-canary.
+      `crates/ono-change-impact/tests/risk.rs`, case `306-canary`.
 
 #### 4.12.12 Spatial and temporal integration (§9, §21, §22, §55.11)
 
-- [ ] **`map --plan` uses real object identities and fabricates no future PID.** §55.11 case 47
-      and §21.4 — `crates/ono-cli/tests/change_map.rs`, case 309-map-with-a-plan.
-- [ ] **The recovery overlay shows which objects an asset covers.** §21.3 —
-      `crates/ono-cli/tests/change_map.rs`, case 309-map-with-a-plan.
-- [ ] **Plan lifecycle events appear in the v0.5 timeline.** §55.11 case 48 and §22.1 —
-      `crates/ono-cli/tests/change_timeline.rs`, case 310-plan-events-on-the-timeline.
-- [ ] **The plan id is a causal anchor.** §22.4: `timeline --plan` and `at event` reach the plan's
+- [x] **`map --plan` uses real object identities and fabricates no future PID.** §55.11 case 47
+      and §21.4 — `crates/ono-cli/tests/change_map.rs`, case `309-map-with-a-plan`.
+- [x] **The recovery overlay shows which objects an asset covers.** §21.3 —
+      `crates/ono-cli/tests/change_views.rs`, `crates/ono-change-render/tests/overlay.rs`, case `309-map-with-a-plan`.
+- [x] **Plan lifecycle events appear in the v0.5 timeline.** §55.11 case 48 and §22.1 —
+      `crates/ono-cli/tests/change_timeline.rs`, case `310-plan-events-on-the-timeline`.
+- [x] **The plan id is a causal anchor.** §22.4: `timeline --plan` and `at event` reach the plan's
       own events — `crates/ono-cli/tests/change_timeline.rs`,
-      case 310-plan-events-on-the-timeline.
-- [ ] **Pre-plan and post-plan state can be compared.** §55.11 case 49, §22.2 and §22.3 —
-      `crates/ono-cli/tests/change_timeline.rs`, case 311-before-and-after.
-- [ ] **The recovery event chain is auditable.** §55.11 case 50 and §22.1 —
-      `crates/ono-cli/tests/change_timeline.rs`, case 310-plan-events-on-the-timeline.
+      case `310-plan-events-on-the-timeline`.
+- [x] **Pre-plan and post-plan state can be compared.** §55.11 case 49, §22.2 and §22.3 —
+      `crates/ono-cli/tests/change_timeline.rs`, case `311-before-and-after`.
+- [x] **The recovery event chain is auditable.** §55.11 case 50 and §22.1 —
+      `crates/ono-cli/tests/change_timeline.rs`, case `310-plan-events-on-the-timeline`.
 - [x] **v0.6 uses the v0.5 ledger rather than a second history.** No competing audit subsystem
       exists; plan events are `ono.plan.*` subtypes on the canonical kinds —
       `xtask/src/change.rs`, `crates/ono-cli/tests/change_timeline.rs`.
 - [x] **Impact is derived from the v0.4 topology with its confidence unchanged.** §9.3 and §3.5:
       an `inferred` edge stays inferred — `crates/ono-change-impact/tests/impact.rs`.
-- [ ] **The unknown boundary is visible.** §9.6: where the graph ends at an opaque boundary, the
+- [x] **The unknown boundary is visible.** §9.6: where the graph ends at an opaque boundary, the
       boundary is part of the answer — `crates/ono-change-impact/tests/impact.rs`,
-      case 288-inspect-plan.
+      case `288-inspect-plan`.
 - [x] **A bounded impact traversal never renders as a complete one.** §9.5 and §52.2 —
       `crates/ono-change-impact/tests/impact.rs`, `crates/ono-change-render/tests/impact.rs`.
 
@@ -3533,37 +3543,37 @@ Conventions this subsection relies on:
       `recovery.*` families, with each scope key declaring honestly whether the broker can enforce
       it — `crates/ono-kuang-protocol/src/capability.rs`,
       `docs/contracts/kuang/capabilities.v1.yaml`, `xtask/tests/change_contracts.rs`.
-- [ ] **A plugin that can describe impact cannot execute the change.** §48.4: a package holding
+- [x] **A plugin that can describe impact cannot execute the change.** §48.4: a package holding
       `change.plan.read` and `change.plan.contribute` that attempts `change.action.execute` is
       denied at the call and the denial is audited —
-      `crates/ono-kuang-sdk/tests/conformance.rs`, case 312-kuang-change-permissions.
+      `crates/ono-kuang-sdk/tests/conformance.rs`, case `312-kuang-change-permissions`.
 - [x] **A recovery provider that declares `recovery.restore` without a destructive capability is
       refused at load.** §48.4 and §43.7, before any package code runs —
       `crates/ono-kuang-sdk/tests/conformance.rs`.
-- [ ] **`recovery.restore` can never be in a default profile.** Appendix H's rule that a safe
+- [x] **`recovery.restore` can never be in a default profile.** Appendix H's rule that a safe
       default sits below the `mutate` risk over class A or B capabilities —
-      `crates/ono-kuang-supervisor/tests/`, case 312-kuang-change-permissions.
+      `crates/ono-kuang-supervisor/tests/`, case `312-kuang-change-permissions`.
 - [x] **A contributed risk rule can raise the class and never lower it.** §19.2 —
       `crates/ono-kuang-sdk/tests/conformance.rs`.
-- [ ] **A model cannot establish recovery coverage.** §49.3: there is no path from a model
+- [x] **A model cannot establish recovery coverage.** §49.3: there is no path from a model
       response to a recovery candidate, a protection action or a protection level, and the test
       would fail if somebody added one — `crates/ono-kuang-sdk/tests/conformance.rs`,
-      case 314-model-cannot-declare-protection.
-- [ ] **A plan shows which actions require privilege, and when elevation occurs.** §43.3 —
-      `crates/ono-change-render/tests/plan.rs`, case 313-change-security.
-- [ ] **Recovery privilege is discovered before protection is advertised as usable.** §43.4 —
-      `crates/ono-change-protection/tests/coverage.rs`, case 313-change-security.
-- [ ] **Recovery asset metadata may be shown and contents may not.** §44: the store is private,
+      case `314-model-cannot-declare-protection`.
+- [x] **A plan shows which actions require privilege, and when elevation occurs.** §43.3 —
+      `crates/ono-change-render/tests/plan.rs`, case `313-change-security`.
+- [x] **Recovery privilege is discovered before protection is advertised as usable.** §43.4 —
+      `crates/ono-change-protection/tests/coverage.rs`, case `313-change-security`.
+- [x] **Recovery asset metadata may be shown and contents may not.** §44: the store is private,
       the contents are never rendered by default, and a plugin receives scoped access only —
-      `crates/ono-recovery-files/tests/store.rs`, case 292-file-recovery.
+      `crates/ono-recovery-files/tests/store.rs`, case `292-file-recovery`.
 - [x] **The v0.6 fuzz targets exist and run.** The plan block grammar, plan and asset
       deserialisation, provider protocol messages, snapshot names and paths, impact graph inputs
       and recovery metadata (§54.3) — `fuzz/src/targets.rs`, `fuzz/tests/corpus.rs`.
-- [ ] **The security tests of §54.6 pass.** Symlink swap races, path traversal, privilege
+- [x] **The security tests of §54.6 pass.** Symlink swap races, path traversal, privilege
       mismatch, a malicious plugin provider, shell injection attempts, a tampered plan store,
       tampered recovery asset metadata and concurrent apply —
       `crates/ono-recovery-files/tests/restore.rs`, `crates/ono-change-plan/tests/plan_store.rs`,
-      `crates/ono-kuang-sdk/tests/conformance.rs`, case 313-change-security.
+      `crates/ono-kuang-sdk/tests/conformance.rs`, case `313-change-security`.
 - [x] **Failure is injected at every lifecycle boundary.** §54.5's ten: snapshot creation fails, a
       snapshot validates the wrong scope, mutation fails after protection, the shell crashes
       mid-apply, a provider disconnects, verification times out, recovery fails halfway, cleanup
@@ -3572,24 +3582,25 @@ Conventions this subsection relies on:
 
 #### 4.12.14 The eighteen core invariants of §2
 
-- [ ] **1. Planning is side-effect free.** `ono-change-core` performs no I/O and depends on nothing
+- [x] **1. Planning is side-effect free.** `ono-change-core` performs no I/O and depends on nothing
       that does; a plan's assets are `PROPOSED` until apply —
       `crates/ono-change-core/tests/value_records.rs`, case `280-plan-creates-nothing`.
-- [ ] **2. Protection is explicit in the plan.** PREPARE actions are visible before execution —
+- [x] **2. Protection is explicit in the plan.** PREPARE actions are visible before execution —
       `crates/ono-change-render/tests/plan.rs`, case `293-protection-is-a-matrix`.
-- [ ] **3. Protection happens before mutation.** There is no lifecycle edge from `prepare-failed`
+- [x] **3. Protection happens before mutation.** There is no lifecycle edge from `prepare-failed`
       to `applying`, checked directly — `crates/ono-change-core/src/state.rs`,
-      `xtask/tests/change_contracts.rs`, case 294-prepare-before-mutate.
+      `xtask/tests/change_contracts.rs`, case `294-prepare-before-mutate`.
 - [x] **4. Unknown is preserved.** No combining operation strengthens a confidence, a consistency
       or a coverage — `crates/ono-change-core/src/effect.rs`,
       `crates/ono-change-core/src/protection.rs`.
-- [ ] **5. Historical context remains read-only.** §6.4's refusal —
+- [x] **5. Historical context remains read-only.** §6.4's refusal —
       `crates/ono-cli/tests/change_planning.rs`, case `283-plan-refuses-the-past`.
-- [ ] **6. Targets are frozen at plan sealing.** —
-      `crates/ono-change-plan/tests/freeze.rs`, case 282-plan-from-a-pipeline.
-- [ ] **7. Preconditions are revalidated at apply time.** —
-      `crates/ono-change-plan/src/drift.rs`, case 285-drift-stops-apply.
-- [ ] **8. Provider claims are scoped.** A filesystem snapshot protects filesystem state —
+- [x] **6. Targets are frozen at plan sealing.** —
+      `crates/ono-change-plan/src/builder.rs`,
+      `crates/ono-change-plan/tests/sealed_plan_properties.rs`, case `282-plan-from-a-pipeline`.
+- [x] **7. Preconditions are revalidated at apply time.** —
+      `crates/ono-change-plan/src/drift.rs`, case `285-drift-stops-apply`.
+- [x] **8. Provider claims are scoped.** A filesystem snapshot protects filesystem state —
       `crates/ono-change-protection/tests/coverage.rs`, case `293-protection-is-a-matrix`.
 - [x] **9. A snapshot is not a backup.** `shares_failure_domain` travels with the mechanism —
       `crates/ono-change-core/src/asset.rs`, `xtask/tests/change_contracts.rs`.
@@ -3597,63 +3608,65 @@ Conventions this subsection relies on:
       claims Btrfs performs a rollback — `crates/ono-recovery-btrfs/tests/recovery_workflow.rs`.
 - [x] **11. Cross-provider changes are not atomic by default.** —
       `crates/ono-change-core/src/protection.rs`.
-- [ ] **12. Recovery is itself a change.** It is planned, impact-checked and verified —
-      `crates/ono-cli/tests/change_recovery.rs`, case 302-recovery-verification.
-- [ ] **13. Irreversible effects remain visible after protection.** —
+- [x] **12. Recovery is itself a change.** It is planned, impact-checked and verified —
+      `crates/ono-cli/tests/change_recovery.rs`, case `302-recovery-verification`.
+- [x] **13. Irreversible effects remain visible after protection.** —
       `crates/ono-change-protection/tests/coverage.rs`, case `293-protection-is-a-matrix`.
-- [ ] **14. Verification is separate from execution success.** —
-      `crates/ono-change-executor/tests/appendix_f.rs`, case 295-apply-and-verify.
-- [ ] **15. Cleanup never outruns recovery policy.** —
-      `crates/ono-change-protection/tests/retention.rs`, case 316-cleanup-is-blocked.
-- [ ] **16. All lifecycle transitions are auditable.** They reach the v0.5 ledger —
-      `crates/ono-cli/tests/change_timeline.rs`, case 310-plan-events-on-the-timeline.
+- [x] **14. Verification is separate from execution success.** —
+      `crates/ono-change-executor/tests/appendix_f.rs`, case `295-apply-and-verify`.
+- [x] **15. Cleanup never outruns recovery policy.** —
+      `crates/ono-change-protection/tests/retention.rs`, case `316-cleanup-is-blocked`.
+- [x] **16. All lifecycle transitions are auditable.** They reach the v0.5 ledger —
+      `crates/ono-cli/tests/change_timeline.rs`, case `310-plan-events-on-the-timeline`.
 - [x] **17. No hidden shell scripts.** No execution method admits a command line —
       `crates/ono-change-core/src/action.rs`, `xtask/tests/change_contracts.rs`.
-- [ ] **18. The safe path remains usable.** Protection needs no ritual of flags for normal
-      interactive use: `plan`, `apply`, done — case 295-apply-and-verify.
+- [x] **18. The safe path remains usable.** Protection needs no ritual of flags for normal
+      interactive use: `plan`, `apply`, done — case `295-apply-and-verify`.
 
 #### 4.12.15 Release criteria (§63) and delivery
 
-- [ ] **Plan creation is demonstrably side-effect free.** §63.1 — case `280-plan-creates-nothing`.
+- [x] **Plan creation is demonstrably side-effect free.** §63.1 — case `280-plan-creates-nothing`.
 - [x] **Sealed plans are immutable and digest-verified.** §63.2 —
       `crates/ono-change-core/src/plan.rs`, `crates/ono-change-plan/src/builder.rs`.
-- [ ] **Target freezing and drift detection work under race tests.** §63.3 —
-      `crates/ono-change-plan/src/drift.rs`, case 285-drift-stops-apply.
-- [ ] **PREPARE failure proves no mutation occurred.** §63.4 — case 294-prepare-before-mutate.
-- [ ] **Apply state survives crash and restart.** §63.5 — case 303-resume-after-a-crash.
-- [ ] **Verification is independent of action exit status.** §63.6 — case 295-apply-and-verify.
-- [ ] **Recovery always produces a RecoveryPlan before mutation.** §63.7 —
-      case 298-selective-restore.
-- [ ] **ZFS scope and rollback semantics pass real acceptance tests.** §63.8 —
-      case 318-zfs-against-a-real-pool.
-- [ ] **Btrfs nested-subvolume semantics pass real acceptance tests.** §63.9 —
-      case 319-btrfs-against-a-real-filesystem.
-- [ ] **The protection matrix never overstates coverage in adversarial fixtures.** §63.10 and
+- [x] **Target freezing and drift detection work under race tests.** §63.3 —
+      `crates/ono-change-plan/src/drift.rs`, case `285-drift-stops-apply`.
+- [x] **PREPARE failure proves no mutation occurred.** §63.4 — `crates/ono-cli/tests/change_prepare_failure.rs`,
+      case `294-prepare-before-mutate`.
+- [x] **Apply state survives crash and restart.** §63.5 — case `303-resume-after-a-crash`.
+- [x] **Verification is independent of action exit status.** §63.6 —
+      `crates/ono-cli/tests/change_scripting.rs`, case `295-apply-and-verify`.
+- [x] **Recovery always produces a RecoveryPlan before mutation.** §63.7 —
+      case `298-selective-restore`.
+- [x] **ZFS scope and rollback semantics pass real acceptance tests.** §63.8 —
+      case `318-zfs-against-a-real-pool`.
+- [x] **Btrfs nested-subvolume semantics pass real acceptance tests.** §63.9 —
+      case `319-btrfs-against-a-real-filesystem`.
+- [x] **The protection matrix never overstates coverage in adversarial fixtures.** §63.10 and
       Appendix G.2's eight truth tests — `crates/ono-change-protection/tests/coverage.rs`,
-      `crates/ono-recovery-zfs/tests/boundaries.rs`,
-      `crates/ono-recovery-btrfs/tests/boundaries.rs`, case 320-truth-tests.
-- [ ] **Irreversible and unknown effects remain visible.** §63.11 — case `293-protection-is-a-matrix`.
-- [ ] **Destructive recovery of newer state requires explicit acceptance.** §63.12 —
-      case 299-destructive-rollback-is-gated.
-- [ ] **Recovery verification reports domain-specific equivalence.** §63.13 —
-      case 302-recovery-verification.
-- [ ] **Bulk and canary behaviour is deterministic.** §63.14 — case 306-canary.
-- [ ] **Remote unknown state remains unknown.** §63.15 — case 308-remote-disconnect.
-- [ ] **KUANG/11 providers cannot escalate capability.** §63.16 —
-      case 312-kuang-change-permissions.
+      `crates/ono-recovery-zfs/tests/discovery.rs`,
+      `crates/ono-recovery-btrfs/tests/boundaries.rs`, case `320-truth-tests`.
+- [x] **Irreversible and unknown effects remain visible.** §63.11 — case `293-protection-is-a-matrix`.
+- [x] **Destructive recovery of newer state requires explicit acceptance.** §63.12 —
+      case `299-destructive-rollback-is-gated`.
+- [x] **Recovery verification reports domain-specific equivalence.** §63.13 —
+      case `302-recovery-verification`.
+- [x] **Bulk and canary behaviour is deterministic.** §63.14 — case `306-canary`.
+- [ ] **Remote unknown state remains unknown.** §63.15 — case `308-remote-disconnect`.
+- [x] **KUANG/11 providers cannot escalate capability.** §63.16 —
+      case `312-kuang-change-permissions`.
 - [x] **All machine-readable contracts match runtime registration.** §63.17 —
       `cargo xtask spec-check`, `xtask/tests/change_contracts.rs`.
-- [ ] **Security, fuzz and failure-injection suites pass.** §63.18 —
+- [x] **Security, fuzz and failure-injection suites pass.** §63.18 —
       `crates/ono-change-executor/tests/failure_injection.rs`, `fuzz/tests/corpus.rs`,
-      case 313-change-security.
-- [ ] **Container acceptance uses the real `ono` binary and real supported filesystems.** §63.19 —
-      case 318-zfs-against-a-real-pool, case 319-btrfs-against-a-real-filesystem.
-- [ ] **Every v0.6 command is machine-registered and discoverable.** `plan`, `get`/`inspect`/
+      case `313-change-security`.
+- [x] **Container acceptance uses the real `ono` binary and real supported filesystems.** §63.19 —
+      case `318-zfs-against-a-real-pool`, case `319-btrfs-against-a-real-filesystem`.
+- [x] **Every v0.6 command is machine-registered and discoverable.** `plan`, `get`/`inspect`/
       `rebase`/`resume plan`, `impact`, `protect`, `apply`, `verify`, `recover`, and
       `get`/`inspect`/`remove recovery` answer `help`, completion, `explain` and `inspect` from the
       registry — `xtask/src/bindings.rs`, `crates/ono-cli/tests/change_discoverability.rs`,
-      case 323-change-discoverability.
-- [ ] **Machine-readable output is suitable for scripting.** Every v0.6 command's output is a typed
+      case `323-change-discoverability`.
+- [x] **Machine-readable output is suitable for scripting.** Every v0.6 command's output is a typed
       value a pipeline can filter and `to json` can serialise —
       `crates/ono-cli/tests/change_scripting.rs`, case `322-change-in-a-script`.
 - [x] **The shell is unchanged where v0.6 is not used.** v0.2–v0.5 behaviour is green with the

@@ -10,15 +10,17 @@
 use std::path::Path;
 
 use ono_change_core::{
-    ConsistencyClass, EffectDomain, PersistenceDomain, RecoveryCapability, RecoveryObjective,
-    RestoreMethod, error,
+    AssetState, ConsistencyClass, EffectDomain, PersistenceDomain, RecoveryCapability,
+    RecoveryObjective, ResolvedMount, RestoreMethod, error,
 };
 use ono_change_protection::{MountTable, ProviderRegistry};
 use ono_core::ErrorCode;
 
 mod support;
 
-use support::{TestProvider, ZFS_ROOT, candidate, snapshot_cost};
+use support::{
+    CONTAINER, TestProvider, ZFS_ROOT, candidate, ready_asset, registry_with, snapshot_cost,
+};
 
 fn root_dataset() -> PersistenceDomain {
     MountTable::from_text(ZFS_ROOT).resolve(Path::new("/etc/nginx/nginx.conf"))
@@ -277,4 +279,219 @@ fn should_name_the_capabilities_a_provider_would_have_to_add() {
         vec!["recovery.cleanup"],
         "§12.2: the shortfall is stated as capability names a plugin manifest can carry"
     );
+}
+
+#[test]
+fn should_hand_each_provider_the_domain_it_resolved_itself() {
+    let own = PersistenceDomain::resolved(
+        "/etc/nginx/nginx.conf",
+        root_dataset().mount().clone(),
+        "zfs-dataset",
+        "rpool/ROOT/debian#guid-7731",
+        "the provider's own identity for the dataset",
+    );
+    let mut registry = ProviderRegistry::new();
+    registry
+        .register(
+            TestProvider::new("ono.recovery.zfs")
+                .resolving("/etc/nginx/nginx.conf", own)
+                .offering(candidate(
+                    "ono.recovery.zfs",
+                    "zfs-dataset",
+                    "rpool/ROOT/debian#guid-7731",
+                    &["/etc/nginx/nginx.conf"],
+                    EffectDomain::FilesystemPersistent,
+                    RecoveryObjective::PreserveExact,
+                ))
+                .shared(),
+        )
+        .expect("a capable provider registers");
+
+    let outcome = registry.discover_at(
+        "/etc/nginx/nginx.conf",
+        Some(&root_dataset()),
+        RecoveryObjective::PreserveExact,
+    );
+    assert_eq!(
+        outcome.candidates().len(),
+        1,
+        "ADR-0807: the provider's discovery is handed the domain it resolved"
+    );
+    assert_eq!(
+        outcome
+            .resolved_by("ono.recovery.zfs")
+            .and_then(PersistenceDomain::object),
+        Some("rpool/ROOT/debian#guid-7731")
+    );
+}
+
+#[test]
+fn should_not_ask_a_provider_to_resolve_a_path_the_core_refused() {
+    let own = PersistenceDomain::resolved(
+        "/run/nginx.pid",
+        root_dataset().mount().clone(),
+        "zfs-dataset",
+        "rpool/ROOT/debian",
+        "a provider that would claim a tmpfs path",
+    );
+    let mut registry = ProviderRegistry::new();
+    registry
+        .register(
+            TestProvider::new("ono.recovery.zfs")
+                .resolving("/run/nginx.pid", own)
+                .offering(zfs_candidate())
+                .shared(),
+        )
+        .expect("a capable provider registers");
+
+    let outcome = registry.discover_at(
+        "/run/nginx.pid",
+        Some(&tmpfs_path()),
+        RecoveryObjective::PreserveExact,
+    );
+    assert!(
+        outcome.candidates().is_empty(),
+        "Appendix B.7 and §32.4: the core's refusal of a tmpfs stands whatever a provider says"
+    );
+}
+
+#[test]
+fn should_refuse_a_provider_resolution_that_goes_through_a_different_mount_than_the_kernels() {
+    let table = MountTable::from_text(support::SRV_TREE);
+    let core = table.resolve(Path::new("/srv/legacy/report.csv"));
+    let root = table.resolve(Path::new("/etc/hosts"));
+    let claimed = PersistenceDomain::resolved(
+        "/srv/legacy/report.csv",
+        root.mount().clone(),
+        "btrfs-subvolume",
+        "fs-5d1c:256:/@",
+        "a provider that only reads its own filesystem's mounts and so sees `/` as the deepest",
+    );
+    let mut registry = ProviderRegistry::new();
+    registry
+        .register(
+            TestProvider::new("ono.recovery.btrfs")
+                .resolving("/srv/legacy/report.csv", claimed)
+                .offering(candidate(
+                    "ono.recovery.btrfs",
+                    "btrfs-subvolume",
+                    "fs-5d1c:256:/@",
+                    &["/srv/legacy/report.csv"],
+                    EffectDomain::FilesystemPersistent,
+                    RecoveryObjective::PreserveExact,
+                ))
+                .shared(),
+        )
+        .expect("a capable provider registers");
+
+    let outcome = registry.discover_at(
+        "/srv/legacy/report.csv",
+        Some(&core),
+        RecoveryObjective::PreserveExact,
+    );
+    assert!(
+        outcome.candidates().is_empty(),
+        "Appendix B.1 and §56.3: the kernel serves the path from the ext4 disk at /srv/legacy, \
+         and a snapshot of the filesystem at `/` holds none of it"
+    );
+    let refusal = outcome
+        .refusals()
+        .iter()
+        .find(|refusal| refusal.provider() == "ono.recovery.btrfs")
+        .expect("two readings that disagree are a stated refusal rather than a silent skip");
+    assert!(
+        refusal.reason().contains("/srv/legacy"),
+        "{}",
+        refusal.reason()
+    );
+}
+
+#[test]
+fn should_not_let_a_provider_answer_turn_a_tmpfs_path_into_a_persistence_domain() {
+    // Acceptance 287 pr3a: Docker's `/dev/shm` is a tmpfs sourced `shm`. Whatever a provider says
+    // about the path, Appendix B.7 makes it no persistence domain at all.
+    let path = "/dev/shm/ono-volatile";
+    let volatile = MountTable::from_text(CONTAINER).resolve(Path::new(path));
+    let claimed = PersistenceDomain::resolved(
+        path,
+        ResolvedMount::new("0:319", "/dev/shm", "ext4", "shm", "/"),
+        "filesystem",
+        "shm",
+        "a provider that misread the mount",
+    );
+    let offered = candidate(
+        "ono.recovery.file-copy",
+        "filesystem",
+        "shm",
+        &[path],
+        EffectDomain::FilesystemPersistent,
+        RecoveryObjective::PreserveExact,
+    )
+    .at_consistency(ConsistencyClass::ByteConsistent)
+    .restored_by(RestoreMethod::SelectiveFileRestore);
+    let registry = registry_with(vec![
+        TestProvider::new("ono.recovery.file-copy")
+            .resolving(path, claimed)
+            .offering(offered)
+            .shared(),
+    ]);
+
+    let outcome = registry.discover_at(path, Some(&volatile), RecoveryObjective::PreserveExact);
+    assert!(
+        outcome.candidates().is_empty(),
+        "Appendix B.7: a tmpfs is never a persistent recovery domain, whatever a provider answers"
+    );
+    assert!(
+        outcome.resolutions().is_empty(),
+        "the provider's own resolution of a refused path is not recorded as a domain"
+    );
+}
+
+#[test]
+fn should_mark_a_ready_asset_invalid_when_its_provider_no_longer_finds_it() {
+    // NEW-11: the stored bytes were deleted behind Ono's back, and the record still says ready.
+    let registry = registry_with(vec![
+        TestProvider::new("ono.recovery.zfs")
+            .failing_validation("the snapshot is no longer there")
+            .shared(),
+    ]);
+    let asset = ready_asset("rpool/ROOT/debian@ono-1");
+    assert_eq!(asset.state(), AssetState::Ready, "the record says ready");
+
+    let checked = registry.revalidate(&asset).expect("the provider answered");
+    assert_eq!(
+        checked.state(),
+        AssetState::Invalid,
+        "§11.4: an asset that no longer passes validation is INVALID, not READY"
+    );
+    assert!(
+        checked
+            .validation()
+            .expect("the fresh validation travels with the asset")
+            .failures()
+            .contains(&"the asset does not exist"),
+        "§11.4's first check is the one that failed"
+    );
+}
+
+#[test]
+fn should_keep_a_ready_asset_ready_when_its_provider_still_validates_it() {
+    let registry = registry_with(vec![TestProvider::new("ono.recovery.zfs").shared()]);
+    let checked = registry
+        .revalidate(&ready_asset("rpool/ROOT/debian@ono-1"))
+        .expect("the provider answered");
+    assert_eq!(checked.state(), AssetState::Ready);
+}
+
+#[test]
+fn should_refuse_to_vouch_for_an_asset_whose_provider_cannot_be_asked() {
+    let registry = registry_with(vec![
+        TestProvider::new("ono.recovery.zfs")
+            .unavailable("zfs is not installed")
+            .shared(),
+    ]);
+    let error = registry
+        .revalidate(&ready_asset("rpool/ROOT/debian@ono-1"))
+        .expect_err("§56.3: an asset nobody could check is not confirmed ready");
+    assert_eq!(error.code(), ErrorCode::RecoveryProviderUnavailable);
 }

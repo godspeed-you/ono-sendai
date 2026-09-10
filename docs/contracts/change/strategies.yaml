@@ -1,9 +1,14 @@
 # The execution strategies of v0.6 §28.4, and what each one does with a plan's frozen target set.
 #
 # §28.4 defines four and rules out a fifth in the same breath: "Unlimited parallel mutation is not
-# a default strategy." So `parallel` carries its bound, `bounded: true` is on every row, and
-# `xtask/src/change.rs::check_strategies` asserts the implementation offers no unbounded variant —
-# a width of zero is refused at construction rather than read as "as many as possible".
+# a default strategy." The guarantee is the type: `ono_change_core::Strategy`
+# (`crates/ono-change-core/src/strategy.rs`) has no unbounded variant. `batch`, `canary` and
+# `parallel` each carry their width, and `Strategy::batch`, `Strategy::canary` and
+# `Strategy::parallel` return `None` for a width of zero rather than reading it as "as many as
+# possible"; every parser in the shell builds a strategy through them.
+# `xtask/src/change.rs::check_vocabularies` holds the rows against `StrategyKind::ALL`, and
+# `check_strategies` requires `bounded: true` on every row, exactly one default, and frozen bulk
+# membership.
 #
 # §28.5 makes the strategy part of the seal, because it changes operational risk and temporal
 # effects. Changing it creates a new plan revision.

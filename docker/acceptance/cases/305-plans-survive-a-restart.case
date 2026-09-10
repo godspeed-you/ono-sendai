@@ -1,0 +1,93 @@
+# v0.6 §50 phase P2 — §36.1, §36.2 and §36.4: the plan store is durable, a plan outlives the shell
+# that made it, and a reference is either unambiguous or refused.
+#
+# §36.1 makes plan history persistent, §36.2 makes a store it cannot read a refusal rather than
+# an empty answer, and §36.4 resolves a plan by an unambiguous prefix of its identity. §44.3 puts
+# the store where other users cannot read it.
+case: plans and their assets outlive the shell that made them
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+
+  data="${XDG_DATA_HOME:-$HOME/.local/share}/ono/change"
+  mkdir -p "$HOME/etc"
+  printf 'a\n' > "$HOME/etc/source"
+  printf 'b\n' > "$HOME/etc/target"
+
+  echo '== §36.1: one shell writes, another reads =='
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/target --overwrite | to json" > /tmp/ps0.json 2>&1
+  id=$(plan_id /tmp/ps0.json)
+  digest=$(sed -n 's/.*"digest":"\([0-9a-f]\{64\}\)".*/\1/p' /tmp/ps0.json | head -1)
+  level=$(sed -n 's/.*"protection_level":"\([a-z-]*\)".*/\1/p' /tmp/ps0.json | head -1)
+  prove ps1a "a later process reads the plan back, sealed, with the digest it was sealed with (§36.1, §4.4)" \
+    "[ \"\$(ono -c 'get plan $id | select id state digest | to json' 2>&1)\" = '[{\"id\":\"$id\",\"state\":\"sealed\",\"digest\":\"$digest\"}]' ]"
+  prove ps1c "and with the coverage it was sealed with (§46.1)" \
+    "[ -n '$level' ] && [ \"\$(ono -c 'get plan $id | select protection_level | to json' 2>&1)\" = '[{\"protection_level\":\"$level\"}]' ]"
+
+  echo '== §36.1 and §44.3: the store is a file, private to this user =='
+  prove ps2a "the store exists on disk, where the shell keeps its data (§36.1)" "[ -f '$data/plans.sqlite3' ]"
+  prove ps2b "and it is private to this user (§44.3)" "[ \"\$(stat -c %a '$data/plans.sqlite3')\" = '600' ]"
+  prove ps2c "as is the directory holding it (§15.3, §44.3)" "[ \"\$(stat -c %a '$data')\" = '700' ]"
+
+  echo '== §36.1: the assets and the outcome outlive the shell too =='
+  ono -c "apply $id" > /dev/null 2>&1
+  prove ps3a "a third shell finds the recovery asset, ready (§11.1, §36.1)" \
+    "[ \"\$(ono -c 'get recovery | select state source_plan | to json' 2>&1)\" = '[{\"state\":\"ready\",\"source_plan\":\"$id\"}]' ]"
+  prove ps3b "and the plan in the state the applying shell left it (§4.1)" \
+    "[ \"\$(ono -c 'get plan $id | select state | to json' 2>&1)\" = '[{\"state\":\"verified\"}]' ]"
+
+  echo '== §36.4: a prefix resolves when it is unambiguous, and is refused when it is not =='
+  prove ps4a "the first four characters reach the plan (§36.4)" \
+    "[ \"\$(ono -c 'get plan ${id:0:4} | select id | to json' 2>&1)\" = '[{\"id\":\"$id\"}]' ]"
+  # Seventeen identities cannot all start differently in hex, so two plans sharing a first
+  # character are found within that many.
+  shared=""
+  for _ in $(seq 1 17); do
+    ono -c "plan copy file $HOME/etc/source $HOME/etc/target --overwrite | to json" > /tmp/ps5.json 2>&1
+    first=$(plan_id /tmp/ps5.json | cut -c1)
+    if [ "$(ono -c 'get plan | select id | to json' 2>/dev/null | grep -o "\"id\":\"$first" | wc -l)" -ge 2 ]; then shared=$first; break; fi
+  done
+  prove ps4pre "two plans share a first character, so that character is ambiguous" '[ -n "'"$shared"'" ]'
+  ono -c "get plan $shared" > /tmp/ps6.txt 2>&1
+  prove ps4b "an ambiguous prefix is refused with §36.4's code rather than guessed (§36.4, §45)" \
+    'grep -q "change.plan_reference_ambiguous" /tmp/ps6.txt'
+
+  echo '== §36.2: a store that cannot be read is a refusal, not an empty list =='
+  # A directory where the store should be is a store nobody can open. §36.2 refuses rather than
+  # answering with nothing, because an empty plan list is a claim that there are no plans.
+  broken="$HOME/broken"
+  mkdir -p "$broken/data/ono/change/plans.sqlite3"
+  XDG_DATA_HOME="$broken/data" ono -c 'get plan | to json' > /tmp/ps7.txt 2>&1
+  status=$?
+  prove ps5a "an unreadable store refuses with §36.2's code (§36.2)" \
+    'grep -qE "change\.plan_store_(unavailable|corrupt)" /tmp/ps7.txt'
+  prove ps5b "and does not answer with an empty list, and exits non-zero (§36.2, v0.2 §43)" \
+    "[ $status -ne 0 ] && ! grep -qx '\[\]' /tmp/ps7.txt"
+
+  echo 'plans-survive-a-restart: done'
+exit: 0
+stdout-contains: PROVED ps1a
+stdout-contains: PROVED ps1c
+stdout-contains: PROVED ps2a
+stdout-contains: PROVED ps2b
+stdout-contains: PROVED ps2c
+stdout-contains: PROVED ps3a
+stdout-contains: PROVED ps3b
+stdout-contains: PROVED ps4a
+stdout-contains: PROVED ps4pre
+stdout-contains: PROVED ps4b
+stdout-contains: PROVED ps5a
+stdout-contains: PROVED ps5b
+stdout-contains: plans-survive-a-restart: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

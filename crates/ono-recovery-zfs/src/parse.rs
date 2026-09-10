@@ -15,6 +15,8 @@ use std::sync::Arc;
 use ono_change_core::error::tool_failed;
 use ono_value::ErrorValue;
 
+use crate::layout::is_descendant;
+
 /// The marker OpenZFS prints when the calling user is not permitted to use the utilities.
 ///
 /// §11.4 counts privilege among the things validation must establish, and §43.4 notes recovery
@@ -126,15 +128,18 @@ pub struct RollbackRefusal {
     pub snapshots: Vec<Arc<str>>,
     /// The bookmarks ZFS named.
     pub bookmarks: Vec<Arc<str>>,
+    /// The clones and other datasets ZFS named — a name with neither `@` nor `#`.
+    pub clones: Vec<Arc<str>>,
 }
 
 impl RollbackRefusal {
-    /// Every object the refusal named, snapshots before bookmarks.
+    /// Every object the refusal named: snapshots, then bookmarks, then clones.
     #[must_use]
     pub fn objects(&self) -> Vec<Arc<str>> {
         self.snapshots
             .iter()
             .chain(self.bookmarks.iter())
+            .chain(self.clones.iter())
             .map(Arc::clone)
             .collect()
     }
@@ -142,7 +147,7 @@ impl RollbackRefusal {
     /// Whether ZFS named anything at all.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.snapshots.is_empty() && self.bookmarks.is_empty()
+        self.snapshots.is_empty() && self.bookmarks.is_empty() && self.clones.is_empty()
     }
 }
 
@@ -151,7 +156,8 @@ impl RollbackRefusal {
 /// The shape is fixed: a `cannot rollback to ...` line, then `use '-r' to force deletion of the
 /// following snapshots and bookmarks:`, then one object per line. A name containing `@` is a
 /// snapshot and one containing `#` is a bookmark, which is ZFS's own syntax rather than a
-/// convention this provider invented.
+/// convention this provider invented; a name with neither is a dataset — the clone `-R` would
+/// take — and it is kept rather than dropped, because it is the one an operator has to remove.
 #[must_use]
 pub fn rollback_refusal(text: &str) -> RollbackRefusal {
     let mut refusal = RollbackRefusal::default();
@@ -172,6 +178,8 @@ pub fn rollback_refusal(text: &str) -> RollbackRefusal {
             refusal.bookmarks.push(Arc::from(name));
         } else if name.contains('@') {
             refusal.snapshots.push(Arc::from(name));
+        } else {
+            refusal.clones.push(Arc::from(name));
         }
     }
     refusal
@@ -199,6 +207,100 @@ pub fn destroy_refusal(text: &str) -> Vec<Arc<str>> {
         }
     }
     dependents
+}
+
+/// Who a `zfs allow` delegation is granted to (§43.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Grantee {
+    /// `user <name>` — a name, or a uid where the user has none.
+    User(Arc<str>),
+    /// `group <name>`.
+    Group(Arc<str>),
+    /// `everyone`.
+    Everyone,
+}
+
+/// One `zfs allow` entry that applies to the dataset it was read for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Delegation {
+    /// Who holds it.
+    pub grantee: Grantee,
+    /// The permissions, as ZFS names them. A permission set (`@name`) is kept as written and is
+    /// not expanded, so it grants nothing this provider counts on.
+    pub permissions: Vec<Arc<str>>,
+}
+
+/// Reads `zfs allow <dataset>` into the delegations that apply to `dataset` itself.
+///
+/// `zfs allow` has no `-H` form, so this reads its display, and only its fixed skeleton: a
+/// `---- Permissions on <dataset> ----` banner per dataset in the ancestry, then `Local`,
+/// `Descendent` and `Local+Descendent` sections of tab-indented `user`, `group` and `everyone`
+/// lines. A local permission applies to the dataset it is set on; a descendent one to the datasets
+/// beneath; `Local+Descendent` to both. Anything else — create-time permissions, permission sets —
+/// grants nothing here, which is the refusing direction §56.3 asks for.
+#[must_use]
+pub fn delegations(text: &str, dataset: &str) -> Vec<Delegation> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Reach {
+        Local,
+        Descendent,
+        Both,
+        Neither,
+    }
+    let mut owner: Option<&str> = None;
+    let mut reach = Reach::Neither;
+    let mut found = Vec::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("---- Permissions on ") {
+            owner = rest.split_whitespace().next();
+            reach = Reach::Neither;
+            continue;
+        }
+        if !line.starts_with('\t') {
+            reach = match line.trim() {
+                "Local permissions:" => Reach::Local,
+                "Descendent permissions:" => Reach::Descendent,
+                "Local+Descendent permissions:" => Reach::Both,
+                _ => Reach::Neither,
+            };
+            continue;
+        }
+        let Some(owner) = owner else { continue };
+        let applies = match reach {
+            Reach::Local => owner == dataset,
+            Reach::Descendent => owner != dataset && is_descendant(dataset, owner),
+            Reach::Both => is_descendant(dataset, owner),
+            Reach::Neither => false,
+        };
+        if !applies {
+            continue;
+        }
+        let mut words = line.split_whitespace();
+        let (grantee, permissions) = match words.next() {
+            Some("user") => (
+                words.next().map(|name| Grantee::User(Arc::from(name))),
+                words.next(),
+            ),
+            Some("group") => (
+                words.next().map(|name| Grantee::Group(Arc::from(name))),
+                words.next(),
+            ),
+            Some("everyone") => (Some(Grantee::Everyone), words.next()),
+            _ => (None, None),
+        };
+        if let (Some(grantee), Some(permissions)) = (grantee, permissions) {
+            found.push(Delegation {
+                grantee,
+                permissions: permissions
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|permission| !permission.is_empty())
+                    .map(Arc::from)
+                    .collect(),
+            });
+        }
+    }
+    found
 }
 
 /// Whether ZFS refused because the caller lacks the privilege the utilities need (§11.4, §43.4).
@@ -253,6 +355,66 @@ mod tests {
         let error = rows("zfs", "tank\tfilesystem", 6)
             .expect_err("Appendix G.4: an unexpected tool output degrades rather than guesses");
         assert_eq!(error.code().name(), "recovery.provider_unavailable");
+    }
+
+    #[test]
+    fn should_keep_the_clone_a_refusal_names_rather_than_dropping_it() {
+        let refusal = rollback_refusal(
+            "cannot rollback to 'tank/data@a': clones of previous snapshots exist\n\
+             use '-R' to force deletion of the following clones and filesystems:\n\
+             tank/cloned\n",
+        );
+        assert_eq!(refusal.clones, vec![Arc::from("tank/cloned")]);
+        assert_eq!(refusal.objects(), vec![Arc::from("tank/cloned")]);
+    }
+
+    const ALLOWED: &str = "---- Permissions on tank ---------------------------------------------\n\
+        Local permissions:\n\
+        \tuser alice rollback\n\
+        Descendent permissions:\n\
+        \tuser alice destroy\n\
+        ---- Permissions on tank/data ----------------------------------------\n\
+        Local+Descendent permissions:\n\
+        \tuser alice mount,snapshot\n\
+        \tgroup staff snapshot\n\
+        \teveryone send\n";
+
+    fn permissions_of(dataset: &str) -> Vec<String> {
+        delegations(ALLOWED, dataset)
+            .into_iter()
+            .flat_map(|delegation| delegation.permissions)
+            .map(|permission| permission.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn should_apply_an_ancestors_descendent_permission_and_not_its_local_one() {
+        let granted = permissions_of("tank/data");
+        assert!(granted.contains(&"destroy".to_owned()), "{granted:?}");
+        assert!(
+            !granted.contains(&"rollback".to_owned()),
+            "zfs-allow(8): a local permission on `tank` does not reach `tank/data`, got {granted:?}"
+        );
+        assert!(granted.contains(&"mount".to_owned()));
+    }
+
+    #[test]
+    fn should_apply_a_local_permission_to_the_dataset_it_is_set_on_only() {
+        let granted = permissions_of("tank");
+        assert!(granted.contains(&"rollback".to_owned()));
+        assert!(!granted.contains(&"destroy".to_owned()));
+        assert!(!granted.contains(&"mount".to_owned()));
+    }
+
+    #[test]
+    fn should_say_who_each_delegation_is_granted_to() {
+        let grantees: Vec<Grantee> = delegations(ALLOWED, "tank/data/customer")
+            .into_iter()
+            .map(|delegation| delegation.grantee)
+            .collect();
+        assert!(grantees.contains(&Grantee::User(Arc::from("alice"))));
+        assert!(grantees.contains(&Grantee::Group(Arc::from("staff"))));
+        assert!(grantees.contains(&Grantee::Everyone));
     }
 
     #[test]

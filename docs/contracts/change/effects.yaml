@@ -1,9 +1,12 @@
 # The proposed-effect model: the four confidence classes of v0.6 §8.1, the mutation domains of
 # Appendix A.1, and what an effect does to its object.
 #
-# `xtask/src/change.rs::check_effects` compares each list against
-# `ono_change_core::{EffectConfidence, EffectDomain, EffectKind}::ALL` in both directions, and
-# asserts that the confidence lattice has no operation that strengthens.
+# `xtask/src/change.rs::check_vocabularies` compares each list against
+# `ono_change_core::{EffectConfidence, EffectDomain, EffectKind, ImpactClass}::ALL` in both
+# directions. `check_effect_domains` holds the `persistent`, `external` and
+# `inherently_irreversible` flags against the shell's own answers, and reads the inherent methods of
+# `EffectConfidence` out of `crates/ono-change-core/src`, refusing any beside `weakest_of` that
+# takes a second confidence.
 #
 # §8.3 is why there is no probability anywhere in this file: v0.6 MUST NOT invent percentages such
 # as "82% likely" unless a provider supplies a documented statistical model with provenance. What
@@ -16,9 +19,9 @@ version: 1
 # §8.1's classes, strongest first. `assertable: true` for `guaranteed` alone: §1.1 permits stating
 # a future state only where a provider can prove it.
 #
-# The lattice combines with a weakest-of and has no counterpart. §2.4 forbids unknown being
-# silently promoted, and the absence of a strengthening operation is how that is enforced rather
-# than remembered — the same shape v0.5 §7.2 gave `EvidenceStrength`.
+# The lattice combines with a weakest-of, and the type offers no inherent counterpart. §2.4 forbids
+# unknown being silently promoted; the gate holds the absence of a strengthening method (see
+# `lattice`) — the same shape v0.5 §7.2 gave `EvidenceStrength`.
 confidence_classes:
   - {id: guaranteed, rank: 0, assertable: true, doc: "§8.1: the effect follows directly from the successfully completed operation and the provider contract, scoped to that provider's observable domain."}
   - {id: expected, rank: 1, assertable: false, doc: "§8.1: the provider has strong semantics for the effect, and external system behaviour can still intervene."}
@@ -30,8 +33,12 @@ lattice:
   strengthening_operation: null
   doc: >-
     §2.4 and §8.1: composing two statements about the future can never produce a stronger
-    statement than either. `strengthening_operation: null` is a contract rather than an omission —
-    `xtask` asserts the implementation offers no such method.
+    statement than either. `strengthening_operation: null` is a contract rather than an omission:
+    `xtask/src/change.rs::check_effect_domains` requires it to be null, requires
+    `EffectConfidence::weakest_of` to exist, and refuses any other inherent method of
+    `EffectConfidence` that takes a second confidence or is named as a strengthening. The type also
+    derives `Ord` (strongest first) so it can key a sorted collection, which makes `Ord::min` the
+    stronger of two; the gate does not police calls to it.
 
 # Appendix A.1's canonical mutation domains. `persistent: true` marks state that outlives the
 # process that made it, and Appendix A.5 uses exactly that predicate to decide which domains a

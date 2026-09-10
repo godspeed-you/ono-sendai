@@ -1,0 +1,81 @@
+# v0.6 §50 phase P2 — §49 and §62.11: a language model may describe a plan and may not declare
+# protection, risk or recovery.
+#
+# §49.1 gives the model a read-only seat: it explains what a plan says. §49.3 forbids it
+# authoring the plan's own facts — protection is what a provider offered, risk is what a rule
+# found, and recovery is what an asset supports. §62.11 names an AI-generated risk class as a
+# failure mode in as many words. So every fact checked here must trace to a provider or a rule,
+# and must come out the same every time it is asked.
+case: the plan's facts come from providers and rules, never from a model
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  count_of() { ono -c "$1 | count | to json" 2>&1 | tr -d '[:space:]' | sed 's/^\[//; s/\]$//'; }
+  rows() { sed 's/^\[{"[a-z_]*":\[//; s/\]}\]$//; s/},{"/}\n{"/g'; }
+  # A plan's facts with the identities it generated removed, so two answers can be compared.
+  facts() { ono -c "$1 | select protection_level protection risk risk_findings | to json" 2>&1 | sed 's/"[0-9a-f]\{16\}"/"ID"/g'; }
+
+  mkdir -p "$HOME/etc"
+  printf 'a\n' > "$HOME/etc/source"
+  printf 'b\n' > "$HOME/etc/target"
+  copy="plan copy file $HOME/etc/source $HOME/etc/target --overwrite"
+  ono -c "$copy | to json" > /tmp/ml1.json 2>&1
+  sleep 600 &
+  victim=$!
+  kill_plan="plan kill process $victim --signal SIGKILL"
+  ono -c "$kill_plan | to json" > /tmp/ml2.json 2>&1
+
+  echo '== §19.2 and §62.11: every risk finding names the rule that made it =='
+  for record in /tmp/ml1.json /tmp/ml2.json; do
+    prove "ml1-$(basename "$record" .json)" "every finding of $(basename "$record") names a registered rule and nothing else authored it (§19.2, §62.11)" \
+      "[ \"\$(grep -o '\"risk_findings\":\[[^]]*\]' $record | grep -o '\"dimension\"' | wc -l)\" -ge 1 ] && [ \"\$(grep -o '\"risk_findings\":\[[^]]*\]' $record | grep -o '\"dimension\"' | wc -l)\" = \"\$(grep -o '\"risk_findings\":\[[^]]*\]' $record | grep -o '\"rule\":\"risk\.[a-z.-]*\"' | wc -l)\" ]"
+  done
+  prove ml1c "no fact is attributed to a model (§49.3, §62.11)" \
+    "! grep -qiE '\"(model|assistant|llm|generated_by)\"' /tmp/ml1.json /tmp/ml2.json"
+
+  echo '== §10.3 and §49.3: protection is what a provider offered =='
+  ono -c "$copy | select protection | to json" 2>&1 | rows > /tmp/ml3.rows
+  ono -c "$kill_plan | select protection | to json" 2>&1 | rows > /tmp/ml4.rows
+  prove ml2a "every row satisfied by protection, rather than by needing none, names the asset that satisfies it (§10.3, §12.1)" \
+    "[ -n \"\$(grep '\"satisfied\":true' /tmp/ml3.rows)\" ] && ! grep -h '\"satisfied\":true' /tmp/ml3.rows /tmp/ml4.rows | grep -v '\"objective\":\"no-recovery-required\"' | grep -q '\"assets\":\[\]'"
+  prove ml2b "and the asset is one the provider's own prepare action will create (§12.1, §17.1)" \
+    'grep -q "\"role\":\"prepare\",[^{]*\"execution\":{\"method\":\"recovery-operation\",\"provider\":\"ono.recovery.file-copy\"" /tmp/ml1.json'
+  prove ml2c "where nothing covers a row, the row says why instead of leaving it blank (§10.5, §2.4)" \
+    "[ -n \"\$(grep '\"satisfied\":false' /tmp/ml4.rows)\" ] && ! grep '\"satisfied\":false' /tmp/ml4.rows | grep -qE '\"note\":(null|\"\")'"
+
+  echo '== §8.1 and §8.3: an effect carries a confidence from a closed list, not a probability =='
+  prove ml3a "every effect states one of §8.1's four confidences (§8.1)" \
+    "grep -q '\"confidence\":' /tmp/ml2.json && ! grep -ho '\"confidence\":\"[a-z]*\"' /tmp/ml1.json /tmp/ml2.json | grep -vqE '\"(guaranteed|expected|possible|unknown)\"'"
+  prove ml3b "and no effect carries a percentage or a probability (§8.3)" \
+    "! grep -qE '\"(probability|likelihood|certainty_pct)\"|\"explanation\":\"[^\"]*[0-9]+%' /tmp/ml1.json /tmp/ml2.json"
+
+  echo '== §49.1: the facts are derived, so they are the same every time =='
+  prove ml4a "this container configures no model at all (§49.1)" "[ \"\$(count_of 'get model')\" = '0' ]"
+  prove ml4b "and the same change planned twice yields the same protection, risk and findings (§19.2, §49.3)" \
+    "[ -n \"\$(facts \"$copy\")\" ] && [ \"\$(facts \"$copy\")\" = \"\$(facts \"$copy\")\" ] && [ \"\$(facts \"$kill_plan\")\" = \"\$(facts \"$kill_plan\")\" ]"
+  kill "$victim" 2>/dev/null
+
+  echo 'model-cannot-declare-protection: done'
+exit: 0
+stdout-contains: PROVED ml1-ml1
+stdout-contains: PROVED ml1-ml2
+stdout-contains: PROVED ml1c
+stdout-contains: PROVED ml2a
+stdout-contains: PROVED ml2b
+stdout-contains: PROVED ml2c
+stdout-contains: PROVED ml3a
+stdout-contains: PROVED ml3b
+stdout-contains: PROVED ml4a
+stdout-contains: PROVED ml4b
+stdout-contains: model-cannot-declare-protection: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

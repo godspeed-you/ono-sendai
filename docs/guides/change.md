@@ -44,15 +44,32 @@ impact
   possible      14 active client connections
   unknown       application-level client retry behaviour
 
-protection   PARTIALLY_PROTECTED  1/2
-  <-> rpool/ROOT/debian@ono-a82f          filesystem-consistent
+protection
+  PARTIALLY_PROTECTED <->  filesystem-consistent
 
-not covered
-  process runtime          a restart replaces the worker set; nothing restores a PID
-  active TCP sessions      connections being served may be cut
+  by domain
+    filesystem-persistent  preserve-exact    PROTECTED      <->
+    process-runtime        restore-semantic  UNPROTECTED
 
-risk          MODERATE
-reboot        no
+  not covered
+    process runtime - a restart replaces the worker set; nothing restores a PID
+    active TCP sessions - connections being served may be cut
+
+not recoverable
+  nothing was recorded as irreversible
+
+risk
+  MODERATE
+    downtime - restarting nginx.service interrupts it
+
+reboot
+  no
+
+verification
+  service nginx state == running
+
+approval
+  none required
 
 PLAN NOT EXECUTED
 ```
@@ -166,18 +183,17 @@ resolves each target to the persistence object that actually holds its state, an
 
 ```text
 local:// > inspect plan a82f --resolution
+PERSISTENCE RESOLUTION
 
-/etc/nginx/nginx.conf
-  mount        /
-  filesystem   zfs
-  dataset      rpool/ROOT/debian
-  recovery     zfs snapshot available
+  /etc/nginx/nginx.conf
+    mount / (zfs) on rpool/ROOT/debian
+    filesystem root /, object rpool/ROOT/debian (zfs-dataset)
+    recovery boundary rpool/ROOT/debian
 
-/data/customer.db
-  mount        /data
-  filesystem   zfs
-  dataset      tank/data
-  recovery     zfs snapshot available    (a separate asset)
+  /data/customer.db
+    mount /data (zfs) on tank/data
+    filesystem root /, object tank/data (zfs-dataset)
+    recovery boundary tank/data
 ```
 
 **A Btrfs snapshot is not recursive across nested subvolumes.** A snapshot of `@var` contains an
@@ -193,28 +209,17 @@ the plan's `not covered` block after protection, because that is what §2.13 is 
 
 ```text
 local:// > apply a82f
-
-PREPARING
-  [1/1] create ZFS recovery point            PASS
-
-PROTECTION READY
-  rpool/ROOT/debian@ono-a82f
-
-APPLYING
-  [1/3] replace nginx.conf                   PASS
-  [2/3] validate nginx config                PASS
-  [3/3] restart nginx.service                PASS
-
-VERIFYING
-  service running                            PASS
-  listener :443                              PASS
-
-PLAN VERIFIED
-
-recovery point retained
-  recovery/r-a82f
-  expires in 24h
+note: PREPARE  1/1
+note: APPLY    2/2
+note: VERIFY   2/2
+TARGET                 OPERATION                          STATUS   CHANGED  DURATION
+/etc/nginx/nginx.conf  copy file ./nginx.conf /etc/ngi...  success  true           0s
+nginx.service          restart service nginx               success  true           1s
 ```
+
+The progress lines go to standard error and the results to standard output, so
+`apply a82f | to json` is a stream of one result per action and nothing else. `get recovery`
+afterwards shows the recovery point the run created, and how long it is kept.
 
 Three things happen in a fixed order, and the display keeps them apart on purpose.
 
@@ -223,15 +228,57 @@ state that is about to change rather than the state from when you were writing t
 required protection action fails, nothing is mutated at all — the plan becomes `PREPARE_FAILED`,
 and that is a different fact from `APPLY_FAILED`, which means what ran, ran.
 
+The protection the plan was sealed with is the protection it gets. If, at apply, nothing can create
+a recovery point the sealed plan showed — the provider is gone, the store is unwritable — the apply
+does not quietly run unprotected: it stops with `change.prepare_failed` and the plan is
+`PREPARE_FAILED`. A recovery point made earlier with `protect a82f` can stand in, but only if it
+still holds the bytes that are about to change; one that is older than the current state is named
+as stale, and `--accept-stale-protection` uses it anyway, knowing it is not a just-before-change
+point. Optional protection under `maximize` that could not be made is printed as a note, never
+dropped.
+
 **Drift stops the apply.** The preconditions the plan froze are rechecked first. A file whose hash
 moved, a service that was replaced, a package at a different version — any of them refuses, names
 what changed, and mutates nothing. `rebase plan a82f` resolves the plan again against the world as
-it is now, as a new revision, leaving the sealed one exactly where it was.
+it is now, as a new revision, leaving the sealed one exactly where it was — and
+`get plan a82f --revision 1` reads that one back, because the plan that was refused is the
+evidence for why.
+
+**A sealed plan applies once.** The state a run reaches is written to the plan store as it is
+reached, so applying a plan that already ran is refused by name rather than run twice, and a shell
+that stopped in the middle is found in the state it stopped in.
 
 **Verification is a separate question from success.** A command that exited zero has proved that it
-exited zero. Whether the state you asked for exists is asked afterwards, against the world. A plan
+exited zero. Whether the state you asked for exists is asked afterwards, against the world — a
+copy is checked by the bytes it should now hold, not by the destination merely existing. A plan
 whose actions all succeeded and whose required check failed is `FAILED`, and its recovery assets
-are kept.
+are kept. `verify a82f` asks again later: it answers with every check's result and records the
+verdict on a plan that applied. When a required check failed or could not be answered, the stream
+ends with `change.verification_failed` after the last result, so a script piping `verify` into
+`to json` reads every answer and its exit status says what they mean.
+
+### From a pipeline
+
+A plan is an ordinary value, so the next command can take it from the pipe:
+
+```text
+local:// > plan restart service nginx | apply
+local:// > get service | where state == failed | plan restart service | impact
+```
+
+`impact`, `protect`, `apply`, `verify` and `recover` all accept the plan they were handed. Exactly
+one — a pipe carrying several plans is a choice the shell does not make for you.
+
+### Interrupted
+
+`resume plan a82f --confirm` continues a plan whose run was cut off. It re-checks the world first,
+then continues from the first action that did not settle — the ones that succeeded are not run
+again. Before it mutates anything more it re-establishes the protection the first run created, and
+refuses if that is gone. An action whose outcome was never established is rerun only where its
+idempotency class permits it; otherwise the refusal names the action and why. A plan that already
+has its verdict says there is nothing to resume; one that mutated but was never verified is
+verified. A recovery plan resumes through the same newer-state gate as its first run, so a restore
+that would discard newer state still needs `--accept-newer-state-loss`.
 
 ### Gates
 
@@ -250,7 +297,14 @@ Ono-Sendai-E1723 change.risk_not_accepted
 
 The gate says what is actually risky rather than asking whether you are sure. A script supplies
 the same acknowledgements as flags and never waits for a prompt — a non-interactive run that
-cannot satisfy its policy fails with a structured error instead of blocking.
+cannot satisfy its policy fails with a structured error instead of blocking. Outside a terminal, a
+plan that carries a gate also needs `--confirm`; a plan without one applies on `apply` alone. An
+answer given at the terminal is stored in the sealed revision exactly like the flag would be.
+
+Irreversible actions are a gate of their own (`--accept-irreversible`). HIGH and CRITICAL plans
+need `--accept-risk` unless `change.high_risk_requires_ack` / `change.critical_risk_requires_ack`
+is set to `false`, which is the non-interactive policy flag of §19.4: the class is then
+acknowledged by policy in the sealed revision.
 
 ## Recovering
 
@@ -262,25 +316,39 @@ local:// > recover a82f
 RECOVERY PLAN / r91c
 
 NEWER STATE AT RISK
-  nothing — the restore set is one file, unchanged since the recovery point
+  2 objects changed after the recovery point
+  both would be left alone by this method
+
+RESTORE TARGET
+  /etc/nginx/nginx.conf
 
 source
   plan a82f
+  recovery asset recovery/r-a82f
+
+method
+  selective-file-restore
+  restore-changed-objects
+  keep-extra-files
+
+methods not chosen
+  dataset-rollback - would discard the 2 newer objects below
+
+newer state preserved
+  /etc/ssh/sshd_config  changed after the plan
+  /etc/hosts            changed after the plan
+
+services
+  nginx.service  restart
+
+reboot
+  no
+
+assets consumed
   recovery/r-a82f
 
-recommended method
-  selective restore
-
-will restore
-  /etc/nginx/nginx.conf
-
-will preserve
-  /etc/ssh/sshd_config   changed after the plan
-  /etc/hosts             changed after the plan
-
-runtime
-  nginx restart required
-  TCP sessions cannot be restored
+not recoverable
+  TCP sessions being served when nginx restarts
 
 risk
   MODERATE
@@ -296,6 +364,25 @@ So Ono compares the recovery target against the current state first, classifies 
 as preserved, discarded, conflicting or unknown, and shows the result **above** the restore detail.
 Then you apply the recovery plan like any other plan — it has an impact, a risk class, verification
 contracts and a lifecycle of its own.
+
+Undoing the plan's own change loses nothing, so it needs nothing typed: `apply r91c` restores. An
+edit made *after* the plan is newer state, and restoring over it is refused until you accept that
+loss:
+
+```text
+local:// > apply r91c --confirm
+Ono-Sendai-E1809 recovery.newer_state_conflict
+
+  /etc/nginx/nginx.conf — edited at 15:12, after the recovery point
+
+local:// > apply r91c --accept-newer-state-loss --confirm
+```
+
+`apply` runs the comparison again before it restores, because hours may have passed since
+`recover`. A loss that appeared after the recovery plan was shown refuses whatever you accepted —
+an acceptance covers the losses you were shown and no others — and `recover` again shows what the
+restore would take now. Every restore runs through the provider that made the recovery point, which
+re-checks what the restore depends on at the moment it acts.
 
 ### The method matters more than the asset
 
@@ -381,23 +468,25 @@ Assets are kept for 24 hours after a successful verification, by default. Two ru
   `DEGRADED` or `RECOVERY_FAILED` plan keeps its recovery points until you decide otherwise.
 - **Cleanup that would strand a plan refuses.** Removing an asset a retained plan still depends on
   answers `recovery.cleanup_blocked` and names the plans that would become unrecoverable.
-  `remove recovery r-a82f --dry-run` shows the same thing without removing anything.
+  `remove recovery r-a82f --dry-run` draws the same answer without removing anything, and
+  `--confirm --force` removes it anyway, as an explicit act. An asset whose provider is not
+  available here is not removed: only the provider that made it can.
 
 ## Policy
 
-```toml
-[change]
-default_protection = "prefer"      # off | prefer | require | maximize
-default_strategy = "sequential"
+Settings are ordinary configuration lines in `~/.config/ono/config.ono`:
 
-[recovery]
-retention = "24h"
-min_filesystem_free = "10%"
-
-[recovery.zfs]
-prefer_selective_restore = true
-allow_destructive_rollback = false
+```text
+set config change.default_protection prefer      # off | prefer | require | maximize
+set config change.default_strategy sequential
+set config recovery.retention 24h
+set config recovery.min_filesystem_free 10%
+set config recovery.zfs.prefer_selective_restore true
+set config recovery.zfs.allow_destructive_rollback false
 ```
+
+A value Ono cannot read keeps its default and is reported — at start-up and by
+`get config --problems` — while every other key keeps the value you gave it.
 
 `prefer` is the interactive default: discover cheap protection, include it in the plan, create it
 during preparation, and abort before mutation if it fails. `require` refuses to apply when a
@@ -405,10 +494,21 @@ required domain cannot reach the plan's protection class. `off` creates nothing 
 what was available. `maximize` adds every non-conflicting mechanism inside the configured cost
 limits — it does not mean "snapshot the host".
 
-The four profiles of Appendix H (`interactive`, `cautious`, `fleet`, `scripted`) expand to those
-same settings and hide nothing. One rule governs all of it: **the strictest requirement in force
-applies**, whichever of configuration, profile or plan states it. A profile cannot loosen a plan
-and a plan cannot loosen a profile.
+Appendix H's profiles are presets over the same settings: `set config change.profile cautious`
+(or `interactive`, `fleet`, `scripted`). A profile only tightens what is configured — `cautious`
+means `require`, 72 hours of retention, a 15% free-space floor and an acknowledgement from
+MODERATE risk up; `fleet` makes a canary the default strategy; `scripted` never prompts, so every
+gate needs its flag. `get config --profile` shows each setting the profile touches, what it asks
+for and what is in force.
+
+One rule governs all of it: **the strictest requirement in force applies**, whichever of
+configuration, profile or plan states it. A plan can ask for more than the configuration — `--protection
+require` under an `off` default is kept as `require` — and never for less.
+
+Automatic recovery after a failed verification is off. `plan --auto-recover` is accepted as a
+declaration and rejected at seal, naming each §26.3 condition it does not meet: no recovery point
+exists before the plan's protection is created, so neither a recovery plan nor its verification can
+be established yet, and no setting enables it.
 
 ## What this is not
 
@@ -423,10 +523,15 @@ and not a transaction; and where it does not know, it says that too.
 | you see | what it means |
 |---|---|
 | `change.plan_drift_detected` | the world moved after the plan was sealed. Nothing was changed. `rebase plan <id>` |
-| `change.prepare_failed` | protection could not be created. **Nothing was mutated.** |
+| `change.prepare_failed` | protection could not be created. **Nothing was mutated.** Where an earlier recovery point exists but no longer holds the current state, the help names it and `--accept-stale-protection` |
 | `change.apply_failed` | a mutating action failed. Some of it ran. `inspect plan <id>` shows exactly what |
 | `change.verification_failed` | the actions succeeded and the state you asked for does not exist |
 | `recovery.coverage_insufficient` | `require` policy, and a domain has no validated recovery path. The matrix says which |
 | `recovery.cleanup_blocked` | an asset a retained plan needs. The refusal names the plans |
 | `recovery.plan_incomplete` | a fact recovery needed could not be established, so it was blocked rather than guessed |
-| `change.plan_already_applying` | another session holds the apply claim |
+| `change.plan_already_applying` | another session holds the apply claim, and the refusal names it. A claim whose process has exited is taken over, so `resume` after a crash does not wait out the lease |
+| `change.action_not_plannable` | no provider contract can plan the operation, or the shell is inside an entered link, where this build does not plan. Leave the link to plan on this machine |
+| `recovery.newer_state_conflict` | the restore would discard an edit made after the recovery point. `--accept-newer-state-loss` accepts it; a loss that appeared after `recover` needs `recover` again |
+| `recovery.destructive_history_not_accepted` | a rollback would destroy newer snapshots, bookmarks or clones, each named |
+| `change.resume_refused` | an action's outcome is not established and its contract does not allow running it blind |
+| `change.auto_recovery_rejected` | `--auto-recover` was declared; the refusal lists the §26.3 conditions that do not hold |

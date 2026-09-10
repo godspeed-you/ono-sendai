@@ -134,13 +134,13 @@ pub fn check(root: &Path) -> Vec<Problem> {
     problems.extend(check_vocabularies(&registries));
     problems.extend(check_transitions(&registries));
     problems.extend(check_protection_levels(&registries));
-    problems.extend(check_execution_methods(&registries));
-    problems.extend(check_effect_domains(&registries));
+    problems.extend(check_execution_methods(root, &registries));
+    problems.extend(check_effect_domains(root, &registries));
     problems.extend(check_restore_methods(&registries));
     problems.extend(check_asset_types(&registries));
     problems.extend(check_consistency(&registries));
     problems.extend(check_consistency_ownership(root, &registries));
-    problems.extend(check_quiesce(&registries));
+    problems.extend(check_quiesce(root, &registries));
     problems.extend(check_capabilities(&registries));
     problems.extend(check_command_inventory(root, &registries));
     problems.extend(check_schemas(root, &registries));
@@ -563,8 +563,13 @@ fn check_protection_levels(registries: &Registries) -> Vec<Problem> {
     problems
 }
 
-/// §2.17 and §12.3, at the registry: no execution method may admit a command line.
-fn check_execution_methods(registries: &Registries) -> Vec<Problem> {
+/// §2.17 and §12.3, at the registry: no execution method may admit a command line, and the rows
+/// are exactly the variants of `ono_change_core::Execution`.
+///
+/// `Execution` carries data, so it has no `ALL`; its variants are read out of `ono-change-core`'s
+/// source, in both directions. A method added to the shell without a row fails the gate, and a row
+/// naming no variant fails it too.
+fn check_execution_methods(root: &Path, registries: &Registries) -> Vec<Problem> {
     let location = "docs/contracts/change/actions.yaml";
     if registries.get("actions.yaml").is_none() {
         return Vec::new();
@@ -604,11 +609,44 @@ fn check_execution_methods(registries: &Registries) -> Vec<Problem> {
             ));
         }
     }
+    let source = root.join("crates").join("ono-change-core").join("src");
+    if source.is_dir() {
+        match rust_files(&source)
+            .iter()
+            .find_map(|(_, text)| enum_variants(text, "Execution"))
+        {
+            None => problems.push(Problem::new(
+                "crates/ono-change-core/src",
+                "declares no `pub enum Execution`, so `execution_methods` cannot be held against \
+                 the ways the shell actually runs an action",
+            )),
+            Some(variants) => {
+                let implemented: BTreeSet<String> = variants
+                    .iter()
+                    .map(String::as_str)
+                    .map(kebab_name)
+                    .collect();
+                let declared = registries.ids("actions.yaml", "execution_methods");
+                problems.extend(compare(
+                    location,
+                    "execution_methods",
+                    &declared,
+                    &implemented,
+                    "execution method",
+                ));
+            }
+        }
+    }
     problems
 }
 
-/// Appendix A.5's persistence predicate, which decides what `PROTECTED` may cover.
-fn check_effect_domains(registries: &Registries) -> Vec<Problem> {
+/// Appendix A.5's persistence predicate, which decides what `PROTECTED` may cover, §2.13's
+/// irreversibility, and §2.4's rule that the confidence lattice has no strengthening method.
+///
+/// The last is read out of `ono-change-core`'s source: `EffectConfidence::weakest_of` must exist,
+/// and no other inherent method may take a second confidence or be named as a strengthening. The
+/// type's derived `Ord` is not an inherent method, and this check does not see it.
+fn check_effect_domains(root: &Path, registries: &Registries) -> Vec<Problem> {
     let location = "docs/contracts/change/effects.yaml";
     if registries.get("effects.yaml").is_none() {
         return Vec::new();
@@ -678,6 +716,50 @@ fn check_effect_domains(registries: &Registries) -> Vec<Problem> {
             "`lattice.strengthening_operation` is not null. §2.4 forbids unknown being promoted, \
              and the absence of an operation that could do it is the contract",
         ));
+    }
+    let source = root.join("crates").join("ono-change-core").join("src");
+    if source.is_dir() {
+        let mut methods = Vec::new();
+        for (path, text) in rust_files(&source) {
+            if let Some(declared) = inherent_methods(&text, "EffectConfidence") {
+                let file = relative(root, &path);
+                methods.extend(
+                    declared
+                        .into_iter()
+                        .map(|(name, signature)| (file.clone(), name, signature)),
+                );
+            }
+        }
+        if !methods.iter().any(|(_, name, _)| name == "weakest_of") {
+            problems.push(Problem::new(
+                "crates/ono-change-core/src",
+                "declares no `EffectConfidence::weakest_of`. §2.4 and §8.1 make it the lattice's \
+                 one combining operation, and `effects.yaml`'s `lattice.operation` names it",
+            ));
+        }
+        for (file, name, signature) in methods {
+            if name == "weakest_of" {
+                continue;
+            }
+            let parameters = signature
+                .split_once('(')
+                .map_or("", |(_, rest)| rest.split("->").next().unwrap_or(rest));
+            let combines = parameters.contains("Self") || parameters.contains("EffectConfidence");
+            let named = ["strong", "promot", "upgrad", "raise"]
+                .iter()
+                .any(|word| name.contains(word));
+            if combines || named {
+                problems.push(Problem::new(
+                    file,
+                    format!(
+                        "`EffectConfidence::{name}` is an operation beside `weakest_of` that takes \
+                         a second confidence or names a strengthening. §2.4 forbids unknown being \
+                         promoted, and `effects.yaml`'s `strengthening_operation: null` promises \
+                         the type offers no such method"
+                    ),
+                ));
+            }
+        }
     }
     problems
 }
@@ -1310,7 +1392,8 @@ fn check_risk_gates(registries: &Registries) -> Vec<Problem> {
             problems.push(Problem::new(
                 location,
                 format!(
-                    "rule `{}` is registered against the dimension `{}` and the engine emits into                      `{}`. §40.2 shows the dimension a gate is objecting on, so the two must agree",
+                    "rule `{}` is registered against the dimension `{}` and the engine emits into \
+                     `{}`. §40.2 shows the dimension a gate is objecting on, so the two must agree",
                     rule.id(),
                     dimension.unwrap_or("nothing"),
                     rule.dimension().as_str()
@@ -1334,6 +1417,8 @@ fn check_risk_gates(registries: &Registries) -> Vec<Problem> {
                 ),
             )),
         }
+        // `RiskRuleSpec` exposes no class — each evaluation chooses one — so `emits` can only be
+        // held to §19.2's vocabulary here, not to what the engine emits.
         match entry.get("emits").and_then(Yaml::as_str) {
             Some(class) if classes.contains(class) => {}
             other => problems.push(Problem::new(
@@ -1640,8 +1725,9 @@ fn check_inventory(root: &Path) -> Vec<Problem> {
 ///
 /// §53 ends with the sentence the whole file serves — configuration MUST NOT silently weaken
 /// explicit plan requirements — and that is only checkable if the two lists of defaults agree.
-/// So the registry's own defaults are fed through the reader the shell uses, and the result must
-/// be [`ChangeSettings::defaults`] exactly. A registry that documents `require` where the shell
+/// So the registry's own defaults are fed through the reader the shell uses, and the rows
+/// [`ChangeSettings::entries`] prints for the result must be [`ChangeSettings::defaults`]'s rows
+/// exactly. Provenance — whether a value was written — is not part of the comparison. A registry that documents `require` where the shell
 /// defaults to `prefer` would otherwise promise protection nobody gets.
 fn check_settings(registries: &Registries) -> Vec<Problem> {
     let location = "docs/contracts/change/plans.yaml";
@@ -1699,13 +1785,28 @@ fn check_settings(registries: &Registries) -> Vec<Problem> {
                 error.message()
             ),
         )),
-        Ok(read) if read != ChangeSettings::defaults() => problems.push(Problem::new(
-            location,
-            "the declared defaults do not produce the shell's own defaults. §53 prints one \
-             reference configuration, and a registry that documents a different one makes every \
-             promise in it unverifiable",
-        )),
-        Ok(_) => {}
+        Ok(read) => {
+            // The key/value rows §53 prints, row by row. Where a value came from — whether the
+            // operator wrote it — is provenance rather than configuration, and is not compared.
+            let defaults = ChangeSettings::defaults().entries();
+            let read = read.entries();
+            if read != defaults {
+                let differing: Vec<String> = read
+                    .iter()
+                    .filter(|row| !defaults.contains(row))
+                    .map(|(key, value)| format!("`{key}` reads `{value}`"))
+                    .collect();
+                problems.push(Problem::new(
+                    location,
+                    format!(
+                        "the declared defaults do not produce the shell's own defaults. §53 prints \
+                         one reference configuration, and a registry that documents a different \
+                         one makes every promise in it unverifiable. Differing: {}",
+                        differing.join(", ")
+                    ),
+                ));
+            }
+        }
     }
     problems
 }
@@ -2425,21 +2526,23 @@ fn variant_name(spelling: &str) -> String {
         .collect()
 }
 
-/// §39.3's quiesce protocol, and the rule that keeps it from being claimed by nobody.
+/// §39.3's quiesce protocol, and the rule that no first-party provider claims it.
 ///
 /// No first-party provider implements it: §39.3 is a MAY for a provider that can make an
-/// application-consistent claim, and none of ZFS, Btrfs or the file store can. So the check is
-/// that none of them declares `recovery.quiesce` either — a capability declared without the
-/// protocol behind it is exactly the overstatement §39.1 forbids.
-fn check_quiesce(registries: &Registries) -> Vec<Problem> {
+/// application-consistent claim, and none of ZFS, Btrfs or the file store can. So besides the
+/// protocol's shape, the check reads every `crates/ono-recovery-*/src` and refuses a declaration of
+/// `recovery.quiesce` — a capability declared without the protocol behind it is exactly the
+/// overstatement §39.1 forbids — and of `recovery.transaction`, which §27.1 reserves for a provider
+/// that states its own atomicity guarantee.
+fn check_quiesce(root: &Path, registries: &Registries) -> Vec<Problem> {
     let location = "docs/contracts/recovery/consistency.yaml";
+    let mut problems = first_party_optional_capabilities(root);
     let Some(protocol) = registries
         .get("consistency.yaml")
         .and_then(|document| document.get("quiesce_protocol"))
     else {
-        return Vec::new();
+        return problems;
     };
-    let mut problems = Vec::new();
     let steps = protocol
         .get("steps")
         .and_then(Yaml::as_sequence)
@@ -2545,6 +2648,10 @@ fn check_provider_capabilities(root: &Path, registries: &Registries) -> Vec<Prob
 /// not find, and a provider crate that ships without a row is a mechanism nothing holds to
 /// Appendix G's fixture set. The identity compared is each crate's own `PROVIDER_ID`, because that
 /// is the string the registry keys on at runtime.
+///
+/// Appendix G.4 is held here too: `version_variance.degrade_to` must be `unsupported`, and the
+/// crate of every provider whose row names a `tool` must, read as text, declare a non-empty
+/// `VALIDATED_VERSIONS`, test a version against it, and answer `ProviderAvailability::Unsupported`.
 fn check_shipped_providers(root: &Path, registries: &Registries) -> Vec<Problem> {
     let location = "docs/contracts/recovery/providers.yaml";
     if registries.get("providers.yaml").is_none() {
@@ -2597,6 +2704,53 @@ fn check_shipped_providers(root: &Path, registries: &Registries) -> Vec<Problem>
             "`version_variance.degrade_to` is not `unsupported`. Appendix G.4 and §56.3 both \
              choose blocking over guessing when a fact could not be established",
         ));
+    }
+    for entry in registries.entries("providers.yaml", "providers") {
+        let id = entry.get("id").and_then(Yaml::as_str).unwrap_or("");
+        let (Some(tool), Some(name)) = (
+            entry.get("tool").and_then(Yaml::as_str),
+            entry.get("crate").and_then(Yaml::as_str),
+        ) else {
+            continue;
+        };
+        let source = crates.join(name).join("src");
+        if !source.is_dir() {
+            continue;
+        }
+        let text = rust_files(&source)
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let versions = text
+            .split_once("pub const VALIDATED_VERSIONS: &[&str] = &[")
+            .and_then(|(_, rest)| rest.split_once(']'))
+            .map_or(0, |(list, _)| {
+                list.split(',').filter(|item| item.contains('"')).count()
+            });
+        if versions == 0 {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "provider `{id}` drives `{tool}`, and its crate `{name}` declares no non-empty \
+                     `pub const VALIDATED_VERSIONS: &[&str]`. Appendix G.4: a provider tests the \
+                     tool versions it supports, and a list nobody wrote is a version nobody tested"
+                ),
+            ));
+        }
+        if !text.contains("VALIDATED_VERSIONS.contains(")
+            || !text.contains("ProviderAvailability::Unsupported")
+        {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "provider `{id}`'s crate `{name}` never tests a version against \
+                     `VALIDATED_VERSIONS` and answers `ProviderAvailability::Unsupported`. \
+                     Appendix G.4: a provider degrades rather than executing semantics it has not \
+                     validated"
+                ),
+            ));
+        }
     }
 
     // Appendix G.2's truth tests: the layouts a provider must refuse false coverage on. The list
@@ -2688,4 +2842,202 @@ fn provider_id_of(source: &Path) -> Option<String> {
         }
     }
     None
+}
+
+/// Every `.rs` file under `source`, with its text, in path order.
+fn rust_files(source: &Path) -> Vec<(std::path::PathBuf, String)> {
+    let mut files = Vec::new();
+    let mut stack = vec![source.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().and_then(std::ffi::OsStr::to_str) == Some("rs")
+                && let Ok(text) = std::fs::read_to_string(&path)
+            {
+                files.push((path, text));
+            }
+        }
+    }
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    files
+}
+
+/// `path` relative to the repository root, for a refusal's location.
+fn relative(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// The variants of `pub enum {name}` in `text`, or `None` where `text` declares no such enum.
+///
+/// A variant is an identifier starting with a capital at the enum's own brace depth; comment and
+/// attribute lines are skipped, so a brace in a doc comment does not move the depth.
+fn enum_variants(text: &str, name: &str) -> Option<BTreeSet<String>> {
+    let header = format!("pub enum {name} {{");
+    let start = text.find(&header)?.saturating_add(header.len());
+    let mut depth = 1_usize;
+    let mut variants = BTreeSet::new();
+    for line in text.get(start..)?.lines() {
+        let code = line.trim();
+        if code.starts_with("//") || code.starts_with("#[") {
+            continue;
+        }
+        if depth == 1 {
+            let ident: String = code
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            if ident.starts_with(|c: char| c.is_ascii_uppercase()) {
+                variants.insert(ident);
+            }
+        }
+        for c in code.chars() {
+            match c {
+                '{' => depth = depth.saturating_add(1),
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some(variants);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// Every method of the inherent `impl {type_name} { … }` blocks in `text`, as its name and its
+/// signature up to the opening brace, or `None` where `text` has no such block.
+fn inherent_methods(text: &str, type_name: &str) -> Option<Vec<(String, String)>> {
+    let header = format!("impl {type_name} {{");
+    let mut methods = Vec::new();
+    let mut found = false;
+    let mut rest = text;
+    while let Some(at) = rest.find(&header) {
+        found = true;
+        let body = rest.get(at.saturating_add(header.len())..)?;
+        let mut depth = 1_usize;
+        let mut consumed = 0_usize;
+        let mut signature: Option<String> = None;
+        for line in body.split_inclusive('\n') {
+            consumed = consumed.saturating_add(line.len());
+            let code = line.trim();
+            if code.starts_with("//") || code.starts_with("#[") {
+                continue;
+            }
+            if depth == 1
+                && signature.is_none()
+                && (code.starts_with("fn ") || code.contains(" fn "))
+            {
+                signature = Some(String::new());
+            }
+            if let Some(written) = signature.as_mut() {
+                written.push_str(code);
+                written.push(' ');
+                if code.contains('{') || code.ends_with(';') {
+                    if let Some(name) = written
+                        .split("fn ")
+                        .nth(1)
+                        .and_then(|after| after.split('(').next())
+                    {
+                        methods.push((name.trim().to_owned(), written.clone()));
+                    }
+                    signature = None;
+                }
+            }
+            for c in code.chars() {
+                match c {
+                    '{' => depth = depth.saturating_add(1),
+                    '}' => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+            }
+            if depth == 0 {
+                break;
+            }
+        }
+        rest = body.get(consumed..).unwrap_or("");
+    }
+    found.then_some(methods)
+}
+
+/// The kebab-case vocabulary spelling of a Rust variant name — the inverse of [`variant_name`].
+fn kebab_name(variant: &str) -> String {
+    let mut spelling = String::new();
+    for (index, c) in variant.chars().enumerate() {
+        if c.is_ascii_uppercase() {
+            if index > 0 {
+                spelling.push('-');
+            }
+            spelling.push(c.to_ascii_lowercase());
+        } else {
+            spelling.push(c);
+        }
+    }
+    spelling
+}
+
+/// Every declaration of §12.2's two optional capabilities in a first-party provider's source.
+///
+/// Every non-comment line under `crates/ono-recovery-*/src` is read. `recovery.quiesce` needs
+/// §39.3's protocol behind it and `recovery.transaction` §27.1's own atomicity guarantee, and no
+/// first-party provider has either.
+fn first_party_optional_capabilities(root: &Path) -> Vec<Problem> {
+    const DECLARATIONS: [(&str, &str); 4] = [
+        ("RecoveryCapability::Quiesce", "recovery.quiesce"),
+        ("\"recovery.quiesce\"", "recovery.quiesce"),
+        ("RecoveryCapability::Transaction", "recovery.transaction"),
+        ("\"recovery.transaction\"", "recovery.transaction"),
+    ];
+    let mut problems = Vec::new();
+    let Ok(entries) = std::fs::read_dir(root.join("crates")) else {
+        return problems;
+    };
+    let mut crates: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("ono-recovery-")
+        })
+        .map(|entry| entry.path())
+        .collect();
+    crates.sort();
+    for directory in crates {
+        for (path, text) in rust_files(&directory.join("src")) {
+            let mut named = BTreeSet::new();
+            for line in text.lines() {
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                for (needle, capability) in DECLARATIONS {
+                    if line.contains(needle) {
+                        named.insert(capability);
+                    }
+                }
+            }
+            for capability in named {
+                problems.push(Problem::new(
+                    relative(root, &path),
+                    format!(
+                        "names `{capability}`, and no first-party recovery provider may declare \
+                         it: `recovery.quiesce` needs §39.3's protocol behind it and \
+                         `recovery.transaction` §27.1's own atomicity guarantee, and ZFS, Btrfs \
+                         and the file store have neither. A capability declared without its \
+                         mechanism is the overstatement §39.1 forbids"
+                    ),
+                ));
+            }
+        }
+    }
+    problems
 }

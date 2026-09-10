@@ -27,6 +27,7 @@ use std::sync::Arc;
 use ono_change_core::{
     ChangePlan, RequiredAcknowledgement, RiskClass, RiskDimension, RiskFinding, error,
 };
+use ono_change_protection::ChangeSettings;
 use ono_command::BoundArguments;
 use ono_core::ErrorCode;
 use ono_value::{ErrorValue, Value};
@@ -52,6 +53,24 @@ pub struct Acknowledgements {
 }
 
 impl Acknowledgements {
+    /// These acknowledgements, with the one `flag` spells added (§19.4, §40.3).
+    ///
+    /// An operator who answers a gate at a terminal has given exactly what the flag gives, and
+    /// §19.4 stores it in the sealed revision the same way.
+    #[must_use]
+    pub fn granting(mut self, flag: &str) -> Self {
+        match flag {
+            "--accept-risk" => self.risk = true,
+            "--accept-irreversible" => self.irreversible = true,
+            "--accept-service-outage" => self.service_outage = true,
+            "--accept-newer-state-loss" => self.newer_state_loss = true,
+            "--accept-stale-protection" => self.stale_protection = true,
+            "--confirm" => self.confirmed = true,
+            _ => {}
+        }
+        self
+    }
+
     /// The acknowledgements `arguments` carries.
     #[must_use]
     pub fn of(arguments: &BoundArguments) -> Self {
@@ -77,13 +96,49 @@ pub struct Gate {
     pub reasons: Vec<String>,
 }
 
-/// Every gate `plan` raises that `given` has not answered (§19.4, §40.1).
+/// Every gate `plan` raises that `given` has not answered (§19.4, §40.1), under the settings
+/// this shell resolved.
 ///
 /// An empty answer is §40.1's normal path, and it is the common one on purpose.
 #[must_use]
 pub fn outstanding(plan: &ChangePlan, given: Acknowledgements) -> Vec<Gate> {
+    outstanding_under(plan, given, &super::session::configured())
+}
+
+/// Every gate `plan` raises that `given` has not answered, under `settings` (§19.4, Appendix H).
+///
+/// The plan's own assessment gates HIGH and CRITICAL. A profile whose risk gate starts lower —
+/// `cautious`'s `moderate+` (Appendix H.2) — gates the classes between as well, with the same
+/// flag, so a plan §40.1 would let through on `apply` alone needs `--accept-risk` under it.
+#[must_use]
+pub fn outstanding_under(
+    plan: &ChangePlan,
+    given: Acknowledgements,
+    settings: &ChangeSettings,
+) -> Vec<Gate> {
     let risk = plan.risk();
     let mut gates = Vec::new();
+    let class = risk.classify();
+    if !class.needs_acknowledgement()
+        && settings.requires_acknowledgement(class)
+        && !risk.is_risk_accepted()
+        && !given.risk
+    {
+        let mut reasons = sentences(&risk.leading());
+        if let Some(profile) = settings.profile() {
+            reasons.push(format!(
+                "the `{}` profile's risk gate is `{}+`, and this plan is {} (v0.6 Appendix H)",
+                profile.as_str(),
+                profile.risk_gate().as_str(),
+                class.as_str()
+            ));
+        }
+        gates.push(Gate {
+            flag: "--accept-risk",
+            refusal: error::risk_not_accepted(plan.id(), class.as_str(), &reasons),
+            reasons,
+        });
+    }
     for required in risk.outstanding_acknowledgements() {
         match required {
             RequiredAcknowledgement::Risk(class) => {
@@ -92,9 +147,15 @@ pub fn outstanding(plan: &ChangePlan, given: Acknowledgements) -> Vec<Gate> {
                     continue;
                 }
                 let reasons = sentences(&leading);
+                let flag = flag_for(&leading);
+                let refusal = if flag == "--accept-service-outage" {
+                    outage_not_accepted(plan, class, &reasons)
+                } else {
+                    error::risk_not_accepted(plan.id(), class.as_str(), &reasons)
+                };
                 gates.push(Gate {
-                    flag: flag_for(&leading),
-                    refusal: error::risk_not_accepted(plan.id(), class.as_str(), &reasons),
+                    flag,
+                    refusal,
                     reasons,
                 });
             }
@@ -117,6 +178,35 @@ pub fn outstanding(plan: &ChangePlan, given: Acknowledgements) -> Vec<Gate> {
         }
     }
     gates
+}
+
+/// §40.2's worked gate, refused as §45's bulk guard (`change.bulk_guard_failed`).
+///
+/// `risk.yaml` declares that error for the service-outage gate: what fired is the guard §28.3
+/// puts on a bulk change that leaves no healthy serving member of its group, rather than a risk
+/// class in general, so a script can tell the two refusals apart by code. The rules' sentences
+/// travel on the metadata as the risk refusal's do, and the help names the one flag that answers
+/// it.
+fn outage_not_accepted(plan: &ChangePlan, class: RiskClass, reasons: &[String]) -> ErrorValue {
+    let short = plan.id().short();
+    ErrorValue::new(
+        ErrorCode::ChangeBulkGuardFailed,
+        format!(
+            "plan {short} would leave no healthy serving member of its group, and the outage was \
+             not acknowledged"
+        ),
+    )
+    .with_help(format!(
+        "v0.6 §40.2 and §28.3: the reason is in the metadata rather than behind a generic \
+         question. `apply plan/{short} --accept-service-outage` acknowledges the outage. A script \
+         supplies it as a flag and never waits for a prompt (§40.3). Nothing was changed"
+    ))
+    .with_metadata("plan", Value::string(plan.id().as_str()))
+    .with_metadata("risk", Value::string(class.as_str()))
+    .with_metadata(
+        "reasons",
+        Value::list(reasons.iter().map(|reason| Value::string(reason))),
+    )
 }
 
 /// Whether `--accept-service-outage` answers this risk class on its own (§40.2).
@@ -162,14 +252,41 @@ pub fn enforce(
     given: Acknowledgements,
     interactive: bool,
     plan_value: &Value,
-) -> Result<(), ErrorValue> {
-    for gate in outstanding(plan, given) {
-        if interactive && ask(plan, &gate)? {
+) -> Result<Acknowledgements, ErrorValue> {
+    let settings = super::session::configured();
+    let mut granted = given;
+    for gate in outstanding_under(plan, given, &settings) {
+        if interactive && settings.prompts() && ask(plan, &gate)? {
+            // §19.4: the answer is an acknowledgement, and it is stored like the flag would be.
+            granted = granted.granting(gate.flag);
             continue;
         }
-        return Err(spelled(&gate).with_metadata("plan", plan_value.clone()));
+        return Err(unprompted(spelled(&gate), &settings).with_metadata("plan", plan_value.clone()));
     }
-    Ok(())
+    Ok(granted)
+}
+
+/// The refusal, saying so where it is the profile rather than the terminal that forbade asking
+/// (Appendix H.4, §40.3).
+///
+/// An operator at a terminal who expected to be asked reads why they were not; without this the
+/// refusal would look like a gate that never offered its question.
+fn unprompted(refusal: ErrorValue, settings: &ChangeSettings) -> ErrorValue {
+    match settings.profile() {
+        Some(profile) if !profile.prompts() => {
+            let note = format!(
+                "the `{}` profile never prompts (v0.6 Appendix H.4), so every acknowledgement is \
+                 given by its flag",
+                profile.as_str()
+            );
+            let help = match refusal.help() {
+                Some(existing) => format!("{existing}. {note}"),
+                None => note,
+            };
+            refusal.with_help(help)
+        }
+        _ => refusal,
+    }
 }
 
 /// The refusal with the rules' own sentences on it (§40.2).
@@ -229,17 +346,21 @@ pub fn require_confirmation(
     given: Acknowledgements,
     interactive: bool,
 ) -> Result<(), ErrorValue> {
-    if given.confirmed || interactive {
+    let settings = super::session::configured();
+    if given.confirmed || (interactive && settings.prompts()) {
         return Ok(());
     }
-    Err(ErrorValue::new(
-        ErrorCode::SafetyConfirmationRequired,
-        format!("`{spelling}` is a commitment and was not confirmed"),
-    )
-    .with_help(format!(
-        "nothing was changed. Write `{spelling} --confirm` to act; v0.6 §40.3 forbids a script \
+    Err(unprompted(
+        ErrorValue::new(
+            ErrorCode::SafetyConfirmationRequired,
+            format!("`{spelling}` is a commitment and was not confirmed"),
+        )
+        .with_help(format!(
+            "nothing was changed. Write `{spelling} --confirm` to act; v0.6 §40.3 forbids a script \
          waiting for a prompt, so the confirmation is a flag"
-    )))
+        )),
+        &settings,
+    ))
 }
 
 /// The risk class as a word a refusal quotes, for a caller with the assessment and not the plan.
@@ -257,4 +378,80 @@ pub fn machine_readable(plan: &ChangePlan) -> Result<Value, ErrorValue> {
     Ok(Value::Record(Arc::new(
         ono_change_core::value::plan_record(plan)?,
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::expect_used,
+        reason = "a test states its preconditions directly (AGENTS.md section 16)"
+    )]
+
+    use super::*;
+    use ono_change_core::{Intent, RiskAssessment};
+
+    fn plan_with(findings: Vec<RiskFinding>) -> ChangePlan {
+        ChangePlan::draft(
+            Intent::new("restart service web-*", "gates"),
+            "s-gates",
+            jiff::Timestamp::UNIX_EPOCH,
+        )
+        .with_risk(RiskAssessment::of(findings))
+    }
+
+    fn whole_role() -> RiskFinding {
+        RiskFinding::new(
+            RiskDimension::Downtime,
+            RiskClass::Critical,
+            "risk.bulk.whole-role",
+            "no healthy serving member of the role is excluded",
+        )
+    }
+
+    #[test]
+    fn should_refuse_a_whole_role_outage_as_a_bulk_guard_naming_its_flag() {
+        let gates = outstanding_under(
+            &plan_with(vec![whole_role()]),
+            Acknowledgements::default(),
+            &ChangeSettings::defaults(),
+        );
+        let gate = gates.first().expect("§40.2's worked gate is raised");
+        assert_eq!(gate.flag, "--accept-service-outage");
+        assert_eq!(
+            gate.refusal.code().name(),
+            "change.bulk_guard_failed",
+            "risk.yaml declares §45's bulk guard error for the service-outage gate"
+        );
+        assert!(
+            gate.refusal
+                .help()
+                .is_some_and(|help| help.contains("--accept-service-outage")),
+            "the refusal names the flag that answers it: {:?}",
+            gate.refusal.help()
+        );
+        assert!(
+            gate.reasons
+                .iter()
+                .any(|reason| reason.contains("risk.bulk.whole-role")),
+            "§40.2: the rule's own reason, not a generic question"
+        );
+    }
+
+    #[test]
+    fn should_keep_the_risk_refusal_when_the_outage_is_not_the_only_reason() {
+        let reboot = RiskFinding::new(
+            RiskDimension::RebootRequirement,
+            RiskClass::Critical,
+            "risk.reboot.required",
+            "a reboot is required",
+        );
+        let gates = outstanding_under(
+            &plan_with(vec![whole_role(), reboot]),
+            Acknowledgements::default(),
+            &ChangeSettings::defaults(),
+        );
+        let gate = gates.first().expect("the risk gate is raised");
+        assert_eq!(gate.flag, "--accept-risk");
+        assert_eq!(gate.refusal.code().name(), "change.risk_not_accepted");
+    }
 }

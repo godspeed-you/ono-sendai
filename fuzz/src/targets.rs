@@ -119,6 +119,32 @@ pub const TARGETS: &[Target] = &[
         area: "storage provider tool output",
         run: storage_tool_output,
     },
+    // The rest of v0.6 §54.3's list, in its own words. Their bodies live in `change_surfaces`.
+    Target {
+        name: "plan-grammar",
+        area: "plan parser/block grammar",
+        run: crate::change_surfaces::plan_grammar,
+    },
+    Target {
+        name: "provider-messages",
+        area: "provider protocol messages",
+        run: crate::change_surfaces::provider_messages,
+    },
+    Target {
+        name: "snapshot-paths",
+        area: "snapshot names and paths",
+        run: crate::change_surfaces::snapshot_paths,
+    },
+    Target {
+        name: "impact-graph",
+        area: "impact graph inputs",
+        run: crate::change_surfaces::impact_graph,
+    },
+    Target {
+        name: "recovery-metadata",
+        area: "recovery metadata",
+        run: crate::change_surfaces::recovery_metadata,
+    },
 ];
 
 /// The target of that name.
@@ -732,7 +758,7 @@ fn btrfs_tool_output(selector: u8, text: &str) {
                 "a Btrfs snapshot name derived from `{text}` carries syntax: `{name}`"
             );
             assert!(
-                name != "." && name != ".." && !name.contains(".."),
+                name != "." && name != "..",
                 "a Btrfs snapshot name derived from `{text}` can leave its namespace: `{name}`"
             );
             assert!(

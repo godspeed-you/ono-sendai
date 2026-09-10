@@ -18,20 +18,21 @@ mod support;
 
 use std::sync::Arc;
 
-use ono_change_core::{RecoveryGoal, RecoveryProvider, ToolOutput, ToolRunner};
+use ono_change_core::{RecoveryGoal, RecoveryProvider, RestoreAcceptance, ToolOutput, ToolRunner};
 use ono_recovery_zfs::{GUID_FINGERPRINT, MountTable, SafetyChecklist, ZFS, ZfsFact, ZfsProvider};
 use ono_value::ErrorValue;
 
 use support::{
     NEWER_BOOKMARK, NEWER_SNAPSHOT, ROOT_DATASET, ROOT_SNAPSHOT, ROOT_SNAPSHOT_GUID, Script, Slot,
-    asset, blocked_facts, code, instant, out, provider,
+    accepted, asset, blocked_facts, code, instant, mounts, out, provider,
 };
 
-/// The checklist the recorded pool proves, with every query answered as it really answered.
+/// The checklist the recorded pool proves, with every query answered as it really answered and
+/// the operator's acceptance given (`--accept-newer-state-loss`).
 fn proven() -> SafetyChecklist {
     let tools = Script::examination().runner();
     provider(&tools)
-        .safety_checklist(&asset())
+        .safety_checklist(&asset(), &accepted())
         .expect("the recorded pool answers every query")
 }
 
@@ -162,18 +163,128 @@ fn should_prove_the_expected_discarded_live_data() {
 #[test]
 fn should_prove_sufficient_privilege() {
     assert!(proven().is_established(ZfsFact::SufficientPrivilege));
+    let detail = evidence(ZfsFact::SufficientPrivilege);
     assert!(
-        evidence(ZfsFact::SufficientPrivilege).contains("permission refusal"),
-        "§11.4 and §43.4: privilege is established from what the queries themselves reported"
+        detail.contains("effective uid 0"),
+        "§43.4: `snapshot` and `rollback` need root or a delegation, so the probe of who this \
+         process is must be what the fact rests on, got `{detail}`"
     );
+    assert!(
+        detail.contains("permission refusal"),
+        "§11.4: and the queries themselves were not refused, got `{detail}`"
+    );
+}
+
+/// A provider running as an ordinary user, answering `zfs allow` with `delegation`.
+fn as_alice(
+    delegation: ono_change_core::ToolOutput,
+) -> (Arc<ono_change_core::ScriptedRunner>, SafetyChecklist) {
+    let tools = Script::examination().then(ZFS, delegation).runner();
+    let runner: Arc<dyn ToolRunner> = Arc::clone(&tools) as Arc<dyn ToolRunner>;
+    let checklist = ZfsProvider::new(runner)
+        .reading_mounts(mounts())
+        .at_instant(instant())
+        .running_as(1000, "alice")
+        .safety_checklist(&asset(), &accepted())
+        .expect("the pool answers");
+    (tools, checklist)
+}
+
+/// `zfs allow` output in the shape OpenZFS prints it: a banner per dataset, then the sections.
+///
+/// Composed: the recorded pool delegated nothing. `scripts/fs-fixtures/zfs.sh` records the real
+/// shape as `allow-delegated.txt`.
+fn delegated(sections: &str) -> ono_change_core::ToolOutput {
+    ToolOutput::ok(format!(
+        "---- Permissions on rpool/ROOT/debian ---------------------------------\n{sections}"
+    ))
+}
+
+#[test]
+fn should_establish_privilege_through_a_zfs_allow_delegation_when_not_root() {
+    let (tools, checklist) = as_alice(delegated(
+        "Local+Descendent permissions:\n\tuser alice destroy,mount,rollback,snapshot\n",
+    ));
+    assert!(
+        checklist.is_established(ZfsFact::SufficientPrivilege),
+        "{:?}",
+        checklist.evidence(ZfsFact::SufficientPrivilege)
+    );
+    let detail = checklist
+        .evidence(ZfsFact::SufficientPrivilege)
+        .expect("an entry")
+        .detail()
+        .to_owned();
+    assert!(
+        detail.contains("alice") && detail.contains("zfs allow"),
+        "{detail}"
+    );
+    assert!(
+        tools
+            .calls()
+            .iter()
+            .any(|(_, argv)| argv == &vec!["allow".to_owned(), ROOT_DATASET.to_owned()]),
+        "§43.4: the delegation is read from ZFS for the dataset itself"
+    );
+}
+
+#[test]
+fn should_not_establish_privilege_for_a_user_zfs_delegates_too_little_to() {
+    let (_, checklist) = as_alice(delegated(
+        "Local+Descendent permissions:\n\tuser alice mount,snapshot\n",
+    ));
+    assert!(!checklist.is_established(ZfsFact::SufficientPrivilege));
+    let detail = checklist
+        .evidence(ZfsFact::SufficientPrivilege)
+        .expect("an entry")
+        .detail()
+        .to_owned();
+    assert!(
+        detail.contains("rollback") && detail.contains("destroy"),
+        "the missing permissions are named, got `{detail}`"
+    );
+}
+
+#[test]
+fn should_not_establish_privilege_when_zfs_delegates_nothing_to_this_user() {
+    let (_, checklist) = as_alice(ToolOutput::ok(""));
+    assert!(!checklist.is_established(ZfsFact::SufficientPrivilege));
+}
+
+#[test]
+fn should_not_establish_privilege_when_zfs_refuses_to_list_delegations() {
+    let (_, checklist) = as_alice(out("unprivileged-list"));
+    assert!(!checklist.is_established(ZfsFact::SufficientPrivilege));
+}
+
+#[test]
+fn should_leave_history_destruction_unaccepted_until_the_operator_accepts_it() {
+    let tools = Script::examination().runner();
+    let checklist = provider(&tools)
+        .safety_checklist(&asset(), &RestoreAcceptance::none())
+        .expect("the recorded pool answers every query");
+    assert!(
+        checklist.is_established(ZfsFact::NewerSnapshotsAndBookmarks),
+        "the enumeration itself is complete"
+    );
+    assert!(
+        !checklist.is_established(ZfsFact::HistoryDestructionAccepted),
+        "§56.1: an enumeration is what acceptance covers, and is not the acceptance"
+    );
+    let detail = checklist
+        .evidence(ZfsFact::HistoryDestructionAccepted)
+        .expect("an entry")
+        .detail()
+        .to_owned();
+    assert!(detail.contains("2 object(s)"), "{detail}");
 }
 
 #[test]
 fn should_prove_that_explicit_acceptance_for_history_destruction_is_required_and_enumerated() {
     assert!(proven().is_established(ZfsFact::HistoryDestructionAccepted));
     assert!(
-        evidence(ZfsFact::HistoryDestructionAccepted).contains("2 object(s) would be destroyed"),
-        "§13.6: acceptance is explicit only when what it covers has been enumerated"
+        evidence(ZfsFact::HistoryDestructionAccepted).contains("accepted losing 2 object(s)"),
+        "§13.6: the acceptance covers exactly what was enumerated"
     );
     let tools = Script::examination().runner();
     let fragment = provider(&tools)
@@ -271,6 +382,7 @@ fn should_block_when_the_reboot_or_offline_requirement_cannot_be_established() {
     let error = ZfsProvider::new(runner)
         .reading_mounts(MountTable::default())
         .at_instant(instant())
+        .running_as(0, "root")
         .plan_recovery(&asset(), None, RecoveryGoal::RestoreDomain)
         .expect_err("§56.3: without the mount table the reboot requirement is a guess");
     assert_blocked(&error, ZfsFact::RebootOrOfflineRequirement);
@@ -350,8 +462,7 @@ fn should_block_a_restore_action_whose_facts_stopped_holding_between_plan_and_ap
         },
     );
     let error = provider(&tools)
-        .with_accepted_history_destruction()
-        .restore(&action, &asset())
+        .restore_with(&action, &asset(), &accepted())
         .expect_err("§56.3: the checklist is proved again before the destructive act, not once");
     assert_eq!(code(&error), "recovery.plan_incomplete");
 }

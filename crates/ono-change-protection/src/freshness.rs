@@ -142,3 +142,69 @@ pub fn assess(
          protection was created (§18.3)"
     ))
 }
+
+/// Decides what §18.3 permits for an asset made earlier, from what it captured object by object
+/// (§18.2).
+///
+/// `captured` is what the asset's provider says it holds for each object — the digests a
+/// [`RecoveryPlanFragment`](ono_change_core::RecoveryPlanFragment) hands over — and `current`
+/// reads each object's digest now. The asset is fresh only where every object it captured still
+/// holds those bytes. One that changed, one that cannot be read now, and an asset that says
+/// nothing about what it captured are all not fresh: §2.4 forbids reading an unestablished fact
+/// as a pass. `require_fresh` is §18.3's third option, as for [`assess`].
+#[must_use]
+pub fn assess_captured(
+    asset: &RecoveryAsset,
+    captured: &[(Arc<str>, Arc<str>)],
+    current: &dyn Fn(&str) -> Option<String>,
+    require_fresh: bool,
+) -> FreshnessVerdict {
+    let stale = |detail: String| FreshnessVerdict {
+        freshness: if require_fresh {
+            Freshness::MustReplace
+        } else {
+            Freshness::StaleAcceptable
+        },
+        detail: Arc::from(detail),
+    };
+    if !asset.is_usable() {
+        return FreshnessVerdict {
+            freshness: Freshness::MustReplace,
+            detail: Arc::from(format!(
+                "the asset is {} and only a validated, ready asset is a recovery point (§11.4)",
+                asset.state()
+            )),
+        };
+    }
+    if captured.is_empty() {
+        return stale(
+            "the asset's provider does not say what it captured object by object, so nothing \
+             establishes that it reflects the state about to change (§18.3)"
+                .to_owned(),
+        );
+    }
+    for (object, digest) in captured {
+        match current(object) {
+            None => {
+                return stale(format!(
+                    "{object} cannot be read now, so the asset cannot be shown to hold its current \
+                     state (§18.3, §56.3)"
+                ));
+            }
+            Some(now) if now != digest.as_ref() => {
+                return stale(format!(
+                    "{object} changed after the asset captured it, so the asset holds an earlier \
+                     state (§18.3)"
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+    FreshnessVerdict {
+        freshness: Freshness::Fresh,
+        detail: Arc::from(format!(
+            "every one of the {} object(s) it captured still holds the captured bytes (§18.2)",
+            captured.len()
+        )),
+    }
+}

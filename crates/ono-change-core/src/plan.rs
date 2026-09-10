@@ -816,12 +816,20 @@ mod tests {
         use crate::protection::{DomainCoverage, DomainProtection, RecoveryObjective};
         let plan = sealed()
             .revise()
-            .with_protection(ProtectionSummary::of(vec![DomainCoverage::new(
-                EffectDomain::FilesystemPersistent,
-                RecoveryObjective::PreserveExact,
-                DomainProtection::Protected,
-                "zfs snapshot",
-            )]));
+            .with_protection(ProtectionSummary::of(vec![
+                DomainCoverage::new(
+                    EffectDomain::FilesystemPersistent,
+                    RecoveryObjective::PreserveExact,
+                    DomainProtection::Protected,
+                    "zfs snapshot",
+                )
+                .by_asset(crate::RecoveryAssetId::of(
+                    "ono.recovery.zfs",
+                    None,
+                    "rpool/etc",
+                    "0",
+                )),
+            ]));
         assert_eq!(
             plan.protection().level(),
             crate::protection::ProtectionLevel::Protected,

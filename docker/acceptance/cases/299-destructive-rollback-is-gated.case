@@ -1,0 +1,78 @@
+# v0.6 §50 phase P2 — §13.6, §2.12 and §63.12: destructive recovery of newer state requires
+# explicit acceptance.
+#
+# §13.6 is the ZFS case: a rollback that would destroy newer snapshots, bookmarks or clones is
+# enumerated and gated, never silently forced. §2.12 generalises it — recovery MUST NOT destroy
+# newer state merely because an older recovery point exists — and §24.5 makes the acceptance its
+# own flag. `--confirm` is the commitment every apply needs; it is not the acceptance of loss, so
+# an apply that carries `--confirm` and not `--accept-newer-state-loss` must still be refused.
+case: a recovery that would destroy newer state names it, and waits for its own flag
+timeout: 240
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+
+  mkdir -p "$HOME/etc"
+  printf 'original\n' > "$HOME/etc/config"
+  printf 'changed\n' > "$HOME/etc/source"
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/config --overwrite | to json" > /tmp/dr0.json 2>&1
+  id=$(plan_id /tmp/dr0.json)
+  ono -c "apply $id" > /dev/null 2>&1
+
+  echo '== §2.12 and §55.8 case 36: newer state after the recovery point is named before anything runs =='
+  printf 'newer, written after the change\n' > "$HOME/etc/config"
+  ono -c "recover $id" > /tmp/dr1.txt 2>&1
+  ono -c "recover $id | to json" > /tmp/dr1.json 2>&1
+  rid=$(plan_id /tmp/dr1.json)
+  prove dr1a "the recovery plan lists the object whose newer state the restore would overwrite (§24.3)" \
+    "grep -q '\"newer_state\":\[{\"object\":\"$HOME/etc/config\"' /tmp/dr1.json && grep -qi 'newer state' /tmp/dr1.txt"
+  prove dr1b "and states that it needs the acceptance, by flag (§24.5, §40.2)" \
+    "grep -q '\"requires_acceptance\":true' /tmp/dr1.json && grep -q 'accept-newer-state-loss' /tmp/dr1.txt"
+  prove dr1c "and performed nothing (§2.11)" 'grep -qx "RECOVERY NOT EXECUTED" /tmp/dr1.txt'
+
+  echo '== §24.5: `--confirm` is a commitment, not the acceptance of loss =='
+  timeout 60 ono -c "apply $rid --confirm" > /tmp/dr2.txt 2>&1
+  status=$?
+  prove dr2b "the run returned rather than waiting (§17.4, §40.3)" "[ $status -ne 124 ]"
+  prove dr2c "and it refused for the newer state, with a recovery code (§2.12, §24.5)" \
+    'grep -qE "recovery\.newer_state_conflict|recovery\.destructive_history_not_accepted" /tmp/dr2.txt'
+  prove dr2d "the newer state is still there (§2.12)" \
+    "[ \"\$(cat $HOME/etc/config)\" = 'newer, written after the change' ]"
+  prove dr2e "and the recovery plan is still sealed, ready to be accepted deliberately (§4.1)" \
+    "[ \"\$(ono -c 'get plan $rid | select state | to json' 2>&1)\" = '[{\"state\":\"sealed\"}]' ]"
+
+  echo '== §24.5: with the acceptance, the recovery runs =='
+  ono -c "apply $rid --accept-newer-state-loss --confirm" > /tmp/dr3.txt 2>&1
+  prove dr3a "the restore put back what the asset held (§15.4)" \
+    "[ \"\$(cat $HOME/etc/config)\" = 'original' ]"
+  prove dr3b "and was verified (§25.1)" \
+    "[ \"\$(ono -c 'get plan $rid | select state | to json' 2>&1)\" = '[{\"state\":\"recovery-verified\"}]' ]"
+
+  echo '== §13.6: the ZFS setting that governs the same rule is off by default =='
+  prove dr4a "\`recovery.zfs.allow_destructive_rollback\` defaults to false (§13.6, §53)" \
+    "ono -c 'get config recovery.zfs.allow_destructive_rollback | to json' 2>&1 | grep -q '^\[{\"key\":\"recovery.zfs.allow_destructive_rollback\",\"value\":false,'"
+
+  echo 'destructive-rollback-is-gated: done'
+exit: 0
+stdout-contains: PROVED dr1a
+stdout-contains: PROVED dr1b
+stdout-contains: PROVED dr1c
+stdout-contains: PROVED dr2b
+stdout-contains: PROVED dr2c
+stdout-contains: PROVED dr2d
+stdout-contains: PROVED dr2e
+stdout-contains: PROVED dr3a
+stdout-contains: PROVED dr3b
+stdout-contains: PROVED dr4a
+stdout-contains: destructive-rollback-is-gated: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

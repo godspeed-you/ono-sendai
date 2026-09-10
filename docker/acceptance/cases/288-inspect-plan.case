@@ -1,0 +1,85 @@
+# v0.6 §50 phase P2 — §20 and §21: the plan view answers the nine questions §20.1 asks, and
+# `inspect plan` is where the detail behind each of them lives.
+#
+# §20.4 is the rule that shapes it: protection and risk are separate axes, and a view that
+# collapsed them would let a protected plan read as a safe one. §62.6 forbids showing the
+# protection level without the exclusions beside it, and §20.3 keeps an unknown visible as an
+# unknown rather than as an absence.
+case: the plan view answers its questions, and the inspector shows the working
+timeout: 120
+columns: 80
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+
+  # A directory name long enough that an 80-column view has to cut the lines that carry it.
+  dir="$HOME/a-directory-with-a-deliberately-long-name-so-an-eighty-column-view-must-cut-it"
+  mkdir -p "$dir"
+  printf 'a\n' > "$dir/source"
+  printf 'b\n' > "$dir/target"
+  ono -c "plan copy file $dir/source $dir/target --overwrite | to json" > /tmp/i0.json 2>&1
+  id=$(plan_id /tmp/i0.json)
+  ono -c "get plan $id" > /tmp/i1.txt 2>&1
+
+  echo '== §20.1: the nine questions, in order =='
+  prove i1a "the view answers every question under its own heading, in §20.1's order" \
+    "[ \"\$(grep -xE 'intent|targets|planned|impact|protection|not recoverable|risk|verification' /tmp/i1.txt | tr '\n' ' ')\" = 'intent targets planned impact protection not recoverable risk verification ' ]"
+  prove i1i "and it says it has not run (§2.1, §62.3)" 'grep -qx "PLAN NOT EXECUTED" /tmp/i1.txt'
+
+  echo '== §20.4 and §62.6: protection and risk are separate, and never shown alone =='
+  level=$(sed -n 's/.*"protection_level":"\([a-z-]*\)".*/\1/p' /tmp/i0.json | head -1)
+  risk=$(sed -n 's/.*"risk":"\([a-z]*\)".*/\1/p' /tmp/i0.json | head -1)
+  prove i2a "the protection block carries its exclusions beside the level (§62.6, Appendix E.8)" \
+    "sed -n '/^protection\$/,/^not recoverable\$/p' /tmp/i1.txt | grep -qx '  not covered'"
+  prove i2b "the protection headline is the level the record carries, not a word of its own (§10.2)" \
+    "[ \"\$(sed -n '/^protection\$/{n;p;}' /tmp/i1.txt | awk '{print \$1}')\" = \"\$(printf '%s' '$level' | tr 'a-z-' 'A-Z ' | awk '{print \$1}')\" ]"
+  prove i2c "and the risk block states the record's own class, separately (§20.4, §10.4)" \
+    "[ \"\$(sed -n '/^risk\$/{n;p;}' /tmp/i1.txt | awk '{print \$1}')\" = \"\$(printf '%s' '$risk' | tr 'a-z' 'A-Z')\" ]"
+
+  echo '== §21: the inspector shows the working behind each answer =='
+  ono -c "inspect plan $id" > /tmp/i3.txt 2>&1
+  prove i3a "\`inspect plan\` answers with this plan (§36.4)" "grep -q '^PLAN / ${id:0:4} ' /tmp/i3.txt"
+  ono -c "inspect plan $id --resolution" > /tmp/i4.txt 2>&1
+  prove i3b "\`--resolution\` shows why the protection landed where it did (Appendix B.10)" \
+    'grep -qx "PERSISTENCE RESOLUTION" /tmp/i4.txt && grep -qE "^    mount [^ ]+ \([a-z0-9]+\) on " /tmp/i4.txt'
+
+  echo '== v0.2 §13.3: what is cut is visibly cut =='
+  prove i4a "no line is wider than the 80 columns the view was given (v0.2 §13.3)" \
+    "LC_ALL=C.UTF-8 awk 'length(\$0) > 80 { bad = 1 } END { exit bad }' /tmp/i1.txt"
+  prove i4b "and the lines that had to be cut end in the marker rather than mid-word (v0.2 §13.3)" \
+    "grep -q '\.\.\.\$' /tmp/i1.txt"
+
+  echo '== §36.4: the three reference spellings =='
+  prove i5a "\`get plan <prefix>\` reaches the plan (§36.4)" "ono -c 'get plan ${id:0:4}' 2>&1 | grep -q '^PLAN / ${id:0:4} '"
+  prove i5b "\`get plan plan/<id>\` reaches the same plan (§36.4)" "ono -c 'get plan plan/$id' 2>&1 | grep -q '^PLAN / ${id:0:4} '"
+  ono -c "recover plan/$id" > /tmp/i5c.txt 2>&1
+  ono -c "recover $id" > /tmp/i5d.txt 2>&1
+  prove i5c "\`recover plan/<id>\` answers exactly as \`recover <id>\` does, not with an unknown plan (§36.4)" \
+    '! grep -q "change.plan_not_found" /tmp/i5c.txt && cmp -s /tmp/i5c.txt /tmp/i5d.txt'
+
+  echo 'inspect-plan: done'
+exit: 0
+stdout-contains: PROVED i1a
+stdout-contains: PROVED i1i
+stdout-contains: PROVED i2a
+stdout-contains: PROVED i2b
+stdout-contains: PROVED i2c
+stdout-contains: PROVED i3a
+stdout-contains: PROVED i3b
+stdout-contains: PROVED i4a
+stdout-contains: PROVED i4b
+stdout-contains: PROVED i5a
+stdout-contains: PROVED i5b
+stdout-contains: PROVED i5c
+stdout-contains: inspect-plan: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

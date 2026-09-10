@@ -41,7 +41,9 @@ mod view;
 mod wasm;
 
 pub use adapters::{AdapterPackageError, declared_executables, validate_package};
-pub use change::{ChangeContributions, compose_risk, validate_effect_class};
+pub use change::{
+    ChangeContributions, compose_risk, validate_effect_class, validate_recovery_asset,
+};
 pub use consent::{
     ConsentAnswer, ConsentDuration, ConsentRequest, ConsentSource, NoConsent, ScriptedConsent,
     scope_words,

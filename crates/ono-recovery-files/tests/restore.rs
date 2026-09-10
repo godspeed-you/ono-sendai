@@ -87,6 +87,32 @@ fn should_leave_the_original_intact_when_the_replacement_cannot_be_written() {
     let asset = fixture.protect(&configuration);
     fixture.write("etc/nginx.conf", "worker_processes 8;\n");
     let before = inode_of(&configuration);
+    // The stored copy is sound and the directory is writable; what cannot be written is the
+    // replacement, because a directory already occupies the place it is staged in. Were the
+    // staging place ever renamed, the restore would succeed and this test would fail loudly.
+    std::fs::create_dir(fixture.path("etc/.ono-recovery.nginx.conf.staging"))
+        .expect("the staging place can be occupied");
+
+    let error = fixture
+        .provider
+        .restore(&recovery_action(Some(&configuration)), &asset)
+        .expect_err("a replacement that cannot be written is not renamed over anything");
+    assert_eq!(error.code().name(), "recovery.apply_failed");
+    assert_eq!(
+        std::fs::read_to_string(&configuration).expect("the original is still there"),
+        "worker_processes 8;\n",
+        "§15.4: nothing is renamed until the replacement is complete, so the live file is untouched"
+    );
+    assert_eq!(inode_of(&configuration), before);
+}
+
+#[test]
+fn should_leave_the_original_intact_when_the_stored_copy_cannot_be_read() {
+    let fixture = Fixture::new();
+    let configuration = fixture.write("etc/nginx.conf", "worker_processes 1;\n");
+    let asset = fixture.protect(&configuration);
+    fixture.write("etc/nginx.conf", "worker_processes 8;\n");
+    let before = inode_of(&configuration);
     std::fs::remove_file(Path::new(asset.reference()).join("objects/00000001"))
         .expect("the stored copy can be removed");
 
@@ -105,6 +131,9 @@ fn should_leave_the_original_intact_when_the_replacement_cannot_be_written() {
 
 #[test]
 fn should_leave_no_staging_file_behind_when_a_restore_fails() {
+    // The refusal here is the digest check, which runs before anything is staged, so this guards
+    // the order: verify the copy, then stage it. A failure after the staging file exists would be
+    // `write_all` or `sync_all` returning an I/O error, which no unprivileged test can provoke.
     let fixture = Fixture::new();
     let configuration = fixture.write("etc/nginx.conf", "worker_processes 1;\n");
     let asset = fixture.protect(&configuration);
@@ -430,6 +459,11 @@ fn should_restore_extended_attributes_where_the_filesystem_carries_them() {
             !coverage.xattrs,
             "Appendix C.7: a filesystem without extended attributes is reported as a gap rather \
              than as coverage"
+        );
+        ono_testkit::skipped(
+            ono_testkit::SkipReason::MissingKernelFeature,
+            "the scratch filesystem carries no extended attributes, so only the reported gap was \
+             checked",
         );
         return;
     }

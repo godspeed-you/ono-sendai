@@ -17,9 +17,11 @@ use std::time::Duration;
 
 use jiff::Timestamp;
 use ono_change_core::value::{
-    action_record, asset_from_record, asset_record, candidate_record, coverage_record,
-    domain_record, effect_record, impact_from_record, impact_record, plan_from_record, plan_record,
-    recovery_plan_from_record, recovery_plan_record, verification_record,
+    RecoveryPlanNotes, RejectedMethodNote, ServiceImpact, action_record, asset_from_record,
+    asset_record, candidate_record, coverage_from_record, coverage_record, domain_record,
+    effect_from_record, effect_record, impact_from_record, impact_record, plan_from_record,
+    plan_record, recovery_plan_from_record, recovery_plan_record, recovery_plan_record_with,
+    verification_record,
 };
 use ono_change_core::{
     ActionRole, ActionStatus, AssetState, ChangePlan, ConsistencyClass, CoverageExclusion,
@@ -28,10 +30,10 @@ use ono_change_core::{
     LifecycleEvent, MetadataCoverage, NewerStateClass, NewerStateImpact, NewerStateItem,
     NonPersistentReason, PersistenceDomain, PlanAction, PlanState, Precondition, PreconditionKind,
     ProposedEffect, ProtectionLevel, ProtectionMode, ProtectionSummary, ProviderBinding,
-    RecoveryAsset, RecoveryAssetType, RecoveryCandidate, RecoveryCost, RecoveryExclusion,
-    RecoveryGoal, RecoveryObjective, RecoveryPlan, RecoveryScope, RecoveryValidation,
-    ResolvedMount, RestoreMethod, RetentionPolicy, RiskAssessment, RiskClass, RiskDimension,
-    RiskFinding, Strategy, UnknownBoundary, UnrecoverableEffect, VerificationClass,
+    RecoveryAsset, RecoveryAssetId, RecoveryAssetType, RecoveryCandidate, RecoveryCost,
+    RecoveryExclusion, RecoveryGoal, RecoveryObjective, RecoveryPlan, RecoveryScope,
+    RecoveryValidation, ResolvedMount, RestoreMethod, RetentionPolicy, RiskAssessment, RiskClass,
+    RiskDimension, RiskFinding, Strategy, UnknownBoundary, UnrecoverableEffect, VerificationClass,
     VerificationContract, VerificationResult, VerificationSet, VerificationStatus,
 };
 use ono_value::{ByteSize, Percent, RecordValue, Value};
@@ -199,7 +201,8 @@ fn protection() -> ProtectionSummary {
             EffectDomain::FilesystemPersistent,
             "/etc/nginx/cache",
             "the cache directory is a separate dataset",
-        )),
+        ))
+        .outside_of("rpool"),
         DomainCoverage::new(
             EffectDomain::ProcessRuntime,
             RecoveryObjective::RestoreSemantic,
@@ -782,6 +785,31 @@ fn should_carry_every_exclusion_the_matrix_holds_when_a_plan_is_encoded() {
         plan.protection().exclusions().len(),
         "§62.6: the summary must never hide what the matrix does not cover"
     );
+    for (item, exclusion) in exclusions.iter().zip(plan.protection().exclusions()) {
+        let Value::Map(item) = item else {
+            panic!("§10.3: one exclusion is a map, got {item:?}");
+        };
+        assert_eq!(
+            item.get("domain"),
+            Some(&Value::string(exclusion.domain().as_str())),
+            "§10.3: the exclusion keeps the domain it leaves uncovered"
+        );
+        assert_eq!(
+            item.get("subject"),
+            Some(&Value::string(exclusion.subject())),
+            "§62.6: the exclusion names what it leaves out"
+        );
+        assert_eq!(
+            item.get("reason"),
+            Some(&Value::string(exclusion.reason())),
+            "§10.3: the exclusion says why"
+        );
+        assert_eq!(
+            item.get("irreversible"),
+            Some(&Value::Bool(exclusion.is_irreversible())),
+            "§10.3: an irreversible exclusion stays marked as one"
+        );
+    }
 }
 
 #[test]
@@ -872,6 +900,26 @@ fn should_produce_an_identical_record_when_a_plan_is_encoded_decoded_and_encoded
         impact_record(read.id(), read.impact()).expect("contract"),
         graph,
         "§9: what the graph record said the second time is what it said the first"
+    );
+}
+
+#[test]
+fn should_read_a_coverage_row_written_before_it_named_what_does_not_protect_it() {
+    // §36.1: a plan stored by an earlier build has no `not_protected_by`, and it still reads.
+    let row = protection().rows().first().cloned().expect("a row");
+    let record = rewritten(
+        &coverage_record(&row).expect("contract"),
+        "not_protected_by",
+        Value::Null,
+    );
+    let read = coverage_from_record(&record).expect("§13.4's list is optional on read");
+    assert!(read.not_protected_by().is_empty());
+    assert_eq!(
+        coverage_from_record(&coverage_record(&row).expect("contract"))
+            .expect("decodes")
+            .not_protected_by(),
+        row.not_protected_by(),
+        "§13.4: the list survives the store"
     );
 }
 
@@ -1301,6 +1349,18 @@ fn should_keep_the_asset_identity_rather_than_deriving_it_again_on_read() {
         "§11.1: the id is what a plan references and what `remove recovery` names"
     );
     assert_eq!(read.source_plan(), asset.source_plan());
+
+    // The id above is a function of fields the record also carries, so a reader that derived it
+    // again would pass. An id the fields do not produce tells the two apart.
+    let stored = RecoveryAssetId::derive(&["an identity the other fields do not produce"]);
+    assert_ne!(&stored, asset.id(), "precondition: the stored id differs");
+    let record = rewritten(&record, "id", Value::string(stored.as_str()));
+    let read = asset_from_record(&record).expect("decodes");
+    assert_eq!(
+        read.id(),
+        &stored,
+        "§11.1: the id the store holds is the one the plan referenced, whatever it was derived from"
+    );
 }
 
 #[test]
@@ -1535,7 +1595,13 @@ fn should_keep_a_policy_declaration_of_irrelevance_when_a_plan_is_read_back() {
             RecoveryObjective::PreserveExact,
             DomainProtection::Protected,
             "zfs snapshot of rpool/ROOT/debian",
-        ),
+        )
+        .by_asset(ono_change_core::RecoveryAssetId::of(
+            "ono.recovery.zfs",
+            None,
+            "rpool/ROOT/debian",
+            "0",
+        )),
         DomainCoverage::new(
             EffectDomain::Unknown,
             RecoveryObjective::RestoreSemantic,
@@ -1641,9 +1707,12 @@ fn should_keep_every_dimension_the_cost_model_names_when_an_asset_is_read_back()
         "§38.1: cleanup cost is a cost dimension, and §37.3's preview is where it is read"
     );
     for dimension in RecoveryCost::DIMENSIONS {
-        assert!(
-            read.cost().states(dimension).is_some(),
-            "§38.1 names `{dimension}`, so the cost model must be able to answer for it"
+        let measured = matches!(*dimension, "io-overhead" | "cleanup-cost");
+        assert_eq!(
+            read.cost().states(dimension),
+            Some(measured),
+            "§38.1 names `{dimension}`; the asset read back states a figure for it exactly when \
+             the provider measured one"
         );
     }
 }
@@ -1726,4 +1795,279 @@ fn should_report_each_validation_check_without_reading_its_prose() {
         "and the failing check survives the store, because §11.1's INVALID state rests on it"
     );
     assert_eq!(read.state(), AssetState::Invalid);
+}
+
+// ---------------------------------------------------------------------------------------------
+// What `recover` learned beside the plan (§24.3, Appendix C.1, Appendix I.5)
+// ---------------------------------------------------------------------------------------------
+
+/// One map of a list field, by position.
+fn map_at(record: &RecordValue, field: &str, index: usize) -> ono_value::MapValue {
+    let Some(Value::List(items)) = record.get(field) else {
+        panic!("`{field}` is a list, got {:?}", record.get(field));
+    };
+    let Some(Value::Map(item)) = items.get(index) else {
+        panic!("`{field}` holds a map at {index}, got {items:?}");
+    };
+    (**item).clone()
+}
+
+fn texts(value: Option<&Value>) -> Vec<String> {
+    let Some(Value::List(items)) = value else {
+        panic!("a list, got {value:?}");
+    };
+    items
+        .iter()
+        .map(|item| item.as_str().expect("text").to_owned())
+        .collect()
+}
+
+#[test]
+fn should_say_the_alternatives_and_the_services_were_not_recorded_when_nobody_supplied_them() {
+    let record = recovery_plan_record(&recovery_plan()).expect("contract");
+    assert_eq!(
+        record.get("rejected_methods"),
+        Some(&Value::Null),
+        "§10.5: a record nobody told about the methods not chosen does not claim there were none"
+    );
+    assert_eq!(
+        record.get("services_affected"),
+        Some(&Value::Null),
+        "§10.5: which services a recovery stops is unknown until a planner says"
+    );
+}
+
+#[test]
+fn should_carry_a_rejected_rollback_and_the_newer_state_it_would_discard() {
+    // Appendix I.5: a selective restore was chosen, and a whole-dataset rollback would discard
+    // every newer change the analysis saw in the dataset — not only the ones this method discards.
+    let notes = RecoveryPlanNotes::default().with_rejected(vec![RejectedMethodNote::new(
+        "ono.recovery.zfs",
+        RestoreMethod::DatasetRollback,
+        "dominated",
+        "selective-file-restore reaches the same goal and risks less unrelated state",
+    )]);
+    let record = recovery_plan_record_with(&recovery_plan(), &notes).expect("contract");
+    record
+        .validate()
+        .expect("§36.5: the record satisfies ono.recovery-plan/1");
+    let rejected = map_at(&record, "rejected_methods", 0);
+    assert_eq!(
+        rejected.get("method"),
+        Some(&Value::string("dataset-rollback"))
+    );
+    assert_eq!(rejected.get("reason"), Some(&Value::string("dominated")));
+    assert_eq!(
+        rejected.get("provider"),
+        Some(&Value::string("ono.recovery.zfs"))
+    );
+    assert_eq!(
+        texts(rejected.get("would_discard")),
+        vec![
+            "/etc/nginx/conf.d/new-site.conf".to_owned(),
+            "/etc/nginx/mime.types".to_owned()
+        ],
+        "Appendix I.5: a rollback discards everything written after the recovery point, and an \
+         object whose fate could not be established stays unknown rather than being listed"
+    );
+}
+
+#[test]
+fn should_not_guess_what_a_method_that_keeps_newer_state_would_discard() {
+    let notes = RecoveryPlanNotes::default().with_rejected(vec![
+        RejectedMethodNote::new(
+            "ono.recovery.zfs",
+            RestoreMethod::CloneAndCopy,
+            "metadata-shortfall",
+            "Appendix C.7: clone-and-copy does not restore SELinux labels",
+        )
+        .unmet(vec![Arc::from("SELinux labels")]),
+    ]);
+    let record = recovery_plan_record_with(&recovery_plan(), &notes).expect("contract");
+    let rejected = map_at(&record, "rejected_methods", 0);
+    assert_eq!(
+        rejected.get("would_discard"),
+        Some(&Value::Null),
+        "§2.4: nothing analysed what this method would discard, so the record does not say"
+    );
+    assert_eq!(
+        texts(rejected.get("unmet")),
+        vec!["SELinux labels".to_owned()]
+    );
+}
+
+#[test]
+fn should_not_list_what_a_rollback_would_discard_when_the_newer_state_was_never_analysed() {
+    let recovery = recovery_plan().with_newer_state(NewerStateImpact::unanalysed());
+    let notes = RecoveryPlanNotes::default().with_rejected(vec![RejectedMethodNote::new(
+        "ono.recovery.zfs",
+        RestoreMethod::DatasetRollback,
+        "dominated",
+        "a less destructive method reaches the goal",
+    )]);
+    let record = recovery_plan_record_with(&recovery, &notes).expect("contract");
+    assert_eq!(
+        map_at(&record, "rejected_methods", 0).get("would_discard"),
+        Some(&Value::Null),
+        "§62.8: an analysis that never ran found nothing, and says so as unknown"
+    );
+}
+
+#[test]
+fn should_carry_the_services_a_recovery_stops_or_restarts() {
+    let notes = RecoveryPlanNotes::default().with_services(vec![
+        ServiceImpact::restarted("nginx.service"),
+        ServiceImpact::stopped("php-fpm.service"),
+    ]);
+    let record = recovery_plan_record_with(&recovery_plan(), &notes).expect("contract");
+    record
+        .validate()
+        .expect("§36.5: the record satisfies ono.recovery-plan/1");
+    for (index, (service, action)) in [("nginx.service", "restart"), ("php-fpm.service", "stop")]
+        .into_iter()
+        .enumerate()
+    {
+        let item = map_at(&record, "services_affected", index);
+        assert_eq!(item.get("service"), Some(&Value::string(service)));
+        assert_eq!(
+            item.get("action"),
+            Some(&Value::string(action)),
+            "§24.3: the recovery plan shows services stopped and restarted"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// A known null is not an absent value (§10.5)
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn should_keep_a_contract_that_expects_null_when_a_plan_is_read_back() {
+    let plan = draft();
+    let contract = VerificationContract::new(
+        plan.id(),
+        VerificationClass::Required,
+        "env ONO_FEATURE",
+        "is unset",
+    )
+    .expecting(Value::Null);
+    let plan = plan.with_verification(VerificationSet::of(vec![contract]));
+    let read = plan_from_record(&plan_record(&plan).expect("contract")).expect("decodes");
+    assert_eq!(
+        read.verification().contracts()[0].expected(),
+        Some(&Value::Null),
+        "§10.5: a contract that expects the value to be null is not a contract with no \
+         expectation"
+    );
+    let unstated = draft().with_verification(VerificationSet::of(vec![VerificationContract::new(
+        draft().id(),
+        VerificationClass::Required,
+        "env ONO_FEATURE",
+        "exists",
+    )]));
+    let read = plan_from_record(&plan_record(&unstated).expect("contract")).expect("decodes");
+    assert_eq!(
+        read.verification().contracts()[0].expected(),
+        None,
+        "and a contract that stated no value still states none"
+    );
+}
+
+#[test]
+fn should_keep_the_stored_check_identity_when_a_plan_is_read_back() {
+    let plan = draft();
+    let contract = VerificationContract::new(
+        plan.id(),
+        VerificationClass::Required,
+        "nginx.service",
+        "state == running",
+    );
+    let planted = VerificationContract::new(
+        plan.id(),
+        VerificationClass::Required,
+        "a different subject",
+        "a different expression",
+    )
+    .id()
+    .clone();
+    let plan = plan.with_verification(VerificationSet::of(vec![contract]));
+    let record = plan_record(&plan).expect("contract");
+    let Some(Value::List(contracts)) = record.get("verification_contracts") else {
+        panic!("a plan with a contract carries it");
+    };
+    let mut contracts: Vec<Value> = contracts.iter().cloned().collect();
+    let mut first = contracts[0].as_map().expect("a contract is a map").clone();
+    first.insert("id".into(), Value::string(planted.as_str()));
+    contracts[0] = Value::Map(Arc::new(first));
+    let record = rewritten(&record, "verification_contracts", Value::list(contracts));
+    let read = plan_from_record(&record).expect("decodes");
+    assert_eq!(
+        read.verification().contracts()[0].id(),
+        &planted,
+        "§36.1: the check a result was recorded against is the one the store kept, so the stored \
+         identity comes back rather than one derived again"
+    );
+}
+
+#[test]
+fn should_keep_a_known_null_before_and_after_apart_from_an_unknown_one() {
+    let plan = draft();
+    let action = prepare_action(&plan);
+    let effect = |before: Option<Value>, proposed: Option<Value>| {
+        ProposedEffect::new(
+            action.id().clone(),
+            EffectDomain::FilesystemPersistent,
+            EffectKind::Create,
+            EffectConfidence::Guaranteed,
+            "the file is created where none was",
+        )
+        .on("/etc/nginx/conf.d/new.conf")
+        .from_to(before, proposed)
+    };
+    let known = effect(Some(Value::Null), Some(Value::Null));
+    let read = effect_from_record(&effect_record(&known).expect("contract")).expect("decodes");
+    assert_eq!(
+        (read.before(), read.proposed()),
+        (Some(&Value::Null), Some(&Value::Null)),
+        "§10.5: an object known to hold nothing is not an object whose value is unknown"
+    );
+    let unknown = effect(None, None);
+    let read = effect_from_record(&effect_record(&unknown).expect("contract")).expect("decodes");
+    assert_eq!(
+        (read.before(), read.proposed()),
+        (None, None),
+        "and an unknown value still comes back unknown"
+    );
+    let stated = effect(None, Some(Value::string("worker_processes 4;")));
+    let read = effect_from_record(&effect_record(&stated).expect("contract")).expect("decodes");
+    assert_eq!(read.proposed(), Some(&Value::string("worker_processes 4;")));
+    assert_eq!(read.before(), None);
+}
+
+/// §11.5: whether a recovery point shares its target's failure domain is a fact about where it
+/// was stored, not only about its mechanism — a file copy kept on the same disk, or on a
+/// container's writable layer, dies with the target. The provider says so per asset, and the
+/// record keeps what it said.
+#[test]
+fn should_keep_a_file_copys_shared_failure_domain_across_a_round_trip() {
+    let asset = ono_change_core::RecoveryAsset::proposed(
+        "ono.recovery.file-copy",
+        ono_change_core::RecoveryAssetType::FileArchive,
+        "/var/lib/ono/change/recovery/a1",
+        ono_change_core::RecoveryScope::new("file", "/etc/app.conf", "localhost")
+            .covering("/etc/app.conf"),
+        at(10),
+    )
+    .sharing_failure_domain();
+    let record = ono_change_core::value::asset_record(&asset).expect("encodes");
+    assert_eq!(
+        record.get("shares_failure_domain"),
+        Some(&ono_value::Value::Bool(true)),
+        "§11.5: the record says what the provider established"
+    );
+    let read = ono_change_core::value::asset_from_record(&record).expect("decodes");
+    assert!(
+        read.is_local_recovery_point(),
+        "and reading it back keeps it rather than re-deriving it from the mechanism"
+    );
 }

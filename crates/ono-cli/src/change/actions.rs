@@ -14,7 +14,7 @@
 //! - a spelling that is neither — `validate config nginx` — is `change.action_not_plannable`,
 //!   because §6.3's escape is an explicit request and never a fallback (ADR-0813).
 //!
-//! [`operations`] is the table §6.1 asks the contract to carry beyond what a command contract
+//! `operations()` is the table §6.1 asks the contract to carry beyond what a command contract
 //! already says: which mutation domain the operation acts in, at what confidence, whether it can
 //! be run twice, and what the plan will check afterwards. It is the shell's stand-in for the
 //! `plannable_operations:` registry of `docs/contracts/change/actions.yaml`; when that registry
@@ -115,6 +115,25 @@ pub struct PlannableOperation {
     pub declared: &'static ono_change_actions::Operation,
 }
 
+impl PlannableOperation {
+    /// Whether the object has to exist for the operation to be planned at all (§4.3, §7.2).
+    ///
+    /// §7.2's existence precondition is "the object still exists and is still this object". An
+    /// operation that declares it and brings nothing into existence — a removal, a move, a
+    /// permission change — states a precondition nobody could satisfy when the object is not
+    /// there, and sealing it would hand `apply` a plan that can only be refused. `write file`
+    /// declares no existence precondition and `copy file` creates its destination, so both still
+    /// plan onto a path that does not exist yet.
+    #[must_use]
+    pub fn requires_existence(&self) -> bool {
+        !self.creates
+            && self
+                .declared
+                .preconditions()
+                .contains(&PreconditionKind::Existence)
+    }
+}
+
 /// Every operation §6.1 makes plannable, built once from the registry (§6.2, §47).
 ///
 /// §6.2's default is refusal, and this is where it is decided: an operation with no row in
@@ -181,7 +200,9 @@ fn operations() -> &'static [PlannableOperation] {
                     shape: TargetShape::of(target),
                     subject,
                     subject_is_number,
-                    privileged: contract.privilege() != ono_command::Privilege::None,
+                    // §43.3: `conditional` privilege is needed only in some situations, and the
+                    // provider says which when it acts. Only `elevated` is privileged up front.
+                    privileged: contract.privilege() == ono_command::Privilege::Elevated,
                     creates: operation.effects().iter().all(|effect| {
                         !matches!(
                             effect.kind(),
@@ -295,7 +316,7 @@ impl OpaquePermission {
 /// What one statement contributes to a plan (§5.2, §23.1).
 #[derive(Debug, Clone)]
 pub enum Resolution {
-    /// An operation the registry declares and [`operations`] can plan.
+    /// An operation the registry declares and `operations()` can plan.
     Operation {
         /// The contract the spelling resolved to.
         command: &'static str,
@@ -348,7 +369,7 @@ pub fn resolve(
     registry: &CommandRegistry,
     statement: &Statement,
     opaque: OpaquePermission,
-    piped: &[String],
+    piped: &[Value],
 ) -> Result<Resolution, ErrorValue> {
     if statement.is_verification() {
         return verification_of(statement);
@@ -386,9 +407,10 @@ pub fn resolve(
     let bound = contract.bind(resolved.arguments)?;
     // §5.3: a pipeline supplies the objects the mutation acts on, and the statement then names
     // none. What was typed still wins over what the pipe carried, exactly as a context frame does.
+    let from_pipe = piped_subjects(piped, operation.subject);
     let subjects = match subject_of(&bound, operation) {
         Some(named) => vec![named],
-        None if !piped.is_empty() => piped.to_vec(),
+        None if !from_pipe.is_empty() => from_pipe,
         None => {
             return Err(error::target_unresolved(
                 &statement.source,
@@ -449,6 +471,40 @@ pub fn resolve(
         arguments,
         source: statement.source.clone(),
     })
+}
+
+/// The subjects a pipeline in front of `plan` resolved, read by the field `field` names (§5.3).
+///
+/// Read from the field the operation's own selector names first — `path` for a file, `pid` for a
+/// process, `name` for a service — because that is the field the object is frozen by (§7.1). A
+/// stream of `ono.file/1` carries a `name` too, and it is the basename: frozen as the subject, it
+/// would be resolved against the working directory and name a different file, or none. The
+/// identifying fields follow for a record that lacks the selector's own. §2.6 freezes what this
+/// answers: an object that starts matching after this point does not join the plan.
+fn piped_subjects(input: &[Value], field: &str) -> Vec<String> {
+    let mut subjects = Vec::new();
+    for value in input {
+        let Ok(record) = value.as_record() else {
+            if let Ok(text) = value.as_str() {
+                subjects.push(text.to_owned());
+            }
+            continue;
+        };
+        let found = [field, "path", "unit", "name"]
+            .into_iter()
+            .find_map(|name| match record.get(name) {
+                Some(Value::String(text)) => Some(text.to_string()),
+                Some(Value::Path(path)) => Some(path.display().to_string()),
+                Some(Value::Int(number)) => Some(number.to_string()),
+                _ => None,
+            });
+        if let Some(subject) = found {
+            subjects.push(subject);
+        }
+    }
+    subjects.sort();
+    subjects.dedup();
+    subjects
 }
 
 /// The refusal for a statement no command contract resolves (§6.2, ADR-0813).
@@ -690,13 +746,22 @@ pub fn fragment_for(
                  unknown",
             );
             let id = action.id().clone();
+            // §6.3 makes impact and reversibility unknown. The effect says so in its own terms —
+            // domain, kind and confidence `unknown` — and is not marked irreversible: §19.4 gates
+            // *known* irreversible actions, and that would be a claim nobody can make (ADR-0823).
+            // The views list it under `not recoverable` as reversibility unknown. The explanation
+            // leads with the command because the effect names no object, and the explanation is
+            // what a view prints in its place.
             let effect = ProposedEffect::new(
                 id,
                 EffectDomain::Unknown,
                 EffectKind::Unknown,
                 EffectConfidence::Unknown,
-                "the operator acknowledged that Ono cannot reason about what this command \
-                 touches (§6.3), so its domain, its scope and its reversibility are all unknown",
+                format!(
+                    "opaque action `{description}`: the operator acknowledged that Ono cannot \
+                     reason about what this command touches (§6.3), so its domain, its scope and \
+                     its reversibility are all unknown"
+                ),
             );
             PlanFragment::empty().acting(action.effecting(effect))
         }
@@ -732,12 +797,26 @@ pub fn contracts_for(
             // §23.1 asks for checks that can be answered, and a contract whose `{option:<name>}`
             // has no value is not one — `--version 1.2` is what makes a version check askable,
             // and without it the check is about nothing.
-            let expression = substituted(spec.expression(), arguments)?;
+            // A `{digest:<argument>}` needs one file to hash. Where there is none — a recursive copy
+            // of a directory — the check that can still be answered is that the object is there.
+            let expression = substituted(spec.expression(), arguments).or_else(|| {
+                spec.expression()
+                    .contains("{digest:")
+                    .then(|| "exists".to_owned())
+            })?;
             // The registry's `subject` is the noun a person reads — "the service", "the process"
             // — and §23.1's check is asked of the world through a provider, which is found by
             // target. So the subject the contract carries is `<target> <label>`: `service nginx`
             // names which provider to ask, where `the service nginx` names none.
-            let subject = format!("{} {}", operation.shape.target_word(), target.label());
+            //
+            // The object is named by the value it was frozen by (§7.1). For most targets that is
+            // the name the label already shows; a process is frozen by its pid, and `process
+            // sleep` would be a check about whichever `sleep` answered first.
+            let subject = format!(
+                "{} {}",
+                operation.shape.target_word(),
+                frozen_key(operation, target)
+            );
             let mut contract =
                 VerificationContract::new(plan, spec.class(), subject, expression.clone())
                     .about(equivalence_of(domain));
@@ -747,6 +826,26 @@ pub fn contracts_for(
             Some(contract)
         })
         .collect()
+}
+
+/// The value `target` was frozen by, as a verification subject names it (§7.1, §23.1).
+///
+/// A target selected by `name` is named by its label. One selected by any other field — a
+/// process by `pid`, a container by `id` — is named by the key its identity carries,
+/// `<namespace>:<key>[#generation=…]`, because its label is a display name and not an identity.
+fn frozen_key<'a>(
+    operation: &PlannableOperation,
+    target: &'a ono_change_core::FrozenTarget,
+) -> &'a str {
+    if operation.subject == "name" || !matches!(operation.shape, TargetShape::Named(_)) {
+        return target.label();
+    }
+    target
+        .identity()
+        .split_once(':')
+        .and_then(|(_, rest)| rest.split('#').next())
+        .filter(|key| !key.is_empty())
+        .unwrap_or_else(|| target.label())
 }
 
 /// `expression` with every `{option:<name>}` replaced, or `None` where one has no value (§23.1).
@@ -766,7 +865,33 @@ fn substituted(expression: &str, arguments: &[(Arc<str>, Value)]) -> Option<Stri
         rest = tail;
     }
     filled.push_str(rest);
-    Some(filled)
+    // `{digest:<argument>}` is the SHA-256 of the file that argument names, taken now: §25.1's
+    // persistent-state check for a copy is that the destination holds the bytes the source held
+    // when the plan was sealed, and "the destination exists" establishes nothing about them.
+    let mut digested = String::with_capacity(filled.len());
+    let mut rest = filled.as_str();
+    while let Some(start) = rest.find("{digest:") {
+        let (before, tail) = rest.split_at(start);
+        digested.push_str(before);
+        let inner = tail.strip_prefix("{digest:")?;
+        let (name, tail) = inner.split_once('}')?;
+        // A path argument is a string, and its canonical text is quoted; the file to hash is the
+        // string itself.
+        let path = arguments
+            .iter()
+            .find(|(argument, _)| argument.as_ref() == name)
+            .and_then(|(_, value)| {
+                value
+                    .as_str()
+                    .ok()
+                    .map(str::to_owned)
+                    .or_else(|| ono_value::canonical_text(value).ok())
+            })?;
+        digested.push_str(&digest_of(&path)?);
+        rest = tail;
+    }
+    digested.push_str(rest);
+    Some(digested)
 }
 
 /// The SHA-256 of the file at `path`, or `None` where there is no file to hash.
@@ -789,7 +914,7 @@ fn digest_of(path: &str) -> Option<String> {
 /// A kind whose fact the frozen target does not carry is not emitted. §2.4 is why: a precondition
 /// against `unknown` is a check that can never pass, and a plan carrying one would refuse every
 /// apply for a fact nobody ever recorded.
-fn preconditions_of(
+pub(super) fn preconditions_of(
     operation: &PlannableOperation,
     target: &ono_change_core::FrozenTarget,
 ) -> Vec<Precondition> {
@@ -840,6 +965,22 @@ fn preconditions_of(
                 "§7.2: the object's generation is part of the identity the plan froze, so an \
                  object restarted or replaced underneath it is not this object",
             ),
+            // §7.2 verbatim: "package installed version still equals Z". The version is the one
+            // §4.3 froze into the package's identity; an object that has none — a package the
+            // plan installs — has no version to hold, and §2.4 forbids inventing one.
+            PreconditionKind::Version => match installed_version(target) {
+                Some(version) => Precondition::new(
+                    PreconditionKind::Version,
+                    target.identity(),
+                    "version",
+                    Value::string(version),
+                )
+                .explained(
+                    "§7.2: the installed version is the one the plan was resolved against, so a \
+                     package upgraded or removed after the seal stops the apply",
+                ),
+                None => continue,
+            },
             PreconditionKind::PersistenceDomain => match target.persistence_domain() {
                 Some(domain) => Precondition::new(
                     PreconditionKind::PersistenceDomain,
@@ -856,11 +997,74 @@ fn preconditions_of(
             // §7.2's provider and capability checks are made by the executor before prepare
             // (§43.2), against the session rather than against the world, so they are not
             // frozen facts and carry no value a drift check could compare.
+            PreconditionKind::ProviderAvailable | PreconditionKind::Capability => continue,
+            // `field` names no fact by itself — an operation declaring it would have to say
+            // which field — and §43.5's path identity below is the one this module freezes.
+            PreconditionKind::Field => continue,
+            // A guarded kind whose fact this target does not carry: §2.4 again.
             _ => continue,
         };
         preconditions.push(precondition);
     }
+    preconditions.extend(path_identities(target));
     preconditions
+}
+
+/// The installed version a frozen package carries, where it carries one (§7.2).
+fn installed_version(target: &ono_change_core::FrozenTarget) -> Option<&str> {
+    if target.schema() != super::world::PACKAGE_SCHEMA {
+        return None;
+    }
+    target
+        .identity()
+        .split_once('#')
+        .map(|(_, version)| version)
+        .filter(|version| !version.is_empty())
+}
+
+/// §43.5's path identities for a file target: what the path is, read without following it.
+///
+/// "Paths, symlinks and identities MUST be revalidated using safe filesystem APIs." The content
+/// digest reads through a link, so a link swapped in over the path — to an object with the very
+/// same bytes — passes every other precondition, and the mutation then writes through it. The
+/// file type, device and inode of the path itself do not survive that swap.
+///
+/// Two paths are frozen where the operator's spelling is not the canonical one: the canonical
+/// path the plan resolved, and the path as written — a symlink the action will be carried out
+/// through, and that could be re-pointed between the seal and the apply.
+fn path_identities(target: &ono_change_core::FrozenTarget) -> Vec<Precondition> {
+    // Only a resolved object has an identity to hold: a file the plan creates was not there.
+    let Some(spelled) = target.selector() else {
+        return Vec::new();
+    };
+    if target.schema() != ono_change_plan::freeze::FILE_SCHEMA {
+        return Vec::new();
+    }
+    let canonical = std::path::Path::new(target.label());
+    let mut paths = vec![(target.identity().to_owned(), canonical.to_path_buf())];
+    if let Ok(spelled) = std::path::absolute(spelled)
+        && spelled != canonical
+    {
+        paths.push((spelled.display().to_string(), spelled));
+    }
+    paths
+        .into_iter()
+        .filter_map(|(subject, path)| {
+            let found = super::world::lstat_identity(&path).ok()?;
+            Some(
+                Precondition::new(
+                    PreconditionKind::Field,
+                    subject,
+                    super::world::LSTAT_FIELD,
+                    Value::string(&found),
+                )
+                .explained(
+                    "§43.5: the path is still the object the plan was resolved against — the same \
+                     type, device and inode, read without following a symlink",
+                ),
+            )
+        })
+        .collect()
 }
 
 /// The one thing §23.1 lets a plan say about an opaque action (§6.3, §23.3).

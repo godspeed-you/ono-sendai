@@ -1,0 +1,90 @@
+# v0.6 §50 phase P2 — §25 and §63.13: recovery verification reports per equivalence domain, and
+# never as one word.
+#
+# §25.1 gives the three domains — persistent state, runtime state, external side effects — and
+# §25.3 forbids the sentence "rollback successful" without a scope. §35.3 and §27.4 keep the
+# domains a local asset cannot reach honest: a killed process stays killed whatever was restored
+# beside it, and the recovery plan says so rather than leaving it out.
+case: recovery says which equivalence it established, and for which domains
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+
+  mkdir -p "$HOME/etc"
+  printf 'worker_processes 4;\n' > "$HOME/etc/nginx.conf"
+  printf 'worker_processes 8;\n' > "$HOME/etc/nginx.conf.new"
+  original=$(sha256sum "$HOME/etc/nginx.conf" | cut -d' ' -f1)
+
+  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | to json" > /tmp/rv0.json 2>&1
+  id=$(plan_id /tmp/rv0.json)
+  ono -c "apply $id" > /dev/null 2>&1
+  ono -c "recover $id | to json" > /tmp/rv1.json 2>&1
+  rid=$(plan_id /tmp/rv1.json)
+  prove rv0 "a recovery plan exists to verify (§24.1)" '[ -n "'"$rid"'" ]'
+
+  echo '== §25.1: the contract says which domain it reports on, before it runs =='
+  prove rv1a "the recovery plan carries a required contract on persistent state (§23.1, §25.1)" \
+    'grep -q "\"verification_contracts\":\[{\"id\":\"[0-9a-f]*\",\"class\":\"required\"" /tmp/rv1.json && grep -q "\"equivalence_domain\":\"persistent-state\"" /tmp/rv1.json'
+  prove rv1c "and its condition is the digest the asset captured, not a sentence about one (§25.1, §62.9)" \
+    "grep -q '\"expression\":\"sha256 == $original\"' /tmp/rv1.json"
+
+  echo '== §25.2: applying it reports the outcome, and the state says which equivalence held =='
+  ono -c "apply $rid --accept-newer-state-loss --confirm" > /tmp/rv2.txt 2>&1
+  prove rv2a "the run reports a verification phase of its own (§25.1)" 'grep -qE "VERIFY +1/1" /tmp/rv2.txt'
+  prove rv2b "and the plan is RECOVERY_VERIFIED, not merely finished (§4.1, §25)" \
+    "[ \"\$(ono -c 'get plan $rid | select state | to json' 2>&1)\" = '[{\"state\":\"recovery-verified\"}]' ]"
+  prove rv2c "the bytes are the captured ones (§15.4)" \
+    "[ \"\$(sha256sum $HOME/etc/nginx.conf | cut -d' ' -f1)\" = '$original' ]"
+
+  echo '== §25.3: nothing claims a global success =='
+  prove rv3a "no output claims a rollback succeeded or the world was recovered without a scope (§25.3)" \
+    '! grep -qiE "rollback successful|fully (recovered|restored)|undone" /tmp/rv2.txt'
+
+  echo '== §5.7: verify on the recovery plan asks again, per domain, and changes nothing =='
+  ono -c "verify $rid | to json" > /tmp/rv4.json 2>&1
+  prove rv4a "every check is answered for its domain, and passed (§23.3, §25.1)" \
+    "grep -q '\"status\":\"passed\",[^}]*\"equivalence_domain\":\"persistent-state\"' /tmp/rv4.json && ! grep -o '\"status\":\"[a-z]*\"' /tmp/rv4.json | grep -vq '\"passed\"'"
+  prove rv4b "and observing changed nothing (§5.7)" \
+    "[ \"\$(sha256sum $HOME/etc/nginx.conf | cut -d' ' -f1)\" = '$original' ]"
+
+  echo '== §35.3 and §27.4: what no local asset reaches stays unrecoverable, and is said to =='
+  sleep 600 &
+  victim=$!
+  printf 'worker_processes 16;\n' > "$HOME/etc/other.conf"
+  ono -c "plan { copy file $HOME/etc/nginx.conf.new $HOME/etc/other.conf --overwrite; kill process $victim --signal SIGKILL } | to json" > /tmp/rv5.json 2>&1
+  mixed=$(plan_id /tmp/rv5.json)
+  ono -c "apply $mixed --accept-risk --accept-irreversible --confirm" > /dev/null 2>&1
+  ono -c "recover $mixed" > /tmp/rv6.txt 2>&1
+  ono -c "recover $mixed | to json" > /tmp/rv6.json 2>&1
+  prove rv5a "the recovery plan of a plan that killed a process lists the runtime effect as unrecoverable (§35.3, §33.1)" \
+    'grep -q "\"unrecoverable_effects\":\[[^]]*\"domain\":\"process-runtime\"" /tmp/rv6.json'
+  prove rv5b "and its view keeps it in \`not recoverable\` beside the file it can restore (§2.13, Appendix E.6)" \
+    "sed -n '/^not recoverable\$/,/^metadata not restored\$/p' /tmp/rv6.txt | grep -q 'process-runtime'"
+  kill -9 "$victim" 2>/dev/null
+
+  echo 'recovery-verification: done'
+exit: 0
+stdout-contains: PROVED rv0
+stdout-contains: PROVED rv1a
+stdout-contains: PROVED rv1c
+stdout-contains: PROVED rv2a
+stdout-contains: PROVED rv2b
+stdout-contains: PROVED rv2c
+stdout-contains: PROVED rv3a
+stdout-contains: PROVED rv4a
+stdout-contains: PROVED rv4b
+stdout-contains: PROVED rv5a
+stdout-contains: PROVED rv5b
+stdout-contains: recovery-verification: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

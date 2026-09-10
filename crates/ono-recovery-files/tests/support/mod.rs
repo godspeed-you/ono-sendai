@@ -106,19 +106,22 @@ impl Fixture {
 
     /// The same walk, with the refusal visible.
     pub fn try_protect(&self, path: &Path) -> Result<RecoveryAsset, ono_value::ErrorValue> {
-        let domain = self
-            .provider
-            .resolve_domain(&path.display().to_string())?
-            .expect("a file on a persistent filesystem resolves to a domain");
-        let candidates = self
-            .provider
-            .discover(&domain, RecoveryObjective::PreserveExact)?;
-        let actions = self
-            .provider
-            .plan_protection(&candidates, ProtectionMode::Prefer)?;
-        let action = actions.first().expect("one candidate makes one action");
-        self.provider.create(action)
+        protect_with(&self.provider, path)
     }
+}
+
+/// Everything §4.5 does to protect `path`, through `provider`: discover, plan, create.
+pub fn protect_with(
+    provider: &FileRecoveryProvider,
+    path: &Path,
+) -> Result<RecoveryAsset, ono_value::ErrorValue> {
+    let domain = provider
+        .resolve_domain(&path.display().to_string())?
+        .expect("a file on a persistent filesystem resolves to a domain");
+    let candidates = provider.discover(&domain, RecoveryObjective::PreserveExact)?;
+    let actions = provider.plan_protection(&candidates, ProtectionMode::Prefer)?;
+    let action = actions.first().expect("one candidate makes one action");
+    provider.create(action)
 }
 
 /// A recovery action naming `object`, as `plan_recovery` would emit it.

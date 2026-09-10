@@ -1,6 +1,6 @@
 # ADR-0815: `require` outranks `maximize`, and the narrowing is reported
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0833
 - Date: 2026-09-10
 - Spec refs: v0.6 §17.2, §17.3, §53, §2.4, §56.3
 - Decided by: agent (autonomous)

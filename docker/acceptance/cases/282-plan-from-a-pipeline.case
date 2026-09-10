@@ -3,9 +3,13 @@
 #
 # §5.3 gives the two shapes: one plan over the resolved set, or one plan per object when that is
 # asked for. §2.6 is the invariant behind both — sealed bulk target membership is fixed at
-# resolution — and §55.1 case 2 is its worked example: a fifth service that starts failing after
+# resolution — and §55.1 case 2 is its worked example: a fifth object that starts matching after
 # the plan was sealed does not join it. A plan whose membership can grow is a plan an operator
 # read and a shell did not run.
+#
+# §55.1 tells the story with failing services. This container runs no service manager, so the
+# objects are files — the same pipeline, the same freezing, and a membership change that can be
+# made deterministically by creating one more file that matches the selector.
 case: a pipeline produces one plan over the set it froze
 timeout: 180
 env: NO_COLOR=1
@@ -19,44 +23,62 @@ run: |
       printf '%s\n' "$out" | head -6 | sed 's/^/        /'
     fi
   }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  count_of() { ono -c "$1 | count | to json" 2>&1 | tr -d '[:space:]' | sed 's/^\[//; s/\]$//'; }
+  # The identities a plan froze, one per line, sorted.
+  frozen() { ono -c "get plan $1 | select targets | to json" 2>&1 | grep -o '"identity":"[^"]*"' | sed 's/^"identity":"//; s/"$//' | sort; }
 
-  # A host with no service manager cannot present §5.3's example. §2.4: say so rather than pass.
-  if ! ono -c 'get service | count | to json' > /tmp/svc.txt 2>&1 || grep -q '^0$' /tmp/svc.txt; then
-    echo 'SKIPPED plan-from-a-pipeline: fixture_not_applicable: this container serves no unit'
-    echo 'plan-from-a-pipeline: done'
-    exit 0
-  fi
+  dir="$HOME/pipe"
+  mkdir -p "$dir"
+  for name in a b c; do printf '%s\n' "$name" > "$dir/$name.conf"; done
+  printf 'not selected\n' > "$dir/keep.txt"
+  expected=$(printf '%s\n' "$dir/a.conf" "$dir/b.conf" "$dir/c.conf")
 
   echo '== §5.3: one plan over the resolved set =='
-  ono -c 'get service | take 3 | plan restart service | to json' > /tmp/p2.txt 2>&1
   prove p2a "the pipeline produced exactly one plan (§5.3)" \
-    "[ \"\$(ono -c 'get service | take 3 | plan restart service | count | to json' 2>&1 | tr -d '[:space:]')\" = '1' ]"
-  prove p2b "and the plan carries the objects the pipeline resolved (§4.3)" \
-    'grep -q "\"targets\"" /tmp/p2.txt'
+    "[ \"\$(count_of 'get file $dir/*.conf | plan remove file')\" = '1' ]"
+  ono -c "get file $dir/*.conf | plan remove file | to json" > /tmp/p2.json 2>&1
+  id=$(plan_id /tmp/p2.json)
+  prove p2d "the sealed plan has an identity to be read back by (§36.4)" '[ -n "'"$id"'" ]'
+  prove p2b "and it froze exactly the three objects the pipeline carried, by their real paths (§4.3, §7.1)" \
+    "[ \"\$(frozen $id)\" = \"\$(printf '%s\n' '$dir/a.conf' '$dir/b.conf' '$dir/c.conf')\" ]"
 
   echo '== §5.3: one plan per object, when that is what was asked for =='
   prove p2c "\`--one-per-object\` produces one plan per resolved object (§5.3)" \
-    "[ \"\$(ono -c 'get service | take 3 | plan --one-per-object restart service | count | to json' 2>&1 | tr -d '[:space:]')\" = '3' ]"
+    "[ \"\$(count_of 'get file $dir/*.conf | plan --one-per-object remove file')\" = '3' ]"
 
   echo '== §2.6 and §55.1 case 2: membership is fixed at resolution =='
-  # The same selector, resolved twice, is two plans. What makes §2.6 checkable here is that a
-  # sealed plan's target list is a stored fact rather than a query re-run at apply: reading the
-  # plan back answers with what was frozen, whatever `get service` says now.
-  first=$(ono -c 'get service | take 2 | plan restart service | to json' 2>&1)
-  id=$(printf '%s' "$first" | sed -n 's/.*"id":"\([0-9a-f]\{16\}\).*/\1/p' | head -1)
-  prove p2d "the sealed plan has an identity to be read back by (§36.4)" '[ -n "'"$id"'" ]'
-  ono -c "get plan $id | to json" > /tmp/p2read.txt 2>&1
-  prove p2e "reading it back answers with the frozen set and not a fresh query (§2.6)" \
-    "[ \"\$(ono -c 'get plan $id | to json' 2>&1 | grep -o '\"identity\"' | wc -l)\" = 2 ]"
+  printf 'd\n' > "$dir/d.conf"
+  prove p2e "a fourth file matching the selector after the seal did not join the plan (§2.6)" \
+    "[ \"\$(frozen $id)\" = \"\$(printf '%s\n' '$dir/a.conf' '$dir/b.conf' '$dir/c.conf')\" ]"
   prove p2f "and the plan is still sealed rather than re-resolved (§4.4)" \
-    'grep -q "\"state\":\"sealed\"" /tmp/p2read.txt'
+    "[ \"\$(ono -c 'get plan $id | select state | to json' 2>&1)\" = '[{\"state\":\"sealed\"}]' ]"
+  # Every acknowledgement is given, so what the apply touches is decided by the frozen set alone.
+  ono -c "apply $id --accept-risk --accept-irreversible --confirm" > /tmp/p2apply.txt 2>&1
+  prove p2g "the apply removed exactly the frozen three (§2.6, §4.7)" \
+    "[ ! -e '$dir/a.conf' ] && [ ! -e '$dir/b.conf' ] && [ ! -e '$dir/c.conf' ]"
+  prove p2h "and left the late arrival and the unselected file alone (§2.6)" \
+    "[ \"\$(cat '$dir/d.conf')\" = 'd' ] && [ \"\$(cat '$dir/keep.txt')\" = 'not selected' ]"
 
-  echo '== §5.3: what the pipeline carried is what the plan is about =='
-  prove p2g "a pipeline that resolved nothing produces no plan (§4.3)" \
-    "ono -c 'get service | where name == a-unit-no-host-serves | plan restart service' 2>&1 | grep -qE 'change.target_unresolved|Ono-Sendai-E1711'"
+  echo '== §4.3: a pipeline that resolved nothing produces no plan =='
+  plans=$(count_of 'get plan')
+  ono -c "get file $dir/*.conf | where name == \"no-file-is-called-this\" | plan remove file" > /tmp/p2none.txt 2>&1
+  prove p2i "an empty pipeline refuses with §4.3's own code (§4.3, §45)" \
+    'grep -q "Ono-Sendai-E1711 change.target_unresolved" /tmp/p2none.txt'
+  prove p2j "and sealed nothing (§4.3)" "[ \"\$(count_of 'get plan')\" = '$plans' ]"
 
   echo 'plan-from-a-pipeline: done'
 exit: 0
+stdout-contains: PROVED p2a
+stdout-contains: PROVED p2b
+stdout-contains: PROVED p2c
+stdout-contains: PROVED p2d
+stdout-contains: PROVED p2e
+stdout-contains: PROVED p2f
+stdout-contains: PROVED p2g
+stdout-contains: PROVED p2h
+stdout-contains: PROVED p2i
+stdout-contains: PROVED p2j
 stdout-contains: plan-from-a-pipeline: done
 stdout-not-contains: FAILED
 stdout-not-contains: panicked

@@ -153,7 +153,7 @@ fn should_permit_auto_recovery_when_all_six_conditions_hold() {
     let plan = compliant_plan();
     let recovery = compliant_recovery(Vec::new(), true);
     assert!(
-        admits_auto_recovery(&plan, &recovery, true).is_ok(),
+        admits_auto_recovery(&plan, Some(&recovery), true).is_ok(),
         "§26.3: a plan MAY declare auto-recovery when all of the conditions are true"
     );
 }
@@ -162,7 +162,7 @@ fn should_permit_auto_recovery_when_all_six_conditions_hold() {
 fn should_reject_auto_recovery_when_the_recovery_plan_is_not_constructed_yet() {
     let plan = compliant_plan();
     let recovery = recovery(Vec::new(), true, false);
-    let error = admits_auto_recovery(&plan, &recovery, true)
+    let error = admits_auto_recovery(&plan, Some(&recovery), true)
         .expect_err("§26.3: the recovery plan must be fully constructible before mutation");
     assert_eq!(unmet(&error).len(), 1, "only this condition fails");
     assert!(unmet(&error)[0].contains("fully constructed"));
@@ -173,9 +173,14 @@ fn should_reject_auto_recovery_when_the_drift_analysis_did_not_run() {
     let plan = compliant_plan();
     let recovery =
         compliant_recovery(Vec::new(), true).with_newer_state(NewerStateImpact::unanalysed());
-    let error = admits_auto_recovery(&plan, &recovery, true)
+    let error = admits_auto_recovery(&plan, Some(&recovery), true)
         .expect_err("§62.8: the analysis is part of constructing the plan");
     assert_eq!(unmet(&error).len(), 1);
+    assert!(
+        unmet(&error)[0].contains("newer-state analysis did not run"),
+        "§62.8: the refusal names the missing analysis, got {:?}",
+        unmet(&error)
+    );
 }
 
 #[test]
@@ -187,7 +192,7 @@ fn should_reject_auto_recovery_when_an_irreversible_external_side_effect_exists(
     );
     let plan = source(protected_filesystem(), emitting_effect(&shape));
     let recovery = compliant_recovery(Vec::new(), true);
-    let error = admits_auto_recovery(&plan, &recovery, true)
+    let error = admits_auto_recovery(&plan, Some(&recovery), true)
         .expect_err("§26.3: no known irreversible external side effects may exist");
     assert_eq!(unmet(&error).len(), 1, "only this condition fails");
     assert!(unmet(&error)[0].contains("deployment webhook"));
@@ -204,7 +209,7 @@ fn should_reject_auto_recovery_when_recovery_would_destroy_unrelated_newer_state
         )],
         true,
     );
-    let error = admits_auto_recovery(&plan, &recovery, true)
+    let error = admits_auto_recovery(&plan, Some(&recovery), true)
         .expect_err("§26.3: recovery must not destroy unrelated newer state");
     assert_eq!(unmet(&error).len(), 1, "only this condition fails");
     assert!(unmet(&error)[0].contains("/var/lib/app/db"));
@@ -215,9 +220,15 @@ fn should_reject_auto_recovery_when_recovery_would_destroy_provider_native_histo
     let plan = compliant_plan();
     let recovery = compliant_recovery(Vec::new(), true)
         .with_newer_state(NewerStateImpact::analysed(Vec::new()).destroying("tank/data@later-1"));
-    let error = admits_auto_recovery(&plan, &recovery, true)
+    let error = admits_auto_recovery(&plan, Some(&recovery), true)
         .expect_err("§13.6: destroying newer history is never automatic");
     assert_eq!(unmet(&error).len(), 1);
+    assert!(
+        unmet(&error)[0].contains("destroy unrelated newer state")
+            && unmet(&error)[0].contains("tank/data@later-1"),
+        "§13.6: the refusal names the history it would destroy, got {:?}",
+        unmet(&error)
+    );
 }
 
 #[test]
@@ -232,7 +243,7 @@ fn should_permit_auto_recovery_when_the_only_newer_state_is_the_recovery_target_
         true,
     );
     assert!(
-        admits_auto_recovery(&plan, &recovery, true).is_ok(),
+        admits_auto_recovery(&plan, Some(&recovery), true).is_ok(),
         "§26.3 speaks of unrelated newer state, and Appendix C.4's conflict is the target itself"
     );
 }
@@ -246,7 +257,7 @@ fn should_reject_auto_recovery_when_a_required_domain_is_not_protected() {
     );
     let plan = source(unprotected_filesystem(), file_effect(&shape));
     let recovery = compliant_recovery(Vec::new(), true);
-    let error = admits_auto_recovery(&plan, &recovery, true)
+    let error = admits_auto_recovery(&plan, Some(&recovery), true)
         .expect_err("§26.3: protection must be PROTECTED or TRANSACTIONAL");
     assert_eq!(unmet(&error).len(), 1, "only this condition fails");
     assert!(unmet(&error)[0].contains("filesystem-persistent"));
@@ -261,16 +272,21 @@ fn should_reject_auto_recovery_when_no_domain_carries_a_coverage_row_at_all() {
     );
     let plan = source(ProtectionSummary::empty(), file_effect(&shape));
     let recovery = compliant_recovery(Vec::new(), true);
-    let error = admits_auto_recovery(&plan, &recovery, true)
+    let error = admits_auto_recovery(&plan, Some(&recovery), true)
         .expect_err("§56.3: a condition nobody established has not been shown to hold");
     assert_eq!(unmet(&error).len(), 1);
+    assert!(
+        unmet(&error)[0].contains("no mutation domain carries a coverage row"),
+        "§56.3: the refusal says no row exists rather than inventing a domain, got {:?}",
+        unmet(&error)
+    );
 }
 
 #[test]
 fn should_reject_auto_recovery_when_the_recovery_carries_no_scoped_verification() {
     let plan = compliant_plan();
     let recovery = compliant_recovery(Vec::new(), false);
-    let error = admits_auto_recovery(&plan, &recovery, true)
+    let error = admits_auto_recovery(&plan, Some(&recovery), true)
         .expect_err("§26.3: recovery verification must exist");
     assert_eq!(unmet(&error).len(), 1, "only this condition fails");
     assert!(unmet(&error)[0].contains("equivalence domain"));
@@ -280,7 +296,7 @@ fn should_reject_auto_recovery_when_the_recovery_carries_no_scoped_verification(
 fn should_reject_auto_recovery_when_user_policy_does_not_enable_it() {
     let plan = compliant_plan();
     let recovery = compliant_recovery(Vec::new(), true);
-    let error = admits_auto_recovery(&plan, &recovery, false)
+    let error = admits_auto_recovery(&plan, Some(&recovery), false)
         .expect_err("§26.1: automatic recovery is OFF by default");
     assert_eq!(unmet(&error).len(), 1, "only this condition fails");
     assert!(unmet(&error)[0].contains("off by default"));
@@ -290,7 +306,7 @@ fn should_reject_auto_recovery_when_user_policy_does_not_enable_it() {
 fn should_reject_auto_recovery_with_the_code_the_error_taxonomy_reserves() {
     let plan = compliant_plan();
     let recovery = compliant_recovery(Vec::new(), true);
-    let error = admits_auto_recovery(&plan, &recovery, false).expect_err("§26.1");
+    let error = admits_auto_recovery(&plan, Some(&recovery), false).expect_err("§26.1");
     assert_eq!(error.code().name(), "change.auto_recovery_rejected");
 }
 
@@ -311,22 +327,61 @@ fn should_name_every_condition_that_does_not_hold_at_once() {
         false,
         false,
     );
-    let error = admits_auto_recovery(&plan, &recovery, false).expect_err("§26.3");
+    let error = admits_auto_recovery(&plan, Some(&recovery), false).expect_err("§26.3");
+    let reported = unmet(&error);
     assert_eq!(
-        unmet(&error).len(),
+        reported.len(),
         6,
         "§45: an operator sees the whole list at once rather than one condition per attempt"
     );
+    for condition in [
+        "fully constructed",
+        "deployment webhook",
+        "/var/lib/app/db",
+        "filesystem-persistent",
+        "equivalence domain",
+        "off by default",
+    ] {
+        assert!(
+            reported.iter().any(|line| line.contains(condition)),
+            "§26.3: each condition that does not hold is named, and `{condition}` is not in \
+             {reported:?}"
+        );
+    }
 }
 
 #[test]
 fn should_name_the_plan_whose_declaration_was_rejected() {
     let plan = compliant_plan();
     let recovery = compliant_recovery(Vec::new(), true);
-    let error = admits_auto_recovery(&plan, &recovery, false).expect_err("§26.1");
+    let error = admits_auto_recovery(&plan, Some(&recovery), false).expect_err("§26.1");
     assert_eq!(
         error.metadata().get("plan"),
         Some(&ono_value::Value::string(plan.id().as_str())),
         "§26.3: the declaration is rejected at seal time, so the plan is named"
+    );
+}
+
+/// §26.3 decides at seal, and at seal a plan has no recovery asset yet: §4.5 creates them
+/// immediately before mutation. With nothing to restore from, the first condition cannot hold, and
+/// the rejection says so rather than evaluating a recovery that does not exist.
+#[test]
+fn should_reject_a_declaration_when_no_recovery_plan_can_exist_before_mutation() {
+    let plan = compliant_plan();
+    let error = admits_auto_recovery(&plan, None, true)
+        .expect_err("§26.3: without a recovery plan the declaration is rejected");
+    assert_eq!(error.code().name(), "change.auto_recovery_rejected");
+    let unmet = unmet(&error);
+    assert!(
+        unmet
+            .iter()
+            .any(|condition| condition.contains("fully constructed")),
+        "the first condition is named, got {unmet:?}"
+    );
+    assert!(
+        unmet
+            .iter()
+            .any(|condition| condition.contains("verification")),
+        "and nothing establishes a recovery verification either, got {unmet:?}"
     );
 }

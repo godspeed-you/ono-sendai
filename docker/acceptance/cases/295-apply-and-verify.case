@@ -1,0 +1,102 @@
+# v0.6 §50 phase P2 — §2.14, §23 and §63.6: verification is separate from execution success.
+#
+# §2.14 is the sentence: a command that returned zero has proved that it returned zero. §23.1
+# requires a contract on every plan that mutates, §23.3 gives the four outcomes, and §23.5
+# forbids infinite waiting and treating a timeout as a pass. §62.9 names verifying from an exit
+# code as the failure mode all of this exists to prevent.
+case: applying and verifying are two different answers
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  state_of() { ono -c "get plan $1 | select state | to json" 2>&1; }
+
+  mkdir -p "$HOME/etc"
+  printf 'worker_processes 4;\n' > "$HOME/etc/nginx.conf"
+  printf 'worker_processes 8;\n' > "$HOME/etc/nginx.conf.new"
+  wanted=$(sha256sum "$HOME/etc/nginx.conf.new" | cut -d' ' -f1)
+
+  echo '== §23.1: a plan that mutates carries a contract, and the contract states the outcome =='
+  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | to json" > /tmp/v1.json 2>&1
+  id=$(plan_id /tmp/v1.json)
+  prove v1a "the sealed plan carries a required verification contract (§23.1)" \
+    'grep -q "\"verification_contracts\":\[{\"id\":\"[0-9a-f]*\",\"class\":\"required\"" /tmp/v1.json'
+  prove v1b "the copy's contract checks the bytes it meant to write, not merely that a file exists (§23.1, §62.9)" \
+    "grep -q '\"expression\":\"sha256 == $wanted\"' /tmp/v1.json"
+  prove v1c "every contract has a finite timeout that never answers passed (§23.5)" \
+    '! grep -o "\"timeout\":[^,]*,\"timeout_status\":\"[a-z]*\"" /tmp/v1.json | grep -vqE "^\"timeout\":\"[0-9]+ns\",\"timeout_status\":\"(failed|unknown)\"\$" && grep -q "\"timeout_status\"" /tmp/v1.json'
+  prove v1d "and says which equivalence domain it reports on (§25.1)" \
+    'grep -q "\"equivalence_domain\":\"persistent-state\"" /tmp/v1.json'
+
+  echo '== §4.8 and §40.1: apply verifies, and the verdict is its own answer =='
+  ono -c "apply $id" > /tmp/v2.txt 2>&1
+  prove v2a "the run reports PREPARE, APPLY and VERIFY as separate phases (Appendix E.4, §2.14)" \
+    'grep -qE "PREPARE +[0-9]+/[0-9]+" /tmp/v2.txt && grep -qE "APPLY +[0-9]+/[0-9]+" /tmp/v2.txt && grep -qE "VERIFY +[0-9]+/[0-9]+" /tmp/v2.txt'
+  prove v2b "an ordinary plan applied on \`apply\` alone and reached VERIFIED, not merely finished (§40.1, §4.8)" \
+    "[ \"\$(state_of $id)\" = '[{\"state\":\"verified\"}]' ]"
+
+  echo '== §5.7: verify asks the world again, and changes nothing =='
+  before=$(sha256sum "$HOME/etc/nginx.conf" | cut -d' ' -f1)
+  ono -c "verify $id | to json" > /tmp/v3.json 2>&1
+  prove v3a "\`verify\` answers every check, and every check passed (§23.3)" \
+    "grep -q '\"status\":\"passed\"' /tmp/v3.json && ! grep -o '\"status\":\"[a-z]*\"' /tmp/v3.json | grep -vq '\"passed\"'"
+  prove v3b "and it observed rather than acted (§5.7)" \
+    "[ \"\$(sha256sum $HOME/etc/nginx.conf | cut -d' ' -f1)\" = '$before' ]"
+
+  echo '== §2.14: the world moving after the fact makes the same check fail =='
+  printf 'something else\n' > "$HOME/etc/nginx.conf"
+  ono -c "verify $id | to json" > /tmp/v4.json 2>&1
+  ono -c "verify $id" > /tmp/v4.txt 2>&1
+  status=$?
+  prove v4a "the same contract now reports failure, because it reads the world (§2.14)" \
+    'grep -q "\"status\":\"failed\"" /tmp/v4.json'
+  prove v4b "and \`verify\` says so as a refusal with an exit status, not only in a table (§23.3, v0.2 §43)" \
+    "[ $status -ne 0 ] && grep -q 'change.verification_failed' /tmp/v4.txt"
+
+  echo '== §55.7 case 32: a mutation that succeeded and a required check that failed is a failed plan =='
+  printf 'old\n' > "$HOME/etc/checked"
+  ono -c "plan { copy file $HOME/etc/nginx.conf.new $HOME/etc/checked --overwrite; verify file $HOME/etc/checked size == 999 } | to json" > /tmp/v5.json 2>&1
+  failing=$(plan_id /tmp/v5.json)
+  ono -c "apply $failing" > /tmp/v5.txt 2>&1
+  prove v5a "the mutation happened (§4.7)" "[ \"\$(cat $HOME/etc/checked)\" = 'worker_processes 8;' ]"
+  prove v5b "and the plan is failed, whatever the copy returned (§2.14, §55.7 case 32)" \
+    "[ \"\$(state_of $failing)\" = '[{\"state\":\"failed\"}]' ] && grep -q 'change.verification_failed' /tmp/v5.txt"
+
+  echo '== §5.6: an expired plan does not apply =='
+  printf 'untouched\n' > "$HOME/etc/late"
+  ono -c "plan --expires 1s copy file $HOME/etc/nginx.conf.new $HOME/etc/late --overwrite | to json" > /tmp/v6.json 2>&1
+  late=$(plan_id /tmp/v6.json)
+  sleep 2
+  ono -c "apply $late" > /tmp/v6.txt 2>&1
+  prove v6a "a plan past its validity window refuses with §5.6's code (§5.6)" \
+    'grep -q "change.plan_expired" /tmp/v6.txt'
+  prove v6b "and changed nothing" "[ \"\$(cat $HOME/etc/late)\" = 'untouched' ]"
+
+  echo 'apply-and-verify: done'
+exit: 0
+stdout-contains: PROVED v1a
+stdout-contains: PROVED v1b
+stdout-contains: PROVED v1c
+stdout-contains: PROVED v1d
+stdout-contains: PROVED v2a
+stdout-contains: PROVED v2b
+stdout-contains: PROVED v3a
+stdout-contains: PROVED v3b
+stdout-contains: PROVED v4a
+stdout-contains: PROVED v4b
+stdout-contains: PROVED v5a
+stdout-contains: PROVED v5b
+stdout-contains: PROVED v6a
+stdout-contains: PROVED v6b
+stdout-contains: apply-and-verify: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

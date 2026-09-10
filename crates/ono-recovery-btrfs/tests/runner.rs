@@ -9,6 +9,8 @@
 //! The programs here are written by the test into its own scratch directory, so nothing depends
 //! on what happens to be installed on the machine running the suite.
 
+use std::time::{Duration, Instant};
+
 use ono_change_core::ToolRunner;
 use ono_recovery_btrfs::{METADATA_COVERAGE, ProcessRunner};
 use ono_testkit::{executable_script, scratch, while_text_file_busy};
@@ -116,5 +118,35 @@ fn should_say_which_file_metadata_a_selective_restore_does_not_put_back() {
         ],
         "Appendix C.7: missing metadata support reduces recovery coverage and MUST be visible. A \
          configuration file returned without its SELinux label has not been returned"
+    );
+}
+
+#[test]
+fn should_stop_waiting_for_a_program_that_does_not_finish_within_its_bound() {
+    let runner = ProcessRunner::new().within(Duration::from_millis(300));
+    let started = Instant::now();
+    let error = runner
+        .run("sleep", &["30"])
+        .expect_err("a program still running at the bound is refused rather than waited for");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "ADR-0805: the wait is bounded — a btrfs command blocked in the kernel must not hang the \
+         shell, and this one returned after {:?}",
+        started.elapsed()
+    );
+    assert_eq!(error.code().name(), "recovery.provider_unavailable");
+    assert!(
+        error
+            .help()
+            .is_some_and(|help| help.contains("did not finish")),
+        "the refusal says why the program stopped"
+    );
+}
+
+#[test]
+fn should_bound_the_wait_by_default() {
+    assert!(
+        ProcessRunner::new().timeout() <= Duration::from_secs(60),
+        "ADR-0805: the real runner waits a bounded time unless told otherwise"
     );
 }

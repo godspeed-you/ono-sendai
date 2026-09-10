@@ -82,7 +82,7 @@ pub use protection::{
 pub use provider::{
     ChangeCapability, ChangeProvider, PlanFragment, ProtectionAction, ProviderAvailability,
     ProviderCapabilities, RECOVERY_PROVIDER_CONFORMANCE, RecoveryCandidate, RecoveryCapability,
-    RecoveryPlanFragment, RecoveryProvider, Support,
+    RecoveryPlanFragment, RecoveryProvider, RestoreAcceptance, RestoreOutcome, Support,
 };
 pub use recovery::{
     DirectoryRestorePolicy, EquivalenceState, MetadataCoverage, NewerStateClass, NewerStateImpact,

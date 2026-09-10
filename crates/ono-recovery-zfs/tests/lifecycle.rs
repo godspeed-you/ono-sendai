@@ -211,9 +211,11 @@ fn should_emit_no_destructive_flag_across_the_whole_provider_lifecycle() {
         .then(ZFS, out("list-clones"))
         .then(ZPOOL, out("zpool-list"))
         .then(ZPOOL, out("zpool-status"))
-        // the space guard of `plan_protection` and of `create`
+        // the pool reading of `plan_protection` and of `create`
         .then(ZPOOL, out("zpool-list"))
+        .then(ZPOOL, out("zpool-status"))
         .then(ZPOOL, out("zpool-list"))
+        .then(ZPOOL, out("zpool-status"))
         // `create`
         .then(ZFS, ToolOutput::ok(""))
         .then(ZFS, out("list-snapshots"))

@@ -316,11 +316,30 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [v06 | 2026-09-09] **The v0.6 tranche — Prospective Change, Protection & Recovery.** Ten crates
-  under `crates/ono-change-*` and `crates/ono-recovery-*`, the eleven registries of §47 under
-  `docs/contracts/change/` and `docs/contracts/recovery/`, `docs/contracts/commands/change.yaml`,
-  the E17/E18/E19 error families, the ten schemas of §46, `xtask/src/change.rs`, and the shell
-  integration in `crates/ono-cli`. ADR-0800 onward.
+- [v06 | 2026-09-10] **The v0.6 tranche — §29's change over a link is what remains.** The audit
+  round of ADR-0822 … ADR-0837 and this session's corrections are in the tree, and the whole
+  acceptance suite passes — 248 of 248 cases, the ZFS and Btrfs ones against real loop filesystems
+  in an image whose userland the providers validate (ADR-0846). The first full container run failed
+  eight v0.6 cases, all fixed (ADR-0842), among them a plan sealed as protected that mutated
+  unprotected when its store broke. Running the filesystem cases for real found what no recorded
+  fixture had:
+  - two recovery points of one file in one session shared an asset id, because the file provider
+    lived on the session's first instant; it now reads a clock;
+  - a path holding `@` — a Btrfs subvolume is conventionally `@var` — drifted at every `apply`,
+    because revalidation cut the path at the first `@`;
+  - a file in a nested Btrfs subvolume recorded the mount's `subvol=` option; a file now records
+    the storage object its provider resolves (ADR-0847);
+  - the Btrfs provider stamped assets with 1970, named every snapshot `ono-ono-<subvolume>`, never
+    created its `@snapshots` namespace and declared no metadata coverage, so no Btrfs recovery could
+    be chosen;
+  - the recovery builder ignored the newer state the ZFS provider established, so every dataset
+    rollback was blocked as unestablished and §13.6's acceptance was unreachable (ADR-0849).
+  §13.4's `NOT PROTECTED BY` reaches the plan view (ADR-0845), and `plan` refuses inside a link
+  (ADR-0844). Open in §4.12: the five boxes §29 needs through the shell — cases 307 and 308 —
+  recorded as exclusions in `docs/releases/v0.6.0.md`, and the box that closes last. Next: ADR-0848's
+  design (freezing through the link's providers, protection and recovery per host, a disconnect left
+  unknown), then `scripts/release-check.sh`. Files: `crates/ono-cli/src/change`,
+  `crates/ono-change-*`, `docker/acceptance/cases/307-*`, `308-*`.
 
 ## What is left, and why
 
@@ -2291,6 +2310,24 @@ the provider samples — and no assertion changed.
   feature. `crates/ono-recovery-files/tests/` works around it by building its scratch from
   `env!("CARGO_TARGET_TMPDIR")` in its own fixture. What closes it: `scratch()` taking the
   directory from the caller through a macro, so the constant is expanded where the test is.
+
+- **The session registers the file recovery provider only when its store opens (2026-09-10).**
+  `crates/ono-cli` builds the protection registry with `ono.recovery.file-copy` only if the
+  recovery store could be opened, so a session whose store is unusable has no file provider at all
+  and the matrix says "no registered provider offers protection" rather than naming why. Nothing
+  unsafe follows — a plan sealed as protected still refuses at `apply` (ADR-0842) — but the reason
+  a plan is unprotected is lost. Reproduction: make `~/.local/state/ono/recovery` unwritable, then
+  `plan copy file a b --overwrite | to json` — no refusal names the store. What closes it: register
+  the provider as unavailable with the store's error, so `analysis.refusals` carries it into the
+  matrix.
+
+- **The CI runner may lack the OpenZFS 2.4.1 module the ZFS acceptance cases need
+  (2026-09-10).** ADR-0846 runs cases 289 and 318 in an image whose userland is 2.4.1 and removes
+  their declared skips, because on this machine they create a real pool. On a runner whose kernel
+  has no ZFS module, or another version, the cases announce a skip the registry does not declare and
+  fail. Reproduction: `scripts/acceptance.sh zfs` on a host without `/dev/zfs`. What closes it:
+  either a runner with the module, or an environment-conditional skip declaration the harness can
+  hold both ways.
 
 
 - **A second release run compares a fresh package against the previous release's manifest

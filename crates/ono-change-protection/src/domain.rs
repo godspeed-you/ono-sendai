@@ -15,8 +15,13 @@
 //!   [`NonPersistentReason::Pseudo`] and a tmpfs to [`NonPersistentReason::Volatile`], whatever
 //!   their mountpoint looks like — §32.4's case is exactly a runtime tmpfs *beneath* a
 //!   snapshotted `/`;
-//! - an overlay resolves to [`NonPersistentReason::UpperLayerElsewhere`] unless its writable
-//!   upper layer resolves to a persistence domain of its own (Appendix B.4);
+//! - an overlay whose writable upper layer this namespace can follow resolves to that layer's
+//!   domain, and to [`NonPersistentReason::UpperLayerElsewhere`] when that layer is not
+//!   protectable (Appendix B.4). An overlay whose upper layer cannot be followed at all — the
+//!   container case, where `upperdir` names a host path — resolves to a domain of
+//!   [`DomainReach::CopyOnly`]: B.4 forbids claiming that *snapshotting* the merged view
+//!   protects it, and a copy of the visible bytes written back through the same view is not that
+//!   claim;
 //! - a filesystem Ono cannot classify resolves to [`NonPersistentReason::Unresolved`] rather than
 //!   to a guess (§56.3).
 //!
@@ -39,7 +44,7 @@ use std::sync::Arc;
 
 use ono_change_core::{FilesystemKind, NonPersistentReason, PersistenceDomain, ResolvedMount};
 use ono_core::ErrorCode;
-use ono_value::{ErrorValue, Value};
+use ono_value::{ByteSize, ErrorValue, Value};
 
 pub use ono_provider_linux::decoders::{MountInfo, parse_mountinfo};
 
@@ -135,6 +140,53 @@ impl MountTable {
         resolve(path, &self.mounts, self.namespace())
     }
 
+    /// Every filesystem mounted beneath `path`, in path order (§32.2, §32.3).
+    ///
+    /// §32.3: *"Recursive path operations MUST NOT assume mounted filesystems or nested
+    /// subvolumes belong to the same recovery scope."* A removal of `path` reaches each of these,
+    /// and each is resolved as a persistence domain of its own — a child dataset, a nested
+    /// subvolume, an ext4 disk, a tmpfs, an NFS export — so the caller can show the boundaries
+    /// before the plan is sealed (§32.2) and the coverage algorithm can require each one to be
+    /// captured. `path` itself is not listed: it is the target, and it resolves the ordinary way.
+    ///
+    /// A mount is listed once, as the kernel shows it: of several mounts at one point the last
+    /// wins, and a mount made beneath a point that was later mounted over is hidden and cannot be
+    /// reached, so it is not listed at all. The mount table states no sizes, so every boundary
+    /// comes back with [`MountBoundary::size`] unknown; a caller that measures one records it with
+    /// [`MountBoundary::sized`].
+    #[must_use]
+    pub fn boundaries_beneath(&self, path: &Path) -> Vec<MountBoundary> {
+        let Some(root) = absolute(path) else {
+            return Vec::new();
+        };
+        let mut points: Vec<String> = Vec::new();
+        for (index, info) in self.mounts.iter().enumerate() {
+            let Some(point) = absolute(&info.target) else {
+                continue;
+            };
+            if point == root || !contains(&root, &point) || points.contains(&point) {
+                continue;
+            }
+            let hidden = self.mounts[index + 1..].iter().any(|later| {
+                absolute(&later.target).is_some_and(|over| {
+                    over != point && contains(&over, &point) && contains(&root, &over)
+                })
+            });
+            if !hidden {
+                points.push(point);
+            }
+        }
+        points.sort();
+        points
+            .into_iter()
+            .map(|point| MountBoundary {
+                domain: self.resolve(Path::new(&point)),
+                mount_point: Arc::from(point),
+                size: None,
+            })
+            .collect()
+    }
+
     /// The mount `path` is served by, deepest first (Appendix B.1).
     ///
     /// Deepest wins, and among mounts at the same point the last one wins: that is what the
@@ -144,6 +196,46 @@ impl MountTable {
     pub fn mount_for(&self, path: &Path) -> Option<&MountInfo> {
         let target = absolute(path)?;
         deepest(&target, &self.mounts).map(|index| &self.mounts[index])
+    }
+}
+
+/// One filesystem mounted beneath a directory a mutation reaches (§32.2, §32.3).
+///
+/// Each boundary is a persistence domain of its own, and a recursive mutation of the directory
+/// above it is protected only where something captures it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MountBoundary {
+    mount_point: Arc<str>,
+    domain: PersistenceDomain,
+    size: Option<ByteSize>,
+}
+
+impl MountBoundary {
+    /// Where the filesystem is mounted.
+    #[must_use]
+    pub fn mount_point(&self) -> &str {
+        &self.mount_point
+    }
+
+    /// The persistence domain the mount resolves to.
+    #[must_use]
+    pub const fn domain(&self) -> &PersistenceDomain {
+        &self.domain
+    }
+
+    /// How much the mount holds, where it was measured (§32.2's size before sealing).
+    ///
+    /// `None` is unknown rather than empty (§35.3).
+    #[must_use]
+    pub const fn size(&self) -> Option<ByteSize> {
+        self.size
+    }
+
+    /// Records how much the mount holds.
+    #[must_use]
+    pub const fn sized(mut self, size: ByteSize) -> Self {
+        self.size = Some(size);
+        self
     }
 }
 
@@ -244,7 +336,7 @@ fn resolve_at(
                 info.target.display()
             ),
         ),
-        FilesystemKind::Overlay => resolve_overlay(subject, info, mount, mounts, namespace, depth),
+        FilesystemKind::Overlay => resolve_overlay(subject, index, mount, mounts, namespace, depth),
         FilesystemKind::Zfs => {
             // Appendix B.8: the dataset is what the kernel says is mounted here. `/rpool/data`
             // is a path; `tank/things` is a dataset, and only one of them is evidence.
@@ -305,15 +397,82 @@ fn resolve_at(
     }
 }
 
-/// Appendix B.4: an overlay protects nothing unless its writable upper layer is resolved.
+/// Which mechanisms may claim a resolved domain (Appendix B.4, B.6, B.7).
+///
+/// [`PersistenceDomain::is_protectable`] answers whether *anything* local may be asked. Appendix
+/// B.4 draws a finer line for an overlay whose writable layer this namespace cannot see: a
+/// snapshot of the merged mount would not hold that layer, so no snapshot provider may claim it,
+/// while a provider that copies the visible bytes and writes them back through the same merged
+/// view protects exactly what it read. The distinction is read off the domain's mount — a domain
+/// that is protectable and still resolved *through* an overlay is one whose upper layer could not
+/// be followed — so it is a property of the resolution rather than of a sentence in its detail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DomainReach {
+    /// No local provider may claim the domain (Appendix B.4, B.6, B.7, §56.3).
+    Refused,
+    /// Only a copy of the visible bytes, written back through the same view, may claim it
+    /// (Appendix B.4).
+    CopyOnly,
+    /// Any provider whose mechanism the domain's filesystem supports may claim it.
+    Any,
+}
+
+impl DomainReach {
+    /// The reach of `domain`.
+    #[must_use]
+    pub fn of(domain: &PersistenceDomain) -> Self {
+        if !domain.is_protectable() {
+            Self::Refused
+        } else if domain.mount().kind() == FilesystemKind::Overlay {
+            Self::CopyOnly
+        } else {
+            Self::Any
+        }
+    }
+
+    /// Whether a snapshot of the domain's filesystem may be claimed to protect it (Appendix B.4).
+    #[must_use]
+    pub const fn admits_snapshot(self) -> bool {
+        matches!(self, Self::Any)
+    }
+
+    /// Whether a copy of the visible bytes may be claimed to protect it (§15, Appendix B.4).
+    #[must_use]
+    pub const fn admits_copy(self) -> bool {
+        matches!(self, Self::Any | Self::CopyOnly)
+    }
+}
+
+/// The persistence domain a frozen target records beside its identity (§7.1, Appendix B).
+///
+/// The snapshot boundary where the mechanism has one, otherwise the backing object. A path the
+/// resolution refused — a tmpfs, procfs, a network export, an overlay whose writable layer is on a
+/// volatile filesystem — records none at all: Appendix B.7 says such a filesystem is never a
+/// persistence domain, and its mount source (`shm`, `proc`, `tmpfs`) is a label rather than one.
+#[must_use]
+pub fn recorded_domain(domain: &PersistenceDomain) -> Option<&str> {
+    if !domain.is_protectable() {
+        return None;
+    }
+    domain.boundary().or_else(|| domain.object())
+}
+
+/// Appendix B.4: a mutation of an overlay lands in its writable upper layer.
+///
+/// Three answers, and the order matters. An overlay with no upper layer has nowhere a write could
+/// land, and is refused. An upper layer this namespace can see is followed, and its domain is the
+/// answer — refused if that layer is itself not protectable. An upper layer this namespace cannot
+/// see (no mount here contains it, or the only one that does is this overlay) cannot be followed,
+/// and the merged view becomes a [`DomainReach::CopyOnly`] domain.
 fn resolve_overlay(
     subject: &str,
-    info: &MountInfo,
+    index: usize,
     mount: ResolvedMount,
     mounts: &[MountInfo],
     namespace: Option<&str>,
     depth: usize,
 ) -> PersistenceDomain {
+    let info = &mounts[index];
     let Some(upper) = mount.option("upperdir").map(str::to_owned) else {
         return PersistenceDomain::refused(
             subject,
@@ -338,9 +497,16 @@ fn resolve_overlay(
             ),
         );
     }
+    let hidden = match absolute(Path::new(&upper)) {
+        Some(lookup) => deepest(&lookup, mounts).is_none_or(|holder| holder == index),
+        None => true,
+    };
+    if hidden {
+        return copy_only(subject, info, mount, &upper);
+    }
     let resolved = resolve_at(subject, &upper, mounts, namespace, depth + 1);
-    if !resolved.is_protectable() {
-        return PersistenceDomain::refused(
+    match DomainReach::of(&resolved) {
+        DomainReach::Refused => PersistenceDomain::refused(
             subject,
             mount,
             NonPersistentReason::UpperLayerElsewhere,
@@ -351,26 +517,60 @@ fn resolve_overlay(
                 info.target.display(),
                 resolved.detail()
             ),
-        );
+        ),
+        // The upper layer is itself an overlay whose own writable layer is out of sight: the
+        // bytes are still reachable through this merged view, and through nothing else.
+        DomainReach::CopyOnly => copy_only(subject, info, mount, &upper),
+        DomainReach::Any => {
+            let object = resolved
+                .object()
+                .map_or_else(|| Arc::from(upper.as_str()), Arc::<str>::from);
+            let domain = PersistenceDomain::resolved(
+                subject,
+                resolved.mount().clone(),
+                resolved.object_kind().to_owned(),
+                Arc::clone(&object),
+                format!(
+                    "the mutation lands in the writable upper layer {upper} of the overlay at {}, \
+                     which resolves to {object}; the merged mount itself holds nothing \
+                     (Appendix B.4)",
+                    info.target.display()
+                ),
+            );
+            match resolved.boundary() {
+                Some(boundary) => domain.with_boundary(boundary.to_owned()),
+                None => domain,
+            }
+        }
     }
-    let object = resolved
-        .object()
-        .map_or_else(|| Arc::from(upper.as_str()), Arc::<str>::from);
-    let domain = PersistenceDomain::resolved(
+}
+
+/// The merged view of an overlay whose writable layer cannot be followed (Appendix B.4, B.5).
+///
+/// The domain stays on the overlay's own mount, which is what [`DomainReach::of`] reads, and it
+/// names the upper layer as its object because that is where the bytes a mutation writes land.
+/// It carries no snapshot boundary: there is none a provider here could take.
+fn copy_only(
+    subject: &str,
+    info: &MountInfo,
+    mount: ResolvedMount,
+    upper: &str,
+) -> PersistenceDomain {
+    PersistenceDomain::resolved(
         subject,
-        resolved.mount().clone(),
-        resolved.object_kind().to_owned(),
-        Arc::clone(&object),
+        mount,
+        "overlay-writable-layer",
+        upper,
         format!(
-            "the mutation lands in the writable upper layer {upper} of the overlay at {}, which \
-             resolves to {object}; the merged mount itself holds nothing (Appendix B.4)",
+            "the writable upper layer {upper} of the overlay at {} is not visible in this mount \
+             namespace, so it cannot be followed to a filesystem. Appendix B.4 forbids claiming \
+             that snapshotting the merged mount protects this data; only a copy of the visible \
+             bytes, written back through the same merged view, may protect it. A container's \
+             writable layer may be ephemeral (Appendix B.5), and a copy kept on the same overlay \
+             shares its failure domain (§11.5)",
             info.target.display()
         ),
-    );
-    match resolved.boundary() {
-        Some(boundary) => domain.with_boundary(boundary.to_owned()),
-        None => domain,
-    }
+    )
 }
 
 /// Turns one `mountinfo(5)` line into the vocabulary's mount (Appendix B.1).
@@ -462,7 +662,7 @@ fn subvolume_of(info: &MountInfo) -> Option<&str> {
 ///
 /// `/var` serves `/var/lib/app` and does not serve `/variable`: a prefix test on the raw text
 /// would claim the second, and claim protection for a filesystem that holds nothing of it.
-fn contains(target: &str, path: &str) -> bool {
+pub(crate) fn contains(target: &str, path: &str) -> bool {
     let target = target.trim_end_matches('/');
     if target.is_empty() {
         return path.starts_with('/');

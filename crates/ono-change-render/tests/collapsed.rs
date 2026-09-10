@@ -7,9 +7,12 @@
 )]
 
 use ono_change_render::{ActionGroup, Charset, Phase, action_groups, collapsed_plan};
+use ono_value::Value;
 
 mod support;
-use support::{contains, headings, long_plan, nginx_plan_in, sealed_nginx_plan};
+use support::{
+    action, contains, headings, long_plan, nginx_plan_in, record, rewritten, s, sealed_nginx_plan,
+};
 
 #[test]
 fn should_collapse_identical_actions_into_one_group_each() {
@@ -117,6 +120,66 @@ fn should_report_a_mixed_group_as_a_settled_count_rather_than_one_wrong_word() {
         Some("succeeded"),
         "a group whose actions agree carries their word"
     );
+
+    // Three restarts of one group, which have not agreed on how they went.
+    let mixed = record(
+        "ono.change-plan",
+        &[
+            ("id", s("c0de5eed01234567")),
+            ("state", s("apply-failed")),
+            (
+                "actions",
+                Value::list([
+                    action(
+                        1,
+                        "mutate",
+                        "restart service",
+                        None,
+                        "succeeded",
+                        Value::list([]),
+                    ),
+                    action(
+                        2,
+                        "mutate",
+                        "restart service",
+                        None,
+                        "failed",
+                        Value::list([]),
+                    ),
+                    action(
+                        3,
+                        "mutate",
+                        "restart service",
+                        None,
+                        "pending",
+                        Value::list([]),
+                    ),
+                ]),
+            ),
+        ],
+    );
+    let groups = action_groups(&mixed);
+    let counts: Vec<usize> = groups.iter().map(ActionGroup::count).collect();
+    assert_eq!(
+        counts,
+        vec![3],
+        "precondition: the three restarts are one group"
+    );
+    assert_eq!(
+        groups[0].status(),
+        Some("2/3"),
+        "Appendix E.2: two of the three settled, and neither `succeeded` nor `failed` is true of \
+         all of them"
+    );
+    let lines = collapsed_plan(&mixed, 80, Charset::Ascii);
+    let line = lines
+        .iter()
+        .find(|line| line.contains("restart service"))
+        .expect("the group is rendered");
+    assert!(
+        line.trim_end().ends_with("2/3"),
+        "the collapsed line carries the settled count, got `{line}`"
+    );
 }
 
 #[test]
@@ -158,10 +221,32 @@ fn should_show_the_exclusions_beside_the_footers_protection_summary() {
 
 #[test]
 fn should_fall_back_to_the_verification_contracts_when_a_plan_has_no_verify_action() {
-    let lines = collapsed_plan(&sealed_nginx_plan(), 80, Charset::Ascii);
+    let sealed = sealed_nginx_plan();
+    let Some(Value::List(actions)) = sealed.get("actions") else {
+        panic!("the nginx plan carries its actions");
+    };
+    let without_verify: Vec<Value> = actions
+        .iter()
+        .filter(|action| {
+            !matches!(action, Value::Record(action) if action.get("role") == Some(&s("verify")))
+        })
+        .cloned()
+        .collect();
+    let plan = rewritten(&sealed, "actions", Value::list(without_verify));
     assert!(
-        contains(&lines, "VERIFY"),
-        "§23.1: a mutating plan verifies, and the collapsed view may not hide that it does"
+        action_groups(&plan)
+            .iter()
+            .all(|group| group.phase() != Phase::Verify),
+        "precondition: the plan verifies through its contracts alone"
+    );
+    let lines = collapsed_plan(&plan, 80, Charset::Ascii);
+    let verify = lines.iter().position(|line| line == "VERIFY").expect(
+        "§23.1: a mutating plan verifies, and the collapsed view may not hide that it does",
+    );
+    assert_eq!(
+        lines.get(verify + 1).map(|line| line.trim()),
+        Some("3 verification contracts"),
+        "§23: the VERIFY block counts the contracts the plan carries"
     );
 }
 

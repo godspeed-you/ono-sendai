@@ -21,7 +21,7 @@ Every release publishes the digest of every artifact, a signature over that mani
 ### 1. `download`
 
 ```bash
-VERSION=0.5.0; ARCH=amd64
+VERSION=0.6.0; ARCH=amd64
 BASE=https://github.com/godspeed-you/ono-sendai/releases/download/v$VERSION
 curl -fLO $BASE/ono_${VERSION}_${ARCH}.deb
 curl -fLO $BASE/SHA256SUMS

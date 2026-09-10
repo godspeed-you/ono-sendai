@@ -1,0 +1,83 @@
+# v0.6 §50 phase P2 — §5.8, §24 and §63.7: recovery always produces a RecoveryPlan before it
+# mutates anything.
+#
+# §2.11 is the invariant: `recover` builds a plan and performs nothing. Appendix C.1 orders the
+# methods least-destructive first, and §13.5 prefers the one that minimises unrelated damage —
+# a selective restore puts back the objects that were changed and leaves everything else alone
+# (§59.6). Appendix C.7 keeps the metadata it cannot restore visible beside the coverage it can.
+case: recovery plans before it acts, and restores what changed without touching the rest
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+
+  mkdir -p "$HOME/etc"
+  printf 'worker_processes 4;\n' > "$HOME/etc/nginx.conf"
+  printf 'worker_processes 8;\n' > "$HOME/etc/nginx.conf.new"
+  printf 'unrelated\n' > "$HOME/etc/other.conf"
+  original=$(sha256sum "$HOME/etc/nginx.conf" | cut -d' ' -f1)
+
+  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | to json" > /tmp/s0.json 2>&1
+  id=$(plan_id /tmp/s0.json)
+  ono -c "apply $id" > /dev/null 2>&1
+
+  echo '== §2.11 and §5.8: recover produces a plan and performs nothing =='
+  # A file beside the target changed after the recovery point: newer state the restore must leave.
+  printf 'later\n' > "$HOME/etc/other.conf"
+  ono -c "recover $id" > /tmp/s1.txt 2>&1
+  ono -c "recover $id | to json" > /tmp/s1.json 2>&1
+  rid=$(plan_id /tmp/s1.json)
+  prove s1a "\`recover\` answers with a recovery plan (§5.8)" 'grep -q "^RECOVERY PLAN" /tmp/s1.txt'
+  prove s1b "and says it was not executed (§2.11, §62.4)" 'grep -qx "RECOVERY NOT EXECUTED" /tmp/s1.txt'
+  prove s1c "the changed file is still the changed one (§2.11)" \
+    "[ \"\$(cat $HOME/etc/nginx.conf)\" = 'worker_processes 8;' ]"
+  prove s1d "the plan uses selective restore, the least destructive method that meets the goal (Appendix C.1, §13.5)" \
+    'grep -q "\"goal\":\"restore-changed-objects\",\"method\":\"selective-file-restore\"" /tmp/s1.json'
+  prove s1e "and it would put back exactly the object that changed, nothing beside it (§24.2, §59.6)" \
+    "grep -q '\"restores\":\[\"$HOME/etc/nginx.conf\"\]' /tmp/s1.json"
+  prove s1f "the metadata it would not restore is named beside it (Appendix C.7)" \
+    "grep -q '\"metadata_gaps\":\[\"' /tmp/s1.json && grep -qx 'metadata not restored' /tmp/s1.txt"
+  prove s2b "and it keeps what it does not restore (Appendix C.6)" \
+    'grep -q "\"directory_policy\":\"keep-extra-files\"" /tmp/s1.json'
+
+  echo '== §24.1: the recovery plan is a plan, with a state and an identity =='
+  prove s3a "the recovery plan is in the store as a plan of its own, sealed (§24.1, §2.12)" \
+    "[ \"\$(ono -c 'get plan $rid | select kind state | to json' 2>&1)\" = '[{\"kind\":\"recovery\",\"state\":\"sealed\"}]' ]"
+  prove s3b "and the store keeps what it will do, so a later process applies the plan that was read (§24.1, §36.1)" \
+    "ono -c 'get plan $rid | to json' 2>&1 | grep -q '\"method\":\"selective-file-restore\"'"
+
+  echo '== §25.1: applying it restores the object and verifies the restore =='
+  ono -c "apply $rid --accept-newer-state-loss --confirm" > /tmp/s4.txt 2>&1
+  prove s4a "the object is back to the bytes the asset captured (§15.4)" \
+    "[ \"\$(sha256sum $HOME/etc/nginx.conf | cut -d' ' -f1)\" = '$original' ]"
+  prove s4b "and the unrelated file was left exactly alone (§13.5, §59.6)" \
+    "[ \"\$(cat $HOME/etc/other.conf)\" = 'later' ]"
+  prove s4c "the restore was verified rather than assumed: RECOVERY_VERIFIED (§25.1, §62.9)" \
+    "[ \"\$(ono -c 'get plan $rid | select state | to json' 2>&1)\" = '[{\"state\":\"recovery-verified\"}]' ]"
+
+  echo 'selective-restore: done'
+exit: 0
+stdout-contains: PROVED s1a
+stdout-contains: PROVED s1b
+stdout-contains: PROVED s1c
+stdout-contains: PROVED s1d
+stdout-contains: PROVED s1e
+stdout-contains: PROVED s1f
+stdout-contains: PROVED s2b
+stdout-contains: PROVED s3a
+stdout-contains: PROVED s3b
+stdout-contains: PROVED s4a
+stdout-contains: PROVED s4b
+stdout-contains: PROVED s4c
+stdout-contains: selective-restore: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

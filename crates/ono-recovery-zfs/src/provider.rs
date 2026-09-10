@@ -7,13 +7,14 @@
 //! - §13.4: the dataset is the snapshot boundary. A snapshot of `tank/data` does not protect
 //!   `tank/data/customer`, and [`Layout::dataset_of_path`] resolves through mount metadata so a
 //!   directory *named* like a dataset never becomes one (Appendix B.8).
-//! - §13.3: one `zfs snapshot -r` may create several snapshots, and Appendix D.1 still wants one
-//!   concrete reference per dataset. [`RecoveryProvider::plan_protection`] emits one protection action
-//!   per dataset, so a recursive creation produces a list of assets rather than a single entry
-//!   that quietly stands for several.
+//! - §13.3: several datasets protected at one point are named, each of them, in one atomic
+//!   `zfs snapshot`, and Appendix D.1 still wants one concrete reference per dataset.
+//!   [`RecoveryProvider::plan_protection`] emits one protection action per dataset, so a
+//!   multi-dataset creation produces a list of assets rather than a single entry that quietly
+//!   stands for several.
 //! - §13.6: rollback can require destroying newer snapshots, bookmarks and clones, and Ono MUST
 //!   NEVER silently add the flag that does it. No argument vector this provider builds contains
-//!   `-R`, and the only `-r` it ever emits is §13.3's recursive *creation*.
+//!   `-r` or `-R`, and [`RecoveryProvider::restore_with`] refuses every spelling of either.
 //! - §13.7: rollback may need an unmount, a reboot or a boot-environment switch, and the plan
 //!   says so before apply rather than promising online rollback because a snapshot exists.
 //! - §56.1 and §56.3: twelve facts are proven before a destructive path is enabled, and a fact
@@ -23,29 +24,30 @@ use std::sync::Arc;
 
 use jiff::Timestamp;
 use ono_change_core::error::{
-    asset_create_failed, destructive_history_not_accepted, privilege_required,
+    asset_create_failed, destructive_history_not_accepted, precondition_failed, privilege_required,
     provider_unavailable, recovery_apply_failed, recovery_plan_incomplete, requires_offline,
     requires_reboot, storage_pressure, target_unresolved, tool_failed,
 };
 use ono_change_core::{
-    ActionRole, ChangePlan, ConsistencyClass, EffectDomain, Execution, Idempotency,
-    MetadataCoverage, NewerStateClass, NewerStateImpact, NewerStateItem, PersistenceDomain,
-    PlanAction, PlanId, Precondition, PreconditionKind, ProtectionAction, ProtectionMode,
-    ProviderAvailability, ProviderCapabilities, RecoveryAsset, RecoveryAssetType,
+    ActionRole, ChangePlan, ConsistencyClass, EffectConfidence, EffectDomain, EffectKind,
+    Execution, Idempotency, MetadataCoverage, NewerStateClass, NewerStateImpact, NewerStateItem,
+    PersistenceDomain, PlanAction, PlanId, Precondition, PreconditionKind, ProtectionAction,
+    ProtectionMode, ProviderAvailability, ProviderCapabilities, RecoveryAsset, RecoveryAssetType,
     RecoveryCandidate, RecoveryCapability, RecoveryCost, RecoveryExclusion, RecoveryGoal,
     RecoveryObjective, RecoveryPlanFragment, RecoveryProvider, RecoveryScope, RecoveryValidation,
-    RestoreMethod, ToolOutput, ToolRunner, UnrecoverableEffect, VerificationClass,
-    VerificationContract, choose_method,
+    RestoreAcceptance, RestoreMethod, RestoreOutcome, ToolOutput, ToolRunner, UnrecoverableEffect,
+    VerificationClass, VerificationContract, choose_method,
 };
 use ono_value::{ByteSize, ErrorValue, Value};
 
 use crate::checklist::{SafetyChecklist, ZfsFact};
+use crate::floor::FreeSpaceFloor;
 use crate::layout::{
-    Dataset, Layout, MountState, MountTable, Snapshot, is_beneath, is_descendant, mount_state,
-    with_status,
+    Dataset, Layout, MountState, MountTable, Pool, Snapshot, is_beneath, is_descendant,
+    mount_state, with_status,
 };
 use crate::naming::{full_name, snapshot_part};
-use crate::parse;
+use crate::parse::{self, Grantee};
 
 /// The provider id §12.1's example gives this provider.
 pub const PROVIDER_ID: &str = "ono.recovery.zfs";
@@ -63,6 +65,13 @@ pub const ZPOOL: &str = "/usr/sbin/zpool";
 /// ACL and extended-attribute preservation that `--preserve=all` already performs, and
 /// Appendix C.7 makes losing any of those a restore that did not return the file.
 pub const CP: &str = "/bin/cp";
+
+/// The program that lists a snapshot's directory before a selective restore is offered (§13.5).
+///
+/// `.zfs/snapshot/<name>` is mounted on first access, and where the kernel cannot do that — inside
+/// a container, whose mount namespace the module does not mount into — the directory exists and
+/// is empty. A listing that shows the snapshot's contents is the evidence a copy can read there.
+pub const LS: &str = "/bin/ls";
 
 /// The OpenZFS releases this provider has been validated against (Appendix G.4).
 ///
@@ -117,6 +126,25 @@ impl RootDatasetCase {
     }
 }
 
+/// Who this process is, for §43.4's privilege probe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Identity {
+    /// Read from `/proc/self/status` and `/etc/passwd` when a probe needs it.
+    Proc,
+    /// Supplied by the caller — the deterministic suite, or a harness that already knows.
+    Recorded { uid: u32, user: Arc<str> },
+}
+
+/// The permissions a non-root user needs delegated for a destructive recovery (§43.4).
+///
+/// `zfs-allow(8)`: `rollback` and `destroy` each "must also have the mount ability". A recovery
+/// plan's destructive path is a `destroy` of each newer object and then a `rollback`, so these
+/// three are what it needs.
+const RESTORE_PERMISSIONS: [&str; 3] = ["rollback", "destroy", "mount"];
+
+/// §53's setting that has to be true before a rollback destroying newer history is planned.
+const ALLOW_DESTRUCTIVE_ROLLBACK: &str = "recovery.zfs.allow_destructive_rollback";
+
 /// The ZFS recovery provider of §13.
 #[derive(Debug, Clone)]
 pub struct ZfsProvider {
@@ -125,8 +153,10 @@ pub struct ZfsProvider {
     host: Arc<str>,
     plan: Option<PlanId>,
     now: Option<Timestamp>,
-    free_space_floor: ByteSize,
-    accepted_history_destruction: bool,
+    free_space_floor: FreeSpaceFloor,
+    identity: Identity,
+    prefer_selective_restore: bool,
+    allow_destructive_rollback: bool,
 }
 
 impl ZfsProvider {
@@ -139,8 +169,11 @@ impl ZfsProvider {
             host: Arc::from("localhost"),
             plan: None,
             now: None,
-            free_space_floor: ByteSize::ZERO,
-            accepted_history_destruction: false,
+            free_space_floor: FreeSpaceFloor::None,
+            identity: Identity::Proc,
+            // §53's defaults, so a provider nobody configured is the cautious one.
+            prefer_selective_restore: true,
+            allow_destructive_rollback: false,
         }
     }
 
@@ -180,26 +213,97 @@ impl ZfsProvider {
         self
     }
 
-    /// Sets Appendix D.3's free-space floor, below which automatic protection fails closed.
+    /// Sets Appendix D.3's free-space floor as an absolute quantity; zero is no floor.
     ///
-    /// There is no default floor. Appendix D.3 speaks of a *configured* one, and a provider that
-    /// invented a number would refuse to protect a small pool whose operator is content with it.
+    /// Shorthand for [`ZfsProvider::with_minimum_free`] with [`FreeSpaceFloor::Bytes`].
     #[must_use]
-    pub const fn with_free_space_floor(mut self, floor: ByteSize) -> Self {
+    pub fn with_free_space_floor(self, floor: ByteSize) -> Self {
+        self.with_minimum_free(if floor == ByteSize::ZERO {
+            FreeSpaceFloor::None
+        } else {
+            FreeSpaceFloor::Bytes(floor)
+        })
+    }
+
+    /// Sets Appendix D.3's free-space floor as §53's `recovery.min_filesystem_free` states it: a
+    /// share of the pool's size, or an absolute quantity.
+    ///
+    /// The provider has no floor of its own. Appendix D.3 speaks of a *configured* one, and §53's
+    /// `"10%"` default belongs to the configuration the shell reads it from:
+    ///
+    /// ```
+    /// # use std::sync::Arc;
+    /// # use ono_recovery_zfs::{FreeSpaceFloor, ProcessRunner, ZfsProvider};
+    /// # fn main() -> Result<(), ono_value::ErrorValue> {
+    /// let provider = ZfsProvider::new(Arc::new(ProcessRunner::default()))
+    ///     .with_minimum_free(FreeSpaceFloor::parse("10%")?);
+    /// # let _ = provider;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub const fn with_minimum_free(mut self, floor: FreeSpaceFloor) -> Self {
         self.free_space_floor = floor;
         self
     }
 
-    /// Records that §24.5's gate was passed and history destruction was explicitly accepted.
+    /// Sets §53's `recovery.zfs.prefer_selective_restore` and
+    /// `recovery.zfs.allow_destructive_rollback`, whose defaults are `true` and `false`.
     ///
-    /// §13.6 requires the plan to enumerate every newer snapshot, bookmark and clone a rollback
-    /// would destroy and to require explicit acceptance. The acceptance itself belongs to the
-    /// operator and reaches the provider only here: an executor constructs the provider with this
-    /// after the gate, and [`ZfsProvider::restore`] refuses a destructive rollback without it.
+    /// - `prefer_selective_restore = false` puts a dataset rollback ahead of a selective file
+    ///   restore wherever the goal permits it. Appendix C.1 lets a lower method stand where the
+    ///   upper ones cannot return required metadata — a file copy returns no hard links, file
+    ///   capabilities or SELinux labels — so this is that exception, taken by the operator and
+    ///   stated on the rollback action. It never moves an offline root recovery forward, and never
+    ///   a rollback §56.1 has not fully proven.
+    /// - `allow_destructive_rollback = false` keeps every rollback that would destroy a newer
+    ///   snapshot, bookmark or clone — or that could not be shown to destroy none — out of the
+    ///   plan, and `restore_with` refuses such an act. `--accept-newer-state-loss` does not stand
+    ///   in for it (§13.6): the operator sets it first, and accepts the loss after.
     #[must_use]
-    pub const fn with_accepted_history_destruction(mut self) -> Self {
-        self.accepted_history_destruction = true;
+    pub const fn with_recovery_policy(
+        mut self,
+        prefer_selective_restore: bool,
+        allow_destructive_rollback: bool,
+    ) -> Self {
+        self.prefer_selective_restore = prefer_selective_restore;
+        self.allow_destructive_rollback = allow_destructive_rollback;
         self
+    }
+
+    /// States who this process is for §43.4's privilege probe, rather than reading it from procfs.
+    ///
+    /// `user` is the name `zfs allow` prints for a delegation to `uid`. Production reads both;
+    /// the deterministic suite and a harness that already knows who it is say so here.
+    #[must_use]
+    pub fn running_as(mut self, uid: u32, user: impl Into<Arc<str>>) -> Self {
+        self.identity = Identity::Recorded {
+            uid,
+            user: user.into(),
+        };
+        self
+    }
+
+    /// This process's effective uid and the user name `zfs allow` would print for it.
+    fn identity(&self) -> Option<(u32, Arc<str>)> {
+        match &self.identity {
+            Identity::Recorded { uid, user } => Some((*uid, Arc::clone(user))),
+            Identity::Proc => {
+                let status = std::fs::read_to_string("/proc/self/status").ok()?;
+                let uid: u32 = status
+                    .lines()
+                    .find_map(|line| line.strip_prefix("Uid:"))?
+                    .split_whitespace()
+                    .nth(1)?
+                    .parse()
+                    .ok()?;
+                let user = std::fs::read_to_string("/etc/passwd")
+                    .ok()
+                    .and_then(|passwd| user_name(&passwd, uid))
+                    .unwrap_or_else(|| uid.to_string());
+                Some((uid, Arc::from(user)))
+            }
+        }
     }
 
     /// The instant this provider stamps its work with.
@@ -241,6 +345,35 @@ impl ZfsProvider {
     /// Runs one ZFS command, returning what it said whatever its status (§12.3).
     fn zfs(&self, argv: &[&str]) -> Result<ToolOutput, ErrorValue> {
         self.runner.run(ZFS, argv)
+    }
+
+    /// Why the snapshot's own directory cannot be copied out of, or `None` where it can (§13.5).
+    ///
+    /// A selective restore reads `<mountpoint>/.zfs/snapshot/<name>`, so it is offered only when a
+    /// listing of that directory shows the snapshot's contents. An empty listing, a refused one or
+    /// no `ls` to ask leaves the fact unestablished (§56.3), and Appendix D.4's CLONE_AND_COPY
+    /// materialises the snapshot as a clone instead; the reason travels on the plan.
+    fn snapshot_directory_unreadable(&self, examination: &Examination) -> Option<String> {
+        let mountpoint = examination.mount.mountpoint.as_deref().unwrap_or("");
+        let root = format!(
+            "{}/.zfs/snapshot/{}",
+            mountpoint.trim_end_matches('/'),
+            examination.short
+        );
+        if !self.runner.is_available(LS) {
+            return Some(format!("`{LS}` is not present to read `{root}`"));
+        }
+        match self.runner.run(LS, &["-A", "--", &root]) {
+            Ok(listing) if listing.succeeded() && !listing.stdout().trim().is_empty() => None,
+            Ok(listing) if listing.succeeded() => Some(format!(
+                "`{root}` lists nothing, so the snapshot is not mounted where a copy would read it"
+            )),
+            Ok(listing) => Some(format!(
+                "`{root}` could not be listed: {}",
+                listing.stderr().trim()
+            )),
+            Err(error) => Some(format!("`{root}` could not be listed: {error}")),
+        }
     }
 
     /// Runs one `zpool` command.
@@ -396,29 +529,34 @@ impl ZfsProvider {
         })
     }
 
-    /// The free-space guard of Appendix D.3.
+    /// The free-space guard of Appendix D.3, against a share or a quantity (§53).
+    ///
+    /// A configured floor that cannot be compared — the pool's free space or, for a share, its size
+    /// was not read — fails closed: a floor nobody measured the pool against is not met.
     fn space_guard(&self, layout: &Layout, dataset: &str) -> Result<(), ErrorValue> {
-        if self.free_space_floor == ByteSize::ZERO {
+        if self.free_space_floor == FreeSpaceFloor::None {
             return Ok(());
         }
         let pool_name = dataset.split('/').next().unwrap_or(dataset);
-        let Some(pool) = layout.pool(pool_name) else {
-            return Ok(());
-        };
-        let Some(free) = pool.free else {
-            return Ok(());
-        };
-        if ByteSize::from_bytes(free) < self.free_space_floor {
-            return Err(storage_pressure(
+        let pool = layout.pool(pool_name);
+        let size = pool.and_then(|pool| pool.size);
+        let free = pool.and_then(|pool| pool.free);
+        match (free, self.free_space_floor.minimum_bytes(size)) {
+            (Some(free), Some(floor)) if free >= floor => Ok(()),
+            (free, _) => Err(storage_pressure(
                 pool_name,
-                &ByteSize::from_bytes(free).to_string(),
-                &self.free_space_floor.to_string(),
-            ));
+                &free.map_or_else(
+                    || "an unknown amount".to_owned(),
+                    |free| ByteSize::from_bytes(free).to_string(),
+                ),
+                &self.free_space_floor.describe(size),
+            )),
         }
-        Ok(())
     }
 
-    /// Reads only the pools, for the guard that runs before a protection action is planned.
+    /// Reads only the pools, for the guards that run before a protection action is planned and
+    /// again before it is created: `zpool list` for size, space and state, `zpool status` for the
+    /// data errors §13.1's health question also covers.
     fn pool_reading(&self) -> Result<Layout, ErrorValue> {
         self.require_tools()?;
         let listed = self.zpool(&[
@@ -428,8 +566,14 @@ impl ZfsProvider {
             "-o",
             "name,size,alloc,free,capacity,fragmentation,health",
         ])?;
+        let status = self.zpool(&["status"])?;
         let pools = if listed.succeeded() {
-            crate::layout::pools(ZPOOL, listed.stdout())?
+            let pools = crate::layout::pools(ZPOOL, listed.stdout())?;
+            if status.succeeded() {
+                with_status(pools, status.stdout())
+            } else {
+                pools
+            }
         } else {
             Vec::new()
         };
@@ -441,6 +585,164 @@ impl ZfsProvider {
             pools,
             MountTable::default(),
         ))
+    }
+
+    /// §43.4's privilege fact: whether this process may `rollback` and `destroy` on `dataset`.
+    ///
+    /// Read-only queries succeeding proves only that ZFS lets this process look. Root may do
+    /// everything; anyone else needs a `zfs allow` delegation of [`RESTORE_PERMISSIONS`] to the
+    /// user or to everyone. Group delegations are not evaluated, and say so.
+    fn privilege_evidence(
+        &self,
+        dataset: &str,
+        queries_refused: bool,
+    ) -> Result<(bool, String), ErrorValue> {
+        if queries_refused {
+            return Ok((
+                false,
+                "ZFS refused a query for want of privilege: the utilities must be run as root"
+                    .to_owned(),
+            ));
+        }
+        let Some((uid, user)) = self.identity() else {
+            return Ok((
+                false,
+                "the effective uid of this process could not be read from /proc/self/status, so \
+                 whether it may `rollback` and `destroy` is unknown"
+                    .to_owned(),
+            ));
+        };
+        if uid == 0 {
+            return Ok((
+                true,
+                "the process runs with effective uid 0, and every ZFS query this plan rests on \
+                 ran without a permission refusal"
+                    .to_owned(),
+            ));
+        }
+        let listed = self.zfs(&["allow", dataset])?;
+        if !listed.succeeded() {
+            return Ok((
+                false,
+                format!(
+                    "the process runs as `{user}` (effective uid {uid}), not root, and ZFS \
+                     refused to list the delegations on `{dataset}`: {}",
+                    refusal_text(&listed)
+                ),
+            ));
+        }
+        let uid_text = uid.to_string();
+        let granted: Vec<Arc<str>> = parse::delegations(listed.stdout(), dataset)
+            .into_iter()
+            .filter(|delegation| match &delegation.grantee {
+                Grantee::User(name) => name.as_ref() == user.as_ref() || name.as_ref() == uid_text,
+                Grantee::Everyone => true,
+                Grantee::Group(_) => false,
+            })
+            .flat_map(|delegation| delegation.permissions)
+            .collect();
+        let missing: Vec<&str> = RESTORE_PERMISSIONS
+            .into_iter()
+            .filter(|needed| {
+                !granted
+                    .iter()
+                    .any(|permission| permission.as_ref() == *needed)
+            })
+            .collect();
+        Ok(if missing.is_empty() {
+            (
+                true,
+                format!(
+                    "the process runs as `{user}` (effective uid {uid}), and `zfs allow {dataset}` \
+                     delegates {} to it",
+                    RESTORE_PERMISSIONS.join(", ")
+                ),
+            )
+        } else {
+            (
+                false,
+                format!(
+                    "the process runs as `{user}` (effective uid {uid}), not root, and `zfs allow \
+                     {dataset}` does not delegate {} to this user or to everyone (group \
+                     delegations are not evaluated)",
+                    missing.join(", ")
+                ),
+            )
+        })
+    }
+
+    /// The bookmarks a rollback to `reference` would take with it (Appendix D.5).
+    ///
+    /// A bookmark carries the GUID and `createtxg` of the snapshot it was taken from. One whose
+    /// GUID belongs to a newer snapshot is in the way and one whose GUID belongs to the target or
+    /// an older snapshot is not. One whose snapshot is gone is placed by `createtxg` against the
+    /// target's — asked of ZFS only then — and `None` is the answer when that could not be read:
+    /// §56.3 refuses rather than guessing which side of the recovery point it lies on.
+    fn affected_bookmarks(
+        &self,
+        layout: &Layout,
+        dataset: &str,
+        reference: &str,
+        snapshot_known: bool,
+    ) -> Result<Option<Vec<Arc<str>>>, ErrorValue> {
+        let newer: Vec<&str> = layout
+            .newer_snapshots(reference)
+            .into_iter()
+            .map(|snapshot| snapshot.guid.as_ref())
+            .collect();
+        let at_or_before: Vec<&str> = layout
+            .snapshots_of(dataset)
+            .into_iter()
+            .filter(|snapshot| !newer.contains(&snapshot.guid.as_ref()))
+            .map(|snapshot| snapshot.guid.as_ref())
+            .collect();
+        let mut affected = Vec::new();
+        let mut orphans = Vec::new();
+        for bookmark in layout.bookmarks_of(dataset) {
+            if newer.contains(&bookmark.guid.as_ref()) {
+                affected.push(Arc::clone(&bookmark.name));
+            } else if !at_or_before.contains(&bookmark.guid.as_ref()) {
+                orphans.push(Arc::clone(&bookmark.name));
+            }
+        }
+        if orphans.is_empty() {
+            return Ok(Some(affected));
+        }
+        if !snapshot_known {
+            return Ok(None);
+        }
+        let mut argv: Vec<&str> = vec![
+            "get",
+            "-H",
+            "-p",
+            "-o",
+            "name,property,value",
+            "createtxg",
+            reference,
+        ];
+        argv.extend(orphans.iter().map(AsRef::as_ref));
+        let placed = self.zfs(&argv)?;
+        if !placed.succeeded() {
+            return Ok(None);
+        }
+        let Ok(rows) = parse::properties(ZFS, placed.stdout()) else {
+            return Ok(None);
+        };
+        let Some(target) = parse::property_of(&rows, reference, "createtxg")
+            .and_then(|entry| parse::number(&entry.value))
+        else {
+            return Ok(None);
+        };
+        for orphan in orphans {
+            match parse::property_of(&rows, &orphan, "createtxg")
+                .and_then(|entry| parse::number(&entry.value))
+            {
+                Some(txg) if txg > target => affected.push(orphan),
+                Some(_) => {}
+                None => return Ok(None),
+            }
+        }
+        Ok(Some(affected))
     }
 
     /// Which dataset case §13.7 puts this dataset in, where it is one of them.
@@ -548,17 +850,30 @@ impl ZfsProvider {
 
     /// Proves §56.1's twelve facts about `asset`, or records which of them it could not.
     ///
+    /// `acceptance` is what the operator accepted for this run (§24.5). The last fact — explicit
+    /// acceptance for history destruction — is established by it and by nothing else, unless a
+    /// rollback would neither destroy an object nor discard a byte: an enumeration of what would
+    /// be lost is what an acceptance covers, and is not the acceptance.
+    ///
     /// # Errors
     ///
     /// A structured error when a program could not be run at all. A program that ran and refused
     /// is a fact this provider failed to establish, which is a checklist entry rather than an
     /// error: §56.3's block is raised by the caller that wanted a destructive path.
-    pub fn safety_checklist(&self, asset: &RecoveryAsset) -> Result<SafetyChecklist, ErrorValue> {
-        Ok(self.examine(asset)?.checklist)
+    pub fn safety_checklist(
+        &self,
+        asset: &RecoveryAsset,
+        acceptance: &RestoreAcceptance,
+    ) -> Result<SafetyChecklist, ErrorValue> {
+        Ok(self.examine(asset, acceptance)?.checklist)
     }
 
     /// Reads everything a recovery plan over `asset` needs, and scores §56.1's checklist.
-    fn examine(&self, asset: &RecoveryAsset) -> Result<Examination, ErrorValue> {
+    fn examine(
+        &self,
+        asset: &RecoveryAsset,
+        acceptance: &RestoreAcceptance,
+    ) -> Result<Examination, ErrorValue> {
         self.require_tools()?;
         let reference = asset.reference().to_owned();
         let dataset_name = reference.split_once('@').map_or_else(
@@ -576,13 +891,22 @@ impl ZfsProvider {
             "clones",
             &reference,
         ])?;
+        // Appendix D.5: what a rollback discards is everything written since the recovery point.
+        // Plain `written` counts only since the dataset's newest snapshot, which is that point
+        // only when nothing newer exists; past newer snapshots the figure is `written@<snapshot>`.
+        let written_property = match reference.split_once('@') {
+            Some((_, short)) if !layout.newer_snapshots(&reference).is_empty() => {
+                format!("written@{short}")
+            }
+            _ => "written".to_owned(),
+        };
         let written = self.zfs(&[
             "get",
             "-H",
             "-p",
             "-o",
             "name,property,value",
-            "written",
+            &written_property,
             &dataset_name,
         ])?;
         let space = self.zfs(&[
@@ -604,7 +928,7 @@ impl ZfsProvider {
             &dataset_name,
         ])?;
 
-        let privileged = !Self::refused_for_privilege(&[&clones, &written, &space, &placement]);
+        let refused = Self::refused_for_privilege(&[&clones, &written, &space, &placement]);
         let dataset = layout.dataset(&dataset_name).cloned();
         let snapshot = layout.snapshot(&reference).cloned();
         let short = snapshot
@@ -627,7 +951,7 @@ impl ZfsProvider {
         });
         let written_bytes = written.succeeded().then_some(()).and_then(|()| {
             let listed = parse::properties(ZFS, written.stdout()).ok()?;
-            parse::number(&parse::property_of(&listed, &dataset_name, "written")?.value)
+            parse::number(&parse::property_of(&listed, &dataset_name, &written_property)?.value)
         });
         let used_by_snapshots = space.succeeded().then_some(()).and_then(|()| {
             let listed = parse::properties(ZFS, space.stdout()).ok()?;
@@ -646,12 +970,30 @@ impl ZfsProvider {
             .into_iter()
             .map(|snapshot| Arc::clone(&snapshot.name))
             .collect();
-        let affected_bookmarks = affected_bookmarks(&layout, &dataset_name, &reference);
+        // §13.6: `rollback -R` destroys the clones of the snapshots it destroys — the newer ones.
+        // A clone of the target itself is untouched by a rollback to it.
+        let mut newer_clones: Vec<(Arc<str>, Arc<str>)> = Vec::new();
+        for newer in layout.newer_snapshots(&reference) {
+            for clone in layout.clones_of(&newer.name) {
+                if !newer_clones.iter().any(|(seen, _)| *seen == clone.name) {
+                    newer_clones.push((Arc::clone(&clone.name), Arc::clone(&newer.name)));
+                }
+            }
+        }
+        let mut own_clones: Vec<Arc<str>> = clone_names.clone().unwrap_or_default();
+        for clone in layout.clones_of(&reference) {
+            if !own_clones.contains(&clone.name) {
+                own_clones.push(Arc::clone(&clone.name));
+            }
+        }
+        let affected_bookmarks =
+            self.affected_bookmarks(&layout, &dataset_name, &reference, snapshot.is_some())?;
         let children: Vec<Arc<str>> = layout
             .descendants_of(&dataset_name)
             .into_iter()
             .map(|child| Arc::clone(&child.name))
             .collect();
+        let privilege = self.privilege_evidence(&dataset_name, refused)?;
 
         let recorded_guid = asset
             .captured_state()
@@ -728,7 +1070,10 @@ impl ZfsProvider {
             .establishing(
                 ZfsFact::DiscardedLiveData,
                 written_bytes.map(|bytes| {
-                    format!("`zfs get written` reports {bytes} bytes written since the snapshot")
+                    format!(
+                        "`zfs get {written_property}` reports {bytes} bytes written since \
+                         `{reference}`"
+                    )
                 }),
                 "`zfs get written` did not report a value, so the discarded live data is unknown",
             );
@@ -753,39 +1098,56 @@ impl ZfsProvider {
             )
         };
 
-        checklist = match clone_names.as_ref().filter(|_| status.origins) {
-            Some(names) if names.is_empty() => checklist.established(
+        checklist = if status.origins && clone_names.is_some() {
+            checklist.established(
                 ZfsFact::AffectedClones,
-                format!("`zfs get clones {reference}` reports no clone"),
-            ),
-            Some(names) => checklist.established(
+                if newer_clones.is_empty() {
+                    format!(
+                        "`zfs list -o name,origin` shows no clone of the {} newer snapshot(s), \
+                         which are what `-R` would take; {} clone(s) of `{reference}` itself are \
+                         untouched by a rollback to it",
+                        newer_snapshots.len(),
+                        own_clones.len()
+                    )
+                } else {
+                    format!(
+                        "the clone(s) {} depend on newer snapshot(s) a rollback must destroy",
+                        newer_clones
+                            .iter()
+                            .map(|(clone, origin)| format!("`{clone}` (of `{origin}`)"))
+                            .collect::<Vec<String>>()
+                            .join(", ")
+                    )
+                },
+            )
+        } else {
+            checklist.missing(
                 ZfsFact::AffectedClones,
-                format!("`{reference}` has the clone(s) {}", names.join(", ")),
-            ),
-            None => checklist.missing(
-                ZfsFact::AffectedClones,
-                "`zfs get clones` did not report the property for this snapshot",
-            ),
+                "`zfs get clones` or `zfs list -o name,origin` did not answer, so the clones a \
+                 destructive flag would take are unknown",
+            )
         };
 
         checklist = if status.order
             && status.bookmarks
             && layout.has_creation_order()
             && snapshot.is_some()
+            && affected_bookmarks.is_some()
         {
             checklist.established(
                 ZfsFact::NewerSnapshotsAndBookmarks,
                 format!(
                     "{} newer snapshot(s) and {} affected bookmark(s) were enumerated",
                     newer_snapshots.len(),
-                    affected_bookmarks.len()
+                    affected_bookmarks.as_ref().map_or(0, Vec::len)
                 ),
             )
         } else {
             checklist.missing(
                 ZfsFact::NewerSnapshotsAndBookmarks,
                 "the snapshot and bookmark listings did not together establish what rollback \
-                 would destroy",
+                 would destroy, or a bookmark whose snapshot is gone could not be placed by its \
+                 createtxg",
             )
         };
 
@@ -810,39 +1172,58 @@ impl ZfsProvider {
             )
         };
 
+        let (privileged, privilege_detail) = privilege;
         checklist = if privileged {
-            checklist.established(
-                ZfsFact::SufficientPrivilege,
-                "every ZFS query this plan rests on ran without a permission refusal",
-            )
+            checklist.established(ZfsFact::SufficientPrivilege, privilege_detail)
         } else {
-            checklist.missing(
-                ZfsFact::SufficientPrivilege,
-                "ZFS refused a query for want of privilege: the utilities must be run as root",
-            )
+            checklist.missing(ZfsFact::SufficientPrivilege, privilege_detail)
         };
 
         let enumeration_complete = checklist.is_established(ZfsFact::LatestRelevantSnapshot)
             && checklist.is_established(ZfsFact::NewerSnapshotsAndBookmarks)
             && checklist.is_established(ZfsFact::AffectedClones);
+        let newer_clone_names: Vec<Arc<str>> = newer_clones
+            .iter()
+            .map(|(clone, _)| Arc::clone(clone))
+            .collect();
         let destroyed = destroyed_objects(
             &newer_snapshots,
-            &affected_bookmarks,
-            clone_names.as_deref().unwrap_or(&[]),
+            affected_bookmarks.as_deref().unwrap_or(&[]),
+            &newer_clone_names,
         );
-        checklist = if enumeration_complete {
+        let discarded = written_bytes
+            .filter(|bytes| *bytes > 0)
+            .map_or_else(String::new, |bytes| {
+                format!(" and {bytes} bytes written since the snapshot")
+            });
+        checklist = if !enumeration_complete {
+            checklist.missing(
+                ZfsFact::HistoryDestructionAccepted,
+                "what acceptance would cover could not be enumerated, so it cannot be explicit",
+            )
+        } else if destroyed.is_empty() && written_bytes == Some(0) {
+            checklist.established(
+                ZfsFact::HistoryDestructionAccepted,
+                "a rollback to this snapshot destroys no newer snapshot, bookmark or clone and \
+                 `zfs get written` reports nothing written since, so there is nothing to accept",
+            )
+        } else if acceptance.accepts_newer_state_loss() {
             checklist.established(
                 ZfsFact::HistoryDestructionAccepted,
                 format!(
-                    "{} object(s) would be destroyed, and the plan requires explicit acceptance \
-                     of each",
+                    "the operator accepted losing {} object(s){discarded} \
+                     (`--accept-newer-state-loss`)",
                     destroyed.len()
                 ),
             )
         } else {
             checklist.missing(
                 ZfsFact::HistoryDestructionAccepted,
-                "what acceptance would cover could not be enumerated, so it cannot be explicit",
+                format!(
+                    "{} object(s) would be destroyed{discarded}, and losing them has not been \
+                     accepted (`--accept-newer-state-loss`)",
+                    destroyed.len()
+                ),
             )
         };
 
@@ -853,14 +1234,17 @@ impl ZfsProvider {
             snapshot,
             short,
             newer_snapshots,
-            affected_bookmarks,
-            clones: clone_names.unwrap_or_default(),
+            affected_bookmarks: affected_bookmarks.unwrap_or_default(),
+            newer_clones,
+            own_clones,
             children,
             mount,
             root_case,
             written: written_bytes,
             used_by_snapshots,
             checklist,
+            enumeration_complete,
+            layout,
         })
     }
 }
@@ -885,23 +1269,136 @@ struct Examination {
     short: Arc<str>,
     newer_snapshots: Vec<Arc<str>>,
     affected_bookmarks: Vec<Arc<str>>,
-    clones: Vec<Arc<str>>,
+    /// Clones of newer snapshots, each with the snapshot it depends on (§13.6).
+    newer_clones: Vec<(Arc<str>, Arc<str>)>,
+    /// Clones of the recovery point itself, which no method here touches.
+    own_clones: Vec<Arc<str>>,
     children: Vec<Arc<str>>,
     mount: MountState,
     root_case: Option<RootDatasetCase>,
     written: Option<u128>,
     used_by_snapshots: Option<u128>,
     checklist: SafetyChecklist,
+    /// Whether what an acceptance would cover was enumerated, so it can be deferred to apply.
+    enumeration_complete: bool,
+    layout: Layout,
 }
 
 impl Examination {
     /// Everything a full rollback would destroy, in the order §13.6 enumerates them.
     fn destroyed(&self) -> Vec<Arc<str>> {
-        destroyed_objects(
-            &self.newer_snapshots,
-            &self.affected_bookmarks,
-            &self.clones,
+        let clones: Vec<Arc<str>> = self
+            .newer_clones
+            .iter()
+            .map(|(clone, _)| Arc::clone(clone))
+            .collect();
+        destroyed_objects(&self.newer_snapshots, &self.affected_bookmarks, &clones)
+    }
+
+    /// The newer snapshots and bookmarks a rollback plan destroys by name, one action each.
+    fn history(&self) -> Vec<Arc<str>> {
+        destroyed_objects(&self.newer_snapshots, &self.affected_bookmarks, &[])
+    }
+
+    /// The GUID ZFS reports now for a snapshot or bookmark of this pool.
+    fn guid_of(&self, object: &str) -> Option<Arc<str>> {
+        self.layout
+            .snapshot(object)
+            .map(|snapshot| Arc::clone(&snapshot.guid))
+            .or_else(|| {
+                self.layout
+                    .bookmarks()
+                    .iter()
+                    .find(|bookmark| bookmark.name.as_ref() == object)
+                    .map(|bookmark| Arc::clone(&bookmark.guid))
+            })
+    }
+
+    /// The temporary clone Appendix D.4's CLONE_AND_COPY materialises, and where it is mounted.
+    fn temporary_clone(&self) -> (String, String) {
+        let pool = self
+            .dataset_name
+            .split('/')
+            .next()
+            .unwrap_or(&self.dataset_name);
+        (
+            format!("{pool}/ono-restore-{}", self.short),
+            format!("{CLONE_MOUNT_ROOT}/{}", self.short),
         )
+    }
+
+    /// Where `object` lies inside this dataset, as a path relative to its mountpoint — or why
+    /// this snapshot does not hold it (§13.4).
+    ///
+    /// Beneath the mountpoint is necessary and not sufficient: a child dataset, or any other
+    /// filesystem, mounted inside it is a boundary of its own, and what lives there is not in the
+    /// parent's snapshot however the path reads.
+    fn placement_of(&self, object: &str) -> Result<String, String> {
+        let outside = || {
+            format!(
+                "v0.6 §13.4: `{object}` is not inside the dataset `{}` that this snapshot holds, \
+                 so this asset cannot put it back",
+                self.dataset_name
+            )
+        };
+        if !object.starts_with('/') || object.split('/').any(|part| part == "." || part == "..") {
+            return Err(outside());
+        }
+        let Some(mountpoint) = self
+            .mount
+            .mountpoint
+            .as_deref()
+            .filter(|mountpoint| mountpoint.starts_with('/'))
+        else {
+            return Err(outside());
+        };
+        if !is_beneath(object, mountpoint) {
+            return Err(outside());
+        }
+        if let Some(holder) = self.foreign_holder(object, mountpoint) {
+            return Err(format!(
+                "v0.6 §13.4: `{object}` lives in `{holder}`, which is mounted inside `{}` and is a \
+                 boundary of its own, so the snapshot `{}` does not hold it",
+                self.dataset_name, self.reference
+            ));
+        }
+        Ok(object
+            .get(mountpoint.len()..)
+            .unwrap_or("")
+            .trim_start_matches('/')
+            .to_owned())
+    }
+
+    /// The filesystem other than this dataset that holds `path`, where one is mounted inside it.
+    fn foreign_holder(&self, path: &str, own: &str) -> Option<Arc<str>> {
+        let mounted = self
+            .layout
+            .mounts()
+            .mounts()
+            .iter()
+            .filter(|mount| {
+                mount.mount_point.as_ref() != own
+                    && is_beneath(&mount.mount_point, own)
+                    && is_beneath(path, &mount.mount_point)
+                    && !(mount.kind() == ono_change_core::FilesystemKind::Zfs
+                        && mount.source.as_ref() == self.dataset_name.as_ref())
+            })
+            .map(|mount| (mount.mount_point.len(), Arc::clone(&mount.source)));
+        let placed = self
+            .layout
+            .descendants_of(&self.dataset_name)
+            .into_iter()
+            .filter(|child| {
+                child.mounted
+                    && child.has_placed_mountpoint()
+                    && child.mountpoint.as_ref() != own
+                    && is_beneath(path, &child.mountpoint)
+            })
+            .map(|child| (child.mountpoint.len(), Arc::clone(&child.name)));
+        mounted
+            .chain(placed)
+            .max_by_key(|(length, _)| *length)
+            .map(|(_, holder)| holder)
     }
 
     /// Whether a selective file restore can reach into the snapshot at all (§13.5).
@@ -924,31 +1421,28 @@ impl Examination {
     }
 }
 
-/// The bookmarks a rollback past `reference` would take with it (Appendix D.5).
+/// Why a pool is not fit for §13.1's "proposed protection operation", where it is not.
 ///
-/// A bookmark records the GUID of the snapshot it was taken from, so a bookmark whose GUID
-/// belongs to a snapshot at or before the target is unaffected and one whose GUID belongs to a
-/// newer snapshot is destroyed. A bookmark whose source snapshot no longer exists cannot be
-/// placed either way, and §56.3's direction is to include it: over-enumerating adds an acceptance
-/// the operator can give, and under-enumerating destroys something nobody was shown.
-fn affected_bookmarks(layout: &Layout, dataset: &str, reference: &str) -> Vec<Arc<str>> {
-    let newer: Vec<&str> = layout
-        .newer_snapshots(reference)
-        .into_iter()
-        .map(|snapshot| snapshot.guid.as_ref())
-        .collect();
-    let at_or_before: Vec<&str> = layout
-        .snapshots_of(dataset)
-        .into_iter()
-        .filter(|snapshot| !newer.contains(&snapshot.guid.as_ref()))
-        .map(|snapshot| snapshot.guid.as_ref())
-        .collect();
-    layout
-        .bookmarks_of(dataset)
-        .into_iter()
-        .filter(|bookmark| !at_or_before.contains(&bookmark.guid.as_ref()))
-        .map(|bookmark| Arc::clone(&bookmark.name))
-        .collect()
+/// `ONLINE` with `No known data errors` is fit. Anything else — DEGRADED, SUSPENDED, FAULTED, a
+/// pool reporting data errors, a pool whose `errors:` line or listing was not read — is a reason,
+/// and §56.3 makes an unread one a reason too.
+fn pool_unfitness(pool: Option<&Pool>, name: &str) -> Option<String> {
+    let Some(pool) = pool else {
+        return Some(format!(
+            "the health of pool `{name}` could not be read: `zpool list` did not report it"
+        ));
+    };
+    if pool.health.as_ref() != "ONLINE" {
+        return Some(format!("the pool `{name}` is {}, not healthy", pool.health));
+    }
+    match pool.errors.as_deref() {
+        None => Some(format!(
+            "the health of pool `{name}` could not be read: `zpool status` gave no `errors:` line \
+             for it, so whether it holds data errors is unknown"
+        )),
+        Some(_) if pool.is_healthy() => None,
+        Some(errors) => Some(format!("the pool `{name}` reports `{errors}`, not healthy")),
+    }
 }
 
 /// Newer snapshots, then bookmarks, then clones — §13.6's enumeration, without duplicates.
@@ -1182,15 +1676,48 @@ impl RecoveryProvider for ZfsProvider {
         let part = snapshot_part(self.plan.as_ref().map(PlanId::short), self.now());
         let children = layout.descendants_of(&dataset.name);
         let in_tree = layout.descendants_in_tree(&dataset.name, path);
-        let pool_note = layout.pool(dataset.pool()).map(|pool| {
-            format!(
-                "the pool `{}` is {} with {} fragmentation",
-                pool.name,
-                pool.health,
-                pool.fragmentation
-                    .map_or_else(|| "unknown".to_owned(), |value| format!("{value}%"))
-            )
-        });
+        // §13.4: the datasets an operator may take for coverage — an ancestor by name, or the
+        // dataset mounted above this one, as in §13.4's own `/` over `/data`. Mount points come
+        // from the mount table, never from a path's shape (Appendix B.8).
+        let placed = |name: &str| {
+            layout
+                .mounts()
+                .of_dataset(name)
+                .map(|mount| Arc::clone(&mount.mount_point))
+        };
+        let own = placed(&dataset.name);
+        let enclosing: Vec<Arc<str>> = layout
+            .datasets()
+            .iter()
+            .filter(|other| other.name != dataset.name)
+            .filter(|other| {
+                crate::layout::is_descendant(&dataset.name, &other.name)
+                    || matches!(
+                        (own.as_deref(), placed(&other.name)),
+                        (Some(inner), Some(outer)) if crate::layout::is_beneath(inner, &outer)
+                    )
+            })
+            .map(|other| Arc::clone(&other.name))
+            .collect();
+        let pool_note = match pool_unfitness(layout.pool(dataset.pool()), dataset.pool()) {
+            None => layout
+                .pool(dataset.pool())
+                .map_or_else(String::new, |pool| {
+                    format!(
+                        "the pool `{}` is {} with {} fragmentation",
+                        pool.name,
+                        pool.health,
+                        pool.fragmentation
+                            .map_or_else(|| "unknown".to_owned(), |value| format!("{value}%"))
+                    )
+                }),
+            // §13.1 and §56.3: the reason protection is blocked travels with the candidate, so a
+            // plan shows why no snapshot will be made rather than failing without one.
+            Some(reason) => format!(
+                "v0.6 §13.1 and §56.3: {reason}, so no snapshot is created on it until it is \
+                 healthy"
+            ),
+        };
 
         let mut candidates = Vec::new();
         let mut exact = RecoveryCandidate::new(
@@ -1236,8 +1763,9 @@ impl RecoveryProvider for ZfsProvider {
                 "network sessions",
                 "v0.6 §34: live sessions are runtime state and no snapshot returns them",
             ));
-        if let Some(note) = &pool_note {
-            exact = exact.needing_to_create(note.clone());
+        exact = exact.needing_to_create(pool_note.clone());
+        for object in &enclosing {
+            exact = exact.outside_of(Arc::clone(object));
         }
         candidates.push(exact);
 
@@ -1257,17 +1785,20 @@ impl RecoveryProvider for ZfsProvider {
                 EffectDomain::FilesystemPersistent,
                 objective,
                 format!(
-                    "snapshot -r {}@{part}, covering {} dataset(s) at one point",
+                    "snapshot {}@{part} and {} descendant dataset(s) inside the tree, named in one \
+                     atomic creation",
                     dataset.name,
-                    in_tree.len() + 1
+                    in_tree.len()
                 ),
             )
             .at_consistency(ConsistencyClass::FilesystemConsistent)
             .restored_by(RestoreMethod::SelectiveFileRestore)
             .costing(RecoveryCost::unknown())
             .needing_to_create(
-                "v0.6 §13.3: one recursive creation, recorded as one asset per dataset",
+                "v0.6 §13.3: one atomic `zfs snapshot` naming each dataset, recorded as one asset \
+                 per dataset",
             )
+            .needing_to_create(pool_note.clone())
             .needing_to_restore(
                 "v0.6 §13.3: recovery reasons about each dataset separately; ZFS offers no one \
                  recursive rollback for the whole tree",
@@ -1282,6 +1813,9 @@ impl RecoveryProvider for ZfsProvider {
                         ),
                     ));
                 }
+            }
+            for object in &enclosing {
+                recursive = recursive.outside_of(Arc::clone(object));
             }
             candidates.push(recursive);
         }
@@ -1310,6 +1844,14 @@ impl RecoveryProvider for ZfsProvider {
             let top = top_dataset(&datasets);
             let paths = covered_paths(candidate.scope());
             for dataset in &datasets {
+                let pool = dataset.split('/').next().unwrap_or(dataset);
+                if let Some(reason) = pool_unfitness(pools.pool(pool), pool)
+                    && !mode.refuses_shortfall()
+                {
+                    // §13.1: a snapshot is not made on a pool that is not healthy. `require`
+                    // still plans, and `create` refuses, exactly as Appendix D.3 does for space.
+                    return Err(asset_create_failed(PROVIDER_ID, dataset, &reason));
+                }
                 if let Err(pressure) = self.space_guard(&pools, dataset) {
                     // Appendix D.3: `prefer` and `maximize` fail closed here, into a plan the
                     // operator has to decide about explicitly. `require` still plans, and
@@ -1345,9 +1887,14 @@ impl RecoveryProvider for ZfsProvider {
                     asset = asset.excluding(exclusion.clone());
                 }
                 let summary = if recursive {
+                    let names: Vec<String> = datasets
+                        .iter()
+                        .map(|named| full_name(named, &part).to_string())
+                        .collect();
                     format!(
-                        "zfs snapshot -r {reference} — one recursive creation over {} datasets, \
-                         recorded individually (§13.3, Appendix D.1)",
+                        "zfs snapshot {} — one atomic creation over {} datasets, recorded \
+                         individually (§13.3, Appendix D.1)",
+                        names.join(" "),
                         datasets.len()
                     )
                 } else {
@@ -1382,18 +1929,30 @@ impl RecoveryProvider for ZfsProvider {
                  hand ZFS a name it has not sanitised",
             ));
         }
-        // Appendix D.3: `require` plans through storage pressure and fails here instead.
+        // §13.1 and Appendix D.3: `require` plans through an unhealthy pool and storage pressure,
+        // and fails here instead.
         let pools = self.pool_reading()?;
+        let pool = dataset.split('/').next().unwrap_or(&dataset);
+        if let Some(reason) = pool_unfitness(pools.pool(pool), pool) {
+            return Err(asset_create_failed(PROVIDER_ID, &dataset, &reason));
+        }
         self.space_guard(&pools, &dataset)?;
 
+        // §13.3: several datasets at one point are named, each of them, in one `zfs snapshot`,
+        // which ZFS creates atomically. `-r` would also snapshot every child outside the tree
+        // and every zvol beneath, which no asset records and no cleanup would ever remove.
         let datasets = covered_datasets(action.candidate());
-        let recursive =
+        let together =
             datasets.len() > 1 && top_dataset(&datasets).as_deref() == Some(dataset.as_str());
-        let argv: Vec<&str> = if recursive {
-            vec!["snapshot", "-r", &reference]
-        } else {
-            vec!["snapshot", &reference]
+        let names: Vec<Arc<str>> = match generated {
+            Some(part) if together => datasets
+                .iter()
+                .map(|named| full_name(named, part))
+                .collect(),
+            _ => vec![Arc::from(reference.as_str())],
         };
+        let mut argv: Vec<&str> = vec!["snapshot"];
+        argv.extend(names.iter().map(AsRef::as_ref));
         let created = self.zfs(&argv)?;
         if !created.succeeded() {
             let refusal = refusal_text(&created);
@@ -1543,23 +2102,78 @@ impl RecoveryProvider for ZfsProvider {
         source: Option<&ChangePlan>,
         goal: RecoveryGoal,
     ) -> Result<RecoveryPlanFragment, ErrorValue> {
-        let examination = self.examine(asset)?;
+        let examination = self.examine(asset, &RestoreAcceptance::none())?;
+        // §24.5: the operator accepts at apply, after seeing this plan, so acceptance is the one
+        // fact a plan is built without — provided what it would cover was enumerated.
+        // `restore_with` holds the act itself to all twelve.
+        let deferred: &[ZfsFact] = if examination.enumeration_complete {
+            &[ZfsFact::HistoryDestructionAccepted]
+        } else {
+            &[]
+        };
         // §56.3: the goal decides whether the whole checklist applies, before a method is chosen,
         // so a fact that is missing blocks rather than quietly narrowing the choice of method.
         let goal_is_destructive = matches!(goal, RecoveryGoal::RestoreDomain);
-        if let Some(blocked) = examination.checklist.blocking_error(goal_is_destructive) {
+        if let Some(blocked) = examination
+            .checklist
+            .blocking_error_deferring(goal_is_destructive, deferred)
+        {
             return Err(blocked);
         }
 
-        let mut available = vec![RestoreMethod::CloneAndCopy];
-        if examination.selective_is_possible() {
-            available.push(RestoreMethod::SelectiveFileRestore);
-        }
-        available.push(match examination.root_case {
+        let rollback = match examination.root_case {
             Some(_) => RestoreMethod::OfflineRootRecovery,
             None => RestoreMethod::DatasetRollback,
-        });
-        let Some(method) = choose_method(goal, &available) else {
+        };
+        let destroyed = examination.destroyed();
+        // §53 and §13.6: while destructive rollback is not allowed, a rollback that would destroy
+        // history — or that could not be shown to destroy none — is not offered at all.
+        let rollback_forbidden = !self.allow_destructive_rollback
+            && (!examination.enumeration_complete || !destroyed.is_empty());
+        let mut available = vec![RestoreMethod::CloneAndCopy];
+        let set_aside = if examination.selective_is_possible() {
+            let unreadable = self.snapshot_directory_unreadable(&examination);
+            if unreadable.is_none() {
+                available.push(RestoreMethod::SelectiveFileRestore);
+            }
+            unreadable
+        } else {
+            None
+        };
+        if !rollback_forbidden {
+            available.push(rollback);
+        }
+        let ordinary = choose_method(goal, &available);
+        // §53's `prefer_selective_restore = false`, read through Appendix C.1's metadata
+        // exception: a dataset rollback, fully proven, ahead of a file restore.
+        let rollback_preferred = !self.prefer_selective_restore
+            && !rollback_forbidden
+            && rollback == RestoreMethod::DatasetRollback
+            && choose_method(goal, &[rollback]).is_some()
+            && examination
+                .checklist
+                .blocking_error_deferring(true, deferred)
+                .is_none();
+        let preference = if rollback_preferred && ordinary != Some(rollback) {
+            format!(
+                ". Chosen ahead of {} because `recovery.zfs.prefer_selective_restore` is false: \
+                 Appendix C.1 lets a lower method stand where the upper ones cannot return \
+                 required metadata, and a file copy returns no hard links, file capabilities or \
+                 SELinux labels",
+                ordinary.map_or("a file restore", RestoreMethod::as_str)
+            )
+        } else {
+            String::new()
+        };
+        let chosen = if rollback_preferred {
+            Some(rollback)
+        } else {
+            ordinary
+        };
+        let Some(method) = chosen else {
+            if rollback_forbidden && choose_method(goal, &[rollback]).is_some() {
+                return Err(destructive_rollback_forbidden(&examination, &destroyed));
+            }
             return Err(recovery_plan_incomplete(
                 "a restore method that achieves the recovery goal",
                 &format!(
@@ -1571,7 +2185,9 @@ impl RecoveryProvider for ZfsProvider {
             ));
         };
         if method.discards_newer_state()
-            && let Some(blocked) = examination.checklist.blocking_error(true)
+            && let Some(blocked) = examination
+                .checklist
+                .blocking_error_deferring(true, deferred)
         {
             return Err(blocked);
         }
@@ -1589,21 +2205,25 @@ impl RecoveryProvider for ZfsProvider {
             |plan| plan.id().clone(),
         );
         let objects = objects_to_restore(asset, source);
+        // §13.4: an object beneath the mountpoint may still live in a child dataset, or on some
+        // other filesystem mounted inside this one, and neither is in this snapshot.
+        let mut restorable: Vec<(Arc<str>, String)> = Vec::new();
+        let mut excluded: Vec<(Arc<str>, String)> = Vec::new();
+        for object in &objects {
+            match examination.placement_of(object) {
+                Ok(relative) => restorable.push((Arc::clone(object), relative)),
+                Err(reason) => excluded.push((Arc::clone(object), reason)),
+            }
+        }
 
         let mut fragment = RecoveryPlanFragment::new(PROVIDER_ID, method);
         let mut ordinal = 0;
-        let mut unreachable = Vec::new();
 
         match method {
             RestoreMethod::SelectiveFileRestore => {
-                let mountpoint = examination
-                    .mount
-                    .mountpoint
-                    .as_deref()
-                    .unwrap_or("")
-                    .to_owned();
-                for object in &objects {
-                    match ZfsProvider::snapshot_path(&mountpoint, &examination.short, object) {
+                let mountpoint = examination.mount.mountpoint.as_deref().unwrap_or("");
+                for (object, _) in &restorable {
+                    match ZfsProvider::snapshot_path(mountpoint, &examination.short, object) {
                         Some(source_path) => {
                             fragment = fragment.acting(
                                 file_restore_action(
@@ -1617,95 +2237,111 @@ impl RecoveryProvider for ZfsProvider {
                             );
                             ordinal += 1;
                         }
-                        None => unreachable.push(Arc::clone(object)),
+                        None => excluded.push((
+                            Arc::clone(object),
+                            format!(
+                                "v0.6 §13.5: `{object}` has no path inside the snapshot directory \
+                                 of `{}`",
+                                examination.dataset_name
+                            ),
+                        )),
                     }
                 }
             }
             RestoreMethod::CloneAndCopy => {
-                let clone_name = format!(
-                    "{}/ono-restore-{}",
-                    examination
-                        .dataset_name
-                        .split('/')
-                        .next()
-                        .unwrap_or(&examination.dataset_name),
-                    examination.short
-                );
-                let clone_mount = format!("{CLONE_MOUNT_ROOT}/{}", examination.short);
-                fragment = fragment.acting(program_action(
-                    &plan_id,
-                    ordinal,
-                    ActionRole::Prepare,
-                    format!(
-                        "zfs clone {} {clone_name} — Appendix D.4's CLONE_AND_COPY materialises \
-                         the snapshot beside the live dataset rather than over it",
-                        examination.reference
+                let (clone_name, clone_mount) = examination.temporary_clone();
+                fragment = fragment.acting(
+                    program_action(
+                        &plan_id,
+                        ordinal,
+                        ActionRole::Prepare,
+                        format!(
+                            "zfs clone {} {clone_name} — Appendix D.4's CLONE_AND_COPY \
+                             materialises the snapshot beside the live dataset rather than over \
+                             it{}",
+                            examination.reference,
+                            set_aside.as_deref().map_or_else(String::new, |reason| format!(
+                                ". §13.5's selective restore was set aside: {reason}"
+                            ))
+                        ),
+                        ZFS,
+                        vec![
+                            Arc::from("clone"),
+                            Arc::from("-o"),
+                            Arc::from(format!("mountpoint={clone_mount}")),
+                            Arc::clone(&examination.reference),
+                            Arc::from(clone_name.as_str()),
+                        ],
+                    )
+                    .requiring(snapshot_precondition(&examination))
+                    .declaring(
+                        EffectDomain::FilesystemPersistent,
+                        EffectKind::Create,
+                        EffectConfidence::Guaranteed,
+                        clone_name.as_str(),
+                        "a temporary clone of the snapshot is created beside the live dataset (Appendix D.4)",
                     ),
-                    ZFS,
-                    vec![
-                        Arc::from("clone"),
-                        Arc::from("-o"),
-                        Arc::from(format!("mountpoint={clone_mount}")),
-                        Arc::clone(&examination.reference),
-                        Arc::from(clone_name.as_str()),
-                    ],
-                ));
+                );
                 ordinal += 1;
-                for object in &objects {
-                    let relative = examination
-                        .mount
-                        .mountpoint
-                        .as_deref()
-                        .and_then(|mountpoint| {
-                            is_beneath(object, mountpoint)
-                                .then(|| object.get(mountpoint.len()..).unwrap_or("").to_owned())
-                        });
-                    match relative {
-                        Some(relative) => {
-                            let source_path =
-                                format!("{clone_mount}/{}", relative.trim_start_matches('/'));
-                            fragment = fragment.acting(file_restore_action(
-                                &plan_id,
-                                ordinal,
-                                &source_path,
-                                object,
-                                examination.snapdir(),
-                            ));
-                            ordinal += 1;
-                        }
-                        None => unreachable.push(Arc::clone(object)),
-                    }
+                for (object, relative) in &restorable {
+                    let source_path = format!("{clone_mount}/{relative}");
+                    fragment = fragment.acting(file_restore_action(
+                        &plan_id,
+                        ordinal,
+                        &source_path,
+                        object,
+                        examination.snapdir(),
+                    ));
+                    ordinal += 1;
                 }
-                fragment = fragment.acting(program_action(
-                    &plan_id,
-                    ordinal,
-                    ActionRole::Cleanup,
-                    format!("zfs destroy {clone_name} — the clone is temporary (§37)"),
-                    ZFS,
-                    vec![Arc::from("destroy"), Arc::from(clone_name.as_str())],
-                ));
+                fragment = fragment.acting(
+                    program_action(
+                        &plan_id,
+                        ordinal,
+                        ActionRole::Cleanup,
+                        format!("zfs destroy {clone_name} — the clone is temporary (§37)"),
+                        ZFS,
+                        vec![Arc::from("destroy"), Arc::from(clone_name.as_str())],
+                    )
+                    .declaring(
+                        EffectDomain::FilesystemPersistent,
+                        EffectKind::Remove,
+                        EffectConfidence::Guaranteed,
+                        clone_name.as_str(),
+                        "the temporary clone is destroyed (§37)",
+                    ),
+                );
                 ordinal += 1;
             }
             RestoreMethod::DatasetRollback | RestoreMethod::OfflineRootRecovery => {
                 // §13.6: every destruction is a named action of its own. Ono adds no flag that
                 // removes newer history as a side effect of the rollback, so what would be lost
-                // is visible object by object in the plan an operator accepts.
-                for object in examination
-                    .newer_snapshots
-                    .iter()
-                    .chain(examination.affected_bookmarks.iter())
-                {
-                    fragment = fragment.acting(program_action(
-                        &plan_id,
-                        ordinal,
-                        ActionRole::Recover,
-                        format!(
-                            "zfs destroy {object} — §13.6: this stands in the rollback's way, and \
-                             destroying it needs explicit acceptance"
+                // is visible object by object in the plan an operator accepts — and each action
+                // carries the GUID of the object the operator saw, so a name that came back as
+                // something else is not destroyed on the strength of that acceptance.
+                for object in examination.history() {
+                    let guid = examination.guid_of(&object);
+                    fragment = fragment.acting(
+                        program_action(
+                            &plan_id,
+                            ordinal,
+                            ActionRole::Recover,
+                            format!(
+                                "zfs destroy {object} — §13.6: this stands in the rollback's way, \
+                                 and destroying it needs explicit acceptance"
+                            ),
+                            ZFS,
+                            vec![Arc::from("destroy"), Arc::clone(&object)],
+                        )
+                        .requiring(guid_precondition(&object, guid.as_deref()))
+                        .declaring(
+                            EffectDomain::FilesystemPersistent,
+                            EffectKind::Remove,
+                            EffectConfidence::Guaranteed,
+                            Arc::clone(&object),
+                            "the snapshot or bookmark is destroyed; §13.6's acceptance is what permits it",
                         ),
-                        ZFS,
-                        vec![Arc::from("destroy"), Arc::clone(object)],
-                    ));
+                    );
                     ordinal += 1;
                 }
                 fragment = fragment.acting(
@@ -1715,13 +2351,20 @@ impl RecoveryProvider for ZfsProvider {
                         ActionRole::Recover,
                         format!(
                             "zfs rollback {} — §13.6: the whole dataset returns to this point and \
-                             everything written since is discarded",
+                             everything written since is discarded{preference}",
                             examination.reference
                         ),
                         ZFS,
                         vec![Arc::from("rollback"), Arc::clone(&examination.reference)],
                     )
-                    .requiring(snapshot_precondition(&examination)),
+                    .requiring(snapshot_precondition(&examination))
+                    .declaring(
+                        EffectDomain::FilesystemPersistent,
+                        EffectKind::Replace,
+                        EffectConfidence::Guaranteed,
+                        Arc::clone(&examination.dataset_name),
+                        "the dataset returns to the snapshot and everything written since is discarded (§13.6)",
+                    ),
                 );
                 ordinal += 1;
             }
@@ -1729,26 +2372,25 @@ impl RecoveryProvider for ZfsProvider {
         }
         let _ = ordinal;
 
-        for object in unreachable {
+        for (object, reason) in excluded {
             fragment = fragment.leaving(UnrecoverableEffect::new(
-                Arc::clone(&object),
+                object,
                 EffectDomain::FilesystemPersistent,
-                format!(
-                    "v0.6 §13.4: `{object}` is not inside the dataset `{}` that this snapshot \
-                     holds, so this asset cannot put it back",
-                    examination.dataset_name
-                ),
+                reason,
             ));
         }
-        for clone in &examination.clones {
-            fragment = fragment.leaving(UnrecoverableEffect::new(
-                Arc::clone(clone),
-                EffectDomain::FilesystemPersistent,
-                format!(
-                    "v0.6 §13.6: `{clone}` is a clone of this snapshot. ZFS refuses the rollback \
-                     while it exists, and Ono does not add the flag that would destroy it"
-                ),
-            ));
+        if method.discards_newer_state() {
+            for (clone, origin) in &examination.newer_clones {
+                fragment = fragment.leaving(UnrecoverableEffect::new(
+                    Arc::clone(clone),
+                    EffectDomain::FilesystemPersistent,
+                    format!(
+                        "v0.6 §13.6: `{clone}` is a clone of the newer snapshot `{origin}`, which \
+                         this rollback has to destroy. ZFS refuses while the clone exists, and Ono \
+                         does not add the flag that would destroy it"
+                    ),
+                ));
+            }
         }
 
         for object in &objects {
@@ -1778,84 +2420,30 @@ impl RecoveryProvider for ZfsProvider {
     }
 
     fn restore(&self, action: &PlanAction, asset: &RecoveryAsset) -> Result<(), ErrorValue> {
-        self.require_tools()?;
-        let Execution::Program { program, argv } = action.execution() else {
-            return Err(recovery_apply_failed(
-                action.summary(),
-                "v0.6 §2.17: this provider carries out a recovery action as a program and an \
-                 argument vector, and this action carries neither",
-            ));
-        };
-        if argv.iter().any(|argument| argument.as_ref() == "-R") {
-            return Err(recovery_apply_failed(
-                action.summary(),
-                "v0.6 §13.6: Ono never adds a destructive rollback flag equivalent to removing \
-                 newer history, and refuses to run one it did not build",
-            ));
-        }
-        let destroys_history = program.as_ref() == ZFS
-            && matches!(
-                argv.first().map(Arc::as_ref),
-                Some("rollback") | Some("destroy")
-            );
-        if destroys_history {
-            let examination = self.examine(asset)?;
-            if let Some(blocked) = examination.checklist.blocking_error(true) {
-                return Err(blocked);
-            }
-            // §24.5's gate comes first: an operator is shown everything the recovery would take
-            // away before being told what else it needs. §13.7's requirement is the second
-            // refusal, not a way of never reaching the first.
-            let destroyed = examination.destroyed();
-            if !destroyed.is_empty() && !self.accepted_history_destruction {
-                return Err(destructive_history_not_accepted(
-                    &destroyed
-                        .iter()
-                        .map(|object| object.to_string())
-                        .collect::<Vec<String>>(),
-                ));
-            }
-            if argv.first().map(Arc::as_ref) == Some("rollback")
-                && let Some(case) = examination.root_case
-            {
-                // §13.7 and §55.3 case 16: the requirement is reported before execution, and the
-                // execution then refuses rather than rolling back the running system.
-                return Err(match case {
-                    RootDatasetCase::RunningRoot => requires_offline(
-                        &examination.dataset_name,
-                        RestoreMethod::OfflineRootRecovery.as_str(),
-                    ),
-                    RootDatasetCase::BootEnvironment => requires_reboot(
-                        &examination.dataset_name,
-                        RestoreMethod::OfflineRootRecovery.as_str(),
-                    ),
-                });
-            }
-        }
-        let arguments: Vec<&str> = argv.iter().map(Arc::as_ref).collect();
-        let output = self.runner.run(program, &arguments)?;
-        if output.succeeded() {
-            return Ok(());
-        }
-        let refusal = refusal_text(&output);
-        if parse::is_permission_refusal(&refusal) {
-            return Err(privilege_required(
-                action.summary(),
-                "root, or a `zfs allow` delegation that permits this operation",
-                true,
-            ));
-        }
-        let refused = parse::rollback_refusal(&refusal);
-        if !refused.is_empty() {
-            return Err(destructive_history_not_accepted(
-                &refused
-                    .objects()
-                    .iter()
-                    .map(|object| object.to_string())
-                    .collect::<Vec<String>>(),
-            ));
-        }
-        Err(recovery_apply_failed(action.summary(), &refusal))
+        self.carry_out(action, asset, &RestoreAcceptance::none())
+    }
+
+    /// Carries out one action of a plan this provider built, re-proving what it rests on.
+    ///
+    /// Every action of a ZFS recovery plan arrives here, whatever built it. Each is recognised
+    /// against a fresh reading as exactly one of the shapes [`RecoveryProvider::plan_recovery`]
+    /// emits — anything else is refused before it runs — and each is held, at the moment of the
+    /// act, to the §56.1 facts it depends on:
+    ///
+    /// - no `-r` or `-R` in any spelling, whatever was accepted (§13.6);
+    /// - every act needs the snapshot to exist, be the one recorded, and be readable (§56.3);
+    /// - destroying a newer snapshot or bookmark, and the rollback itself, need all twelve facts,
+    ///   the operator's `acceptance`, no clone of a newer snapshot in the way, and a dataset that
+    ///   is not a running root or boot environment (§13.6, §13.7, §24.5);
+    /// - a destroy names an object the reading enumerates, with the GUID the plan recorded.
+    fn restore_with(
+        &self,
+        action: &PlanAction,
+        asset: &RecoveryAsset,
+        acceptance: &RestoreAcceptance,
+    ) -> Result<RestoreOutcome, ErrorValue> {
+        self.carry_out(action, asset, acceptance)
+            .map(|()| RestoreOutcome::default())
     }
 
     fn cleanup(&self, asset: &RecoveryAsset) -> Result<(), ErrorValue> {
@@ -2021,6 +2609,13 @@ fn file_restore_action(
         ],
     )
     .on(object)
+    .declaring(
+        EffectDomain::FilesystemPersistent,
+        EffectKind::Replace,
+        EffectConfidence::Guaranteed,
+        object,
+        "the live file is replaced by the snapshot's copy of it (§13.5)",
+    )
 }
 
 /// One plan action that runs a program with an argument vector and no shell (§2.17, §12.3).
@@ -2048,21 +2643,305 @@ fn program_action(
 
 /// The precondition §7.2 puts on an action that reads from one exact snapshot.
 fn snapshot_precondition(examination: &Examination) -> Precondition {
+    guid_precondition(
+        &examination.reference,
+        examination
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.guid.as_ref()),
+    )
+}
+
+/// The precondition that ties an action to the snapshot or bookmark `object` as it was read.
+fn guid_precondition(object: &str, guid: Option<&str>) -> Precondition {
     Precondition::new(
         PreconditionKind::Existence,
-        Arc::clone(&examination.reference),
+        object,
         "guid",
-        Value::string(
-            examination
-                .snapshot
-                .as_ref()
-                .map_or("", |snapshot| snapshot.guid.as_ref()),
-        ),
+        Value::string(guid.unwrap_or("")),
     )
     .explained(
-        "v0.6 §56.1: a snapshot destroyed and recreated under the same name is a different \
-         snapshot, and only the GUID says so",
+        "v0.6 §56.1: a snapshot or bookmark destroyed and recreated under the same name is a \
+         different object, and only the GUID says so",
     )
+}
+
+/// Refuses when a GUID an action recorded is not the GUID ZFS reports now (§56.1).
+fn check_guid_preconditions(
+    action: &PlanAction,
+    examination: &Examination,
+) -> Result<(), ErrorValue> {
+    for precondition in action
+        .preconditions()
+        .iter()
+        .filter(|precondition| precondition.field() == "guid")
+    {
+        let now = examination.guid_of(precondition.subject());
+        if now
+            .as_deref()
+            .is_some_and(|guid| precondition.expected() == &Value::string(guid))
+        {
+            continue;
+        }
+        return Err(precondition_failed(
+            action.id(),
+            precondition.subject(),
+            &format!(
+                "v0.6 §56.1: the plan recorded GUID {} for `{}`, and ZFS now reports {}, so this \
+                 is not the object the plan was built over.",
+                precondition.expected(),
+                precondition.subject(),
+                now.map_or_else(|| "no such object".to_owned(), |guid| guid.to_string()),
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// What one recovery action is, once recognised as a shape this provider's plans emit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Act {
+    /// `cp` out of the snapshot directory or the temporary clone (§13.5, Appendix D.4).
+    Copy,
+    /// `zfs clone` of the recovery point as the temporary clone.
+    Clone,
+    /// `zfs destroy` of a newer snapshot or bookmark the reading enumerates (§13.6).
+    DestroyHistory(Arc<str>),
+    /// `zfs destroy` of the temporary clone, and whether it is still there.
+    DestroyTemporaryClone { present: bool },
+    /// `zfs rollback` to the recovery point.
+    Rollback,
+}
+
+/// Recognises `program` and `words` as one of the shapes `plan_recovery` emits, against a fresh
+/// reading, or says why it is not one.
+fn recognise(program: &str, words: &[&str], examination: &Examination) -> Result<Act, String> {
+    let (clone_name, clone_mount) = examination.temporary_clone();
+    let reference = examination.reference.as_ref();
+    if program == CP {
+        let [
+            "--preserve=all",
+            "--no-dereference",
+            "--no-target-directory",
+            "--",
+            source,
+            target,
+        ] = words
+        else {
+            return Err(
+                "a restore copies with `--preserve=all --no-dereference --no-target-directory`, \
+                 a source and a target, and this copy is not that"
+                    .to_owned(),
+            );
+        };
+        let relative = examination.placement_of(target)?;
+        let mountpoint = examination.mount.mountpoint.as_deref().unwrap_or("");
+        if ZfsProvider::snapshot_path(mountpoint, &examination.short, target).as_deref()
+            == Some(*source)
+        {
+            return Ok(Act::Copy);
+        }
+        if *source == format!("{clone_mount}/{relative}") {
+            return match examination.layout.dataset(&clone_name) {
+                Some(clone)
+                    if clone.origin.as_deref() == Some(reference)
+                        && clone.mountpoint.as_ref() == clone_mount =>
+                {
+                    Ok(Act::Copy)
+                }
+                _ => Err(format!(
+                    "`{source}` is read through the temporary clone `{clone_name}`, and ZFS does \
+                     not report that clone of `{reference}` mounted at `{clone_mount}`"
+                )),
+            };
+        }
+        return Err(format!(
+            "`{source}` is neither `{target}` inside the snapshot `{reference}` nor inside its \
+             temporary clone, so this copy does not restore from this asset"
+        ));
+    }
+    if program != ZFS {
+        return Err(format!(
+            "`{program}` is not a program a ZFS recovery plan runs"
+        ));
+    }
+    let mountpoint_option = format!("mountpoint={clone_mount}");
+    match words {
+        ["rollback", target] if *target == reference => Ok(Act::Rollback),
+        ["clone", "-o", option, origin, name]
+            if *option == mountpoint_option && *origin == reference && *name == clone_name =>
+        {
+            Ok(Act::Clone)
+        }
+        ["destroy", object]
+            if examination
+                .history()
+                .iter()
+                .any(|named| named.as_ref() == *object) =>
+        {
+            Ok(Act::DestroyHistory(Arc::from(*object)))
+        }
+        ["destroy", object] if *object == clone_name => match examination.layout.dataset(object) {
+            None => Ok(Act::DestroyTemporaryClone { present: false }),
+            Some(clone) if clone.origin.as_deref() == Some(reference) => {
+                Ok(Act::DestroyTemporaryClone { present: true })
+            }
+            Some(_) => Err(format!(
+                "`{object}` is not a clone of `{reference}`, so it is not this recovery's \
+                     temporary clone and is not destroyed"
+            )),
+        },
+        ["destroy", object] => Err(format!(
+            "`{object}` is not a newer snapshot or bookmark this recovery enumerated, nor its \
+             temporary clone, so no acceptance covers destroying it"
+        )),
+        _ => Err(
+            "this is not an action a ZFS recovery plan emits, and the provider runs only those"
+                .to_owned(),
+        ),
+    }
+}
+
+/// The first argument carrying `-r` or `-R`, in any spelling (§13.6).
+///
+/// A short-option cluster is read letter by letter, so `-rR`, `-Rf` and `-fr` are all caught;
+/// `--recursive` is the long spelling. Operands after `--` are not options.
+fn recursive_flag<'a>(words: &[&'a str]) -> Option<&'a str> {
+    words
+        .iter()
+        .copied()
+        .take_while(|word| *word != "--")
+        .find(|word| {
+            *word == "--recursive"
+                || (word.starts_with('-')
+                    && !word.starts_with("--")
+                    && word
+                        .chars()
+                        .skip(1)
+                        .any(|letter| letter == 'r' || letter == 'R'))
+        })
+}
+
+/// Refuses a destructive act §56.1, §24.5, §13.6 and §13.7 do not permit right now.
+///
+/// §24.5's gate comes first: an operator is shown everything the recovery would take away before
+/// being told what else it needs. §13.7's requirement is refused before anything is destroyed on
+/// behalf of a rollback that cannot then be carried out.
+fn guard_destruction(examination: &Examination, allowed: bool) -> Result<(), ErrorValue> {
+    if let Some(blocked) = examination
+        .checklist
+        .blocking_error_deferring(true, &[ZfsFact::HistoryDestructionAccepted])
+    {
+        return Err(blocked);
+    }
+    // §53 before §24.5: the operator allows destructive rollback first, and accepts the loss
+    // after. An acceptance given while the setting is false does not stand in for it.
+    let destroyed = examination.destroyed();
+    if !allowed && (!destroyed.is_empty() || !examination.enumeration_complete) {
+        return Err(recovery_apply_failed(
+            &format!("zfs rollback {}", examination.reference),
+            &format!(
+                "v0.6 §13.6 and §53: `{ALLOW_DESTRUCTIVE_ROLLBACK}` is false, and this rollback \
+                 destroys newer history. Nothing was destroyed"
+            ),
+        )
+        .with_metadata("setting", Value::string(ALLOW_DESTRUCTIVE_ROLLBACK))
+        .with_metadata(
+            "destroyed",
+            Value::list(destroyed.iter().map(|object| Value::string(object))),
+        ));
+    }
+    if !examination
+        .checklist
+        .is_established(ZfsFact::HistoryDestructionAccepted)
+    {
+        let mut destroyed: Vec<String> = examination
+            .destroyed()
+            .iter()
+            .map(|object| object.to_string())
+            .collect();
+        if destroyed.is_empty() {
+            destroyed.push(examination.dataset_name.to_string());
+        }
+        return Err(destructive_history_not_accepted(&destroyed));
+    }
+    if !examination.newer_clones.is_empty() {
+        let clones: Vec<&str> = examination
+            .newer_clones
+            .iter()
+            .map(|(clone, _)| clone.as_ref())
+            .collect();
+        return Err(recovery_apply_failed(
+            &format!("zfs rollback {}", examination.reference),
+            &format!(
+                "v0.6 §13.6: the clone(s) {} depend on newer snapshots this rollback must destroy. \
+                 ZFS refuses while they exist, and Ono never adds `-R`; promote or remove them \
+                 first. Nothing was destroyed",
+                clones.join(", ")
+            ),
+        )
+        .with_metadata(
+            "clones",
+            Value::list(clones.iter().map(|clone| Value::string(clone))),
+        ));
+    }
+    if let Some(case) = examination.root_case {
+        // §13.7 and §55.3 case 16: the requirement is reported before execution, and the
+        // execution then refuses rather than rolling back the running system.
+        return Err(match case {
+            RootDatasetCase::RunningRoot => requires_offline(
+                &examination.dataset_name,
+                RestoreMethod::OfflineRootRecovery.as_str(),
+            ),
+            RootDatasetCase::BootEnvironment => requires_reboot(
+                &examination.dataset_name,
+                RestoreMethod::OfflineRootRecovery.as_str(),
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// The refusal for a goal only a rollback achieves, while §53 does not allow the destruction.
+fn destructive_rollback_forbidden(examination: &Examination, destroyed: &[Arc<str>]) -> ErrorValue {
+    let what = if destroyed.is_empty() {
+        "and what it would destroy could not be enumerated".to_owned()
+    } else {
+        format!(
+            "and it would destroy {}",
+            destroyed
+                .iter()
+                .map(|object| format!("`{object}`"))
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
+    };
+    recovery_plan_incomplete(
+        "a restore method that achieves the recovery goal",
+        &format!(
+            "v0.6 §13.6 and §53: only a rollback to `{}` achieves this goal, {what}, and \
+             `{ALLOW_DESTRUCTIVE_ROLLBACK}` is false. Set it to true to have the rollback planned; \
+             `--accept-newer-state-loss` then accepts the loss at apply (§24.5), and does not \
+             stand in for the setting",
+            examination.reference
+        ),
+    )
+    .with_metadata("setting", Value::string(ALLOW_DESTRUCTIVE_ROLLBACK))
+    .with_metadata(
+        "destroyed",
+        Value::list(destroyed.iter().map(|object| Value::string(object))),
+    )
+}
+
+/// The name `/etc/passwd` gives `uid`, which is how `zfs allow` prints a delegation to it.
+fn user_name(passwd: &str, uid: u32) -> Option<String> {
+    passwd.lines().find_map(|line| {
+        let mut fields = line.split(':');
+        let name = fields.next()?;
+        let _password = fields.next()?;
+        let id = fields.next()?.parse::<u32>().ok()?;
+        (id == uid).then(|| name.to_owned())
+    })
 }
 
 /// What the chosen method would do to everything written since the snapshot (Appendix C.3, D.5).
@@ -2096,7 +2975,7 @@ fn newer_state_impact(examination: &Examination, method: RestoreMethod) -> Newer
             "v0.6 §13.6: a bookmark of a newer snapshot is destroyed by a rollback past it",
         ));
     }
-    for clone in &examination.clones {
+    for (clone, origin) in &examination.newer_clones {
         items.push(NewerStateItem::new(
             Arc::clone(clone),
             if discards {
@@ -2104,8 +2983,19 @@ fn newer_state_impact(examination: &Examination, method: RestoreMethod) -> Newer
             } else {
                 NewerStateClass::PreservedByMethod
             },
-            "v0.6 §13.6: this clone exists because of the snapshot, so rolling the origin back \
-             and keeping the clone are the same object pulled two ways",
+            format!(
+                "v0.6 §13.6: this clone depends on the newer snapshot `{origin}`, so destroying \
+                 that snapshot for a rollback and keeping the clone are the same object pulled \
+                 two ways"
+            ),
+        ));
+    }
+    for clone in &examination.own_clones {
+        items.push(NewerStateItem::new(
+            Arc::clone(clone),
+            NewerStateClass::PreservedByMethod,
+            "v0.6 §13.6: a clone of the recovery point itself; neither a rollback to it nor a \
+             file restore touches it",
         ));
     }
     for child in &examination.children {
@@ -2158,4 +3048,91 @@ fn newer_state_impact(examination: &Examination, method: RestoreMethod) -> Newer
         }
     }
     impact
+}
+
+impl ZfsProvider {
+    /// Everything [`RecoveryProvider::restore_with`] does, answering only whether it was done.
+    fn carry_out(
+        &self,
+        action: &PlanAction,
+        asset: &RecoveryAsset,
+        acceptance: &RestoreAcceptance,
+    ) -> Result<(), ErrorValue> {
+        self.require_tools()?;
+        let Execution::Program { program, argv } = action.execution() else {
+            return Err(recovery_apply_failed(
+                action.summary(),
+                "v0.6 §2.17: this provider carries out a recovery action as a program and an \
+                 argument vector, and this action carries neither",
+            ));
+        };
+        let words: Vec<&str> = argv.iter().map(Arc::as_ref).collect();
+        if let Some(flag) = recursive_flag(&words) {
+            return Err(recovery_apply_failed(
+                action.summary(),
+                &format!(
+                    "v0.6 §13.6: `{flag}` carries a recursive flag. Ono never adds a destructive \
+                     flag equivalent to removing newer history, in any spelling, and refuses to \
+                     run one it did not build"
+                ),
+            ));
+        }
+        let examination = self.examine(asset, acceptance)?;
+        if let Some(blocked) = examination.checklist.blocking_error(false) {
+            return Err(blocked);
+        }
+        let act = recognise(program, &words, &examination)
+            .map_err(|detail| recovery_apply_failed(action.summary(), &detail))?;
+        match &act {
+            Act::DestroyHistory(object) => {
+                guard_destruction(&examination, self.allow_destructive_rollback)?;
+                if !action.preconditions().iter().any(|precondition| {
+                    precondition.subject() == object.as_ref() && precondition.field() == "guid"
+                }) {
+                    return Err(recovery_apply_failed(
+                        action.summary(),
+                        &format!(
+                            "v0.6 §56.1: the action carries no GUID for `{object}`, so what the \
+                             operator accepted cannot be tied to the object that is there now"
+                        ),
+                    ));
+                }
+            }
+            Act::Rollback => guard_destruction(&examination, self.allow_destructive_rollback)?,
+            Act::DestroyTemporaryClone { present: false } => {
+                // §37: the temporary clone is already gone, which is what destroying it was for.
+                return Ok(());
+            }
+            Act::Copy | Act::Clone | Act::DestroyTemporaryClone { .. } => {}
+        }
+        check_guid_preconditions(action, &examination)?;
+
+        let output = self.runner.run(program, &words)?;
+        if output.succeeded() {
+            return Ok(());
+        }
+        let refusal = refusal_text(&output);
+        if parse::is_permission_refusal(&refusal) {
+            return Err(privilege_required(
+                action.summary(),
+                "root, or a `zfs allow` delegation that permits this operation",
+                true,
+            ));
+        }
+        let named = match act {
+            Act::DestroyHistory(_) | Act::DestroyTemporaryClone { .. } => {
+                parse::destroy_refusal(&refusal)
+            }
+            _ => parse::rollback_refusal(&refusal).objects(),
+        };
+        if !named.is_empty() {
+            return Err(destructive_history_not_accepted(
+                &named
+                    .iter()
+                    .map(|object| object.to_string())
+                    .collect::<Vec<String>>(),
+            ));
+        }
+        Err(recovery_apply_failed(action.summary(), &refusal))
+    }
 }

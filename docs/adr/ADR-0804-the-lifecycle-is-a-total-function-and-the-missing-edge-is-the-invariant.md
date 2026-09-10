@@ -1,6 +1,6 @@
 # ADR-0804: The plan lifecycle is a total function, and the edge that is absent is the invariant
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0833
 - Date: 2026-09-09
 - Spec refs: v0.6 §2.3, §4.1, §4.5, §4.7, Appendix F, Appendix F.2
 - Decided by: agent (autonomous)

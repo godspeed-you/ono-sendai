@@ -233,6 +233,44 @@ Default view: `path`, `name`, `parent`
 | `name` | `string` | — | required | The last component of the path, `nginx.service` — what a place view shows. |
 | `parent` | `path` | — | nullable | The path of the enclosing control group; null for the root of the hierarchy. |
 
+## ChangePlan — `ono.change-plan/1`
+
+One proposed change, with what it would touch, what would protect it and what would remain irreversible.
+
+Identity: `id`, `revision`
+
+Default view: `id`, `revision`, `state`, `protection_level`, `risk`, `intent`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The plan's stable identity (§3.2). References resolve on an unambiguous prefix of it (§36.4). |
+| `revision` | `int` | — | required | The monotonically increasing revision (§3.2). Any change to the plan's semantics — targets, actions, strategy, protection policy, accepted risk — creates a new one rather than editing this (§4.4, §7.5). |
+| `kind` | `enum` | — | required | Whether this plan changes the system forward or restores it. §3.8 makes a RecoveryPlan a specialised ChangePlan, so it carries the same lifecycle and the same gates (§2.12). |
+| `state` | `enum` | — | required | Where the plan is in §4.1. `prepare-failed` means no mutating action ran (Appendix F); `apply-failed` means what ran, ran. The distinction is load-bearing and lives only here. |
+| `intent` | `string` | — | required | The operator's requested change at the highest semantic level (§3.1). |
+| `source` | `string` | — | required | What the operator typed, kept so `explain` can show where the plan came from. |
+| `session` | `string` | — | required | The session the plan was created in, which §42.4 uses to keep two of them from applying it at once. |
+| `created_at` | `timestamp` | — | required | When the plan was created (§46.1). |
+| `sealed_at` | `timestamp` | — | nullable | When the plan was sealed (§4.4). Null for a draft, which has no digest either. |
+| `expires_at` | `timestamp` | — | nullable | When the sealed plan stops being appliable (§4.1's `EXPIRED`). Null where no window was set. |
+| `targets` | `list<record>` | — | required | The frozen object identities (§4.3, §7.1) — schema, identity, label, host and the persistence domain each resolves to. §2.6 forbids this set changing after the seal. |
+| `actions` | `list<ono.plan-action/1>` | — | required | The ordered action graph (§3.3, §46.2), roles included, so PREPARE is visible before MUTATE. |
+| `effects` | `list<ono.proposed-effect/1>` | — | required | Every effect every action declares, at §8.1's four confidence classes. §2.4 keeps `unknown` here rather than dropping it. |
+| `impact_summary` | `record` | — | required | §9.5's blast radius — `direct_targets`, `direct_effects`, `dependents`, `transitive`, `external`, `boundary_count`, `hosts`, `complete`, `truncated_reason`, and the bounded label lists `direct_labels`, `dependent_labels`, `possible_labels` and `boundary_labels` that §20.2's plan view names its rows from. `impact <plan>` returns the full `ono.impact-graph/1`; this is the summary, and §9.6 is why it counts boundaries beside objects rather than under them. |
+| `protection` | `list<ono.protection-coverage/1>` | — | required | The coverage matrix of §10.3, one row per mutation domain. §10.1 forbids reducing this to a boolean, and §62.1 is what happens when someone does. |
+| `protection_level` | `enum` | — | required | §10.2's plan-level status, composed from `protection` by Appendix A.5 and capped by A.7. It is derived, never asserted: §4.6 forbids the word `protected` for partial coverage. |
+| `protection_mode` | `enum` | — | required | The policy the plan runs under (§17.2). `prefer` is the interactive default (§17.1). |
+| `coverage_exclusions` | `list<record>` | — | required | What the protection does not cover, and which of it is irreversible rather than merely uncovered (§10.3, §2.13). Appendix A.5 requires this beside the class, always. |
+| `risk` | `enum` | — | required | §19.2's class, composed from rule findings. §19.1 keeps it independent of protection: a strongly protected plan can still be dangerous. |
+| `risk_findings` | `list<record>` | — | required | Each rule that contributed, with the dimension it found and the sentence a gate shows. §40.2 prints these instead of a generic question, and §62.11 forbids generating them. |
+| `strategy` | `string` | — | required | The execution strategy (§28.4) — `sequential`, `batch N`, `canary N then batch N` or `parallel N`. Part of the seal, because it changes operational risk (§28.5). |
+| `verification_contracts` | `list<record>` | — | required | What will be checked afterwards (§23.1). A plan containing a MUTATE action cannot be sealed without at least one. |
+| `preconditions` | `list<record>` | — | required | The facts revalidated immediately before PREPARE (§7.2, §7.3). |
+| `provider_bindings` | `list<record>` | — | required | Every provider the plan resolved against, and the version whose semantics it used. §4.4 puts these in the seal; Appendix G.4 is why the version matters. |
+| `accepted_risk_overrides` | `list<string>` | — | required | The acknowledgements the operator has given (§19.4), stored in the sealed revision so that accepting a risk re-seals the plan rather than editing it in place. |
+| `requires_privilege` | `bool` | — | required | Whether any action needs elevated privilege, which §43.3 requires the plan to show. |
+| `digest` | `string` | — | nullable | The canonical seal digest of §4.4, over revision, targets, action graph, provider identities and versions, preconditions, protection policy, verification contracts and accepted overrides. Null for a draft. |
+
 ## ChangeSummary — `ono.change-summary/1`
 
 What changed around a place in a time window, or why nothing can be said about it.
@@ -247,6 +285,30 @@ Default view: `window`, `state`, `source`
 | `state` | `enum` | — | required | Whether changes could be observed at all (§35.2). `unsupported` means no event source and no comparison snapshot existed, which §24.3 forbids being rendered as "nothing changed". |
 | `source` | `string` | — | nullable | What the changes were observed through — an event stream or a snapshot comparison (§25.4). |
 | `entries` | `list<record>` | — | required | The changes themselves, each carrying the object it happened to and when it was observed. |
+
+## ChangeVerificationResult — `ono.change-verification/1`
+
+Whether one observable condition held after a change, and what was actually seen.
+
+Identity: `plan_id`, `check_id`
+
+Default view: `class`, `subject`, `status`, `observed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `plan_id` | `string` | — | required | The plan the check belongs to (§23.3). |
+| `check_id` | `string` | — | required | The check's stable identity (§23.3). |
+| `class` | `enum` | — | required | §23.2's classes. A failing `required` postcondition makes the plan FAILED; a failing `advisory` one may make it DEGRADED; `observational` provides context and changes nothing. |
+| `subject` | `string` | — | required | What the check is about — `nginx.service`, `listener :443`, `installed version`. |
+| `expression` | `string` | — | required | The condition, as a person and a machine both read it. |
+| `status` | `enum` | — | required | §23.3's outcome. `unknown` means the check could not be answered — a timeout, an absent source — and §23.5 forbids treating it as success. |
+| `observed` | `value` | — | nullable | What was actually seen, or null where nothing could be observed. |
+| `expected` | `value` | — | nullable | What the contract expected, where it stated a value. |
+| `evidence` | `list<string>` | — | required | What the observation rests on, so a verification can be argued with rather than believed. |
+| `equivalence_domain` | `enum` | — | nullable | For a recovery verification, which of §25.1's domains this result speaks about. §25.3 forbids a global claim, so a recovery result without a domain claims nothing. |
+| `equivalence_state` | `enum` | — | nullable | For a recovery verification, what happened to this subject (§25.2). It is a different fact from `status`: a restarted service's worker PIDs differ, and §25.2 shows that as `DIFFERENT / EXPECTED` rather than as a failure, because recovery never claimed to restore them. No §23.3 status carries that, so a renderer without this field would have to invent it — and §25.3 is exactly the sentence forbidding a renderer to invent a recovery claim. Null for an ordinary plan verification, which speaks about no equivalence domain. |
+| `detail` | `string` | — | nullable | The sentence a person reads beside the result. |
+| `timestamp` | `timestamp` | — | required | When it was observed (§23.3). |
 
 ## ClientKey — `ono.client-key/1`
 
@@ -766,6 +828,29 @@ Default view: `reference`, `id`, `size`, `created`
 | `tags` | `list<string>` | — | nullable | Every repository tag the image carries. |
 | `size` | `bytesize` | — | nullable | The image's size on disk, as the engine reports it. |
 | `created` | `timestamp` | — | nullable | When the image was built. |
+
+## ImpactGraph — `ono.impact-graph/1`
+
+What a plan could touch, how Ono knows, and where its knowledge stops.
+
+Identity: `plan_id`
+
+Default view: `plan_id`, `direct_targets`, `dependents`, `transitive`, `boundary_count`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `plan_id` | `string` | — | required | The plan this graph is about. |
+| `nodes` | `list<record>` | — | required | Every object in the graph: its canonical identity and label, its type, its §9.2 class, its depth, the v0.4 relation that reached it, that edge's confidence unchanged, and its host. |
+| `boundaries` | `list<record>` | — | required | §9.6's opaque boundaries: the last object Ono can see, what lies past it, and why the graph stops there. An empty list means the graph reached the edge of what evidence supports. |
+| `direct_targets` | `int` | — | required | §9.5's count of objects the plan names. |
+| `direct_effects` | `int` | — | required | §9.5's count of objects an action's declared effects land on. |
+| `dependents` | `int` | — | required | §9.5's count of objects one relation away. |
+| `transitive` | `int` | — | required | §9.5's count of objects more than one relation away. |
+| `external` | `int` | — | required | §9.5's count of effects that leave the machine (§35.1). |
+| `boundary_count` | `int` | — | required | §9.5's count of places the graph stops. It is counted beside the objects rather than under them, because a summary that hides a boundary is the summary §9.6 forbids. |
+| `hosts` | `int` | — | required | How many hosts the graph spans (§29.1). |
+| `complete` | `bool` | — | required | Whether traversal reached the edge of the evidence rather than a budget (§52.2). |
+| `truncated_reason` | `string` | — | nullable | Why traversal stopped early, where it did. Null when `complete` is true. |
 
 ## InterfaceAddress — `ono.interface-address/1`
 
@@ -1298,6 +1383,32 @@ Default view: `title`, `state`, `when`, `scope`
 | `derived` | `bool` | — | required | Whether the host derived the permission because the package declared none for the capability (K11P §8.1). |
 | `decided_at` | `timestamp` | — | nullable | When the standing decision was made. Null when nothing has decided it. |
 
+## PersistenceDomain — `ono.persistence-domain/1`
+
+Where a path's state actually lives, and whether a local provider can protect it.
+
+Identity: `path`
+
+Default view: `path`, `filesystem_kind`, `object`, `boundary`, `protectable`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `path` | `string` | — | required | The path that was resolved. |
+| `mount_point` | `string` | — | required | The namespace-visible mount the path resolves through (Appendix B.1, B.2). |
+| `mount_id` | `string` | — | required | The kernel's mount id, so two mounts of one filesystem stay distinguishable. |
+| `filesystem` | `string` | — | required | The filesystem type as the kernel spells it. |
+| `filesystem_kind` | `enum` | — | required | How Ono classified it. Appendix B.8 and B.9 forbid inferring a snapshot mechanism from a name, so anything unrecognised is `other` rather than a guess. |
+| `source` | `string` | — | required | The mount source — a device, a ZFS dataset name, a server export. For ZFS this is the dataset, which Appendix B.8 requires to come from mount metadata rather than a path convention. |
+| `filesystem_root` | `string` | — | required | The mount's root within its filesystem. For Btrfs this is what tells one subvolume from another (Appendix B.9). |
+| `object` | `string` | — | nullable | The backing persistence object — the dataset, the subvolume id, the logical volume. Null where the pipeline could not be completed, which is a refusal rather than an absence. |
+| `object_kind` | `string` | — | required | What kind of object it is — `zfs-dataset`, `btrfs-subvolume`, `file`, `none`. |
+| `boundary` | `string` | — | nullable | The snapshot boundary the object sits inside (§13.4, §14.3). Nested subvolumes and child datasets are separate boundaries, whatever the paths look like. |
+| `read_only` | `bool` | — | required | Whether the mount is read-only, which prevents a restore into it (Appendix G.2). |
+| `namespace` | `string` | — | nullable | The mount namespace this reading was taken in (Appendix B.2). A path inside a container may map differently from the host path of the same name. |
+| `protectable` | `bool` | — | required | Whether a local recovery provider may be asked to protect this path. |
+| `refusal` | `enum` | — | nullable | Why it is not protectable, where it is not. Null when it is. |
+| `detail` | `string` | — | required | The sentence `inspect plan` shows beside the resolution (Appendix B.10). |
+
 ## PlaceView — `ono.place-view/1`
 
 The current place, its exits, its landmarks and what changed around it.
@@ -1324,6 +1435,32 @@ Default view: `label`, `type`, `hostname`, `generated_at`
 | `system` | `ono.system/1` | — | nullable | The `SystemPlace` of §7.1 in full, carried by `look --all` at the root. §24.1 keeps the exhaustive view of the object behind a place out of the default `look`, so the default names the system and `--all` describes it. |
 | `changed` | `ono.change-summary/1` | — | nullable | What changed in the window `--changes` asked for (§24.3). Null when the user did not ask; never a fabricated summary when no event source or comparison snapshot exists. |
 | `generated_at` | `timestamp` | — | required | When the view was made. |
+
+## PlanAction — `ono.plan-action/1`
+
+One semantically meaningful operation in a plan, with how it runs and what it may do.
+
+Identity: `id`
+
+Default view: `ordinal`, `role`, `summary`, `status`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The action's stable identity within its plan (§3.3). |
+| `ordinal` | `int` | — | required | Its position in the plan, which is also the number the plan view shows beside it (§20.2). |
+| `role` | `enum` | — | required | §3.3's roles. `prepare` runs immediately before the first mutation (§4.5) and its failure means no mutating action ran at all (§2.3). |
+| `summary` | `string` | — | required | The line a person reads in the plan view (§20.2, Appendix E.2). |
+| `target` | `string` | — | nullable | The frozen target this action acts on (§7.1). Null where the action acts on the plan rather than an object. |
+| `execution` | `record` | — | required | How the action runs: a `method` of `provider-action`, `program`, `recovery-operation` or `opaque`, the provider or resolved program, and typed arguments or an argument vector. §12.3 forbids a generated shell string anywhere in it. |
+| `provider` | `string` | — | required | The provider or program that carries the action out, for the plan's provider bindings (§4.4). |
+| `depends_on` | `list<string>` | — | required | The actions this one runs after (§3.2's directed acyclic graph). |
+| `preconditions` | `list<record>` | — | required | The facts that must still hold, each with its kind, its expected value and whether drift in it is material (§7.2, §7.4). |
+| `idempotency` | `enum` | — | required | §41.1's class. §41.2 forbids blindly rerunning `unknown` or `non-idempotent` after a crash, so `unknown` is not a soft `idempotent`. |
+| `proposed_effects` | `list<ono.proposed-effect/1>` | — | required | What the action may do, at §8.1's confidence classes. |
+| `recovery_semantics` | `string` | — | nullable | What the contract says about undoing this action, or null — which §6.1 calls "explicit lack thereof" and which is shown as such rather than inferred. |
+| `requires_privilege` | `bool` | — | required | Whether the action needs elevated privilege, which §43.3 requires the plan to show before apply. |
+| `verification` | `list<string>` | — | nullable | The verification checks that speak to this action, by identity (§23.1). |
+| `status` | `enum` | — | required | What is known about the outcome. `unknown` is Appendix F.2's uncertainty boundary — not a failure, not a success — and §41.2 treats it as a reason not to retry. |
 
 ## PluginAuditEvent — `ono.plugin-audit-event/1`
 
@@ -1584,6 +1721,54 @@ Default view: `pid`, `name`, `cpu`, `memory`, `user`
 | `container` | `ref<ono.container/1>` | — | nullable | The container the process runs in; null outside a container or without a provider. |
 | `pid_namespace` | `int` | — | nullable | The inode of the pid namespace the `pid` was read in, from `/proc/<pid>/ns/pid`. Two processes in different namespaces can carry the same pid number, so the spatial layer needs this to tell a container's pid 1 from the host's (spec v0.4 §10.2). Never the root namespace, which would be a guess: null on a kernel that has no namespace to name, and an error value when the kernel will not name the one it has — a refusal is not an absence (spec v0.4 §35.2). |
 
+## ProposedEffect — `ono.proposed-effect/1`
+
+One thing Ono expects an action may do, and how strongly it can say so.
+
+Identity: `id`
+
+Default view: `action_id`, `domain`, `kind`, `confidence`, `explanation`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The effect's stable identity (§8.2). |
+| `action_id` | `string` | — | required | The action this effect belongs to (§8.2). |
+| `object` | `string` | — | nullable | The object the effect lands on, or null where the effect has no single object. |
+| `domain` | `enum` | — | required | Appendix A.1's mutation domains. Protection is computed per domain, which is what makes "filesystem protected, process runtime unprotected" a statable answer (§10.3). |
+| `kind` | `enum` | — | required | What the effect does to its object. `emit` is inherently irreversible (§35.1). |
+| `confidence` | `enum` | — | required | §8.1's classes. `guaranteed` follows from the provider contract and is scoped to that provider's observable domain; `unknown` means Ono lacks a justified model and stays visible. |
+| `before` | `value` | — | nullable | The value the object holds now, where it is known (§8.2). |
+| `proposed` | `value` | — | nullable | The value proposed for it, where one is known (§8.2). |
+| `before_known` | `bool` | — | nullable | Whether `before` is known (§10.5). `true` with a null `before` says the object is known to hold nothing, `false` says its value is not known. A record without the flag reads a null `before` as not known. |
+| `proposed_known` | `bool` | — | nullable | Whether `proposed` is known (§10.5), with the same reading as `before_known`: a known null is a proposal that the object hold nothing. |
+| `evidence` | `list<string>` | — | required | The provider contracts cited in support of the claim (§8.2). |
+| `explanation` | `string` | — | required | The sentence a person reads. §20.1's fifth question — what does Ono not know? — is answered out of these, so an unknown effect with nothing to say is a gap where a reason belongs. |
+| `irreversible` | `bool` | — | required | Whether no recovery asset can undo this effect (§2.13). A protected filesystem does not hide an irreversible network call or process signal. |
+| `compensation` | `string` | — | nullable | A declared inverse action that restores an acceptable semantic state (§27.4). It is compensation, not rollback, and §27.4 forbids the second word for it. |
+
+## ProtectionCoverage — `ono.protection-coverage/1`
+
+What one mutation domain of a plan needs to get back, and what actually covers it.
+
+Identity: `domain`
+
+Default view: `domain`, `objective`, `protection`, `satisfied`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `domain` | `enum` | — | required | Appendix A.1's mutation domain this row is about. |
+| `objective` | `enum` | — | required | Appendix A.2's recovery objective. `preserve-exact` suits file and configuration state; `restore-semantic` suits state whose identity may legitimately change, such as worker PIDs. |
+| `protection` | `enum` | — | required | What covers the domain. There is no `partially-protected` here: a domain is atomic, and partial coverage is a statement about a plan spanning several of them. |
+| `satisfied` | `bool` | — | required | Whether what covers the domain meets what it needs (Appendix A.5). A `preserve-exact` objective is satisfied only by a captured state image, never by compensation. |
+| `required` | `bool` | — | required | Whether the plan must cover this domain before it may be called protected. False for `no-recovery-required`, and for a domain policy has explicitly declared irrelevant (Appendix A.7). |
+| `declared_irrelevant` | `bool` | — | required | Whether an operator's policy declared this domain irrelevant to the requested recovery objective. Appendix A.7's only escape from the unknown cap, and it is a decision recorded in the sealed plan rather than a default — which is why it travels beside `required` instead of being inferred from it. |
+| `assets` | `list<string>` | — | required | The validated recovery assets that cover this domain (§11.4). |
+| `consistency` | `enum` | — | nullable | The consistency the covering mechanism achieves (§11.3). Null where nothing covers the domain. |
+| `transaction_scope` | `string` | — | nullable | The provider whose transaction boundary this domain sits inside (§27.1). §27.2 forbids calling a plan transactional once two boundaries are involved. |
+| `exclusions` | `list<record>` | — | required | What this row does not cover, each with a reason and whether it is irreversible rather than merely uncovered (§10.3, §2.13). |
+| `not_protected_by` | `list<string>` | — | nullable | §13.4's `NOT PROTECTED BY`: the objects that enclose this domain — a parent dataset, the dataset mounted above it — and whose snapshot would not reach it. Named by the provider that resolved them, never inferred from a path. Null in a plan stored before the field existed. |
+| `note` | `string` | — | required | The sentence a person reads beside the row (§13.8's rendering). |
+
 ## Provider — `ono.provider/1`
 
 One provider a shell or a linked host offers, by its stable id.
@@ -1645,6 +1830,105 @@ Default view: `running`, `events`, `earliest`, `latest`, `health`
 | `dropped` | `int` | — | required | How many events the bounded queues of §43.1 discarded. §43.2 forbids silent loss, so the count is part of the status rather than a log line. |
 | `health` | `enum` | — | required | §43.4's recorder health. `degraded` is what a run of dropped events or a coverage loss produces; §21.8 forbids freezing the last known state and calling it current. |
 | `diagnostic` | `string` | — | nullable | Why the recorder is not retaining history, where it is `failed`. §44.3 requires an upgrade whose migration cannot complete safely to leave the shell working with temporal persistence disabled *and an explicit diagnostic*, and §31.7 requires a store that cannot be read to name itself. A health of `failed` with no reason beside it is the shape of both those rules half-kept: the user learns that history stopped and not what to do about it. Null whenever the recorder has nothing to explain. |
+
+## RecoveryAsset — `ono.recovery-asset/1`
+
+One concrete resource that can contribute to restoring state, and exactly what it holds.
+
+Identity: `id`
+
+Default view: `id`, `type`, `source_plan`, `state`, `consistency`, `expires_at`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The asset's stable identity (§11.1). |
+| `provider` | `string` | — | required | The recovery provider that owns it — `ono.recovery.zfs`, `ono.recovery.btrfs`, `ono.recovery.file-copy` (§3.7). |
+| `type` | `enum` | — | required | The mechanism (§3.6, §16). |
+| `reference` | `string` | — | required | The provider-native reference — `rpool/ROOT/debian@ono-a82f`, a subvolume path, a store path, a savepoint name. Sanitised at creation (§43.6). |
+| `host` | `string` | — | required | The host the asset lives on (§11.1, §29.2). |
+| `scope` | `record` | — | required | What it protects, concretely (§11.2): the resolved persistence object, its kind, and the objects it actually covers. Membership is exact; a path prefix is not coverage (§13.4). |
+| `created_at` | `timestamp` | — | required | When it was created (§11.1). |
+| `source_plan` | `string` | — | nullable | The plan that asked for it, or null for an asset that predates any plan (§11.1). |
+| `state` | `enum` | — | required | §11.1's lifecycle. `proposed` is what a plan carries before apply, because §2.1 makes planning side-effect free; only a validation that passed reaches `ready` (§11.4). |
+| `consistency` | `enum` | — | required | §11.3's classes. §39.2 forbids Ono labelling a filesystem snapshot of a database `application-consistent` unless a database-aware provider asserts it. |
+| `restore_method` | `enum` | — | required | How the asset would actually be used (§13.5, §14.4). Appendix C.1 orders these least-destructive first and requires the least one that satisfies the goal. |
+| `validation` | `record` | — | nullable | §11.4's checks — existence, identity, scope, restore availability, permissions — and which of them passed. Null for an asset nothing has validated, which is not the same as one that failed. |
+| `retention` | `duration` | — | required | How long the asset is kept after successful verification (§37.1). Default twenty-four hours. |
+| `expires_at` | `timestamp` | — | nullable | When retention ends, where it is known (§37.5). |
+| `held` | `bool` | — | required | Whether an explicit hold prevents automatic removal. §37.2 holds the assets of a failed, degraded or recovery-failed plan out of ordinary success retention. |
+| `initial_size` | `bytesize` | — | nullable | The space the asset occupied when it was created, or null where it is not measurable (§38.2). |
+| `retained_size` | `bytesize` | — | nullable | The space it occupies now, or null. §38.2 forbids displaying "free" for a copy-on-write snapshot. |
+| `size_estimated` | `bool` | — | required | Whether the size figures are estimated rather than exact. §37.5 requires the label wherever filesystem accounting is not exact. |
+| `creation_latency` | `duration` | — | nullable | How long creating the asset took, or is expected to take (§38.1's initial latency). Null where nobody measured it, which is not zero (spec v0.2 §35.3). |
+| `io_overhead` | `percent` | — | nullable | The I/O overhead retaining the asset imposes, as a share (§38.1). Null wherever no provider measured it, which is every first-party snapshot provider: the copy-on-write cost of a retained snapshot depends on the writes that follow it. Null is unknown, not zero, and §38.2 forbids reading it as free. |
+| `quiesce_duration` | `duration` | — | nullable | How long an application must be paused for this asset (§38.1, §18.4). Null where no quiesce is involved. §18.4 bounds the window and requires the application to be resumed when snapshot creation fails. |
+| `requires_reboot` | `bool` | — | required | Whether restoring from this asset needs a reboot (§13.7, §14.6). |
+| `requires_offline` | `bool` | — | required | Whether restoring from it needs the filesystem unmounted or the system offline (§13.7). |
+| `cleanup_latency` | `duration` | — | nullable | How long removing the asset is expected to take (§38.1's cleanup cost). Null where the provider does not state it. §37.3's preview shows it where it is known, because a cleanup that takes an hour is a different decision from one that takes a second. |
+| `shares_failure_domain` | `bool` | — | required | Whether the asset lives on the storage it protects. §11.5 and §14.7 require a local copy-on-write snapshot to be described as a recovery point, not a backup. |
+| `dependencies` | `list<string>` | — | required | Other assets this one needs to be usable (§11.1). |
+| `exclusions` | `list<record>` | — | required | What the asset explicitly does not protect, each with a reason (§11.1). §13.8's rendering is built from these. |
+| `captured_state` | `string` | — | nullable | A fingerprint of the state the asset captured (§18.3). Null means Ono cannot say the asset is a just-before-change recovery point, and will not pretend it is. |
+
+## RecoveryCandidate — `ono.recovery-candidate/1`
+
+Protection a provider could create for one domain, and what it would and would not do.
+
+Identity: `provider`, `domain`, `scope_object`
+
+Default view: `provider`, `domain`, `scope_object`, `consistency`, `restore_method`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `provider` | `string` | — | required | The recovery provider offering it. |
+| `domain` | `enum` | — | required | The mutation domain it would cover (Appendix A.1). |
+| `objective` | `enum` | — | required | The recovery objective it would satisfy (Appendix A.2). |
+| `scope_object` | `string` | — | required | The resolved persistence object it would capture (§11.2). |
+| `scope_kind` | `string` | — | required | What kind of object that is — `zfs-dataset`, `btrfs-subvolume`, `file`. |
+| `scope_width` | `int` | — | required | How many objects the scope holds. Appendix A.4's second preference key: the smallest scope that satisfies the objective wins, because it has the smallest recovery blast radius. |
+| `consistency` | `enum` | — | required | The consistency it would achieve (§11.3). |
+| `restore_method` | `enum` | — | required | How the resulting asset would be used to restore (Appendix C.1). |
+| `restore_destructiveness` | `int` | — | required | How much unrelated state that method risks, least first. Appendix A.4's fourth preference key, and the reason a rollback does not beat a file copy merely by being bigger. |
+| `estimated_size` | `bytesize` | — | nullable | What it would occupy, where the provider can estimate it. Null is unknown, not zero (§38.2). |
+| `creation_requirements` | `list<string>` | — | required | What creating it needs — a capability, free space, a quiesce window (Appendix A.3). |
+| `restore_requirements` | `list<string>` | — | required | What restoring from it needs — a reboot, an unmount, a privilege stronger than the mutation itself required. §43.4 requires this to be discovered before protection is advertised. |
+| `exclusions` | `list<record>` | — | required | What it would not cover, each with a reason (Appendix A.3). |
+| `detail` | `string` | — | required | The sentence the plan view shows. |
+
+## RecoveryPlan — `ono.recovery-plan/1`
+
+What recovering a change would restore, what it would destroy, and what it cannot touch.
+
+Identity: `id`
+
+Default view: `id`, `source_plan`, `method`, `requires_acceptance`, `risk`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The recovery plan's identity. It is a ChangePlan (§3.8), so this is a plan id. |
+| `source_plan` | `string` | — | nullable | The plan being recovered from, or null when recovering from an asset directly (§5.8). |
+| `source_assets` | `list<string>` | — | required | The recovery assets this plan would use (§46.5). |
+| `goal` | `enum` | — | required | Appendix C.2's goal. The normal one is to restore the objects the original plan changed, not to rewind a whole persistence domain to a timestamp. |
+| `method` | `enum` | — | required | The method that will actually be used (§13.5, §14.4). Appendix C.1 requires the least-destructive method that satisfies the goal, and §62.5 forbids the convenient one. |
+| `target_state` | `string` | — | required | The state that would be restored — the asset, the version, the checkpoint (§46.5). |
+| `restore_actions` | `list<ono.plan-action/1>` | — | required | The actions the recovery would take (§46.5). |
+| `restores` | `list<string>` | — | required | The objects that would come back (§24.4's "will restore"). |
+| `newer_state` | `list<record>` | — | required | Appendix C.3's classification of everything that changed after the recovery point: `preserved-by-method`, `discarded-by-method`, `conflicting` or `unknown`, each with when it changed and why it is classified so. |
+| `newer_state_analysed` | `bool` | — | required | Whether the drift analysis actually ran. False is not "nothing would be lost": §62.8 makes an unanalysed recovery a gated one. |
+| `destroyed_assets` | `list<string>` | — | required | Provider-native objects the recovery would destroy — newer snapshots, bookmarks, clones (§13.6, §24.5). Ono never adds a destructive flag that produces these silently. |
+| `discarded_size` | `bytesize` | — | nullable | How much live data would be discarded, where it could be estimated (§24.5). |
+| `unrecoverable_effects` | `list<record>` | — | required | What recovery cannot reverse (§24.3, §35.2), each with its domain, its reason and any compensating action. A compensation does not remove an effect from this list (§35.3). |
+| `metadata_restored` | `list<string>` | — | required | Which pieces of file metadata the restore actually puts back — content, mode, owner, ACLs, xattrs, capabilities, SELinux labels, hard links (Appendix C.7). |
+| `metadata_gaps` | `list<string>` | — | required | Which it does not. Appendix C.7: missing metadata support reduces recovery coverage and MUST be visible. |
+| `directory_policy` | `enum` | — | required | What happens to files that exist now and did not then (Appendix C.6). The default keeps them; deleting newer extra files is a choice the objective has to require. |
+| `state` | `enum` | — | required | Where the recovery plan is in §4.1. §2.12 puts recovery through the same lifecycle as any other change, so this is the same machine — and a reader needs it for the same reason: `recovery-planned` means nothing has been restored, and `recovery-failed` means the remaining assets and the exact partial state are preserved (Appendix F). |
+| `risk` | `enum` | — | required | The recovery's own risk class (§19.2). Recovering is itself a change (§2.12). |
+| `requires_reboot` | `bool` | — | required | Whether recovery takes effect only after a reboot (§13.7, §14.6). |
+| `requires_offline` | `bool` | — | required | Whether recovery needs the filesystem unmounted or the system offline (§13.7). |
+| `requires_acceptance` | `bool` | — | required | Whether §24.5's explicit gate is still outstanding. True whenever newer state would be discarded, a provider-native object destroyed, or the analysis could not be completed. |
+| `verification_contracts` | `list<record>` | — | required | What will be checked after recovery (§25). §25.1 keeps persistent, runtime and external equivalence separate, so these carry the domain each one speaks about. |
+| `rejected_methods` | `list<record>` | — | nullable | The methods that were offered and not chosen (Appendix C.1), each with its `provider`, `method`, `reason` (`dominated`, `goal-unsatisfied`, `metadata-shortfall`, `semantic-shortfall`), `unmet` and `detail`, and `would_discard` — the newer state it would have taken. Appendix I.5 requires the view to show that a full rollback would discard the later changes a selective restore keeps. `would_discard` is null where nothing analysed it, and the whole field is null where the planner did not record the alternatives (§10.5). Appended and nullable, so the change is additive and the schema stays at version 1. |
+| `services_affected` | `list<record>` | — | nullable | The services the recovery stops or restarts (§24.3), each with its `service` and an `action` of `stop` or `restart`. Null where the planner did not establish which, which is not the same answer as an empty list. Appended and nullable, so the change is additive. |
 
 ## RouteEvent — `ono.route-event/1`
 

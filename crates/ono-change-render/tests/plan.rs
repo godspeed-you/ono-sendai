@@ -213,9 +213,31 @@ fn should_list_the_verification_contracts_the_plan_carries() {
     );
 }
 
+/// The nginx plan with §19.4's known irreversible action: a rule found the irreversibility.
+fn irreversible_nginx_plan() -> RecordValue {
+    support::rewritten(
+        &sealed_nginx_plan(),
+        "risk_findings",
+        ono_value::Value::list([support::map(&[
+            ("dimension", support::s("irreversibility")),
+            ("class", support::s("moderate")),
+            ("rule", support::s("rule.webhook.emit")),
+            ("reason", support::s("the reload webhook cannot be un-sent")),
+        ])]),
+    )
+}
+
+/// The line after `approval`, which is §20.1's answer to question 9.
+fn approval(lines: &[String]) -> Vec<String> {
+    block(lines, "approval")
+        .into_iter()
+        .map(|line| line.trim().to_owned())
+        .collect()
+}
+
 #[test]
 fn should_name_the_acknowledgement_an_irreversible_plan_still_needs() {
-    let lines = view(&sealed_nginx_plan());
+    let lines = view(&irreversible_nginx_plan());
     let index = lines
         .iter()
         .position(|line| line == "approval")
@@ -242,24 +264,24 @@ fn should_say_no_approval_is_required_when_none_is() {
 
 #[test]
 fn should_stop_asking_for_an_acknowledgement_the_plan_already_carries() {
-    let mut fields: Vec<(&str, ono_value::Value)> = Vec::new();
-    for name in [
-        "id",
-        "revision",
-        "state",
-        "intent",
-        "coverage_exclusions",
-        "risk",
-    ] {
-        if let Some(value) = sealed_nginx_plan().get(name) {
-            fields.push((name, value.clone()));
-        }
-    }
-    fields.push((
+    let approval = |lines: &[String]| -> String {
+        let index = lines
+            .iter()
+            .position(|line| line == "approval")
+            .expect("§20.1 question 9 is answered");
+        lines[index + 1].trim().to_owned()
+    };
+    // The control: the same sealed plan, with nothing acknowledged, is gated.
+    let unacknowledged = plan_view(&irreversible_nginx_plan(), &[], 80, Charset::Ascii);
+    assert!(
+        approval(&unacknowledged).contains("--accept-irreversible"),
+        "precondition: a rule found the plan irreversible, so it asks"
+    );
+    let accepted = support::rewritten(
+        &irreversible_nginx_plan(),
         "accepted_risk_overrides",
         support::list(&["--accept-irreversible"]),
-    ));
-    let accepted = support::record("ono.change-plan", &fields);
+    );
     let lines = plan_view(&accepted, &[], 80, Charset::Ascii);
     let index = lines
         .iter()
@@ -378,5 +400,230 @@ fn should_neutralise_control_characters_a_target_label_carries() {
     assert!(
         !lines.iter().any(|line| line.contains('\u{1b}')),
         "v0.2 §49: an escape in a plan's own text must not reach the terminal"
+    );
+}
+
+/// §6.3's opaque escape as `ono.change-plan/1` carries it: one effect whose domain, kind and
+/// confidence are all unknown, which is not marked irreversible because §19.4 gates only *known*
+/// irreversibility, and a graph that ends at the boundary the command is.
+fn opaque_plan() -> RecordValue {
+    let explanation = "opaque action `touch work/opq`: the operator acknowledged that Ono cannot \
+                       reason about what this command touches (§6.3), so its domain, its scope \
+                       and its reversibility are all unknown";
+    let effect = support::nested(
+        "ono.proposed-effect",
+        &[
+            ("id", support::s("effect/opaque")),
+            ("object", ono_value::Value::Null),
+            ("domain", support::s("unknown")),
+            ("kind", support::s("unknown")),
+            ("confidence", support::s("unknown")),
+            ("explanation", support::s(explanation)),
+            ("irreversible", ono_value::Value::Bool(false)),
+        ],
+    );
+    support::record(
+        "ono.change-plan",
+        &[
+            ("id", support::s("97d5c0de12345678")),
+            ("revision", support::i(1)),
+            ("state", support::s("sealed")),
+            ("intent", support::s("touch work/opq")),
+            (
+                "targets",
+                ono_value::Value::list([support::map(&[
+                    ("schema", support::s("ono.host/1")),
+                    ("identity", support::s("localhost")),
+                    ("label", support::s("localhost")),
+                ])]),
+            ),
+            (
+                "actions",
+                ono_value::Value::list([support::action(
+                    1,
+                    "mutate",
+                    "opaque action: touch work/opq",
+                    Some("localhost"),
+                    "pending",
+                    ono_value::Value::list([effect.clone()]),
+                )]),
+            ),
+            ("effects", ono_value::Value::list([effect])),
+            (
+                "impact_summary",
+                support::map(&[
+                    ("direct_targets", support::i(1)),
+                    ("boundaries", support::i(1)),
+                    ("complete", ono_value::Value::Bool(false)),
+                    (
+                        "truncated_reason",
+                        support::s(
+                            "the opaque action `touch work/opq` has no model Ono can traverse",
+                        ),
+                    ),
+                    (
+                        "boundary_labels",
+                        support::list(&["opaque action: touch work/opq"]),
+                    ),
+                ]),
+            ),
+            (
+                "protection",
+                ono_value::Value::list([support::nested(
+                    "ono.protection-coverage",
+                    &[
+                        ("domain", support::s("unknown")),
+                        ("objective", support::s("unknown")),
+                        ("protection", support::s("unprotected")),
+                        ("required", ono_value::Value::Bool(true)),
+                        ("exclusions", ono_value::Value::list([])),
+                        ("note", support::s("nothing covers an unknown domain")),
+                    ],
+                )]),
+            ),
+            ("protection_level", support::s("unprotected")),
+            ("coverage_exclusions", ono_value::Value::list([])),
+            ("risk", support::s("unknown")),
+            ("risk_findings", ono_value::Value::list([])),
+            ("accepted_risk_overrides", ono_value::Value::list([])),
+        ],
+    )
+}
+
+/// The lines of one block of the view, up to the blank line that ends it.
+fn block(lines: &[String], heading: &str) -> Vec<String> {
+    lines
+        .iter()
+        .skip_while(|line| line.as_str() != heading)
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn should_list_an_effect_whose_reversibility_is_unknown_as_not_recoverable() {
+    let lines = view(&opaque_plan());
+    let body = block(&lines, "not recoverable");
+    assert!(
+        body.iter()
+            .any(|line| line.contains("reversibility unknown: opaque action `touch work/opq`")),
+        "v0.6 §6.3 makes an opaque action's reversibility unknown and §2.4 forbids promoting it, \
+         so §20.1 question 7 names it. Got {body:?}"
+    );
+    assert!(
+        !body
+            .iter()
+            .any(|line| line.contains("nothing was recorded")),
+        "§2.4: an unknown reversibility is not an absence of loss. Got {body:?}"
+    );
+}
+
+#[test]
+fn should_not_list_an_unknown_effect_a_recovery_asset_covers_as_not_recoverable() {
+    let plan = support::rewritten(
+        &sealed_nginx_plan(),
+        "effects",
+        ono_value::Value::list([support::nested(
+            "ono.proposed-effect",
+            &[
+                ("id", support::s("effect/conf")),
+                ("object", support::s("/etc/nginx/conf.d")),
+                ("domain", support::s("filesystem-persistent")),
+                ("kind", support::s("modify")),
+                ("confidence", support::s("unknown")),
+                ("explanation", support::s("an include nobody resolved")),
+                ("irreversible", ono_value::Value::Bool(false)),
+            ],
+        )]),
+    );
+    let body = block(&view(&plan), "not recoverable");
+    assert!(
+        !body
+            .iter()
+            .any(|line| line.contains("reversibility unknown")),
+        "§10.3: an effect in a domain a recovery asset protects is recoverable whatever the \
+         provider could not say about it. Got {body:?}"
+    );
+}
+
+#[test]
+fn should_name_the_boundary_an_opaque_action_is_in_the_unknown_row() {
+    let lines = view(&opaque_plan());
+    let row = block(&lines, "impact")
+        .into_iter()
+        .find(|line| line.trim_start().starts_with("unknown"))
+        .expect("§20.2's impact block has an `unknown` row");
+    assert!(
+        row.contains("touch work/opq"),
+        "§6.3 and §9.6: the row names where Ono's knowledge ends, and for an opaque action that \
+         is the command. Got {row:?}"
+    );
+    assert!(
+        !row.contains("external boundar"),
+        "§9.6: a boundary in an unknown domain is not an external one. Got {row:?}"
+    );
+    assert!(
+        row.chars().count() <= 80,
+        "the row fits the width it was laid out at. Got {row:?}"
+    );
+}
+
+#[test]
+fn should_not_ask_for_an_irreversible_acknowledgement_that_only_an_exclusion_suggests() {
+    // The nginx plan excludes TCP sessions nothing can re-establish, and no rule found an
+    // irreversible action: §19.4 gates the second and never the first.
+    let lines = view(&sealed_nginx_plan());
+    assert_eq!(
+        approval(&lines),
+        vec!["none required".to_owned()],
+        "§19.4 requires `accept_irreversible` for known irreversible actions, which the rules \
+         find; a coverage exclusion is §10.3's answer about protection, and the shell never asks \
+         for a flag because of one"
+    );
+}
+
+#[test]
+fn should_ask_for_the_acknowledgements_the_shell_says_are_outstanding() {
+    let high = support::rewritten(&sealed_nginx_plan(), "risk", support::s("high"));
+    let mut builder = RecordValue::builder(
+        std::sync::Arc::clone(high.schema()),
+        high.provenance().clone(),
+    );
+    for field in high.schema().fields() {
+        builder = builder
+            .set(
+                field.name(),
+                high.get(field.name())
+                    .cloned()
+                    .unwrap_or(ono_value::Value::Null),
+            )
+            .expect("declared");
+    }
+    let gated = builder
+        .set_extra(
+            "ono.change/outstanding-acknowledgements",
+            ono_value::Value::list([support::map(&[
+                ("flag", support::s("--accept-service-outage")),
+                (
+                    "reason",
+                    support::s("no healthy member of the role remains"),
+                ),
+            ])]),
+        )
+        .build();
+    let lines = view(&gated);
+    let asked = approval(&lines);
+    assert!(
+        asked
+            .iter()
+            .any(|line| line.starts_with("--accept-service-outage")
+                && line.contains("no healthy member")),
+        "§40.2 and §40.3: the view names the flag the shell will ask for, with its reason. Got \
+         {asked:?}"
+    );
+    assert!(
+        !asked.iter().any(|line| line.contains("--accept-risk")),
+        "the view does not ask for a flag the shell does not name. Got {asked:?}"
     );
 }

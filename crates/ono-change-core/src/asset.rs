@@ -682,6 +682,7 @@ pub struct RecoveryAsset {
     exclusions: Vec<RecoveryExclusion>,
     captured_state: Option<Arc<str>>,
     expires_at: Option<Timestamp>,
+    shares_failure_domain: bool,
 }
 
 impl RecoveryAsset {
@@ -722,6 +723,7 @@ impl RecoveryAsset {
             exclusions: Vec::new(),
             captured_state: None,
             expires_at: None,
+            shares_failure_domain: false,
         }
     }
 
@@ -769,6 +771,7 @@ impl RecoveryAsset {
             exclusions,
             captured_state,
             expires_at,
+            shares_failure_domain: false,
         }
     }
 
@@ -1003,7 +1006,18 @@ impl RecoveryAsset {
     /// Whether the asset is a local recovery point rather than a backup (§11.5, §14.7).
     #[must_use]
     pub const fn is_local_recovery_point(&self) -> bool {
-        self.asset_type.shares_failure_domain()
+        self.shares_failure_domain || self.asset_type.shares_failure_domain()
+    }
+
+    /// Records that this asset shares its target's failure domain whatever its mechanism (§11.5).
+    ///
+    /// A copy is independent of its target only if it is stored somewhere the target's loss does
+    /// not reach. The provider that stored it knows; a file copy on the same device, or on a
+    /// container's writable layer, says so here.
+    #[must_use]
+    pub const fn sharing_failure_domain(mut self) -> Self {
+        self.shares_failure_domain = true;
+        self
     }
 
     /// Whether the asset still reflects the state named by `fingerprint` (§18.3).

@@ -1,0 +1,98 @@
+# v0.6 §50 phase P2 — §14, §56.2 and §63.9: Btrfs nested-subvolume semantics, against a real
+# filesystem.
+#
+# §14 opens by forbidding Btrfs being modelled as if it were ZFS. §14.3 is the fact the whole
+# provider turns on: snapshots are not recursive across nested subvolumes, so a snapshot of a
+# parent contains an *empty directory* where a nested subvolume was. §14.4 forbids presenting a
+# generic in-place rollback primitive that Btrfs does not have, and §14.5 keeps a recovery
+# snapshot read-only. Appendix G.3 fixes the environment: a loop file this case creates and
+# destroys. `privileged: true` hands the container the host's loop devices (ADR-0843), so the
+# acceptance run builds the filesystem for real, in the image whose btrfs-progs the provider
+# validates (ADR-0846), and every check has to run.
+case: Btrfs nested subvolumes on a filesystem this case built
+timeout: 300
+capability: SYS_ADMIN
+user: root
+security: apparmor=unconfined
+privileged: true
+image: filesystems
+env: NO_COLOR=1
+run: |
+  proved=" "
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"; proved="$proved$id "
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  require_proved() { for want in "$@"; do case "$proved" in *" $want "*) ;; *) echo "FAILED $want: this check never ran";; esac; done; }
+  skip() { echo "SKIPPED btrfs-against-a-real-filesystem: $1"; echo 'btrfs-against-a-real-filesystem: done'; exit 0; }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  domain_of() { sed -n 's/.*"targets":\[{[^]]*"persistence_domain":\("[^"]*"\|null\).*/\1/p' "$1" | head -1; }
+
+  command -v mkfs.btrfs > /dev/null 2>&1 && command -v btrfs > /dev/null 2>&1 \
+    || skip 'external_tool_unavailable: no btrfs-progs on this host'
+  image=/tmp/onobtrfs$$.img
+  mount_point=/tmp/onobtrfs$$
+  truncate -s 512M "$image" || skip 'fixture_not_applicable: no space for a loop image'
+  cleanup() { umount "$mount_point" 2>/dev/null; rm -rf "$mount_point" "$image"; }
+  trap cleanup EXIT
+  mkfs.btrfs -q "$image" > /dev/null 2>&1 || skip 'missing_privilege: mkfs.btrfs was refused'
+  losetup --find > /dev/null 2>&1 || skip 'missing_privilege: the container is given no loop device'
+  mkdir -p "$mount_point"
+  mount -o loop "$image" "$mount_point" 2>/dev/null || skip 'missing_privilege: the loop mount was refused'
+
+  echo '== §14.3: a nested subvolume is its own boundary =='
+  btrfs subvolume create "$mount_point/@var" > /dev/null
+  btrfs subvolume create "$mount_point/@var/lib-app" > /dev/null
+  printf 'parent\n' > "$mount_point/@var/parent.txt"
+  printf 'nested\n' > "$mount_point/@var/lib-app/inner.txt"
+  printf 'source\n' > "$mount_point/@var/source.txt"
+
+  ono -c "plan copy file $mount_point/@var/source.txt $mount_point/@var/lib-app/inner.txt --overwrite | to json" > /tmp/b1.json 2>&1
+  ono -c "plan copy file $mount_point/@var/source.txt $mount_point/@var/parent.txt --overwrite | to json" > /tmp/b1p.json 2>&1
+  id=$(plan_id /tmp/b1.json)
+  nested=$(domain_of /tmp/b1.json)
+  parent=$(domain_of /tmp/b1p.json)
+  prove b1a "the nested subvolume's file resolves to a domain of its own, not the parent's (§14.3)" \
+    "[ -n '$nested' ] && [ '$nested' != 'null' ] && [ -n '$parent' ] && [ '$parent' != 'null' ] && [ '$nested' != '$parent' ]"
+  # The domain records the subvolume's tree path; the snapshot action names it by filesystem, id
+  # and tree path (Appendix B.9), so it is the tree path that has to end the action's scope.
+  nested_path=$(printf '%s' "$nested" | tr -d '"')
+  prove b1b "and the snapshot the plan prepares is of that nested subvolume (§14.3, §10.3)" \
+    "grep -q '\"role\":\"prepare\"' /tmp/b1.json && grep -o '\"name\":\"domain\",\"value\":\"[^\"]*\"' /tmp/b1.json | grep -qF ':$nested_path\"'"
+
+  echo '== §14.3: a parent snapshot is empty where the nested subvolume was =='
+  btrfs subvolume snapshot -r "$mount_point/@var" "$mount_point/@var-parent-snap" > /dev/null
+  prove b2a "the fixture really shows §14.3: the parent's snapshot holds no nested data" \
+    "[ -d '$mount_point/@var-parent-snap/lib-app' ] && [ -z \"\$(ls -A '$mount_point/@var-parent-snap/lib-app')\" ]"
+  prove b2b "so no candidate the plan offers is that parent snapshot (§14.3, §2.5)" \
+    "! grep -q '@var-parent-snap' /tmp/b1.json"
+
+  echo '== §14.5 and §55.4 case 20: the recovery snapshot is created read-only and stays so =='
+  ono -c "apply $id" > /tmp/b3.txt 2>&1
+  snapshot=$(ono -c 'get recovery | where type == "btrfs-snapshot" | select reference | to json' 2>/dev/null | sed -n 's/^\[{"reference":"\([^"]*\)"}\]$/\1/p')
+  prove b3a "the apply created a Btrfs snapshot and the asset names it (§14.2, §11.1)" \
+    "[ -n '$snapshot' ] && btrfs subvolume show '$snapshot' > /dev/null 2>&1"
+  prove b3b "and the filesystem itself says it is read-only (§14.5)" \
+    "[ \"\$(btrfs property get -ts '$snapshot' ro)\" = 'ro=true' ]"
+  prove b3c "it holds the nested file as it was before the change (§14.3, §4.5)" \
+    "[ \"\$(cat '$snapshot/inner.txt' 2>/dev/null)\" = 'nested' ]"
+
+  echo '== §14.4: nothing offers a generic in-place rollback =='
+  ono -c "recover $id" > /tmp/b4.txt 2>&1
+  ono -c "recover $id | select method | to json" > /tmp/b4.json 2>&1
+  prove b4a "the recovery plan names selective restore, a real Btrfs workflow (§14.4, Appendix C.1)" \
+    "[ \"\$(cat /tmp/b4.json)\" = '[{\"method\":\"selective-file-restore\"}]' ]"
+  prove b4b "never a rollback, and it performed nothing (§14.4, §62.2, §2.11)" \
+    "! grep -qi 'rollback' /tmp/b4.txt && grep -qx 'RECOVERY NOT EXECUTED' /tmp/b4.txt"
+
+  require_proved b1a b1b b2a b2b b3a b3b b3c b4a b4b
+  echo 'btrfs-against-a-real-filesystem: done'
+exit: 0
+stdout-contains: btrfs-against-a-real-filesystem: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

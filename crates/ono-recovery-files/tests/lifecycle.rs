@@ -308,3 +308,19 @@ fn should_keep_working_when_the_asset_is_attributed_to_the_plan_that_asked_for_i
          does not lose it"
     );
 }
+
+#[test]
+fn should_say_a_copy_on_the_same_device_as_its_target_shares_its_failure_domain() {
+    // NEW-7: the fixture's store and its target are both beneath `target/`, on one device.
+    let fixture = Fixture::new();
+    let configuration = fixture.write("etc/nginx.conf", "worker_processes 1;\n");
+    let asset = fixture.protect(&configuration);
+
+    assert!(
+        fixture
+            .provider
+            .shares_failure_domain(&asset)
+            .expect("the store and the target can both be inspected"),
+        "§11.5: a copy on the device that holds the original is lost with it, and says so"
+    );
+}

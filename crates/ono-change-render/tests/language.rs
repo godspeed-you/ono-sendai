@@ -21,7 +21,7 @@ mod support;
 use support::{
     contains, nginx_results, plan_with, protected_exclusions, protected_rows, ready_asset,
     recovery_results, rollback_recovery, sealed_nginx_plan, selective_recovery,
-    unanalysed_recovery, unprotected_rows, zfs_asset,
+    unanalysed_recovery, unprotected_rows, verified_recovery, zfs_asset,
 };
 
 /// The words §25.3 and §62.2 forbid: each of them claims a scope nothing established.
@@ -76,7 +76,11 @@ fn should_never_emit_a_forbidden_sentence_from_any_view() {
     emitted.extend(recovery_view(&selective_recovery(), 80, Charset::Ascii));
     emitted.extend(recovery_view(&rollback_recovery(), 80, Charset::Ascii));
     emitted.extend(recovery_view(&unanalysed_recovery(), 80, Charset::Ascii));
-    emitted.extend(recovery_verification(&recovery_results(), 80));
+    emitted.extend(recovery_verification(
+        &verified_recovery(),
+        &recovery_results(),
+        80,
+    ));
     emitted.extend(verification_view(&plan, &nginx_results(), 80));
     emitted.extend(protection_block(
         &plan_with("protected", protected_rows(), protected_exclusions()),
@@ -101,7 +105,7 @@ fn should_never_emit_a_forbidden_sentence_from_any_view() {
 
 #[test]
 fn should_close_a_recovery_verification_with_the_scope_it_did_not_claim() {
-    let lines = recovery_verification(&recovery_results(), 80);
+    let lines = recovery_verification(&verified_recovery(), &recovery_results(), 80);
     assert!(
         contains(&lines, "FULL WORLD EQUIVALENCE NOT CLAIMED"),
         "§25.2's result block is what replaces the sentence §25.3 forbids"

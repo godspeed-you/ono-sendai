@@ -257,6 +257,22 @@ impl ProposedEffect {
         self
     }
 
+    /// The same effect, declared by `action` (§8.2).
+    ///
+    /// An effect belongs to the action that declares it, and its identity is derived from that
+    /// action. A plan that rebuilds a provider's action under its own identity — a recovery plan
+    /// re-anchoring a fragment's actions (§2.12, §3.3) — carries the effect across with it, so
+    /// the plan's effect list states what the rebuilt action will do.
+    #[must_use]
+    pub fn for_action(&self, action: ActionId) -> Self {
+        let id = EffectId::of(&action, self.domain.as_str(), &self.explanation);
+        Self {
+            id,
+            action,
+            ..self.clone()
+        }
+    }
+
     /// The effect's identity.
     #[must_use]
     pub const fn id(&self) -> &EffectId {

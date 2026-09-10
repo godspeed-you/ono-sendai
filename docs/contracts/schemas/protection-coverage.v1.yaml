@@ -82,6 +82,13 @@ fields:
     doc: >-
       What this row does not cover, each with a reason and whether it is irreversible rather than
       merely uncovered (§10.3, §2.13).
+  not_protected_by:
+    type: list<string>
+    nullable: true
+    doc: >-
+      §13.4's `NOT PROTECTED BY`: the objects that enclose this domain — a parent dataset, the
+      dataset mounted above it — and whose snapshot would not reach it. Named by the provider that
+      resolved them, never inferred from a path. Null in a plan stored before the field existed.
   note:
     type: string
     required: true

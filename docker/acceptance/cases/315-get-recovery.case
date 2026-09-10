@@ -1,0 +1,95 @@
+# v0.6 §50 phase P2 — §37.5 and §11.1: a recovery asset is an object with a lifecycle, and
+# `get recovery` is where an operator finds it.
+#
+# §11.1 gives the seven states, §11.5 forbids calling a local copy-on-write snapshot a backup,
+# §37.1 fixes the retention and §37.5 requires the cost figures to be labelled estimated wherever
+# filesystem accounting is not exact. §44.2 keeps the contents out of the rendering entirely.
+case: get recovery shows scope, retention and cost, and never the contents
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+
+  mkdir -p "$HOME/etc"
+  printf 'database_password = hunter2\n' > "$HOME/etc/secret.conf"
+  printf 'database_password = correcthorse\n' > "$HOME/etc/secret.new"
+
+  ono -c "plan copy file $HOME/etc/secret.new $HOME/etc/secret.conf --overwrite | to json" > /tmp/gr0.json 2>&1
+  ono -c "apply $(plan_id /tmp/gr0.json)" > /dev/null 2>&1
+
+  echo '== §37.5 and §11.1: the asset as an object =='
+  ono -c 'get recovery | to json' > /tmp/gr1.txt 2>&1
+  prove gr1a "exactly one asset exists, and it came from the plan that was applied (§11.1)" \
+    "[ \"\$(ono -c 'get recovery | select source_plan | to json' 2>&1)\" = '[{\"source_plan\":\"$(plan_id /tmp/gr0.json)\"}]' ]"
+  prove gr1b "it names its state, from §11.1's seven" \
+    'grep -qE "\"state\":\"(proposed|creating|ready|invalid|expired|removed|failed)\"" /tmp/gr1.txt'
+  prove gr1c "it names its scope — exactly the object it covers (§11.1, §13.4)" \
+    "grep -q '\"covers\":\[\"$HOME/etc/secret.conf\"\]' /tmp/gr1.txt"
+  prove gr1d "and the consistency class it claims (§11.3)" 'grep -q "\"consistency\"" /tmp/gr1.txt'
+  prove gr1e "and the restore method it offers (Appendix C.1)" 'grep -q "\"restore_method\"" /tmp/gr1.txt'
+
+  echo '== §37.1: retention is stated, and it is a duration =='
+  prove gr2a "the asset carries its retention (§37.1)" 'grep -q "\"retention\"" /tmp/gr1.txt'
+  prove gr2b "and the instant it expires at, so nobody has to compute it" \
+    'grep -q "\"expires_at\"" /tmp/gr1.txt'
+  prove gr2c "and whether a hold keeps it past that (§37.2)" 'grep -q "\"held\"" /tmp/gr1.txt'
+
+  echo '== §37.5 and §38.2: the cost, labelled =='
+  prove gr3a "the size figures carry the estimated label (§37.5)" 'grep -q "\"size_estimated\"" /tmp/gr1.txt'
+  prove gr3b "and every §38.1 dimension has a place, even where nobody measured it" \
+    'grep -q "\"io_overhead\"" /tmp/gr1.txt && grep -q "\"cleanup_latency\"" /tmp/gr1.txt'
+  prove gr3c "an unmeasured dimension is null rather than zero (v0.2 §35.3, §38.2)" \
+    'grep -q "\"io_overhead\":null" /tmp/gr1.txt'
+
+  echo '== §11.5: a local recovery point is not a backup =='
+  prove gr4a "the asset says whether it shares the failure domain of what it protects (§11.5)" \
+    'grep -q "\"shares_failure_domain\"" /tmp/gr1.txt'
+  prove gr4b "and nothing in the rendering calls it a backup (§11.5, §14.7)" \
+    "! ono -c 'get recovery' 2>&1 | grep -qi 'backup'"
+
+  echo '== §44.2: the contents are not in the rendering, and not in the record =='
+  prove gr5a "the captured secret is not in the rendered view (§44.2)" \
+    "! ono -c 'get recovery' 2>&1 | grep -q 'hunter2'"
+  prove gr5b "and not in the machine-readable record either (§44.1, §44.2)" \
+    '! grep -q "hunter2" /tmp/gr1.txt'
+  prove gr5c "what travels is metadata: the rendered view shows the scope, the state and the retention (§44.1, §37.5)" \
+    "ono -c 'get recovery' 2>&1 | grep -q '^  covers  *[^ ]' && ono -c 'get recovery' 2>&1 | grep -q '^  state  *ready\$' && ono -c 'get recovery' 2>&1 | grep -q '^  retained  *[0-9]'"
+
+  echo '== §11.4: ready is a claim only a validation that passed may make =='
+  prove gr6a "a ready asset carries the validation behind it (§11.4)" \
+    'grep -q "\"validation\"" /tmp/gr1.txt'
+  prove gr6b "and every one of §11.4's five checks is in it" \
+    'grep -q "\"validation\":{\"exists\":true,\"identity_matches\":true,\"scope_matches\":true,\"restore_available\":true,\"permissions_present\":true," /tmp/gr1.txt'
+
+  echo 'get-recovery: done'
+exit: 0
+stdout-contains: PROVED gr1a
+stdout-contains: PROVED gr1b
+stdout-contains: PROVED gr1c
+stdout-contains: PROVED gr1d
+stdout-contains: PROVED gr1e
+stdout-contains: PROVED gr2a
+stdout-contains: PROVED gr2b
+stdout-contains: PROVED gr2c
+stdout-contains: PROVED gr3a
+stdout-contains: PROVED gr3b
+stdout-contains: PROVED gr3c
+stdout-contains: PROVED gr4a
+stdout-contains: PROVED gr4b
+stdout-contains: PROVED gr5a
+stdout-contains: PROVED gr5b
+stdout-contains: PROVED gr5c
+stdout-contains: PROVED gr6a
+stdout-contains: PROVED gr6b
+stdout-contains: get-recovery: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

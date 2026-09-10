@@ -1,0 +1,96 @@
+# v0.6 §50 phase P2 — §14.4 to §14.6: Btrfs recovery is a workflow, not a verb.
+#
+# §14.4 forbids presenting a generic in-place rollback primitive that Btrfs does not have. What
+# it has is a set of workflows — read the wanted objects out of a read-only snapshot, replace or
+# rename a subvolume, or point the next boot at a different one — and Appendix C.1 orders them
+# least-destructive first. §14.5 keeps the snapshot read-only while it is retained, and §14.6
+# makes root recovery explicit about which workflow it is.
+#
+# The filesystem is built on a loop file (Appendix G.3), which needs root and a loop device.
+# `privileged: true` hands the container the host's loop devices (ADR-0843), so the acceptance run
+# builds it for real, in the image whose btrfs-progs the provider validates (ADR-0846); a host that
+# cannot give one skips undeclared, and the run fails.
+case: Btrfs recovery names the workflow it would run, and never a rollback
+timeout: 240
+capability: SYS_ADMIN
+user: root
+security: apparmor=unconfined
+privileged: true
+image: filesystems
+env: NO_COLOR=1
+run: |
+  proved=" "
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"; proved="$proved$id "
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  require_proved() { for want in "$@"; do case "$proved" in *" $want "*) ;; *) echo "FAILED $want: this check never ran";; esac; done; }
+  skip() { echo "SKIPPED btrfs-recovery-is-a-workflow: $1"; echo 'btrfs-recovery-is-a-workflow: done'; exit 0; }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+
+  echo '== §14.4 and §62.2: there is no universal rollback verb, on any host =='
+  prove br1a "no command is spelled \`rollback\` (§14.4, §62.2)" \
+    "ono -c 'get command | to json' 2>&1 | grep -q '\"spelling\":\"recover\"' && ! ono -c 'get command | to json' 2>&1 | grep -q '\"spelling\":\"rollback\"'"
+  mkdir -p "$HOME/etc"
+  printf 'original\n' > "$HOME/etc/config"
+  printf 'changed\n' > "$HOME/etc/source"
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/config --overwrite | to json" > /tmp/br0.json 2>&1
+  local_plan=$(plan_id /tmp/br0.json)
+  ono -c "apply $local_plan" > /dev/null 2>&1
+  ono -c "recover $local_plan --method rollback" > /tmp/br1.txt 2>&1
+  prove br1b "and \`rollback\` is not a restore method either: forcing it is refused (Appendix C.1, §14.4)" \
+    'grep -qE "Ono-Sendai-E[0-9]{4} " /tmp/br1.txt && ! grep -qx "RECOVERY NOT EXECUTED" /tmp/br1.txt'
+
+  echo '== §14.5, §14.6 and §53: the Btrfs settings default as §53 prints them =='
+  prove br2b "the root-recovery workflow defaults to \`next-boot\` (§14.6, §53)" \
+    "ono -c 'get config recovery.btrfs.root_recovery | to json' 2>&1 | grep -q '^\[{\"key\":\"recovery.btrfs.root_recovery\",\"value\":\"next-boot\",'"
+  prove br2c "and read-only snapshots are the default (§14.5)" \
+    "ono -c 'get config recovery.btrfs.prefer_read_only_snapshots | to json' 2>&1 | grep -q '^\[{\"key\":\"recovery.btrfs.prefer_read_only_snapshots\",\"value\":true,'"
+
+  echo '== §14.4: a real filesystem, and the workflow the plan names =='
+  command -v mkfs.btrfs > /dev/null 2>&1 && command -v btrfs > /dev/null 2>&1 \
+    || skip 'external_tool_unavailable: no btrfs-progs on this host'
+  image=/tmp/onobrw$$.img
+  mount_point=/tmp/onobrw$$
+  truncate -s 512M "$image" || skip 'fixture_not_applicable: no space for a loop image'
+  cleanup() { umount "$mount_point" 2>/dev/null; rm -rf "$mount_point" "$image"; }
+  trap cleanup EXIT
+  mkfs.btrfs -q "$image" > /dev/null 2>&1 || skip 'missing_privilege: mkfs.btrfs was refused'
+  losetup --find > /dev/null 2>&1 || skip 'missing_privilege: the container is given no loop device'
+  mkdir -p "$mount_point"
+  mount -o loop "$image" "$mount_point" 2>/dev/null || skip 'missing_privilege: the loop mount was refused'
+
+  btrfs subvolume create "$mount_point/@data" > /dev/null
+  printf 'original\n' > "$mount_point/@data/config"
+  printf 'changed\n' > "$mount_point/@data/source"
+  ono -c "plan copy file $mount_point/@data/source $mount_point/@data/config --overwrite | to json" > /tmp/br2.json 2>&1
+  id=$(plan_id /tmp/br2.json)
+  ono -c "apply $id" > /tmp/br2.txt 2>&1
+  snapshot=$(ono -c 'get recovery | where type == "btrfs-snapshot" | select reference | to json' 2>/dev/null | sed -n 's/^\[{"reference":"\([^"]*\)"}\]$/\1/p')
+  prove br3pre "the apply prepared a Btrfs snapshot (§14.2, §4.5)" '[ -n "'"$snapshot"'" ]'
+  prove br3e "and the snapshot is read-only, verified on the filesystem itself (§14.5, §55.4 case 20)" \
+    "[ \"\$(btrfs property get -ts '$snapshot' ro)\" = 'ro=true' ]"
+  ono -c "recover $id" > /tmp/br3.txt 2>&1
+  ono -c "recover $id | select method requires_reboot requires_offline | to json" > /tmp/br3.json 2>&1
+  prove br3a "one changed file is recovered by selective restore, the least destructive workflow (§14.4, Appendix C.1)" \
+    "[ \"\$(cat /tmp/br3.json)\" = '[{\"method\":\"selective-file-restore\",\"requires_reboot\":false,\"requires_offline\":false}]' ]"
+  prove br3b "the view never presents an in-place rollback Btrfs does not have (§14.4)" \
+    'grep -qx "RECOVERY PLAN.*\|RECOVERY PLAN" /tmp/br3.txt && ! grep -qi "rollback" /tmp/br3.txt'
+  prove br3c "and it performed nothing (§2.11)" \
+    "grep -qx 'RECOVERY NOT EXECUTED' /tmp/br3.txt && [ \"\$(cat $mount_point/@data/config)\" = 'changed' ]"
+
+  require_proved br3pre br3e br3a br3b br3c
+  echo 'btrfs-recovery-is-a-workflow: done'
+exit: 0
+stdout-contains: PROVED br1a
+stdout-contains: PROVED br1b
+stdout-contains: PROVED br2b
+stdout-contains: PROVED br2c
+stdout-contains: btrfs-recovery-is-a-workflow: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

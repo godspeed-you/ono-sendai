@@ -20,6 +20,7 @@
 //! assert!(report.findings.is_empty());
 //! ```
 
+mod change_surfaces;
 mod corpus;
 mod engine;
 mod mutate;

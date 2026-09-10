@@ -166,7 +166,7 @@ impl CommandImpl for Timeline {
             let plan = arguments
                 .option("plan")
                 .and_then(|value| value.as_str().ok())
-                .map(str::to_owned);
+                .map(crate::change::plan_reference);
             // §11.4 fixes the value: `Stream<TemporalEvent>`, and "this MUST work" —
             // `timeline --since 1h | where kind == "object.changed"`. So the events are the
             // stream, and everything the window is a statement *about* — its bounds, its

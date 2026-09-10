@@ -18,19 +18,23 @@ run: |
       printf '%s\n' "$out" | head -6 | sed 's/^/        /'
     fi
   }
+  # How many records a pipeline produced, as a bare number.
+  count_of() { ono -c "$1 | count | to json" 2>&1 | tr -d '[:space:]' | sed 's/^\[//; s/\]$//'; }
 
+  store="${XDG_DATA_HOME:-$HOME/.local/share}/ono/change/recovery"
   mkdir -p "$HOME/etc"
   printf 'worker_processes 4;\n' > "$HOME/etc/nginx.conf"
   printf 'worker_processes 8;\n' > "$HOME/etc/nginx.conf.new"
   before_digest=$(sha256sum "$HOME/etc/nginx.conf" | cut -d' ' -f1)
   before_mtime=$(stat -c %Y "$HOME/etc/nginx.conf")
+  before_mounts=$(sha256sum < /proc/self/mountinfo | cut -d' ' -f1)
 
   echo '== §5.1: a plan is an object, and producing it is not doing it =='
   ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite" > /tmp/p1.txt 2>&1
-  prove p1a "\`plan replace file\` answers with a plan (§5.1)" \
-    'grep -qi "^PLAN" /tmp/p1.txt'
+  prove p1a "\`plan copy file\` answers with a plan (§5.1)" \
+    'grep -q "^PLAN / [0-9a-f]\{4\}" /tmp/p1.txt'
   prove p1b "and the plan says it was not executed (§2.1, §62.3)" \
-    'grep -q "PLAN NOT EXECUTED" /tmp/p1.txt'
+    'grep -qx "PLAN NOT EXECUTED" /tmp/p1.txt'
 
   after_digest=$(sha256sum "$HOME/etc/nginx.conf" | cut -d' ' -f1)
   after_mtime=$(stat -c %Y "$HOME/etc/nginx.conf")
@@ -39,29 +43,50 @@ run: |
   prove p1d "and its modification time did not move either" \
     "[ '$before_mtime' = '$after_mtime' ]"
 
-  echo '== §2.1: no recovery asset exists, because planning creates none =='
-  prove p1e "\`get recovery\` reports nothing the plan created (§11.1's PROPOSED state)" \
-    'ono -c "get recovery | count | to json" 2>&1 | grep -qE "^0$|^\{|^\["'
+  echo '== §2.1 and §62.3: no recovery asset exists, because planning creates none =='
+  prove p1e "\`get recovery\` answers with no asset at all (§11.1's PROPOSED state is not an asset)" \
+    "[ \"\$(count_of 'get recovery')\" = '0' ]"
+  prove p1n "and the recovery store holds no captured bytes (§62.3: no silent snapshot)" \
+    "[ \"\$(find '$store' -type f 2>/dev/null | wc -l)\" -eq 0 ]"
+  prove p1o "the mount table did not move, so no snapshot was mounted or created (§62.3)" \
+    "[ \"\$(sha256sum < /proc/self/mountinfo | cut -d' ' -f1)\" = '$before_mounts' ]"
 
-  echo '== §20.1: the view answers its nine questions in order =='
-  prove p1f "the plan names its intent (§20.1 q1)" 'grep -qi "^intent" /tmp/p1.txt'
-  prove p1g "the plan names the objects it would touch (§20.1 q2)" 'grep -qi "^targets" /tmp/p1.txt'
-  prove p1h "the plan names what it would do (§20.1 q3)" 'grep -qi "^planned" /tmp/p1.txt'
+  echo '== §20.1: the view answers its questions in order =='
+  prove p1f "the plan names its intent (§20.1 q1)" 'grep -qx "intent" /tmp/p1.txt'
+  prove p1g "the plan names the objects it would touch (§20.1 q2)" 'grep -qx "targets" /tmp/p1.txt'
+  prove p1h "the plan names what it would do (§20.1 q3)" 'grep -qx "planned" /tmp/p1.txt'
   prove p1i "the plan names what protection would be created (§20.1 q6, §20.4)" \
-    'grep -qi "^protection" /tmp/p1.txt'
+    'grep -qx "protection" /tmp/p1.txt'
   prove p1j "the plan names its risk, which is a separate axis from protection (§10.4, §19.1)" \
-    'grep -qi "^risk" /tmp/p1.txt'
+    'grep -qx "risk" /tmp/p1.txt'
 
   echo '== §12.3: a plan is a value, not a rendering =='
-  prove p1k "the plan serialises through the ordinary pipeline (§12.3, §33.5)" \
-    "ono -c 'plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | to json' 2>&1 | grep -qE '^\{'"
-  prove p1l "and it carries the protection level the coverage matrix composed (§10.2)" \
-    "ono -c 'plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | to json' 2>&1 | grep -q 'protection_level'"
+  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | select kind state | to json" > /tmp/p1k.txt 2>&1
+  prove p1k "the plan serialises through the ordinary pipeline as a sealed change plan (§12.3, §4.4)" \
+    "[ \"\$(cat /tmp/p1k.txt)\" = '[{\"kind\":\"change\",\"state\":\"sealed\"}]' ]"
+  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | select protection_level | to json" > /tmp/p1l.txt 2>&1
+  prove p1l "and it carries one of §10.2's six protection levels, composed from the matrix (§10.2)" \
+    'grep -qxE "\[\{\"protection_level\":\"(unprotected|compensatable|partially-protected|protected|transactional|unknown)\"\}\]" /tmp/p1l.txt'
+  prove p1p "serialising it planned nothing either (§2.1)" \
+    "[ \"\$(sha256sum $HOME/etc/nginx.conf | cut -d' ' -f1)\" = '$before_digest' ] && [ \"\$(count_of 'get recovery')\" = '0' ]"
+
+  echo '== §4.3: a target that does not resolve refuses rather than half-planning =='
+  plans_before=$(count_of 'get plan')
+  ono -c "plan remove file $HOME/etc/no-such-file-1a2b3c" > /tmp/p1m.txt 2>&1
+  prove p1m "an unresolvable file refuses with §4.3's own code (§4.3, §45)" \
+    'grep -q "Ono-Sendai-E1711 change.target_unresolved" /tmp/p1m.txt'
+  prove p1q "and it sealed nothing, so there is no half-plan to apply later (§4.3)" \
+    "[ \"\$(count_of 'get plan')\" = '$plans_before' ]"
 
   echo '== §5.1: planning a service restart touches no service =='
+  plans_before=$(count_of 'get plan')
   ono -c 'plan restart service nonexistent-unit-1a2b3c' > /tmp/p1svc.txt 2>&1
-  prove p1m "an unresolvable target refuses rather than half-planning (§4.3)" \
-    'grep -qE "Ono-Sendai-E17|change\.(target_unresolved|action_not_plannable)" /tmp/p1svc.txt'
+  # Either answer is a refusal: no such unit, or no service manager to ask in this container.
+  # What §4.3 forbids is a plan over a unit nobody resolved.
+  prove p1r "an unresolvable service refuses with a structured code (§4.3, v0.2 §43)" \
+    'grep -qE "Ono-Sendai-E1711 change.target_unresolved|Ono-Sendai-E0401 provider.unavailable" /tmp/p1svc.txt'
+  prove p1s "and no plan was sealed for it (§2.1, §4.3)" \
+    "[ \"\$(count_of 'get plan')\" = '$plans_before' ]"
 
   echo 'plan-creates-nothing: done'
 exit: 0
@@ -78,6 +103,12 @@ stdout-contains: PROVED p1j
 stdout-contains: PROVED p1k
 stdout-contains: PROVED p1l
 stdout-contains: PROVED p1m
+stdout-contains: PROVED p1n
+stdout-contains: PROVED p1o
+stdout-contains: PROVED p1p
+stdout-contains: PROVED p1q
+stdout-contains: PROVED p1r
+stdout-contains: PROVED p1s
 stdout-contains: plan-creates-nothing: done
 stdout-not-contains: FAILED
 stdout-not-contains: panicked

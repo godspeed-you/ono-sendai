@@ -1,0 +1,84 @@
+# v0.6 §50 phase P2 — §21 and §55.11 case 47: the plan overlays the v0.4 map, and fabricates no
+# future identity.
+#
+# §21.2 makes `map --plan` an overlay rather than a second projection: the objects are the ones
+# the plan froze, carried under the identities the map already uses. §21.3 marks the objects a
+# recovery asset covers, because "protected" and "about to change" are different facts. §21.4 is
+# the prohibition: no future identity is invented.
+case: a plan overlays the map with real identities and invents nothing
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+
+  mkdir -p "$HOME/etc"
+  printf 'a\n' > "$HOME/etc/source"
+  printf 'b\n' > "$HOME/etc/target"
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/target --overwrite | to json" > /tmp/mp0.json 2>&1
+  id=$(plan_id /tmp/mp0.json)
+  place=$(sed -n 's/.*"targets":\[{[^]]*"spatial_id":"\([^"]*\)".*/\1/p' /tmp/mp0.json | head -1)
+  prove mp0 "a plan exists to overlay, and it froze its target with a stable spatial identity (§21.2, §7.1)" \
+    '[ -n "'"$id"'" ] && [ -n "'"$place"'" ]'
+
+  echo '== §21.2: the overlay is the map, with the plan on it =='
+  ono -c "map --plan $id | to json" > /tmp/mp1.json 2>&1
+  prove mp1a "\`map --plan\` answers with the map itself, not a second projection (§21.2)" \
+    'grep -q "\"map_id\":" /tmp/mp1.json && grep -q "\"nodes\":\[" /tmp/mp1.json'
+  prove mp1b "and carries the overlay as an extension naming this plan and its state (§21.2, §22.4)" \
+    "grep -q '\"ono.change/plan-overlay\":{\"plan\":\"$id\",\"state\":\"sealed\"' /tmp/mp1.json"
+
+  echo '== §55.11 case 47: the overlay uses the real identities the plan froze =='
+  prove mp2a "the overlay object is the plan's target, under the same identity and place (§21.2, §7.1)" \
+    "grep -q '\"objects\":\[{\"object\":\"$HOME/etc/target\",\"identity\":\"$HOME/etc/target\",\"place\":\"$place\"' /tmp/mp1.json"
+
+  echo '== §21.4: no future identity is fabricated =='
+  sleep 600 &
+  victim=$!
+  ono -c "plan kill process $victim --signal SIGKILL | to json" > /tmp/mp3.json 2>&1
+  ono -c "map --plan $(plan_id /tmp/mp3.json) | to json" > /tmp/mp3m.json 2>&1
+  overlay=$(grep -o '"ono.change/plan-overlay":{"plan":"[0-9a-f]*","state":"[a-z]*","protection":"[a-z-]*","objects":\[[^]]*\]' /tmp/mp3m.json)
+  prove mp3a "the overlay of a kill carries the process it would signal (§21.2)" \
+    "printf '%s' '$overlay' | grep -q '$victim'"
+  prove mp3b "and no process identity other than that real one — nothing the plan would create is named (§21.4)" \
+    "[ -z \"\$(printf '%s' '$overlay' | grep -oE '(process:|\"pid\":)[0-9]+' | grep -v '$victim')\" ]"
+  kill "$victim" 2>/dev/null
+
+  echo '== §21.3: what an asset covers is marked, and only after it exists =='
+  prove mp4a "before apply, the object is not marked covered (§2.1, §21.3)" \
+    "grep -q '\"identity\":\"$HOME/etc/target\",\"place\":\"[^\"]*\",\"covered\":false' /tmp/mp1.json"
+  ono -c "apply $id" > /dev/null 2>&1
+  ono -c "map --plan $id | to json" > /tmp/mp5.json 2>&1
+  prove mp4b "after apply created the asset, the object is marked covered (§21.3)" \
+    "grep -q '\"identity\":\"$HOME/etc/target\",\"place\":\"[^\"]*\",\"covered\":true' /tmp/mp5.json"
+  ono -c "map --plan $id" > /tmp/mp5.txt 2>&1
+  prove mp4c "and the rendered map shows the coverage mark beside it (§21.3's \`<->\`)" \
+    "grep -E '<->|↔' /tmp/mp5.txt | grep -q 'target'"
+
+  echo '== §21.2: a reference that names no plan refuses rather than drawing a bare map =='
+  ono -c 'map --plan 0000' > /tmp/mp6.txt 2>&1
+  prove mp5a "an unknown plan reference refuses (§36.4)" 'grep -q "change.plan_not_found" /tmp/mp6.txt'
+
+  echo 'map-with-a-plan: done'
+exit: 0
+stdout-contains: PROVED mp0
+stdout-contains: PROVED mp1a
+stdout-contains: PROVED mp1b
+stdout-contains: PROVED mp2a
+stdout-contains: PROVED mp3a
+stdout-contains: PROVED mp3b
+stdout-contains: PROVED mp4a
+stdout-contains: PROVED mp4b
+stdout-contains: PROVED mp4c
+stdout-contains: PROVED mp5a
+stdout-contains: map-with-a-plan: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

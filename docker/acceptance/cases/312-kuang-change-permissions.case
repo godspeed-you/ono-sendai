@@ -1,0 +1,63 @@
+# v0.6 §50 phase P2 — §48 and §63.16: a KUANG/11 provider cannot escalate capability.
+#
+# §48.3 names the change and recovery capabilities a package may hold, §48.4 makes describing
+# distinct from executing, and §48.5 keeps a contributed finding inside the package's own
+# declarations. The capability broker is v0.2 §31's, unchanged: v0.6 adds names to it and no
+# second permission system beside it (§43.2).
+case: the change capabilities go through the one capability broker
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== §48.3: the change capabilities are in the one capability registry =='
+  ono -c 'get capability | to json' > /tmp/kc1.txt 2>&1
+  for cap in change.plan.read change.plan.contribute change.action.execute verification.observe \
+             recovery.discover recovery.prepare recovery.restore recovery.cleanup \
+             recovery.estimate-cost recovery.quiesce recovery.transaction; do
+    prove "kc1-$cap" "\`$cap\` is a capability the broker knows (§48.3)" \
+      "grep -q '\"capability\":\"$cap\"' /tmp/kc1.txt"
+  done
+
+  echo '== §43.2: change and recovery are separate grants =='
+  prove kc2a "the change family and the recovery family are distinct (§43.2)" \
+    "grep -q '\"capability\":\"change\.' /tmp/kc1.txt && grep -q '\"capability\":\"recovery\.' /tmp/kc1.txt"
+  prove kc2b "and \`recovery.restore\` is one of them (§43.4, §13.6)" \
+    "grep -q '\"capability\":\"recovery.restore\"' /tmp/kc1.txt"
+
+  echo '== §48.4: describing is not executing =='
+  prove kc3a "\`change.plan.read\` is registered as its own grant (§48.4)" \
+    "grep -q '\"capability\":\"change.plan.read\"' /tmp/kc1.txt"
+  prove kc3b "and \`change.action.execute\` is a different one — describing is not executing" \
+    "grep -q '\"capability\":\"change.action.execute\"' /tmp/kc1.txt"
+
+  echo '== §43.2: there is no second permission system =='
+  prove kc4a "the v0.6 capabilities live beside the others, not in a registry of their own" \
+    "[ \"\$(ono -c 'get capability | count | to json' 2>&1 | tr -d '[:space:]' | sed 's/^\[//; s/\]\$//')\" -gt 11 ]"
+  prove kc4b "and \`get permission\` is still the one place a grant is decided, answering with records (K11P §7)" \
+    "ono -c 'get permission | to json' 2>&1 | grep -qx '\[.*\]' && ! ono -c 'get command | to json' 2>&1 | grep -qE '\"spelling\":\"(get|grant|revoke) change-permission\"'"
+
+  echo '== §48: a package that is not installed grants nothing =='
+  prove kc5a "no plugin is loaded in this container, and none contributed a provider (§48)" \
+    "! ono -c 'get recovery | to json' 2>&1 | grep -qE '\"provider\":\"(dev|com|org)\\.'"
+
+  echo 'kuang-change-permissions: done'
+exit: 0
+stdout-contains: PROVED kc2a
+stdout-contains: PROVED kc2b
+stdout-contains: PROVED kc3a
+stdout-contains: PROVED kc3b
+stdout-contains: PROVED kc4a
+stdout-contains: PROVED kc4b
+stdout-contains: PROVED kc5a
+stdout-contains: kuang-change-permissions: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

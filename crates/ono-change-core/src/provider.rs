@@ -216,6 +216,7 @@ pub struct RecoveryCandidate {
     exclusions: Vec<RecoveryExclusion>,
     creation_requirements: Vec<Arc<str>>,
     restore_requirements: Vec<Arc<str>>,
+    not_protecting: Vec<Arc<str>>,
     detail: Arc<str>,
 }
 
@@ -240,8 +241,23 @@ impl RecoveryCandidate {
             exclusions: Vec::new(),
             creation_requirements: Vec::new(),
             restore_requirements: Vec::new(),
+            not_protecting: Vec::new(),
             detail: detail.into(),
         }
+    }
+
+    /// Names an object that encloses what this candidate protects and whose own snapshot does
+    /// not reach it — §13.4's `NOT PROTECTED BY`.
+    #[must_use]
+    pub fn outside_of(mut self, object: impl Into<Arc<str>>) -> Self {
+        self.not_protecting.push(object.into());
+        self
+    }
+
+    /// The enclosing objects whose snapshot would not protect this candidate's target (§13.4).
+    #[must_use]
+    pub fn not_protecting(&self) -> &[Arc<str>] {
+        &self.not_protecting
     }
 
     /// States the consistency the mechanism would achieve (§11.3).
@@ -438,6 +454,7 @@ pub struct RecoveryPlanFragment {
     newer_state: NewerStateImpact,
     unrecoverable: Vec<UnrecoverableEffect>,
     verification: Vec<VerificationContract>,
+    captured: Vec<(Arc<str>, Arc<str>)>,
     metadata: MetadataCoverage,
     directory_policy: DirectoryRestorePolicy,
     requires_reboot: bool,
@@ -455,6 +472,7 @@ impl RecoveryPlanFragment {
             newer_state: NewerStateImpact::unanalysed(),
             unrecoverable: Vec::new(),
             verification: Vec::new(),
+            captured: Vec::new(),
             metadata: MetadataCoverage::none(),
             directory_policy: DirectoryRestorePolicy::KeepExtraFiles,
             requires_reboot: false,
@@ -487,6 +505,18 @@ impl RecoveryPlanFragment {
     #[must_use]
     pub fn verifying(mut self, contract: VerificationContract) -> Self {
         self.verification.push(contract);
+        self
+    }
+
+    /// Records the digest the asset holds for `object` (§18.3, Appendix C.3).
+    ///
+    /// Appendix C.3 decides whether an object changed since the recovery point, and the digest the
+    /// asset captured is the evidence that outranks a timestamp. Only the provider can read it out
+    /// of its own asset, so it hands it over here rather than leaving the conflict analysis to
+    /// guess from a change time the filesystem may not even keep.
+    #[must_use]
+    pub fn capturing(mut self, object: impl Into<Arc<str>>, digest: impl Into<Arc<str>>) -> Self {
+        self.captured.push((object.into(), digest.into()));
         self
     }
 
@@ -525,6 +555,12 @@ impl RecoveryPlanFragment {
     pub const fn needing_offline(mut self) -> Self {
         self.requires_offline = true;
         self
+    }
+
+    /// The digest the asset holds for each object it named (Appendix C.3).
+    #[must_use]
+    pub fn captured(&self) -> &[(Arc<str>, Arc<str>)] {
+        &self.captured
     }
 
     /// Which metadata this provider's restore returns (Appendix C.7).
@@ -585,6 +621,66 @@ impl RecoveryPlanFragment {
     #[must_use]
     pub const fn requires_offline(&self) -> bool {
         self.requires_offline
+    }
+}
+
+/// What one recovery action left behind that the shell has to keep track of (§14.5, §11.1).
+///
+/// Most restores create nothing. A Btrfs clone-and-copy or subvolume replacement derives a
+/// writable subvolume from the snapshot, and §14.5 makes that subvolume an asset of its own with
+/// a lifecycle — which only the store can give it, so the provider hands it back here rather than
+/// keeping it where nothing can reach it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RestoreOutcome {
+    created: Vec<RecoveryAsset>,
+}
+
+impl RestoreOutcome {
+    /// Records an asset the action created.
+    #[must_use]
+    pub fn creating(mut self, asset: RecoveryAsset) -> Self {
+        self.created.push(asset);
+        self
+    }
+
+    /// Every asset the action created.
+    #[must_use]
+    pub fn created(&self) -> &[RecoveryAsset] {
+        &self.created
+    }
+}
+
+/// What the operator accepted for one recovery run (§24.5, §13.6, §19.4).
+///
+/// The acceptance is the operator's, given as a flag on `apply` (§40.3), and it travels to the
+/// provider at the moment of the act so the provider can refuse a destruction nobody accepted
+/// even when the plan was built while something else was true.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RestoreAcceptance {
+    newer_state_loss: bool,
+}
+
+impl RestoreAcceptance {
+    /// Nothing accepted: every destruction of newer state is refused.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            newer_state_loss: false,
+        }
+    }
+
+    /// The operator accepted losing state written after the recovery point, including newer
+    /// snapshots, bookmarks and clones the method destroys (`--accept-newer-state-loss`).
+    #[must_use]
+    pub const fn accepting_newer_state_loss(mut self) -> Self {
+        self.newer_state_loss = true;
+        self
+    }
+
+    /// Whether losing newer state was accepted.
+    #[must_use]
+    pub const fn accepts_newer_state_loss(&self) -> bool {
+        self.newer_state_loss
     }
 }
 
@@ -681,6 +777,30 @@ pub trait RecoveryProvider: Send + Sync + std::fmt::Debug {
     /// A structured error when the action failed. Appendix F then preserves the remaining assets
     /// and the exact partial state.
     fn restore(&self, action: &PlanAction, asset: &RecoveryAsset) -> Result<(), ErrorValue>;
+
+    /// Carries out one recovery action with what the operator accepted for this run (§24.5).
+    ///
+    /// Every action of a recovery plan is executed through this method on the provider that
+    /// owns the source asset — whatever its `Execution` variant — so the provider's own safety
+    /// re-checks (§56.1, §56.2) run at the moment of the act rather than only at planning. The
+    /// default ignores `acceptance` and calls [`RecoveryProvider::restore`], which is right for
+    /// a provider whose restores destroy nothing; a provider that can destroy newer history
+    /// overrides it and refuses unless `acceptance` says the destruction was accepted (§13.6).
+    ///
+    /// # Errors
+    ///
+    /// As [`RecoveryProvider::restore`], and a structured refusal where the action would destroy
+    /// something `acceptance` does not cover.
+    fn restore_with(
+        &self,
+        action: &PlanAction,
+        asset: &RecoveryAsset,
+        acceptance: &RestoreAcceptance,
+    ) -> Result<RestoreOutcome, ErrorValue> {
+        let _ = acceptance;
+        self.restore(action, asset)
+            .map(|()| RestoreOutcome::default())
+    }
 
     /// Removes an asset (§37).
     ///

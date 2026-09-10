@@ -169,16 +169,33 @@ fn registry(
         ono_recovery_files::FileRecoveryStore::open(directory.join(RECOVERY_DIRECTORY))
     {
         let provider = ono_recovery_files::FileRecoveryProvider::new(store, now)
-            .with_retention(settings.retention_policy());
+            .with_retention(settings.retention_policy())
+            // A session outlives its first plan: each asset is dated, named and expired by when
+            // it was made, so two recovery points of one file are two assets (§11.1, §37.1).
+            .with_clock(Timestamp::now);
         let _ = registry.register(Arc::new(provider));
     }
     if settings.zfs_enabled() {
         let runner = Arc::new(ono_recovery_zfs::ProcessRunner::default());
-        let _ = registry.register(Arc::new(ono_recovery_zfs::ZfsProvider::new(runner)));
+        let provider = ono_recovery_zfs::ZfsProvider::new(runner)
+            .with_minimum_free(zfs_floor(settings.min_filesystem_free()))
+            .with_recovery_policy(
+                settings.zfs_prefer_selective_restore(),
+                settings.zfs_allow_destructive_rollback(),
+            );
+        let _ = registry.register(Arc::new(provider));
     }
     if settings.btrfs_enabled() {
         let runner = Arc::new(ono_recovery_btrfs::ProcessRunner::default());
-        let _ = registry.register(Arc::new(ono_recovery_btrfs::BtrfsProvider::new(runner)));
+        let provider = ono_recovery_btrfs::BtrfsProvider::new(runner).with_config(
+            ono_recovery_btrfs::config::BtrfsConfig::default()
+                .preferring_read_only(
+                    settings.prefer_read_only_snapshots()
+                        && settings.btrfs_prefer_read_only_snapshots(),
+                )
+                .recovering_root_by(btrfs_root_recovery(settings.btrfs_root_recovery())),
+        );
+        let _ = registry.register(Arc::new(provider));
     }
     registry
 }
@@ -226,11 +243,17 @@ pub fn configured() -> ChangeSettings {
 ///
 /// A key the settings catalogue does not declare is read from its mechanical `ONO_*` spelling
 /// (ADR-0010) instead, so §53's seventeen keys are settable before the catalogue carries them.
-/// The catalogue wins wherever it answers.
-pub fn configure_from(settings: &crate::settings::Settings) {
+/// The catalogue wins wherever it answers, and a catalogued key still at its built-in default is
+/// passed on as unset (ADR-0834).
+pub fn configure_from(settings: &crate::settings::Settings) -> Vec<ErrorValue> {
     let lookup = |key: &str| -> Option<Value> {
-        if let Some(resolved) = settings.effective(key) {
-            return Some(resolved.value.clone());
+        // A key at its built-in default was not written, and the change layer reads it as unset:
+        // ADR-0834 lets a plan lower the built-in protection mode and never one an operator
+        // configured, so "written" has to survive into the reader.
+        match settings.effective(key) {
+            Some(resolved) if resolved.layer == crate::settings::Layer::Default => return None,
+            Some(resolved) => return Some(resolved.value.clone()),
+            None => {}
         }
         let variable = format!("ONO_{}", key.to_ascii_uppercase().replace('.', "_"));
         std::env::var(variable)
@@ -238,17 +261,14 @@ pub fn configure_from(settings: &crate::settings::Settings) {
             .filter(|text| !text.is_empty())
             .map(|text| typed(&text))
     };
-    let resolved = match ChangeSettings::from_settings(&lookup) {
-        Ok(resolved) => resolved,
-        // §53's closing sentence asks for a configuration nobody can read to be reported rather
-        // than silently ignored, and the shell already has a place for that: the reading is
-        // noted and the defaults stand, so the shell keeps working and `get config --problems`
-        // is where the mistake is found.
-        Err(_) => ChangeSettings::defaults(),
-    };
+    // §53's closing sentence asks for a configuration nobody can read to be reported rather than
+    // silently ignored. Each unreadable key keeps its default and comes back as a problem for
+    // `get config --problems`; every key that could be read keeps the operator's value.
+    let (resolved, problems) = ChangeSettings::read(&lookup);
     if let Ok(mut held) = published_settings().write() {
         *held = resolved;
     }
+    problems
 }
 
 /// An environment variable as the value the setting's declared type wants.
@@ -284,4 +304,61 @@ pub fn note_last_plan(plan: &PlanId) {
 #[must_use]
 pub fn last_plan() -> Option<PlanId> {
     published_plan().read().ok().and_then(|held| held.clone())
+}
+
+/// §53's `recovery.min_filesystem_free`, as the ZFS provider enforces it against a pool
+/// (Appendix D.3).
+///
+/// Every part of the floor carries over: a share and a quantity together stay together, because
+/// keeping only one of them would quietly lower the floor the operator configured.
+fn zfs_floor(
+    floor: ono_change_protection::policy::FreeSpaceFloor,
+) -> ono_recovery_zfs::FreeSpaceFloor {
+    use ono_change_protection::policy::FreeSpaceFloor as Configured;
+    use ono_recovery_zfs::FreeSpaceFloor as Enforced;
+    match floor {
+        Configured::Share(share) => Enforced::Share(share),
+        Configured::Absolute(bytes) => Enforced::Bytes(bytes),
+        Configured::Both { share, absolute } => Enforced::Both {
+            share,
+            bytes: absolute,
+        },
+    }
+}
+
+/// §53's `recovery.btrfs.root_recovery`, as the Btrfs provider plans a root recovery (§14.6).
+const fn btrfs_root_recovery(
+    configured: ono_change_protection::settings::RootRecovery,
+) -> ono_recovery_btrfs::config::RootRecovery {
+    use ono_change_protection::settings::RootRecovery as Configured;
+    use ono_recovery_btrfs::config::RootRecovery as Planned;
+    match configured {
+        Configured::OnlineSelectiveRestore => Planned::OnlineSelectiveRestore,
+        Configured::OfflineSubvolumeReplacement => Planned::OfflineSubvolumeReplacement,
+        Configured::NextBoot => Planned::NextBoot,
+    }
+}
+
+/// The authority this process actually holds (§43.2, §43.3).
+///
+/// Read from `/proc/self/status`: the effective uid (`Uid:`'s second field) and the effective
+/// capability set (`CapEff:`). A set that cannot be read is left unknown, and
+/// [`Authority::for_session`](ono_change_executor::Authority::for_session) then decides by uid —
+/// never by assuming the session may do everything.
+#[must_use]
+pub fn authority() -> ono_change_executor::Authority {
+    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    let field = |name: &str| {
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix(name))
+            .map(str::trim)
+    };
+    let uid = field("Uid:")
+        .and_then(|values| values.split_whitespace().nth(1))
+        .and_then(|value| value.parse::<u32>().ok())
+        // A uid nobody could read is not root: the narrower answer is the safe one.
+        .unwrap_or(u32::MAX);
+    let capabilities = field("CapEff:").and_then(|value| u64::from_str_radix(value, 16).ok());
+    ono_change_executor::Authority::for_session(uid, capabilities)
 }

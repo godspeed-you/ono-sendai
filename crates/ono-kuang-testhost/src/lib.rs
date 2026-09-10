@@ -879,6 +879,12 @@ pub fn check_change_package(directory: &std::path::Path) -> ChangePackageReport 
                     provider.id
                 ));
             }
+            // The shell's own definition, so a package passing here is one the supervisor loads:
+            // the asset type is from the registry, and §16.2's memory inclusion is stated for a
+            // VM snapshot and for nothing else.
+            if let Err(error) = ono_kuang_supervisor::validate_recovery_asset(&provider) {
+                report.problems.push(error.message().to_owned());
+            }
             let consistency = ono_change_core::ConsistencyClass::from_name(&provider.consistency);
             if consistency.is_none() {
                 report.problems.push(format!(

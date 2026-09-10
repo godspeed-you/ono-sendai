@@ -127,7 +127,9 @@ fn implementations(session: &mut Session) -> Result<&'static CommandTable, Error
     // index or the terminal a gate is asked at, and none of those is reachable from the library
     // (§55.7, `docs/contracts/commands/change.yaml`). `plan` itself is not here — it carries
     // another command inside it, so the evaluator claims it before the registry path (ADR-0814).
-    crate::change::configure_from(session.settings());
+    // The problems are reported once, by `config::load`, which reads the change settings again
+    // after every configuration layer is in.
+    let _ = crate::change::configure_from(session.settings());
     built.register(std::sync::Arc::new(crate::change::GetPlan));
     built.register(std::sync::Arc::new(crate::change::InspectPlan));
     built.register(std::sync::Arc::new(crate::change::RebasePlan));

@@ -1,6 +1,6 @@
 # ADR-0800: The v0.6 vocabulary is one crate, and §2's invariants are properties of its types
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0833
 - Date: 2026-09-09
 - Spec refs: v0.6 §2, §3, §50, §50.1; ADR-0001, ADR-0005
 - Decided by: agent (autonomous)

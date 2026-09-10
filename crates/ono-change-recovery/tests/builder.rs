@@ -13,9 +13,10 @@ use std::sync::Arc;
 
 use ono_change_core::{
     ActionId, ActionRole, ActionStatus, ChangePlan, DirectoryRestorePolicy, EffectConfidence,
-    EffectDomain, EffectKind, EquivalenceDomain, Execution, Intent, PlanAction, PlanKind,
-    PlanState, ProposedEffect, RecoveryAsset, RecoveryGoal, RecoveryPlan, RestoreMethod, RiskClass,
-    VerificationClass, VerificationContract, VerificationSet,
+    EffectDomain, EffectKind, EquivalenceDomain, Execution, FrozenTarget, ImpactClass, ImpactGraph,
+    ImpactNode, Intent, NewerStateClass, PlanAction, PlanKind, PlanState, ProposedEffect,
+    RecoveryAsset, RecoveryGoal, RecoveryPlan, RestoreMethod, RiskClass, VerificationClass,
+    VerificationContract, VerificationSet,
 };
 use ono_change_protection::ProviderRegistry;
 use ono_change_recovery::builder::{RecoveryRequest, plan_recovery};
@@ -83,6 +84,68 @@ fn nginx_recovery(registry: &ProviderRegistry, assets: &[RecoveryAsset]) -> Reco
 }
 
 // -- §24.1: recover produces a plan and changes nothing ---------------------------------------
+
+#[test]
+fn should_carry_the_newer_state_a_provider_established_for_a_whole_dataset_rollback() {
+    // §13.6 and §56.1: the provider that made the snapshot establishes what a rollback of its
+    // dataset would destroy — the newer snapshots, the bytes written since. The shell observes
+    // paths and cannot observe a dataset, so the provider's reading is the one the plan carries,
+    // and the gate asks for §13.6's acceptance rather than calling the dataset unknown.
+    let registry = registry(vec![
+        TestProvider::new(PROVIDER)
+            .restoring_by(RestoreMethod::DatasetRollback)
+            .leaving_newer_state(
+                ono_change_core::NewerStateImpact::analysed(Vec::new())
+                    .destroying("rpool/ROOT/debian@later")
+                    .discarding(ono_value::ByteSize::from_bytes(4096)),
+            )
+            .shared(),
+    ]);
+    let assets = vec![ready_asset(
+        PROVIDER,
+        SNAPSHOT,
+        "rpool/ROOT/debian",
+        &["rpool/ROOT/debian", NGINX_CONF],
+        at(14, 2),
+    )];
+    let observe = |object: &str| {
+        if object.starts_with('/') {
+            ObservedState::changed(at(13, 0), "sha256:untouched-since-the-snapshot")
+        } else {
+            ObservedState::unestablished("this observer reads a path's content and nothing else")
+        }
+    };
+
+    let recovery = plan_recovery(
+        &RecoveryRequest::new(
+            &registry,
+            &assets,
+            &observe,
+            RecoveryGoal::RestoreDomain,
+            "session-rollback",
+            at(16, 0),
+        )
+        .forcing_method("dataset-rollback"),
+    )
+    .expect("the recovery plans");
+
+    assert_eq!(
+        recovery.newer_state().destroyed_assets(),
+        [Arc::<str>::from("rpool/ROOT/debian@later")],
+        "§13.6: the plan names the snapshot the rollback would destroy"
+    );
+    let refusal = ono_change_recovery::gate::check(&recovery)
+        .expect_err("§13.6: destroying newer history needs the explicit acceptance");
+    assert_eq!(
+        refusal.code().name(),
+        "recovery.destructive_history_not_accepted",
+        "§56.1: every fact is established, so what remains is the acceptance: {refusal:?}"
+    );
+    assert!(
+        ono_change_recovery::gate::check(&recovery.destruction_accepted()).is_ok(),
+        "§24.5: once accepted, the rollback may run"
+    );
+}
 
 #[test]
 fn should_produce_a_sealed_plan_that_has_not_been_applied() {
@@ -190,6 +253,11 @@ fn should_bind_the_provider_at_the_version_the_plan_was_resolved_against() {
         "§4.4: a plan resolved against one provider version is not the same plan against another"
     );
     assert_eq!(recovery.plan().providers()[0].id(), PROVIDER);
+    assert_eq!(
+        recovery.plan().providers()[0].version(),
+        "2.2.2",
+        "§4.4: the binding carries the version the registry resolved the plan against"
+    );
 }
 
 // -- §24.3, §24.4: what the plan shows ---------------------------------------------------------
@@ -280,6 +348,89 @@ fn should_report_the_recovery_as_complete_when_nothing_is_beyond_its_reach() {
     let registry = zfs();
     let recovery = nginx_recovery(&registry, &assets());
     assert!(recovery.is_complete());
+}
+
+// -- §2.12: a recovery plan is impact-checked like any other plan -------------------------------
+
+#[test]
+fn should_name_every_restored_object_in_the_impact_and_say_the_walk_stopped_without_a_topology() {
+    let registry = zfs();
+    let recovery = nginx_recovery(&registry, &assets());
+
+    let impact = recovery.plan().impact();
+
+    assert!(
+        impact
+            .of_class(ImpactClass::DirectTarget)
+            .iter()
+            .any(|node| node.label() == NGINX_CONF),
+        "§2.12 and §9.1: the recovery's impact names the object it restores. Got {:?}",
+        impact.nodes()
+    );
+    assert!(
+        !impact.is_complete(),
+        "§9.5: a graph nobody walked beyond its targets does not call itself complete"
+    );
+}
+
+#[test]
+fn should_carry_the_callers_impact_derivation_when_one_is_given() {
+    let registry = zfs();
+    let assets = assets();
+    let source = nginx_plan();
+    let observe = world;
+    let derive = |targets: &[FrozenTarget], _actions: &[PlanAction]| {
+        let mut graph = ImpactGraph::empty();
+        for target in targets {
+            graph.add(ImpactNode::new(
+                target.identity(),
+                target.label(),
+                target.schema(),
+                ImpactClass::DirectTarget,
+                0,
+            ));
+        }
+        graph.add(ImpactNode::new(
+            "nginx.service",
+            "nginx.service",
+            "ono.service/1",
+            ImpactClass::Dependent,
+            1,
+        ));
+        graph
+    };
+
+    let recovery = plan_recovery(
+        &RecoveryRequest::new(
+            &registry,
+            &assets,
+            &observe,
+            RecoveryGoal::RestoreChangedObjects,
+            "session-recovery",
+            at(16, 0),
+        )
+        .recovering(&source)
+        .applied_at(at(14, 3))
+        .restoring(NGINX_CONF)
+        .captured(NGINX_CONF, "sha256:before-the-plan")
+        .deriving_impact(&derive),
+    )
+    .expect("§24.1: a recovery over a validated asset produces a plan");
+
+    let impact = recovery.plan().impact();
+    assert!(
+        impact
+            .of_class(ImpactClass::Dependent)
+            .iter()
+            .any(|node| node.label() == "nginx.service"),
+        "§2.12 and §9: the recovery is walked by the same derivation the caller runs for every \
+         plan. Got {:?}",
+        impact.nodes()
+    );
+    assert!(
+        impact.is_complete(),
+        "§9.5: a derivation that finished inside its budget is complete"
+    );
 }
 
 #[test]
@@ -1009,4 +1160,55 @@ fn should_carry_the_provider_native_objects_a_rollback_would_destroy() {
     .expect("the plan is produced");
     assert_eq!(recovery.newer_state().destroyed_assets().len(), 2, "§24.5");
     assert!(recovery.needs_destructive_acceptance(), "§13.6");
+}
+
+/// Appendix C.3: the digest the asset captured is the provider's to hand over, and it outranks a
+/// change time — which a filesystem may not keep at all. Without it every object whose change time
+/// is unknown is UNKNOWN, and §56.3 then blocks the ordinary recovery §40.1 keeps usable.
+#[test]
+fn should_decide_newer_state_from_the_digests_the_provider_captured() {
+    let registry = registry(vec![
+        TestProvider::new(PROVIDER)
+            .capturing("/etc/hosts", "sha256:hosts")
+            .capturing("/etc/ssh/sshd_config", "sha256:sshd-at-14:02")
+            .shared(),
+    ]);
+    let source = nginx_plan();
+    let observe = |object: &str| match object {
+        "/etc/hosts" => ObservedState::present("sha256:hosts"),
+        "/etc/ssh/sshd_config" => ObservedState::present("sha256:sshd-edited-later"),
+        _ => ObservedState::changed(at(14, 3), "sha256:written-by-the-plan"),
+    };
+    let recovery = plan_recovery(
+        &RecoveryRequest::new(
+            &registry,
+            &assets(),
+            &observe,
+            RecoveryGoal::RestoreChangedObjects,
+            "session-recovery",
+            at(16, 0),
+        )
+        .recovering(&source)
+        .applied_at(at(14, 3))
+        .restoring(NGINX_CONF),
+    )
+    .expect("the recovery plans");
+    let class_of = |object: &str| {
+        recovery
+            .newer_state()
+            .items()
+            .iter()
+            .find(|item| item.object() == object)
+            .map(|item| item.class())
+    };
+    assert_eq!(
+        class_of("/etc/hosts"),
+        None,
+        "an object holding exactly the captured bytes has no newer state, whatever its mtime"
+    );
+    assert_eq!(
+        class_of("/etc/ssh/sshd_config"),
+        Some(NewerStateClass::PreservedByMethod),
+        "a captured digest that differs is evidence of newer state, not an unknown"
+    );
 }

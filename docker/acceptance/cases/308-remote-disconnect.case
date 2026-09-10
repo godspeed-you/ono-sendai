@@ -1,0 +1,73 @@
+# v0.6 §50 phase P2 — §29 and §63.15: a remote whose state could not be established stays
+# unknown.
+#
+# §29.3 is the rule this case exists for: a host whose outcome could not be established is
+# `UNKNOWN`, not a failure and not a success, and Appendix F.2 says the same of an action. Watching
+# a link drop mid-plan needs a linked host, and the suite runs with `--network=none`, so that
+# scenario is announced as a declared skip. What is proved here is what the container can
+# present: a host nobody linked is refused with a code and changes nothing, and the shell's
+# vocabulary has a word for an outcome nobody established.
+case: an unlinked remote is refused, unknown is a word the shell has, and the disconnect is declared unobserved
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  mkdir -p "$HOME/etc" "$HOME/.config/ono"
+  printf 'a\n' > "$HOME/etc/a"
+  printf 'b\n' > "$HOME/etc/b"
+
+  echo '== §29.1: a host nobody linked is a refusal, with a code =='
+  ono -c 'trace host no-such-host-1a2b' > /tmp/rd1.txt 2>&1
+  status=$?
+  prove rd1a "tracing an unknown host is refused as a target that does not resolve (v0.4.1 §9, v0.2 §43)" \
+    'grep -q "Ono-Sendai-E0102 resolve.target_not_found" /tmp/rd1.txt'
+  prove rd1b "and it exits non-zero, without claiming anything happened (§2.4)" \
+    "[ $status -ne 0 ] && ! grep -qiw 'success' /tmp/rd1.txt"
+  ono -c 'test host no-such-host-1a2b' > /tmp/rd2.txt 2>&1
+  status=$?
+  prove rd1c "testing it answers that the link is not available, as a refusal (v0.4.1 §9, §29.3)" \
+    "[ $status -ne 0 ] && grep -q 'Ono-Sendai-E0601 remote.unreachable' /tmp/rd2.txt"
+
+  echo '== §22.1 and §29.2: one ledger, and the refusal left no plan in it =='
+  ono -c "trace host no-such-host-1a2b
+  plan copy file $HOME/etc/a $HOME/etc/b --overwrite | to json
+  find event | to json" > /tmp/rd3.txt 2>&1
+  prove rd2a "in one session, the only plan the ledger records is the local one planned beside the refusal (§22.1)" \
+    "[ \"\$(grep -o '\"subtype\":\"ono.plan.created\"' /tmp/rd3.txt | wc -l)\" -eq 1 ]"
+
+  echo '== §29.3, §41.1 and Appendix F.2: the shell has a word for an outcome nobody established =='
+  # §6.3's escape is the one action whose idempotency no contract can state; the plan records it
+  # as `unknown` rather than guessing either way.
+  printf 'set config change.allow_opaque_actions true\n' > "$HOME/.config/ono/config.ono"
+  ono -c "plan --opaque sh -c 'true' | select actions | to json" > /tmp/rd4.json 2>&1
+  prove rd3a "an action whose idempotency cannot be established is sealed as \`unknown\` (§41.1, §6.3)" \
+    'grep -q "\"idempotency\":\"unknown\"" /tmp/rd4.json'
+  ono -c "plan --opaque sh -c 'true' | to json" > /tmp/rd5.json 2>&1
+  prove rd3b "and the plan's risk is \`unknown\`, not promoted to a class nobody measured (§2.4, §19.2)" \
+    'grep -q "\"risk\":\"unknown\"" /tmp/rd5.json'
+  rm -f "$HOME/.config/ono/config.ono"
+  prove rd3c "every verification contract says a timeout is failed or unknown, never passed (§23.5)" \
+    "ono -c 'plan copy file $HOME/etc/a $HOME/etc/b --overwrite | to json' 2>&1 | grep -qE '\"timeout_status\":\"(failed|unknown)\"'"
+
+  echo 'SKIPPED remote-disconnect: fixture_not_applicable: nothing can be linked with --network=none, so a link dropping mid-plan (v0.6 §55.10 case 45) cannot be observed'
+  echo 'remote-disconnect: done'
+exit: 0
+stdout-contains: PROVED rd1a
+stdout-contains: PROVED rd1b
+stdout-contains: PROVED rd1c
+stdout-contains: PROVED rd2a
+stdout-contains: PROVED rd3a
+stdout-contains: PROVED rd3b
+stdout-contains: PROVED rd3c
+stdout-contains: remote-disconnect: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

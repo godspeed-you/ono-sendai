@@ -90,6 +90,42 @@ pub fn record(schema_id: &str, fields: &[(&str, Value)]) -> RecordValue {
     record.build()
 }
 
+/// The same record with `field` holding `value`, and every other field as it was.
+///
+/// A fixture's schema declares only the fields the fixture sets, so a field it never declared is
+/// added rather than dropped: a rewrite that silently lost its field would pass for the wrong
+/// reason.
+#[must_use]
+pub fn rewritten(original: &RecordValue, field: &str, value: Value) -> RecordValue {
+    let id = original.schema().id().clone();
+    let mut schema = Schema::builder(id.clone(), original.schema().name());
+    let mut names: Vec<String> = Vec::new();
+    for declared in original.schema().fields() {
+        schema = schema.field(declared.clone());
+        names.push(declared.name().to_owned());
+    }
+    if !names.iter().any(|name| name == field) {
+        schema = schema.field(FieldDef::new(field, FieldType::Any));
+        names.push(field.to_owned());
+    }
+    let schema = Arc::new(schema.build().expect("a well-formed schema"));
+    let mut builder = RecordValue::builder(schema, original.provenance().clone());
+    for name in &names {
+        let held = if name == field {
+            value.clone()
+        } else {
+            original.get(name).cloned().unwrap_or(Value::Null)
+        };
+        builder = builder
+            .set(name, held)
+            .expect("the schema declares its own fields");
+    }
+    for (key, held) in original.extra().iter() {
+        builder = builder.set_extra(key, held.clone());
+    }
+    builder.build()
+}
+
 /// The same record as a list element.
 #[must_use]
 pub fn nested(schema_id: &str, fields: &[(&str, Value)]) -> Value {
@@ -940,6 +976,16 @@ pub fn equivalence(domain: &str, subject: &str, state: &str) -> RecordValue {
             ("equivalence_state", s(state)),
             ("timestamp", Value::Timestamp(instant())),
         ],
+    )
+}
+
+/// The recovery §25.2's results answer for: it restored exactly the two persistent subjects.
+#[must_use]
+pub fn verified_recovery() -> RecordValue {
+    rewritten(
+        &selective_recovery(),
+        "restores",
+        list(&["nginx.conf", "package version"]),
     )
 }
 

@@ -271,11 +271,12 @@ impl ImpactGraph {
         }
     }
 
-    /// Records that traversal stopped at a budget rather than at the edge of the world.
+    /// Records why the graph is not the whole answer: traversal stopped at a budget, or an effect
+    /// reaches something Ono has no model of (§6.3, §8.1).
     ///
     /// §9.5 lets `impact` summarise, and §52.2 bounds how long it may take. A graph cut short by
-    /// a budget is not a graph that ended, and saying which is the difference between a summary
-    /// and a lie.
+    /// a budget, or ended by an effect nobody can follow, is not a graph that ended at the edge of
+    /// the world, and saying which is the difference between a summary and a lie.
     #[must_use]
     pub fn truncated(mut self, reason: impl Into<Arc<str>>) -> Self {
         self.truncated = Some(reason.into());
@@ -303,7 +304,7 @@ impl ImpactGraph {
         &self.boundaries
     }
 
-    /// Why traversal stopped early, where it did.
+    /// Why the graph is incomplete, where it is.
     #[must_use]
     pub fn truncation(&self) -> Option<&str> {
         self.truncated.as_deref()

@@ -14,7 +14,7 @@
 use ono_core::ErrorCode;
 use ono_value::{ErrorValue, Value};
 
-use crate::id::{ActionId, PlanId, RecoveryAssetId};
+use crate::id::{ActionId, PlanId, RecoveryAssetId, SHORT, shortest_unique_prefixes};
 use crate::protection::ProtectionLevel;
 use crate::state::{LifecycleEvent, PlanState};
 
@@ -101,7 +101,10 @@ pub fn plan_already_applying(plan: &PlanId, holder: &str) -> ErrorValue {
     plan_metadata(
         ErrorValue::new(
             ErrorCode::ChangePlanAlreadyApplying,
-            format!("plan {} is already being applied by {holder}", plan.short()),
+            format!(
+                "plan {} is already being applied by session {holder}",
+                plan.short()
+            ),
         )
         .with_help(
             "v0.6 §42.4: the plan store prevents two sessions from applying one sealed plan at \
@@ -147,8 +150,18 @@ pub fn plan_not_found(reference: &str) -> ErrorValue {
 }
 
 /// The reference matches more than one plan (§36.4).
+///
+/// The refusal states the shortest prefix width that tells the candidates apart, and each
+/// candidate at that width, so the operator can retype one without guessing how much more to
+/// write (ADR-0803, ADR-0833).
 #[must_use]
 pub fn plan_reference_ambiguous(reference: &str, candidates: &[String]) -> ErrorValue {
+    let borrowed: Vec<&str> = candidates.iter().map(String::as_str).collect();
+    let width = shortest_unique_prefixes(&borrowed, SHORT);
+    let shortened: Vec<&str> = borrowed
+        .iter()
+        .map(|id| id.get(..width.min(id.len())).unwrap_or(id))
+        .collect();
     ErrorValue::new(
         ErrorCode::ChangePlanReferenceAmbiguous,
         format!(
@@ -156,8 +169,15 @@ pub fn plan_reference_ambiguous(reference: &str, candidates: &[String]) -> Error
             candidates.len()
         ),
     )
-    .with_help("write enough of the identity to tell them apart (v0.6 §36.4)".to_owned())
+    .with_help(format!(
+        "write at least {width} characters of the identity to tell them apart: {} (v0.6 §36.4)",
+        shortened.join(", ")
+    ))
     .with_metadata("reference", Value::string(reference))
+    .with_metadata(
+        "width",
+        Value::Int(i128::try_from(width).unwrap_or(i128::MAX)),
+    )
     .with_metadata(
         "candidates",
         Value::list(candidates.iter().map(|id| Value::string(id))),
@@ -330,10 +350,23 @@ pub fn drift_detected(plan: &PlanId, findings: &[(String, String, String)]) -> E
     plan_metadata(
         ErrorValue::new(
             ErrorCode::ChangePlanDriftDetected,
-            format!(
-                "plan {} was resolved against state that has since changed",
-                plan.short()
-            ),
+            match findings.first() {
+                // §7.3: the refusal names what moved, so the operator does not have to go looking.
+                Some((subject, field, detail)) => format!(
+                    "plan {} was resolved against state that has since changed: {subject}.{field} \
+                     — {detail}{}",
+                    plan.short(),
+                    if findings.len() > 1 {
+                        format!(" (and {} more)", findings.len() - 1)
+                    } else {
+                        String::new()
+                    }
+                ),
+                None => format!(
+                    "plan {} was resolved against state that has since changed",
+                    plan.short()
+                ),
+            },
         )
         .with_help(format!(
             "v0.6 §7.3: material drift stops execution before anything is prepared or mutated. \
@@ -343,6 +376,7 @@ pub fn drift_detected(plan: &PlanId, findings: &[(String, String, String)]) -> E
         )),
         plan,
     )
+    .with_metadata("details", Value::list(rendered.clone()))
     .with_metadata("drift", Value::list(rendered))
 }
 
@@ -562,9 +596,10 @@ pub fn auto_recovery_rejected(plan: &PlanId, unmet: &[String]) -> ErrorValue {
         ErrorValue::new(
             ErrorCode::ChangeAutoRecoveryRejected,
             format!(
-                "plan {} declares automatic recovery and does not meet {} of §26.3's conditions",
+                "plan {} declares automatic recovery and does not meet {} of §26.3's conditions: {}",
                 plan.short(),
-                unmet.len()
+                unmet.len(),
+                unmet.join("; ")
             ),
         )
         .with_help(
@@ -953,15 +988,17 @@ pub fn cleanup_blocked(asset: &RecoveryAssetId, plans: &[String]) -> ErrorValue 
     ErrorValue::new(
         ErrorCode::RecoveryCleanupBlocked,
         format!(
-            "removing recovery asset {} would leave {} plan(s) unrecoverable",
+            "removing recovery asset {} would leave {} plan(s) unrecoverable: {}",
             asset.short(),
-            plans.len()
+            plans.len(),
+            plans.join(", ")
         ),
     )
     .with_help(
         "v0.6 §2.15: recovery assets required by a retained plan MUST NOT be deleted silently, \
          and §37.2 keeps the assets of a failed plan out of ordinary success retention. \
-         `remove recovery <id> --confirm` overrides it"
+         `remove recovery <id> --confirm --force` overrides it; `--dry-run` shows which plans \
+         would lose their recovery"
             .to_owned(),
     )
     .with_metadata("asset", Value::string(asset.as_str()))
@@ -1111,6 +1148,31 @@ mod tests {
                 }),
             Some(Value::string(plan().as_str())),
             "§45: a refusal a script reads must carry what was refused"
+        );
+    }
+
+    #[test]
+    fn should_state_the_prefix_width_that_tells_ambiguous_candidates_apart() {
+        let candidates = [
+            "a82f1c0000000000000000000000000000000000000000000000000000000000".to_owned(),
+            "a82f7d0000000000000000000000000000000000000000000000000000000000".to_owned(),
+        ];
+        let refused = plan_reference_ambiguous("a82f", &candidates);
+        let width = refused
+            .field("metadata")
+            .and_then(|metadata| match metadata {
+                Value::Map(map) => map.get("width").cloned(),
+                _ => None,
+            });
+        assert_eq!(
+            width,
+            Some(Value::Int(5)),
+            "§36.4, ADR-0803: the refusal names the shortest width that tells the candidates apart"
+        );
+        let help = refused.help().unwrap_or_default();
+        assert!(
+            help.contains("5 characters") && help.contains("a82f1") && help.contains("a82f7"),
+            "the operator reads the width and each candidate at that width — got `{help}`"
         );
     }
 

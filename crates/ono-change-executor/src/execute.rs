@@ -23,8 +23,8 @@
 //!   requirement about what is reported: [`prepare`] returns the original refusal whatever the
 //!   cleanup did, and the cleanup's own failures are reported beside it.
 
-use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use jiff::Timestamp;
@@ -35,7 +35,7 @@ use ono_change_core::{
     VerificationClass, VerificationContract, VerificationResult, VerificationStatus, error,
     topological_order,
 };
-use ono_change_plan::PlanStore;
+use ono_change_plan::{Claim, PlanStore};
 use ono_change_protection::ProviderRegistry;
 use ono_value::{ErrorValue, Value};
 
@@ -139,6 +139,10 @@ pub enum FailurePoint {
     RecoveryValidation,
     /// An application could not be quiesced or resumed (§18.4).
     ApplicationQuiesce,
+    /// A mutating action was never started: its in-flight record could not be written, or the
+    /// apply claim could not be renewed before it (§41.2, §42.3). Nothing ran *at this point*;
+    /// whether earlier actions of the run did is [`ApplyOutcome::has_mutated`]'s answer.
+    ActionNotStarted,
     /// The first mutating action failed, so nothing else in the chain ran.
     FirstMutateAction,
     /// A later mutating action failed, after earlier ones had already changed the system.
@@ -193,6 +197,7 @@ impl FailurePoint {
             FailurePoint::RecoveryAssetCreation => "recovery-asset-creation",
             FailurePoint::RecoveryValidation => "recovery-validation",
             FailurePoint::ApplicationQuiesce => "application-quiesce",
+            FailurePoint::ActionNotStarted => "action-not-started",
             FailurePoint::FirstMutateAction => "first-mutate-action",
             FailurePoint::MiddleMutateAction => "middle-mutate-action",
             FailurePoint::RemoteDisconnect => "remote-disconnect",
@@ -237,6 +242,30 @@ impl Authority {
             ],
             recovery: RecoveryCapability::REQUIRED.to_vec(),
             elevated: true,
+        }
+    }
+
+    /// The authority of the session the shell is actually running as (§43.3).
+    ///
+    /// `effective_uid` is the process's effective user id, and `effective_capabilities` the
+    /// kernel's effective capability set (`CapEff` in `/proc/self/status`) where it could be read.
+    /// Elevation is `CAP_SYS_ADMIN` in that set: a root process whose capabilities were dropped —
+    /// a container, a hardened unit — cannot do what an elevated action needs, and a non-root
+    /// process granted the capability can. Only where the set is unknown does uid 0 decide.
+    ///
+    /// The §43.2 capabilities are the shell's own grants rather than the kernel's, so they are
+    /// [`Authority::full`]'s; a caller narrows them with [`Authority::without_change`].
+    #[must_use]
+    pub fn for_session(effective_uid: u32, effective_capabilities: Option<u64>) -> Self {
+        /// `CAP_SYS_ADMIN` is capability 21 (`linux/capability.h`).
+        const CAP_SYS_ADMIN: u64 = 1 << 21;
+        let elevated = match effective_capabilities {
+            Some(set) => set & CAP_SYS_ADMIN != 0,
+            None => effective_uid == 0,
+        };
+        Self {
+            elevated,
+            ..Self::full()
         }
     }
 
@@ -453,6 +482,45 @@ impl CleanupReport {
     }
 }
 
+/// An optional protection action that did not produce validated protection (§4.6, §17.2).
+///
+/// `maximize`'s extras may fail without stopping the apply, and §4.6 forbids counting them as
+/// protection when they do. Both halves of that are reported here: the asset that exists and did
+/// not validate (it still occupies storage and is retained), and the one that was never created.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProtectionShortfall {
+    provider: Arc<str>,
+    summary: Arc<str>,
+    asset: Option<RecoveryAsset>,
+    reason: ErrorValue,
+}
+
+impl ProtectionShortfall {
+    /// The provider that was asked.
+    #[must_use]
+    pub fn provider(&self) -> &str {
+        &self.provider
+    }
+
+    /// The protection action's line (§17.1).
+    #[must_use]
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+
+    /// The asset that was created and did not validate, where one was created (`INVALID`).
+    #[must_use]
+    pub const fn asset(&self) -> Option<&RecoveryAsset> {
+        self.asset.as_ref()
+    }
+
+    /// Why it is not protection: the creation refusal, or `recovery.asset_invalid`.
+    #[must_use]
+    pub const fn reason(&self) -> &ErrorValue {
+        &self.reason
+    }
+}
+
 /// The functions the executor reaches the world through. `revalidate` rechecks one action's
 /// preconditions (§7.3).
 type Revalidate<'a> = dyn Fn(&PlanAction) -> Result<Vec<DriftFinding>, ErrorValue> + 'a;
@@ -478,6 +546,7 @@ pub struct PrepareRequest<'a> {
     quiesce: Option<Quiescing<'a>>,
     cleanup: CleanupDecision,
     created: Vec<RecoveryAsset>,
+    shortfall: Vec<ProtectionShortfall>,
     cleanup_report: Option<CleanupReport>,
     quiesce_report: Option<QuiesceReport>,
     failure_point: Option<FailurePoint>,
@@ -501,6 +570,7 @@ impl<'a> PrepareRequest<'a> {
             quiesce: None,
             cleanup: CleanupDecision::Retain,
             created: Vec::new(),
+            shortfall: Vec::new(),
             cleanup_report: None,
             quiesce_report: None,
             failure_point: None,
@@ -532,6 +602,12 @@ impl<'a> PrepareRequest<'a> {
     #[must_use]
     pub fn created(&self) -> &[RecoveryAsset] {
         &self.created
+    }
+
+    /// The optional protection that did not become protection (§17.2), failed or not.
+    #[must_use]
+    pub fn shortfall(&self) -> &[ProtectionShortfall] {
+        &self.shortfall
     }
 
     /// What cleanup did after a failed preparation (Appendix F.1).
@@ -572,14 +648,31 @@ impl<'a> PrepareRequest<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Prepared {
     assets: Vec<RecoveryAsset>,
+    shortfall: Vec<ProtectionShortfall>,
     quiesce: Option<QuiesceReport>,
 }
 
 impl Prepared {
-    /// The validated assets protection produced (§4.6, §11.4).
+    /// Nothing prepared, for a plan with no protection to create or one already past PREPARE.
+    const fn nothing() -> Self {
+        Self {
+            assets: Vec::new(),
+            shortfall: Vec::new(),
+            quiesce: None,
+        }
+    }
+
+    /// The validated assets protection produced (§4.6, §11.4). Only these are protection.
     #[must_use]
     pub fn assets(&self) -> &[RecoveryAsset] {
         &self.assets
+    }
+
+    /// The optional protection that failed or did not validate (§17.2). An `INVALID` asset here
+    /// still exists; the caller persists and surfaces it like any other.
+    #[must_use]
+    pub fn shortfall(&self) -> &[ProtectionShortfall] {
+        &self.shortfall
     }
 
     /// What happened to the quiesce window (§18.4).
@@ -614,6 +707,7 @@ impl Prepared {
 pub fn prepare(request: &mut PrepareRequest<'_>) -> Result<Prepared, ErrorValue> {
     request.failure_point = None;
     request.created.clear();
+    request.shortfall.clear();
     request.cleanup_report = None;
     request.quiesce_report = None;
 
@@ -643,39 +737,93 @@ pub fn prepare(request: &mut PrepareRequest<'_>) -> Result<Prepared, ErrorValue>
     }
 
     let mut failure: Option<(FailurePoint, ErrorValue)> = None;
+    // ADR-0825: the domains this preparation tried to protect, and the ones it did.
+    let mut attempted: Vec<ono_change_core::EffectDomain> = Vec::new();
+    let mut protected: Vec<ono_change_core::EffectDomain> = Vec::new();
     for action in request.protection {
+        attempted.push(action.candidate().domain());
+        let required = requires_protection(request.plan, action);
+        if !request.authority.has_recovery(RecoveryCapability::Prepare) {
+            // §43.2: creating an asset is the protection provider's capability, and a session
+            // without it asks no provider for anything.
+            let refusal = error::capability_missing(
+                request.plan.id().as_str(),
+                RecoveryCapability::Prepare.as_str(),
+                false,
+            );
+            if required {
+                failure = Some((FailurePoint::PrivilegeCheck, refusal));
+                break;
+            }
+            request.shortfall.push(shortfall_of(action, None, refusal));
+            continue;
+        }
         match create_and_validate(request.providers, action, request.now) {
             Ok(asset) => {
-                let usable = asset.is_usable();
-                let invalid = asset.state();
-                request.created.push(asset);
-                if !usable && action.is_required() {
-                    let asset_id = request
-                        .created
-                        .last()
-                        .map(|asset| asset.id().clone())
-                        .unwrap_or_else(|| RecoveryAssetId::of(action.provider(), None, "", ""));
-                    let failures = request
-                        .created
-                        .last()
-                        .and_then(RecoveryAsset::validation)
+                // §4.6: only a validated asset is protection. One that exists and did not
+                // validate is still a real object — retained, reported — and never counted.
+                let invalid = (!asset.is_usable()).then(|| {
+                    let failures = asset
+                        .validation()
                         .map(RecoveryValidation::failures)
                         .unwrap_or_default();
-                    let _ = invalid;
-                    failure = Some((
-                        FailurePoint::RecoveryValidation,
-                        error::asset_invalid(&asset_id, &failures),
+                    error::asset_invalid(asset.id(), &failures)
+                });
+                if let Some(refusal) = &invalid
+                    && !required
+                {
+                    request.shortfall.push(shortfall_of(
+                        action,
+                        Some(asset.clone()),
+                        refusal.clone(),
                     ));
+                }
+                if asset.is_usable() {
+                    protected.push(action.candidate().domain());
+                }
+                request.created.push(asset);
+                if let Some(refusal) = invalid
+                    && required
+                {
+                    failure = Some((FailurePoint::RecoveryValidation, refusal));
                     break;
                 }
             }
             Err(refusal) => {
-                if action.is_required() {
+                if required {
                     failure = Some((FailurePoint::RecoveryAssetCreation, refusal));
                     break;
                 }
+                // §17.2: a failed extra degrades the coverage, and a degradation nobody is told
+                // about is the silent partial protection §4.6 forbids.
+                request.shortfall.push(shortfall_of(action, None, refusal));
             }
         }
+    }
+
+    // ADR-0825 and §2.3: the operator approved the matrix the plan was sealed with. A domain it
+    // showed protected, and that this preparation set out to protect, ends with a validated asset
+    // or nothing mutates. An optional action failing there is the plan's protection failing: the
+    // silent downgrade to unprotected execution §2.3 forbids, not an extra degrading.
+    if failure.is_none()
+        && let Some(row) = request.plan.protection().rows().iter().find(|row| {
+            row.is_required()
+                && row.is_satisfied()
+                && attempted.contains(&row.domain())
+                && !protected.contains(&row.domain())
+        })
+    {
+        let cause = request.shortfall.last().map_or_else(
+            || {
+                error::asset_create_failed(
+                    "the protection provider",
+                    row.domain().as_str(),
+                    "no validated asset came out of the preparation",
+                )
+            },
+            |shortfall| shortfall.reason.clone(),
+        );
+        failure = Some((FailurePoint::RecoveryAssetCreation, cause));
     }
 
     // §18.4: the window closes whether creation worked or not, and failing to close it is a
@@ -694,9 +842,39 @@ pub fn prepare(request: &mut PrepareRequest<'_>) -> Result<Prepared, ErrorValue>
             Err(critical)
         }
         (None, None) => Ok(Prepared {
-            assets: request.created.clone(),
+            assets: request
+                .created
+                .iter()
+                .filter(|asset| asset.is_usable())
+                .cloned()
+                .collect(),
+            shortfall: request.shortfall.clone(),
             quiesce: request.quiesce_report.clone(),
         }),
+    }
+}
+
+/// Whether a failure of `action` must stop the apply before mutation (§2.3, §4.6, §17.2).
+///
+/// This is the one predicate for "required protection": the discovery check, the capability
+/// check and preparation all ask it. Under `require` nothing planned is optional, whatever the
+/// action says, because §17.2's `require` refuses to apply without the protection; elsewhere the
+/// action's own flag decides (§17.2's `maximize` extras).
+fn requires_protection(plan: &ChangePlan, action: &ProtectionAction) -> bool {
+    action.is_required() || plan.protection_mode().refuses_shortfall()
+}
+
+/// The report for an optional protection action that did not become protection.
+fn shortfall_of(
+    action: &ProtectionAction,
+    asset: Option<RecoveryAsset>,
+    reason: ErrorValue,
+) -> ProtectionShortfall {
+    ProtectionShortfall {
+        provider: Arc::from(action.provider()),
+        summary: Arc::from(action.summary()),
+        asset,
+        reason,
     }
 }
 
@@ -865,6 +1043,8 @@ pub struct ApplyRequest<'a> {
     execute: &'a Execute<'a>,
     observe: &'a Observe<'a>,
     store_failures: Vec<ErrorValue>,
+    clock: Option<&'a dyn Fn() -> Timestamp>,
+    resume: bool,
 }
 
 impl std::fmt::Debug for ApplyRequest<'_> {
@@ -908,7 +1088,38 @@ impl<'a> ApplyRequest<'a> {
             execute,
             observe,
             store_failures: Vec::new(),
+            clock: None,
+            resume: false,
         }
+    }
+
+    /// Continues an interrupted apply rather than starting one (§41.2, §41.3).
+    ///
+    /// The plan may then be `applying`, `apply-failed` or `verifying` as well as sealed. Under the
+    /// claim, the persisted action records decide: an action that succeeded is not run again; one
+    /// left `running` or `unknown` is rerun only where its idempotency permits a blind retry, and
+    /// a failed one only where its contract accepts a retry (§41.1) — otherwise the whole resume
+    /// refuses with `change.resume_refused` naming the actions, and nothing runs. Preparation is
+    /// not repeated once mutation began: an asset taken now would capture the half-changed state
+    /// rather than the one the plan protected. Instead, the stored asset behind every required
+    /// protection action is validated again through its provider, and the resume refuses with
+    /// `recovery.coverage_insufficient` where one is gone or no longer validates (§4.6, §17.2).
+    /// Verification follows as for a fresh apply.
+    #[must_use]
+    pub const fn resuming(mut self) -> Self {
+        self.resume = true;
+        self
+    }
+
+    /// Stamps each settled action with the instant `clock` answers when it settles (§41.2).
+    ///
+    /// Without one, every action carries the instant `apply` was given. That is right for a
+    /// scripted run (§39.2), and wrong for a real one: the plan's own write happens after that
+    /// instant, and Appendix C.4 tells the write from a later edit by when it settled.
+    #[must_use]
+    pub const fn stamping_with(mut self, clock: &'a dyn Fn() -> Timestamp) -> Self {
+        self.clock = Some(clock);
+        self
     }
 
     /// States what the session actually holds (§43.2, §43.3).
@@ -960,6 +1171,8 @@ pub struct ApplyOutcome {
     error: Option<ErrorValue>,
     quiesce: Option<QuiesceReport>,
     cleanup: Option<CleanupReport>,
+    shortfall: Vec<ProtectionShortfall>,
+    executed: bool,
 }
 
 impl ApplyOutcome {
@@ -979,6 +1192,9 @@ impl ApplyOutcome {
     #[must_use]
     pub const fn has_mutated(&self) -> bool {
         match self.failure_point {
+            // The point itself changed nothing; whether an earlier action of the run did is the
+            // answer, and only this run's executions count.
+            Some(FailurePoint::ActionNotStarted) => self.executed,
             Some(point) => point.may_have_mutated(),
             None => self.state.has_mutated(),
         }
@@ -1091,6 +1307,13 @@ impl ApplyOutcome {
     pub const fn cleanup(&self) -> Option<&CleanupReport> {
         self.cleanup.as_ref()
     }
+
+    /// The optional protection that did not become protection (§17.2), which the operator is
+    /// told about rather than left to infer from a shorter asset list.
+    #[must_use]
+    pub fn protection_shortfall(&self) -> &[ProtectionShortfall] {
+        &self.shortfall
+    }
 }
 
 /// Runs §5.6's commitment point: claim, revalidate, check, gate, prepare, mutate, verify.
@@ -1098,40 +1321,95 @@ impl ApplyOutcome {
 /// Every step before preparation refuses with the plan untouched and unprepared, which is what
 /// Appendix F's first three rows require; preparation may leave assets behind and never a changed
 /// target (§2.3); and from the first mutating action onwards the outcome says what ran.
+///
+/// §4.1 and §41.2: the state the plan reaches is durable, so `apply` on an applied plan is a
+/// refusal rather than a second mutation, and a shell that stopped in the middle is found in the
+/// state it stopped in. Every durable write happens under the claim: a session refused at the
+/// claim writes nothing, because the state it holds may be older than the one the store holds.
 #[must_use]
 pub fn apply(request: &mut ApplyRequest<'_>) -> ApplyOutcome {
-    let store = request.store;
-    let plan = request.prepare.plan;
-    let outcome = apply_within(request);
-    // §4.1 and §41.2: the state the plan reached is durable, so `apply` on an applied plan is a
-    // refusal rather than a second mutation, and a shell that stopped in the middle is found in
-    // the state it stopped in. It is written last because the states *inside* the run are written
-    // as they are entered — a durable state nobody wrote is a plan that says `sealed` after it
-    // changed the world.
-    let _ = store.record_state(plan.id(), plan.revision(), outcome.state);
-    outcome
-}
-
-/// [`apply`], without the durable state write that wraps every one of its exits.
-fn apply_within(request: &mut ApplyRequest<'_>) -> ApplyOutcome {
     let plan = request.prepare.plan;
     let now = request.prepare.now;
+    let resume = request.resume;
 
-    if let Some(refusal) = appliability(plan, now) {
+    // §42.4 before §4.1: a plan another session is applying reads `applying` here, and only the
+    // claim below can say which session that is. The durable state is checked again under it.
+    let in_flight = matches!(
+        plan.state(),
+        PlanState::Preparing | PlanState::Applying | PlanState::Verifying
+    );
+    if (!in_flight || resume)
+        && let Some(refusal) = appliability(plan, plan.state(), now, resume)
+    {
         return refused(plan, FailurePoint::PlanState, refusal);
+    }
+
+    // §4.4: the seal is what makes a sealed plan immutable. A plan whose content no longer matches
+    // its recorded digest was changed after the operator approved it — in memory or in the store —
+    // and none of it runs.
+    if !plan.digest_holds() {
+        return refused(
+            plan,
+            FailurePoint::PlanState,
+            error::store_corrupt(&format!(
+                "plan {} does not match the digest it was sealed with, so it is not the plan that \
+                 was approved (§4.4). Nothing was changed; `rebase plan {}` seals it again from \
+                 the world as it is",
+                plan.id().short(),
+                plan.id().short()
+            )),
+        );
     }
 
     // 1. §42.4: two sessions MUST NOT apply one sealed plan at once. The claim is held for the
     //    whole of this function and released on the way out, including on an early return (§42.3).
-    let claim = match request.store.claim(plan.id(), &request.session, now) {
+    let mut claim = match request.store.claim(plan.id(), &request.session, now) {
         Ok(claim) => claim,
         Err(refusal) => return refused(plan, FailurePoint::Claim, refusal),
     };
 
+    // §42.4 again, under the claim: the copy of the plan this session holds may have been read
+    // before another session applied it. The store is the evidence, and nobody can change it
+    // while the claim is held.
+    let (durable, recorded) = match durable_evidence(plan, request.store) {
+        Ok(evidence) => evidence,
+        Err(refusal) => return refused(plan, FailurePoint::PlanState, refusal),
+    };
+    if let Some(refusal) = appliability(plan, durable, now, resume) {
+        return refused_on_evidence(plan, FailurePoint::PlanState, refusal, durable, &recorded);
+    }
+    let began = mutation_began(plan, &recorded);
+    if began && !resume {
+        // §2.7 and §41.2: the state write never landed, and an action record did. The plan reads
+        // sealed and may already have changed the world, so it is resumed rather than rerun.
+        let refusal = error::plan_not_sealed(plan.id(), PlanState::Applying).with_help(
+            "v0.6 §41.2: the persisted action records say this plan already began executing. \
+             `resume plan` decides, action by action, what may continue"
+                .to_owned(),
+        );
+        return refused_on_evidence(plan, FailurePoint::PlanState, refusal, durable, &recorded);
+    }
+    // §41.3, under the claim: the records decide which actions may continue, and a plan with any
+    // action that may not is refused whole rather than resumed around it.
+    let prior = if resume {
+        let decision = crate::resume::resume(plan, request.store, now);
+        if let Some(refusal) = decision.refusal() {
+            return refused_on_evidence(
+                plan,
+                FailurePoint::PlanState,
+                refusal.clone(),
+                durable,
+                &recorded,
+            );
+        }
+        recorded.clone()
+    } else {
+        BTreeMap::new()
+    };
+
     // 2. §7.3: revalidate before anything is prepared. Material drift and an unanswerable check
     //    both stop the apply, because §2.4 forbids promoting unknown to expected.
-    if let Some(refusal) = revalidate_plan(plan, request.revalidate) {
-        drop(claim);
+    if let Some(refusal) = revalidate_plan(plan, request.revalidate, &prior) {
         return refused(plan, FailurePoint::TargetRevalidation, refusal);
     }
 
@@ -1139,34 +1417,43 @@ fn apply_within(request: &mut ApplyRequest<'_>) -> ApplyOutcome {
     if let Some(refusal) =
         check_authority(plan, &request.prepare.authority, request.prepare.protection)
     {
-        drop(claim);
         return refused(plan, FailurePoint::PrivilegeCheck, refusal);
     }
     if let Some(refusal) = check_discovery(plan, request.prepare.protection) {
-        drop(claim);
         return refused(plan, FailurePoint::RecoveryDiscovery, refusal);
     }
 
     // 4. §19.4: an outstanding acknowledgement refuses before prepare. §40.3 makes this the whole
     //    of a script's gate: nothing here prompts, so a missing flag is a refusal.
     if let Some(refusal) = check_gates(plan) {
-        drop(claim);
         return refused(plan, FailurePoint::Gate, refusal);
     }
 
     // 5. §4.5: create and validate the recovery assets the policy requires. The state is written
     //    before the first asset, because §2.3's rule — mutation MUST NOT begin when a required
     //    asset could not be created — is only checkable afterwards if the store says preparation
-    //    had begun.
-    let _ = request
-        .store
-        .record_state(plan.id(), plan.revision(), PlanState::Preparing);
-    let prepared = if request.prepare.protection.is_empty() {
-        Ok(Prepared {
-            assets: Vec::new(),
-            quiesce: None,
-        })
+    //    had begun. A resumed plan that already began mutating is past PREPARE: its protection is
+    //    the one taken before the first change, and a second one would capture the half-changed
+    //    state.
+    let prepared = if began {
+        // §4.6 and §17.2 on resume: the protection taken before the first change is what this
+        // plan rests on, so it is checked again rather than assumed — and never retaken.
+        match reestablish_protection(request) {
+            Ok(prepared) => Ok(prepared),
+            Err(refusal) => {
+                return refused_on_evidence(
+                    plan,
+                    FailurePoint::RecoveryValidation,
+                    refusal,
+                    durable,
+                    &recorded,
+                );
+            }
+        }
+    } else if request.prepare.protection.is_empty() {
+        Ok(Prepared::nothing())
     } else {
+        write_state(request, PlanState::Preparing);
         prepare(&mut request.prepare)
     };
     let prepared = match prepared {
@@ -1182,7 +1469,11 @@ fn apply_within(request: &mut ApplyRequest<'_>) -> ApplyOutcome {
             outcome.retained = request.prepare.retained();
             outcome.quiesce = request.prepare.quiesce_report.clone();
             outcome.cleanup = request.prepare.cleanup_report.clone();
+            outcome.shortfall = request.prepare.shortfall.clone();
             outcome.untouched = target_labels(plan);
+            let created = request.prepare.created.clone();
+            persist_assets(request, &created);
+            write_state(request, outcome.state);
             drop(claim);
             return outcome;
         }
@@ -1191,33 +1482,244 @@ fn apply_within(request: &mut ApplyRequest<'_>) -> ApplyOutcome {
     // 6. §4.7: the mutating actions, in dependency order, by the plan's strategy. `applying` is
     //    durable before the first one runs, so a shell killed between here and the end is found
     //    as a plan that may have mutated rather than as one that never started (§41.1, F.2).
-    let _ = request
-        .store
-        .record_state(plan.id(), plan.revision(), PlanState::Applying);
-    let mutation = mutate(request, &prepared);
+    // §41.2: the protection a resume will rest on is durable before the first change, because
+    // a crash between here and the end leaves nothing else to find it by.
+    let kept: Vec<RecoveryAsset> = prepared
+        .assets
+        .iter()
+        .cloned()
+        .chain(
+            prepared
+                .shortfall
+                .iter()
+                .filter_map(|shortfall| shortfall.asset.clone()),
+        )
+        .collect();
+    persist_assets(request, &kept);
+    write_state(request, PlanState::Applying);
+    let (outcome, held) = mutate(request, &prepared, &prior, &mut claim);
+    // §42.4: a session that lost the claim to another writes nothing over what that one holds.
+    if held {
+        write_state(request, outcome.state);
+    }
     drop(claim);
-    mutation
+    outcome
 }
 
-/// §5.6: `apply` MUST refuse drafts and expired plans.
-fn appliability(plan: &ChangePlan, now: Timestamp) -> Option<ErrorValue> {
-    if plan.is_expired_at(now) {
+/// Persists the assets this apply created, attributed to the plan (§11.1, §41.2).
+fn persist_assets(request: &mut ApplyRequest<'_>, assets: &[RecoveryAsset]) {
+    let plan = request.prepare.plan;
+    for asset in assets {
+        let attributed = match asset.source_plan() {
+            Some(_) => asset.clone(),
+            None => asset.clone().for_plan(plan.id().clone()),
+        };
+        if let Err(failure) = request.store.put_asset(&attributed) {
+            request.store_failures.push(failure);
+        }
+    }
+}
+
+/// Checks, through its provider, the stored asset behind every required protection action of a
+/// resumed plan (§4.6, §17.2, §41.3).
+///
+/// A fresh asset is never taken instead: after the first change it would capture the half-changed
+/// state, which is not the state the plan protected. An asset that is gone, unrecorded, or no
+/// longer validates — or whose provider is not here to say — is protection the plan no longer
+/// has, and `require`'s refusal is the answer.
+fn reestablish_protection(request: &ApplyRequest<'_>) -> Result<Prepared, ErrorValue> {
+    let plan = request.prepare.plan;
+    let required: Vec<&ProtectionAction> = request
+        .prepare
+        .protection
+        .iter()
+        .filter(|action| requires_protection(plan, action))
+        .collect();
+    if required.is_empty() {
+        return Ok(Prepared::nothing());
+    }
+    // An asset the store cannot decode is one this resume cannot rest on, the same as a missing
+    // one; the refusal below names the domain either way.
+    let stored: Vec<RecoveryAsset> = request
+        .store
+        .assets_for(plan.id())?
+        .iter()
+        .filter_map(|id| request.store.get_asset(id).ok())
+        .collect();
+    let mut assets = Vec::new();
+    let mut missing = Vec::new();
+    for action in required {
+        let domain = action.proposed_asset().scope().domain();
+        let Some(asset) = stored.iter().find(|asset| {
+            asset.provider() == action.provider() && asset.scope().domain() == domain
+        }) else {
+            missing.push(format!(
+                "{domain}: no recovery asset from the first run is recorded"
+            ));
+            continue;
+        };
+        let Some(provider) = request.prepare.providers.get(asset.provider()) else {
+            missing.push(format!(
+                "{domain}: {} is not registered, so {} cannot be checked",
+                asset.provider(),
+                asset.id().as_str()
+            ));
+            continue;
+        };
+        match provider.validate(asset) {
+            Ok(validation) => {
+                let checked = asset.clone().validated(validation);
+                if checked.is_usable() {
+                    assets.push(checked);
+                } else {
+                    missing.push(format!(
+                        "{domain}: {} no longer validates",
+                        asset.id().as_str()
+                    ));
+                }
+            }
+            Err(refusal) => missing.push(format!("{domain}: {}", refusal.message())),
+        }
+    }
+    if missing.is_empty() {
+        return Ok(Prepared {
+            assets,
+            shortfall: Vec::new(),
+            quiesce: None,
+        });
+    }
+    Err(error::coverage_insufficient(
+        plan.id(),
+        plan.protection().level(),
+        ProtectionLevel::Protected,
+        &missing,
+    )
+    .with_help(
+        "v0.6 §4.6, §17.2 and §41.3: the protection this plan was applied under cannot be \
+         established again, so it does not go on mutating. A new asset now would capture the \
+         half-changed state; a recovery or rebase decision is required"
+            .to_owned(),
+    ))
+}
+
+/// A refusal made after reading the store, reporting what the store holds rather than `pending`.
+///
+/// The plan is refused in the state the store has it in, and every action carries its persisted
+/// record: an operator told "nothing ran" about an action recorded `running` would be told the
+/// one thing Appendix F.2 forbids guessing.
+fn refused_on_evidence(
+    plan: &ChangePlan,
+    point: FailurePoint,
+    refusal: ErrorValue,
+    durable: PlanState,
+    recorded: &BTreeMap<String, ActionStatus>,
+) -> ApplyOutcome {
+    let mut outcome = refused(plan, point, refusal);
+    outcome.state = durable;
+    for (id, status) in &mut outcome.statuses {
+        if let Some(record) = recorded.get(id.as_str()) {
+            *status = *record;
+        }
+    }
+    outcome.uncertain = outcome
+        .statuses
+        .iter()
+        .filter(|(_, status)| matches!(status, ActionStatus::Unknown | ActionStatus::Running))
+        .map(|(id, _)| id.clone())
+        .collect();
+    outcome
+}
+
+/// Writes a §4.1 transition, keeping a refusal the store raised beside the outcome (§41.2).
+fn write_state(request: &mut ApplyRequest<'_>, state: PlanState) {
+    let plan = request.prepare.plan;
+    if let Err(failure) = request
+        .store
+        .record_state(plan.id(), plan.revision(), state)
+    {
+        request.store_failures.push(failure);
+    }
+}
+
+/// What the store holds about this plan revision: its durable state and its action records.
+fn durable_evidence(
+    plan: &ChangePlan,
+    store: &PlanStore,
+) -> Result<(PlanState, BTreeMap<String, ActionStatus>), ErrorValue> {
+    let state = store.get_revision(plan.id(), plan.revision())?.state();
+    let recorded = store.action_statuses(plan.id(), plan.revision())?;
+    Ok((state, recorded))
+}
+
+/// Whether a persisted record says a mutating action may already have changed the system.
+fn mutation_began(plan: &ChangePlan, recorded: &BTreeMap<String, ActionStatus>) -> bool {
+    plan.actions()
+        .iter()
+        .filter(|action| action.role().mutates_target())
+        .any(|action| {
+            recorded
+                .get(action.id().as_str())
+                .is_some_and(|status| status.may_have_mutated())
+        })
+}
+
+/// §5.6: `apply` MUST refuse drafts and expired plans; §41.3 lets `resume` pick up the states an
+/// interrupted apply leaves behind, and nothing past a verdict.
+fn appliability(
+    plan: &ChangePlan,
+    state: PlanState,
+    now: Timestamp,
+    resume: bool,
+) -> Option<ErrorValue> {
+    if plan.is_expired_at(now) || state == PlanState::Expired {
         return Some(error::plan_expired(plan.id()));
     }
-    if !plan.state().is_appliable() {
-        return Some(error::plan_not_sealed(plan.id(), plan.state()));
+    if !resume {
+        return (!state.is_appliable()).then(|| error::plan_not_sealed(plan.id(), state));
     }
-    None
+    let resumable = state.is_appliable()
+        || matches!(
+            state,
+            PlanState::Preparing
+                | PlanState::Applying
+                | PlanState::ApplyFailed
+                | PlanState::Verifying
+        );
+    if resumable {
+        return None;
+    }
+    if state.is_terminal() || state.is_verdict() {
+        return Some(error::resume_complete(plan.id(), state));
+    }
+    Some(error::plan_not_sealed(plan.id(), state))
 }
 
 /// §7.3: material drift, or a precondition nobody could check, stops the apply before prepare.
-fn revalidate_plan(plan: &ChangePlan, revalidate: &Revalidate<'_>) -> Option<ErrorValue> {
+///
+/// An action a resumed apply already completed is not rechecked: its target changed because the
+/// action changed it, and reading that as drift would refuse every resume (§41.3).
+fn revalidate_plan(
+    plan: &ChangePlan,
+    revalidate: &Revalidate<'_>,
+    prior: &BTreeMap<String, ActionStatus>,
+) -> Option<ErrorValue> {
     let mut blocking: Vec<(String, String, String)> = Vec::new();
-    for action in plan.actions() {
+    let mut vanished: Option<String> = None;
+    for action in plan
+        .actions()
+        .iter()
+        .filter(|action| prior.get(action.id().as_str()).copied() != Some(ActionStatus::Succeeded))
+    {
         match revalidate(action) {
             Ok(findings) => {
                 for finding in &findings {
                     if finding.verdict().blocks_apply() {
+                        if finding.kind() == ono_change_core::PreconditionKind::Existence
+                            && finding.verdict() == DriftVerdict::Material
+                            && vanished.is_none()
+                        {
+                            vanished = Some(finding.subject().to_owned());
+                        }
                         blocking.push(drift_row(finding));
                     }
                 }
@@ -1229,6 +1731,23 @@ fn revalidate_plan(plan: &ChangePlan, revalidate: &Revalidate<'_>) -> Option<Err
                 refusal.message().to_owned(),
             )),
         }
+    }
+    // §7.3: a target that is gone, or is no longer the object the plan froze, is refused as the
+    // changed target it is — the rest of the drift rides along on the metadata.
+    if let Some(subject) = vanished {
+        return Some(
+            error::target_changed(
+                &subject,
+                "it no longer exists, or is no longer the object the plan was sealed against; \
+                 nothing was changed",
+            )
+            .with_metadata(
+                "drift",
+                ono_value::Value::list(blocking.iter().map(|(subject, field, detail)| {
+                    ono_value::Value::string(&format!("{subject}.{field}: {detail}"))
+                })),
+            ),
+        );
     }
     (!blocking.is_empty()).then(|| error::drift_detected(plan.id(), &blocking))
 }
@@ -1273,7 +1792,9 @@ fn check_authority(
         ));
     }
     // §43.2: "applying requires target action capabilities plus protection provider capabilities."
-    if protection.iter().any(ProtectionAction::is_required)
+    if protection
+        .iter()
+        .any(|action| requires_protection(plan, action))
         && !authority.has_recovery(RecoveryCapability::Prepare)
     {
         return Some(error::capability_missing(
@@ -1296,7 +1817,10 @@ fn check_discovery(plan: &ChangePlan, protection: &[ProtectionAction]) -> Option
         .iter()
         .map(|row| row.domain().as_str().to_owned())
         .collect();
-    if !protection.is_empty() && shortfall.is_empty() {
+    let protected = protection
+        .iter()
+        .any(|action| requires_protection(plan, action));
+    if protected && shortfall.is_empty() {
         return None;
     }
     Some(error::coverage_insufficient(
@@ -1363,13 +1887,30 @@ fn refused(plan: &ChangePlan, point: FailurePoint, error: ErrorValue) -> ApplyOu
         error: Some(error),
         quiesce: None,
         cleanup: None,
+        shortfall: Vec::new(),
+        executed: false,
     }
 }
 
 /// §4.7: the mutating actions, in dependency order, by the plan's strategy, then §4.8.
-fn mutate(request: &mut ApplyRequest<'_>, prepared: &Prepared) -> ApplyOutcome {
+///
+/// `prior` holds what a resumed apply found persisted (§41.2): an action it records as succeeded
+/// is reported as such and not run again, and every other action starts from its record.
+fn mutate(
+    request: &mut ApplyRequest<'_>,
+    prepared: &Prepared,
+    prior: &BTreeMap<String, ActionStatus>,
+    claim: &mut Claim<'_>,
+) -> (ApplyOutcome, bool) {
+    // §42.3: the claim is a lease, renewed before each action, so an apply longer than the lease
+    // is still this session's. A renewal another session refused means the plan is not ours.
+    let claim = RefCell::new(claim);
+    let lost = Cell::new(false);
+    let executed = Cell::new(false);
     let plan = request.prepare.plan;
     let now = request.prepare.now;
+    let clock = request.clock;
+    let stamp = || clock.map_or(now, |clock| clock());
     let order = match topological_order(plan.actions()) {
         Ok(order) => order,
         Err(cycle) => {
@@ -1379,7 +1920,7 @@ fn mutate(request: &mut ApplyRequest<'_>, prepared: &Prepared) -> ApplyOutcome {
                 error::action_graph_cyclic(plan.id(), &cycle),
             );
             outcome.assets = prepared.assets.to_vec();
-            return outcome;
+            return (outcome, true);
         }
     };
 
@@ -1402,12 +1943,13 @@ fn mutate(request: &mut ApplyRequest<'_>, prepared: &Prepared) -> ApplyOutcome {
                     && action
                         .target()
                         .is_some_and(|target| prepared_domains.contains(&target));
+                let recorded = prior.get(action.id().as_str()).copied();
                 (
                     action.id().clone(),
                     if settled {
                         ActionStatus::Succeeded
                     } else {
-                        ActionStatus::Pending
+                        recorded.unwrap_or(ActionStatus::Pending)
                     },
                 )
             })
@@ -1424,7 +1966,7 @@ fn mutate(request: &mut ApplyRequest<'_>, prepared: &Prepared) -> ApplyOutcome {
                 action.id(),
                 action.ordinal(),
                 ActionStatus::Succeeded,
-                now,
+                stamp(),
                 None,
             )
         {
@@ -1449,7 +1991,7 @@ fn mutate(request: &mut ApplyRequest<'_>, prepared: &Prepared) -> ApplyOutcome {
             action.id(),
             action.ordinal(),
             status,
-            now,
+            stamp(),
             detail,
         ) {
             store_failures.borrow_mut().push(failure);
@@ -1467,7 +2009,7 @@ fn mutate(request: &mut ApplyRequest<'_>, prepared: &Prepared) -> ApplyOutcome {
                 break;
             }
             let mut status = ActionStatus::Skipped;
-            let mut failure = None;
+            let mut failure_seen = None;
             for action in mutating
                 .iter()
                 .filter(|action| action_covers(action, target, plan))
@@ -1475,6 +2017,46 @@ fn mutate(request: &mut ApplyRequest<'_>, prepared: &Prepared) -> ApplyOutcome {
                 if stop.borrow().is_some() {
                     break;
                 }
+                if prior.get(action.id().as_str()).copied() == Some(ActionStatus::Succeeded) {
+                    // §41.3: a resumed apply continues after what already succeeded.
+                    status = ActionStatus::Succeeded;
+                    continue;
+                }
+                // §42.3: renewed before the action, so the claim cannot lapse under it. §41.2 and
+                // Appendix F.2: `running` is durable before the action starts, so a shell killed
+                // mid-action leaves an in-flight record rather than `pending` — the one resume
+                // would rerun blindly. Where either could not be done, the action is not started.
+                let started = claim.borrow_mut().renew(stamp()).and_then(|()| {
+                    request.store.record_action_status(
+                        plan.id(),
+                        plan.revision(),
+                        action.id(),
+                        action.ordinal(),
+                        ActionStatus::Running,
+                        stamp(),
+                        None,
+                    )
+                });
+                if let Err(failure) = started {
+                    if failure.code().name() == "change.plan_already_applying" {
+                        lost.set(true);
+                    } else {
+                        store_failures.borrow_mut().push(failure.clone());
+                    }
+                    status = ActionStatus::Skipped;
+                    failure_seen = Some(failure.clone());
+                    *stop.borrow_mut() =
+                        Some((FailurePoint::ActionNotStarted, failure, action.id().clone()));
+                    break;
+                }
+                if let Some(entry) = statuses
+                    .borrow_mut()
+                    .iter_mut()
+                    .find(|(id, _)| id == action.id())
+                {
+                    entry.1 = ActionStatus::Running;
+                }
+                executed.set(true);
                 let outcome = (request.execute)(action);
                 let settled = outcome.status();
                 record(action, settled, outcome.error().map(ErrorValue::message));
@@ -1491,7 +2073,7 @@ fn mutate(request: &mut ApplyRequest<'_>, prepared: &Prepared) -> ApplyOutcome {
                         } else {
                             FailurePoint::FirstMutateAction
                         };
-                        failure = Some(refusal.clone());
+                        failure_seen = Some(refusal.clone());
                         *stop.borrow_mut() = Some((point, refusal.clone(), action.id().clone()));
                     }
                     ExecutionOutcome::Unknown(refusal) => {
@@ -1500,24 +2082,31 @@ fn mutate(request: &mut ApplyRequest<'_>, prepared: &Prepared) -> ApplyOutcome {
                         } else {
                             FailurePoint::UnknownOutcome
                         };
-                        failure = Some(refusal.clone());
+                        failure_seen = Some(refusal.clone());
                         *stop.borrow_mut() = Some((point, refusal.clone(), action.id().clone()));
                     }
                 }
             }
-            results.push(TargetResult::new(Arc::clone(target), status, failure));
+            results.push(TargetResult::new(Arc::clone(target), status, failure_seen));
         }
         results
     };
 
-    let gate = |_wave: &ono_change_core::Wave, _targets: &[Arc<str>]| -> Verdict {
+    let every_target = target_labels(plan);
+    let reached = std::cell::RefCell::new(Vec::<Arc<str>>::new());
+    let gate = |_wave: &ono_change_core::Wave, targets: &[Arc<str>]| -> Verdict {
         // §28.6: for a canary strategy the plan's *required* verification must pass before the
-        // remaining batches continue. Advisory checks say nothing about whether to go on.
+        // remaining batches continue. Advisory checks say nothing about whether to go on, and a
+        // check about a target no wave has reached yet says nothing about the batch that ran:
+        // it would fail for the one reason the batches exist, that the rest has not changed yet.
+        reached.borrow_mut().extend(targets.iter().cloned());
+        let reached = reached.borrow();
         let required: Vec<&VerificationContract> = plan
             .verification()
             .contracts()
             .iter()
             .filter(|contract| contract.class() == VerificationClass::Required)
+            .filter(|contract| about_reached(contract.subject(), &every_target, &reached))
             .collect();
         let mut results = Vec::new();
         for contract in required {
@@ -1550,7 +2139,19 @@ fn mutate(request: &mut ApplyRequest<'_>, prepared: &Prepared) -> ApplyOutcome {
         .filter(|(_, status)| *status == ActionStatus::Unknown)
         .map(|(id, _)| id.clone())
         .collect();
-    let assets = prepared.assets.to_vec();
+    // Every asset this apply created is reported and retained, the ones that did not validate
+    // included: they exist, and §4.6 only forbids calling them protection.
+    let assets: Vec<RecoveryAsset> = prepared
+        .assets
+        .iter()
+        .cloned()
+        .chain(
+            prepared
+                .shortfall
+                .iter()
+                .filter_map(|shortfall| shortfall.asset.clone()),
+        )
+        .collect();
     let retained = assets.iter().map(|asset| asset.id().clone()).collect();
 
     let mut outcome = ApplyOutcome {
@@ -1566,7 +2167,42 @@ fn mutate(request: &mut ApplyRequest<'_>, prepared: &Prepared) -> ApplyOutcome {
         error: None,
         quiesce: request.prepare.quiesce_report.clone(),
         cleanup: request.prepare.cleanup_report.clone(),
+        shortfall: prepared.shortfall.clone(),
+        executed: executed.get(),
     };
+
+    if let Some((FailurePoint::ActionNotStarted, refusal, unstarted)) = &stopped {
+        // Nothing ran at this point. The plan is part-applied where an earlier action may have
+        // changed something — this run's or a resumed one's — and otherwise it is still what it
+        // was before `applying` was written: protected where assets exist, sealed where not.
+        let began = mutating.iter().any(|action| {
+            outcome
+                .status_of(action.id())
+                .is_some_and(ActionStatus::may_have_mutated)
+        });
+        outcome.failure_point = Some(FailurePoint::ActionNotStarted);
+        outcome.state = if began && recovery {
+            PlanState::RecoveryFailed
+        } else if began {
+            PlanState::ApplyFailed
+        } else if !prepared.assets.is_empty() {
+            PlanState::Protected
+        } else if plan.state().is_appliable() {
+            plan.state()
+        } else {
+            PlanState::Sealed
+        };
+        outcome.error = Some(
+            refusal
+                .clone()
+                .with_metadata(
+                    "failure_point",
+                    Value::string(FailurePoint::ActionNotStarted.as_str()),
+                )
+                .with_metadata("not_started", Value::string(unstarted.as_str())),
+        );
+        return (outcome, !lost.get());
+    }
 
     if let Some((point, refusal, _)) = stopped {
         outcome.failure_point = Some(point);
@@ -1583,7 +2219,7 @@ fn mutate(request: &mut ApplyRequest<'_>, prepared: &Prepared) -> ApplyOutcome {
             PlanState::ApplyFailed
         };
         outcome.error = Some(apply_refusal(plan, point, &refusal, &outcome, recovery));
-        return outcome;
+        return (outcome, !lost.get());
     }
 
     if let Some(verdict) = run.gate_verdict()
@@ -1601,7 +2237,7 @@ fn mutate(request: &mut ApplyRequest<'_>, prepared: &Prepared) -> ApplyOutcome {
             }
         };
         outcome.error = Some(verification_refusal(plan, &outcome.verification, recovery));
-        return outcome;
+        return (outcome, !lost.get());
     }
 
     // 7. §4.8: verification starts after mutation completes.
@@ -1614,7 +2250,7 @@ fn mutate(request: &mut ApplyRequest<'_>, prepared: &Prepared) -> ApplyOutcome {
     outcome.state = verification.state_for(recovery);
     outcome.failure_point = verification.failure_point;
     outcome.error = verification.error;
-    outcome
+    (outcome, !lost.get())
 }
 
 /// Whether `action` is one of the mutating actions this target's wave should run.
@@ -1629,6 +2265,17 @@ fn action_covers(action: &PlanAction, target: &str, plan: &ChangePlan) -> bool {
             .first()
             .is_some_and(|first| first.identity() == target),
     }
+}
+
+/// Whether a contract about `subject` belongs to a batch that has run (§28.6).
+///
+/// A contract names its target as `<word> <identity>` or as the identity itself. One that names a
+/// target no wave has reached waits for the verification after the last wave; one that names no
+/// target of the plan is plan-wide and holds at every gate.
+fn about_reached(subject: &str, targets: &[Arc<str>], reached: &[Arc<str>]) -> bool {
+    let names =
+        |target: &Arc<str>| subject == target.as_ref() || subject.ends_with(&format!(" {target}"));
+    !targets.iter().any(names) || reached.iter().any(names)
 }
 
 /// Whether the action's frozen target lives on another host (§7.1, §29.3).
@@ -2061,6 +2708,7 @@ mod tests {
             FailurePoint::RecoveryAssetCreation,
             FailurePoint::RecoveryValidation,
             FailurePoint::ApplicationQuiesce,
+            FailurePoint::ActionNotStarted,
             FailurePoint::Cleanup,
         ] {
             assert!(

@@ -1,0 +1,83 @@
+# v0.6 §50 phase P2 — §37.4 and §38.3: storage pressure surfaces, and never deletes early.
+#
+# §37.4 is explicit: if recovery assets cause storage pressure, Ono may surface landmarks and
+# recommend cleanup, and MUST NOT delete assets early without policy authorisation. §38.3 bounds
+# automatic protection before it happens — by size, scope, quiesce duration, snapshot count and
+# a free-space floor. The pressure here is a configured bound the existing assets already exceed:
+# the next plan has to live within it without reclaiming what earlier plans still rely on.
+case: storage pressure is reported, and nothing is reclaimed without being asked
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  # The asset identities, bare and sorted, one per line.
+  ids() { ono -c 'get recovery | select id | to json' 2>/dev/null | grep -o '"id":"[0-9a-f]*"' | sed 's/^"id":"//; s/"$//' | sort; }
+
+  mkdir -p "$HOME/etc" "$HOME/.config/ono"
+  printf 'source\n' > "$HOME/etc/source"
+
+  echo '== §11.1: several plans, several assets =='
+  for n in 1 2 3; do
+    printf 'target %s\n' "$n" > "$HOME/etc/target$n"
+    ono -c "plan copy file $HOME/etc/source $HOME/etc/target$n --overwrite | to json" > /tmp/sp0.json 2>&1
+    ono -c "apply $(plan_id /tmp/sp0.json)" > /dev/null 2>&1
+  done
+  first=$(plan_id /tmp/sp0.json)
+  before=$(ids)
+  prove sp1a "each applied plan left its own asset (§11.1)" "[ \"\$(printf '%s\n' \"$before\" | grep -c .)\" -eq 3 ]"
+
+  echo '== §37.4 and §38.1: the cost is reported, per asset, and never as free =='
+  ono -c 'get recovery | select retained_size size_estimated | to json' > /tmp/sp2.json 2>&1
+  prove sp2a "each asset states what it occupies, and whether the figure is exact (§38.1, §37.5)" \
+    "[ \"\$(grep -o '{\"retained_size\":[0-9]\{1,\},\"size_estimated\":\(true\|false\)}' /tmp/sp2.json | wc -l)\" -eq 3 ]"
+  prove sp2b "and none is reported as occupying nothing (§38.2)" '! grep -q "\"retained_size\":0[,}]" /tmp/sp2.json'
+
+  echo '== §37.4 and §38.3: a bound the store already exceeds deletes nothing early =='
+  printf 'set config recovery.max_auto_snapshot_count 1\n' > "$HOME/.config/ono/config.ono"
+  prove sp3pre "the bound is in force, as the configuration says (§38.3, §53)" \
+    "ono -c 'get config recovery.max_auto_snapshot_count | to json' 2>&1 | grep -q '^\[{\"key\":\"recovery.max_auto_snapshot_count\",\"value\":1,'"
+  printf 'target 4\n' > "$HOME/etc/target4"
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/target4 --overwrite | to json" > /tmp/sp3.json 2>&1
+  ono -c "apply $(plan_id /tmp/sp3.json)" > /tmp/sp3.txt 2>&1
+  prove sp3a "every earlier asset is still there, by identity, after a plan ran under the bound (§37.4)" \
+    "[ -z \"\$(comm -23 <(printf '%s\n' \"$before\") <(ids))\" ]"
+  prove sp3b "and every one of them is still usable (§11.1)" \
+    "[ \"\$(ono -c 'get recovery | select state | to json' 2>&1 | grep -o '\"state\":\"ready\"' | wc -l)\" -ge 3 ]"
+  rm -f "$HOME/.config/ono/config.ono"
+
+  echo '== §38.3 and §53: the bounds exist and are configurable =='
+  ono -c 'get config | to json' > /tmp/sp4.json 2>&1
+  prove sp4a "a snapshot-count bound, a free-space floor and a retention window are settings (§38.3, §53, §37.1)" \
+    'grep -q "\"key\":\"recovery.max_auto_snapshot_count\"" /tmp/sp4.json && grep -q "\"key\":\"recovery.min_filesystem_free\",\"value\":\"10%\"" /tmp/sp4.json && grep -q "\"key\":\"recovery.retention\"" /tmp/sp4.json'
+
+  echo '== §37.3: the preview shows the consequence before anything goes =='
+  asset=$(ono -c 'get recovery | select id source_plan | to json' 2>/dev/null | grep -o "{\"id\":\"[0-9a-f]*\",\"source_plan\":\"$first\"}" | sed -n 's/^{"id":"\([0-9a-f]*\)".*/\1/p')
+  current=$(ids)
+  ono -c "remove recovery $asset --dry-run" > /tmp/sp5.txt 2>&1
+  prove sp5a "the preview names the plan whose recovery the removal would take (§37.3)" \
+    "[ -n '$asset' ] && grep -q '${first:0:4}' /tmp/sp5.txt"
+  prove sp5b "and removed nothing (§37.3, §37.4)" "[ \"\$(ids)\" = \"$current\" ]"
+
+  echo 'storage-pressure: done'
+exit: 0
+stdout-contains: PROVED sp1a
+stdout-contains: PROVED sp2a
+stdout-contains: PROVED sp2b
+stdout-contains: PROVED sp3pre
+stdout-contains: PROVED sp3a
+stdout-contains: PROVED sp3b
+stdout-contains: PROVED sp4a
+stdout-contains: PROVED sp5a
+stdout-contains: PROVED sp5b
+stdout-contains: storage-pressure: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

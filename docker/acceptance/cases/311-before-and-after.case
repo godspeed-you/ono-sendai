@@ -1,0 +1,75 @@
+# v0.6 §50 phase P2 — §22.2, §22.3 and §55.11 case 49: the state before a plan and the state
+# after it can be compared.
+#
+# §22.2 writes a lightweight semantic checkpoint of the plan's targets into the v0.5 ledger
+# immediately before mutation, independent of any storage snapshot, so the reconstruction v0.5 §12
+# offers has something to reconstruct from. §22.3 lets verification compare the known state before
+# with the known state after. The fixture makes both states recognisable: the target's content
+# digest before the plan and after it are known to the case, and the ledger has to carry both.
+case: the state before a plan and the state after it are both on the record
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  events_of() { grep '^\[{"event_id"' "$1" | tail -1; }
+  # One ledger event per line.
+  split_events() { sed 's/^\[//; s/\]$//; s/},{"event_id"/}\n{"event_id"/g' "$1"; }
+
+  store="${XDG_DATA_HOME:-$HOME/.local/share}/ono/change/recovery"
+  mkdir -p "$HOME/etc"
+  printf 'before\n' > "$HOME/etc/target"
+  printf 'after\n' > "$HOME/etc/source"
+  before=$(sha256sum "$HOME/etc/target" | cut -d' ' -f1)
+  after=$(sha256sum "$HOME/etc/source" | cut -d' ' -f1)
+
+  echo '== §22.2: the plan records what it was about, before it changed it =='
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/target --overwrite | apply
+  find event | to json" > /tmp/ba1.txt 2>&1
+  events_of /tmp/ba1.txt > /tmp/ba1.json
+  split_events /tmp/ba1.json > /tmp/ba1.lines
+  id=$(ono -c 'get plan | take 1 | select id | to json' 2>/dev/null | sed -n 's/^\[{"id":"\([0-9a-f]*\)"}\]$/\1/p')
+  prove ba1a "the run recorded the plan's lifecycle, anchored on its identity (§22.1, §22.4)" \
+    "grep -q '\"payload\":{\"plan\":\"$id\"[^}]*\"event\":\"ono.plan.verified\"' /tmp/ba1.json"
+  prove ba1b "and a checkpoint of the target as it was, before the mutation — not only inside a verification (§22.2)" \
+    "grep '$before' /tmp/ba1.lines | grep -vq '\"subtype\":\"ono.plan.verification.observed\"'"
+  prove ba1c "which is written before the first action starts (§22.2: immediately before mutation)" \
+    "[ \"\$(grep -n '$before' /tmp/ba1.lines | head -1 | cut -d: -f1)\" -lt \"\$(grep -n '\"subtype\":\"ono.plan.action.started\"' /tmp/ba1.lines | head -1 | cut -d: -f1)\" ]"
+
+  echo '== §22.3: the state after is on the record too, so the two can be compared =='
+  prove ba2a "the ledger carries the target's content as the plan left it (§22.3, §55.11 case 49)" \
+    "grep -q '$after' /tmp/ba1.json"
+  prove ba2b "and the world holds that after" "[ \"\$(sha256sum $HOME/etc/target | cut -d' ' -f1)\" = '$after' ]"
+
+  echo '== §7.2 and §11.1: the plan and its asset hold the before, kept =='
+  prove ba3a "the plan froze the digest of the bytes it was resolved against (§7.2)" \
+    "ono -c 'get plan $id | select preconditions | to json' 2>&1 | grep -q '\"kind\":\"content-digest\",\"subject\":\"$HOME/etc/target\",\"field\":\"sha256\",\"expected\":\"$before\"'"
+  prove ba3b "and the asset holds exactly those bytes (§11.1, §4.5)" \
+    "find '$store' -type f -exec sha256sum {} + | grep -q '^$before '"
+
+  echo '== §22.4: the comparison is a v0.5 question, asked of a v0.6 anchor =='
+  ono -c "plan copy file $HOME/etc/target $HOME/etc/source --overwrite | apply
+  timeline --plan \"@\"" > /tmp/ba4.txt 2>&1
+  prove ba4a "the timeline scoped to the plan reaches its events (§22.3, §22.4)" \
+    'grep -q "ono.plan.action.started" /tmp/ba4.txt && grep -q "ono.plan.verified" /tmp/ba4.txt'
+
+  echo 'before-and-after: done'
+exit: 0
+stdout-contains: PROVED ba1a
+stdout-contains: PROVED ba1b
+stdout-contains: PROVED ba1c
+stdout-contains: PROVED ba2a
+stdout-contains: PROVED ba2b
+stdout-contains: PROVED ba3a
+stdout-contains: PROVED ba3b
+stdout-contains: PROVED ba4a
+stdout-contains: before-and-after: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

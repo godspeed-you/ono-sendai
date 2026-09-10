@@ -1,0 +1,92 @@
+# v0.6 §50 phase P2 — §2.15, §37.2 and §37.3: cleanup never outruns recovery policy.
+#
+# §2.15 is the invariant: removing a recovery asset MUST NOT silently invalidate a recovery
+# guarantee Ono still presents as available. §37.2 keeps the assets of a failed, degraded or
+# recovery-failed plan out of ordinary success retention — they are exactly the ones somebody may
+# still need — and §55.5 case 26 makes removing one a refusal without an explicit override.
+# §37.3 requires a preview naming the plans that would become unrecoverable.
+case: cleanup refuses to take away the recovery of a failed plan without an explicit override
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  # The asset a plan's apply created.
+  asset_of() { ono -c 'get recovery | select id source_plan | to json' 2>/dev/null | grep -o "{\"id\":\"[0-9a-f]*\",\"source_plan\":\"$1\"}" | sed -n 's/^{"id":"\([0-9a-f]*\)".*/\1/p' | head -1; }
+  present() { ono -c 'get recovery | select id | to json' 2>/dev/null | grep -q "\"id\":\"$1\""; }
+
+  mkdir -p "$HOME/etc"
+  printf 'b\n' > "$HOME/etc/source"
+
+  echo '== §37.2: a plan whose required verification failed keeps its asset =='
+  printf 'a\n' > "$HOME/etc/failed-target"
+  ono -c "plan { copy file $HOME/etc/source $HOME/etc/failed-target --overwrite; verify file $HOME/etc/failed-target size == 999 } | to json" > /tmp/cl0.json 2>&1
+  failed=$(plan_id /tmp/cl0.json)
+  ono -c "apply $failed" > /dev/null 2>&1
+  prove cl0a "the plan is failed on its verification (§2.14)" \
+    "[ \"\$(ono -c 'get plan $failed | select state | to json' 2>&1)\" = '[{\"state\":\"failed\"}]' ]"
+  asset=$(asset_of "$failed")
+  prove cl0b "and its asset exists, ready (§37.2)" \
+    "[ -n '$asset' ] && ono -c 'get recovery | select id state | to json' 2>&1 | grep -q '{\"id\":\"$asset\",\"state\":\"ready\"}'"
+
+  echo '== §40.3: removal is a commitment, and the commitment is a flag =='
+  ono -c "remove recovery $asset" > /tmp/cl1.txt 2>&1
+  prove cl1a "removal without a flag refuses rather than prompting (§40.3)" \
+    'grep -q "safety.confirmation_required" /tmp/cl1.txt'
+  prove cl1b "and names \`--dry-run\` as the way to see the consequence first (§37.3)" \
+    'grep -q -- "--dry-run" /tmp/cl1.txt'
+  prove cl1c "nothing was removed (§2.15)" "present $asset"
+
+  echo '== §37.3: the preview says which plans become unrecoverable, and removes nothing =='
+  ono -c "remove recovery $asset --dry-run" > /tmp/cl2.txt 2>&1
+  prove cl2a "the preview answers rather than refusing (§37.3)" \
+    '! grep -qE "Ono-Sendai-E[0-9]{4}" /tmp/cl2.txt'
+  prove cl2b "and names the plan that would lose its way back (§37.3)" "grep -q '${failed:0:4}' /tmp/cl2.txt"
+  prove cl2c "the asset is still there afterwards: it shows, it does not do (§37.3)" "present $asset"
+
+  echo '== §2.15 and §55.5 case 26: the asset a failed plan requires is refused without an override =='
+  ono -c "remove recovery $asset --confirm" > /tmp/cl3.txt 2>&1
+  prove cl3a "the refusal is §2.15's own code, whatever \`--confirm\` says (§2.15, §37.2)" \
+    'grep -q "Ono-Sendai-E1815 recovery.cleanup_blocked" /tmp/cl3.txt'
+  prove cl3b "and it names the plan that would become unrecoverable (§37.3)" "grep -q '${failed:0:4}' /tmp/cl3.txt"
+  prove cl3c "the asset is still there (§2.15)" "present $asset"
+  prove cl3d "the refusal names the explicit override, \`--force\`, not the confirmation it just refused (§55.5 case 26)" \
+    'grep -q -- "--force" /tmp/cl3.txt'
+  prove cl3e "and \`help remove recovery\` documents that override (v0.2 §50)" \
+    "ono -c 'help remove recovery' 2>&1 | grep -qE '^  --force +bool'"
+
+  echo '== §55.5 case 26: the explicit override removes it, and the plan stops offering recovery =='
+  ono -c "remove recovery $asset --force --confirm" > /tmp/cl4.txt 2>&1
+  prove cl4a "with the override, the asset is removed (§37.2)" "! present $asset"
+  ono -c "recover $failed" > /tmp/cl5.txt 2>&1
+  prove cl4b "and the plan no longer offers a recovery the store cannot serve (§2.15)" \
+    '! grep -qx "RECOVERY NOT EXECUTED" /tmp/cl5.txt && grep -qE "recovery\.(plan_incomplete|asset_not_found)" /tmp/cl5.txt'
+
+  echo 'cleanup-is-blocked: done'
+exit: 0
+stdout-contains: PROVED cl0a
+stdout-contains: PROVED cl0b
+stdout-contains: PROVED cl1a
+stdout-contains: PROVED cl1b
+stdout-contains: PROVED cl1c
+stdout-contains: PROVED cl2a
+stdout-contains: PROVED cl2b
+stdout-contains: PROVED cl2c
+stdout-contains: PROVED cl3a
+stdout-contains: PROVED cl3b
+stdout-contains: PROVED cl3c
+stdout-contains: PROVED cl3d
+stdout-contains: PROVED cl3e
+stdout-contains: PROVED cl4a
+stdout-contains: PROVED cl4b
+stdout-contains: cleanup-is-blocked: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

@@ -1,0 +1,95 @@
+# v0.6 §50 phase P2 — §14.1 to §14.3: a target resolves to its own subvolume, and a nested
+# subvolume boundary is detected.
+#
+# §14.3 is the fact: Btrfs snapshots are not recursive across nested subvolumes, so a snapshot of
+# a parent contains an empty directory where a nested subvolume was. A shell that presented the
+# parent snapshot as covering the nested one would be promising data that is not in it. §55.4
+# case 19 is the consequence: a change touching both gets one snapshot per subvolume.
+#
+# The case builds its own filesystem on a loop file (Appendix G.3), which needs root and a loop
+# device. `privileged: true` hands the container the host's loop devices (ADR-0843), so the
+# acceptance run builds the filesystem for real, in the image whose btrfs-progs the provider
+# validates (ADR-0846); a host that cannot give one skips undeclared, and the run fails rather than
+# passing on checks that never ran.
+case: a Btrfs target resolves to its own subvolume, and a nested one is its own boundary
+timeout: 240
+capability: SYS_ADMIN
+user: root
+security: apparmor=unconfined
+privileged: true
+image: filesystems
+env: NO_COLOR=1
+run: |
+  proved=" "
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"; proved="$proved$id "
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  # The checks a run that got past the fixture must have made; a missing one is a failure.
+  require_proved() { for want in "$@"; do case "$proved" in *" $want "*) ;; *) echo "FAILED $want: this check never ran";; esac; done; }
+  skip() { echo "SKIPPED btrfs-nested-subvolumes: $1"; echo 'btrfs-nested-subvolumes: done'; exit 0; }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  domain_of() { sed -n 's/.*"targets":\[{[^]]*"persistence_domain":\("[^"]*"\|null\).*/\1/p' "$1" | head -1; }
+
+  mkdir -p "$HOME/etc"
+  printf 'source\n' > "$HOME/etc/source"
+  printf 'target\n' > "$HOME/etc/target"
+
+  echo '== §12.2: off Btrfs, no Btrfs candidate is offered =='
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/target --overwrite | to json" > /tmp/bn1.json 2>&1
+  prove bn1a "no action or asset claims a Btrfs snapshot for a path that is not on Btrfs (§12.2)" \
+    '[ -s /tmp/bn1.json ] && ! grep -qE "btrfs-snapshot|\"provider\":\"ono\.recovery\.btrfs" /tmp/bn1.json'
+  ono -c "inspect plan $(plan_id /tmp/bn1.json) --resolution" > /tmp/bn1.txt 2>&1
+  prove bn1b "and no line of the resolution claims a subvolume the mount table did not give (§2.4)" \
+    'grep -qx "PERSISTENCE RESOLUTION" /tmp/bn1.txt && ! grep "^    " /tmp/bn1.txt | grep -qi "subvolume"'
+
+  echo '== §14.3: a real filesystem with a nested subvolume =='
+  command -v mkfs.btrfs > /dev/null 2>&1 && command -v btrfs > /dev/null 2>&1 \
+    || skip 'external_tool_unavailable: no btrfs-progs on this host'
+  image=/tmp/ononest$$.img
+  mount_point=/tmp/ononest$$
+  truncate -s 512M "$image" || skip 'fixture_not_applicable: no space for a loop image'
+  cleanup() { umount "$mount_point" 2>/dev/null; rm -rf "$mount_point" "$image"; }
+  trap cleanup EXIT
+  mkfs.btrfs -q "$image" > /dev/null 2>&1 || skip 'missing_privilege: mkfs.btrfs was refused'
+  losetup --find > /dev/null 2>&1 || skip 'missing_privilege: the container is given no loop device'
+  mkdir -p "$mount_point"
+  mount -o loop "$image" "$mount_point" 2>/dev/null || skip 'missing_privilege: the loop mount was refused'
+
+  btrfs subvolume create "$mount_point/@var" > /dev/null
+  btrfs subvolume create "$mount_point/@var/lib-app" > /dev/null
+  printf 'nested\n' > "$mount_point/@var/lib-app/data"
+  printf 'parent\n' > "$mount_point/@var/parent.txt"
+  printf 'source\n' > "$mount_point/@var/source"
+  nested_id=$(btrfs subvolume show "$mount_point/@var/lib-app" | awk '/Subvolume ID:/ {print $3}')
+
+  ono -c "plan copy file $mount_point/@var/source $mount_point/@var/lib-app/data --overwrite | to json" > /tmp/bn2.json 2>&1
+  ono -c "plan copy file $mount_point/@var/source $mount_point/@var/parent.txt --overwrite | to json" > /tmp/bn3.json 2>&1
+  nested=$(domain_of /tmp/bn2.json)
+  parent=$(domain_of /tmp/bn3.json)
+  prove bn2a "a file in the nested subvolume and a file beside it resolve to two different domains (§14.3)" \
+    "[ -n '$nested' ] && [ '$nested' != 'null' ] && [ -n '$parent' ] && [ '$parent' != 'null' ] && [ '$nested' != '$parent' ]"
+  ono -c "inspect plan $(plan_id /tmp/bn2.json) --resolution" > /tmp/bn2.txt 2>&1
+  prove bn2b "and the resolution names the nested subvolume itself, by path or by id (Appendix B.9, §14.2)" \
+    "grep '^    ' /tmp/bn2.txt | grep -qE 'lib-app|(id|ID)[ =:]*$nested_id([^0-9]|\$)'"
+
+  echo '== §55.4 case 19: a change touching both gets one snapshot per subvolume =='
+  ono -c "plan { copy file $mount_point/@var/source $mount_point/@var/lib-app/data --overwrite; copy file $mount_point/@var/source $mount_point/@var/parent.txt --overwrite } | to json" > /tmp/bn4.json 2>&1
+  prove bn3a "the plan prepares two recovery assets (§14.3, §55.4 case 19)" \
+    "[ \"\$(grep -o '\"role\":\"prepare\"' /tmp/bn4.json | wc -l)\" -eq 2 ]"
+  prove bn3b "and they are of two different subvolumes, not the parent twice (§14.3)" \
+    "[ \"\$(grep -o '\"name\":\"domain\",\"value\":\"[^\"]*\"' /tmp/bn4.json | sort -u | wc -l)\" -eq 2 ]"
+
+  require_proved bn2a bn2b bn3a bn3b
+  echo 'btrfs-nested-subvolumes: done'
+exit: 0
+stdout-contains: PROVED bn1a
+stdout-contains: PROVED bn1b
+stdout-contains: btrfs-nested-subvolumes: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

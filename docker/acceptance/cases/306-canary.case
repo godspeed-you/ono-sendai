@@ -1,0 +1,93 @@
+# v0.6 §50 phase P2 — §28 and §63.14: bulk and canary behaviour is deterministic.
+#
+# §28.4 gives four strategies and §28.5 makes the choice part of the seal, because it changes
+# operational risk. §28.6 is the canary's whole point: the first wave is verified before the next
+# one starts, and a canary whose verification did not hold stops the run (§55.10 case 43). §28.3
+# is why bulk is risk: a plan over fifty objects is a different kind of change from one over one.
+#
+# §55.10 tells it with services; this container runs no service manager, so the batches are files
+# a block copies to, and the canary's verification is one the case makes fail on purpose.
+case: a strategy is part of the seal, and a canary stops when its verification does not hold
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  digest_of() { sed -n 's/.*"digest":"\([0-9a-f]\{64\}\)".*/\1/p' "$1" | head -1; }
+  count_of() { ono -c "$1 | count | to json" 2>&1 | tr -d '[:space:]' | sed 's/^\[//; s/\]$//'; }
+  # How many of the three batch files hold the new content.
+  changed() { grep -lx 'new' "$HOME/w/t1" "$HOME/w/t2" "$HOME/w/t3" 2>/dev/null | wc -l; }
+  reset() { for n in 1 2 3; do printf 'old\n' > "$HOME/w/t$n"; done; }
+
+  mkdir -p "$HOME/w"
+  printf 'new\n' > "$HOME/w/src"
+  reset
+  copies="copy file $HOME/w/src $HOME/w/t1 --overwrite; copy file $HOME/w/src $HOME/w/t2 --overwrite; copy file $HOME/w/src $HOME/w/t3 --overwrite"
+
+  echo '== §28.4 and §53: the strategy is stated, and the default is sequential =='
+  ono -c "plan { $copies } | to json" > /tmp/cy1.json 2>&1
+  prove cy1a "a plan states its strategy, and the default is sequential (§28.4, §53)" \
+    'grep -q "\"strategy\":\"sequential\"" /tmp/cy1.json'
+
+  echo '== §28.5: the strategy is part of the seal =='
+  ono -c "plan --strategy 'batch 2' { $copies } | to json" > /tmp/cy2.json 2>&1
+  prove cy2a "a batch strategy is recorded with its size (§28.4)" 'grep -qE "\"strategy\":\"batch[^\"]*2" /tmp/cy2.json'
+  prove cy2b "and the same actions under two strategies seal to two digests (§28.5, §55.1 case 3)" \
+    "[ -n '$(digest_of /tmp/cy1.json)' ] && [ -n '$(digest_of /tmp/cy2.json)' ] && [ '$(digest_of /tmp/cy1.json)' != '$(digest_of /tmp/cy2.json)' ]"
+
+  echo '== §28.6 and §55.10 case 43: a canary whose verification fails stops the run =='
+  ono -c "plan --strategy 'canary 1 1' { $copies; verify file $HOME/w/t1 size == 999 } | to json" > /tmp/cy3.json 2>&1
+  failing=$(plan_id /tmp/cy3.json)
+  ono -c "apply $failing" > /tmp/cy3.txt 2>&1
+  prove cy3a "exactly one object — the canary wave — was changed (§28.6)" "[ \"\$(changed)\" -eq 1 ]"
+  prove cy3b "and the plan is failed on its verification, with the rest never run (§28.6, §2.14)" \
+    "[ \"\$(ono -c 'get plan $failing | select state | to json' 2>&1)\" = '[{\"state\":\"failed\"}]' ] && grep -q 'change.verification_failed' /tmp/cy3.txt"
+
+  echo '== §28.6: the same canary with a verification that holds runs every wave =='
+  reset
+  ono -c "plan --strategy 'canary 1 1' { $copies; verify file $HOME/w/t1 exists == true } | to json" > /tmp/cy4.json 2>&1
+  passing=$(plan_id /tmp/cy4.json)
+  ono -c "apply $passing" > /tmp/cy4.txt 2>&1
+  prove cy4a "every object was changed, so the stop above was the canary's doing (§28.6)" "[ \"\$(changed)\" -eq 3 ]"
+  prove cy4b "and the plan verified (§4.8)" \
+    "[ \"\$(ono -c 'get plan $passing | select state | to json' 2>&1)\" = '[{\"state\":\"verified\"}]' ]"
+
+  echo '== §28.4: unlimited parallel mutation is not offered =='
+  plans=$(count_of 'get plan')
+  ono -c "plan --strategy parallel { $copies }" > /tmp/cy5.txt 2>&1
+  prove cy5a "a parallel strategy without a width is refused, naming §28.4 (§28.4)" \
+    'grep -qE "Ono-Sendai-E[0-9]{4}" /tmp/cy5.txt && grep -q "§28.4" /tmp/cy5.txt'
+  prove cy5b "and nothing was sealed (§28.4)" "[ \"\$(count_of 'get plan')\" = '$plans' ]"
+
+  echo '== §28.3: bulk scope is a risk dimension =='
+  mkdir -p "$HOME/bulk"
+  for n in $(seq 1 50); do printf '%s\n' "$n" > "$HOME/bulk/f$n.txt"; done
+  ono -c "get file $HOME/bulk/*.txt | plan remove file | to json" > /tmp/cy6.json 2>&1
+  prove cy6a "a plan over fifty objects carries a HIGH finding from a bulk or scope rule (§28.3, §19.1, §53)" \
+    'grep -qE "\{\"dimension\":\"[a-z-]+\",\"class\":\"(high|critical)\",\"rule\":\"risk\.(scope|bulk)\.[a-z.-]+\"" /tmp/cy6.json'
+  prove cy6b "and the plan's class is at least that high (§19.2)" 'grep -qE "\"risk\":\"(high|critical)\"" /tmp/cy6.json'
+
+  echo 'canary: done'
+exit: 0
+stdout-contains: PROVED cy1a
+stdout-contains: PROVED cy2a
+stdout-contains: PROVED cy2b
+stdout-contains: PROVED cy3a
+stdout-contains: PROVED cy3b
+stdout-contains: PROVED cy4a
+stdout-contains: PROVED cy4b
+stdout-contains: PROVED cy5a
+stdout-contains: PROVED cy5b
+stdout-contains: PROVED cy6a
+stdout-contains: PROVED cy6b
+stdout-contains: canary: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

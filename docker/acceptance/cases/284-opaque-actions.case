@@ -40,8 +40,11 @@ run: |
   plan --opaque sh -c 'true' | to json" > /tmp/p5c.json 2>&1
   prove p5e "an opaque plan does not claim to be protected (§6.3, Appendix A.7)" \
     '! grep -q "\"protection_level\": *\"protected\"" /tmp/p5c.json'
-  prove p5f "and its effects are unknown rather than absent (§8.1, §2.4)" \
-    'grep -qE "unknown" /tmp/p5c.json || grep -qE "Ono-Sendai-E17" /tmp/p5c.json'
+  # `confidence: unknown` alone would satisfy a grep for the word, and it did while the impact
+  # graph still said `complete: true` with no boundary. §6.3 makes the *impact* unknown, so the
+  # check reads the plan's own impact summary.
+  prove p5f "and its impact is unknown rather than complete (§6.3, §9.6, §2.4)" \
+    'grep -qE "\"impact_summary\": *\{[^}]*\"complete\": *false" /tmp/p5c.json'
 
   echo 'opaque-actions: done'
 exit: 0

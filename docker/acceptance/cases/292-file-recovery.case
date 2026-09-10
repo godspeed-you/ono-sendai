@@ -1,0 +1,109 @@
+# v0.6 §50 phase P2 — §15: the file and configuration provider, which is what a host without
+# snapshot-capable storage gets.
+#
+# §15 exists because not every system has ZFS or Btrfs, and §15.1 bounds what this provider
+# claims: it captures files and configuration, and it says `byte-consistent` rather than anything
+# filesystem-wide. §15.3 puts its copies where other users cannot read them, §15.4 restores
+# through temp-file, fsync and rename, §44 keeps the contents out of every rendering, and
+# Appendix C.7 requires the metadata it does *not* restore to be visible beside the coverage.
+case: a host with no snapshot storage still protects a configuration change, and gets it back
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+
+  store="${XDG_DATA_HOME:-$HOME/.local/share}/ono/change/recovery"
+  mkdir -p "$HOME/etc"
+  printf 'listen 8443; # the-old-bytes-7f3a\n' > "$HOME/etc/nginx.conf"
+  printf 'listen 443;\n' > "$HOME/etc/nginx.conf.new"
+  before=$(sha256sum "$HOME/etc/nginx.conf" | cut -d' ' -f1)
+
+  echo '== §15 and §55.5 case 23: the file provider offers protection where no snapshot provider can =='
+  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | to json" > /tmp/f1.json 2>&1
+  id=$(plan_id /tmp/f1.json)
+  prove f1a "the plan reaches PROTECTED through the file provider (§15, §10.2)" \
+    'grep -q "\"protection_level\":\"protected\"" /tmp/f1.json && grep -q "\"provider\":\"ono.recovery.file-copy\"" /tmp/f1.json'
+  prove f1b "and the consistency it claims is byte-consistent and nothing wider (§11.3, §15.1)" \
+    'grep -q "\"consistency\":\"byte-consistent\"" /tmp/f1.json && ! grep -qE "\"consistency\":\"(filesystem|crash|application|transaction)-consistent\"" /tmp/f1.json'
+
+  echo '== §4.5 and §11.1: applying creates the asset, and it is a real object =='
+  ono -c "apply $id" > /tmp/f1a.txt 2>&1
+  ono -c 'get recovery | to json' > /tmp/f2.json 2>&1
+  prove f2a "exactly one asset exists, and it is ready (§11.1, §11.4)" \
+    "[ \"\$(ono -c 'get recovery | select state | to json' 2>&1)\" = '[{\"state\":\"ready\"}]' ]"
+  prove f2b "it is a file archive owned by the file provider, which is what §15 creates (§12.1)" \
+    "[ \"\$(ono -c 'get recovery | select type provider | to json' 2>&1)\" = '[{\"type\":\"file-archive\",\"provider\":\"ono.recovery.file-copy\"}]' ]"
+  prove f2c "it came from the plan that was applied (§11.1)" \
+    "[ \"\$(ono -c 'get recovery | select source_plan | to json' 2>&1)\" = '[{\"source_plan\":\"$id\"}]' ]"
+  prove f2e "and it covers exactly the object that was changed, by object rather than by prefix (§11.2)" \
+    "ono -c 'get recovery | select scope | to json' 2>&1 | grep -q '\"covers\":\[\"$HOME/etc/nginx.conf\"\]'"
+  # §11.5: a copy on the filesystem it protects is lost with that filesystem. Where the store and
+  # the target share a device, claiming otherwise would imply protection nothing provides.
+  if [ "$(stat -c %d "$store")" = "$(stat -c %d "$HOME/etc/nginx.conf")" ]; then shared=true; else shared=false; fi
+  prove f2d "it says whether it shares the failure domain of what it protects, and says it truly (§11.5, §2.5)" \
+    "[ \"\$(ono -c 'get recovery | select shares_failure_domain | to json' 2>&1)\" = '[{\"shares_failure_domain\":$shared}]' ]"
+
+  echo '== Appendix C.7: what a restore does not put back is beside what it does =='
+  prove f3a "the asset names the metadata it cannot restore — a file back without its SELinux label is not back (Appendix C.7)" \
+    "ono -c 'get recovery | select exclusions | to json' 2>&1 | grep -q '\"subject\":\"metadata coverage\",\"reason\":\"[^\"]*SELinux'"
+
+  echo '== §15.3 and §44.3: the store is not readable by other users =='
+  prove f4a "the recovery store exists where the shell keeps it, and holds the captured bytes" \
+    "[ -d '$store' ] && find '$store' -type f -exec sha256sum {} + | grep -q '^$before '"
+  prove f4b "the store is private: 0700 directories, 0600 files (§15.3, §44.3)" \
+    "[ \"\$(stat -c %a '$store')\" = '700' ] && [ -z \"\$(find '$store' -type d ! -perm 700)\" ] && [ -z \"\$(find '$store' -type f ! -perm 600)\" ]"
+
+  echo '== §44 and §55.5 case 24: metadata may be shown, contents may not =='
+  asset=$(ono -c 'get recovery | select id | to json' 2>/dev/null | sed -n 's/^\[{"id":"\([0-9a-f]*\)"}\]$/\1/p')
+  ono -c 'get recovery' > /tmp/f7a.txt 2>&1
+  ono -c "inspect recovery $asset" > /tmp/f7b.txt 2>&1
+  prove f7a "\`get recovery\` and \`inspect recovery\` render the asset's metadata (§37.5)" \
+    'grep -q "^RECOVERY ASSET" /tmp/f7a.txt && grep -q "^RECOVERY ASSET" /tmp/f7b.txt'
+  prove f7b "and no rendering and no record carries the captured contents (§44.2)" \
+    '! grep -q "the-old-bytes-7f3a" /tmp/f7a.txt /tmp/f7b.txt /tmp/f2.json'
+
+  echo '== §5.8 and §15.4: recovery plans first, then restores the captured bytes =='
+  ono -c "recover $id" > /tmp/f5.txt 2>&1
+  prove f5a "\`recover\` answers with a recovery plan (§5.8)" 'grep -q "^RECOVERY PLAN" /tmp/f5.txt'
+  prove f5b "and it performed nothing (§2.11)" 'grep -qx "RECOVERY NOT EXECUTED" /tmp/f5.txt'
+  prove f5c "the file is still the changed one, because planning recovery is not recovery" \
+    "[ \"\$(cat $HOME/etc/nginx.conf)\" = 'listen 443;' ]"
+  ono -c "recover $id | to json" > /tmp/f6.json 2>&1
+  rid=$(plan_id /tmp/f6.json)
+  ono -c "apply $rid --accept-newer-state-loss --confirm" > /tmp/f6.txt 2>&1
+  prove f6a "applying the recovery plan restores the captured bytes (§15.4)" \
+    "[ \"\$(sha256sum $HOME/etc/nginx.conf | cut -d' ' -f1)\" = '$before' ]"
+  prove f6b "and the restore was verified, so the recovery plan is RECOVERY_VERIFIED (§25.1, §4.1)" \
+    "[ \"\$(ono -c 'get plan $rid | select kind state | to json' 2>&1)\" = '[{\"kind\":\"recovery\",\"state\":\"recovery-verified\"}]' ]"
+
+  echo 'file-recovery: done'
+exit: 0
+stdout-contains: PROVED f1a
+stdout-contains: PROVED f1b
+stdout-contains: PROVED f2a
+stdout-contains: PROVED f2b
+stdout-contains: PROVED f2c
+stdout-contains: PROVED f2d
+stdout-contains: PROVED f2e
+stdout-contains: PROVED f3a
+stdout-contains: PROVED f4a
+stdout-contains: PROVED f4b
+stdout-contains: PROVED f7a
+stdout-contains: PROVED f7b
+stdout-contains: PROVED f5a
+stdout-contains: PROVED f5b
+stdout-contains: PROVED f5c
+stdout-contains: PROVED f6a
+stdout-contains: PROVED f6b
+stdout-contains: file-recovery: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

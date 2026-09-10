@@ -76,3 +76,5 @@ The nouns of spec §8 — the resources a verb acts on. `schema` names the objec
 | `event` | system | `ono.temporal-event/1` | T | A canonical temporal event — an observation, a change, an action step or a provider report. |
 | `recorder` | system | `ono.recorder-status/1` | T | The user-level temporal recorder, its state, its sources and what it has retained. |
 | `temporal-history` | system | `ono.temporal-history/1` | T | The local retained temporal ledger, as a whole, for inspection and for deletion. |
+| `plan` | system | `ono.change-plan/1` | P | A proposed change, with its impact, its protection and its way back. |
+| `recovery` | system | `ono.recovery-asset/1` | P | A recovery asset — a snapshot, an archive or a checkpoint — and what it protects. |

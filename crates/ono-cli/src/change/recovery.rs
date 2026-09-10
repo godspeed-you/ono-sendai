@@ -14,9 +14,14 @@
 use std::sync::Arc;
 
 use jiff::Timestamp;
-use ono_change_core::{RecoveryAsset, RecoveryGoal, RecoveryPlan, RestoreMethod, error};
+use ono_change_core::{
+    Execution, FrozenTarget, ImpactGraph, NewerStateClass, PlanAction, RecoveryAsset, RecoveryGoal,
+    RecoveryPlan, RestoreAcceptance, RestoreMethod, error,
+};
+use ono_change_executor::ExecutionOutcome;
+use ono_change_impact::derive::ImpactRequest;
 use ono_change_protection::retention::{PlanRetention, cleanup_preview};
-use ono_change_recovery::{ObservedState, RecoveryRequest, plan_recovery};
+use ono_change_recovery::{ObservedState, RecoveryRequest};
 use ono_command::{CommandImpl, Invocation, Outcome, OutcomeFuture};
 use ono_core::ErrorCode;
 use ono_pipeline::ValueStream;
@@ -57,25 +62,16 @@ impl CommandImpl for Recover {
                 ));
             }
             let goal = goal_of(&arguments)?;
-            let observe = |object: &str| observed(object);
-            let mut request = RecoveryRequest::new(
-                state.providers(),
-                &assets,
-                &observe,
-                goal,
-                state.session_id(),
-                now,
-            );
-            if let Some(plan) = source.as_ref() {
-                request = request.recovering(plan);
-                for target in plan.targets() {
-                    request = request.restoring(target.label());
-                }
-            }
-            if let Some(method) = arguments
+            let restore: Vec<String> = source.as_ref().map_or_else(Vec::new, |plan| {
+                plan.targets()
+                    .iter()
+                    .map(|target| target.label().to_owned())
+                    .collect()
+            });
+            let method = arguments
                 .option("method")
-                .and_then(|value| value.as_str().ok())
-            {
+                .and_then(|value| value.as_str().ok());
+            if let Some(method) = method {
                 // Appendix C.5: a method outside the closed list is refused by name rather than
                 // silently replaced with the one Ono would have chosen.
                 if RestoreMethod::from_name(method).is_none() {
@@ -92,16 +88,39 @@ impl CommandImpl for Recover {
                             .join(", ")
                     )));
                 }
-                request = request.forcing_method(method);
             }
-            let recovery = plan_recovery(&request)?;
+            // §2.12: the recovery is impact-checked over the session's topology like any other
+            // plan. The walk runs before the seal, and the guard goes as soon as it has.
+            let (recovery, notes) = {
+                let spatial = crate::spatial::spatial_session().await;
+                let derive = |targets: &[FrozenTarget], actions: &[PlanAction]| {
+                    ono_change_impact::derive::derive(&ImpactRequest::new(
+                        spatial.index(),
+                        targets,
+                        actions,
+                        now,
+                    ))
+                };
+                analyse(
+                    &state,
+                    source.as_ref(),
+                    &assets,
+                    goal,
+                    method,
+                    &restore,
+                    Some(&derive),
+                    now,
+                )?
+            };
             // §24.1: the recovery plan is stored so it can be inspected and then applied. Storing
             // it changes nothing about the system it would recover.
-            state.store().put(recovery.plan())?;
+            state.store().put_recovery(&recovery, &notes)?;
             super::session::note_last_plan(recovery.plan().id());
             record_planned(source.as_ref(), &recovery, now);
             Ok(Outcome::Values(ValueStream::from_values([Value::Record(
-                Arc::new(ono_change_core::value::recovery_plan_record(&recovery)?),
+                Arc::new(ono_change_core::value::recovery_plan_record_with(
+                    &recovery, &notes,
+                )?),
             )])))
         })
     }
@@ -115,12 +134,15 @@ fn sources(
 ) -> Result<(Option<ono_change_core::ChangePlan>, Vec<RecoveryAsset>), ErrorValue> {
     if let Some(toward) = arguments.option("to").and_then(|value| value.as_str().ok()) {
         let id = super::resolve_asset(state.store(), toward)?;
-        return Ok((None, vec![state.store().get_asset(&id)?]));
+        return Ok((
+            None,
+            vec![fresh_asset(state, state.store().get_asset(&id)?)],
+        ));
     }
     if let Ok(asset) = super::resolve_asset(state.store(), reference)
         && let Ok(asset) = state.store().get_asset(&asset)
     {
-        return Ok((None, vec![asset]));
+        return Ok((None, vec![fresh_asset(state, asset)]));
     }
     let plan = super::plan_of(state, reference)?;
     let assets = assets_of(state, plan.id())?;
@@ -141,10 +163,22 @@ fn assets_of(
     let mut assets = Vec::with_capacity(ids.len());
     for id in ids {
         if let Ok(asset) = state.store().get_asset(&id) {
-            assets.push(asset);
+            assets.push(fresh_asset(state, asset));
         }
     }
-    Ok(assets)
+    // §18.2: a plan protected early by `protect` and again at `apply` holds two assets of the
+    // same domain, and only the newer one is the state just before the change. The store answers
+    // in identity order, which is a hash; choosing by it would restore whichever sorted first.
+    assets.sort_by_key(|asset| std::cmp::Reverse(asset.created_at()));
+    let mut kept: Vec<RecoveryAsset> = Vec::with_capacity(assets.len());
+    for asset in assets {
+        if !kept.iter().any(|newer| {
+            newer.provider() == asset.provider() && newer.scope().domain() == asset.scope().domain()
+        }) {
+            kept.push(asset);
+        }
+    }
+    Ok(kept)
 }
 
 /// `--goal` as Appendix C.2's goal, defaulting to the one §5.8 writes.
@@ -177,7 +211,8 @@ fn goal_of(arguments: &ono_command::BoundArguments) -> Result<RecoveryGoal, Erro
 /// rather than guessing — an object whose current state nobody established is a reason to show
 /// the conflict, never a reason to assume there is none.
 fn observed(object: &str) -> ObservedState {
-    let path = std::path::Path::new(object.split('@').next().unwrap_or(object));
+    // The object is the path as the plan froze it, `@` and all (§7.1).
+    let path = std::path::Path::new(object);
     if !path.is_absolute() {
         return ObservedState::Unestablished {
             reason: Arc::from(
@@ -187,7 +222,10 @@ fn observed(object: &str) -> ObservedState {
         };
     }
     match std::fs::read(path) {
-        Ok(bytes) => ObservedState::present(hex(&bytes)),
+        Ok(bytes) => match modified(path) {
+            Some(at) => ObservedState::changed(at, hex(&bytes)),
+            None => ObservedState::present(hex(&bytes)),
+        },
         Err(failure) if failure.kind() == std::io::ErrorKind::NotFound => {
             ObservedState::Absent { changed_at: None }
         }
@@ -195,6 +233,54 @@ fn observed(object: &str) -> ObservedState {
             reason: Arc::from(failure.to_string()),
         },
     }
+}
+
+/// The digest of the file at `object` now, in the form a manifest records it, where it is a file
+/// that can be read (§18.3, Appendix C.3).
+pub fn current_digest(object: &str) -> Option<String> {
+    let path = std::path::Path::new(object);
+    if !path.is_absolute() {
+        return None;
+    }
+    std::fs::read(path).ok().map(|bytes| hex(&bytes))
+}
+
+/// Whether a recovery asset made earlier for `plan` still captures the state about to change
+/// (§18.2, §18.3).
+///
+/// The provider is asked what its asset holds, object by object, and each is held against the
+/// object as it is now. An asset whose provider is gone, or which says nothing about what it
+/// captured, is of unknown vintage — never fresh.
+pub fn early_freshness(
+    state: &ChangeState,
+    plan: &ono_change_core::ChangePlan,
+    asset: &RecoveryAsset,
+) -> ono_change_protection::freshness::FreshnessVerdict {
+    let require_fresh = plan.protection_mode() == ono_change_core::ProtectionMode::Require;
+    let captured = state
+        .providers()
+        .get(asset.provider())
+        .and_then(|provider| {
+            provider
+                .plan_recovery(asset, Some(plan), RecoveryGoal::RestoreChangedObjects)
+                .ok()
+        })
+        .map(|fragment| fragment.captured().to_vec())
+        .unwrap_or_default();
+    ono_change_protection::freshness::assess_captured(
+        asset,
+        &captured,
+        &current_digest,
+        require_fresh,
+    )
+}
+
+/// When `path` last changed, where the filesystem keeps that (Appendix C.3).
+fn modified(path: &std::path::Path) -> Option<Timestamp> {
+    let at = std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()?;
+    Timestamp::try_from(at).ok()
 }
 
 /// A content digest, as the manifest of §15 writes one.
@@ -242,6 +328,12 @@ impl CommandImpl for GetRecovery {
             } else {
                 state.store().list_assets()?
             };
+            // §11.4: `ready` is a claim a validation made, and only a validation can keep making it.
+            // An asset whose stored copy went away since is shown as what it is now.
+            let assets: Vec<RecoveryAsset> = assets
+                .into_iter()
+                .map(|asset| fresh_asset(&state, asset))
+                .collect();
             let wanted = states_of(&arguments);
             let mut values = Vec::with_capacity(assets.len());
             for asset in &assets {
@@ -301,7 +393,7 @@ impl CommandImpl for InspectRecovery {
             let reference = super::reference_of(ctx, "reference").await?;
             let state = change_session().await?;
             let id = super::resolve_asset(state.store(), &reference)?;
-            let asset = state.store().get_asset(&id)?;
+            let asset = fresh_asset(&state, state.store().get_asset(&id)?);
             Ok(Outcome::Values(ValueStream::from_values([Value::Record(
                 Arc::new(ono_change_core::value::asset_record(&asset)?),
             )])))
@@ -329,7 +421,7 @@ impl CommandImpl for RemoveRecovery {
             let reference = super::reference_of(ctx, "reference").await?;
             let state = change_session().await?;
             let id = super::resolve_asset(state.store(), &reference)?;
-            let asset = state.store().get_asset(&id)?;
+            let asset = fresh_asset(&state, state.store().get_asset(&id)?);
             let now = Timestamp::now();
 
             // §37.3: what would become unrecoverable is computed before anything is decided, so
@@ -348,6 +440,15 @@ impl CommandImpl for RemoveRecovery {
                 .unwrap_or_default();
 
             if arguments.flag("dry-run") {
+                // §37.3: the answer a person asked for is the preview itself, so it is drawn where the
+                // shell's notes go; the value on stdout carries the same answer for a script.
+                for line in ono_change_render::cleanup_preview(
+                    &ono_change_core::value::asset_record(&asset)?,
+                    &blocked,
+                    80,
+                ) {
+                    eprintln!("{line}");
+                }
                 let message = if blocked.is_empty() {
                     format!(
                         "{} would be removed, and no retained plan depends on it",
@@ -384,12 +485,18 @@ impl CommandImpl for RemoveRecovery {
             if !blocked.is_empty() && !arguments.flag("force") {
                 return Err(error::cleanup_blocked(&id, &blocked));
             }
-            let removed = state
-                .providers()
-                .get(asset.provider())
-                .map(|provider| provider.cleanup(&asset));
-            let value = match removed {
-                Some(Ok(())) | None => {
+            // §12.1: only the provider that created an asset can remove it. An asset whose provider is
+            // not registered here still exists, so calling it removed would be a success that did
+            // not happen, and a store that no longer tracks a snapshot nobody deleted.
+            let Some(owner) = state.providers().get(asset.provider()) else {
+                return Err(error::provider_unavailable(
+                    asset.provider(),
+                    "the provider that created this asset is not registered here, so it cannot be \
+                     removed. Nothing was removed, and the asset is still recorded",
+                ));
+            };
+            let value = match owner.cleanup(&asset) {
+                Ok(()) => {
                     state.store().put_asset(&asset.clone().removed())?;
                     record_removed(&state, &asset, now);
                     result(
@@ -399,7 +506,7 @@ impl CommandImpl for RemoveRecovery {
                         &format!("{} is gone", id.short()),
                     )
                 }
-                Some(Err(refusal)) => return Err(refusal),
+                Err(refusal) => return Err(refusal),
             };
             Ok(Outcome::Values(ValueStream::from_values([value])))
         })
@@ -444,8 +551,10 @@ fn record_planned(
     let Some(source) = source else {
         return;
     };
+    // ADR-0821: the source plan was created once, when it was planned. This is a later event about
+    // it, so it continues the plan's history rather than beginning it again.
     let mut lifecycle =
-        ono_change_executor::PlanLifecycle::created(source, crate::spatial::local_scope(), now);
+        ono_change_executor::PlanLifecycle::continuing(source, crate::spatial::local_scope());
     lifecycle.recovery_planned(recovery.plan().id(), now);
     let ledger = crate::temporal::session::writable_ledger();
     let _ = lifecycle.record(ledger.as_ref());
@@ -464,8 +573,270 @@ fn record_removed(state: &ChangeState, asset: &RecoveryAsset, now: Timestamp) {
         return;
     };
     let mut lifecycle =
-        ono_change_executor::PlanLifecycle::created(&plan, crate::spatial::local_scope(), now);
+        ono_change_executor::PlanLifecycle::continuing(&plan, crate::spatial::local_scope());
     lifecycle.asset_removed(asset.id(), now);
     let ledger = crate::temporal::session::writable_ledger();
     let _ = lifecycle.record(ledger.as_ref());
+}
+
+/// Appendix C.3's analysis over `assets`, as `recover` runs it and as `apply` runs it again.
+///
+/// One function for both, because §7.3's revalidation of a recovery plan is exactly this question
+/// asked a second time: what would this restore discard *now*. Two builders would drift, and the
+/// second answer would stop being comparable to the first.
+fn analyse(
+    state: &ChangeState,
+    source: Option<&ono_change_core::ChangePlan>,
+    assets: &[RecoveryAsset],
+    goal: RecoveryGoal,
+    method: Option<&str>,
+    restore: &[String],
+    derive: Option<&dyn Fn(&[FrozenTarget], &[PlanAction]) -> ImpactGraph>,
+    now: Timestamp,
+) -> Result<
+    (
+        ono_change_core::RecoveryPlan,
+        ono_change_core::value::RecoveryPlanNotes,
+    ),
+    ErrorValue,
+> {
+    let observe = |object: &str| observed(object);
+    let mut request = RecoveryRequest::new(
+        state.providers(),
+        assets,
+        &observe,
+        goal,
+        state.session_id(),
+        now,
+    );
+    if let Some(plan) = source {
+        request = request.recovering(plan);
+        // Appendix C.4: the plan's own write is what recovery undoes. When it settled is what
+        // separates that write from a later edit, which is the only newer state there is.
+        if let Some(applied) = state.store().applied_at(plan.id())? {
+            request = request.applied_at(applied);
+        }
+    }
+    for object in restore {
+        request = request.restoring(object.as_str());
+    }
+    if let Some(method) = method {
+        request = request.forcing_method(method);
+    }
+    if let Some(derive) = derive {
+        request = request.deriving_impact(derive);
+    }
+    let (recovery, selection) = ono_change_recovery::plan_recovery_explained(&request)?;
+    // Appendix I.5: the methods not chosen, and why, are part of what the operator is shown.
+    let rejected = selection
+        .rejected()
+        .iter()
+        .map(|rejected| {
+            ono_change_core::value::RejectedMethodNote::new(
+                rejected.provider(),
+                rejected.method(),
+                rejected.reason().as_str(),
+                rejected.detail(),
+            )
+            .unmet(rejected.unmet().to_vec())
+        })
+        .collect();
+    let notes = ono_change_core::value::RecoveryPlanNotes::default().with_rejected(rejected);
+    Ok((recovery, notes))
+}
+
+/// The recovery `apply` is about to run, as the world stands now (§7.3, §24.5, Appendix C.4).
+///
+/// The stored plan is what the operator was shown and what an acceptance was given for. The
+/// analysis is run again because hours may have passed (§62.8): a loss that appeared since is one
+/// nobody was shown, so it refuses whatever was accepted, and the gate is then decided on the
+/// current analysis — an acceptance covers the losses that were on the plan, and no others.
+///
+/// Answers the gated recovery and the assets its actions restore from.
+///
+/// # Errors
+///
+/// - `recovery.plan_incomplete` where the plan carries no stored analysis, or the analysis
+///   cannot be completed now (§56.3);
+/// - `recovery.newer_state_conflict` where recovery would now discard state the stored plan did
+///   not show, or where it would discard state and `--accept-newer-state-loss` was not given;
+/// - `recovery.destructive_history_not_accepted` where it would destroy provider history.
+pub fn current(
+    state: &ChangeState,
+    plan: &ono_change_core::ChangePlan,
+    accepted: bool,
+    now: Timestamp,
+) -> Result<(ono_change_core::RecoveryPlan, Vec<RecoveryAsset>), ErrorValue> {
+    let stored = state.store().get_recovery(plan.id())?;
+    let mut assets = Vec::with_capacity(stored.source_assets().len());
+    for id in stored.source_assets() {
+        assets.push(state.store().get_asset(id)?);
+    }
+    let source = match stored.source_plan() {
+        Some(id) => Some(state.store().get(id)?),
+        None => None,
+    };
+    let restore: Vec<String> = stored.restores().iter().map(|o| o.to_string()).collect();
+    let (fresh, _) = analyse(
+        state,
+        source.as_ref(),
+        &assets,
+        stored.goal(),
+        Some(stored.method().as_str()),
+        &restore,
+        // The stored plan keeps the impact the operator was shown; this pass weighs losses only.
+        None,
+        now,
+    )?;
+    let shown = losses(&stored);
+    let unshown: Vec<String> = losses(&fresh)
+        .into_iter()
+        .filter(|loss| !shown.contains(loss))
+        .collect();
+    if !unshown.is_empty() {
+        return Err(error::newer_state_conflict(&unshown).with_help(
+            "the world changed after `recover` built this plan, and recovery would now discard \
+             state it never showed (§7.3, §24.5). Run `recover` again to see what it would \
+             discard now; an acceptance covers only the losses a plan showed",
+        ));
+    }
+    let gated = if accepted {
+        fresh.destruction_accepted()
+    } else {
+        fresh
+    };
+    ono_change_recovery::gate::check(&gated)?;
+    Ok((gated, assets))
+}
+
+/// Everything a recovery would take away, as comparable text (§24.3, §13.6).
+fn losses(recovery: &ono_change_core::RecoveryPlan) -> Vec<String> {
+    let mut losses: Vec<String> = recovery
+        .newer_state()
+        .items()
+        .iter()
+        .filter(|item| item.class().is_loss() || item.class() == NewerStateClass::Unknown)
+        .map(|item| format!("{} ({})", item.object(), item.class()))
+        .collect();
+    losses.extend(
+        recovery
+            .newer_state()
+            .destroyed_assets()
+            .iter()
+            .map(|asset| format!("{asset} (destroyed)")),
+    );
+    losses
+}
+
+/// Carries out one action of a recovery plan through the provider that owns its asset (§12.2,
+/// §24.2).
+///
+/// Every action goes to the provider, whatever form it was planned in: the provider emitted it,
+/// and only the provider can re-establish, at the moment of the act, the facts its safety rests
+/// on (§56.1). Running a planned program directly would skip exactly that check. The acceptance
+/// travels with the call, so a provider can refuse a destruction nobody accepted even where the
+/// world moved between the gate and the act.
+pub fn restore(
+    state: &ChangeState,
+    plan: &ono_change_core::PlanId,
+    assets: &[RecoveryAsset],
+    acceptance: &RestoreAcceptance,
+    action: &PlanAction,
+) -> ExecutionOutcome {
+    let asset = match owning_asset(assets, action) {
+        Ok(asset) => asset,
+        Err(refusal) => return ExecutionOutcome::Failed(refusal),
+    };
+    let Some(provider) = state.providers().get(asset.provider()) else {
+        return ExecutionOutcome::Failed(error::provider_unavailable(
+            asset.provider(),
+            "the provider that created this asset is not registered here, and only it can \
+             restore from it (§11.4, §12.1)",
+        ));
+    };
+    let outcome = match provider.restore_with(action, asset, acceptance) {
+        Ok(outcome) => outcome,
+        Err(refusal) => return ExecutionOutcome::Failed(refusal),
+    };
+    // §14.5: what the restore derived is an asset with a lifecycle of its own, attributed to the
+    // recovery plan that made it. One the store could not record is a real object nothing
+    // tracks, so the action is not reported as simply done.
+    for created in outcome.created() {
+        if let Err(failure) = state
+            .store()
+            .put_asset(&created.clone().for_plan(plan.clone()))
+        {
+            return ExecutionOutcome::Unknown(failure.with_help(format!(
+                "the restore ran and created {}, which the plan store could not record; \
+                 `get recovery` will not show it until it is recorded",
+                created.reference()
+            )));
+        }
+    }
+    ExecutionOutcome::Succeeded
+}
+
+/// The asset `action` restores from: the one it names, or the only one it could mean.
+fn owning_asset<'a>(
+    assets: &'a [RecoveryAsset],
+    action: &PlanAction,
+) -> Result<&'a RecoveryAsset, ErrorValue> {
+    let (named, provider) = match action.execution() {
+        Execution::RecoveryOperation {
+            provider,
+            arguments,
+            ..
+        } => (
+            arguments
+                .iter()
+                .find(|(name, _)| name.as_ref() == "asset")
+                .and_then(|(_, value)| value.as_str().ok().map(str::to_owned)),
+            Some(provider.as_ref()),
+        ),
+        _ => (None, None),
+    };
+    if let Some(named) = named {
+        return assets
+            .iter()
+            .find(|asset| asset.id().as_str() == named)
+            .ok_or_else(|| {
+                error::action_not_plannable(
+                    action.summary(),
+                    "it names an asset this recovery plan does not restore from",
+                )
+            });
+    }
+    let candidates: Vec<&RecoveryAsset> = assets
+        .iter()
+        .filter(|asset| provider.is_none_or(|provider| asset.provider() == provider))
+        .collect();
+    match candidates.as_slice() {
+        [only] => Ok(only),
+        [] => Err(error::action_not_plannable(
+            action.summary(),
+            "no asset this recovery restores from belongs to the provider that planned it",
+        )),
+        _ => Err(error::action_not_plannable(
+            action.summary(),
+            "it names no asset, and this recovery restores from several",
+        )),
+    }
+}
+
+/// `asset` as its provider finds it now (§11.4, §37).
+///
+/// A `ready` asset is validated again by the provider that made it, and a state that changed —
+/// its stored copy deleted, its snapshot gone — is written back, so the store never keeps offering
+/// a recovery point that no longer exists. A provider that cannot be asked here leaves the asset
+/// as recorded: not being able to ask is not evidence that it is gone.
+pub fn fresh_asset(state: &ChangeState, asset: RecoveryAsset) -> RecoveryAsset {
+    match state.providers().revalidate(&asset) {
+        Ok(fresh) => {
+            if fresh.state() != asset.state() {
+                let _ = state.store().put_asset(&fresh);
+            }
+            fresh
+        }
+        Err(_) => asset,
+    }
 }

@@ -11,8 +11,14 @@ mod support;
 
 use std::path::Path;
 
-use ono_change_core::{NonPersistentReason, RecoveryObjective, RecoveryProvider, RestoreMethod};
-use ono_recovery_files::{FileProtectionLimits, PROVIDER_ID, ScanMode, scan};
+use ono_change_core::{
+    NonPersistentReason, ProtectionMode, RecoveryObjective, RecoveryProvider, RestoreMethod,
+};
+use ono_recovery_files::{
+    FileProtectionLimits, FileRecoveryProvider, FileRecoveryStore, ObjectKind, PROVIDER_ID,
+    ScanMode, scan,
+};
+use ono_testkit::{SkipReason, skipped};
 use support::Fixture;
 
 fn domain_of(fixture: &Fixture, path: &Path) -> ono_change_core::PersistenceDomain {
@@ -125,6 +131,36 @@ fn should_refuse_a_device_node_rather_than_archive_it() {
     assert!(
         !domain.is_protectable(),
         "§15.2: devices are excluded from what this provider archives"
+    );
+}
+
+#[test]
+fn should_exclude_a_device_node_as_a_device_when_it_classifies_one() {
+    // No unprivileged test can make a device node on a persistent filesystem, so the path-level
+    // refusal above comes from /dev being a pseudo filesystem. The classification that excludes
+    // a device anywhere else is exercised here, on a real device node.
+    let Ok(metadata) = std::fs::symlink_metadata("/dev/null") else {
+        skipped(
+            SkipReason::MissingKernelFeature,
+            "this host has no /dev/null to classify",
+        );
+        return;
+    };
+    let kind = ObjectKind::of(&metadata);
+    assert_eq!(
+        kind,
+        ObjectKind::CharacterDevice,
+        "§43.5: an lstat of /dev/null describes a character device"
+    );
+    assert!(
+        !kind.is_protectable(),
+        "§15.1: devices are excluded from what this provider archives"
+    );
+    assert!(
+        kind.exclusion()
+            .is_some_and(|reason| reason.contains("device node")),
+        "§15.2: the exclusion says why a device is excluded, got {:?}",
+        kind.exclusion()
     );
 }
 
@@ -340,8 +376,31 @@ fn should_refuse_a_tree_holding_more_objects_than_the_configured_count() {
 fn should_archive_nothing_when_a_limit_refuses_the_tree() {
     let fixture = Fixture::new();
     fixture.write("var/one", &"x".repeat(700));
-    let limits = FileProtectionLimits::default().with_total_bytes(10);
-    let _ = scan(&fixture.path("var"), &limits, ScanMode::Measure, 0);
+    // The protection was planned by a provider the tree fitted; the provider that creates the
+    // asset is bound by a limit the tree crosses, over the same store, so the refusal is
+    // `create`'s own.
+    let domain = domain_of(&fixture, &fixture.path("var"));
+    let candidates = fixture
+        .provider
+        .discover(&domain, RecoveryObjective::PreserveExact)
+        .expect("the tree is discoverable");
+    let actions = fixture
+        .provider
+        .plan_protection(&candidates, ProtectionMode::Prefer)
+        .expect("the tree is plannable");
+    let action = actions.first().expect("one candidate makes one action");
+    let limited = FileRecoveryProvider::new(
+        FileRecoveryStore::open(fixture.path("store")).expect("the same store opens again"),
+        support::at(support::NOW),
+    )
+    .with_limits(FileProtectionLimits::default().with_total_bytes(10));
+    let error = limited
+        .create(action)
+        .expect_err("§15.2: a tree over the byte limit is refused");
+    assert!(
+        error.metadata().get("limit_name").is_some(),
+        "§15.2: the refusal names the bound that was crossed, got {error:?}"
+    );
     let store_entries = std::fs::read_dir(fixture.provider.store().root())
         .expect("the store can be listed")
         .count();

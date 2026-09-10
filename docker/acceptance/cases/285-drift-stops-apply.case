@@ -1,0 +1,140 @@
+# v0.6 §50 phase P2 — §7.3 and §55.2: a plan resolved against state that has since moved does not
+# apply, and the operator is told what moved.
+#
+# §7.2 fixes what "moved" means per operation: existence, content digest, generation, persistence
+# domain. §7.3 makes material drift stop execution *before* anything is prepared or mutated, and
+# §7.5 gives the way forward — a rebase creating a new revision, leaving the refused one exactly
+# as it was. §7.4 is the other half: a field the action's contract declares tolerable moves without
+# invalidating anything (§55.2 case 8).
+#
+# §55.2 case 7 is about a service target that disappears. This container runs no service manager,
+# so the target that disappears is a process — the same §7.1 identity question, answered by the
+# same `change.target_changed`.
+case: a plan whose world moved refuses, tolerable movement does not, and rebase moves it forward
+timeout: 150
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  count_of() { ono -c "$1 | count | to json" 2>&1 | tr -d '[:space:]' | sed 's/^\[//; s/\]$//'; }
+
+  mkdir -p "$HOME/etc"
+  printf 'worker_processes 4;\n' > "$HOME/etc/nginx.conf"
+  printf 'worker_processes 8;\n' > "$HOME/etc/nginx.conf.new"
+
+  echo '== §7.2: the plan freezes the bytes it was resolved against =='
+  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | to json" > /tmp/d1.json 2>&1
+  id=$(plan_id /tmp/d1.json)
+  first_digest=$(sed -n 's/.*"digest":"\([0-9a-f]\{64\}\)".*/\1/p' /tmp/d1.json | head -1)
+  sealed_bytes=$(sha256sum "$HOME/etc/nginx.conf" | cut -d' ' -f1)
+  prove d1a "the plan carries a content-digest precondition on the bytes it saw (§7.2)" \
+    "grep -q '\"kind\":\"content-digest\",\"subject\":\"$HOME/etc/nginx.conf\",\"field\":\"sha256\",\"expected\":\"$sealed_bytes\"' /tmp/d1.json"
+  prove d1b "and a persistence-domain one, because Appendix B's answer can move too (§7.2)" \
+    'grep -q "\"kind\":\"persistence-domain\"" /tmp/d1.json'
+  prove d1c "the plan has an identity and a digest to apply and compare by (§36.4, §4.4)" \
+    '[ -n "'"$id"'" ] && [ -n "'"$first_digest"'" ]'
+
+  echo '== §7.3: the file changes after the seal, and the apply refuses =='
+  printf 'worker_processes 16;\n' > "$HOME/etc/nginx.conf"
+  ono -c "apply $id" > /tmp/d2.txt 2>&1
+  prove d2a "the apply refuses with §7.3's own code" \
+    'grep -q "Ono-Sendai-E1705 change.plan_drift_detected" /tmp/d2.txt'
+  prove d2e "and names the fact that moved: the content digest (§7.3)" \
+    'grep -qE "content-digest|sha256" /tmp/d2.txt'
+  prove d2b "and says nothing was changed (§7.3: before anything is prepared or mutated)" \
+    'grep -q "Nothing was changed" /tmp/d2.txt'
+  prove d2c "the file is what the operator left, not what the plan would have written (§7.3)" \
+    "[ \"\$(cat $HOME/etc/nginx.conf)\" = 'worker_processes 16;' ]"
+  prove d2d "no recovery asset was created, because prepare never began (§2.3, §4.5)" \
+    "[ \"\$(count_of 'get recovery')\" = '0' ]"
+  prove d2f "the refused plan is still sealed, because a refusal consumes nothing (§4.1)" \
+    "[ \"\$(ono -c 'get plan $id | select state | to json' 2>&1)\" = '[{\"state\":\"sealed\"}]' ]"
+
+  echo '== §7.5: rebase resolves it again, and leaves the refused revision alone =='
+  ono -c "rebase plan $id | select id revision | to json" > /tmp/d3.txt 2>&1
+  prove d3a "rebase answers with revision 2 of the same plan (§4.4, §7.5)" \
+    "[ \"\$(cat /tmp/d3.txt)\" = '[{\"id\":\"$id\",\"revision\":2}]' ]"
+  prove d3c "revision 1 is still readable, exactly as it was sealed and refused (§7.5)" \
+    "[ \"\$(ono -c 'get plan $id --revision 1 | select revision digest state | to json' 2>&1)\" = '[{\"revision\":1,\"digest\":\"$first_digest\",\"state\":\"sealed\"}]' ]"
+
+  echo '== §7.3: the rebased plan applies, because it was resolved against what is there =='
+  ono -c "apply $id" > /tmp/d4.txt 2>&1
+  prove d4a "the rebased revision applies and verifies (§7.5, §4.8)" \
+    "[ \"\$(ono -c 'get plan $id | select revision state | to json' 2>&1)\" = '[{\"revision\":2,\"state\":\"verified\"}]' ]"
+  prove d4b "and the file is what the plan said it would write" \
+    "[ \"\$(cat $HOME/etc/nginx.conf)\" = 'worker_processes 8;' ]"
+
+  echo '== §55.2 case 7: a target that disappeared is refused as a changed target =='
+  sleep 600 &
+  victim=$!
+  ono -c "plan kill process $victim | to json" > /tmp/d5.json 2>&1
+  gone_process=$(plan_id /tmp/d5.json)
+  kill "$victim"; wait "$victim" 2>/dev/null
+  # Every acknowledgement is given, so nothing but the vanished target can stop this apply.
+  ono -c "apply $gone_process --accept-risk --accept-irreversible --confirm" > /tmp/d5.txt 2>&1
+  prove d5a "a process that exited after the seal stops the apply with \`change.target_changed\` (§7.1, §45)" \
+    'grep -q "Ono-Sendai-E1712 change.target_changed" /tmp/d5.txt'
+  prove d5b "and the plan did not run: it is not verified, applied or failed (§7.3)" \
+    "! ono -c 'get plan $gone_process | select state | to json' 2>&1 | grep -qE '\"(verified|degraded|failed|apply-failed|applying)\"'"
+
+  printf 'a\n' > "$HOME/etc/gone.conf"
+  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/gone.conf --overwrite | to json" > /tmp/d6.json 2>&1
+  gone_file=$(plan_id /tmp/d6.json)
+  rm -f "$HOME/etc/gone.conf"
+  ono -c "apply $gone_file" > /tmp/d6.txt 2>&1
+  # §7.2's existence precondition and §45's changed target are both a refusal; the broken outcome
+  # is a copy that recreates a file the plan was never resolved against.
+  prove d5c "a file removed after the seal stops the apply (§7.2, §7.3)" \
+    'grep -qE "change\.target_changed|change\.plan_drift_detected" /tmp/d6.txt'
+  prove d5d "and the copy did not recreate it (§7.3)" "[ ! -e $HOME/etc/gone.conf ]"
+
+  echo '== §7.4 and §55.2 case 8: a contract-declared tolerance is not drift =='
+  # `ono.process.kill` declares CPU and memory tolerable (docs/contracts/change/actions.yaml). A
+  # busy loop's CPU time moves every instant between the seal and the apply.
+  sh -c 'while :; do :; done' &
+  busy=$!
+  ono -c "plan kill process $busy | to json" > /tmp/d7.json 2>&1
+  busy_plan=$(plan_id /tmp/d7.json)
+  sleep 2
+  ono -c "apply $busy_plan --accept-risk --accept-irreversible --confirm" > /tmp/d7.txt 2>&1
+  sleep 0.5
+  prove d7a "CPU movement did not invalidate the plan (§7.4)" \
+    '! grep -qE "change\.plan_drift_detected|change\.target_changed" /tmp/d7.txt'
+  prove d7b "the plan applied and verified (§7.4, §4.8)" \
+    "ono -c 'get plan $busy_plan | select state | to json' 2>&1 | grep -qx '\[{\"state\":\"verified\"}\]'"
+  prove d7c "and the process is gone, because the kill really ran (§4.7)" "! kill -0 $busy 2>/dev/null"
+  kill -9 "$busy" 2>/dev/null
+
+  echo 'drift-stops-apply: done'
+exit: 0
+stdout-contains: PROVED d1a
+stdout-contains: PROVED d1b
+stdout-contains: PROVED d1c
+stdout-contains: PROVED d2a
+stdout-contains: PROVED d2b
+stdout-contains: PROVED d2c
+stdout-contains: PROVED d2d
+stdout-contains: PROVED d2e
+stdout-contains: PROVED d2f
+stdout-contains: PROVED d3a
+stdout-contains: PROVED d3c
+stdout-contains: PROVED d4a
+stdout-contains: PROVED d4b
+stdout-contains: PROVED d5a
+stdout-contains: PROVED d5b
+stdout-contains: PROVED d5c
+stdout-contains: PROVED d5d
+stdout-contains: PROVED d7a
+stdout-contains: PROVED d7b
+stdout-contains: PROVED d7c
+stdout-contains: drift-stops-apply: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

@@ -323,7 +323,8 @@ fn change_provider(flaw: Option<&str>) -> Plugin {
             id: format!("{PACKAGE}.recovery-provider.database"),
             summary: "Point-in-time protection for the databases this package fronts.".to_owned(),
             domain_kinds: vec!["postgres-database".to_owned()],
-            asset_type: "database-dump".to_owned(),
+            asset_type: "database-checkpoint".to_owned(),
+            memory_inclusion: None,
             consistency: if application_consistent {
                 "application-consistent".to_owned()
             } else {

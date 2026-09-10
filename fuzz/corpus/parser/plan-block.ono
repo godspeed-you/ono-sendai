@@ -1,0 +1,1 @@
+plan { replace file /etc/nginx/nginx.conf from ./nginx.conf; restart service nginx }

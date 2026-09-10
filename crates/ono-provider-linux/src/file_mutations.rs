@@ -418,12 +418,37 @@ fn copy_entry(
             )?;
         }
     } else {
-        std::fs::copy(source, destination).map_err(|e| (destination.to_path_buf(), e))?;
+        copy_bytes(source, destination, metadata)?;
     }
     if preserve {
         preserve_attributes(destination, metadata).map_err(|e| (destination.to_path_buf(), e))?;
     }
     Ok(())
+}
+
+/// Copies a regular file's bytes onto `destination`, never through a link there (v0.6 §43.5).
+///
+/// `std::fs::copy` opens the destination by path and follows a symlink it finds, so a link swapped
+/// in after a plan was checked would have the copy write into whatever the link points at — an
+/// object nobody protected. `O_NOFOLLOW` makes the open refuse a link at the final component
+/// instead, and the permission bits are carried over as `std::fs::copy` carries them.
+fn copy_bytes(
+    source: &Path,
+    destination: &Path,
+    metadata: &std::fs::Metadata,
+) -> Result<(), (PathBuf, std::io::Error)> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let mut from = std::fs::File::open(source).map_err(|e| (source.to_path_buf(), e))?;
+    let mut to = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(nix::libc::O_NOFOLLOW)
+        .open(destination)
+        .map_err(|e| (destination.to_path_buf(), e))?;
+    std::io::copy(&mut from, &mut to).map_err(|e| (destination.to_path_buf(), e))?;
+    to.set_permissions(metadata.permissions())
+        .map_err(|e| (destination.to_path_buf(), e))
 }
 
 /// Mode, timestamps and — where permitted — ownership of `metadata`, onto `path`.

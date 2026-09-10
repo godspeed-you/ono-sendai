@@ -46,6 +46,57 @@ fn validation_failures(provider: &FileRecoveryProvider, asset: &RecoveryAsset) -
 }
 
 #[test]
+fn should_create_a_second_recovery_point_of_an_object_that_changed_since_the_first() {
+    // §4.5 and §2.12: one provider may protect the same file twice — a change, then the recovery
+    // of that change — and each recovery point is an asset of its own (§11.1). The session's
+    // provider reads the clock each time, which this one does too, a second at a time.
+    fn ticking() -> jiff::Timestamp {
+        static SECONDS: std::sync::atomic::AtomicI64 =
+            std::sync::atomic::AtomicI64::new(support::NOW);
+        support::at(SECONDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+    let fixture = Fixture::new();
+    let provider = fixture.provider.clone().with_clock(ticking);
+    let configuration = fixture.write("etc/nginx.conf", "worker_processes 1;\n");
+    let first = support::protect_with(&provider, &configuration).expect("the file is protected");
+    std::fs::write(&configuration, "worker_processes 4;\n").expect("the file is rewritten");
+
+    let second = support::protect_with(&provider, &configuration)
+        .expect("§4.5: the second recovery point of the object is created, not refused");
+
+    assert_ne!(
+        first.id(),
+        second.id(),
+        "§11.1: two recovery points are two assets"
+    );
+    assert_ne!(
+        first.reference(),
+        second.reference(),
+        "§15.3: the second copy lives beside the first rather than over it"
+    );
+}
+
+#[test]
+fn should_date_an_asset_by_its_clock_rather_than_by_when_the_provider_was_built() {
+    // §37.1: a session is long-lived, and an asset made an hour after it started was made an hour
+    // later — its expiry is counted from then, not from the session's first instant.
+    fn an_hour_later() -> jiff::Timestamp {
+        support::at(support::NOW + 3600)
+    }
+    let fixture = Fixture::new();
+    let provider = fixture.provider.clone().with_clock(an_hour_later);
+    let configuration = fixture.write("etc/nginx.conf", "worker_processes 1;\n");
+
+    let asset = support::protect_with(&provider, &configuration).expect("the file is protected");
+
+    assert_eq!(
+        asset.created_at(),
+        support::at(support::NOW + 3600),
+        "§11.1: the asset records when it was made"
+    );
+}
+
+#[test]
 fn should_propose_an_asset_whose_copy_would_live_in_the_store_when_it_plans_protection() {
     let fixture = Fixture::new();
     let configuration = fixture.write("etc/nginx.conf", "worker_processes 1;\n");
@@ -168,8 +219,9 @@ fn should_create_a_ready_asset_when_the_copy_succeeds() {
     );
     assert_eq!(asset.restore_method(), RestoreMethod::SelectiveFileRestore);
     assert!(
-        !asset.is_local_recovery_point(),
-        "§11.5: a copy into an independent store does not share the failure domain a snapshot does"
+        asset.is_local_recovery_point(),
+        "§11.5: this fixture keeps its store on the same device as the original, and a copy there \
+         is lost with it, so the asset says it is a local recovery point rather than a backup"
     );
 }
 

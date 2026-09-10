@@ -1,0 +1,80 @@
+# v0.6 §50 phase P2 — §11.2 and Appendix B: a path is resolved to the persistence domain that
+# actually holds its state, and never guessed at.
+#
+# Appendix B is a pipeline, not a prefix match: a bind mount crosses to another filesystem, an
+# overlay's writes land in its upper layer, a tmpfs holds nothing across a reboot, and a pseudo
+# filesystem holds no state at all. §11.2 requires the mapping before protection is claimed, and
+# §2.4 makes an unresolved one `UNKNOWN` rather than an assumption. Every expectation here is read
+# off the mount table the container really has (`findmnt`), never written into the case.
+case: a path resolves to the domain that holds its state, or to none
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+
+  mkdir -p "$HOME/etc"
+  printf 'a\n' > "$HOME/etc/source"
+  printf 'b\n' > "$HOME/etc/target"
+  mount_point=$(findmnt -n -o TARGET --target "$HOME/etc/target")
+  fstype=$(findmnt -n -o FSTYPE --target "$HOME/etc/target")
+  source=$(findmnt -n -o SOURCE --target "$HOME/etc/target")
+
+  echo '== Appendix B.1 and B.10: the resolution is shown, and it names the mount it went through =='
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/target --overwrite | to json" > /tmp/pr0.json 2>&1
+  id=$(plan_id /tmp/pr0.json)
+  ono -c "inspect plan $id --resolution" > /tmp/pr1.txt 2>&1
+  prove pr1a "\`inspect plan --resolution\` answers with the resolution (Appendix B.10)" \
+    'grep -qx "PERSISTENCE RESOLUTION" /tmp/pr1.txt'
+  prove pr1c "it names the mount the mount table gives for the path, with its type and source (Appendix B.1)" \
+    "grep -qxF '    mount $mount_point ($fstype) on $source' /tmp/pr1.txt"
+  prove pr1d "and the recovery boundary, or that there is none (Appendix B.10, §2.4)" \
+    'grep -qE "^    recovery boundary [^ ]" /tmp/pr1.txt'
+
+  echo '== §11.2 and §7.2: the domain reaches the plan rather than staying a note =='
+  domain=$(sed -n 's/.*"targets":\[{[^]]*"persistence_domain":"\([^"]*\)".*/\1/p' /tmp/pr0.json | head -1)
+  prove pr2a "the frozen target carries the domain it resolved to (§7.1, §11.2)" '[ -n "'"$domain"'" ]'
+  prove pr2b "and the persistence-domain precondition freezes that same domain, so apply sees it move (§7.2)" \
+    "grep -q '\"kind\":\"persistence-domain\",\"subject\":\"$HOME/etc/target\",\"field\":\"persistence_domain\",\"expected\":\"$domain\"' /tmp/pr0.json"
+
+  echo '== Appendix B.7 and §32.4: a volatile filesystem is no persistence domain at all =='
+  if [ -d /dev/shm ] && printf 'x\n' > /dev/shm/ono-volatile 2>/dev/null; then
+    ono -c "plan copy file $HOME/etc/source /dev/shm/ono-volatile --overwrite | to json" > /tmp/pr3.txt 2>&1
+    prove pr3a "a tmpfs target resolves to no persistence domain (Appendix B.7)" \
+      'grep -q "\"identity\":\"/dev/shm/ono-volatile\"[^}]*\"persistence_domain\":null" /tmp/pr3.txt'
+    prove pr3b "so it reaches no protection, and nothing is prepared for it (§2.5, §11.2)" \
+      'grep -q "\"protection_level\":\"unprotected\"" /tmp/pr3.txt && ! grep -q "\"role\":\"prepare\"" /tmp/pr3.txt'
+    rm -f /dev/shm/ono-volatile
+  else
+    echo 'SKIPPED persistence-resolution/volatile: fixture_not_applicable: no writable /dev/shm'
+  fi
+
+  echo '== Appendix B.7: a pseudo filesystem holds no state to protect =='
+  ono -c "plan copy file $HOME/etc/source /proc/self/comm --overwrite | to json" > /tmp/pr4.txt 2>&1
+  prove pr4a "a procfs target resolves to no persistence domain (Appendix B.7)" \
+    'grep -q "\"schema\":\"ono.file/1\"[^}]*\"persistence_domain\":null" /tmp/pr4.txt'
+  prove pr4b "and reaches no protection, with nothing prepared (§2.5)" \
+    'grep -q "\"protection_level\":\"unprotected\"" /tmp/pr4.txt && ! grep -q "\"role\":\"prepare\"" /tmp/pr4.txt'
+
+  echo 'persistence-resolution: done'
+exit: 0
+stdout-contains: PROVED pr1a
+stdout-contains: PROVED pr1c
+stdout-contains: PROVED pr1d
+stdout-contains: PROVED pr2a
+stdout-contains: PROVED pr2b
+stdout-contains: PROVED pr3a
+stdout-contains: PROVED pr3b
+stdout-contains: PROVED pr4a
+stdout-contains: PROVED pr4b
+stdout-contains: persistence-resolution: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

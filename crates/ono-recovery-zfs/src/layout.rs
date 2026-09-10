@@ -265,12 +265,41 @@ fn parse_mount_line(line: &str) -> Option<Mount> {
     let source = tail.next()?;
     Some(Mount {
         id: Arc::from(id),
-        mount_point: Arc::from(mount_point),
+        mount_point: Arc::from(unescape(mount_point)),
         filesystem: Arc::from(filesystem),
-        source: Arc::from(source),
-        root: Arc::from(root),
+        source: Arc::from(unescape(source)),
+        root: Arc::from(unescape(root)),
         options: options.split(',').map(Arc::from).collect(),
     })
+}
+
+/// Decodes the octal escapes `mountinfo(5)` writes a path's space, tab, newline and backslash as.
+///
+/// The kernel prints `/mnt/my data` as `/mnt/my\040data` so that whitespace can separate the
+/// fields. Left encoded, the mount point matches no path an operator names, and the path then
+/// resolves to the mount above it — a different snapshot boundary (§13.4).
+fn unescape(field: &str) -> String {
+    let bytes = field.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while let Some(&byte) = bytes.get(index) {
+        if byte == b'\\'
+            && let Some(digits) = bytes.get(index + 1..index + 4)
+            && digits.iter().all(|digit| (b'0'..=b'7').contains(digit))
+            && let Ok(value) = u8::try_from(
+                digits
+                    .iter()
+                    .fold(0_u32, |value, digit| value * 8 + u32::from(digit - b'0')),
+            )
+        {
+            decoded.push(value);
+            index += 4;
+            continue;
+        }
+        decoded.push(byte);
+        index += 1;
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
 }
 
 /// Everything §13.1 asks discovery to resolve, read at one instant.
@@ -698,6 +727,18 @@ mod tests {
         );
         assert!(is_beneath("/tank/data/customer", "/tank/data"));
         assert!(is_beneath("/tank/data", "/tank/data"));
+    }
+
+    #[test]
+    fn should_decode_the_octal_escapes_mountinfo_writes_a_space_as() {
+        let table = MountTable::from_text(
+            "7600 7492 0:101 / /tank/my\\040data rw,relatime - zfs tank/mydata rw,xattr\n",
+        );
+        let mount = table
+            .covering("/tank/my data/db.sqlite")
+            .expect("proc(5): `\\040` is a space, and the path an operator names has a space");
+        assert_eq!(mount.mount_point.as_ref(), "/tank/my data");
+        assert_eq!(mount.source.as_ref(), "tank/mydata");
     }
 
     #[test]

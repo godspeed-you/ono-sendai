@@ -97,9 +97,9 @@ Each [GitHub release](https://github.com/godspeed-you/ono-sendai/releases) carri
 
 ```bash
 # Debian, Ubuntu and relatives
-sudo apt install ./ono_0.5.0_amd64.deb          # or ono_0.5.0_arm64.deb
+sudo apt install ./ono_0.6.0_amd64.deb          # or ono_0.6.0_arm64.deb
 # Fedora, RHEL and relatives
-sudo dnf install ./ono-0.5.0-1.x86_64.rpm       # or ono-0.5.0-1.aarch64.rpm
+sudo dnf install ./ono-0.6.0-1.x86_64.rpm       # or ono-0.6.0-1.aarch64.rpm
 
 chsh -s /usr/bin/ono                             # make it your login shell
 ```
@@ -127,7 +127,7 @@ before you install anything. `cosign` is the one tool you add
 ([sigstore/cosign](https://github.com/sigstore/cosign)); everything else is coreutils.
 
 ```bash
-VERSION=0.5.0; ARCH=amd64
+VERSION=0.6.0; ARCH=amd64
 BASE=https://github.com/godspeed-you/ono-sendai/releases/download/v$VERSION
 curl -fLO $BASE/ono_${VERSION}_${ARCH}.deb
 curl -fLO $BASE/SHA256SUMS
@@ -277,6 +277,64 @@ home. The agent on the far end, the negotiation and the refusal when a host key 
 proven offline against a real second process.
 
 → [**Remote Links**](https://github.com/godspeed-you/ono-sendai/wiki/Remote-Links)
+
+### A change is a thing before it is an event
+
+Every other shell treats the command line as the point of commitment. Ono puts an object between
+intent and effect:
+
+```text
+local://~ > plan {
+    copy file ./nginx.conf /etc/nginx/nginx.conf --overwrite
+    restart service nginx
+    verify service nginx state == running
+    verify socket :443 exists
+}
+
+PLAN / a82f
+
+targets
+  /etc/nginx/nginx.conf
+  nginx.service
+
+impact
+  direct        nginx.conf, nginx.service
+  related       4 worker processes, :80, :443
+  possible      14 active client connections
+  unknown       application-level client retry behaviour
+
+protection   PROTECTED  <->
+  rpool/ROOT/debian@ono-a82f          filesystem-consistent
+
+not covered
+  process memory
+  active TCP sessions
+  requests already served externally
+
+risk          MODERATE
+reboot        no
+
+PLAN NOT EXECUTED
+```
+
+Then `impact a82f`, `apply a82f`, `verify a82f` — and, if it goes wrong, `recover a82f`, which
+produces a **recovery plan** and does not restore anything until you apply it too.
+
+The reason for the extra step is the reason the protection block has four lines instead of a green
+tick. **Protection is coverage, not a boolean.** It is computed per mutation domain, and a plan is
+only `PROTECTED` when every persistent thing it changes has a validated way back — with the
+exclusions shown beside the word, always. A snapshot of `/` does not cover `/data` if that is a
+separate dataset. A Btrfs snapshot of `@var` contains an *empty directory* where a nested
+subvolume was. Killing a process is irreversible whatever the filesystem offers. Ono says all
+three, before you type `apply`.
+
+And recovery is planned rather than performed, because between your change and now, other things
+happened. `recover` compares the recovery point against the world, prefers the method that loses
+the least — usually restoring the one file rather than rewinding the dataset — and names every
+newer snapshot it would have to destroy before it will destroy one.
+
+→ [**Changing things**](https://github.com/godspeed-you/ono-sendai/wiki/Changing-Things) ·
+[**Protection and Recovery**](https://github.com/godspeed-you/ono-sendai/wiki/Protection-and-Recovery)
 
 ### KUANG/11
 
@@ -432,13 +490,14 @@ in this shell is a side effect of telling the truth about the system.
 
 ## Project status
 
-**Current release: v0.5.0.** All ten phases of the specification are implemented, with the
+**Current release: v0.6.0.** All ten phases of the specification are implemented, with the
 External Command Adaptation Layer (v0.3), the Spatial Systems Interface (v0.4), the hardening
-layer (v0.4.1) and the Temporal & Causal Systems Interface (v0.5) on top of them, and every box of
-`docs/ACCEPTANCE.md` is ticked by a named automated proof. Primary platform is Linux (x86_64 and
-aarch64). Four further enhancement specifications — Prospective Change, Protection & Recovery
-(v0.6), Presentation Consolidation & Rich TTY (v0.7), Deck Workspace Composition (v0.8) and Live
-View Integration (v0.9) — are specified but not yet implemented.
+layer (v0.4.1), the Temporal & Causal Systems Interface (v0.5) and Prospective Change, Protection
+& Recovery (v0.6) on top of them. Every ticked box of `docs/ACCEPTANCE.md` names an automated
+proof, and the v0.6 boxes still open are listed as recorded exclusions in
+`docs/releases/v0.6.0.md`. Primary platform is Linux (x86_64 and aarch64). Three further enhancement
+specifications — Presentation Consolidation & Rich TTY (v0.7), Deck Workspace Composition (v0.8)
+and Live View Integration (v0.9) — are specified but not yet implemented.
 
 **By the numbers.** These are measured, not typed: `cargo xtask metrics` reads them out of the
 tree and the quality gate fails when this block and the repository disagree. `tests` counts test
@@ -449,15 +508,15 @@ canonical CI environment expects to.
 <!-- generated by `cargo xtask metrics`. -->
 
 ```text
-crates=37
-workspace_members=39
-tests=4591
-tests_that_can_skip=92
-expected_ci_skips=3
-acceptance_cases=204
-adrs=529
-command_contract_files=14
-commands=209
+crates=48
+workspace_members=50
+tests=6934
+tests_that_can_skip=126
+expected_ci_skips=15
+acceptance_cases=248
+adrs=578
+command_contract_files=15
+commands=222
 ```
 
 <!-- end generated -->

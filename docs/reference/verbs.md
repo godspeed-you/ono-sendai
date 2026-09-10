@@ -73,6 +73,13 @@ The controlled vocabulary of spec §7. The registry is deliberately small: a mod
 | `grant` | Create an explicit capability grant or lease. | capability | mutation/security | yes |
 | `revoke` | Remove an existing capability grant or lease. | capability | mutation/security | yes |
 | `ask` | Send a request to an explicitly selected assistant. | assistant | producer/context | no |
+| `plan` | Describe a proposed change as an inspectable object, without making it. | service, file, package, process, route | transform | no |
+| `impact` | Show what a proposed change could touch, directly and indirectly. | plan | transform | no |
+| `protect` | Create the recovery points a plan describes, before the change window. | plan | mutation | yes |
+| `apply` | Carry out a sealed plan. | plan | mutation | yes |
+| `recover` | Plan the way back from a change, without taking it. | plan, recovery | transform | no |
+| `rebase` | Resolve a sealed plan again against the world as it is now, as a new revision. | plan | transform | no |
+| `resume` | Continue an interrupted plan, for the actions whose state permits it. | plan | mutation | yes |
 | `at` | Move the session's temporal coordinate to a resolved instant. |  | context | no |
 | `now` | Return the session's temporal coordinate to the present. |  | context | no |
 | `present` | Run one external command in the real present from historical context. |  | context | no |

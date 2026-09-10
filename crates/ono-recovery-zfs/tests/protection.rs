@@ -14,7 +14,7 @@ use ono_change_core::{
     ProtectionMode, RecoveryAssetType, RecoveryCandidate, RecoveryObjective, RecoveryProvider,
     ResolvedMount, RestoreMethod, ToolOutput,
 };
-use ono_recovery_zfs::{GUID_FINGERPRINT, ZFS, ZPOOL};
+use ono_recovery_zfs::{FreeSpaceFloor, GUID_FINGERPRINT, ZFS, ZPOOL};
 use ono_value::ByteSize;
 
 use support::{CHILD_DATASET, PARENT_DATASET, Script, code, out, provider, runner};
@@ -36,10 +36,21 @@ fn candidates_for(path: &str) -> Vec<RecoveryCandidate> {
         .expect("the recorded pool is discoverable")
 }
 
+/// Whether a candidate protects more than one dataset at one point (§13.3).
+fn spans_datasets(candidate: &RecoveryCandidate) -> bool {
+    candidate
+        .scope()
+        .covers()
+        .iter()
+        .filter(|covered| !covered.starts_with('/'))
+        .count()
+        > 1
+}
+
 fn recursive_candidate() -> RecoveryCandidate {
     candidates_for("/tank/data")
         .into_iter()
-        .find(|candidate| candidate.detail().contains("snapshot -r"))
+        .find(spans_datasets)
         .expect("§13.3: the recorded layout has a child dataset inside the tree")
 }
 
@@ -64,7 +75,10 @@ fn should_create_nothing_when_the_policy_is_off() {
 
 #[test]
 fn should_make_a_protection_action_required_under_prefer() {
-    let tools = runner(vec![(ZPOOL, out("zpool-list"))]);
+    let tools = runner(vec![
+        (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
+    ]);
     let actions = provider(&tools)
         .plan_protection(&[exact_candidate()], ProtectionMode::Prefer)
         .expect("the recorded pool has room");
@@ -76,7 +90,10 @@ fn should_make_a_protection_action_required_under_prefer() {
 
 #[test]
 fn should_make_extra_coverage_optional_under_maximize() {
-    let tools = runner(vec![(ZPOOL, out("zpool-list"))]);
+    let tools = runner(vec![
+        (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
+    ]);
     let actions = provider(&tools)
         .plan_protection(&[exact_candidate()], ProtectionMode::Maximize)
         .expect("the recorded pool has room");
@@ -88,7 +105,10 @@ fn should_make_extra_coverage_optional_under_maximize() {
 
 #[test]
 fn should_record_each_dataset_of_one_recursive_creation_individually() {
-    let tools = runner(vec![(ZPOOL, out("zpool-list"))]);
+    let tools = runner(vec![
+        (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
+    ]);
     let actions = provider(&tools)
         .plan_protection(&[recursive_candidate()], ProtectionMode::Prefer)
         .expect("the recorded pool has room");
@@ -115,7 +135,10 @@ fn should_record_each_dataset_of_one_recursive_creation_individually() {
 
 #[test]
 fn should_give_each_dataset_of_a_recursive_creation_its_own_asset_identity() {
-    let tools = runner(vec![(ZPOOL, out("zpool-list"))]);
+    let tools = runner(vec![
+        (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
+    ]);
     let actions = provider(&tools)
         .plan_protection(&[recursive_candidate()], ProtectionMode::Prefer)
         .expect("the recorded pool has room");
@@ -130,7 +153,10 @@ fn should_give_each_dataset_of_a_recursive_creation_its_own_asset_identity() {
 
 #[test]
 fn should_leave_a_planned_asset_proposed_until_something_creates_it() {
-    let tools = runner(vec![(ZPOOL, out("zpool-list"))]);
+    let tools = runner(vec![
+        (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
+    ]);
     let actions = provider(&tools)
         .plan_protection(&[exact_candidate()], ProtectionMode::Prefer)
         .expect("the recorded pool has room");
@@ -147,7 +173,10 @@ fn should_leave_a_planned_asset_proposed_until_something_creates_it() {
 
 #[test]
 fn should_carry_the_candidates_exclusions_onto_the_asset_it_would_create() {
-    let tools = runner(vec![(ZPOOL, out("zpool-list"))]);
+    let tools = runner(vec![
+        (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
+    ]);
     let actions = provider(&tools)
         .plan_protection(
             &[candidates_for("/tank/data/notes.txt")[0].clone()],
@@ -170,7 +199,9 @@ fn created() -> (
 ) {
     let tools = runner(vec![
         (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
         (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
         (ZFS, ToolOutput::ok("")),
         (ZFS, out("list-snapshots")),
     ]);
@@ -232,12 +263,14 @@ fn should_run_zfs_snapshot_with_the_exact_name_and_nothing_else() {
 }
 
 #[test]
-fn should_use_recursive_creation_only_for_the_top_dataset_of_a_recursive_candidate() {
+fn should_snapshot_exactly_the_datasets_of_a_multi_dataset_candidate_in_one_creation() {
     let tools = runner(vec![
         (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
         (ZFS, ToolOutput::ok("")),
         (ZFS, out("list-snapshots")),
         (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
         (ZFS, out("snapshot-exists")),
         (ZFS, out("list-snapshots")),
     ]);
@@ -284,20 +317,30 @@ fn should_use_recursive_creation_only_for_the_top_dataset_of_a_recursive_candida
         .map(|(_, argv)| argv)
         .collect();
     assert_eq!(snapshot_calls.len(), 2);
-    assert!(
-        snapshot_calls[0].contains(&"-r".to_owned()),
-        "§13.3: the top dataset of the tree carries the one recursive creation"
+    assert_eq!(
+        snapshot_calls[0],
+        vec![
+            "snapshot".to_owned(),
+            support::RECURSIVE_SNAPSHOT.to_owned(),
+            support::RECURSIVE_CHILD_SNAPSHOT.to_owned()
+        ],
+        "§13.3: one atomic creation naming exactly the datasets that get an asset — `-r` would \
+         also snapshot every out-of-tree child and zvol, which no asset records and no cleanup \
+         removes"
     );
-    assert!(
-        !snapshot_calls[1].contains(&"-r".to_owned()),
-        "§13.3: the descendant's identity is recorded, not created a second time recursively"
-    );
+    for call in &snapshot_calls {
+        assert!(
+            !call.contains(&"-r".to_owned()),
+            "no recursive flag in any creation, got {call:?}"
+        );
+    }
 }
 
 #[test]
 fn should_accept_a_snapshot_the_recursive_sibling_already_made() {
     let tools = runner(vec![
         (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
         (ZFS, out("snapshot-exists")),
         (ZFS, out("list-snapshots")),
     ]);
@@ -333,6 +376,7 @@ fn should_accept_a_snapshot_the_recursive_sibling_already_made() {
 fn should_refuse_to_create_when_zfs_denies_the_privilege() {
     let tools = runner(vec![
         (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
         (ZFS, out("unprivileged-snapshot")),
     ]);
     let (_, action) = protection_action();
@@ -346,6 +390,7 @@ fn should_refuse_to_create_when_zfs_denies_the_privilege() {
 fn should_refuse_to_create_when_the_dataset_does_not_exist() {
     let tools = runner(vec![
         (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
         (ZFS, out("snapshot-missing")),
     ]);
     let (_, action) = protection_action();
@@ -359,6 +404,7 @@ fn should_refuse_to_create_when_the_dataset_does_not_exist() {
 fn should_refuse_to_claim_protection_a_listing_does_not_confirm() {
     let tools = runner(vec![
         (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
         (ZFS, ToolOutput::ok("")),
         (ZFS, ToolOutput::ok("")),
     ]);
@@ -407,7 +453,10 @@ fn floor_below_the_pool() -> ByteSize {
 
 #[test]
 fn should_fail_closed_under_prefer_when_the_pool_is_below_the_configured_floor() {
-    let tools = runner(vec![(ZPOOL, out("zpool-list"))]);
+    let tools = runner(vec![
+        (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
+    ]);
     let error = provider(&tools)
         .with_free_space_floor(floor_above_the_pool())
         .plan_protection(&[exact_candidate()], ProtectionMode::Prefer)
@@ -417,7 +466,12 @@ fn should_fail_closed_under_prefer_when_the_pool_is_below_the_configured_floor()
 
 #[test]
 fn should_plan_under_require_and_fail_the_apply_when_the_pool_is_below_the_floor() {
-    let tools = runner(vec![(ZPOOL, out("zpool-list")), (ZPOOL, out("zpool-list"))]);
+    let tools = runner(vec![
+        (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
+        (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
+    ]);
     let provider = provider(&tools).with_free_space_floor(floor_above_the_pool());
     let actions = provider
         .plan_protection(&[exact_candidate()], ProtectionMode::Require)
@@ -430,7 +484,10 @@ fn should_plan_under_require_and_fail_the_apply_when_the_pool_is_below_the_floor
 
 #[test]
 fn should_plan_normally_when_the_pool_meets_the_configured_floor() {
-    let tools = runner(vec![(ZPOOL, out("zpool-list"))]);
+    let tools = runner(vec![
+        (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
+    ]);
     let actions = provider(&tools)
         .with_free_space_floor(floor_below_the_pool())
         .plan_protection(&[exact_candidate()], ProtectionMode::Prefer)
@@ -440,7 +497,10 @@ fn should_plan_normally_when_the_pool_meets_the_configured_floor() {
 
 #[test]
 fn should_name_the_pool_and_the_floor_in_a_storage_pressure_refusal() {
-    let tools = runner(vec![(ZPOOL, out("zpool-list"))]);
+    let tools = runner(vec![
+        (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
+    ]);
     let error = provider(&tools)
         .with_free_space_floor(floor_above_the_pool())
         .plan_protection(&[exact_candidate()], ProtectionMode::Prefer)
@@ -470,7 +530,9 @@ fn should_never_report_a_created_snapshot_as_costing_nothing() {
 fn should_emit_no_destructive_flag_anywhere_in_protection() {
     let tools = runner(vec![
         (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
         (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
         (ZFS, ToolOutput::ok("")),
         (ZFS, out("list-snapshots")),
     ]);
@@ -485,4 +547,167 @@ fn should_emit_no_destructive_flag_anywhere_in_protection() {
             "§13.6: Ono never adds a destructive flag, got {argv:?}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Appendix D.3 and §53: the floor is a share of the pool or a quantity.
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn should_read_the_floor_section_fifty_three_configures_as_a_share_or_a_quantity() {
+    assert!(matches!(
+        FreeSpaceFloor::parse("10%").expect("§53's default"),
+        FreeSpaceFloor::Share(_)
+    ));
+    assert_eq!(
+        FreeSpaceFloor::parse("2GiB").expect("a quantity"),
+        FreeSpaceFloor::Bytes(ByteSize::parse("2GiB").expect("a literal"))
+    );
+    assert_eq!(
+        FreeSpaceFloor::parse("0%").expect("no floor"),
+        FreeSpaceFloor::None
+    );
+    assert!(
+        FreeSpaceFloor::parse("150%").is_err(),
+        "a pool has no more than all of itself free"
+    );
+    assert!(FreeSpaceFloor::parse("-5%").is_err());
+    assert!(FreeSpaceFloor::parse("plenty").is_err());
+}
+
+#[test]
+fn should_fail_closed_under_prefer_when_the_pool_is_below_a_share_floor() {
+    // The recorded `tank` is 1006632960 bytes with 1006297600 free: 99.97% free.
+    let tools = runner(vec![
+        (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
+    ]);
+    let error = provider(&tools)
+        .with_minimum_free(FreeSpaceFloor::parse("99.99%").expect("a share"))
+        .plan_protection(&[exact_candidate()], ProtectionMode::Prefer)
+        .expect_err(
+            "Appendix D.3: below the configured share of the pool, protection fails closed",
+        );
+    assert_eq!(code(&error), "recovery.storage_pressure");
+    let floor = error
+        .metadata()
+        .get("floor")
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    assert!(
+        floor.contains("99.99%"),
+        "the refusal states the floor as configured, got {floor}"
+    );
+}
+
+#[test]
+fn should_plan_normally_when_the_pool_meets_the_default_share_floor() {
+    let tools = runner(vec![
+        (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
+    ]);
+    let actions = provider(&tools)
+        .with_minimum_free(FreeSpaceFloor::parse("10%").expect("§53's default"))
+        .plan_protection(&[exact_candidate()], ProtectionMode::Prefer)
+        .expect("the recorded pool is almost empty");
+    assert_eq!(actions.len(), 1);
+}
+
+// ---------------------------------------------------------------------------------------------
+// §13.1: pool health sufficient for the proposed protection operation.
+// ---------------------------------------------------------------------------------------------
+
+/// `zpool list` and `zpool status` with `tank` reported as `state`, composed from the recording by
+/// replacing the one word; the recorded pools were healthy.
+fn tank_in_state(state: &str) -> Vec<(&'static str, ToolOutput)> {
+    let listed = out("zpool-list").stdout().replace(
+        "1006297600\t0\t3\tONLINE",
+        &format!("1006297600\t0\t3\t{state}"),
+    );
+    let status = out("zpool-status").stdout().replacen(
+        "pool: tank\n state: ONLINE",
+        &format!("pool: tank\n state: {state}"),
+        1,
+    );
+    vec![
+        (ZPOOL, ToolOutput::ok(listed)),
+        (ZPOOL, ToolOutput::ok(status)),
+    ]
+}
+
+#[test]
+fn should_refuse_to_plan_protection_on_a_degraded_pool() {
+    let tools = runner(tank_in_state("DEGRADED"));
+    let error = provider(&tools)
+        .plan_protection(&[exact_candidate()], ProtectionMode::Prefer)
+        .expect_err("§13.1 and §56.3: no recovery point is made on a pool that is not healthy");
+    assert_eq!(code(&error), "recovery.asset_create_failed");
+    assert!(error.to_string().contains("DEGRADED") || format!("{error:?}").contains("DEGRADED"));
+}
+
+#[test]
+fn should_refuse_to_plan_protection_on_a_pool_reporting_data_errors() {
+    // Composed from the recording: `tank`'s own `errors:` line, and only that one, is replaced.
+    let recorded = out("zpool-status").stdout().to_owned();
+    let at = recorded
+        .find("pool: tank")
+        .expect("the recording has a tank section");
+    let (before, tank) = recorded.split_at(at);
+    let status = format!(
+        "{before}{}",
+        tank.replacen(
+            "errors: No known data errors",
+            "errors: 1 data errors, use '-v' for a list",
+            1
+        )
+    );
+    assert!(
+        status.contains("1 data errors"),
+        "the composition found the tank section"
+    );
+    let tools = runner(vec![
+        (ZPOOL, out("zpool-list")),
+        (ZPOOL, ToolOutput::ok(status)),
+    ]);
+    let error = provider(&tools)
+        .plan_protection(&[exact_candidate()], ProtectionMode::Prefer)
+        .expect_err("§13.1: a pool reporting data errors is not healthy");
+    assert_eq!(code(&error), "recovery.asset_create_failed");
+}
+
+#[test]
+fn should_refuse_to_plan_protection_when_pool_health_could_not_be_read() {
+    let tools = runner(vec![
+        (
+            ZPOOL,
+            ToolOutput::failed(1, "cannot open 'tank': no such pool\n"),
+        ),
+        (ZPOOL, out("zpool-status")),
+    ]);
+    let error = provider(&tools)
+        .plan_protection(&[exact_candidate()], ProtectionMode::Prefer)
+        .expect_err("§56.3: health that was not read is not assumed");
+    assert_eq!(code(&error), "recovery.asset_create_failed");
+}
+
+#[test]
+fn should_plan_under_require_and_fail_the_create_on_a_degraded_pool() {
+    let mut answers = tank_in_state("DEGRADED");
+    answers.extend(tank_in_state("DEGRADED"));
+    let tools = runner(answers);
+    let provider = provider(&tools);
+    let actions = provider
+        .plan_protection(&[exact_candidate()], ProtectionMode::Require)
+        .expect("`require` shows the plan the operator has to decide about");
+    let error = provider
+        .create(actions.first().expect("one action"))
+        .expect_err("and the apply fails rather than snapshotting onto a degraded pool");
+    assert_eq!(code(&error), "recovery.asset_create_failed");
+    assert!(
+        !tools
+            .calls()
+            .iter()
+            .any(|(_, argv)| argv.first().is_some_and(|word| word == "snapshot")),
+        "nothing was created"
+    );
 }

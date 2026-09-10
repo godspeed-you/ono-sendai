@@ -39,13 +39,14 @@ pub mod cost;
 pub mod coverage;
 pub mod domain;
 pub mod freshness;
+pub mod hosts;
 pub mod policy;
 pub mod registry;
 pub mod retention;
 pub mod settings;
 
 pub use coverage::{CoverageAnalysis, CoverageRequest, MutationDomain, analyse};
-pub use domain::{MountInfo, MountTable, resolve};
+pub use domain::{DomainReach, MountBoundary, MountInfo, MountTable, recorded_domain, resolve};
 pub use freshness::{Freshness, FreshnessVerdict, assess};
 pub use policy::{CostLimits, FreeSpaceFloor, Profile, ProtectionPolicy};
 pub use registry::{DiscoveryOutcome, ProviderRefusal, ProviderRegistry};

@@ -29,30 +29,49 @@ pub enum RootRecovery {
 }
 
 impl RootRecovery {
-    /// The token §53 spells the setting with.
+    /// The token `recovery.btrfs.root_recovery` spells the setting with (§53).
+    ///
+    /// These are the spellings `ono-change-protection`'s settings accept and print —
+    /// `online-selective`, `offline-replacement`, `next-boot` — so a value read from the
+    /// configuration file is the same text this provider names in a plan.
     #[must_use]
     pub const fn token(self) -> &'static str {
         match self {
-            RootRecovery::OnlineSelectiveRestore => "online-selective-restore",
-            RootRecovery::OfflineSubvolumeReplacement => "offline-subvolume-replacement",
+            RootRecovery::OnlineSelectiveRestore => "online-selective",
+            RootRecovery::OfflineSubvolumeReplacement => "offline-replacement",
             RootRecovery::NextBoot => "next-boot",
+        }
+    }
+
+    /// The name of the §14.6 workflow the setting selects, as a plan shows it.
+    #[must_use]
+    pub const fn workflow(self) -> &'static str {
+        match self {
+            RootRecovery::OnlineSelectiveRestore => "online selective restore",
+            RootRecovery::OfflineSubvolumeReplacement => "offline subvolume replacement",
+            RootRecovery::NextBoot => "next-boot recovery",
         }
     }
 
     /// The setting a token names, or `None` when the token is not one of the three.
     ///
-    /// An unrecognised value is `None` rather than the default: §53 forbids configuration
-    /// silently weakening a plan requirement, and quietly reading an unknown root policy as
-    /// "next-boot" is exactly that.
+    /// The settings' spellings are the tokens; the longer `online-selective-restore` and
+    /// `offline-subvolume-replacement` this provider used before are still read, so a value
+    /// written against either reads the same. An unrecognised value is `None` rather than the
+    /// default: §53 forbids configuration silently weakening a plan requirement, and quietly
+    /// reading an unknown root policy as "next-boot" is exactly that.
     #[must_use]
     pub fn from_token(token: &str) -> Option<Self> {
-        [
-            RootRecovery::OnlineSelectiveRestore,
-            RootRecovery::OfflineSubvolumeReplacement,
-            RootRecovery::NextBoot,
-        ]
-        .into_iter()
-        .find(|policy| policy.token() == token)
+        match token {
+            "online-selective" | "online-selective-restore" => {
+                Some(RootRecovery::OnlineSelectiveRestore)
+            }
+            "offline-replacement" | "offline-subvolume-replacement" => {
+                Some(RootRecovery::OfflineSubvolumeReplacement)
+            }
+            "next-boot" => Some(RootRecovery::NextBoot),
+            _ => None,
+        }
     }
 
     /// Whether the workflow only takes effect after a reboot (§55.4 case 22).
@@ -206,14 +225,15 @@ pub fn sanitised_name(raw: &str) -> String {
 /// The shape is `ono-<plan>-<subvolume>`, which is the fixtures' own (`ono-a82f-root`,
 /// `ono-a82f-var`). It is predictable, which is what Appendix D.8 asks of the namespace, and it
 /// carries the plan id, so §37's cleanup can tell one plan's assets from another's.
+///
+/// The whole tree path goes into the name, each `/` becoming `-`, so `@var/cache` and `@cache`
+/// are `ono-<plan>-var-cache` and `ono-<plan>-cache`. Two subvolumes whose paths sanitise to the
+/// same text (`@var/cache` and `@var-cache`) still collide; `btrfs subvolume snapshot` then
+/// refuses the second one because the destination exists (`snapshot-exists.txt`), so a
+/// collision is a refused protection rather than one snapshot standing in for two.
 #[must_use]
 pub fn snapshot_name(plan: &str, subvolume: &str) -> String {
-    let leaf = subvolume
-        .trim_matches('/')
-        .rsplit('/')
-        .next()
-        .unwrap_or(subvolume);
-    let bare = leaf.trim_start_matches('@');
+    let bare = subvolume.trim_matches('/').trim_start_matches('@');
     // `@` is the conventional name of the root subvolume and strips to nothing; the fixtures'
     // own `ono-a82f-root` is what a person reads it as.
     let name = if bare.is_empty() { "root" } else { bare };

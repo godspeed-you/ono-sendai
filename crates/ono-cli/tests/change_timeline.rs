@@ -233,3 +233,46 @@ fn should_reach_the_plans_events_through_the_timeline() {
         run.stdout()
     );
 }
+
+#[test]
+fn should_record_the_target_as_it_was_before_the_first_action_started() {
+    // §22.2 and §22.3: the state before the plan is on its timeline, beside the state after.
+    let home = home();
+    let source = home.path().join("source.txt");
+    let destination = home.path().join("destination.txt");
+    std::fs::write(&source, b"new\n").expect("the source is written");
+    std::fs::write(&destination, b"before the plan\n").expect("the destination is written");
+    let run = ono_at(
+        home.path(),
+        &format!(
+            "plan copy file {} {} --overwrite | apply\nfind event | to json",
+            source.display(),
+            destination.display()
+        ),
+    );
+    run.assert_success();
+    let events = events_of(&run);
+    let position = |subtype: &str| {
+        events
+            .iter()
+            .position(|event| event["subtype"].as_str() == Some(subtype))
+    };
+
+    let checkpoint = position("ono.plan.checkpoint").unwrap_or_else(|| {
+        panic!("§22.2: the plan records a checkpoint of its target. Got {events:?}")
+    });
+    let started = position("ono.plan.action.started").expect("the plan's actions are on record");
+
+    let before = ono_recovery_files::manifest::digest_of(b"before the plan\n");
+    assert!(
+        serde_yaml_ng::to_string(&events[checkpoint])
+            .expect("an event serialises")
+            .contains(&before),
+        "§22.2: the checkpoint carries the digest of the target as it was. Got {:?}",
+        events[checkpoint]
+    );
+    assert!(
+        checkpoint < started,
+        "§22.2: the checkpoint is taken immediately before mutation, ahead of the first action"
+    );
+}

@@ -7,7 +7,9 @@
 //!
 //! `PlanAction::may_resume` already encodes the rule — an idempotent action may be rerun whatever
 //! is known about it, a failed one may be rerun where its contract accepts a request token, and an
-//! unknown or non-idempotent one may not be rerun blindly. What this module owns is the answer for
+//! unknown or non-idempotent one may not be rerun blindly. This module narrows the token case:
+//! §41.1 makes it safe only when the *original* token is presented, and no execution path carries
+//! one yet, so a failed RETRY_SAFE_WITH_TOKEN action is refused rather than retried blind. What this module owns is the answer for
 //! the *plan*: §41.3 says `resume` "MAY continue only actions whose prior status and idempotency
 //! permit it. Otherwise a new recovery or rebase decision is required", and a resume that quietly
 //! skipped the actions it could not rerun would leave a half-applied plan calling itself resumed.
@@ -207,12 +209,21 @@ pub fn resume_with(
             .copied()
             .unwrap_or_else(|| action.status());
         let settled = action.clone().with_status(status);
-        if status == ActionStatus::Unknown {
+        // Appendix F.2: an action the records leave in flight is an unknown outcome — the shell
+        // stopped while it ran, and nothing says whether it finished.
+        if matches!(status, ActionStatus::Unknown | ActionStatus::Running) {
             uncertain.push(action.id().clone());
         }
+        // §41.1: a token retry is safe only with the original token, and the executor cannot
+        // present one — no execution in the workspace carries or honours it. Until it can, the
+        // retry is a blind one, which §41.2 forbids.
+        let token_unavailable = status == ActionStatus::Failed
+            && action.idempotency() == Idempotency::RetrySafeWithToken;
         match status {
             ActionStatus::Succeeded => completed.push(action.id().clone()),
-            _ if settled.may_resume() => resumable.push(action.id().clone()),
+            _ if settled.may_resume() && !token_unavailable => {
+                resumable.push(action.id().clone());
+            }
             _ => blocked.push(BlockedAction {
                 action: action.id().clone(),
                 summary: Arc::from(action.summary()),
@@ -335,6 +346,10 @@ const fn refusal_reason(status: ActionStatus, idempotency: Idempotency) -> &'sta
         (ActionStatus::Running, _) => {
             "it was in flight when the shell stopped and its contract does not permit a blind \
              rerun (§41.2)"
+        }
+        (ActionStatus::Failed, Idempotency::RetrySafeWithToken) => {
+            "its contract permits a retry only with the original request token, and that token \
+             cannot be presented: no execution path carries one yet (§41.1, §41.2)"
         }
         (ActionStatus::Failed, _) => {
             "it failed and its contract does not accept a retry, with or without a request token \

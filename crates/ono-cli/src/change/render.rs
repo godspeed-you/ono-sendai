@@ -9,11 +9,11 @@
 //! a typed value first and a rendering second, so `plan … | to json`, `get plan | where state ==
 //! "failed"` and `impact a82f | to json` see records rather than the lines below.
 
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use ono_change_render::Charset;
 use ono_command::BoundArguments;
-use ono_value::RecordValue;
+use ono_value::{RecordValue, Value};
 
 /// Which sections of a plan `inspect plan` asked to expand (§5.5, §9.5, §10.3, §11.1, §23.1).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -95,7 +95,8 @@ pub fn plan_lines(plan: &RecordValue, assets: &[RecordValue], width: usize) -> V
     let charset = charset();
     let asked = sections();
     if !asked.any() {
-        return ono_change_render::plan_view(plan, assets, width, charset);
+        let plan = with_outstanding_acknowledgements(plan);
+        return ono_change_render::plan_view(&plan, assets, width, charset);
     }
     let mut lines = Vec::new();
     if asked.actions {
@@ -124,6 +125,30 @@ pub fn plan_lines(plan: &RecordValue, assets: &[RecordValue], width: usize) -> V
         lines.extend(resolution_lines(plan, width));
     }
     lines
+}
+
+/// The plan record with the gates `apply` would raise attached (§19.4, §40.2).
+///
+/// Which flag answers a gate is the shell's policy — §40.2's worked gate is answered by
+/// `--accept-service-outage` — so the view is handed the gates `crate::change::gates` computes
+/// rather than working them out again from the record. A record that does not decode as a plan
+/// is drawn as it is.
+fn with_outstanding_acknowledgements(plan: &RecordValue) -> RecordValue {
+    let Ok(decoded) = ono_change_core::value::plan_from_record(plan) else {
+        return plan.clone();
+    };
+    let gates = super::gates::outstanding(&decoded, super::gates::Acknowledgements::default());
+    let rows = gates.iter().map(|gate| {
+        let mut row = ono_value::MapValue::new();
+        row.insert("flag".into(), Value::string(gate.flag));
+        row.insert("reason".into(), Value::string(&gate.reasons.join("; ")));
+        Value::Map(Arc::new(row))
+    });
+    super::extended(
+        plan,
+        ono_change_render::OUTSTANDING_ACKNOWLEDGEMENTS,
+        Value::list(rows),
+    )
 }
 
 /// Appendix B.10's expansion, drawn from the namespaced extension `inspect plan` attached.
@@ -202,5 +227,78 @@ pub fn charset() -> Charset {
     match crate::sink::map_charset() {
         ono_spatial_render::Charset::Unicode => Charset::Unicode,
         ono_spatial_render::Charset::Ascii => Charset::Ascii,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::expect_used,
+        reason = "a test states its preconditions directly (AGENTS.md section 16)"
+    )]
+
+    use ono_change_core::{
+        ChangePlan, Intent, RiskAssessment, RiskClass, RiskDimension, RiskFinding,
+    };
+
+    use super::*;
+
+    fn drawn(risk: RiskAssessment) -> Vec<String> {
+        let plan = ChangePlan::draft(
+            Intent::new("restart nginx", "plan restart service nginx.service"),
+            "session-1",
+            jiff::Timestamp::UNIX_EPOCH,
+        )
+        .with_risk(risk);
+        let record = ono_change_core::value::plan_record(&plan).expect("the contract is in build");
+        plan_lines(&record, &[], 120)
+    }
+
+    fn approval(lines: &[String]) -> Vec<String> {
+        lines
+            .iter()
+            .skip_while(|line| line.trim() != "approval")
+            .skip(1)
+            .take_while(|line| !line.trim().is_empty())
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn should_ask_for_the_service_outage_flag_when_only_downtime_makes_the_plan_high() {
+        let lines = drawn(RiskAssessment::of(vec![RiskFinding::new(
+            RiskDimension::Downtime,
+            RiskClass::High,
+            "risk.downtime.service-restart",
+            "restarting `nginx.service` interrupts what it was serving",
+        )]));
+        let asked = approval(&lines).join("\n");
+        assert!(
+            asked.contains("--accept-service-outage"),
+            "v0.6 §40.2: the view names the flag `apply` will demand. Got {lines:?}"
+        );
+        assert!(
+            !asked.contains("--accept-risk"),
+            "and not a flag `apply` would not ask for. Got {lines:?}"
+        );
+        assert!(
+            asked.contains("interrupts what it was serving"),
+            "§40.2: with the rule's own reason. Got {lines:?}"
+        );
+    }
+
+    #[test]
+    fn should_ask_for_nothing_when_no_gate_is_raised() {
+        let lines = drawn(RiskAssessment::of(vec![RiskFinding::new(
+            RiskDimension::Scope,
+            RiskClass::Moderate,
+            "risk.scope.single-object",
+            "the plan changes one object",
+        )]));
+        assert_eq!(
+            approval(&lines),
+            vec!["  none required".to_owned()],
+            "§40.1: a moderate plan applies on `apply` alone. Got {lines:?}"
+        );
     }
 }

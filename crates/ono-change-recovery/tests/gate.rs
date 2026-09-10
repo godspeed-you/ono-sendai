@@ -179,16 +179,29 @@ fn should_name_every_conflicting_object_in_the_refusal() {
         preserved("/etc/hosts"),
     ]));
     let error = check(&plan).expect_err("Appendix C.4");
-    let conflicts = error
+    let conflicts: Vec<String> = error
         .metadata()
         .get("conflicts")
         .expect("§24.3: newer state discarded")
         .as_list()
         .expect("a list")
-        .len();
+        .iter()
+        .map(|object| object.as_str().expect("one line per object").to_owned())
+        .collect();
     assert_eq!(
-        conflicts, 2,
+        conflicts.len(),
+        2,
         "the preserved object is not a loss, and the other two are"
+    );
+    for lost in ["/etc/nginx/nginx.conf", "/var/lib/app/db"] {
+        assert!(
+            conflicts.iter().any(|line| line.starts_with(lost)),
+            "§24.5: the refusal names `{lost}` by its path, got {conflicts:?}"
+        );
+    }
+    assert!(
+        !conflicts.iter().any(|line| line.contains("/etc/hosts")),
+        "the preserved object is not listed as a loss, got {conflicts:?}"
     );
 }
 

@@ -16,6 +16,8 @@
 
 use std::sync::Arc;
 
+use ono_change_protection::ProviderRegistry;
+
 use jiff::Timestamp;
 use ono_change_core::{
     ChangePlan, ConsistencyClass, EffectKind, PlanAction, ProtectionAction, ProtectionMode,
@@ -80,6 +82,37 @@ pub const EXT4_ROOT: &str = "\
 31 26 0:60 / /run/containers/storage/overlay/1b2c/merged rw,relatime - overlay overlay rw,lowerdir=/usr/lib/containers/l/MNOPQR,upperdir=/run/containers/storage/overlay/1b2c/diff,workdir=/run/containers/storage/overlay/1b2c/work
 ";
 
+/// The mount table inside a Docker container, as `/proc/self/mountinfo` prints it there.
+///
+/// The root is an overlay whose `upperdir` names a host path that no mount in this namespace
+/// contains, which is what makes the writable layer impossible to follow from inside (Appendix
+/// B.4, B.5). `/dev/shm` is Docker's own tmpfs, sourced `shm`, and `/proc` is procfs sourced
+/// `proc`: the two sources a resolution must never report as persistence domains (Appendix B.7).
+pub const CONTAINER: &str = "\
+1339 1234 0:320 / / rw,relatime master:1 - overlay overlay rw,lowerdir=/var/lib/docker/overlay2/l/QX2N7C:/var/lib/docker/overlay2/l/K4M2ZP,upperdir=/var/lib/docker/overlay2/5e1c/diff,workdir=/var/lib/docker/overlay2/5e1c/work,nouserxattr
+1340 1339 0:323 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw
+1341 1339 0:324 / /dev rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,inode64
+1342 1341 0:325 / /dev/pts rw,nosuid,noexec,relatime - devpts devpts rw,gid=5,mode=620,ptmxmode=666
+1343 1339 0:326 / /sys ro,nosuid,nodev,noexec,relatime - sysfs sysfs ro
+1345 1341 0:319 / /dev/shm rw,nosuid,nodev,noexec,relatime - tmpfs shm rw,size=65536k,inode64
+1346 1339 8:2 /var/lib/docker/containers/5e1c/resolv.conf /etc/resolv.conf rw,relatime - ext4 /dev/sda2 rw
+";
+
+/// A ZFS root with a `/srv` dataset that has something of every kind mounted beneath it: a child
+/// dataset, a runtime tmpfs, an ext4 disk and an NFS export (§13.4, §32.2, §32.3).
+///
+/// Modelled on a file server whose `/srv` tree gathers several disks.
+pub const SRV_TREE: &str = "\
+27 1 0:23 / / rw,relatime shared:1 - zfs rpool/ROOT/debian rw,xattr,posixacl
+28 27 0:30 / /run rw,nosuid,nodev shared:10 - tmpfs tmpfs rw,size=1626040k,mode=755
+40 27 0:44 / /srv rw,relatime shared:40 - zfs tank/srv rw,xattr,posixacl
+41 40 0:45 / /srv/data rw,relatime shared:41 - zfs tank/srv/data rw,xattr,posixacl
+42 40 0:46 / /srv/scratch rw,nosuid,nodev shared:42 - tmpfs tmpfs rw,size=1048576k,mode=755
+43 40 8:17 / /srv/legacy rw,relatime shared:43 - ext4 /dev/sdb1 rw,errors=remount-ro
+44 40 0:47 / /srv/share rw,relatime - nfs4 nas01:/export/share rw,vers=4.2,addr=10.0.0.4
+45 27 0:48 / /srvx rw,relatime shared:45 - ext4 /dev/sdc1 rw
+";
+
 /// A recovery provider whose answers the test states (§12.1).
 ///
 /// It fakes the mechanism, not the algorithm: what it declares, what it offers and whether it is
@@ -93,6 +126,9 @@ pub struct TestProvider {
     candidates: Vec<RecoveryCandidate>,
     discovery_error: Option<ErrorValue>,
     asset_type: RecoveryAssetType,
+    resolutions: Vec<(Arc<str>, PersistenceDomain)>,
+    resolution_error: Option<ErrorValue>,
+    validation_failure: Option<Arc<str>>,
 }
 
 impl TestProvider {
@@ -112,7 +148,28 @@ impl TestProvider {
             candidates: Vec::new(),
             discovery_error: None,
             asset_type: RecoveryAssetType::ZfsSnapshot,
+            resolutions: Vec::new(),
+            resolution_error: None,
+            validation_failure: None,
         }
+    }
+
+    /// A provider that maps `path` to `domain` itself (ADR-0807's `resolve_domain`).
+    ///
+    /// A provider that resolves its own domains recognises only the objects it named, as the
+    /// Btrfs provider only recognises the subvolume references it wrote: its discovery answers
+    /// for a domain whose object is one of its own candidates' scopes, and for nothing else.
+    #[must_use]
+    pub fn resolving(mut self, path: &str, domain: PersistenceDomain) -> Self {
+        self.resolutions.push((Arc::from(path), domain));
+        self
+    }
+
+    /// A provider whose `resolve_domain` fails (§56.3).
+    #[must_use]
+    pub fn failing_resolution(mut self, error: ErrorValue) -> Self {
+        self.resolution_error = Some(error);
+        self
     }
 
     /// A provider that declares everything except `capability` (§12.2).
@@ -125,6 +182,14 @@ impl TestProvider {
             }
         }
         self.capabilities = capabilities;
+        self
+    }
+
+    /// A provider whose validation finds the asset gone, as it would after its bytes were deleted
+    /// behind Ono's back (§11.4).
+    #[must_use]
+    pub fn failing_validation(mut self, detail: &str) -> Self {
+        self.validation_failure = Some(Arc::from(detail));
         self
     }
 
@@ -178,8 +243,15 @@ impl RecoveryProvider for TestProvider {
         self.availability.clone()
     }
 
-    fn resolve_domain(&self, _path: &str) -> Result<Option<PersistenceDomain>, ErrorValue> {
-        Ok(None)
+    fn resolve_domain(&self, path: &str) -> Result<Option<PersistenceDomain>, ErrorValue> {
+        if let Some(error) = &self.resolution_error {
+            return Err(error.clone());
+        }
+        Ok(self
+            .resolutions
+            .iter()
+            .find(|(resolved, _)| resolved.as_ref() == path)
+            .map(|(_, domain)| domain.clone()))
     }
 
     fn discover(
@@ -195,7 +267,8 @@ impl RecoveryProvider for TestProvider {
             .iter()
             .filter(|candidate| {
                 domain.object() == Some(candidate.scope().domain())
-                    || candidate.scope().covers_object(domain.path())
+                    || (self.resolutions.is_empty()
+                        && candidate.scope().covers_object(domain.path()))
             })
             .cloned()
             .collect())
@@ -238,6 +311,9 @@ impl RecoveryProvider for TestProvider {
     }
 
     fn validate(&self, _asset: &RecoveryAsset) -> Result<RecoveryValidation, ErrorValue> {
+        if let Some(detail) = &self.validation_failure {
+            return Ok(RecoveryValidation::none(NOW, detail.as_ref()));
+        }
         Ok(RecoveryValidation::complete(NOW, "the fixture checked it"))
     }
 
@@ -357,4 +433,15 @@ pub fn config_mutation() -> MutationDomain {
         "/etc/nginx/nginx.conf",
         "the configuration file is replaced",
     )
+}
+
+/// A registry holding exactly `providers`.
+pub fn registry_with(providers: Vec<Arc<dyn RecoveryProvider>>) -> ProviderRegistry {
+    let mut registry = ProviderRegistry::new();
+    for provider in providers {
+        registry
+            .register(provider)
+            .expect("the fixtures declare every §12.2 capability");
+    }
+    registry
 }

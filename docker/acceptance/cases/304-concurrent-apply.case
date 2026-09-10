@@ -1,0 +1,91 @@
+# v0.6 §50 phase P2 — §42: two sessions must not apply one sealed plan at once.
+#
+# §42.4 is the rule and the claim is the mechanism: an apply takes it for the whole of the run and
+# releases it on the way out, including on an early return (§42.3). §42.1 keeps the plan store
+# safe for concurrent readers, so listing plans while one is being applied is not a race.
+#
+# The race is not left to the scheduler. The first apply's copy reads from a named pipe nobody
+# writes yet, so it holds the claim for as long as the case wants; the second apply is started
+# while it is provably in progress, and only then is the pipe fed.
+case: one plan is applied by one session at a time
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  state_of() { ono -c "get plan $1 | select state | to json" 2>&1; }
+  await_applying() { for _ in $(seq 1 100); do [ "$(state_of "$1")" = '[{"state":"applying"}]' ] && return 0; sleep 0.2; done; return 1; }
+
+  mkdir -p "$HOME/etc"
+  printf 'a\n' > "$HOME/etc/source"
+  printf 'b\n' > "$HOME/etc/target"
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/target --overwrite | to json" > /tmp/ca0.json 2>&1
+  id=$(plan_id /tmp/ca0.json)
+  rm "$HOME/etc/source"
+  mkfifo "$HOME/etc/source"
+
+  echo '== §42.4: two applies of one plan, at once =='
+  ono -c "apply $id" > /tmp/ca1.txt 2>&1 &
+  first=$!
+  prove ca0 "the first apply holds the plan: it is applying, blocked in its copy" "await_applying $id"
+  timeout 30 ono -c "apply $id" > /tmp/ca2.txt 2>&1
+  second_status=$?
+  prove ca1a "the second is refused because another session is applying it (§42.4, §55.9 case 42)" \
+    'grep -q "change.plan_already_applying" /tmp/ca2.txt'
+  prove ca1b "and the refusal names the holder, so the operator knows whom to wait for (§42.4)" \
+    'grep -qE "session s[0-9a-f]{8,}|pid [0-9]+" /tmp/ca2.txt'
+  prove ca1c "it refused at once rather than queueing behind the claim (§40.3)" \
+    "[ $second_status -ne 124 ] && [ $second_status -ne 0 ]"
+  prove ca1d "and it changed nothing while the first was still running (§42.4)" \
+    "[ \"\$(cat $HOME/etc/target)\" = 'b' ]"
+
+  # Feeding the pipe lets the first apply's copy return. The copy provider then refuses a pipe as
+  # a source (§15.2), so the first run ends in APPLY_FAILED rather than VERIFIED — which is beside
+  # the point here: §42.4 is about the second session, and §42.3 about the claim being let go.
+  timeout 20 sh -c "printf 'a\n' > '$HOME/etc/source'"
+  timeout 60 sh -c "while kill -0 $first 2>/dev/null; do sleep 0.2; done"
+  prove ca2a "the first apply ends once it is fed, and the plan leaves APPLYING (§42.3)" \
+    "! kill -0 $first 2>/dev/null && [ \"\$(state_of $id)\" != '[{\"state\":\"applying\"}]' ]"
+
+  echo '== §42.3: the claim is released on the way out =='
+  # A third apply after both have exited must find the claim free — and then be refused for the
+  # ordinary reason, that the plan already applied, rather than for a claim nobody released.
+  ono -c "apply $id" > /tmp/ca3.txt 2>&1
+  prove ca3a "a later apply is refused for the plan's state (§42.3, §2.7)" \
+    'grep -q "change.plan_not_sealed" /tmp/ca3.txt'
+  prove ca3b "and not for a claim (§42.3)" '! grep -q "change.plan_already_applying" /tmp/ca3.txt'
+
+  echo '== §42.1: reading the store while it is written is not a race =='
+  printf 'c\n' > "$HOME/etc/other"
+  ono -c "plan copy file $HOME/etc/target $HOME/etc/other --overwrite | apply" > /tmp/ca4w.txt 2>&1 &
+  writer=$!
+  ono -c 'get plan | count | to json' > /tmp/ca4.txt 2>&1 &
+  reader=$!
+  ono -c 'get recovery | count | to json' > /tmp/ca5.txt 2>&1 &
+  reader2=$!
+  wait "$writer"; wait "$reader"; wait "$reader2"
+  prove ca4a "concurrent readers both answer with a count while a writer applies (§42.1)" \
+    'grep -qxE "\[[0-9]+\]" /tmp/ca4.txt && grep -qxE "\[[0-9]+\]" /tmp/ca5.txt'
+
+  echo 'concurrent-apply: done'
+exit: 0
+stdout-contains: PROVED ca0
+stdout-contains: PROVED ca1a
+stdout-contains: PROVED ca1b
+stdout-contains: PROVED ca1c
+stdout-contains: PROVED ca1d
+stdout-contains: PROVED ca2a
+stdout-contains: PROVED ca3a
+stdout-contains: PROVED ca3b
+stdout-contains: PROVED ca4a
+stdout-contains: concurrent-apply: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

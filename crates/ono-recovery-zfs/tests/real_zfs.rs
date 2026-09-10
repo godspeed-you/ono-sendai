@@ -43,12 +43,18 @@ const IMAGE_BYTES: u64 = 256 * 1024 * 1024;
 struct DisposablePool {
     name: String,
     image: PathBuf,
+    device: Option<String>,
     mountpoint: PathBuf,
     runner: ProcessRunner,
 }
 
 impl DisposablePool {
     /// Builds `onotest-<scenario>` on its own sparse file, or announces why it could not.
+    ///
+    /// The file is attached as a loop device where `losetup` can do it. Inside a container the
+    /// kernel module cannot open a file vdev through the container's mount namespace, while a loop
+    /// device is a block device it opens like any other; case 318 builds its pool the same way.
+    /// A host without `losetup` falls back to the file itself.
     fn for_scenario(scenario: &str) -> Option<Self> {
         if require(
             std::env::var(GATE).as_deref() == Ok("1"),
@@ -98,25 +104,31 @@ impl DisposablePool {
             .expect("the backing file can be sized");
         drop(file);
         let mountpoint = workdir.join("mnt");
+        let device = loop_device_for(&image);
 
         let pool = Self {
             name,
             image,
+            device,
             mountpoint,
             runner,
         };
+        let vdev = pool
+            .device
+            .clone()
+            .unwrap_or_else(|| pool.image.to_string_lossy().into_owned());
         let created = pool.zpool(&[
             "create",
             "-f",
             "-m",
             &pool.mountpoint.to_string_lossy(),
             &pool.name,
-            &pool.image.to_string_lossy(),
+            &vdev,
         ]);
         if require(
             created,
             SkipReason::MissingKernelFeature,
-            "this host could not create a ZFS pool on a file vdev",
+            "this host could not create a ZFS pool on a loop device or a file vdev",
         )
         .unmet()
         {
@@ -155,6 +167,9 @@ impl DisposablePool {
             .reading_mounts(table)
             .at_instant(support::instant())
             .for_plan(support::plan())
+            // The rollback scenario is about what a destructive plan enumerates and refuses, so
+            // this suite allows the plan §53 defaults off.
+            .with_recovery_policy(true, true)
     }
 
     fn path(&self, relative: &str) -> String {
@@ -174,10 +189,26 @@ impl Drop for DisposablePool {
         // Appendix G.3 again: the pool exists for one scenario and does not outlive it, whether
         // the scenario passed, failed or panicked.
         let _ = self.zpool(&["destroy", "-f", &self.name]);
+        if let Some(device) = &self.device {
+            let _ = std::process::Command::new("losetup")
+                .args(["-d", device])
+                .status();
+        }
         if let Some(workdir) = self.image.parent() {
             let _ = std::fs::remove_dir_all(workdir);
         }
     }
+}
+
+/// The loop device `losetup` attached `image` to, or `None` where it could not.
+fn loop_device_for(image: &std::path::Path) -> Option<String> {
+    let output = std::process::Command::new("losetup")
+        .args(["--find", "--show"])
+        .arg(image)
+        .output()
+        .ok()?;
+    let device = String::from_utf8(output.stdout).ok()?.trim().to_owned();
+    (output.status.success() && device.starts_with("/dev/")).then_some(device)
 }
 
 /// This process's effective user id, read from procfs so the crate needs no libc of its own.
@@ -233,6 +264,24 @@ fn should_not_offer_the_parent_dataset_as_covering_a_child_dataset_on_a_live_poo
             pool.dataset("data")
         );
     }
+    let child_domain = provider
+        .resolve_domain(&child)
+        .expect("a live pool resolves")
+        .expect("the path lies on a ZFS dataset");
+    let offered = provider
+        .discover(&child_domain, RecoveryObjective::PreserveExact)
+        .expect("a live pool is discoverable");
+    let parent = pool.dataset("data").to_string();
+    assert!(
+        !offered.is_empty()
+            && offered.iter().all(|candidate| {
+                candidate
+                    .not_protecting()
+                    .iter()
+                    .any(|object| object.as_ref() == parent)
+            }),
+        "§13.4: every candidate for {child} names {parent} under NOT PROTECTED BY"
+    );
 }
 
 #[test]
@@ -306,10 +355,16 @@ fn should_recover_one_changed_file_without_reverting_unrelated_state_on_a_live_p
     let fragment = provider
         .plan_recovery(&asset, None, RecoveryGoal::RestoreChangedObjects)
         .expect("§56.1's facts hold for a pool this suite just built");
-    assert_eq!(
-        fragment.method(),
-        ono_change_core::RestoreMethod::SelectiveFileRestore,
-        "§13.5: prefer the method that minimises unrelated rollback damage"
+    // §13.5 and Appendix D.4: a few changed files come back by copying them, out of the snapshot
+    // directory where the host mounts it and out of a temporary clone where it does not.
+    assert!(
+        matches!(
+            fragment.method(),
+            ono_change_core::RestoreMethod::SelectiveFileRestore
+                | ono_change_core::RestoreMethod::CloneAndCopy
+        ),
+        "§13.5: prefer a method that copies the file back over rolling the dataset back, got {:?}",
+        fragment.method()
     );
     for action in fragment.actions() {
         provider
@@ -411,7 +466,15 @@ fn should_record_each_dataset_of_a_recursive_creation_individually_on_a_live_poo
         .expect("a live pool is discoverable");
     let recursive = candidates
         .into_iter()
-        .find(|candidate| candidate.detail().contains("snapshot -r"))
+        .find(|candidate| {
+            candidate
+                .scope()
+                .covers()
+                .iter()
+                .filter(|covered| !covered.starts_with('/'))
+                .count()
+                > 1
+        })
         .expect("§13.3: the child dataset lies inside the tree");
     let actions = provider
         .plan_protection(&[recursive], ProtectionMode::Prefer)

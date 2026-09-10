@@ -13,7 +13,8 @@
 
 use ono_change_core::{
     ConsistencyClass, EffectConfidence, EffectDomain, EffectKind, EquivalenceDomain, PlanState,
-    RecoveryCapability, RestoreMethod, RiskAssessment, RiskClass, RiskDimension, RiskFinding,
+    RecoveryAssetType, RecoveryCapability, RestoreMethod, RiskAssessment, RiskClass, RiskDimension,
+    RiskFinding,
 };
 use ono_kuang_protocol::{
     ActionContribution, Capability, ChangeViewContribution, EffectClassContribution, Hello,
@@ -156,13 +157,7 @@ fn validate_recovery_provider(
             provider.id
         )));
     }
-    if provider.asset_type.trim().is_empty() {
-        return Err(invalid(format!(
-            "recovery provider `{}` names no asset type, and §11.1 makes the asset the thing a \
-             person inspects",
-            provider.id
-        )));
-    }
+    validate_recovery_asset(provider)?;
     let consistency = word(
         ConsistencyClass::from_name,
         &provider.consistency,
@@ -296,6 +291,77 @@ fn validate_recovery_provider(
         }
     }
     Ok(())
+}
+
+/// The asset a contributed recovery provider creates, held to the registry and to v0.6 §16.2.
+///
+/// One definition shared by the supervisor at load and the conformance host before load
+/// (ADR-0427), so a package the test host passes is a package the shell loads. The asset type
+/// is one of `docs/contracts/recovery/assets.yaml`'s, and a `vm-snapshot` provider states its
+/// memory inclusion while a provider of any other type does not.
+///
+/// # Errors
+///
+/// `package.invalid`, naming the provider, the word and the rule it broke.
+pub fn validate_recovery_asset(provider: &RecoveryProviderContribution) -> Result<(), KuangError> {
+    let asset_type = word(
+        RecoveryAssetType::from_name,
+        &provider.asset_type,
+        "asset type",
+        &provider.id,
+        "the types of `docs/contracts/recovery/assets.yaml` (v0.6 §3.6, §11.1)",
+    )?;
+    validate_memory_inclusion(provider, asset_type)
+}
+
+/// The words v0.6 §16.2's distinction is stated in: a snapshot that includes guest memory, one
+/// that holds disk state only, and a provider that can take either.
+const MEMORY_INCLUSION: [&str; 3] = ["memory-inclusive", "disk-only", "both"];
+
+/// §16.2: a VM provider MUST distinguish memory-inclusive from disk-only snapshots.
+///
+/// The other two kinds §16.2 lists — guest-quiesced and crash-consistent — are consistency
+/// classes, and `consistency` already carries them. Memory inclusion is the one fact no other
+/// field answers, so a `vm-snapshot` provider states it, and a provider of any other asset type
+/// stating it is making a claim about memory its asset cannot hold.
+fn validate_memory_inclusion(
+    provider: &RecoveryProviderContribution,
+    asset_type: RecoveryAssetType,
+) -> Result<(), KuangError> {
+    match (&provider.memory_inclusion, asset_type) {
+        (None, RecoveryAssetType::VmSnapshot) => Err(invalid(format!(
+            "recovery provider `{}` creates `vm-snapshot` and does not state `memory_inclusion`; \
+             v0.6 §16.2 says a VM provider MUST distinguish memory-inclusive from disk-only \
+             snapshots",
+            provider.id
+        ))
+        .with_help(
+            "declare `memory_inclusion: memory-inclusive`, `disk-only`, or `both` for a provider \
+             that can take either",
+        )),
+        (Some(stated), RecoveryAssetType::VmSnapshot) => {
+            if MEMORY_INCLUSION.contains(&stated.as_str()) {
+                Ok(())
+            } else {
+                Err(invalid(format!(
+                    "recovery provider `{}` states the memory inclusion `{stated}`, which is not \
+                     one of `memory-inclusive`, `disk-only` or `both` (v0.6 §16.2)",
+                    provider.id
+                )))
+            }
+        }
+        (Some(_), other) => Err(invalid(format!(
+            "recovery provider `{}` states `memory_inclusion` for `{}`; v0.6 §16.2 draws that \
+             distinction for VM snapshots, and a `{}` has no guest memory to include",
+            provider.id,
+            other.as_str(),
+            other.as_str()
+        ))
+        .with_help(
+            "state `memory_inclusion` only for a provider whose `asset_type` is `vm-snapshot`",
+        )),
+        (None, _) => Ok(()),
+    }
 }
 
 /// §9.4's edges, and §49.3's rule that nothing here raises a confidence.
@@ -492,8 +558,114 @@ pub fn compose_risk(held: RiskClass, contributed: &[RiskFinding]) -> RiskClass {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    reason = "a test states its preconditions directly (AGENTS.md section 16)"
+)]
 mod tests {
     use super::*;
+    use ono_kuang_protocol::{ContributionSet, RecoveryProviderDocument};
+
+    const PACKAGE: &str = "dev.example.vm";
+
+    /// A handshake carrying the recovery provider document given, as the package wrote it.
+    fn hello(document: &str) -> Hello {
+        Hello {
+            format: "kuang-package/1".to_owned(),
+            package: PACKAGE.to_owned(),
+            version: "0.1.0".to_owned(),
+            kuang_api: ">=11.1 <12".to_owned(),
+            contributions: ContributionSet {
+                recovery_providers: RecoveryProviderDocument::parse(document)
+                    .expect("the fixture is a readable document")
+                    .recovery_providers,
+                ..ContributionSet::default()
+            },
+        }
+    }
+
+    /// One recovery provider creating `asset_type`, with `extra` lines added to its declaration.
+    fn provider(asset_type: &str, extra: &str) -> String {
+        format!(
+            "recovery_providers:\n  - id: {PACKAGE}.recovery-provider.guests\n    \
+             summary: Snapshots guests.\n    domain_kinds: [libvirt-domain]\n    \
+             asset_type: {asset_type}\n    consistency: crash-consistent\n    \
+             capabilities: [recovery.discover, recovery.prepare]\n{extra}"
+        )
+    }
+
+    fn load(document: &str) -> Result<(), KuangError> {
+        validate(PACKAGE, &hello(document), &mut |_, _, _| Ok(()))
+    }
+
+    #[test]
+    fn should_load_a_vm_snapshot_provider_that_states_its_memory_inclusion() {
+        for stated in ["memory-inclusive", "disk-only", "both"] {
+            let document = provider("vm-snapshot", &format!("    memory_inclusion: {stated}\n"));
+            assert_eq!(
+                load(&document),
+                Ok(()),
+                "§16.2: a VM provider that distinguishes its snapshots (`{stated}`) loads"
+            );
+        }
+    }
+
+    #[test]
+    fn should_refuse_a_vm_snapshot_provider_that_does_not_state_its_memory_inclusion() {
+        let refusal = load(&provider("vm-snapshot", "")).expect_err(
+            "§16.2: a VM provider MUST distinguish memory-inclusive from disk-only snapshots",
+        );
+        assert_eq!(refusal.code(), KuangErrorCode::PackageInvalid);
+        assert!(
+            refusal.message().contains("§16.2") && refusal.message().contains("memory_inclusion"),
+            "the refusal names the rule and the field that answers it, got {refusal}"
+        );
+    }
+
+    #[test]
+    fn should_refuse_a_memory_inclusion_stated_for_an_asset_that_is_not_a_vm_snapshot() {
+        let refusal = load(&provider(
+            "zfs-snapshot",
+            "    memory_inclusion: memory-inclusive\n",
+        ))
+        .expect_err("a ZFS snapshot has no memory to include, so the statement is a false one");
+        assert_eq!(refusal.code(), KuangErrorCode::PackageInvalid);
+        assert!(
+            refusal.message().contains("§16.2") && refusal.message().contains("zfs-snapshot"),
+            "the refusal names the rule and the asset type it does not apply to, got {refusal}"
+        );
+    }
+
+    #[test]
+    fn should_refuse_a_memory_inclusion_outside_the_distinction_section_16_2_draws() {
+        let refusal = load(&provider("vm-snapshot", "    memory_inclusion: partial\n"))
+            .expect_err("§16.2 draws memory-inclusive against disk-only and nothing else");
+        assert_eq!(refusal.code(), KuangErrorCode::PackageInvalid);
+        assert!(
+            refusal.message().contains("partial"),
+            "the refusal names the word it does not know, got {refusal}"
+        );
+    }
+
+    #[test]
+    fn should_refuse_an_asset_type_the_asset_registry_does_not_define() {
+        let refusal = load(&provider("database-dump", ""))
+            .expect_err("§11.1: the asset is the thing a person inspects, so its type is known");
+        assert_eq!(refusal.code(), KuangErrorCode::PackageInvalid);
+        assert!(
+            refusal.message().contains("database-dump"),
+            "the refusal names the asset type it does not know, got {refusal}"
+        );
+    }
+
+    #[test]
+    fn should_load_a_provider_of_another_asset_type_that_says_nothing_about_memory() {
+        assert_eq!(
+            load(&provider("zfs-snapshot", "")),
+            Ok(()),
+            "memory inclusion is a question only a VM snapshot has an answer to"
+        );
+    }
 
     #[test]
     fn should_keep_the_stronger_class_when_a_contributed_rule_finds_a_weaker_one() {

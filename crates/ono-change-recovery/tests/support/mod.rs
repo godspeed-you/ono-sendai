@@ -22,12 +22,12 @@ use jiff::Timestamp;
 use ono_change_core::{
     ActionRole, ChangePlan, ConsistencyClass, DirectoryRestorePolicy, DomainCoverage,
     DomainProtection, EffectConfidence, EffectDomain, EffectKind, EquivalenceDomain, Execution,
-    Idempotency, Intent, MetadataCoverage, PersistenceDomain, PlanAction, PlanId, ProposedEffect,
-    ProtectionAction, ProtectionMode, ProtectionSummary, ProviderAvailability,
-    ProviderCapabilities, RecoveryAsset, RecoveryAssetType, RecoveryCandidate, RecoveryCapability,
-    RecoveryCost, RecoveryGoal, RecoveryObjective, RecoveryPlanFragment, RecoveryProvider,
-    RecoveryScope, RecoveryValidation, RestoreMethod, VerificationClass, VerificationContract,
-    VerificationSet,
+    Idempotency, Intent, MetadataCoverage, NewerStateClass, NewerStateImpact, NewerStateItem,
+    PersistenceDomain, PlanAction, PlanId, ProposedEffect, ProtectionAction, ProtectionMode,
+    ProtectionSummary, ProviderAvailability, ProviderCapabilities, RecoveryAsset,
+    RecoveryAssetType, RecoveryCandidate, RecoveryCapability, RecoveryCost, RecoveryGoal,
+    RecoveryObjective, RecoveryPlanFragment, RecoveryProvider, RecoveryScope, RecoveryValidation,
+    RestoreMethod, VerificationClass, VerificationContract, VerificationSet,
 };
 use ono_change_protection::ProviderRegistry;
 use ono_value::ErrorValue;
@@ -39,6 +39,16 @@ pub const EPOCH: Timestamp = Timestamp::UNIX_EPOCH;
 #[must_use]
 pub fn at(hour: i64, minute: i64) -> Timestamp {
     Timestamp::from_second(hour * 3600 + minute * 60).expect("a valid instant")
+}
+
+/// The class a newer-state analysis gave `object`, or `None` where it did not list it (§24.2).
+#[must_use]
+pub fn class_of(impact: &NewerStateImpact, object: &str) -> Option<NewerStateClass> {
+    impact
+        .items()
+        .iter()
+        .find(|item| item.object() == object)
+        .map(NewerStateItem::class)
 }
 
 /// How often a provider was asked to change something (§24.1, §55.8 case 35).
@@ -77,9 +87,11 @@ pub struct TestProvider {
     directory_policy: DirectoryRestorePolicy,
     actions: Vec<(Arc<str>, Arc<str>)>,
     contracts: Vec<(Arc<str>, Arc<str>, VerificationClass, EquivalenceDomain)>,
+    captured: Vec<(Arc<str>, Arc<str>)>,
     requires_reboot: bool,
     requires_offline: bool,
     failure: Option<ErrorValue>,
+    newer_state: Option<NewerStateImpact>,
     calls: Arc<Calls>,
 }
 
@@ -105,11 +117,21 @@ impl TestProvider {
                 Arc::from("recovery.restore"),
             )],
             contracts: Vec::new(),
+            captured: Vec::new(),
             requires_reboot: false,
             requires_offline: false,
             failure: None,
+            newer_state: None,
             calls: Arc::new(Calls::default()),
         }
+    }
+
+    /// Records the digest its asset holds for `object`, as a real provider reads it out of the
+    /// asset (Appendix C.3).
+    #[must_use]
+    pub fn capturing(mut self, object: &str, digest: &str) -> Self {
+        self.captured.push((Arc::from(object), Arc::from(digest)));
+        self
     }
 
     /// The method its fragment offers (Appendix C.1).
@@ -174,6 +196,14 @@ impl TestProvider {
     #[must_use]
     pub fn failing(mut self, error: ErrorValue) -> Self {
         self.failure = Some(error);
+        self
+    }
+
+    /// What the provider itself established about newer state, as a real provider reads it out of
+    /// its own storage — the snapshots a rollback would destroy, the bytes written since (§13.6).
+    #[must_use]
+    pub fn leaving_newer_state(mut self, impact: NewerStateImpact) -> Self {
+        self.newer_state = Some(impact);
         self
     }
 
@@ -297,6 +327,12 @@ impl RecoveryProvider for TestProvider {
                 )
                 .about(*domain),
             );
+        }
+        for (object, digest) in &self.captured {
+            fragment = fragment.capturing(Arc::clone(object), Arc::clone(digest));
+        }
+        if let Some(impact) = &self.newer_state {
+            fragment = fragment.with_newer_state(impact.clone());
         }
         if self.requires_reboot {
             fragment = fragment.needing_reboot();

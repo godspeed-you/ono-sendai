@@ -18,40 +18,47 @@ run: |
       printf '%s\n' "$out" | head -6 | sed 's/^/        /'
     fi
   }
+  count_of() { ono -c "$1 | count | to json" 2>&1 | tr -d '[:space:]' | sed 's/^\[//; s/\]$//'; }
 
   mkdir -p "$HOME/etc"
   printf 'worker_processes 4;\n' > "$HOME/etc/nginx.conf"
   printf 'worker_processes 8;\n' > "$HOME/etc/nginx.conf.new"
 
   echo '== §5.2: a block of actions and verification contracts =='
-  ono -c "plan { copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite; verify file $HOME/etc/nginx.conf exists == true }" > /tmp/b1.txt 2>&1
-  prove b1a "a block of one action and one check seals (§5.2)" 'grep -qi "^PLAN" /tmp/b1.txt'
-  prove b1b "and it is a plan, so it executed nothing (§2.1)" 'grep -q "PLAN NOT EXECUTED" /tmp/b1.txt'
-  prove b1c "the action is in the plan (§5.2)" 'grep -qi "^planned" /tmp/b1.txt'
-  prove b1d "the \`verify\` line became a verification contract (§23.1, ADR-0813)" \
-    'grep -qi "^verification" /tmp/b1.txt'
+  block="plan { copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite; verify file $HOME/etc/nginx.conf exists == true }"
+  ono -c "$block" > /tmp/b1.txt 2>&1
+  prove b1a "a block of one action and one check seals (§5.2)" 'grep -q "^PLAN / [0-9a-f]\{4\}  rev 1  sealed" /tmp/b1.txt'
+  prove b1b "and it is a plan, so it executed nothing (§2.1)" 'grep -qx "PLAN NOT EXECUTED" /tmp/b1.txt'
+  ono -c "$block | to json" > /tmp/b1.json 2>&1
+  prove b1c "the block's action is the plan's one mutation (§5.2)" \
+    "[ \"\$(grep -o '\"role\":\"mutate\"' /tmp/b1.json | wc -l)\" -eq 1 ]"
+  prove b1d "the \`verify\` line became a verification contract rather than an action (§23.1, ADR-0813)" \
+    "grep -q '\"expression\":\"exists == true\"' /tmp/b1.json && ! grep -q '\"summary\":\"verify ' /tmp/b1.json"
+  plans=$(count_of 'get plan')
 
   echo '== §5.2: the four things a block MUST NOT introduce =='
   ono -c 'plan { for x in [1, 2] { restart service nginx } }' > /tmp/b2.txt 2>&1
   prove b2a "a loop is refused (§5.2)" \
-    'grep -q "change.action_not_plannable" /tmp/b2.txt && grep -qi "loop" /tmp/b2.txt'
+    'grep -q "change.action_not_plannable" /tmp/b2.txt && grep -q "this is a loop" /tmp/b2.txt'
 
   ono -c 'plan { fn f() { restart service nginx } }' > /tmp/b3.txt 2>&1
   prove b2b "an arbitrary function is refused (§5.2)" \
-    'grep -q "change.action_not_plannable" /tmp/b3.txt && grep -qi "function" /tmp/b3.txt'
+    'grep -q "change.action_not_plannable" /tmp/b3.txt && grep -q "arbitrary function" /tmp/b3.txt'
 
   ono -c 'plan { restart service nginx & }' > /tmp/b4.txt 2>&1
   prove b2c "a background job is refused (§5.2)" \
-    'grep -q "change.action_not_plannable" /tmp/b4.txt'
+    'grep -q "change.action_not_plannable" /tmp/b4.txt && grep -q "background job" /tmp/b4.txt'
 
   ono -c 'plan { if true { restart service nginx } }' > /tmp/b5.txt 2>&1
   prove b2d "unbounded runtime control flow is refused (§5.2)" \
-    'grep -q "change.action_not_plannable" /tmp/b5.txt && grep -qi "conditional" /tmp/b5.txt'
+    'grep -q "change.action_not_plannable" /tmp/b5.txt && grep -q "unbounded runtime control flow" /tmp/b5.txt'
 
   echo '== §5.2: the refusal names the rule rather than a parse error =='
-  prove b2e "each refusal quotes §5.2 rather than answering with a syntax message" \
-    'grep -q "5.2" /tmp/b2.txt'
-  prove b2f "and each one changed nothing, because a plan that would not seal ran nothing (§2.1)" \
+  prove b2e "every one of the four refusals quotes §5.2, and none is a syntax message" \
+    'for f in /tmp/b2.txt /tmp/b3.txt /tmp/b4.txt /tmp/b5.txt; do grep -q "§5.2" "$f" || exit 1; if grep -q "Ono-Sendai-E00" "$f"; then exit 1; fi; done'
+  prove b2f "none of them sealed a plan, so nothing is left behind to apply (§2.1)" \
+    "[ \"\$(count_of 'get plan')\" = '$plans' ]"
+  prove b2g "and the file is still what it was, because nothing ran (§2.1)" \
     "[ \"\$(cat $HOME/etc/nginx.conf)\" = 'worker_processes 4;' ]"
 
   echo 'plan-block: done'
@@ -66,6 +73,7 @@ stdout-contains: PROVED b2c
 stdout-contains: PROVED b2d
 stdout-contains: PROVED b2e
 stdout-contains: PROVED b2f
+stdout-contains: PROVED b2g
 stdout-contains: plan-block: done
 stdout-not-contains: FAILED
 stdout-not-contains: panicked

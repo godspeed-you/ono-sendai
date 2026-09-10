@@ -1,0 +1,4 @@
+for unit in [nginx, php] { restart $unit }
+fn helper() { }
+sleep 10 &
+if true { stop nginx }

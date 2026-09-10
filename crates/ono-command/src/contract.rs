@@ -225,6 +225,10 @@ pub enum Confirmation {
     Bulk,
     /// `--confirm` is needed for every run.
     Always,
+    /// `--confirm` is needed only where the run carries a gate: an outstanding acknowledgement,
+    /// or an acceptance being given (v0.6 §40.1, §40.3). The command enforces it, because only
+    /// it knows what the plan it was handed is gated on.
+    Gated,
 }
 
 /// The spec §37 phase that delivers a command, where one does.
@@ -1108,10 +1112,11 @@ impl RawCommand {
         let confirmation = match self.confirmation.as_deref() {
             None | Some("bulk") => Confirmation::Bulk,
             Some("always") => Confirmation::Always,
+            Some("gated") => Confirmation::Gated,
             Some(other) => {
                 return Err(contract_error(
                     &id,
-                    format!("unknown confirmation `{other}`; it is `bulk` or `always`"),
+                    format!("unknown confirmation `{other}`; it is `bulk`, `always` or `gated`"),
                 ));
             }
         };

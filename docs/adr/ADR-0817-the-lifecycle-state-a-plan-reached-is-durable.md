@@ -1,6 +1,6 @@
 # ADR-0817: The lifecycle state a plan reached is durable
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0833
 - Date: 2026-09-10
 - Spec refs: v0.6 §2.7, §4.1, §4.5, §4.7, §22.2, §41.1, §41.2, Appendix F.2
 - Decided by: agent (autonomous)

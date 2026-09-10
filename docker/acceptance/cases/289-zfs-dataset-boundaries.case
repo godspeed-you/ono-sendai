@@ -1,0 +1,100 @@
+# v0.6 §50 phase P2 — §13.1 to §13.4: a path is mapped to the dataset that actually holds it,
+# and a separate child dataset is never falsely covered.
+#
+# §13.4 is the sentence the provider exists for: a snapshot of the root dataset does not protect
+# a separate child dataset, however the paths nest. Appendix B is the resolution that makes it
+# answerable, and §2.5 is the invariant it serves — a protection level must never overstate
+# actual coverage. Where there is no ZFS, the honest answer is that no ZFS candidate is offered
+# (§12.2, Appendix G.4), and that branch stays for a host without it.
+#
+# The case builds a real pool on a loop device, in the image whose OpenZFS userland the provider
+# validates (ADR-0846), so it runs privileged and as root; every check against the pool has to run.
+case: a ZFS path resolves to its own dataset, and a child dataset is its own boundary
+timeout: 240
+capability: SYS_ADMIN
+user: root
+security: apparmor=unconfined
+privileged: true
+image: filesystems
+env: NO_COLOR=1
+run: |
+  proved=" "
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"; proved="$proved$id "
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  # The checks a run that got past the fixture must have made; a missing one is a failure.
+  require_proved() { for want in "$@"; do case "$proved" in *" $want "*) ;; *) echo "FAILED $want: this check never ran";; esac; done; }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  # The persistence domain the plan froze for its (single) target.
+  domain_of() { sed -n 's/.*"targets":\[{[^]]*"persistence_domain":\("[^"]*"\|null\).*/\1/p' "$1" | head -1; }
+
+  mkdir -p "$HOME/etc"
+  printf 'source\n' > "$HOME/etc/source"
+  printf 'target\n' > "$HOME/etc/target"
+
+  echo '== Appendix B: the resolution names the filesystem it went through =='
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/target --overwrite | to json" > /tmp/zb0.json 2>&1
+  id=$(plan_id /tmp/zb0.json)
+  ono -c "inspect plan $id --resolution" > /tmp/zb1.txt 2>&1
+  prove zb1a "the resolution answers (Appendix B.10)" 'grep -qx "PERSISTENCE RESOLUTION" /tmp/zb1.txt'
+  prove zb1b "and names the filesystem type the mount table gives (Appendix B.1)" \
+    "grep -qF \"($(findmnt -n -o FSTYPE --target "$HOME/etc/target"))\" /tmp/zb1.txt"
+
+  echo '== §12.2 and Appendix G.4: with no ZFS, no ZFS candidate is offered =='
+  if ! command -v zfs > /dev/null 2>&1; then
+    prove zb2a "no asset or prepare action claims a ZFS snapshot on a host with no ZFS (§12.2)" \
+      '! grep -qE "zfs-snapshot|\"provider\":\"ono\.recovery\.zfs" /tmp/zb0.json'
+    prove zb2b "and no line of the resolution claims a dataset boundary the mount table did not give (§2.4)" \
+      '! grep "^    " /tmp/zb1.txt | grep -qi "dataset"'
+    prove zb2c "the file provider still protects the change, which is §15's whole reason to exist (§55.5 case 23)" \
+      'grep -q "\"protection_level\":\"protected\"" /tmp/zb0.json && grep -q "\"provider\":\"ono.recovery.file-copy\"" /tmp/zb0.json'
+    echo 'SKIPPED zfs-dataset-boundaries/real: external_tool_unavailable: no zfs on this host'
+    echo 'zfs-dataset-boundaries: done'
+    exit 0
+  fi
+
+  echo '== §13.4: a real pool, and a child dataset that is its own boundary =='
+  pool="onobnd$$"
+  image=/tmp/$pool.img
+  truncate -s 256M "$image" 2>/dev/null || { echo 'SKIPPED zfs-dataset-boundaries: fixture_not_applicable: no space'; echo 'zfs-dataset-boundaries: done'; exit 0; }
+  device=$(losetup --find --show "$image" 2>/dev/null) || { echo 'SKIPPED zfs-dataset-boundaries: missing_privilege: no loop device'; rm -f "$image"; echo 'zfs-dataset-boundaries: done'; exit 0; }
+  cleanup() { zpool destroy "$pool" 2>/dev/null; losetup -d "$device" 2>/dev/null; rm -f "$image"; }
+  trap cleanup EXIT
+  if ! zpool create -f "$pool" "$device" 2>/dev/null; then
+    echo 'SKIPPED zfs-dataset-boundaries: missing_privilege: the pool could not be created'
+    echo 'zfs-dataset-boundaries: done'; exit 0
+  fi
+  zfs create "$pool/child"
+  printf 'in the parent\n' > "/$pool/a.txt"
+  printf 'in the child\n' > "/$pool/child/b.txt"
+  # Appendix A.4 prefers the smallest recovery scope, and a one-file copy is smaller than any
+  # dataset. §15.2 bounds that copy: past the file provider's 16 MiB per-object limit the file is
+  # not archived, and the child dataset's snapshot is the protection the plan chooses.
+  truncate -s 17M "/$pool/child/b.txt"
+
+  ono -c "plan copy file /$pool/a.txt /$pool/child/b.txt --overwrite | to json" > /tmp/zb3.json 2>&1
+  prove zb3a "the child's own dataset is the resolved domain (§13.4, Appendix B.8)" \
+    "[ \"\$(domain_of /tmp/zb3.json)\" = '\"$pool/child\"' ]"
+  prove zb3b "the snapshot the plan prepares is of the child, not of the parent (§13.4, §2.5)" \
+    "grep -q '\"value\":\"$pool/child\"' /tmp/zb3.json && ! grep -q '\"value\":\"$pool\"' /tmp/zb3.json"
+  ono -c "get plan $(plan_id /tmp/zb3.json)" > /tmp/zb4.txt 2>&1
+  prove zb3c "and the view says what the parent does not protect (§13.4's NOT PROTECTED BY)" \
+    "grep -q 'NOT PROTECTED BY' /tmp/zb4.txt"
+
+  require_proved zb3a zb3b zb3c
+  echo 'zfs-dataset-boundaries: done'
+exit: 0
+stdout-contains: PROVED zb1a
+stdout-contains: PROVED zb1b
+stdout-contains: PROVED zb3a
+stdout-contains: PROVED zb3b
+stdout-contains: PROVED zb3c
+stdout-contains: zfs-dataset-boundaries: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

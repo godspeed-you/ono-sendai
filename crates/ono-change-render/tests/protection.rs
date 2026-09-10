@@ -13,9 +13,45 @@ use ono_value::{RecordValue, Value};
 
 mod support;
 use support::{
-    contains, nested, plan_with, protected_exclusions, protected_rows, ready_asset, s,
+    contains, list, nested, plan_with, protected_exclusions, protected_rows, ready_asset, s,
     sealed_nginx_plan, unprotected_rows, zfs_asset,
 };
+
+#[test]
+fn should_name_the_enclosing_snapshots_that_do_not_protect_the_target_under_not_protected_by() {
+    let row = nested(
+        "ono.protection-coverage",
+        &[
+            ("domain", s("filesystem-persistent")),
+            ("objective", s("preserve-exact")),
+            ("protection", s("protected")),
+            ("satisfied", Value::Bool(true)),
+            ("required", Value::Bool(true)),
+            ("declared_irrelevant", Value::Bool(false)),
+            ("consistency", s("filesystem-consistent")),
+            ("exclusions", Value::list([])),
+            ("not_protected_by", list(&["tank/data"])),
+            ("note", s("covered by the child dataset's own snapshot")),
+        ],
+    );
+    let plan = plan_with("protected", Value::list([row]), protected_exclusions());
+    for lines in [
+        protection_block(&plan, &[], 100, Charset::Ascii),
+        coverage_matrix(&plan, 100, Charset::Ascii),
+    ] {
+        assert!(
+            contains(&lines, "NOT PROTECTED BY") && contains(&lines, "a snapshot of tank/data"),
+            "§13.4: the view says which enclosing snapshot does not protect the target: {lines:#?}"
+        );
+    }
+    assert!(
+        !contains(
+            &protection_block(&protected_plan(), &[], 100, Charset::Ascii),
+            "NOT PROTECTED BY"
+        ),
+        "a matrix that names nothing draws no empty block"
+    );
+}
 
 /// §64's plan: PROTECTED, with the exclusions Appendix A.6 keeps beside the word.
 fn protected_plan() -> RecordValue {

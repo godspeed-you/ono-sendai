@@ -12,13 +12,39 @@ use std::sync::Arc;
 
 use ono_change_core::{RecoveryGoal, RecoveryProvider, RestoreMethod};
 use ono_recovery_btrfs::{BtrfsConfig, BtrfsProvider, RootRecovery, SafetyFact};
-use support::{mounts, root_asset, root_recovery_script, var_asset, var_recovery_script};
+use support::{
+    FILESYSTEM, boot_by_name, booting, mounts, root_asset, root_recovery_script, var_asset,
+    var_recovery_script,
+};
 
 fn provider_recovering_root_by(policy: RootRecovery) -> BtrfsProvider {
+    provider_booting(policy, Some(&boot_by_name()))
+}
+
+fn provider_booting(policy: RootRecovery, cmdline: Option<&str>) -> BtrfsProvider {
+    let files = match cmdline {
+        Some(cmdline) => booting(cmdline),
+        None => support::recorded_files(),
+    };
     BtrfsProvider::new(support::runner(root_recovery_script()))
         .with_mounts(mounts())
-        .with_files(Arc::new(support::recorded_files()))
+        .with_files(Arc::new(files))
         .with_config(BtrfsConfig::default().recovering_root_by(policy))
+}
+
+/// The refusal a next-boot recovery of the root raises when the boot cannot be steered.
+fn next_boot_refusal(cmdline: Option<&str>) -> ono_value::ErrorValue {
+    let error = provider_booting(RootRecovery::NextBoot, cmdline)
+        .plan_recovery(&root_asset(), None, RecoveryGoal::RestoreDomain)
+        .expect_err("§56.3: a boot impact that cannot be established blocks the recovery");
+    assert_eq!(error.code().name(), "recovery.plan_incomplete");
+    assert!(
+        error
+            .message()
+            .contains(SafetyFact::DefaultSubvolumeAndBootImpact.description()),
+        "the fact that blocks is §56.2's default-subvolume and boot impact: {error:?}"
+    );
+    error
 }
 
 #[test]
@@ -207,6 +233,126 @@ fn should_map_each_method_back_to_the_workflow_section_fourteen_point_six_names(
         None,
         "§14.4: a dataset rollback is not one of them, and Btrfs is never presented as having one"
     );
+}
+
+#[test]
+fn should_refuse_a_next_boot_recovery_when_the_boot_entry_names_the_subvolume_by_id() {
+    let error = next_boot_refusal(Some(&format!(
+        "root=UUID={FILESYSTEM} ro rootflags=subvolid=256"
+    )));
+    assert!(
+        error
+            .help()
+            .is_some_and(|help| help.contains("subvolid=256")),
+        "§14.6: a boot entry that names subvolume 256 by id boots 256 whatever the default is and          whatever it is called, so neither `set-default` nor a rename changes what boots: {error:?}"
+    );
+}
+
+#[test]
+fn should_refuse_a_next_boot_recovery_when_the_boot_entry_cannot_be_seen() {
+    let error = next_boot_refusal(None);
+    assert!(
+        error
+            .help()
+            .is_some_and(|help| help.contains("command line")),
+        "without the kernel command line nobody knows how this root is selected: {error:?}"
+    );
+}
+
+#[test]
+fn should_refuse_a_next_boot_recovery_when_the_command_line_boots_another_filesystem() {
+    next_boot_refusal(Some(
+        "root=UUID=00000000-1111-2222-3333-444444444444 ro rootflags=subvol=@",
+    ));
+}
+
+#[test]
+fn should_refuse_a_next_boot_recovery_when_the_default_it_would_steer_is_not_what_boots_this_root()
+{
+    let error = next_boot_refusal(Some(&format!("root=UUID={FILESYSTEM} ro quiet")));
+    assert!(
+        error.help().is_some_and(|help| help.contains("default")),
+        "the command line names no subvolume, so the default decides — and the recorded default          is the top level (5), not the root subvolume 256 being recovered: {error:?}"
+    );
+}
+
+#[test]
+fn should_state_that_a_boot_entry_selecting_by_name_is_steered_by_a_rename() {
+    let (_, checklist) = provider_recovering_root_by(RootRecovery::NextBoot)
+        .plan_recovery_with_checklist(&root_asset(), None, RecoveryGoal::RestoreDomain)
+        .expect("the recovery plans");
+    let evidence = checklist
+        .evidence(SafetyFact::DefaultSubvolumeAndBootImpact)
+        .expect("the boot impact is established")
+        .to_owned();
+    assert!(
+        evidence.contains("subvol=@") && evidence.contains("name"),
+        "§56.2: the evidence says how this root is selected at boot: {evidence}"
+    );
+    assert!(
+        evidence.contains("leaves the default subvolume alone"),
+        "and that the default is not what this recovery changes: {evidence}"
+    );
+}
+
+#[test]
+fn should_name_the_section_fourteen_point_six_workflow_in_every_root_recovery_action() {
+    for (policy, goal, workflow) in [
+        (
+            RootRecovery::NextBoot,
+            RecoveryGoal::RestoreChangedObjects,
+            "online selective restore",
+        ),
+        (
+            RootRecovery::OnlineSelectiveRestore,
+            RecoveryGoal::RestoreDomain,
+            "online selective restore",
+        ),
+        (
+            RootRecovery::OfflineSubvolumeReplacement,
+            RecoveryGoal::RestoreDomain,
+            "offline subvolume replacement",
+        ),
+        (
+            RootRecovery::NextBoot,
+            RecoveryGoal::RestoreDomain,
+            "next-boot",
+        ),
+    ] {
+        let fragment = provider_recovering_root_by(policy)
+            .plan_recovery(&root_asset(), None, goal)
+            .expect("the recovery plans");
+        for action in fragment.actions() {
+            assert!(
+                action.summary().contains(workflow),
+                "§14.6: the root workflow MUST be shown before execution; `{}` does not name                  `{workflow}`",
+                action.summary()
+            );
+        }
+    }
+}
+
+#[test]
+fn should_read_the_root_policy_in_the_spelling_the_settings_use() {
+    for (token, policy) in [
+        ("online-selective", RootRecovery::OnlineSelectiveRestore),
+        (
+            "offline-replacement",
+            RootRecovery::OfflineSubvolumeReplacement,
+        ),
+        ("next-boot", RootRecovery::NextBoot),
+    ] {
+        assert_eq!(
+            RootRecovery::from_token(token),
+            Some(policy),
+            "§53's `recovery.btrfs.root_recovery` is spelt `{token}` by the settings"
+        );
+        assert_eq!(
+            policy.token(),
+            token,
+            "and the provider speaks it back the same way"
+        );
+    }
 }
 
 #[test]

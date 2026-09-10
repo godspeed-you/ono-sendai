@@ -517,6 +517,31 @@ pub fn parse_filesystem_show(text: &str) -> Result<FilesystemInfo, ErrorValue> {
     Ok(info)
 }
 
+/// Parses `btrfs filesystem show` with no argument, which lists every filesystem it finds.
+///
+/// Each filesystem is a block that opens with its `Label:` line; each block is read by
+/// [`parse_filesystem_show`]. A listing with no filesystem in it is an empty list.
+///
+/// # Errors
+///
+/// [`crate::error::unreadable_output`] when a block carries no UUID.
+pub fn parse_filesystem_list(text: &str) -> Result<Vec<FilesystemInfo>, ErrorValue> {
+    let mut blocks: Vec<String> = Vec::new();
+    for line in text.lines() {
+        if line.trim_start().starts_with("Label:") {
+            blocks.push(String::new());
+        }
+        if let Some(block) = blocks.last_mut() {
+            block.push_str(line);
+            block.push('\n');
+        }
+    }
+    blocks
+        .iter()
+        .map(|block| parse_filesystem_show(block))
+        .collect()
+}
+
 /// What `btrfs filesystem usage` reports about space (§38).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FilesystemUsage {

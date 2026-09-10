@@ -20,7 +20,7 @@ use ono_value::RecordValue;
 use crate::symbols::{Charset, Symbol};
 use crate::{
     Fields, Item, count, counted, display_width, fit, flag, heading, items, join_fitted, labelled,
-    text,
+    strings, text,
 };
 
 /// §9.2's classes, in the order §9.2 lists them, with the noun §9.5 counts them by.
@@ -234,16 +234,18 @@ pub(crate) fn impact_rows(plan: &RecordValue, width: usize, charset: Charset) ->
         lines.push(fit(&labelled("possible", &possible, label), width));
     }
 
+    // §9.6: a boundary is named by what lies beyond it. It is not called external, because an
+    // opaque command's boundary is an unknown domain on this host (§6.3), and the name comes first
+    // so that a cut row still shows it.
     let mut unknown: Vec<String> = Vec::new();
     let boundaries = count(&summary, "boundaries")
         .or_else(|| count(&summary, "boundary_count"))
         .unwrap_or_default();
-    if boundaries > 0 {
-        unknown.push(counted(
-            boundaries,
-            "external boundary",
-            "external boundaries",
-        ));
+    let named = strings(&summary, "boundary_labels");
+    let unnamed = boundaries.saturating_sub(named.len());
+    unknown.extend(named);
+    if unnamed > 0 {
+        unknown.push(counted(unnamed, "unknown boundary", "unknown boundaries"));
     }
     if !flag(&summary, "complete") {
         unknown.push(text(&summary, "truncated_reason").map_or_else(

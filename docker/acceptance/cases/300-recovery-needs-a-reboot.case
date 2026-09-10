@@ -1,0 +1,73 @@
+# v0.6 §50 phase P2 — §13.7, §14.6 and §30.5: a recovery that needs the filesystem offline or a
+# reboot says so before it is applied.
+#
+# §13.7 and §14.6 both describe workflows that cannot run against a mounted root: an offline
+# subvolume replacement, a boot-environment switch, a next-boot swap. §30.5 makes the reboot
+# requirement a fact the plan carries rather than something an operator discovers afterwards, and
+# Appendix C.1 puts these methods last because they cost the most. On this container's files the
+# honest answer is "no reboot, no unmount" — and it has to be stated, not left out (§2.4).
+case: a plan and its recovery state whether a reboot or an unmount is needed, before anything runs
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+
+  mkdir -p "$HOME/etc"
+  printf 'original\n' > "$HOME/etc/config"
+  printf 'changed\n' > "$HOME/etc/source"
+
+  echo '== §30.5: the reboot question is asked of every plan, and answered =='
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/config --overwrite" > /tmp/rr1.txt 2>&1
+  prove rr1a "the plan view answers the reboot question under its own heading (§30.5)" 'grep -qx "reboot" /tmp/rr1.txt'
+  prove rr1b "and for a file copy the answer is no, stated rather than left out (§30.5, §2.4)" \
+    "[ \"\$(sed -n '/^reboot\$/{n;p;}' /tmp/rr1.txt)\" = '  no' ]"
+
+  echo '== §13.7 and §14.6: the asset carries the two facts that make a restore expensive =='
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/config --overwrite | to json" > /tmp/rr1.json 2>&1
+  id=$(plan_id /tmp/rr1.json)
+  ono -c "apply $id" > /dev/null 2>&1
+  prove rr2a "the file archive needs neither a reboot nor an offline filesystem to restore (§13.7, §14.6, §38.1)" \
+    "[ \"\$(ono -c 'get recovery | select requires_reboot requires_offline | to json' 2>&1)\" = '[{\"requires_reboot\":false,\"requires_offline\":false}]' ]"
+
+  echo '== §24.3: the recovery plan repeats it, because that is where the decision is made =='
+  ono -c "recover $id" > /tmp/rr3.txt 2>&1
+  ono -c "recover $id | to json" > /tmp/rr3.json 2>&1
+  prove rr3a "the recovery plan uses the online method, selective restore (Appendix C.1)" \
+    'grep -q "\"method\":\"selective-file-restore\"" /tmp/rr3.json'
+  prove rr3b "and carries both requirements as facts, both false for it (§30.5, §13.7, §14.6)" \
+    'grep -q "\"requires_reboot\":false,\"requires_offline\":false" /tmp/rr3.json'
+  prove rr3c "the view states the reboot answer before anything runs (§30.5)" \
+    "[ \"\$(sed -n '/^reboot\$/{n;p;}' /tmp/rr3.txt)\" = '  no' ] && grep -qx 'RECOVERY NOT EXECUTED' /tmp/rr3.txt"
+  prove rr3d "and it ran nothing while saying it (§2.11)" \
+    "[ \"\$(cat $HOME/etc/config)\" = 'changed' ]"
+
+  echo '== §14.6 and §53: the default root-recovery workflow is stated, not guessed =='
+  ono -c 'get config recovery.btrfs.root_recovery | to json' > /tmp/rr4.json 2>&1
+  prove rr4a "the default is \`next-boot\` (§14.6, §53)" \
+    'grep -q "^\[{\"key\":\"recovery.btrfs.root_recovery\",\"value\":\"next-boot\"," /tmp/rr4.json'
+  prove rr4b "and the setting names the three workflows §14.6 gives (§14.6)" \
+    'grep -q "online-selective" /tmp/rr4.json && grep -q "offline-replacement" /tmp/rr4.json && grep -q "next-boot\`" /tmp/rr4.json'
+
+  echo 'recovery-needs-a-reboot: done'
+exit: 0
+stdout-contains: PROVED rr1a
+stdout-contains: PROVED rr1b
+stdout-contains: PROVED rr2a
+stdout-contains: PROVED rr3a
+stdout-contains: PROVED rr3b
+stdout-contains: PROVED rr3c
+stdout-contains: PROVED rr3d
+stdout-contains: PROVED rr4a
+stdout-contains: PROVED rr4b
+stdout-contains: recovery-needs-a-reboot: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

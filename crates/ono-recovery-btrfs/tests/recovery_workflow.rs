@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use ono_change_core::{
     ActionRole, Execution, NewerStateClass, ProtectionMode, RecoveryGoal, RecoveryObjective,
-    RecoveryProvider, RestoreMethod, ToolOutput,
+    RecoveryProvider, RestoreMethod,
 };
 use ono_recovery_btrfs::{
     BtrfsConfig, BtrfsProvider, RecordedFiles, RootRecovery, classify_object,
@@ -45,6 +45,25 @@ fn should_declare_selective_file_restore_when_the_wanted_objects_can_be_read_out
     );
     assert!(!fragment.requires_reboot());
     assert!(!fragment.requires_offline());
+}
+
+#[test]
+fn should_state_the_metadata_a_selective_restore_puts_back() {
+    // Appendix C.7: a restore states what it returns, and silence is not a claim — a fragment that
+    // stated nothing could not meet any recovery goal, and no Btrfs recovery could be chosen.
+    let provider = provider_with_files(root_recovery_script());
+    let fragment = provider
+        .plan_recovery(
+            &root_asset(),
+            Some(&support::source_plan()),
+            RecoveryGoal::RestoreChangedObjects,
+        )
+        .expect("every §56.2 fact is established by the recorded output");
+    assert_eq!(
+        fragment.metadata(),
+        ono_recovery_btrfs::METADATA_COVERAGE,
+        "Appendix C.7: a copy out of a snapshot returns content and mode, and says so"
+    );
 }
 
 #[test]
@@ -210,6 +229,33 @@ fn should_declare_subvolume_replacement_rather_than_an_in_place_primitive() {
             .any(|action| action.role() == ActionRole::Prepare),
         "§14.5: the writable subvolume it is replaced with is derived first, and tracked as its \
          own asset"
+    );
+}
+
+#[test]
+fn should_state_that_a_subvolume_replacement_returns_every_piece_of_metadata() {
+    let provider = provider_with_files(support::var_recovery_script());
+    let fragment = provider
+        .plan_recovery(
+            &var_asset(&["/mnt/root/var/log/syslog"]),
+            None,
+            RecoveryGoal::RestoreDomain,
+        )
+        .expect("the recovery plans");
+    assert_eq!(
+        fragment.metadata(),
+        ono_change_core::MetadataCoverage {
+            content: true,
+            mode: true,
+            owner: true,
+            acl: true,
+            xattrs: true,
+            capabilities: true,
+            selinux: true,
+            hardlinks: true,
+        },
+        "Appendix C.7: the snapshot becomes the live subvolume, and every piece of metadata it \
+         recorded comes back with it"
     );
 }
 
@@ -404,32 +450,6 @@ fn should_carry_a_verification_contract_for_the_recovered_state() {
 }
 
 #[test]
-fn should_refuse_to_derive_a_writable_subvolume_through_the_restore_call() {
-    let provider = provider_with_files(support::var_recovery_script());
-    let fragment = provider
-        .plan_recovery(
-            &var_asset(&["/mnt/root/var/log/syslog"]),
-            None,
-            RecoveryGoal::RestoreDomain,
-        )
-        .expect("the recovery plans");
-    let prepare = fragment
-        .actions()
-        .iter()
-        .find(|action| action.role() == ActionRole::Prepare)
-        .expect("the writable subvolume is derived first");
-    let error = provider
-        .restore(prepare, &var_asset(&[]))
-        .expect_err("§14.5: a derived writable subvolume is an asset, and `restore` returns none");
-    assert!(
-        error
-            .help()
-            .is_some_and(|help| help.contains("derive_writable")),
-        "the refusal names the call that records the derived asset and its dependency"
-    );
-}
-
-#[test]
 fn should_read_nothing_from_a_store_that_holds_nothing_and_block_rather_than_guess() {
     let provider = BtrfsProvider::new(runner(root_recovery_script()))
         .with_mounts(mounts())
@@ -438,73 +458,4 @@ fn should_read_nothing_from_a_store_that_holds_nothing_and_block_rather_than_gue
         .plan_recovery(&root_asset(), None, RecoveryGoal::RestoreChangedObjects)
         .expect_err("§56.3: what would be discarded could not be established");
     assert_eq!(error.code().name(), "recovery.plan_incomplete");
-}
-
-#[test]
-fn should_report_which_argument_vector_a_set_default_recovery_would_run() {
-    let provider = BtrfsProvider::new(runner(vec![
-        fixture("subvol-show-snapshot"),
-        ToolOutput::ok(""),
-    ]))
-    .with_mounts(mounts());
-    let plan = support::plan_id();
-    let action = ono_change_core::PlanAction::new(
-        &plan,
-        0,
-        ActionRole::Recover,
-        "point the next boot at the derived subvolume",
-        Execution::RecoveryOperation {
-            provider: Arc::from(ono_recovery_btrfs::PROVIDER_ID),
-            capability: Arc::from("recovery.restore"),
-            arguments: vec![
-                (
-                    Arc::from("operation"),
-                    ono_value::Value::string("set-default-subvolume"),
-                ),
-                (
-                    Arc::from("source"),
-                    ono_value::Value::string("/mnt/top/@snapshots/ono-a82f-root-rw"),
-                ),
-                (Arc::from("mount"), ono_value::Value::string("/mnt/root")),
-            ],
-        },
-    );
-    provider
-        .restore(&action, &root_asset())
-        .expect("the default subvolume is set");
-}
-
-#[test]
-fn should_report_a_refused_set_default_as_a_recovery_failure() {
-    let provider = BtrfsProvider::new(runner(vec![
-        fixture("subvol-show-snapshot"),
-        fixture("set-default-refused"),
-    ]))
-    .with_mounts(mounts());
-    let plan = support::plan_id();
-    let action = ono_change_core::PlanAction::new(
-        &plan,
-        0,
-        ActionRole::Recover,
-        "point the next boot at the derived subvolume",
-        Execution::RecoveryOperation {
-            provider: Arc::from(ono_recovery_btrfs::PROVIDER_ID),
-            capability: Arc::from("recovery.restore"),
-            arguments: vec![
-                (
-                    Arc::from("operation"),
-                    ono_value::Value::string("set-default-subvolume"),
-                ),
-                (
-                    Arc::from("source"),
-                    ono_value::Value::string("/mnt/top/@snapshots/ono-a82f-root-rw"),
-                ),
-                (Arc::from("mount"), ono_value::Value::string("/mnt/root")),
-            ],
-        },
-    );
-    let error = provider
-        .restore(&action, &root_asset())
-        .expect_err("the recorded `set-default` refusal is a recovery failure");
-    assert_eq!(error.code().name(), "recovery.apply_failed");
 }

@@ -1,6 +1,6 @@
 # ADR-0801: The change, recovery and transaction families open E17, E18 and E19
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0833
 - Date: 2026-09-09
 - Spec refs: v0.6 §45; v0.2 §43; ADR-0006, ADR-0610
 - Decided by: agent (autonomous)

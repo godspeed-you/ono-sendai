@@ -141,7 +141,9 @@ fn hostile_candidate() -> RecoveryCandidate {
 fn should_keep_a_dataset_name_containing_shell_syntax_as_one_argument() {
     let tools = runner(vec![
         (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
         (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
         (ZFS, ToolOutput::ok("")),
         (ZFS, out("list-snapshots")),
     ]);
@@ -172,7 +174,10 @@ fn should_keep_a_dataset_name_containing_shell_syntax_as_one_argument() {
 
 #[test]
 fn should_refuse_to_create_a_snapshot_whose_generated_name_zfs_would_not_accept() {
-    let tools = runner(vec![(ZPOOL, out("zpool-list"))]);
+    let tools = runner(vec![
+        (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
+    ]);
     let candidate = hostile_candidate();
     let hand_built = ono_change_core::RecoveryAsset::proposed(
         PROVIDER_ID,
@@ -195,7 +200,10 @@ fn should_refuse_to_create_a_snapshot_whose_generated_name_zfs_would_not_accept(
 
 #[test]
 fn should_derive_the_same_name_for_every_dataset_of_one_recursive_creation() {
-    let tools = runner(vec![(ZPOOL, out("zpool-list"))]);
+    let tools = runner(vec![
+        (ZPOOL, out("zpool-list")),
+        (ZPOOL, out("zpool-status")),
+    ]);
     let candidate = RecoveryCandidate::new(
         PROVIDER_ID,
         RecoveryScope::new("zfs-dataset", "tank/data", "localhost")

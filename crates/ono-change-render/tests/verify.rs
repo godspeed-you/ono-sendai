@@ -10,7 +10,8 @@ use ono_change_render::{NO_FULL_EQUIVALENCE, recovery_verification, verification
 
 mod support;
 use support::{
-    contains, equivalence, index_of, nginx_results, recovery_results, result, sealed_nginx_plan,
+    contains, equivalence, index_of, list, map, nginx_results, record, recovery_results, result,
+    rewritten, s, sealed_nginx_plan, verified_recovery,
 };
 
 #[test]
@@ -113,7 +114,7 @@ fn should_say_no_contract_was_answered_rather_than_printing_an_empty_view() {
 
 #[test]
 fn should_report_the_three_equivalence_domains_separately() {
-    let lines = recovery_verification(&recovery_results(), 80);
+    let lines = recovery_verification(&verified_recovery(), &recovery_results(), 80);
     for domain in ["persistent state", "runtime", "external side effects"] {
         assert!(
             contains(&lines, domain),
@@ -124,7 +125,7 @@ fn should_report_the_three_equivalence_domains_separately() {
 
 #[test]
 fn should_call_a_new_worker_identity_a_difference_that_was_expected() {
-    let lines = recovery_verification(&recovery_results(), 80);
+    let lines = recovery_verification(&verified_recovery(), &recovery_results(), 80);
     let line = lines
         .iter()
         .find(|line| line.contains("worker PIDs"))
@@ -137,7 +138,7 @@ fn should_call_a_new_worker_identity_a_difference_that_was_expected() {
 
 #[test]
 fn should_call_a_live_session_not_recoverable() {
-    let lines = recovery_verification(&recovery_results(), 80);
+    let lines = recovery_verification(&verified_recovery(), &recovery_results(), 80);
     let line = lines
         .iter()
         .find(|line| line.contains("TCP connections"))
@@ -150,7 +151,7 @@ fn should_call_a_live_session_not_recoverable() {
 
 #[test]
 fn should_claim_only_the_persistent_scope_it_verified() {
-    let lines = recovery_verification(&recovery_results(), 80);
+    let lines = recovery_verification(&verified_recovery(), &recovery_results(), 80);
     assert!(
         contains(&lines, "PERSISTENT STATE VERIFIED"),
         "§25.2's result block names the scope the verification actually covers"
@@ -168,7 +169,7 @@ fn should_deny_the_persistent_claim_when_something_did_not_come_back() {
         "nginx.conf",
         "not-restored",
     )];
-    let lines = recovery_verification(&results, 80);
+    let lines = recovery_verification(&verified_recovery(), &results, 80);
     assert!(
         contains(&lines, "PERSISTENT STATE NOT VERIFIED"),
         "§10.5: an absent claim and a denied claim are different facts"
@@ -181,7 +182,7 @@ fn should_deny_the_persistent_claim_when_something_did_not_come_back() {
 
 #[test]
 fn should_say_when_something_is_outside_any_recovery() {
-    let lines = recovery_verification(&recovery_results(), 80);
+    let lines = recovery_verification(&verified_recovery(), &recovery_results(), 80);
     assert!(
         contains(&lines, "OUTSIDE ANY RECOVERY"),
         "§35.2 and §62.2: a webhook already delivered is the reason there is no universal undo"
@@ -191,7 +192,7 @@ fn should_say_when_something_is_outside_any_recovery() {
 #[test]
 fn should_say_a_domain_was_not_observed_rather_than_leaving_it_out() {
     let results = vec![equivalence("persistent-state", "nginx.conf", "restored")];
-    let lines = recovery_verification(&results, 80);
+    let lines = recovery_verification(&verified_recovery(), &results, 80);
     assert!(
         contains(&lines, "nothing was observed in this domain"),
         "§25.1: a domain nobody looked at is a fact, and an omitted heading reads as a pass"
@@ -213,7 +214,7 @@ fn should_never_invent_an_expected_difference_for_a_result_nobody_classified() {
         ],
     );
     results.push(unclassified);
-    let lines = recovery_verification(&results, 80);
+    let lines = recovery_verification(&verified_recovery(), &results, 80);
     assert!(
         !contains(&lines, "DIFFERENT / EXPECTED"),
         "§50.1: whether a difference was anticipated is a fact, and a renderer may not decide one"
@@ -223,8 +224,107 @@ fn should_never_invent_an_expected_difference_for_a_result_nobody_classified() {
 #[test]
 fn should_render_the_same_bytes_for_the_same_results() {
     assert_eq!(
-        recovery_verification(&recovery_results(), 80),
-        recovery_verification(&recovery_results(), 80),
+        recovery_verification(&verified_recovery(), &recovery_results(), 80),
+        recovery_verification(&verified_recovery(), &recovery_results(), 80),
         "§50: rendering is deterministic"
+    );
+}
+
+#[test]
+fn should_name_the_recovery_it_verified_in_the_title() {
+    let lines = recovery_verification(&verified_recovery(), &recovery_results(), 80);
+    assert_eq!(
+        lines.first().map(String::as_str),
+        Some("RECOVERY VERIFICATION / r91c"),
+        "§25.3: the verified scope belongs to one recovery, and the title says which"
+    );
+}
+
+#[test]
+fn should_not_claim_the_persistent_scope_when_a_restored_object_was_never_checked() {
+    let plan = rewritten(
+        &selective_recovery_restoring_three(),
+        "id",
+        s("r91c4d2e8b6a3f150"),
+    );
+    let lines = recovery_verification(&plan, &recovery_results(), 80);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("/etc/hosts") && line.contains("NOT VERIFIED")),
+        "§25.1: an object the recovery restored and nothing checked is not verified. Got {lines:?}"
+    );
+    assert!(
+        contains(&lines, "PERSISTENT STATE NOT VERIFIED"),
+        "§25.3: the verified scope is every restored object, so one unchecked object denies the \
+         claim. Got {lines:?}"
+    );
+}
+
+#[test]
+fn should_read_the_restored_objects_off_the_change_plan_a_recovery_apply_holds() {
+    // After `apply`, the shell holds the recovery's own `ono.change-plan/1`, whose targets are
+    // the objects it restores.
+    let plan = record(
+        "ono.change-plan",
+        &[
+            ("id", s("r91c4d2e8b6a3f150")),
+            ("kind", s("recovery")),
+            ("state", s("verifying")),
+            (
+                "targets",
+                ono_value::Value::list([
+                    map(&[("label", s("nginx.conf")), ("identity", s("nginx.conf"))]),
+                    map(&[("label", s("/etc/hosts")), ("identity", s("/etc/hosts"))]),
+                ]),
+            ),
+        ],
+    );
+    let lines = recovery_verification(&plan, &recovery_results(), 80);
+    assert_eq!(
+        lines.first().map(String::as_str),
+        Some("RECOVERY VERIFICATION / r91c")
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("/etc/hosts") && line.contains("NOT VERIFIED")),
+        "§25.1: the change plan's targets are what the recovery restored. Got {lines:?}"
+    );
+    assert!(contains(&lines, "PERSISTENT STATE NOT VERIFIED"));
+}
+
+/// The selective recovery, restoring one object §25.2's results do not speak about.
+fn selective_recovery_restoring_three() -> ono_value::RecordValue {
+    rewritten(
+        &verified_recovery(),
+        "restores",
+        list(&["nginx.conf", "package version", "/etc/hosts"]),
+    )
+}
+
+/// §25.3: a restored object is verified by the check about it, whatever way the check names it.
+/// A contract written as `file /etc/app.conf` is about the restored `/etc/app.conf`; reading it as
+/// some other object printed a passed restore as NOT VERIFIED.
+#[test]
+fn should_count_a_check_on_file_path_as_verifying_the_restored_path() {
+    let recovery = support::rewritten(
+        &verified_recovery(),
+        "restores",
+        ono_value::Value::list([ono_value::Value::string("/etc/app.conf")]),
+    );
+    let results = vec![support::equivalence(
+        "persistent-state",
+        "file /etc/app.conf",
+        "restored",
+    )];
+    let lines = recovery_verification(&recovery, &results, 80);
+    assert!(
+        contains(&lines, "PERSISTENT STATE VERIFIED"),
+        "§25.2: the one restored object was checked and came back, got {lines:#?}"
+    );
+    assert!(
+        !contains(&lines, "NOT VERIFIED"),
+        "and it is not listed a second time as unchecked, got {lines:#?}"
     );
 }

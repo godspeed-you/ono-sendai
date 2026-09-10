@@ -1,0 +1,112 @@
+# v0.6 §50 phase P2 — §22 and §55.11 cases 48 and 50: v0.6's history is v0.5's ledger.
+#
+# §22.1 records the plan lifecycle as events on the existing ledger, under the seventeen
+# canonical kinds v0.5 §17.2 closes and distinguished by an `ono.plan.*` subtype. §22.4 makes the
+# plan identity the causal anchor, and §55.11 case 50 asks that the recovery chain be auditable
+# the same way. There is no second audit subsystem, which is what §29.2 means by the two histories
+# sharing one ledger.
+#
+# Every ledger read happens in the `ono` process that produced the events: the session ledger is
+# in-memory unless a recorder runs (v0.5 §10.2), so a second process would legitimately see
+# nothing, and a check that looked there could not tell a silent shell from a correct one.
+case: a plan's lifecycle and its recovery are on the v0.5 timeline, under v0.5's own kinds
+timeout: 150
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  # The ledger answer of a script: its last line that is a JSON list of events.
+  events_of() { grep '^\[{"event_id"' "$1" | tail -1; }
+  newest() { ono -c "get plan | where kind == \"$1\" | take 1 | select id | to json" 2>/dev/null | sed -n 's/^\[{"id":"\([0-9a-f]*\)"}\]$/\1/p'; }
+  # Does the ledger hold the event `$2` about plan `$3`?
+  has_event() { grep -q "\"payload\":{\"plan\":\"$3\"[^}]*\"event\":\"$2\"" "$1"; }
+
+  mkdir -p "$HOME/etc"
+  printf 'a\n' > "$HOME/etc/source"
+  printf 'b\n' > "$HOME/etc/target"
+
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/target --overwrite | apply
+  recover \"@\" | apply --accept-newer-state-loss --confirm
+  find event | to json" > /tmp/tl1.txt 2>&1
+  events_of /tmp/tl1.txt > /tmp/tl1.json
+  change=$(newest change)
+  recovery=$(newest recovery)
+  prove tl0 "one session planned, applied, recovered and read its own ledger" \
+    "[ -s /tmp/tl1.json ] && [ -n '$change' ] && [ -n '$recovery' ]"
+
+  echo '== §22.1 and §55.11 case 48: the lifecycle events, each about the plan =='
+  for subtype in ono.plan.created ono.plan.sealed ono.plan.protected ono.plan.action.started \
+                 ono.plan.action.completed ono.plan.verification.observed ono.plan.verified; do
+    prove "tl1-$subtype" "\`$subtype\` is in the ledger, carrying the plan it is about (§22.1, §22.4)" \
+      "has_event /tmp/tl1.json $subtype $change"
+  done
+
+  echo '== v0.5 §17.2: the kinds are v0.5s, and v0.6 added none =='
+  prove tl2a "the events use v0.5's own action kinds (§22.1)" \
+    'grep -qE "\"kind\":\"action\.(requested|authorized|executed|completed)\"" /tmp/tl1.json'
+  prove tl2b "and no kind outside v0.5's seventeen appears (§17.2)" \
+    '! grep -qE "\"kind\":\"(plan|change|recovery)\." /tmp/tl1.json'
+  prove tl2c "the distinction travels in \`subtype\`, which is v0.5's extension point" \
+    'grep -q "\"subtype\":\"ono.plan.created\"" /tmp/tl1.json'
+
+  echo '== §22.4: the plan identity is the causal anchor, backed by evidence =='
+  prove tl3a "every plan event names one of the session's two plans (§22.4)" \
+    "[ \"\$(grep -o '\"subtype\":\"ono\.\(plan\|recovery\)\.[a-z.]*\"' /tmp/tl1.json | wc -l)\" -eq \"\$(grep -oE '\"payload\":\{\"plan\":\"($change|$recovery)\"' /tmp/tl1.json | wc -l)\" ]"
+  prove tl3b "and carries the evidence claim behind it, so \`why\` can join on it (§22.4, v0.5 §5)" \
+    "[ \"\$(grep -o '\"evidence\":\[\"@' /tmp/tl1.json | wc -l)\" -ge \"\$(grep -o '\"subtype\":\"ono\.plan\.' /tmp/tl1.json | wc -l)\" ]"
+
+  echo '== §55.11 case 50: the recovery chain is auditable the same way =='
+  prove tl5a "the recovery was planned on the ledger (§22.1's RecoveryPlanned)" \
+    'grep -q "\"subtype\":\"ono.recovery.planned\"" /tmp/tl1.json'
+  prove tl5b "its actions started and completed as events of the recovery plan (§22.1)" \
+    "has_event /tmp/tl1.json ono.plan.action.started $recovery && has_event /tmp/tl1.json ono.plan.action.completed $recovery"
+  prove tl5c "and a recovery that verified is recorded as verified, not as failed (§22.1's RecoveryVerified)" \
+    "[ \"\$(ono -c 'get plan $recovery | select state | to json' 2>&1)\" = '[{\"state\":\"recovery-verified\"}]' ] && ! has_event /tmp/tl1.json ono.plan.failed $recovery && { has_event /tmp/tl1.json ono.recovery.verified $recovery || has_event /tmp/tl1.json ono.plan.verified $recovery; }"
+
+  echo '== §22.4: `timeline --plan` reaches the plan own events =='
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/target --overwrite | apply
+  timeline --plan \"@\"" > /tmp/tl2.txt 2>&1
+  prove tl4a "the timeline scoped to the plan shows its lifecycle (§22.4, §55.11 case 48)" \
+    'grep -q "ono.plan.created" /tmp/tl2.txt && grep -q "ono.plan.verified" /tmp/tl2.txt'
+
+  echo '== §2.1: a plan that was not applied has no applied history =='
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/target --overwrite
+  find event | to json" > /tmp/tl3.txt 2>&1
+  events_of /tmp/tl3.txt > /tmp/tl3.json
+  unapplied=$(newest change)
+  prove tl6a "the plan that was only planned is on the ledger as created and sealed (§22.1)" \
+    "has_event /tmp/tl3.json ono.plan.created $unapplied && has_event /tmp/tl3.json ono.plan.sealed $unapplied"
+  prove tl6b "and nothing claims one of its actions ran or that it verified (§2.1)" \
+    "! has_event /tmp/tl3.json ono.plan.action.started $unapplied && ! has_event /tmp/tl3.json ono.plan.verified $unapplied"
+
+  echo 'plan-events-on-the-timeline: done'
+exit: 0
+stdout-contains: PROVED tl0
+stdout-contains: PROVED tl1-ono.plan.created
+stdout-contains: PROVED tl1-ono.plan.sealed
+stdout-contains: PROVED tl1-ono.plan.protected
+stdout-contains: PROVED tl1-ono.plan.action.started
+stdout-contains: PROVED tl1-ono.plan.action.completed
+stdout-contains: PROVED tl1-ono.plan.verification.observed
+stdout-contains: PROVED tl1-ono.plan.verified
+stdout-contains: PROVED tl2a
+stdout-contains: PROVED tl2b
+stdout-contains: PROVED tl2c
+stdout-contains: PROVED tl3a
+stdout-contains: PROVED tl3b
+stdout-contains: PROVED tl5a
+stdout-contains: PROVED tl5b
+stdout-contains: PROVED tl5c
+stdout-contains: PROVED tl4a
+stdout-contains: PROVED tl6a
+stdout-contains: PROVED tl6b
+stdout-contains: plan-events-on-the-timeline: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

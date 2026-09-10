@@ -1,0 +1,87 @@
+# v0.6 §50 phase P2 — §17.2's `require`: refuse to apply when a required mutation domain cannot
+# reach the plan's protection class.
+#
+# §2.5 is the invariant beside it — a protection level must never overstate actual coverage — and
+# §17.3 lets a plan ask for more than the configuration does. §53's closing line forbids the
+# other direction. Together they make `require` a promise rather than a preference.
+case: require refuses rather than proceeding unprotected
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  count_of() { ono -c "$1 | count | to json" 2>&1 | tr -d '[:space:]' | sed 's/^\[//; s/\]$//'; }
+
+  mkdir -p "$HOME/etc"
+  printf 'a\n' > "$HOME/etc/source"
+  printf 'b\n' > "$HOME/etc/target"
+
+  echo '== §17.1 and §17.2: `prefer` is the default, and it protects what it can =='
+  prove r1a "the default mode is \`prefer\`, and a plain file reaches PROTECTED under it (§17.1, §10.2)" \
+    "[ \"\$(ono -c 'plan copy file $HOME/etc/source $HOME/etc/target --overwrite | select protection_mode protection_level | to json' 2>&1)\" = '[{\"protection_mode\":\"prefer\",\"protection_level\":\"protected\"}]' ]"
+
+  echo '== §17.2: `require` on a target nothing can protect refuses to apply =='
+  # /dev/shm is a volatile filesystem: Appendix B.7 makes it no persistence domain at all, so no
+  # provider can offer a recovery asset for a file on it and `require` has nothing to be met by.
+  if [ -d /dev/shm ] && printf 'x\n' > /dev/shm/ono-require-target 2>/dev/null; then
+    ono -c "plan --protection require copy file $HOME/etc/source /dev/shm/ono-require-target --overwrite" > /tmp/r2.txt 2>&1
+    held=$(ono -c 'get plan | take 1 | select id | to json' 2>/dev/null | sed -n 's/^\[{"id":"\([0-9a-f]*\)"}\]$/\1/p')
+    prove r2a "the answer is §17.2's own code (§17.2, §45)" \
+      'grep -q "Ono-Sendai-E1807 recovery.coverage_insufficient" /tmp/r2.txt'
+    prove r2b "and it names the class the plan reached and the one it required (§10.2)" \
+      'grep -q "reaches unprotected protection and its policy requires protected" /tmp/r2.txt'
+    prove r2c "the refused plan is kept, and says why: \`require\` over an unprotected level (§17.3)" \
+      "[ \"\$(ono -c 'get plan $held | select protection_mode protection_level | to json' 2>&1)\" = '[{\"protection_mode\":\"require\",\"protection_level\":\"unprotected\"}]' ]"
+    # Every acknowledgement is given, so nothing but §17.2 can stop this apply.
+    ono -c "apply $held --accept-risk --accept-irreversible --confirm" > /tmp/r2d.txt 2>&1
+    prove r2d "applying it anyway is refused with the same code (§17.2: refuse to *apply*)" \
+      'grep -q "recovery.coverage_insufficient" /tmp/r2d.txt'
+    prove r2e "and the target is untouched (§17.2)" "[ \"\$(cat /dev/shm/ono-require-target)\" = 'x' ]"
+    rm -f /dev/shm/ono-require-target
+  else
+    echo 'SKIPPED require-refuses: fixture_not_applicable: this container has no writable /dev/shm'
+  fi
+
+  echo '== §53: the plan asked for more than the configuration, and keeps it =='
+  mkdir -p "$HOME/.config/ono"
+  printf 'set config change.default_protection off\n' > "$HOME/.config/ono/config.ono"
+  prove r3a "\`require\` survives an \`off\` configuration (§53, §17.3)" \
+    "[ \"\$(ono -c 'plan --protection require copy file $HOME/etc/source $HOME/etc/target --overwrite | select protection_mode | to json' 2>&1)\" = '[{\"protection_mode\":\"require\"}]' ]"
+  prove r3b "while a plan that did not ask gets the configured \`off\` (§53)" \
+    "[ \"\$(ono -c 'plan copy file $HOME/etc/source $HOME/etc/target --overwrite | select protection_mode | to json' 2>&1)\" = '[{\"protection_mode\":\"off\"}]' ]"
+  rm -f "$HOME/.config/ono/config.ono"
+
+  echo '== §17.2: `off` creates nothing and still shows the protection block =='
+  ono -c "plan --protection off copy file $HOME/etc/source $HOME/etc/target --overwrite | to json" > /tmp/r4.json 2>&1
+  ono -c "plan --protection off copy file $HOME/etc/source $HOME/etc/target --overwrite" > /tmp/r4.txt 2>&1
+  prove r4a "an \`off\` plan still shows its protection block, with the matrix (§17.2, §62.6)" \
+    "sed -n '/^protection\$/,/^not recoverable\$/p' /tmp/r4.txt | grep -qx '  by domain'"
+  prove r4b "and it plans no preparation (§17.2)" '! grep -q "\"role\":\"prepare\"" /tmp/r4.json'
+  ono -c "apply $(plan_id /tmp/r4.json)" > /tmp/r4a.txt 2>&1
+  prove r4c "applying it creates no recovery asset (§17.2)" \
+    "[ \"\$(cat $HOME/etc/target)\" = 'a' ] && [ \"\$(count_of 'get recovery')\" = '0' ]"
+
+  echo 'require-refuses: done'
+exit: 0
+stdout-contains: PROVED r1a
+stdout-contains: PROVED r2a
+stdout-contains: PROVED r2b
+stdout-contains: PROVED r2c
+stdout-contains: PROVED r2d
+stdout-contains: PROVED r2e
+stdout-contains: PROVED r3a
+stdout-contains: PROVED r3b
+stdout-contains: PROVED r4a
+stdout-contains: PROVED r4b
+stdout-contains: PROVED r4c
+stdout-contains: require-refuses: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

@@ -6,13 +6,13 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_change_render::{Charset, apply_failure, apply_progress, next_steps};
+use ono_change_render::{Charset, apply_failure, apply_progress, failure_display, next_steps};
 use ono_value::Value;
 
 mod support;
 use support::{
-    contains, empty_plan, failed_plan, nginx_plan_in, nginx_results, ready_asset, record, s,
-    sealed_nginx_plan, unprotected_rows,
+    contains, empty_plan, failed_plan, nginx_plan_in, nginx_results, ready_asset, record, result,
+    s, sealed_nginx_plan, unprotected_rows,
 };
 
 #[test]
@@ -136,10 +136,27 @@ fn should_render_the_blocks_appendix_e_five_writes_in_its_order() {
 
 #[test]
 fn should_count_what_completed_by_the_role_it_completed_in() {
+    // The failed plan: a prepare and two mutates succeeded, a third mutate failed, the verify
+    // never ran.
     let lines = apply_failure(&failed_plan(), &[ready_asset()], 80, Charset::Ascii);
-    assert!(
-        contains(&lines, "mutate actions"),
-        "Appendix E.5's `6 mutate actions` says which kind of work already changed the system"
+    let start = lines
+        .iter()
+        .position(|line| line == "completed")
+        .expect("the block exists");
+    let end = lines
+        .iter()
+        .position(|line| line == "failed")
+        .expect("the block exists");
+    let completed: Vec<&str> = lines[start + 1..end]
+        .iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect();
+    assert_eq!(
+        completed,
+        vec!["1 prepare action", "2 mutate actions"],
+        "Appendix E.5's `6 mutate actions` counts what succeeded, by the kind of work that \
+         already changed the system"
     );
 }
 
@@ -276,4 +293,86 @@ fn should_lay_the_failure_display_out_at_the_width_it_was_given() {
             );
         }
     }
+}
+
+/// The record the shell renders after a run whose verification failed: the plan as it was sealed,
+/// every action settled as succeeded, and a required check that failed.
+fn verification_failed() -> (ono_value::RecordValue, Vec<ono_value::RecordValue>) {
+    (
+        nginx_plan_in(
+            "sealed",
+            &[
+                "succeeded",
+                "succeeded",
+                "succeeded",
+                "succeeded",
+                "succeeded",
+            ],
+        ),
+        vec![
+            result("required", "nginx.service", "== running", "failed"),
+            result("required", "socket :443", "exists", "passed"),
+        ],
+    )
+}
+
+#[test]
+fn should_title_a_run_whose_verification_failed_as_a_verification_failure() {
+    let (plan, results) = verification_failed();
+    let lines = failure_display(&plan, &[ready_asset()], &results, 80, Charset::Ascii);
+    assert_eq!(
+        lines.first().map(String::as_str),
+        Some("PLAN VERIFICATION FAILED"),
+        "§4.8 and Appendix E.5: every action ran and a required postcondition did not hold, which \
+         is not an apply failure"
+    );
+    let failed = lines
+        .iter()
+        .skip_while(|line| line.as_str() != "failed")
+        .take_while(|line| !line.is_empty())
+        .cloned()
+        .collect::<Vec<String>>();
+    assert!(
+        failed
+            .iter()
+            .any(|line| line.contains("nginx.service == running")),
+        "Appendix E.5's `failed` block names what failed, and here that is the check. Got \
+         {failed:?}"
+    );
+}
+
+#[test]
+fn should_offer_recovery_when_the_run_created_an_asset_to_recover_with() {
+    let (plan, results) = verification_failed();
+    let lines = failure_display(&plan, &[ready_asset()], &results, 80, Charset::Ascii);
+    assert!(
+        contains(&lines, "recover plan/a82f"),
+        "Appendix E.5: the run changed the system and a recovery asset exists, so recovery is one \
+         of the steps. Got {lines:?}"
+    );
+    assert!(
+        contains(&lines, "1 created asset retained"),
+        "§37.2: the asset the run created is the one the display counts. Got {lines:?}"
+    );
+}
+
+#[test]
+fn should_not_offer_recovery_when_the_run_created_no_asset() {
+    let (plan, results) = verification_failed();
+    let lines = failure_display(&plan, &[], &results, 80, Charset::Ascii);
+    assert!(
+        !lines.iter().any(|line| line.trim().starts_with("recover ")),
+        "§62.1: no asset was created, so there is nothing to recover with. Got {lines:?}"
+    );
+}
+
+#[test]
+fn should_not_count_a_verification_result_as_a_recovery_asset() {
+    let (plan, results) = verification_failed();
+    let lines = failure_display(&plan, &results, &results, 80, Charset::Ascii);
+    assert!(
+        contains(&lines, "no recovery asset was created")
+            && !lines.iter().any(|line| line.trim().starts_with("recover ")),
+        "§37.2: only an `ono.recovery-asset/1` is an asset. Got {lines:?}"
+    );
 }

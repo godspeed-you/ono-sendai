@@ -140,5 +140,23 @@ fields:
     doc: >-
       What will be checked after recovery (§25). §25.1 keeps persistent, runtime and external
       equivalence separate, so these carry the domain each one speaks about.
+  rejected_methods:
+    type: list<record>
+    nullable: true
+    doc: >-
+      The methods that were offered and not chosen (Appendix C.1), each with its `provider`,
+      `method`, `reason` (`dominated`, `goal-unsatisfied`, `metadata-shortfall`,
+      `semantic-shortfall`), `unmet` and `detail`, and `would_discard` — the newer state it would
+      have taken. Appendix I.5 requires the view to show that a full rollback would discard the
+      later changes a selective restore keeps. `would_discard` is null where nothing analysed it,
+      and the whole field is null where the planner did not record the alternatives (§10.5).
+      Appended and nullable, so the change is additive and the schema stays at version 1.
+  services_affected:
+    type: list<record>
+    nullable: true
+    doc: >-
+      The services the recovery stops or restarts (§24.3), each with its `service` and an
+      `action` of `stop` or `restart`. Null where the planner did not establish which, which is
+      not the same answer as an empty list. Appended and nullable, so the change is additive.
 default_view:
   columns: [id, source_plan, method, requires_acceptance, risk]

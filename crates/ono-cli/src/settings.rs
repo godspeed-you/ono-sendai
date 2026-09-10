@@ -736,6 +736,15 @@ pub const CATALOGUE: &[SettingSpec] = &[
         default: DefaultValue::Str("next-boot"),
         range: None,
     },
+    // An extension after §53's seventeen: §53 does not print it, and Appendix H's profiles need a
+    // key to be selected by. Held to `ChangeSettings` through `plans.yaml` like the keys above.
+    SettingSpec {
+        key: "change.profile",
+        ty: SettingType::String,
+        description: "The Appendix H profile the change settings are tightened by: `none`, `interactive`, `cautious`, `fleet` or `scripted` (v0.6 Appendix H, ADR-0810). An extension to §53. A profile only tightens: it raises protection, retention, the free-space floor and the risk gate, disables opaque actions, and never loosens a stricter setting or a plan's own requirement (H.5).",
+        default: DefaultValue::Str("none"),
+        range: None,
+    },
 ];
 
 /// The declaration of `key`, if there is one.

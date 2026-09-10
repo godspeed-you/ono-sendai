@@ -69,7 +69,8 @@ lattice:
 # is declared here because §16's application-aware providers arrive through KUANG/11 (ADR-0812) and
 # this is the contract they will be held to. `xtask/src/change.rs::check_quiesce` checks the five
 # steps, the three properties §18.4 fixes, and that both of §18.4's refusals exist as separate
-# error codes.
+# error codes, and reads every `crates/ono-recovery-*/src` to refuse a first-party provider that
+# declares `recovery.quiesce` or `recovery.transaction`.
 quiesce_protocol:
   steps: [prepare_quiesce, verify_quiesced, create_storage_asset, resume, verify_resumed]
   bounded_window_required: true
@@ -88,6 +89,10 @@ backup_distinction:
   doc: >-
     §11.5: Ono MUST label local copy-on-write snapshots as local recovery assets, and MUST NOT
     imply protection from underlying device corruption, pool loss or destructive writes below the
-    filesystem layer. §14.7 says the same for Btrfs specifically. `shares_failure_domain` on the
-    asset type in `assets.yaml` is where a renderer reads it, so no rendering path has to know the
-    rule to obey it.
+    filesystem layer. §14.7 says the same for Btrfs specifically. A renderer reads
+    `shares_failure_domain` off the asset's own `ono.recovery-asset/1` record, so no rendering path
+    has to know the rule to obey it. The record's value is
+    `RecoveryAsset::is_local_recovery_point()`: true where the asset type shares its target's
+    failure domain (`shares_failure_domain` in `assets.yaml`), or where the provider marked that one
+    asset as sharing it — the file provider does so for a copy on the same device as its target or
+    on an overlay, and for one whose independence it could not establish.

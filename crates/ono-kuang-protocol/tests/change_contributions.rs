@@ -241,7 +241,7 @@ recovery_providers:
   - id: dev.example.pg.recovery-provider.database
     summary: Point-in-time protection for PostgreSQL databases.
     domain_kinds: [postgres-database]
-    asset_type: database-dump
+    asset_type: database-checkpoint
     consistency: application-consistent
     restore_methods: [provider-native-restore]
     shares_failure_domain: false
@@ -256,7 +256,7 @@ fn should_read_a_recovery_provider_document_as_section_48_5_describes_one() {
     let document = RecoveryProviderDocument::parse(RECOVERY_DOCUMENT).expect("reads");
     let provider = &document.recovery_providers[0];
     assert_eq!(provider.domain_kinds, vec!["postgres-database".to_owned()]);
-    assert_eq!(provider.asset_type, "database-dump");
+    assert_eq!(provider.asset_type, "database-checkpoint");
     assert_eq!(provider.consistency, "application-consistent");
     assert_eq!(
         provider.restore_methods,
@@ -299,6 +299,38 @@ fn should_default_a_recovery_provider_to_no_transaction_when_it_declares_none() 
     assert!(!provider.shares_failure_domain);
 }
 
+#[test]
+fn should_read_the_memory_inclusion_a_vm_snapshot_provider_states() {
+    // v0.6 §16.2: a VM provider MUST distinguish a memory-inclusive snapshot from a disk-only
+    // one. The distinction is part of the declaration, so it is read before anything runs.
+    for stated in ["memory-inclusive", "disk-only", "both"] {
+        let document = RecoveryProviderDocument::parse(&format!(
+            "recovery_providers:\n  - id: dev.example.vm.recovery-provider.guests\n    \
+             summary: Snapshots guests.\n    domain_kinds: [libvirt-domain]\n    \
+             asset_type: vm-snapshot\n    memory_inclusion: {stated}\n    \
+             consistency: crash-consistent\n"
+        ))
+        .expect("reads");
+        assert_eq!(
+            document.recovery_providers[0].memory_inclusion.as_deref(),
+            Some(stated),
+            "§16.2: the memory inclusion a provider states is carried as it stated it"
+        );
+    }
+}
+
+#[test]
+fn should_leave_memory_inclusion_unstated_when_a_provider_declares_none() {
+    // Only a `vm-snapshot` provider has a memory inclusion to state; for every other asset the
+    // question has no answer, and the record says nothing rather than a default.
+    let document = RecoveryProviderDocument::parse(
+        "recovery_providers:\n  - id: dev.example.p.recovery-provider.files\n    \
+         summary: Copies files.\n    domain_kinds: [directory]\n    asset_type: file-archive\n    \
+         consistency: byte-consistent\n",
+    )
+    .expect("reads");
+    assert_eq!(document.recovery_providers[0].memory_inclusion, None);
+}
 #[test]
 fn should_read_an_impact_provider_document_with_its_confidence_ceiling() {
     let document = ImpactProviderDocument::parse(

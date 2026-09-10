@@ -1,6 +1,6 @@
 # ADR-0818: A recovery plan's actions are run like any other
 
-- Status: accepted
+- Status: accepted — amended by ADR-0822
 - Date: 2026-09-10
 - Spec refs: v0.6 §5.8, §12.2, §12.3, §24.2, §25.1, §62.9, Appendix C.1
 - Decided by: agent (autonomous)

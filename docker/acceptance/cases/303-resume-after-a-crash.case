@@ -1,0 +1,121 @@
+# v0.6 §50 phase P2 — §41 and §63.5: apply state survives a crash, and resume never reruns what it
+# cannot know the outcome of.
+#
+# §41.1 is what makes it possible: every action declares an idempotency class, and §41.2 forbids
+# blindly rerunning an unknown or non-idempotent one. §41.3 gives the refusal — a new recovery or
+# rebase decision — where continuing is not safe. Appendix F.2 is the state this is all about: an
+# action whose outcome could not be established is neither a success nor a failure.
+#
+# The crash is real. A plan's action is made to block — its input is a named pipe nobody writes
+# yet — and the applying `ono` is killed with SIGKILL while the action is in flight. What the next
+# process finds in the store is then exactly what §41.2 says it must be able to reconstruct.
+case: a plan killed mid-action is found where it stopped, and resume does not rerun blindly
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  state_of() { ono -c "get plan $1 | select state | to json" 2>&1; }
+  # "role status" per action, in plan order. Nothing nested in an action carries either key.
+  statuses() { ono -c "get plan $1 | select actions | to json" 2>&1 | grep -o '"role":"[a-z-]*"\|"status":"[a-z-]*"' | sed 's/^"[a-z]*":"//; s/"$//' | paste -d' ' - -; }
+  # Waits until the plan is being applied, which is when its action is blocked on the pipe.
+  await_applying() { for _ in $(seq 1 100); do [ "$(state_of "$1")" = '[{"state":"applying"}]' ] && return 0; sleep 0.2; done; return 1; }
+
+  mkdir -p "$HOME/etc" "$HOME/.config/ono"
+  printf 'source\n' > "$HOME/etc/source"
+  printf 'old\n' > "$HOME/etc/target"
+
+  echo '== §41.1: every action declares how it may be resumed =='
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/target --overwrite | to json" > /tmp/rs1.txt 2>&1
+  id=$(plan_id /tmp/rs1.txt)
+  prove rs1a "each action carries one of §41.1's four idempotency classes" \
+    "[ \"\$(grep -o '\"idempotency\":\"[a-z-]*\"' /tmp/rs1.txt | grep -vcE '\"(idempotent|non-idempotent|retryable-with-token|unknown)\"')\" = 0 ] && grep -q '\"idempotency\":' /tmp/rs1.txt"
+  prove rs1b "and a sealed plan's actions are all pending, so a record exists to be advanced (§4.7)" \
+    "[ -n \"\$(statuses $id)\" ] && ! statuses $id | grep -qv ' pending\$'"
+
+  echo '== §41.2 and §55.9 case 40: a crash in the middle of an idempotent action =='
+  rm "$HOME/etc/source"
+  mkfifo "$HOME/etc/source"
+  ono -c "apply $id" > /tmp/rs2.txt 2>&1 &
+  applier=$!
+  prove rs2pre "the apply reached its mutation and is blocked in it" "await_applying $id"
+  kill -9 "$applier"; wait "$applier" 2>/dev/null
+  prove rs2a "a second process reads back APPLYING — the state the killed one reached (§41.2, Appendix F.2)" \
+    "[ \"\$(state_of $id)\" = '[{\"state\":\"applying\"}]' ]"
+  prove rs2b "the prepare it finished is recorded as succeeded (§41.2)" \
+    "statuses $id | grep -qx 'prepare succeeded'"
+  prove rs2c "and the action in flight is running or unknown — never pending, which would invite a rerun (§41.2)" \
+    "statuses $id | grep -qxE 'mutate (running|unknown)'"
+
+  # §41.3: an idempotent action in flight may be continued. The source is a regular file again —
+  # the copy provider refuses to read a pipe to the end (§15.2), and the source is no precondition
+  # of the plan — so what decides the outcome below is the resume alone.
+  rm "$HOME/etc/source"
+  printf 'source\n' > "$HOME/etc/source"
+  timeout 60 ono -c "resume plan $id --confirm" > /tmp/rs3.txt 2>&1
+  prove rs3a "resume continues the idempotent copy to the end (§41.3, §55.9 case 40)" \
+    "[ \"\$(cat $HOME/etc/target)\" = 'source' ]"
+  prove rs3b "and the plan verifies, reached through the records the crash left (§41.2, §4.8)" \
+    "[ \"\$(state_of $id)\" = '[{\"state\":\"verified\"}]' ]"
+
+  echo '== §41.2 and §55.9 case 41: a crash in the middle of an action whose outcome is unknown =='
+  # §6.3's escape is the one action whose idempotency is `unknown` by definition: nobody can say
+  # whether running it twice is running it once.
+  printf 'set config change.allow_opaque_actions true\n' > "$HOME/.config/ono/config.ono"
+  mkfifo "$HOME/feed"
+  ono -c "plan --opaque sh -c 'cat $HOME/feed >> $HOME/etc/appended' | to json" > /tmp/rs4.json 2>&1
+  opaque=$(plan_id /tmp/rs4.json)
+  prove rs4pre "the opaque action is sealed with idempotency \`unknown\` (§6.3, §41.1)" \
+    'grep -q "\"idempotency\":\"unknown\"" /tmp/rs4.json'
+  ono -c "apply $opaque --accept-risk --accept-irreversible --confirm" > /tmp/rs4.txt 2>&1 &
+  applier=$!
+  prove rs4a "the apply reached the opaque action and is blocked in it" "await_applying $opaque"
+  kill -9 "$applier"; wait "$applier" 2>/dev/null
+  pkill -f "cat $HOME/feed" 2>/dev/null
+  prove rs4b "the action in flight is recorded as running or unknown, not pending (§41.2, Appendix F.2)" \
+    "statuses $opaque | grep -qxE 'mutate (running|unknown)'"
+  timeout 30 ono -c "resume plan $opaque --confirm" > /tmp/rs5.txt 2>&1
+  status=$?
+  readers=$(pgrep -fc "cat $HOME/feed")
+  pkill -f "cat $HOME/feed" 2>/dev/null
+  prove rs5a "resume returns rather than rerunning the action and blocking on it (§41.2)" "[ $status -ne 124 ]"
+  prove rs5b "and refuses with §41.3's own code, asking for a new recovery or rebase decision" \
+    'grep -q "change.resume_refused" /tmp/rs5.txt'
+  prove rs5c "nothing was started again: no second reader is waiting on the pipe (§41.2)" "[ '$readers' = 0 ]"
+  prove rs5d "and the action's record still says its outcome is not known (Appendix F.2)" \
+    "statuses $opaque | grep -qxE 'mutate (running|unknown)'"
+  rm -f "$HOME/.config/ono/config.ono"
+
+  echo '== §37.2: the asset of the interrupted plan is still there to recover from =='
+  prove rs6a "the recovery asset the crashed apply prepared survived it (§11.1, §36.1)" \
+    "ono -c 'get recovery | select state | to json' 2>&1 | grep -q '\"state\":\"ready\"'"
+
+  echo 'resume-after-a-crash: done'
+exit: 0
+stdout-contains: PROVED rs1a
+stdout-contains: PROVED rs1b
+stdout-contains: PROVED rs2pre
+stdout-contains: PROVED rs2a
+stdout-contains: PROVED rs2b
+stdout-contains: PROVED rs2c
+stdout-contains: PROVED rs3a
+stdout-contains: PROVED rs3b
+stdout-contains: PROVED rs4pre
+stdout-contains: PROVED rs4a
+stdout-contains: PROVED rs4b
+stdout-contains: PROVED rs5a
+stdout-contains: PROVED rs5b
+stdout-contains: PROVED rs5c
+stdout-contains: PROVED rs5d
+stdout-contains: PROVED rs6a
+stdout-contains: resume-after-a-crash: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

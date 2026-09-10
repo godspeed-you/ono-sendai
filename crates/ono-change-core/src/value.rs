@@ -53,7 +53,7 @@ use crate::asset::{
 };
 use crate::domain::PersistenceDomain;
 use crate::effect::{EffectConfidence, EffectDomain, EffectKind, ProposedEffect};
-use crate::id::{ActionId, EffectId, PlanId, RecoveryAssetId};
+use crate::id::{ActionId, CheckId, EffectId, PlanId, RecoveryAssetId};
 use crate::impact::{ImpactClass, ImpactGraph, ImpactNode, UnknownBoundary};
 use crate::plan::{ChangePlan, Intent, PlanKind, ProviderBinding};
 use crate::protection::{
@@ -330,6 +330,18 @@ pub fn effect_record(effect: &ProposedEffect) -> Result<RecordValue, ErrorValue>
         "proposed",
         effect.proposed().cloned().unwrap_or(Value::Null),
     );
+    // §10.5: a null `before` is either "known to hold nothing" or "not known", and only these
+    // flags tell the two apart.
+    let builder = put(
+        builder,
+        "before_known",
+        Value::Bool(effect.before().is_some()),
+    );
+    let builder = put(
+        builder,
+        "proposed_known",
+        Value::Bool(effect.proposed().is_some()),
+    );
     let builder = put(
         builder,
         "evidence",
@@ -486,6 +498,30 @@ pub fn asset_record(asset: &RecoveryAsset) -> Result<RecordValue, ErrorValue> {
 ///
 /// Returns `ono.provider_schema_violation` where a contract of §46 is not in this build.
 pub fn recovery_plan_record(plan: &RecoveryPlan) -> Result<RecordValue, ErrorValue> {
+    recovery_plan_record_with(plan, &RecoveryPlanNotes::default())
+}
+
+/// The `ono.recovery-plan/1` record of §46.5, with what planning learned beside the plan.
+///
+/// [`RecoveryPlan`] holds the plan that will run. Two things §24.3 and Appendix I.5 require the
+/// operator to see are facts about the *planning* rather than the plan — the methods that were
+/// offered and not chosen, and the services the recovery stops or restarts — so the caller that
+/// did the planning passes them in [`RecoveryPlanNotes`]. What the caller did not supply is
+/// written as null, never as an empty list: §10.5 keeps "not recorded" apart from "none".
+///
+/// A rejected method that discards newer state (§24.2) would discard every newer change the
+/// analysis saw, so its `would_discard` is that list. A method that keeps newer state was never
+/// analysed for it, and an analysis that did not run established nothing (§62.8), so both carry
+/// null. [`recovery_plan_from_record`] does not read these fields back: they describe the choice
+/// that produced the plan, and the plan is what a store keeps.
+///
+/// # Errors
+///
+/// Returns `ono.provider_schema_violation` where a contract of §46 is not in this build.
+pub fn recovery_plan_record_with(
+    plan: &RecoveryPlan,
+    notes: &RecoveryPlanNotes,
+) -> Result<RecordValue, ErrorValue> {
     let (schema, provenance) = target("ono.recovery-plan")?;
     let builder = RecordValue::builder(schema, provenance);
     let inner = plan.plan();
@@ -606,7 +642,155 @@ pub fn recovery_plan_record(plan: &RecoveryPlan) -> Result<RecordValue, ErrorVal
                 .map(verification_contract_map),
         ),
     );
+    let builder = put(
+        builder,
+        "rejected_methods",
+        notes.rejected.as_ref().map_or(Value::Null, |rejected| {
+            Value::list(rejected.iter().map(|note| rejected_method_map(note, newer)))
+        }),
+    );
+    let builder = put(
+        builder,
+        "services_affected",
+        notes.services.as_ref().map_or(Value::Null, |services| {
+            Value::list(services.iter().map(ServiceImpact::to_value))
+        }),
+    );
     Ok(builder.build())
+}
+
+/// What recovery planning learned that the [`RecoveryPlan`] itself does not hold (§24.3, I.5).
+///
+/// Every part is optional, and an absent part is written as null: a caller that did not record
+/// the alternatives has not said that there were none.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RecoveryPlanNotes {
+    rejected: Option<Vec<RejectedMethodNote>>,
+    services: Option<Vec<ServiceImpact>>,
+}
+
+impl RecoveryPlanNotes {
+    /// Records the methods that were offered and not chosen (Appendix C.1, I.5).
+    ///
+    /// An empty list states that nothing else was offered.
+    #[must_use]
+    pub fn with_rejected(mut self, rejected: Vec<RejectedMethodNote>) -> Self {
+        self.rejected = Some(rejected);
+        self
+    }
+
+    /// Records the services the recovery stops or restarts (§24.3).
+    ///
+    /// An empty list states that it touches none.
+    #[must_use]
+    pub fn with_services(mut self, services: Vec<ServiceImpact>) -> Self {
+        self.services = Some(services);
+        self
+    }
+}
+
+/// A restore method that was offered and not chosen, and why (Appendix C.1, C.7, I.5).
+///
+/// The fields are `ono_change_recovery::RejectedMethod`'s, which this crate cannot name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RejectedMethodNote {
+    provider: Arc<str>,
+    method: RestoreMethod,
+    reason: Arc<str>,
+    detail: Arc<str>,
+    unmet: Vec<Arc<str>>,
+}
+
+impl RejectedMethodNote {
+    /// `method`, offered by `provider`, lost for `reason` — `dominated`, `goal-unsatisfied`,
+    /// `metadata-shortfall` or `semantic-shortfall` — and `detail` is the sentence that says so.
+    #[must_use]
+    pub fn new(
+        provider: impl Into<Arc<str>>,
+        method: RestoreMethod,
+        reason: impl Into<Arc<str>>,
+        detail: impl Into<Arc<str>>,
+    ) -> Self {
+        Self {
+            provider: provider.into(),
+            method,
+            reason: reason.into(),
+            detail: detail.into(),
+            unmet: Vec::new(),
+        }
+    }
+
+    /// Names what the method could not do — the metadata or the semantics the goal required.
+    #[must_use]
+    pub fn unmet(mut self, unmet: Vec<Arc<str>>) -> Self {
+        self.unmet = unmet;
+        self
+    }
+}
+
+/// What a recovery does to one service while it runs (§24.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceImpact {
+    service: Arc<str>,
+    action: &'static str,
+}
+
+impl ServiceImpact {
+    /// The recovery stops `service` and leaves it stopped.
+    #[must_use]
+    pub fn stopped(service: impl Into<Arc<str>>) -> Self {
+        Self {
+            service: service.into(),
+            action: "stop",
+        }
+    }
+
+    /// The recovery restarts `service`.
+    #[must_use]
+    pub fn restarted(service: impl Into<Arc<str>>) -> Self {
+        Self {
+            service: service.into(),
+            action: "restart",
+        }
+    }
+
+    fn to_value(&self) -> Value {
+        let mut map = MapValue::new();
+        map.insert("service".into(), Value::string(&self.service));
+        map.insert("action".into(), Value::string(self.action));
+        Value::Map(Arc::new(map))
+    }
+}
+
+/// One rejected method as `ono.recovery-plan/1` carries it (Appendix I.5).
+///
+/// Keys: `provider`, `method`, `reason`, `unmet`, `detail`, `would_discard`.
+fn rejected_method_map(note: &RejectedMethodNote, newer: &NewerStateImpact) -> Value {
+    // §24.2: a method that discards newer state takes everything written after the recovery
+    // point, whatever the chosen method would have kept. An object whose state could not be
+    // established stays out of the list — it is unknown, and listing it would be a guess.
+    let would_discard = if note.method.discards_newer_state() && newer.is_complete() {
+        Value::list(
+            newer
+                .items()
+                .iter()
+                .filter(|item| item.class() != NewerStateClass::Unknown)
+                .map(|item| Value::string(item.object())),
+        )
+    } else {
+        Value::Null
+    };
+    let mut map = MapValue::new();
+    map.insert("provider".into(), Value::string(&note.provider));
+    map.insert("method".into(), Value::string(note.method.as_str()));
+    map.insert("reason".into(), Value::string(&note.reason));
+    map.insert(
+        "unmet".into(),
+        Value::list(note.unmet.iter().map(|text| Value::string(text))),
+    );
+    map.insert("detail".into(), Value::string(&note.detail));
+    map.insert("would_discard".into(), would_discard);
+    Value::Map(Arc::new(map))
 }
 
 /// The `ono.change-verification/1` record of §23.3.
@@ -768,6 +952,15 @@ pub fn coverage_record(row: &DomainCoverage) -> Result<RecordValue, ErrorValue> 
         builder,
         "exclusions",
         Value::list(row.exclusions().iter().map(coverage_exclusion_map)),
+    );
+    let builder = put(
+        builder,
+        "not_protected_by",
+        Value::list(
+            row.not_protected_by()
+                .iter()
+                .map(|object| Value::string(object.as_ref())),
+        ),
     );
     let builder = put(builder, "note", Value::string(row.note()));
     Ok(builder.build())
@@ -1085,10 +1278,11 @@ pub fn verification_contract_map(contract: &VerificationContract) -> Value {
     map.insert("class".into(), Value::string(contract.class().as_str()));
     map.insert("subject".into(), Value::string(contract.subject()));
     map.insert("expression".into(), Value::string(contract.expression()));
-    map.insert(
-        "expected".into(),
-        contract.expected().cloned().unwrap_or(Value::Null),
-    );
+    // §10.5: a contract that expects null and a contract that states no value are different
+    // contracts, so the second leaves the key out rather than writing the same null.
+    if let Some(expected) = contract.expected() {
+        map.insert("expected".into(), expected.clone());
+    }
     map.insert("timeout".into(), duration_value(contract.timeout()));
     map.insert(
         "timeout_status".into(),
@@ -1564,7 +1758,7 @@ pub fn asset_from_record(record: &RecordValue) -> Result<RecoveryAsset, ErrorVal
         ));
     }
 
-    Ok(RecoveryAsset::restore(
+    let asset = RecoveryAsset::restore(
         id,
         text(record.get("provider"), "provider")?,
         enumeration(record.get("type"), "type", RecoveryAssetType::from_name)?,
@@ -1590,7 +1784,16 @@ pub fn asset_from_record(record: &RecordValue) -> Result<RecoveryAsset, ErrorVal
         exclusions,
         optional_text_of(record.get("captured_state")),
         optional_instant(record.get("expires_at"), "expires_at")?,
-    ))
+    );
+    // §11.5: the provider established whether this asset shares its target's failure domain, and
+    // the record carries its answer. Re-deriving it from the mechanism would forget a file copy
+    // kept on the target's own disk.
+    let shared = matches!(record.get("shares_failure_domain"), Some(Value::Bool(true)));
+    Ok(if shared && !asset.is_local_recovery_point() {
+        asset.sharing_failure_domain()
+    } else {
+        asset
+    })
 }
 
 /// Reads one action back out of its `ono.plan-action/1` record (§46.2).
@@ -1666,8 +1869,16 @@ pub fn effect_from_record(record: &RecordValue) -> Result<ProposedEffect, ErrorV
             "confidence",
             EffectConfidence::from_name,
         )?,
-        held_value(record.get("before")),
-        held_value(record.get("proposed")),
+        known_value(
+            record.get("before"),
+            record.get("before_known"),
+            "before_known",
+        )?,
+        known_value(
+            record.get("proposed"),
+            record.get("proposed_known"),
+            "proposed_known",
+        )?,
         text_list(record.get("evidence"), "evidence")?,
         text(record.get("explanation"), "explanation")?,
         flag(record.get("irreversible"), "irreversible")?,
@@ -1717,6 +1928,13 @@ pub fn coverage_from_record(record: &RecordValue) -> Result<DomainCoverage, Erro
     }
     for item in list_field(record.get("exclusions"), "exclusions")? {
         row = row.excluding(coverage_exclusion_from(item)?);
+    }
+    // §13.4's list arrived after plans were first stored, so a record without it reads as naming
+    // nothing rather than as corrupt.
+    if !matches!(record.get("not_protected_by"), None | Some(Value::Null)) {
+        for object in text_list(record.get("not_protected_by"), "not_protected_by")? {
+            row = row.outside_of(object);
+        }
     }
     if flag(record.get("declared_irrelevant"), "declared_irrelevant")? {
         row = row.declared_irrelevant();
@@ -1957,9 +2175,9 @@ fn recovery_scope_from(source: Option<&Value>, field: &str) -> Result<RecoverySc
 
 /// One verification contract, out of the map [`verification_contract_map`] wrote.
 ///
-/// The check's identity is derived from the plan, the subject and the expression exactly as
-/// [`VerificationContract::new`] derives it, so the stored `id` is a reader's convenience rather
-/// than a second source of truth.
+/// The stored `id` is the check's identity: a result recorded against the check names it, so it
+/// comes back as written. Only a map without one gets the identity [`VerificationContract::new`]
+/// derives from the plan, the subject and the expression.
 fn verification_contract_from(
     item: &Value,
     plan: &PlanId,
@@ -1977,8 +2195,18 @@ fn verification_contract_from(
         text(map.get("expression"), "verification_contracts.expression")?,
     )
     .within(span(map.get("timeout"), "verification_contracts.timeout")?);
-    if let Some(expected) = held_value(map.get("expected")) {
-        contract = contract.expecting(expected);
+    match map.get("id") {
+        None | Some(Value::Null) => {}
+        Some(_) => {
+            let id = text(map.get("id"), "verification_contracts.id")?;
+            let id = CheckId::parse(&id)
+                .ok_or_else(|| malformed("verification_contracts.id", "is not a check identity"))?;
+            contract = contract.identified_as(id);
+        }
+    }
+    // A present key is a stated expectation, null included; an absent one is none (§10.5).
+    if let Some(expected) = map.get("expected") {
+        contract = contract.expecting(expected.clone());
     }
     if let Some(domain) = optional_enumeration(
         map.get("equivalence_domain"),
@@ -2393,6 +2621,22 @@ fn held_value(source: Option<&Value>) -> Option<Value> {
     match source {
         None | Some(Value::Null) => None,
         Some(value) => Some(value.clone()),
+    }
+}
+
+/// A value whose `known` flag says whether a null is a known null or an unknown (§10.5).
+///
+/// A record written before the flag existed has none, and reads as it always did: null is unknown.
+fn known_value(
+    source: Option<&Value>,
+    known: Option<&Value>,
+    field: &str,
+) -> Result<Option<Value>, ErrorValue> {
+    match known {
+        None | Some(Value::Null) => Ok(held_value(source)),
+        Some(Value::Bool(true)) => Ok(Some(source.cloned().unwrap_or(Value::Null))),
+        Some(Value::Bool(false)) => Ok(None),
+        Some(_) => Err(malformed(field, "is not a boolean")),
     }
 }
 

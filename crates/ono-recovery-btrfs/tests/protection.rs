@@ -22,20 +22,10 @@ use ono_recovery_btrfs::{
 };
 use support::{FILESYSTEM, ROOT_ID, VAR_ID, fixture, mounts, provider, runner};
 
-/// Discovery of one subvolume: resolve, then list and measure.
-fn discovery_script(show: &str) -> Vec<ToolOutput> {
-    vec![
-        fixture("fs-show-mount"),
-        fixture(show),
-        fixture("subvol-list-root"),
-        fixture("subvol-list-root"),
-        fixture("fs-usage"),
-    ]
-}
-
 /// The three calls `create` makes.
 fn creation_script() -> Vec<ToolOutput> {
     vec![
+        fixture("subvolume-create"),
         fixture("snapshot-create"),
         fixture("subvol-show-snapshot"),
         fixture("snapshot-ro-flag"),
@@ -58,7 +48,8 @@ fn candidate(provider: &BtrfsProvider, path: &str) -> ono_change_core::RecoveryC
 
 #[test]
 fn should_propose_one_read_only_snapshot_per_subvolume_the_plan_changes() {
-    let provider = provider(discovery_script("subvol-show-root")).for_plan(support::plan_id());
+    let provider =
+        provider(support::discovery_script("subvol-show-root")).for_plan(support::plan_id());
     let candidate = candidate(&provider, support::NGINX_CONF);
     let actions = provider
         .plan_protection(&[candidate], ProtectionMode::Prefer)
@@ -86,7 +77,8 @@ fn should_propose_one_read_only_snapshot_per_subvolume_the_plan_changes() {
 
 #[test]
 fn should_place_the_snapshot_in_the_recovery_namespace_on_the_same_filesystem() {
-    let provider = provider(discovery_script("subvol-show-root")).for_plan(support::plan_id());
+    let provider =
+        provider(support::discovery_script("subvol-show-root")).for_plan(support::plan_id());
     let candidate = candidate(&provider, support::NGINX_CONF);
     let actions = provider
         .plan_protection(&[candidate], ProtectionMode::Prefer)
@@ -105,7 +97,7 @@ fn should_place_the_snapshot_in_the_recovery_namespace_on_the_same_filesystem() 
 
 #[test]
 fn should_refuse_a_snapshot_location_nested_inside_the_subvolume_being_snapshotted() {
-    let provider = provider(discovery_script("subvol-show-root"))
+    let provider = provider(support::discovery_script("subvol-show-root"))
         .with_config(BtrfsConfig::default().snapshots_in("@/.snapshots"));
     let candidate = candidate(&provider, support::NGINX_CONF);
     let error = provider
@@ -140,8 +132,81 @@ fn should_accept_a_recovery_namespace_beside_the_subvolumes_it_protects() {
 }
 
 #[test]
+fn should_make_the_recovery_namespace_before_the_first_snapshot_on_a_filesystem() {
+    // Appendix D.8: the namespace is a subvolume at the top level of the source's filesystem, and
+    // a filesystem Ono has never protected has none. The first protection makes it, before the
+    // snapshot that needs it, rather than failing on the missing directory.
+    let script = [
+        support::discovery_script("subvol-show-root"),
+        creation_script(),
+    ]
+    .concat();
+    let runner = runner(script);
+    let provider = BtrfsProvider::new(Arc::clone(&runner) as Arc<dyn ono_change_core::ToolRunner>)
+        .with_mounts(mounts())
+        .for_plan(support::plan_id());
+    let candidate = candidate(&provider, support::NGINX_CONF);
+    let actions = provider
+        .plan_protection(&[candidate], ProtectionMode::Prefer)
+        .expect("planning runs");
+
+    let asset = provider.create(&actions[0]).expect("creation runs");
+
+    let namespace = std::path::Path::new(asset.reference())
+        .parent()
+        .expect("a snapshot lives in its namespace")
+        .display()
+        .to_string();
+    let calls: Vec<Vec<String>> = runner.calls().into_iter().map(|(_, argv)| argv).collect();
+    let made = calls.iter().position(|argv| {
+        argv == &vec![
+            "subvolume".to_owned(),
+            "create".to_owned(),
+            namespace.clone(),
+        ]
+    });
+    let taken = calls
+        .iter()
+        .position(|argv| argv.get(1).is_some_and(|verb| verb == "snapshot"));
+    assert!(
+        matches!((made, taken), (Some(made), Some(taken)) if made < taken),
+        "Appendix D.8: the namespace {namespace} is made before the snapshot that needs it: \
+         {calls:?}"
+    );
+}
+
+#[test]
+fn should_name_a_snapshot_by_its_instant_when_no_plan_asked_for_it() {
+    // §37 tells one recovery point from another by its name. A session's provider is asked by no
+    // single plan, so the instant a snapshot is taken at keeps two of one subvolume apart — the
+    // shape the ZFS provider's names have too.
+    let runner = runner(support::discovery_script("subvol-show-root"));
+    let provider = BtrfsProvider::new(Arc::clone(&runner) as Arc<dyn ono_change_core::ToolRunner>)
+        .with_mounts(mounts())
+        .at_instant(jiff::Timestamp::from_second(1_767_225_600).expect("a valid instant"));
+    let candidate = candidate(&provider, support::NGINX_CONF);
+
+    let actions = provider
+        .plan_protection(&[candidate], ProtectionMode::Prefer)
+        .expect("planning runs");
+
+    assert!(
+        actions[0]
+            .proposed_asset()
+            .reference()
+            .ends_with("/ono-manual-20260101T000000Z-root"),
+        "§37: the snapshot is named by the instant it was proposed at: {}",
+        actions[0].proposed_asset().reference()
+    );
+}
+
+#[test]
 fn should_create_the_snapshot_with_the_read_only_flag_and_no_shell() {
-    let script = [discovery_script("subvol-show-root"), creation_script()].concat();
+    let script = [
+        support::discovery_script("subvol-show-root"),
+        creation_script(),
+    ]
+    .concat();
     let runner = runner(script);
     let provider = BtrfsProvider::new(Arc::clone(&runner) as Arc<dyn ono_change_core::ToolRunner>)
         .with_mounts(mounts())
@@ -182,8 +247,9 @@ fn should_create_the_snapshot_with_the_read_only_flag_and_no_shell() {
 #[test]
 fn should_verify_the_read_only_flag_after_creation_rather_than_assuming_it() {
     let script = [
-        discovery_script("subvol-show-root"),
+        support::discovery_script("subvol-show-root"),
         vec![
+            fixture("subvolume-create"),
             fixture("snapshot-create"),
             fixture("subvol-show-snapshot"),
             ToolOutput::ok("ro=false\n"),
@@ -204,7 +270,11 @@ fn should_verify_the_read_only_flag_after_creation_rather_than_assuming_it() {
 
 #[test]
 fn should_take_the_creation_instant_from_the_filesystem_rather_than_from_a_clock() {
-    let script = [discovery_script("subvol-show-root"), creation_script()].concat();
+    let script = [
+        support::discovery_script("subvol-show-root"),
+        creation_script(),
+    ]
+    .concat();
     let provider = provider(script).for_plan(support::plan_id());
     let candidate = candidate(&provider, support::NGINX_CONF);
     let actions = provider
@@ -221,7 +291,11 @@ fn should_take_the_creation_instant_from_the_filesystem_rather_than_from_a_clock
 
 #[test]
 fn should_carry_the_nested_subvolume_exclusions_onto_the_created_asset() {
-    let script = [discovery_script("subvol-show-var"), creation_script()].concat();
+    let script = [
+        support::discovery_script("subvol-show-var"),
+        creation_script(),
+    ]
+    .concat();
     let provider = provider(script).for_plan(support::plan_id());
     let candidate = candidate(&provider, "/mnt/root/var/log/syslog");
     let actions = provider
@@ -243,7 +317,8 @@ fn should_carry_the_nested_subvolume_exclusions_onto_the_created_asset() {
 
 #[test]
 fn should_refuse_to_snapshot_a_subvolume_that_is_not_mounted() {
-    let provider = provider(discovery_script("subvol-show-root")).for_plan(support::plan_id());
+    let provider =
+        provider(support::discovery_script("subvol-show-root")).for_plan(support::plan_id());
     let mut candidate = candidate(&provider, support::NGINX_CONF);
     candidate = ono_change_core::RecoveryCandidate::new(
         ono_recovery_btrfs::PROVIDER_ID,
@@ -267,7 +342,7 @@ fn should_refuse_to_snapshot_a_subvolume_that_is_not_mounted() {
 
 #[test]
 fn should_create_no_assets_when_protection_is_off() {
-    let provider = provider(discovery_script("subvol-show-root"));
+    let provider = provider(support::discovery_script("subvol-show-root"));
     let candidate = candidate(&provider, support::NGINX_CONF);
     assert!(
         provider
@@ -296,10 +371,11 @@ fn should_sanitise_a_plan_name_that_carries_command_syntax() {
 #[test]
 fn should_not_claim_filesystem_consistency_across_two_subvolumes_snapshotted_in_turn() {
     let script = [
-        discovery_script("subvol-show-root"),
+        support::discovery_script("subvol-show-root"),
         creation_script(),
-        discovery_script("subvol-show-var"),
+        support::discovery_script("subvol-show-var"),
         vec![
+            fixture("subvolume-create"),
             fixture("snapshot-create"),
             ToolOutput::ok(
                 fixture("subvol-show-snapshot")
@@ -349,7 +425,11 @@ fn should_not_claim_filesystem_consistency_across_two_subvolumes_snapshotted_in_
 
 #[test]
 fn should_keep_a_single_subvolume_set_at_the_consistency_its_member_has() {
-    let script = [discovery_script("subvol-show-root"), creation_script()].concat();
+    let script = [
+        support::discovery_script("subvol-show-root"),
+        creation_script(),
+    ]
+    .concat();
     let provider = provider(script).for_plan(support::plan_id());
     let candidate = candidate(&provider, support::NGINX_CONF);
     let actions = provider
@@ -370,8 +450,8 @@ fn should_keep_a_single_subvolume_set_at_the_consistency_its_member_has() {
 #[test]
 fn should_retain_the_first_snapshot_when_the_second_one_fails() {
     let script = [
-        discovery_script("subvol-show-root"),
-        discovery_script("subvol-show-var"),
+        support::discovery_script("subvol-show-root"),
+        support::discovery_script("subvol-show-var"),
         creation_script(),
         vec![fixture("snapshot-exists")],
     ]
@@ -462,7 +542,8 @@ fn should_track_a_writable_subvolume_derived_from_a_snapshot_as_its_own_asset() 
 
 #[test]
 fn should_report_the_filesystem_and_subvolume_a_protection_action_names() {
-    let provider = provider(discovery_script("subvol-show-root")).for_plan(support::plan_id());
+    let provider =
+        provider(support::discovery_script("subvol-show-root")).for_plan(support::plan_id());
     let candidate = candidate(&provider, support::NGINX_CONF);
     let actions = provider
         .plan_protection(&[candidate], ProtectionMode::Prefer)
@@ -478,5 +559,97 @@ fn should_report_the_filesystem_and_subvolume_a_protection_action_names() {
     assert!(
         actions[0].summary().contains("/mnt/top/@snapshots/"),
         "and `destination_path`, which is the other half of what D.6 asks it to name"
+    );
+}
+
+#[test]
+fn should_name_a_nested_subvolume_snapshot_after_its_whole_tree_path() {
+    assert_eq!(snapshot_name("a82f", "@var/cache"), "ono-a82f-var-cache");
+    assert_ne!(
+        snapshot_name("a82f", "@var/cache"),
+        snapshot_name("a82f", "@cache"),
+        "§43.6 and Appendix D.8: `@var/cache` and `@cache` are two subvolumes, and one plan's \
+         snapshots of both need two names"
+    );
+    assert_eq!(
+        snapshot_name("a82f", "@var/lib-app"),
+        "ono-a82f-var-lib-app"
+    );
+}
+
+#[test]
+fn should_describe_a_writable_snapshot_as_writable_when_read_only_is_not_preferred() {
+    let provider = provider(support::discovery_script("subvol-show-root"))
+        .with_config(BtrfsConfig::default().preferring_read_only(false));
+    let candidate = candidate(&provider, support::NGINX_CONF);
+    assert!(
+        !candidate.detail().contains("read-only"),
+        "§53's `prefer_read_only_snapshots = false` makes the snapshot writable, and the \
+         candidate may not promise otherwise: {}",
+        candidate.detail()
+    );
+    assert!(candidate.detail().contains("writable"));
+}
+
+#[test]
+fn should_record_on_every_created_asset_that_the_plan_s_snapshots_share_no_common_point() {
+    let script = [
+        support::discovery_script("subvol-show-root"),
+        creation_script(),
+    ]
+    .concat();
+    let provider = provider(script).for_plan(support::plan_id());
+    let candidate = candidate(&provider, support::NGINX_CONF);
+    let actions = provider
+        .plan_protection(&[candidate], ProtectionMode::Prefer)
+        .expect("planning runs");
+    let asset = provider.create(&actions[0]).expect("creation runs");
+    let sequential = asset
+        .exclusions()
+        .iter()
+        .find(|exclusion| exclusion.subject() == ono_recovery_btrfs::SEQUENTIAL_CREATION)
+        .expect(
+            "Appendix D.7: a member of a multi-subvolume set records that the snapshots were \
+             created one after another, on the asset itself, so whoever composes the set cannot \
+             miss it",
+        );
+    assert!(sequential.reason().contains("Appendix D.7"));
+}
+
+#[test]
+fn should_snapshot_a_nested_subvolume_that_is_not_mounted_itself() {
+    let script = [
+        vec![
+            fixture("fs-show-mount"),
+            fixture("subvol-show-nested"),
+            fixture("subvol-list-root"),
+            fixture("subvol-list-root"),
+            fixture("fs-usage"),
+        ],
+        vec![fixture("subvol-show-nested")],
+        creation_script(),
+    ]
+    .concat();
+    let runner = runner(script);
+    let provider = BtrfsProvider::new(Arc::clone(&runner) as Arc<dyn ono_change_core::ToolRunner>)
+        .with_mounts(mounts())
+        .for_plan(support::plan_id());
+    let candidate = candidate(&provider, "/mnt/root/var/lib-app");
+    let actions = provider
+        .plan_protection(&[candidate], ProtectionMode::Prefer)
+        .expect("planning runs");
+    provider
+        .create(&actions[0])
+        .expect("§14.3: the nested subvolume gets a snapshot of its own");
+    let snapshot = runner
+        .calls()
+        .into_iter()
+        .find(|(_, argv)| argv.get(1).is_some_and(|second| second == "snapshot"))
+        .expect("a snapshot was taken");
+    assert_eq!(
+        snapshot.1.get(3).map(String::as_str),
+        Some("/mnt/root/var/lib-app"),
+        "it is reached through the mount of the subvolume it is nested in, after `btrfs \
+         subvolume show` confirmed the path is subvolume 260"
     );
 }

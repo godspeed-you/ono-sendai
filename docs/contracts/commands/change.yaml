@@ -53,6 +53,7 @@ commands:
       - {name: opaque, type: bool, doc: "Permit an action Ono cannot reason about, as §6.3's explicit escape. Its impact and reversibility are classified unknown, and Appendix A.7 caps the plan's protection at partially protected. Refused unless `change.allow_opaque_actions` is set (§53)."}
       - {name: expires, type: duration, doc: "How long the sealed plan stays appliable (§4.1's `EXPIRED`). After it, `apply` refuses and `rebase` resolves the plan again."}
       - {name: one-per-object, type: bool, doc: "Produce one plan per input object rather than one plan over the frozen set (§5.3). The default is one plan, because §2.6 freezes membership and a single plan is what carries that."}
+      - {name: auto-recover, type: bool, doc: "Declare §26.3 automatic recovery after verification failure. Rejected at seal unless all six of §26.3's conditions hold — which, in this build, they cannot: no recovery plan can be built before the plan's protection exists, and no policy enables it (§26.1: off by default)."}
     confirmation: bulk
     privilege: none
     streaming: false
@@ -61,7 +62,9 @@ commands:
     note: >-
       §2.1: creating or inspecting a plan MUST NOT mutate the target system. §6.4: a plan intended
       for application is resolved against present state, so from a historical coordinate this
-      answers `change.historical_context_read_only` and `now` is the way back.
+      answers `change.historical_context_read_only` and `now` is the way back. §29.1: this build
+      freezes targets only on the machine the shell runs on, so inside an entered link it answers
+      `change.action_not_plannable`, names the link and seals nothing (ADR-0844).
     examples:
       - plan restart service nginx
       - plan update package openssl --protection require
@@ -153,6 +156,7 @@ commands:
     selectors:
       - {name: reference, type: "ref<ono.change-plan/1>", doc: "The plan to resume (§41.3)."}
     options:
+      - {name: accept-newer-state-loss, type: bool, doc: "For a recovery plan: acknowledge the newer state and provider-native history the resumed recovery would destroy (§24.5, §13.6). A resumed recovery passes the same gate as its first run."}
       - {name: confirm, type: bool, doc: "Required outside an interactive session, because resuming is a commitment like `apply` (§40.3)."}
     confirmation: always
     privilege: conditional
@@ -202,7 +206,6 @@ commands:
     selectors:
       - {name: plan, type: "ref<ono.change-plan/1>", doc: "The plan whose protection to materialise (§5.5)."}
     options:
-      - {name: refresh, type: bool, doc: "Replace an existing asset whose captured state has drifted, rather than accepting it as stale (§18.3)."}
       - {name: confirm, type: bool, doc: "Required outside an interactive session. §5.5: protection is a real mutation of the storage or control plane, and it is visible in history."}
     confirmation: always
     privilege: conditional
@@ -234,7 +237,7 @@ commands:
       - {name: accept-newer-state-loss, type: bool, doc: "For a recovery plan: acknowledge the newer state and the provider-native history the recovery would destroy (§24.5, §13.6). Nothing destructive runs without it."}
       - {name: accept-stale-protection, type: bool, doc: "Accept a recovery asset captured before the state drifted, rather than creating a fresh one (§18.3)."}
       - {name: confirm, type: bool, doc: "Required outside an interactive session for a plan carrying any gate (§40.3)."}
-    confirmation: always
+    confirmation: gated
     privilege: conditional
     streaming: true
     phase: P
@@ -259,7 +262,7 @@ commands:
     selectors:
       - {name: plan, type: "ref<ono.change-plan/1>", doc: "The plan to verify (§5.7)."}
     options:
-      - {name: timeout, type: duration, doc: "Bound the whole verification. Individual checks carry their own timeouts, and §23.5 forbids infinite waiting in either."}
+      - {name: timeout, type: duration, doc: "Bound every check of this run: each waits at most this long, or its own contract's timeout where that is shorter. §23.5 forbids infinite waiting either way, and a check that runs out is TIMED_OUT, never a pass."}
     privilege: none
     streaming: true
     phase: P
@@ -267,6 +270,8 @@ commands:
       §2.14: verification is separate from execution success. `apply` runs this automatically; it
       can be run again later while the evidence it needs is still available (§5.7). For a recovery
       plan it reports per equivalence domain, and §25.3 forbids a claim wider than the domain.
+      Every result is emitted; when a required check failed or could not be answered, the stream
+      then ends with `change.verification_failed` (§23.3, ADR-0842).
     examples:
       - verify a82f
 

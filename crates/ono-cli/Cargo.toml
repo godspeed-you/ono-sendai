@@ -13,6 +13,8 @@ name = "ono"
 path = "src/main.rs"
 
 [dependencies]
+# v0.6 §32.2: the size of a filesystem mounted beneath a recursive removal, from statvfs(3).
+nix = { workspace = true, features = ["fs"] }
 bytes.workspace = true
 async-trait.workspace = true
 futures.workspace = true

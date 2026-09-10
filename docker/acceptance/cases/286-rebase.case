@@ -1,0 +1,75 @@
+# v0.6 §50 phase P2 — §7.5: rebase creates a new revision and leaves the original exactly as it
+# was.
+#
+# The sealed plan is immutable (§4.4), so the answer to drift is a new revision rather than an
+# edit. §7.5 requires the one it came from to stay inspectable: the plan that was refused is the
+# evidence for why, and a rebase that overwrote it would destroy the reason it happened.
+case: rebase opens the next revision and leaves the sealed one alone
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+
+  mkdir -p "$HOME/etc"
+  printf 'one\n' > "$HOME/etc/target"
+  printf 'two\n' > "$HOME/etc/source"
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/target --overwrite | to json" > /tmp/rb0.txt 2>&1
+  id=$(plan_id /tmp/rb0.txt)
+  first_digest=$(sed -n 's/.*"digest":"\([0-9a-f]\{64\}\)".*/\1/p' /tmp/rb0.txt | head -1)
+  prove rb0 "the first revision has an identity and a digest (§4.4)" \
+    '[ -n "'"$id"'" ] && [ -n "'"$first_digest"'" ]'
+
+  echo '== §4.4: a sealed plan is immutable, so drift is answered with a revision =='
+  printf 'three\n' > "$HOME/etc/target"
+  ono -c "apply $id" > /tmp/rb1.txt 2>&1
+  prove rb1a "the apply refuses on drift (§7.3)" 'grep -q "change.plan_drift_detected" /tmp/rb1.txt'
+  prove rb1b "and the refusal names rebase as the way forward, in a spelling that works (§7.5)" \
+    "grep -qE 'rebase plan (plan/)?${id:0:4}' /tmp/rb1.txt"
+
+  echo '== §7.5: the rebase is a new revision =='
+  ono -c "rebase plan $id | to json" > /tmp/rb2.txt 2>&1
+  prove rb2a "rebase answers with revision 2 of the same plan, sealed (§7.5)" \
+    "grep -q '^\[{\"id\":\"$id\",\"revision\":2,\"kind\":\"change\",\"state\":\"sealed\"' /tmp/rb2.txt"
+  ono -c "get plan $id | select id revision digest | to json" > /tmp/rb2s.txt 2>&1
+  prove rb2c "the latest revision carries the same identity, because it is the same plan (§7.5)" \
+    "grep -q '^\[{\"id\":\"$id\",\"revision\":2,' /tmp/rb2s.txt"
+  prove rb2d "and a different digest, because it was resolved against a different world (§4.4)" \
+    "grep -q '\"digest\":\"[0-9a-f]\{64\}\"' /tmp/rb2s.txt && ! grep -q '\"digest\":\"$first_digest\"' /tmp/rb2s.txt"
+
+  echo '== §7.5: the refused revision is still there, exactly as it was =='
+  prove rb3a "revision 1 can still be read, sealed, with the digest it was sealed with (§7.5, §4.4)" \
+    "[ \"\$(ono -c 'get plan $id --revision 1 | select revision digest state | to json' 2>&1)\" = '[{\"revision\":1,\"digest\":\"$first_digest\",\"state\":\"sealed\"}]' ]"
+
+  echo '== §7.5: the rebased revision applies, because its world is the one it saw =='
+  ono -c "apply $id" > /tmp/rb4.txt 2>&1
+  prove rb4a "the newest revision applies and verifies (§7.3, §4.8)" \
+    "ono -c 'get plan $id | select state | to json' 2>&1 | grep -qx '\[{\"state\":\"verified\"}\]'"
+  prove rb4b "and the file is what the rebased revision said it would write" \
+    "[ \"\$(cat $HOME/etc/target)\" = 'two' ]"
+  prove rb4c "and revision 1 is still sealed and unapplied beside it (§7.5)" \
+    "[ \"\$(ono -c 'get plan $id --revision 1 | select state | to json' 2>&1)\" = '[{\"state\":\"sealed\"}]' ]"
+
+  echo 'rebase: done'
+exit: 0
+stdout-contains: PROVED rb0
+stdout-contains: PROVED rb1a
+stdout-contains: PROVED rb1b
+stdout-contains: PROVED rb2a
+stdout-contains: PROVED rb2c
+stdout-contains: PROVED rb2d
+stdout-contains: PROVED rb3a
+stdout-contains: PROVED rb4a
+stdout-contains: PROVED rb4b
+stdout-contains: PROVED rb4c
+stdout-contains: rebase: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

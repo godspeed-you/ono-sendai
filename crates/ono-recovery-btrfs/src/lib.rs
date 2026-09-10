@@ -61,6 +61,7 @@
 #![forbid(unsafe_code)]
 
 pub mod assets;
+pub mod boot;
 pub mod boundary;
 pub mod config;
 pub mod error;
@@ -73,7 +74,11 @@ pub mod runner;
 pub mod safety;
 pub mod subvolume;
 
-pub use assets::{ProtectionShortfall, RecoveryAssetSet, SetAtomicity};
+pub use assets::{
+    ProtectionShortfall, RecoveryAssetSet, SEQUENTIAL_CREATION, SEQUENTIAL_CREATION_REASON,
+    SetAtomicity,
+};
+pub use boot::{BootSelection, KERNEL_CMDLINE, boot_selection};
 pub use boundary::{RequiredProtection, RequiredSubvolume, SubvolumeBoundary, SubvolumeLayout};
 pub use config::{
     BtrfsConfig, DEFAULT_SNAPSHOT_LOCATION, RootRecovery, sanitised_name, snapshot_name,

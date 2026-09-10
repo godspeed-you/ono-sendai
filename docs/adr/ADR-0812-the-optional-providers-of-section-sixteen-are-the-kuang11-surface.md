@@ -1,6 +1,6 @@
 # ADR-0812: §16's optional providers are the KUANG/11 surface, and the vocabulary is ready for them
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0833
 - Date: 2026-09-09
 - Spec refs: v0.6 §0.4, §16, §48.2, §48.5, §63, Appendix D.10, Appendix G
 - Decided by: agent (autonomous)

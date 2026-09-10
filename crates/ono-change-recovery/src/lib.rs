@@ -56,7 +56,7 @@ pub mod remote;
 pub mod verify;
 
 pub use auto::admits_auto_recovery;
-pub use builder::{RecoveryRequest, plan_recovery};
+pub use builder::{RecoveryRequest, plan_recovery, plan_recovery_explained};
 pub use conflict::{ConflictRequest, ObjectObservation, ObservedState, analyse};
 pub use gate::{conflicting_objects, destroyed_objects, unestablished_objects};
 pub use method::{

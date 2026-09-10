@@ -801,7 +801,9 @@ errors:
     summary: Another session is applying this plan.
     help: >-
       v0.6 §42.4: the plan store prevents two sessions from applying one sealed plan at once. The
-      metadata names the holder and when the claim was taken. Nothing was changed here.
+      metadata names the holder session and, where the store recorded it, its process id
+      (`holder_pid`). A claim whose process has exited is taken over at once (ADR-0842). Nothing
+      was changed here.
   - code: Ono-Sendai-E1705
     name: change.plan_drift_detected
     kind: conflict
@@ -868,6 +870,8 @@ errors:
       v0.6 §6.1: an operation is plannable only where a contract declares its target schema,
       mutation semantics, capabilities, preconditions, effects, execution method, idempotency
       class, recovery semantics and verification options. The metadata names what is missing.
+      Inside an entered link, `plan` answers this too: this build freezes targets only on the
+      machine the shell runs on, and leaving the link plans there (§29.1, ADR-0844).
   - code: Ono-Sendai-E1714
     name: change.opaque_action_forbidden
     kind: safety
@@ -913,7 +917,9 @@ errors:
     summary: A required postcondition did not hold after the change.
     help: >-
       v0.6 §2.14 and §23.2: a command that returned success has not proved that the intended state
-      exists. The plan is FAILED and its recovery assets are retained (§37.2).
+      exists. The plan is FAILED and its recovery assets are retained (§37.2). `verify` ends its
+      stream with this after every per-check result, so a script reads the answers and the exit
+      status both (§23.3, ADR-0842).
   - code: Ono-Sendai-E1720
     name: change.verification_unknown
     kind: provider
@@ -947,11 +953,12 @@ errors:
   - code: Ono-Sendai-E1724
     name: change.bulk_guard_failed
     kind: safety
-    summary: A bulk plan reaches further than its configured guard permits.
+    summary: A bulk plan would leave no healthy serving member of a targeted group, and the outage was not acknowledged.
     help: >-
-      v0.6 §28.3 and §53's `change.bulk` settings: scope is a risk dimension of its own. The
-      metadata names the target count and the guard. Narrow the selection, raise the guard
-      deliberately, or acknowledge the risk.
+      v0.6 §28.3 and §40.2: the guard that no healthy serving member of a targeted group is
+      excluded. The metadata carries the plan, its risk class and the rules' own reasons. Acknowledge
+      the outage with `--accept-service-outage`; a script supplies it as a flag and never waits for
+      a prompt (§40.3). Nothing was changed.
   - code: Ono-Sendai-E1725
     name: change.remote_state_unknown
     kind: provider

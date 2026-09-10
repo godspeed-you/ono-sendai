@@ -20,6 +20,7 @@ use ono_change_core::{
     ChangePlan, Intent, PlanId, RecoveryAsset, RecoveryAssetType, RecoveryExclusion, RecoveryScope,
     ScriptedRunner, ToolOutput,
 };
+use ono_recovery_btrfs::parse::parse_filesystem_show;
 use ono_recovery_btrfs::{BtrfsMounts, BtrfsProvider, RecordedFiles, SCOPE_KIND, SubvolumeRef};
 
 /// The program the provider runs, and the key the scripted runner answers on.
@@ -117,9 +118,88 @@ pub fn runner(outputs: Vec<ToolOutput>) -> Arc<ScriptedRunner> {
     )
 }
 
-/// The mount table the fixtures were recorded against (Appendix B.1).
+/// The mount table the fixtures were recorded against (Appendix B.1), each mount tied to the
+/// filesystem UUID the recorded `btrfs filesystem show` names for its device (§56.2).
 pub fn mounts() -> BtrfsMounts {
+    unidentified_mounts()
+        .identified_by(&[parse_filesystem_show(fixture("fs-show").stdout())
+            .expect("the recorded listing parses")])
+}
+
+/// The recorded mount table alone, before any filesystem UUID is attached to it.
+pub fn unidentified_mounts() -> BtrfsMounts {
     BtrfsMounts::from_mountinfo(fixture("mountinfo").stdout())
+}
+
+/// A kernel command line that boots the recorded filesystem and selects `@` by name.
+///
+/// Stated by the test rather than recorded: the fixtures were taken in a container whose kernel
+/// did not boot from this filesystem. It is the shape `grub-mkconfig` writes for a root on a
+/// Btrfs subvolume — `root=UUID=<filesystem>` plus `rootflags=subvol=@`.
+pub fn boot_by_name() -> String {
+    format!("BOOT_IMAGE=/vmlinuz root=UUID={FILESYSTEM} ro rootflags=subvol=@ quiet")
+}
+
+/// The recorded file contents, plus a kernel command line the test states (§14.6).
+pub fn booting(cmdline: &str) -> RecordedFiles {
+    recorded_files().holding(ono_recovery_btrfs::KERNEL_CMDLINE, format!("{cmdline}\n"))
+}
+
+/// The subvolume id a derived writable subvolume is retold with — the next one the recorded
+/// filesystem would hand out after the three snapshots `subvol-list-after.txt` lists.
+pub const DERIVED_ID: u64 = 264;
+
+/// The recorded `subvolume show` of a snapshot, retold as a writable subvolume derived from it.
+///
+/// The fixtures record no derived subvolume, so this takes the recorded snapshot and changes
+/// exactly what `btrfs subvolume snapshot <snapshot> <name>` changes: a new UUID, the snapshot's
+/// own UUID as the parent, the new name, and no read-only flag (§14.5).
+pub fn derived_from(snapshot: &ToolOutput, name: &str) -> ToolOutput {
+    let text = snapshot.stdout();
+    let uuid = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("UUID:"))
+        .map(str::trim)
+        .expect("the recorded snapshot carries a UUID")
+        .to_owned();
+    let parent = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Parent UUID:"))
+        .map(str::trim)
+        .expect("the recorded snapshot carries a parent UUID")
+        .to_owned();
+    let header = text.lines().next().expect("a header line").to_owned();
+    let leaf = header.rsplit('/').next().unwrap_or(&header).to_owned();
+    let id_line = text
+        .lines()
+        .find(|line| line.trim().starts_with("Subvolume ID:"))
+        .expect("the recorded snapshot carries a subvolume id")
+        .to_owned();
+    let id: u64 = id_line
+        .trim()
+        .trim_start_matches("Subvolume ID:")
+        .trim()
+        .parse()
+        .expect("a numeric id");
+    ToolOutput::ok(
+        text.replace(
+            &id_line,
+            &id_line.replace(&id.to_string(), &DERIVED_ID.to_string()),
+        )
+        .replace(&parent, "PARENT-PLACEHOLDER")
+        .replace(&uuid, "0d3e5c7a-2b1f-4c9e-8a6d-5f4e3d2c1b0a")
+        .replace("PARENT-PLACEHOLDER", &uuid)
+        .replace(&leaf, name)
+        .replace("Flags: \t\t\treadonly", "Flags: \t\t\t-"),
+    )
+}
+
+/// A recorded `subvolume show`, retold at a later generation — the subvolume written since.
+pub fn at_generation(show: &ToolOutput, generation: u64) -> ToolOutput {
+    ToolOutput::ok(show.stdout().replace(
+        "Generation: \t\t9",
+        &format!("Generation: \t\t{generation}"),
+    ))
 }
 
 /// A provider over the recorded mounts, answering from `outputs`.
@@ -261,4 +341,16 @@ pub fn var_snapshot_show() -> ToolOutput {
 pub fn replacing(mut script: Vec<ToolOutput>, index: usize, output: ToolOutput) -> Vec<ToolOutput> {
     script[index] = output;
     script
+}
+
+/// What `discover` reads for a path on the recorded filesystem, with `show` as the
+/// subvolume it resolves to.
+pub fn discovery_script(show: &str) -> Vec<ToolOutput> {
+    vec![
+        fixture("fs-show-mount"),
+        fixture(show),
+        fixture("subvol-list-root"),
+        fixture("subvol-list-root"),
+        fixture("fs-usage"),
+    ]
 }

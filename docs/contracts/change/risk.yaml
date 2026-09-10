@@ -4,8 +4,9 @@
 # §19.2 is the sentence this file exists to satisfy: "These classes are rule-based, not
 # AI-generated", and §62.11 repeats it — AI may explain or propose, and may not upgrade unknown to
 # guaranteed. So risk in Ono has exactly one source, and it is a table. Every finding names the
-# rule that made it, and `xtask/src/change.rs::check_risk_rules` holds this list against the rules
-# the engine actually registers, in both directions.
+# rule that made it, and `xtask/src/change.rs::check_risk_gates` holds this list's ids and
+# dimensions against the rules the engine registers (`ono_change_impact::rules()`), in both
+# directions.
 #
 # §19.1 keeps risk independent of protection, and it is worth stating plainly because the two are
 # easy to conflate: restoring a root filesystem snapshot is PROTECTED and needs a reboot and
@@ -43,8 +44,13 @@ dimensions:
 
 # The built-in rules. Every one is deterministic and reads only what the plan and the topology
 # already say; none of them consults a model, and §62.11 is why.
+#
+# `emits` is the strongest class a rule's finding can carry, read off
+# `crates/ono-change-impact/src/risk.rs` by hand. The engine's `RiskRuleSpec` does not expose a
+# class — each evaluation chooses one — so `check_risk_gates` checks only that `emits` names a
+# §19.2 class. Two rules choose between two classes, and their `doc` says when.
 rules:
-  - {id: risk.scope.single-object, dimension: scope, emits: low, doc: "One object, one provider, bounded effects."}
+  - {id: risk.scope.single-object, dimension: scope, emits: moderate, doc: "§19.3's first example: the plan changes one object, such as one replaced configuration file."}
   - {id: risk.scope.multi-object, dimension: scope, emits: moderate, doc: "More than one object of more than one kind."}
   - {id: risk.bulk.warn-threshold, dimension: bulk-count, emits: moderate, doc: "§28.3: above `change.bulk.warn_targets`."}
   - {id: risk.bulk.high-threshold, dimension: bulk-count, emits: high, doc: "§28.3: above `change.bulk.high_risk_targets`."}
@@ -55,9 +61,9 @@ rules:
   - {id: risk.downtime.service-restart, dimension: downtime, emits: moderate, doc: "A restart that interrupts listeners or in-flight requests."}
   - {id: risk.unknown.impact, dimension: unknown-impact, emits: unknown, doc: "§9.6: the graph has boundaries, the plan has UNKNOWN effects, or it carries an opaque action."}
   - {id: risk.reboot.required, dimension: reboot-requirement, emits: high, doc: "§30.5: a reboot is required rather than recommended."}
-  - {id: risk.remote.fanout, dimension: remote-fanout, emits: high, doc: "§29: the plan reaches several hosts, and §29.1 forbids implying global atomicity over them."}
+  - {id: risk.remote.fanout, dimension: remote-fanout, emits: high, doc: "§29: the plan reaches several hosts, and §29.1 forbids implying global atomicity over them. HIGH from `change.bulk.warn_targets` hosts up, MODERATE below."}
   - {id: risk.remote.link-loss, dimension: remote-fanout, emits: critical, doc: "§34.2: the plan may remove the transport path this active Ono link depends on. Appendix I.3's scenario, and the one landmark that must be impossible to miss."}
-  - {id: risk.recovery.complexity, dimension: recovery-complexity, emits: high, doc: "§13.7 and §14.6: recovery would need an offline or next-boot method."}
+  - {id: risk.recovery.complexity, dimension: recovery-complexity, emits: high, doc: "§13.7 and §14.6: HIGH where recovery would need an offline method, MODERATE where it would need a subvolume replacement that completes at the next boot (§14.4)."}
 
 # §19.4's gates. Both are acknowledgements stored in the sealed revision, so giving one re-seals
 # the plan — a plan that has been accepted is not the same sealed object as one that has not.
@@ -66,4 +72,4 @@ gates:
   - {id: risk, applies_to: [high, critical], flag: "--accept-risk", error: change.risk_not_accepted, doc: "§19.4, §40.2. The refusal names the actual reason rather than asking a generic question."}
   - {id: irreversible, applies_to: [any-class], flag: "--accept-irreversible", error: change.irreversible_not_accepted, doc: "§19.4: a plan containing a known irreversible action requires this whatever its class."}
   - {id: newer-state-loss, applies_to: [recovery], flag: "--accept-newer-state-loss", error: recovery.destructive_history_not_accepted, doc: "§24.5 and §13.6: no recovery execution occurs without the explicit gate."}
-  - {id: service-outage, applies_to: [critical], flag: "--accept-service-outage", error: change.bulk_guard_failed, doc: "§40.2's worked gate: no healthy serving member of the targeted group is excluded."}
+  - {id: service-outage, applies_to: [critical], flag: "--accept-service-outage", error: change.bulk_guard_failed, doc: "§40.2's worked gate, answered by `--accept-service-outage` and refused with `change.bulk_guard_failed`. It stands in for the risk gate where every finding at the plan's class comes from `risk.bulk.whole-role` or `risk.downtime.service-restart` — the findings that say no healthy serving member of the targeted group is excluded (§28.3)."}

@@ -168,4 +168,12 @@ pub fn load(session: &mut Session, options: &Options, reporter: &Reporter) {
     //
     // §32.1 is unaffected: with recording off this opens nothing and touches no filesystem.
     crate::temporal::configure_from(session.settings());
+
+    // v0.6 §53: the change settings are read once every layer is in, for the same reason. A key
+    // that cannot be read keeps its default and is reported here, where every other configuration
+    // problem is, rather than disappearing into a silent default.
+    for problem in crate::change::configure_from(session.settings()) {
+        reporter.error(&problem);
+        session.settings_mut().note_problem(&problem);
+    }
 }

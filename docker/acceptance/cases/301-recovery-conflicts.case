@@ -1,0 +1,76 @@
+# v0.6 §50 phase P2 — Appendix C.3 and C.4: recovery must expose the loss of newer state, and
+# must never destroy it merely because an older recovery point exists.
+#
+# Appendix C.3 classifies what a method would do to state written after the recovery point:
+# preserved by the method, discarded by it, conflicting with the restore, or unknown. C.4 is the
+# worked example this case reproduces: the target file was edited again after the plan, so a
+# selective restore would discard that edit, and the plan MUST show it as a target-level conflict.
+# §24.5 makes the acceptance its own flag; `--confirm` alone commits to nothing of the kind.
+case: what recovery would destroy is named as a conflict before it is asked for
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+
+  mkdir -p "$HOME/etc"
+  printf 'original\n' > "$HOME/etc/target"
+  printf 'changed\n' > "$HOME/etc/source"
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/target --overwrite | to json" > /tmp/rc0.json 2>&1
+  id=$(plan_id /tmp/rc0.json)
+  ono -c "apply $id" > /dev/null 2>&1
+
+  echo '== Appendix C.4: an object changed again after the recovery point is a conflict =='
+  printf 'edited by hand after the change\n' > "$HOME/etc/target"
+  ono -c "recover $id" > /tmp/rc1.txt 2>&1
+  ono -c "recover $id | to json" > /tmp/rc1.json 2>&1
+  rid=$(plan_id /tmp/rc1.json)
+  prove rc1a "the target is classified CONFLICTING, not UNKNOWN (Appendix C.3, C.4)" \
+    "grep -q '\"newer_state\":\[{\"object\":\"$HOME/etc/target\",\"class\":\"conflicting\"' /tmp/rc1.json"
+  prove rc1b "the view reports the newer state with its scope, before the restore detail (§24.3, Appendix E.6)" \
+    "[ \"\$(grep -nx 'NEWER STATE AT RISK' /tmp/rc1.txt | cut -d: -f1)\" -lt \"\$(grep -nx 'RESTORE TARGET' /tmp/rc1.txt | cut -d: -f1)\" ] && grep -qx '  1 object changed after the recovery point' /tmp/rc1.txt"
+  prove rc1c "and lists the edit it would discard, target by target (Appendix C.4)" \
+    "sed -n '/^will discard\$/,/^\$/p' /tmp/rc1.txt | grep -q '^  ! '"
+  prove rc1d "the plan performed nothing (§2.11)" 'grep -qx "RECOVERY NOT EXECUTED" /tmp/rc1.txt'
+  prove rc1e "and the edit is still there" \
+    "[ \"\$(cat $HOME/etc/target)\" = 'edited by hand after the change' ]"
+
+  echo '== §24.5: a method that would discard newer state needs its own acceptance =='
+  prove rc2a "the recovery plan says it requires the acceptance (§24.5, §40.2)" \
+    'grep -q "\"requires_acceptance\":true" /tmp/rc1.json && grep -q "accept-newer-state-loss" /tmp/rc1.txt'
+  ono -c "apply $rid --confirm" > /tmp/rc2.txt 2>&1
+  prove rc3a "applying with \`--confirm\` and without the acceptance refuses, with a recovery code (§2.12, §24.5)" \
+    'grep -qE "recovery\.newer_state_conflict|recovery\.destructive_history_not_accepted" /tmp/rc2.txt'
+  prove rc3b "and the edit survives the refusal (§2.12)" \
+    "[ \"\$(cat $HOME/etc/target)\" = 'edited by hand after the change' ]"
+
+  echo '== §2.12: with the acceptance, what it destroys was named first =='
+  ono -c "apply $rid --accept-newer-state-loss --confirm" > /tmp/rc3.txt 2>&1
+  prove rc4a "the object is the one the asset captured (§15.4)" \
+    "[ \"\$(cat $HOME/etc/target)\" = 'original' ]"
+  prove rc4b "and the recovery verified (§25.1)" \
+    "[ \"\$(ono -c 'get plan $rid | select state | to json' 2>&1)\" = '[{\"state\":\"recovery-verified\"}]' ]"
+
+  echo 'recovery-conflicts: done'
+exit: 0
+stdout-contains: PROVED rc1a
+stdout-contains: PROVED rc1b
+stdout-contains: PROVED rc1c
+stdout-contains: PROVED rc1d
+stdout-contains: PROVED rc1e
+stdout-contains: PROVED rc2a
+stdout-contains: PROVED rc3a
+stdout-contains: PROVED rc3b
+stdout-contains: PROVED rc4a
+stdout-contains: PROVED rc4b
+stdout-contains: recovery-conflicts: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

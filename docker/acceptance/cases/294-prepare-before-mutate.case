@@ -1,0 +1,105 @@
+# v0.6 §50 phase P2 — §2.3, §4.5 and §63.4: preparation happens before the first mutation, and a
+# preparation that failed leaves the target exactly as it was.
+#
+# §2.3 is the invariant the whole tranche is built on: mutation MUST NOT begin when a required
+# recovery asset could not be created. §4.1 draws no edge from PREPARE_FAILED to APPLYING, and
+# Appendix F's first rows say what an operator is left with — the assets that were created, the
+# targets untouched, and a refusal that names the row it stopped on.
+#
+# The failure is injected where §15.3 says the provider writes: the recovery store is replaced by
+# a plain file after the plan was sealed, so the plan carries a required PREPARE that cannot run.
+case: protection is created before the mutation, and a failure to create it stops the mutation
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  count_of() { ono -c "$1 | count | to json" 2>&1 | tr -d '[:space:]' | sed 's/^\[//; s/\]$//'; }
+
+  store="${XDG_DATA_HOME:-$HOME/.local/share}/ono/change/recovery"
+  mkdir -p "$HOME/etc"
+  printf 'worker_processes 4;\n' > "$HOME/etc/nginx.conf"
+  printf 'worker_processes 8;\n' > "$HOME/etc/nginx.conf.new"
+
+  echo '== §17.1: the plan carries the protection action it will run =='
+  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | to json" > /tmp/pm1.txt 2>&1
+  id=$(plan_id /tmp/pm1.txt)
+  prove pm1a "the plan carries a PREPARE action beside the mutation (§17.1)" \
+    'grep -q "\"role\":\"prepare\"" /tmp/pm1.txt'
+  prove pm1b "and the mutation, so the operator sees both before either runs (§5.2)" \
+    'grep -q "\"role\":\"mutate\"" /tmp/pm1.txt'
+  prove pm1c "the prepare action is a recovery operation with no program, not a command line (§2.17, §12.3)" \
+    'grep -q "\"role\":\"prepare\",[^{]*\"execution\":{\"method\":\"recovery-operation\",\"provider\":\"[a-z.-]*\",\"operation\":\"recovery.prepare\",\"program\":null" /tmp/pm1.txt'
+  prove pm1d "no asset exists yet, because §2.1 keeps a plan inert" \
+    "[ \"\$(count_of 'get recovery')\" = '0' ]"
+
+  echo '== §4.5: apply creates the asset, then mutates =='
+  before=$(sha256sum "$HOME/etc/nginx.conf" | cut -d' ' -f1)
+  ono -c "apply $id" > /tmp/pm2.txt 2>&1
+  prove pm2a "the run reports PREPARE separately from APPLY (Appendix E.4, §62.7)" \
+    'grep -qE "PREPARE +[0-9]+/[0-9]+" /tmp/pm2.txt && grep -qE "APPLY +[0-9]+/[0-9]+" /tmp/pm2.txt'
+  prove pm2b "and PREPARE completed what it had to (§4.6)" \
+    'grep -qE "PREPARE +1/1" /tmp/pm2.txt'
+  prove pm2c "exactly one asset exists afterwards, and it is ready (§11.1, §11.4)" \
+    "[ \"\$(ono -c 'get recovery | select state | to json' 2>&1)\" = '[{\"state\":\"ready\"}]' ]"
+  reference=$(ono -c 'get recovery | select reference | to json' 2>/dev/null | sed -n 's/^\[{"reference":"\([^"]*\)"}\]$/\1/p')
+  prove pm2e "the asset holds the bytes as they were before the mutation, in the store it names (§4.5, §15.3)" \
+    "[ -n '$reference' ] && find '$reference' -type f -exec sha256sum {} + | grep -q '^$before '"
+  prove pm2f "the mutation happened after it (§4.7)" \
+    "[ \"\$(cat $HOME/etc/nginx.conf)\" = 'worker_processes 8;' ]"
+
+  echo '== §2.3 and §55.7 case 31: a preparation that cannot happen stops the mutation =='
+  printf 'before\n' > "$HOME/etc/locked.conf"
+  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/locked.conf --overwrite | to json" > /tmp/pm3.json 2>&1
+  locked=$(plan_id /tmp/pm3.json)
+  prove pm3pre "the sealed plan requires a PREPARE, so the failure below is a required one (§17.1)" \
+    'grep -q "\"role\":\"prepare\"" /tmp/pm3.json && grep -q "\"protection_level\":\"protected\"" /tmp/pm3.json'
+  locked_before=$(sha256sum "$HOME/etc/locked.conf" | cut -d' ' -f1)
+  assets_before=$(count_of 'get recovery')
+  mv "$store" "$store.aside"
+  printf 'not a directory\n' > "$store"
+  ono -c "apply $locked" > /tmp/pm3.txt 2>&1
+  status=$?
+  rm -f "$store"
+  mv "$store.aside" "$store"
+  prove pm3a "the apply refuses with the prepare failure (§2.3, §45)" \
+    'grep -qE "change\.prepare_failed|recovery\.asset_create_failed" /tmp/pm3.txt'
+  prove pm3b "and exits non-zero, because nothing it was asked to do happened (v0.2 §43)" "[ $status -ne 0 ]"
+  prove pm3c "the target is byte-for-byte as it was (§2.3, Appendix F)" \
+    "[ \"\$(sha256sum $HOME/etc/locked.conf | cut -d' ' -f1)\" = '$locked_before' ]"
+  prove pm3d "the plan is prepare-failed, a state with no edge to APPLYING (§4.1, §55.7 case 31)" \
+    "[ \"\$(ono -c 'get plan $locked | select state | to json' 2>&1)\" = '[{\"state\":\"prepare-failed\"}]' ]"
+  prove pm3e "and its mutation never ran (§2.3)" \
+    "! ono -c 'get plan $locked | select actions | to json' 2>&1 | grep -q '\"role\":\"mutate\"[^{]*\"status\":\"succeeded\"'"
+  prove pm3f "the earlier asset survived the failed preparation (Appendix F.1)" \
+    "[ \"\$(count_of 'get recovery')\" = '$assets_before' ]"
+
+  echo 'prepare-before-mutate: done'
+exit: 0
+stdout-contains: PROVED pm1a
+stdout-contains: PROVED pm1b
+stdout-contains: PROVED pm1c
+stdout-contains: PROVED pm1d
+stdout-contains: PROVED pm2a
+stdout-contains: PROVED pm2b
+stdout-contains: PROVED pm2c
+stdout-contains: PROVED pm2e
+stdout-contains: PROVED pm2f
+stdout-contains: PROVED pm3pre
+stdout-contains: PROVED pm3a
+stdout-contains: PROVED pm3b
+stdout-contains: PROVED pm3c
+stdout-contains: PROVED pm3d
+stdout-contains: PROVED pm3e
+stdout-contains: PROVED pm3f
+stdout-contains: prepare-before-mutate: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

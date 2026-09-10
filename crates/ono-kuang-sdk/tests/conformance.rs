@@ -3451,7 +3451,7 @@ async fn should_carry_the_recovery_providers_declared_shape_through_the_handshak
     let plugin = change_plugin(change_host()).await;
     let provider = &plugin.change().recovery_providers[0];
     assert_eq!(provider.domain_kinds, vec!["postgres-database".to_owned()]);
-    assert_eq!(provider.asset_type, "database-dump");
+    assert_eq!(provider.asset_type, "database-checkpoint");
     assert_eq!(provider.consistency, "crash-consistent");
     assert!(
         provider.shares_failure_domain,

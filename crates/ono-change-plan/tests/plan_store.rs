@@ -19,18 +19,21 @@ use jiff::Timestamp;
 use ono_change_core::{
     ActionRole, ActionStatus, ChangePlan, ConsistencyClass, DomainCoverage, DomainProtection,
     EffectConfidence, EffectDomain, EffectKind, Execution, FrozenTarget, Idempotency, ImpactClass,
-    ImpactGraph, ImpactNode, Intent, PlanAction, PlanFragment, PlanId, PlanKind, PlanState,
-    Precondition, PreconditionKind, ProposedEffect, ProtectionSummary, RecoveryAsset,
-    RecoveryAssetType, RecoveryObjective, RecoveryScope, VerificationClass, VerificationContract,
+    ImpactGraph, ImpactNode, Intent, NewerStateClass, NewerStateImpact, NewerStateItem, PlanAction,
+    PlanFragment, PlanId, PlanKind, PlanState, Precondition, PreconditionKind, ProposedEffect,
+    ProtectionSummary, RecoveryAsset, RecoveryAssetType, RecoveryGoal, RecoveryObjective,
+    RecoveryPlan, RecoveryScope, RestoreMethod, VerificationClass, VerificationContract,
 };
 use ono_change_plan::builder::PlanBuilder;
 use ono_change_plan::freeze::ServiceTarget;
 use ono_change_plan::secrets::SecretRedaction;
-use ono_change_plan::store::{PlanFilter, PlanStore, StoreOptions};
+use ono_change_plan::store::{PlanFilter, PlanStore};
 use ono_change_plan::{PlanGranularity, rebase};
 use ono_core::ErrorCode;
 use ono_value::Value;
-use tempfile::TempDir;
+use support::store;
+
+mod support;
 
 // ---------------------------------------------------------------------------------------------
 // Fixtures
@@ -38,12 +41,6 @@ use tempfile::TempDir;
 
 fn at(second: i64) -> Timestamp {
     Timestamp::from_second(second).expect("a valid instant")
-}
-
-fn store() -> (TempDir, PlanStore) {
-    let directory = tempfile::tempdir().expect("a temporary directory");
-    let store = PlanStore::open(&directory.path().join("plans.sqlite3")).expect("a store opens");
-    (directory, store)
 }
 
 fn service(unit: &str) -> FrozenTarget {
@@ -61,10 +58,15 @@ fn build(session: &str, intent: &str, units: &[&str]) -> PlanBuilder {
 
 /// A plan with a PREPARE, a MUTATE and a VERIFY action, which is what §41.2's resume reasons over.
 fn contributed(session: &str, intent: &str) -> PlanBuilder {
+    contributed_at(session, intent, at(0))
+}
+
+/// As [`contributed`], drafted at `created` rather than at the epoch.
+fn contributed_at(session: &str, intent: &str, created: Timestamp) -> PlanBuilder {
     let builder = PlanBuilder::for_intent(
         Intent::new(intent.to_owned(), "plan restart service nginx"),
         session.to_owned(),
-        at(0),
+        created,
     );
     let id = builder.plan_id().clone();
     let prepare = PlanAction::new(
@@ -388,9 +390,11 @@ fn should_refuse_a_reference_that_is_not_an_identity_rather_than_search_for_it()
 #[test]
 fn should_refuse_to_resolve_a_recovery_reference_against_the_plan_table() {
     let (_directory, store) = store();
-    store.put(&plan()).expect("a sealed plan is persisted");
+    let plan = plan();
+    store.put(&plan).expect("a sealed plan is persisted");
+    // The body is a prefix the plan table does hold, so only the marker can refuse it.
     let refusal = store
-        .resolve("recovery/a82f")
+        .resolve(&format!("recovery/{}", plan.id().short()))
         .expect_err("§37.5's marker names an asset, not a plan");
     assert_eq!(refusal.code(), ErrorCode::ChangePlanNotFound);
 }
@@ -464,16 +468,24 @@ fn should_refuse_an_ambiguous_reference_and_name_the_candidates() {
 fn should_list_the_plans_the_store_holds_newest_first() {
     let (_directory, store) = store();
     let older = sealed("session-1", "restart a", &["a.service"]);
-    let newer = build("session-1", "restart b", &["b.service"])
+    let newer = contributed_at("session-1", "restart b", at(10))
+        .resolve(vec![service("b.service")])
+        .expect("the targets resolve")
         .expiring_at(at(9_000))
         .seal(at(60))
         .expect("a plan seals");
+    // The older plan goes in first, so insertion order would put it on top.
     store.put(&older).expect("a sealed plan is persisted");
     store
         .put(&newer)
         .expect("a second sealed plan is persisted");
     let rows = store.list(&PlanFilter::all()).expect("the store answers");
-    assert_eq!(rows.len(), 2, "§5.5: `get plan` lists what the store holds");
+    let listed: Vec<&PlanId> = rows.iter().map(|row| &row.id).collect();
+    assert_eq!(
+        listed,
+        vec![newer.id(), older.id()],
+        "§5.5: `get plan` lists what the store holds, the most recently drafted plan first"
+    );
     assert!(rows.iter().all(|row| row.state == PlanState::Sealed));
 }
 
@@ -521,14 +533,31 @@ fn should_list_only_the_plans_of_one_session() {
 #[test]
 fn should_list_only_the_plans_in_one_lifecycle_state() {
     let (_directory, store) = store();
+    let resting = sealed("session-1", "restart a", &["a.service"]);
+    let applying = sealed("session-1", "restart b", &["b.service"]);
+    store.put(&resting).expect("a sealed plan is persisted");
     store
-        .put(&sealed("session-1", "restart a", &["a.service"]))
-        .expect("a sealed plan is persisted");
+        .put(&applying)
+        .expect("a second sealed plan is persisted");
+    store
+        .record_state(applying.id(), applying.revision(), PlanState::Applying)
+        .expect("the transition is recorded");
     let rows = store
         .list(&PlanFilter::all().in_state(PlanState::Applying))
         .expect("the store answers");
-    assert!(
-        rows.is_empty(),
+    let listed: Vec<&PlanId> = rows.iter().map(|row| &row.id).collect();
+    assert_eq!(
+        listed,
+        vec![applying.id()],
+        "§4.1: the filter lists the applying plan, and leaves the sealed one out"
+    );
+    let rows = store
+        .list(&PlanFilter::all().in_state(PlanState::Sealed))
+        .expect("the store answers");
+    let listed: Vec<&PlanId> = rows.iter().map(|row| &row.id).collect();
+    assert_eq!(
+        listed,
+        vec![resting.id()],
         "§4.1: a sealed plan is not an applying one, and the filter says so"
     );
 }
@@ -604,6 +633,10 @@ fn should_forget_a_plan_that_was_removed() {
     let plan = plan();
     store.put(&plan).expect("a sealed plan is persisted");
     store.remove(plan.id()).expect("the plan is removed");
+    let refusal = store
+        .get(plan.id())
+        .expect_err("a removed plan is not read back");
+    assert_eq!(refusal.code(), ErrorCode::ChangePlanNotFound);
     assert!(
         store
             .list(&PlanFilter::all())
@@ -995,8 +1028,10 @@ fn should_return_the_same_asset_it_was_given() {
     let read = store
         .get_asset(recovery.id())
         .expect("the asset comes back");
-    assert_eq!(read.reference(), "rpool/etc@ono-a82f");
-    assert_eq!(read.scope().domain(), "rpool/etc");
+    assert_eq!(
+        read, recovery,
+        "§11: the asset read back is the asset that was stored, field for field"
+    );
     assert!(
         read.scope().covers_object("/etc/nginx/nginx.conf"),
         "§11.2: what an asset covers is exact membership, and storage keeps it exact"
@@ -1140,11 +1175,20 @@ fn should_name_nobody_for_an_asset_no_plan_rests_on() {
 // ---------------------------------------------------------------------------------------------
 
 fn plan_with_password(session: &str) -> ChangePlan {
+    plan_with_password_redacted_by(session, SecretRedaction::new())
+}
+
+/// The password plan, built by a builder that redacts with `redaction` before it seals.
+///
+/// `SecretRedaction::declaring_nothing()` yields a plan that still carries the raw `hunter2`,
+/// which is what a store must be handed to show that the store itself redacts.
+fn plan_with_password_redacted_by(session: &str, redaction: SecretRedaction) -> ChangePlan {
     let builder = PlanBuilder::for_intent(
         Intent::new("set the database password", "plan set password postgres"),
         session.to_owned(),
         at(0),
-    );
+    )
+    .redacting(redaction);
     let id = builder.plan_id().clone();
     let fragment = PlanFragment::empty()
         .at_version("16.2")
@@ -1186,7 +1230,16 @@ fn plan_with_password(session: &str) -> ChangePlan {
 #[test]
 fn should_bring_a_plan_back_from_the_store_with_a_handle_instead_of_the_secret() {
     let (_directory, store) = store();
-    let plan = plan_with_password("session-1");
+    // The builder declared nothing, so the store is handed the raw value and the handle can only
+    // have come from the store.
+    let plan = plan_with_password_redacted_by("session-1", SecretRedaction::declaring_nothing());
+    assert!(
+        plan.actions()[0]
+            .execution()
+            .digest_text()
+            .contains("hunter2"),
+        "precondition: the plan handed to the store carries the raw secret"
+    );
     store.put(&plan).expect("a sealed plan is persisted");
     let read = store.get(plan.id()).expect("the plan comes back");
     let Execution::ProviderAction { arguments, .. } = read.actions()[0].execution() else {
@@ -1241,23 +1294,38 @@ fn should_keep_the_other_arguments_readable_beside_a_redacted_one() {
 fn should_redact_a_plan_the_store_was_handed_with_a_raw_secret_in_it() {
     let directory = tempfile::tempdir().expect("a temporary directory");
     let path = directory.path().join("plans.sqlite3");
-    // A caller that declared nothing produces a plan carrying the raw value; the store applies
+    // A builder that declared nothing produces a plan carrying the raw value; the store applies
     // §36.3 regardless, because the prohibition is about what is persisted.
-    let permissive = PlanStore::open_with(
-        &StoreOptions::at(&path).redacting(SecretRedaction::declaring_nothing()),
-    )
-    .expect("a store opens");
-    let plan = plan_with_password("session-1");
-    drop(permissive);
-    let store = PlanStore::open(&path).expect("the store reopens with the default redaction");
+    let plan = plan_with_password_redacted_by("session-1", SecretRedaction::declaring_nothing());
+    assert!(
+        plan.actions()[0]
+            .execution()
+            .digest_text()
+            .contains("hunter2"),
+        "precondition: the plan handed to the store carries the raw secret"
+    );
+    let store = PlanStore::open(&path).expect("a store opens with the default redaction");
     store.put(&plan).expect("a sealed plan is persisted");
+    // Every file the store keeps — the database and whatever journal sits beside it — is read
+    // while the store is still open, so a write-ahead log that has not been checkpointed counts.
+    for entry in std::fs::read_dir(directory.path()).expect("the store directory reads") {
+        let file = entry.expect("a directory entry").path();
+        let bytes = std::fs::read(&file).expect("a store file reads");
+        assert!(
+            !bytes
+                .windows(b"hunter2".len())
+                .any(|window| window == b"hunter2"),
+            "§36.3: secrets MUST NOT be persisted in raw form, and `{}` holds one",
+            file.display()
+        );
+    }
     let read = store.get(plan.id()).expect("the plan comes back");
     assert!(
         !read.actions()[0]
             .execution()
             .digest_text()
             .contains("hunter2"),
-        "§36.3: secrets MUST NOT be persisted in raw form"
+        "§36.3: what the store reads back carries no raw secret either"
     );
 }
 
@@ -1317,4 +1385,150 @@ fn should_store_each_per_object_plan_under_its_own_identity() {
         assert_eq!(read.targets().len(), 1);
         assert!(read.digest_holds());
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// §24.1, §24.5 — a recovery plan is stored as the recovery plan it is
+// ---------------------------------------------------------------------------------------------
+
+fn recovery_plan() -> RecoveryPlan {
+    let inner = sealed(
+        "session-1",
+        "recover the failed services",
+        &["nginx.service"],
+    );
+    RecoveryPlan::new(
+        inner,
+        RecoveryGoal::RestoreChangedObjects,
+        RestoreMethod::SelectiveFileRestore,
+        "the state before plan/a82f",
+    )
+    .using(asset(at(10)).id().clone())
+    .restoring("/etc/nginx/nginx.conf")
+    .with_newer_state(NewerStateImpact::analysed(vec![NewerStateItem::new(
+        "/etc/nginx/nginx.conf",
+        NewerStateClass::Conflicting,
+        "edited at 15:12, after the recovery point",
+    )]))
+}
+
+#[test]
+fn should_keep_what_a_recovery_would_discard_across_storage() {
+    let (_directory, store) = store();
+    let recovery = recovery_plan();
+    store
+        .put_recovery(
+            &recovery,
+            &ono_change_core::value::RecoveryPlanNotes::default(),
+        )
+        .expect("a recovery plan is persisted");
+    let read = store
+        .get_recovery(recovery.plan().id())
+        .expect("the recovery plan comes back");
+    assert_eq!(
+        read.newer_state(),
+        recovery.newer_state(),
+        "§24.5: the newer state the gate is about survives storage, or `apply` gates on nothing"
+    );
+    assert_eq!(read.source_assets(), recovery.source_assets());
+    assert_eq!(read.method(), recovery.method());
+    assert!(
+        read.needs_destructive_acceptance(),
+        "§24.5: a stored conflicting recovery still needs its explicit gate"
+    );
+}
+
+#[test]
+fn should_keep_the_recovery_analysis_on_a_revision_that_records_an_acknowledgement() {
+    let (_directory, store) = store();
+    let recovery = recovery_plan();
+    store
+        .put_recovery(
+            &recovery,
+            &ono_change_core::value::RecoveryPlanNotes::default(),
+        )
+        .expect("persisted");
+    let revised = recovery
+        .plan()
+        .revise()
+        .seal(at(120))
+        .expect("a revision seals");
+    store.put(&revised).expect("the revision is persisted");
+    let read = store
+        .get_recovery(recovery.plan().id())
+        .expect("the latest revision is still a recovery plan");
+    assert_eq!(read.plan().revision(), revised.revision());
+    assert_eq!(
+        read.newer_state(),
+        recovery.newer_state(),
+        "§7.5: a revision of a recovery plan is still the recovery it describes"
+    );
+}
+
+#[test]
+fn should_refuse_to_read_an_ordinary_plan_as_a_recovery_plan() {
+    let (_directory, store) = store();
+    let plan = plan();
+    store.put(&plan).expect("persisted");
+    let refusal = store
+        .get_recovery(plan.id())
+        .expect_err("an ordinary plan has no recovery analysis");
+    assert_eq!(refusal.code().name(), "recovery.plan_incomplete");
+}
+
+/// Appendix C.4: the plan's own write is what recovery undoes, and only a later edit is newer
+/// state. The conflict analysis needs to know when that write happened, and the settled action
+/// records are where §41.2 keeps it.
+#[test]
+fn should_answer_when_a_plans_actions_last_settled() {
+    let (_directory, store) = store();
+    let plan = plan();
+    store.put(&plan).expect("persisted");
+    assert_eq!(
+        store.applied_at(plan.id()).expect("the store answers"),
+        None,
+        "a plan nothing settled for was never applied"
+    );
+    for (ordinal, (action, second)) in plan.actions().iter().zip([100, 160, 130]).enumerate() {
+        store
+            .record_action_status(
+                plan.id(),
+                plan.revision(),
+                action.id(),
+                ordinal,
+                ActionStatus::Succeeded,
+                at(second),
+                None,
+            )
+            .expect("recorded");
+    }
+    assert_eq!(
+        store.applied_at(plan.id()).expect("the store answers"),
+        Some(at(160)),
+        "the last action that settled is when the plan's writes were done"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// §9.6 — a graph the traversal stopped early is not a complete one
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn should_keep_an_impact_graph_truncated_before_it_found_anything() {
+    let (_directory, store) = store();
+    let reason = "the traversal budget ran out before the first relation";
+    let plan = contributed("session-1", "restart the failed services")
+        .resolve(vec![service("nginx.service")])
+        .expect("the targets resolve")
+        .seal(at(60))
+        .expect("a plan seals")
+        .with_impact(ImpactGraph::empty().truncated(reason));
+    store.put(&plan).expect("a sealed plan is persisted");
+    let read = store.get(plan.id()).expect("the plan comes back");
+    assert!(
+        !read.impact().is_complete(),
+        "§9.6: a traversal that stopped before it found anything did not find that nothing is \
+         there, so the graph must not come back complete"
+    );
+    assert_eq!(read.impact().truncation(), Some(reason));
 }

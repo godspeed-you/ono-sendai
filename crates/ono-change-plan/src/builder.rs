@@ -701,16 +701,46 @@ fn rebind(
     extra: &[ono_change_core::Precondition],
     execution: Option<Execution>,
 ) -> PlanAction {
+    let preconditions: Vec<ono_change_core::Precondition> = extra
+        .iter()
+        .chain(action.preconditions())
+        .cloned()
+        .collect();
+    rebuilt(
+        plan,
+        ordinal,
+        action,
+        remap,
+        &preconditions,
+        action.target(),
+        execution,
+    )
+}
+
+/// [`rebind`] with the action's preconditions and target replaced rather than extended.
+///
+/// §7.5's rebase is the caller: the next revision is resolved against the world as it is now, so
+/// the facts §7.2 froze are frozen again rather than copied, and an object whose identity moved —
+/// a unit restarted since the seal — is the object the action now names.
+pub(crate) fn rebuilt(
+    plan: &PlanId,
+    ordinal: usize,
+    action: &PlanAction,
+    remap: &BTreeMap<ActionId, ActionId>,
+    preconditions: &[ono_change_core::Precondition],
+    target: Option<&str>,
+    execution: Option<Execution>,
+) -> PlanAction {
     let execution = execution.unwrap_or_else(|| action.execution().clone());
     let mut next = PlanAction::new(plan, ordinal, action.role(), action.summary(), execution);
     let id = next.id().clone();
-    if let Some(target) = action.target() {
+    if let Some(target) = target {
         next = next.on(target);
     }
     for dependency in action.depends_on() {
         next = next.after(remap.get(dependency).unwrap_or(dependency).clone());
     }
-    for precondition in extra.iter().chain(action.preconditions()) {
+    for precondition in preconditions {
         next = next.requiring(precondition.clone());
     }
     next = next.with_idempotency(action.idempotency());
@@ -1162,25 +1192,64 @@ mod tests {
 
     #[test]
     fn should_not_add_an_object_that_started_matching_after_resolution() {
-        let builder = builder();
-        let contribution = fragment(builder.plan_id(), &["a.service"]);
-        // §4.3's own example: four services match, a fifth fails afterwards.
-        let mut world = vec!["a.service".to_owned()];
-        let resolved: Vec<FrozenTarget> = world.iter().map(|unit| service(unit)).collect();
-        let plan = builder
+        // §4.3's own example: four services match, a fifth fails afterwards. Here one matched at
+        // resolution, and `e.service` starts matching once the plan is sealed.
+        let first = builder();
+        let contribution = fragment(first.plan_id(), &["a.service"]);
+        let plan = first
             .contributing(&contribution)
             .expect("a fragment is accepted")
-            .resolve(resolved)
+            .resolve(vec![service("a.service")])
             .expect("one target resolves")
             .seal(later())
             .expect("a plan seals");
-        world.push("e.service".to_owned());
+        let sealed_digest = plan.digest().map(str::to_owned);
+
+        // The world now matches two objects. Resolving the same intent again drafts a different
+        // plan, whose seal cannot be mistaken for the first one.
+        let widened = builder();
+        let contribution = fragment(widened.plan_id(), &["a.service"]);
+        let widened = widened
+            .contributing(&contribution)
+            .expect("a fragment is accepted")
+            .resolve(vec![service("a.service"), service("e.service")])
+            .expect("two targets resolve")
+            .seal(later())
+            .expect("a plan seals");
+        assert_ne!(
+            widened.digest(),
+            plan.digest(),
+            "§2.6, §4.4: the seal binds the target set, so a plan that gained an object is not \
+             the sealed plan"
+        );
+
+        // Nor can the new object be resolved into the sealed plan itself.
+        let refusal = plan
+            .clone()
+            .resolve(vec![service("a.service"), service("e.service")])
+            .expect_err("§2.6: a sealed plan's target set does not move");
+        assert_eq!(refusal.code(), ErrorCode::ChangePlanSealed);
+
+        // Revalidating against the widened world re-checks the frozen set and nothing else.
+        let report =
+            crate::drift::revalidate(&plan, &|precondition| Some(precondition.expected().clone()));
         assert_eq!(
-            plan.targets().len(),
+            report.targets_checked(),
             1,
+            "§7.3 re-resolves the frozen targets and does not re-run the selector"
+        );
+
+        let identities: Vec<&str> = plan.targets().iter().map(FrozenTarget::identity).collect();
+        assert_eq!(
+            identities,
+            vec!["systemd:a.service"],
             "§2.6: newly matching objects MUST NOT silently join a sealed plan"
         );
-        assert_eq!(plan.targets()[0].identity(), "systemd:a.service");
+        assert_eq!(plan.digest().map(str::to_owned), sealed_digest);
+        assert!(
+            plan.digest_holds(),
+            "§4.4: the sealed plan still verifies over the set it froze"
+        );
     }
 
     #[test]

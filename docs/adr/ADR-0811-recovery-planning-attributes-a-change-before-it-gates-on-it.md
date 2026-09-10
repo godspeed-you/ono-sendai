@@ -1,6 +1,6 @@
 # ADR-0811: Recovery planning attributes a change before it gates on it, and digest evidence outranks a timestamp
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0833
 - Date: 2026-09-09
 - Spec refs: v0.6 §24.2, §24.5, §40.1, §56.3, §62.8, Appendix C.3, Appendix C.4
 - Decided by: agent (autonomous)

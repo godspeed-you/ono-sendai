@@ -1,0 +1,9 @@
+€recovery_providers:
+  - id: dev.example.recovery-provider.pg
+    summary: PostgreSQL base backups
+    domain_kinds: [postgres-database]
+    asset_type: database-checkpoint
+    consistency: application-consistent
+    restore_methods: [provider-native-restore]
+    shares_failure_domain: false
+    capabilities: [recovery.quiesce]

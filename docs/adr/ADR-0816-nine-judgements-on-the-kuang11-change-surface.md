@@ -1,6 +1,6 @@
 # ADR-0816: Nine judgements on the KUANG/11 change surface
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0833
 - Date: 2026-09-10
 - Spec refs: v0.6 §12.2, §16, §18.4, §19.2, §27, §37.5, §39.2, §39.3, §43.4, §48; K11P §6.2, §7
 - Decided by: agent (autonomous)

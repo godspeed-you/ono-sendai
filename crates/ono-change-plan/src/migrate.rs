@@ -27,7 +27,7 @@ pub(crate) struct Step {
 }
 
 /// The version a freshly created store carries, and the version every older store migrates to.
-pub const STORE_VERSION: u32 = 1;
+pub const STORE_VERSION: u32 = 3;
 
 /// The metadata key holding the store's schema version.
 pub(crate) const VERSION_KEY: &str = "store_version";
@@ -122,11 +122,41 @@ CREATE TABLE apply_claims (
 ) STRICT;
 ";
 
+/// Version 2: the recovery analysis beside a recovery plan (§24.1, §24.5).
+///
+/// A recovery plan is a `ChangePlan` plus what the restore would do to newer state, which assets
+/// it restores from and which method it chose. §24.5's gate is about exactly those facts, so a
+/// store that kept only the `ChangePlan` handed `apply` a recovery with nothing left to gate on.
+/// The column is on the revision row because an acknowledgement is a new revision (§19.4) and the
+/// analysis it acknowledged has to travel with it.
+const V2: &str = "
+ALTER TABLE plans ADD COLUMN recovery TEXT;
+";
+
+/// Version 3: the process that holds an apply claim (§42.3).
+///
+/// A lease alone leaves a crashed session's claim in force until it runs out, so `resume` after a
+/// crash had to wait that long. With the holder's process id a claim whose process is gone is
+/// taken over at once, and a live holder's claim still cannot be.
+const V3: &str = "
+ALTER TABLE apply_claims ADD COLUMN holder_pid INTEGER;
+";
+
 /// Every migration, in order.
-pub(crate) const STEPS: &[Step] = &[Step {
-    version: 1,
-    sql: V1,
-}];
+pub(crate) const STEPS: &[Step] = &[
+    Step {
+        version: 1,
+        sql: V1,
+    },
+    Step {
+        version: 2,
+        sql: V2,
+    },
+    Step {
+        version: 3,
+        sql: V3,
+    },
+];
 
 #[cfg(test)]
 mod tests {

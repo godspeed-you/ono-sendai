@@ -164,23 +164,26 @@ fn resolve_command(session: &Session, words: &[OsString]) -> Result<Vec<Value>, 
     crate::resolve::describe(session, namespace, name).map(|record| vec![record])
 }
 
-/// `get config [key|prefix.] [--problems] [--overridden]` (spec §30, ADR-0094).
+/// `get config [key|prefix.] [--problems] [--overridden] [--profile]` (spec §30, ADR-0094,
+/// ADR-0836).
 fn get_config(session: &Session, words: &[OsString]) -> Result<Vec<Value>, ErrorValue> {
     let mut selector: Option<String> = None;
     let mut problems = false;
     let mut overridden = false;
+    let mut profile = false;
     // The first word is the target, `config`.
     for word in words.iter().skip(1) {
         let word = word.to_string_lossy();
         match word.as_ref() {
             "--problems" => problems = true,
             "--overridden" => overridden = true,
+            "--profile" => profile = true,
             option if option.starts_with("--") => {
                 return Err(ErrorValue::new(
                     ErrorCode::TypeUnknownField,
                     format!("`get config` has no option `{option}`"),
                 )
-                .with_help("`get config` takes `--problems` and `--overridden`"));
+                .with_help("`get config` takes `--problems`, `--overridden` and `--profile`"));
             }
             key => {
                 if selector.replace(key.to_owned()).is_some() {
@@ -194,6 +197,34 @@ fn get_config(session: &Session, words: &[OsString]) -> Result<Vec<Value>, Error
     }
     if problems {
         return Ok(session.settings().problems().to_vec());
+    }
+    // v0.6 Appendix H: a profile expands to inspectable settings. Each row says what the
+    // configuration wrote, what the profile asks for, what is in force and which of them won.
+    if profile {
+        let text = |value: &Option<String>| value.as_deref().map_or(Value::Null, Value::string);
+        return Ok(crate::change::session::configured()
+            .profile_expansion()
+            .into_iter()
+            .map(|setting| {
+                let mut row = ono_value::MapValue::new();
+                row.insert("key".into(), Value::string(setting.key));
+                row.insert("configured".into(), text(&setting.configured));
+                row.insert("profile".into(), Value::string(&setting.profile));
+                row.insert("effective".into(), text(&setting.effective));
+                row.insert(
+                    "source".into(),
+                    Value::string(&match setting.source {
+                        ono_change_protection::settings::Source::Configuration => {
+                            "configuration".to_owned()
+                        }
+                        ono_change_protection::settings::Source::Profile(profile) => {
+                            format!("profile {}", profile.as_str())
+                        }
+                    }),
+                );
+                Value::Map(std::sync::Arc::new(row))
+            })
+            .collect());
     }
     session.settings().records(selector.as_deref(), overridden)
 }

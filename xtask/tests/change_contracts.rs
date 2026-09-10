@@ -88,8 +88,10 @@ fn copied() -> Scratch {
         // §39.2 and §12.1 are checked against what a provider's source says, and Appendix G.2
         // against what its tests say, so those crates come across whole rather than as an empty
         // directory.
+        // `Execution`'s variants and `EffectConfidence`'s methods are read out of
+        // `ono-change-core`'s source, so it comes across too.
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with("ono-recovery-") {
+        if name.starts_with("ono-recovery-") || name == "ono-change-core" {
             copy_source(&entry.path().join("src"), &tree, &format!("{name}/src"));
         }
         if name.starts_with("ono-recovery-") || name == "ono-change-protection" {
@@ -1413,4 +1415,109 @@ fn should_reject_a_quiesce_protocol_missing_one_of_its_five_steps() {
         "  steps: [prepare_quiesce, create_storage_asset, resume, verify_resumed]",
     );
     assert_refuses(&tree, "lists 4 steps and §39.3 names five");
+}
+
+// --- The checks that read source rather than a registry --------------------------------------
+
+#[test]
+fn should_reject_an_execution_method_row_that_names_no_variant_of_execution() {
+    // Both directions at once: the renamed row names nothing, and the variant it described is
+    // left without a row.
+    let tree = broken(
+        "docs/contracts/change/actions.yaml",
+        "  - id: recovery-operation\n",
+        "  - id: recovery-call\n",
+    );
+    assert_refuses(
+        &tree,
+        "`execution_methods` declares the execution method `recovery-call`, which nothing \
+         implements",
+    );
+    assert_refuses(
+        &tree,
+        "`execution_methods` omits the execution method `recovery-operation`",
+    );
+}
+
+#[test]
+fn should_reject_an_execution_variant_the_registry_has_no_row_for() {
+    // §2.17: a way of running an action that nobody has held to "no command line" is exactly the
+    // method that would admit one.
+    let tree = broken(
+        "crates/ono-change-core/src/action.rs",
+        "    /// An action the operator declared opaque",
+        "    /// A command line.\n    ShellString {\n        line: Arc<str>,\n    },\n    /// An action \
+         the operator declared opaque",
+    );
+    assert_refuses(
+        &tree,
+        "`execution_methods` omits the execution method `shell-string`",
+    );
+}
+
+#[test]
+fn should_reject_a_confidence_method_that_combines_two_confidences_beside_weakest_of() {
+    let tree = broken(
+        "crates/ono-change-core/src/effect.rs",
+        "impl EffectConfidence {",
+        "impl EffectConfidence {\n    /// The stronger of two confidences.\n    pub fn \
+         strongest_of(self, other: Self) -> Self {\n        other\n    }\n",
+    );
+    assert_refuses(
+        &tree,
+        "`EffectConfidence::strongest_of` is an operation beside `weakest_of`",
+    );
+}
+
+#[test]
+fn should_reject_a_tool_driving_provider_that_validated_no_versions() {
+    let tree = broken(
+        "crates/ono-recovery-zfs/src/provider.rs",
+        "pub const VALIDATED_VERSIONS: &[&str] = &[\"2.4.1\"];",
+        "pub const VALIDATED_VERSIONS: &[&str] = &[];",
+    );
+    assert_refuses(
+        &tree,
+        "provider `ono.recovery.zfs` drives `zfs`, and its crate `ono-recovery-zfs` declares no \
+         non-empty `pub const VALIDATED_VERSIONS: &[&str]`",
+    );
+}
+
+#[test]
+fn should_reject_a_tool_driving_provider_that_never_tests_a_version_against_its_list() {
+    let tree = broken(
+        "crates/ono-recovery-btrfs/src/provider.rs",
+        "VALIDATED_VERSIONS.contains(",
+        "[\"any\"].contains(",
+    );
+    assert_refuses(
+        &tree,
+        "provider `ono.recovery.btrfs`'s crate `ono-recovery-btrfs` never tests a version against \
+         `VALIDATED_VERSIONS`",
+    );
+}
+
+#[test]
+fn should_reject_a_first_party_provider_that_declares_quiesce() {
+    // §39.1: a capability declared without §39.3's protocol behind it is the overstatement.
+    let tree = broken(
+        "crates/ono-recovery-files/src/provider.rs",
+        ".tested_against(\"ono.recovery.file-copy\"",
+        ".recovering(RecoveryCapability::Quiesce)\n            \
+         .tested_against(\"ono.recovery.file-copy\"",
+    );
+    assert_refuses(
+        &tree,
+        "names `recovery.quiesce`, and no first-party recovery provider may declare it",
+    );
+}
+
+#[test]
+fn should_name_the_settings_row_whose_declared_default_differs_from_the_shells() {
+    let tree = broken(
+        "docs/contracts/change/plans.yaml",
+        "{key: change.bulk.warn_targets, type: int, default: 10,",
+        "{key: change.bulk.warn_targets, type: int, default: 11,",
+    );
+    assert_refuses(&tree, "Differing: `change.bulk.warn_targets` reads `11`");
 }

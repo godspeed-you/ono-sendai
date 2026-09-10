@@ -262,10 +262,26 @@ impl SafetyChecklist {
     /// a time. A non-destructive recovery is held only to the four facts every path needs.
     #[must_use]
     pub fn blocking_error(&self, destructive: bool) -> Option<ErrorValue> {
+        self.blocking_error_deferring(destructive, &[])
+    }
+
+    /// §56.3's refusal, with `deferred` facts left to a check that comes later.
+    ///
+    /// The one fact a plan is built without is the operator's acceptance: §24.5 gives it at
+    /// apply, after the plan it covers was shown. A recovery plan therefore defers
+    /// [`ZfsFact::HistoryDestructionAccepted`] — provided what it covers was enumerated — and the
+    /// act that destroys history is held to all twelve.
+    #[must_use]
+    pub fn blocking_error_deferring(
+        &self,
+        destructive: bool,
+        deferred: &[ZfsFact],
+    ) -> Option<ErrorValue> {
         let missing: Vec<ZfsFact> = self
             .unestablished()
             .into_iter()
             .filter(|fact| destructive || fact.gates_any_recovery())
+            .filter(|fact| !deferred.contains(fact))
             .collect();
         let first = missing.first().copied()?;
         let detail = self

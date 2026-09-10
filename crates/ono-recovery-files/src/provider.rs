@@ -32,14 +32,14 @@ use ono_change_core::error::{
     asset_create_failed, asset_invalid, cleanup_blocked, recovery_plan_incomplete, scope_mismatch,
 };
 use ono_change_core::{
-    ActionRole, AssetState, ChangePlan, ConsistencyClass, DirectoryRestorePolicy, EffectDomain,
-    Execution, FilesystemKind, Idempotency, MetadataCoverage, NewerStateClass, NewerStateImpact,
-    NewerStateItem, NonPersistentReason, PersistenceDomain, PlanAction, PlanId, ProtectionAction,
-    ProtectionMode, ProviderAvailability, ProviderCapabilities, RecoveryAsset, RecoveryAssetType,
-    RecoveryCandidate, RecoveryCapability, RecoveryCost, RecoveryExclusion, RecoveryGoal,
-    RecoveryObjective, RecoveryPlanFragment, RecoveryProvider, RecoveryScope, RecoveryValidation,
-    ResolvedMount, RestoreMethod, RetentionPolicy, UnrecoverableEffect, VerificationClass,
-    VerificationContract,
+    ActionRole, AssetState, ChangePlan, ConsistencyClass, DirectoryRestorePolicy, EffectConfidence,
+    EffectDomain, EffectKind, Execution, FilesystemKind, Idempotency, MetadataCoverage,
+    NewerStateClass, NewerStateImpact, NewerStateItem, NonPersistentReason, PersistenceDomain,
+    PlanAction, PlanId, ProtectionAction, ProtectionMode, ProviderAvailability,
+    ProviderCapabilities, RecoveryAsset, RecoveryAssetType, RecoveryCandidate, RecoveryCapability,
+    RecoveryCost, RecoveryExclusion, RecoveryGoal, RecoveryObjective, RecoveryPlanFragment,
+    RecoveryProvider, RecoveryScope, RecoveryValidation, ResolvedMount, RestoreMethod,
+    RetentionPolicy, UnrecoverableEffect, VerificationClass, VerificationContract,
 };
 use ono_change_core::{EquivalenceDomain, RecoveryAssetId};
 use ono_value::{ByteSize, ErrorValue, Value};
@@ -55,13 +55,22 @@ use crate::store::{FileRecoveryStore, is_writable};
 /// The provider's id, as it appears in every asset, candidate and action it produces.
 pub const PROVIDER_ID: &str = "ono.recovery.file-copy";
 
+/// Where the provider reads the time from.
+#[derive(Debug, Clone, Copy)]
+enum Clock {
+    /// One instant, so a reading comes out the same every time it is taken (AGENTS.md §11).
+    Fixed(Timestamp),
+    /// The clock, read whenever an asset is proposed, created or validated.
+    Live(fn() -> Timestamp),
+}
+
 /// Copies files and configuration into a private store, and puts them back (§15).
 #[derive(Debug, Clone)]
 pub struct FileRecoveryProvider {
     store: FileRecoveryStore,
     limits: FileProtectionLimits,
     host: Arc<str>,
-    now: Timestamp,
+    clock: Clock,
     directory_policy: DirectoryRestorePolicy,
     retention: RetentionPolicy,
 }
@@ -71,17 +80,28 @@ impl FileRecoveryProvider {
     ///
     /// `now` is a parameter because a recovery asset's identity, its expiry and the timestamps in
     /// its manifest are all derived from it, and a provider that read the clock could not be
-    /// tested twice with the same result (AGENTS.md §11).
+    /// tested twice with the same result (AGENTS.md §11). [`Self::with_clock`] is what a
+    /// long-lived session uses instead.
     #[must_use]
     pub fn new(store: FileRecoveryStore, now: Timestamp) -> Self {
         Self {
             store,
             limits: FileProtectionLimits::default(),
             host: Arc::from("localhost"),
-            now,
+            clock: Clock::Fixed(now),
             directory_policy: DirectoryRestorePolicy::KeepExtraFiles,
             retention: RetentionPolicy::default(),
         }
+    }
+
+    /// Reads the time from `clock` whenever an asset is proposed, created or validated.
+    ///
+    /// A shell session is long-lived: an asset created an hour after it started was created an
+    /// hour later, and its identity, its expiry (§37.1) and the timestamps in its manifest say so.
+    #[must_use]
+    pub fn with_clock(mut self, clock: fn() -> Timestamp) -> Self {
+        self.clock = Clock::Live(clock);
+        self
     }
 
     /// Sets what the provider will archive before it refuses (§15.2).
@@ -134,10 +154,13 @@ impl FileRecoveryProvider {
         self.directory_policy
     }
 
-    /// The instant the provider works from.
+    /// The instant the provider works from: the fixed one, or the clock read now.
     #[must_use]
-    pub const fn now(&self) -> Timestamp {
-        self.now
+    pub fn now(&self) -> Timestamp {
+        match self.clock {
+            Clock::Fixed(now) => now,
+            Clock::Live(read) => read(),
+        }
     }
 
     /// What a restore of `path` would actually put back, measured now (Appendix C.7).
@@ -184,6 +207,29 @@ impl FileRecoveryProvider {
         )
     }
 
+    /// Whether the copy behind `asset` would be lost with the object it protects (§11.5, B.5).
+    ///
+    /// §11.5 forbids implying protection from the failure of the storage underneath. A copy is
+    /// independent of its original only when it is kept on another device, so the answer compares
+    /// the device the store is on with the device the protected object was captured from. An
+    /// overlay answers `true` whatever the device numbers say: its writable layer may be a
+    /// container's, and a container discarded takes the store on it along with the target
+    /// (Appendix B.5).
+    ///
+    /// # Errors
+    ///
+    /// The asset's owner refusal when another provider owns it, and the store's error when the
+    /// asset's manifest or the filesystem of either side cannot be read.
+    pub fn shares_failure_domain(&self, asset: &RecoveryAsset) -> Result<bool, ErrorValue> {
+        self.owns(asset)?;
+        let manifest = self.store.read_manifest(&Self::archive_of(asset))?;
+        let store = filesystem_of(self.store.root())?;
+        let parent = manifest.root().parent().unwrap_or(Path::new("/"));
+        let on_overlay = store.kind() == FilesystemKind::Overlay
+            || filesystem_of(parent).is_ok_and(|facts| facts.kind() == FilesystemKind::Overlay);
+        Ok(on_overlay || store.device() == manifest.root_parent().device())
+    }
+
     /// Where an asset's copy actually lives: its own reference (§11.1).
     fn archive_of(asset: &RecoveryAsset) -> PathBuf {
         PathBuf::from(asset.reference())
@@ -206,7 +252,10 @@ impl FileRecoveryProvider {
 
     /// The asset a candidate proposes, whose reference is where the copy will live (§15.3).
     fn proposed_asset(&self, candidate: &RecoveryCandidate) -> RecoveryAsset {
-        let created = self.now.as_nanosecond().to_string();
+        // §11.1: an asset is named by the instant it is made. The clock is read once, so the
+        // identity, the directory the copy lives in and the recorded creation agree.
+        let now = self.now();
+        let created = now.as_nanosecond().to_string();
         let id = RecoveryAssetId::of(PROVIDER_ID, None, candidate.scope().domain(), &created);
         let reference = self.store.asset_directory(&id).display().to_string();
         let asset = RecoveryAsset::proposed(
@@ -214,7 +263,7 @@ impl FileRecoveryProvider {
             RecoveryAssetType::FileArchive,
             reference,
             candidate.scope().clone(),
-            self.now,
+            now,
         )
         .at_consistency(ConsistencyClass::ByteConsistent)
         .restored_by(RestoreMethod::SelectiveFileRestore)
@@ -231,7 +280,8 @@ impl FileRecoveryProvider {
     fn expiry(&self) -> Timestamp {
         let window =
             SignedDuration::try_from(self.retention.window()).unwrap_or(SignedDuration::ZERO);
-        self.now.checked_add(window).unwrap_or(self.now)
+        let now = self.now();
+        now.checked_add(window).unwrap_or(now)
     }
 
     /// The filesystem holding `path`, asked through the directory when the path is a symlink.
@@ -264,7 +314,7 @@ impl FileRecoveryProvider {
     fn check(&self, asset: &RecoveryAsset) -> Result<RecoveryValidation, ErrorValue> {
         let Ok(manifest) = self.store.read_manifest(&Self::archive_of(asset)) else {
             return Ok(RecoveryValidation::none(
-                self.now,
+                self.now(),
                 format!(
                     "the recovery copy is not in the store at `{}`",
                     asset.reference()
@@ -290,7 +340,7 @@ impl FileRecoveryProvider {
                 root.display()
             ));
         }
-        Ok(RecoveryValidation::none(self.now, notes.join("; "))
+        Ok(RecoveryValidation::none(self.now(), notes.join("; "))
             .existing(true)
             .identity(identity)
             .scope(scope)
@@ -550,7 +600,7 @@ impl RecoveryProvider for FileRecoveryProvider {
             path,
             &self.limits,
             ScanMode::Measure,
-            self.now.as_nanosecond(),
+            self.now().as_nanosecond(),
         )?;
         let manifest = capture.manifest();
         let kind = manifest
@@ -638,7 +688,7 @@ impl RecoveryProvider for FileRecoveryProvider {
             path,
             &self.limits,
             ScanMode::Capture,
-            self.now.as_nanosecond(),
+            self.now().as_nanosecond(),
         )?;
         let covered = capture.manifest().covered_objects();
         let planned: Vec<String> = scope
@@ -664,6 +714,14 @@ impl RecoveryProvider for FileRecoveryProvider {
             .capturing(fingerprint)
             .costing(self.cost_of(&capture))
             .expiring_at(self.expiry());
+        // §11.5: a copy kept where the target's loss also reaches — the same device, a container's
+        // writable layer — is not independent of it. One whose independence could not be
+        // established is not claimed to be independent either.
+        let asset = if self.shares_failure_domain(&asset).unwrap_or(true) {
+            asset.sharing_failure_domain()
+        } else {
+            asset
+        };
         let validation = self.check(&asset)?;
         let failures = validation.failures();
         if !failures.is_empty() {
@@ -705,6 +763,14 @@ impl RecoveryProvider for FileRecoveryProvider {
             ));
         }
         let manifest = self.store.read_manifest(&Self::archive_of(asset))?;
+        // §11.4 and §37: READY is what the asset was when it was last validated. The bytes behind
+        // it may have been deleted since, and a recovery planned from bytes that are gone would
+        // only fail later, at the restore, after the operator has accepted the plan.
+        let mut notes = Vec::new();
+        if !self.identity_intact(asset, &manifest, &mut notes) {
+            let failures: Vec<&str> = notes.iter().map(String::as_str).collect();
+            return Err(asset_invalid(asset.id(), &failures));
+        }
         let root = manifest.root();
         let selected = restore_set(&manifest, source);
         if selected.is_empty() {
@@ -746,6 +812,13 @@ impl RecoveryProvider for FileRecoveryProvider {
                     },
                 )
                 .on(object.clone())
+                .declaring(
+                    EffectDomain::FilesystemPersistent,
+                    EffectKind::Replace,
+                    EffectConfidence::Guaranteed,
+                    object.clone(),
+                    "the live object is replaced by the copy the recovery store holds (§15.4)",
+                )
                 .with_idempotency(Idempotency::Idempotent)
                 .recovery_semantics(
                     "v0.6 §15.4: the copy is written beside the live object and renamed over it, \
@@ -753,6 +826,9 @@ impl RecoveryProvider for FileRecoveryProvider {
                 ),
             );
             if entry.kind() != ObjectKind::Directory {
+                // Appendix C.3: the bytes this archive holds are the evidence the conflict analysis
+                // weighs against the object as it is now, and only this provider can read them.
+                fragment = fragment.capturing(object.clone(), entry.digest());
                 // §25.1: a contract nobody can answer establishes nothing, so it is written in
                 // the `<target> <identity>` / `<field> == <value>` form the shell observes rather
                 // than as a sentence. `sha256` is the field, because the bytes coming back is
@@ -833,7 +909,7 @@ impl FileRecoveryProvider {
                         "Appendix C.4: the object was changed again after the recovery point, and \
                          restoring the copy would discard that change",
                     )
-                    .changed_at(self.now),
+                    .changed_at(self.now()),
                 ),
                 LiveState::Different => items.push(NewerStateItem::new(
                     object,

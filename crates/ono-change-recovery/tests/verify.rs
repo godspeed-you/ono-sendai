@@ -413,16 +413,28 @@ fn should_name_the_assets_a_failed_recovery_still_has() {
         "restore /etc/nginx/nginx.conf",
         "the dataset is busy",
     );
-    let retained = error
+    let retained: Vec<String> = error
         .metadata()
         .get("retained_assets")
         .expect("Appendix F: preserve remaining assets")
         .as_list()
         .expect("a list")
-        .len();
+        .iter()
+        .map(|asset| asset.as_str().expect("an asset identity").to_owned())
+        .collect();
+    let rested_on: Vec<String> = plan
+        .source_assets()
+        .iter()
+        .map(|asset| asset.as_str().to_owned())
+        .collect();
     assert_eq!(
-        retained, 1,
-        "§41.3 and Appendix F: the remaining assets and the exact partial state are preserved"
+        rested_on.len(),
+        1,
+        "precondition: the recovery rests on one asset"
+    );
+    assert_eq!(
+        retained, rested_on,
+        "§41.3 and Appendix F: the remaining assets are named by the identity a retry can use"
     );
 }
 

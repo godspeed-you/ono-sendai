@@ -1,0 +1,105 @@
+# v0.6 §50 phase P2 — §13, §56.1 and §63.8: ZFS scope and rollback semantics, against a real
+# pool.
+#
+# Appendix G.3 fixes the environment: a disposable loopback the suite creates, never a production
+# filesystem. §13.4 is the fact the provider exists to get right — a snapshot of the root dataset
+# does not protect a separate child dataset, however the paths nest — and §13.6 is the one it
+# exists to refuse: a rollback that would destroy newer snapshots, bookmarks or clones is
+# enumerated and gated rather than silently forced.
+#
+# The case runs in the image whose OpenZFS userland the provider validates, privileged so it can
+# build its pool on a loop device (ADR-0846); every check below has to run, and a missing one fails.
+case: ZFS boundaries and rollback safety on a pool this case built
+timeout: 300
+capability: SYS_ADMIN
+user: root
+security: apparmor=unconfined
+privileged: true
+image: filesystems
+env: NO_COLOR=1
+run: |
+  proved=" "
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"; proved="$proved$id "
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  require_proved() { for want in "$@"; do case "$proved" in *" $want "*) ;; *) echo "FAILED $want: this check never ran";; esac; done; }
+  skip() { echo "SKIPPED zfs-against-a-real-pool: $1"; echo 'zfs-against-a-real-pool: done'; exit 0; }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  domain_of() { sed -n 's/.*"targets":\[{[^]]*"persistence_domain":\("[^"]*"\|null\).*/\1/p' "$1" | head -1; }
+
+  # Appendix G.4 and §56.3: a provider whose tool is absent degrades rather than pretending, and
+  # so does this case. v0.4.1 §38.1's marker is how a run says it did not observe what it came for.
+  command -v zfs > /dev/null 2>&1 && command -v zpool > /dev/null 2>&1 \
+    || skip 'external_tool_unavailable: no zfs on this host'
+  { modprobe zfs 2>/dev/null || [ -c /dev/zfs ]; } || skip 'missing_kernel_feature: the zfs module is not loaded'
+
+  # Appendix G.3: the suite builds its own pool and names it after this run, so nothing collides.
+  pool="onoacc$$"
+  image=/tmp/$pool.img
+  truncate -s 256M "$image" || skip 'fixture_not_applicable: no space for a loop image'
+  device=$(losetup --find --show "$image" 2>/dev/null) || { rm -f "$image"; skip 'missing_privilege: no loop device'; }
+  cleanup() { zpool destroy "$pool" 2>/dev/null; losetup -d "$device" 2>/dev/null; rm -f "$image"; }
+  trap cleanup EXIT
+  zpool create -f "$pool" "$device" 2>/dev/null || skip 'missing_privilege: the pool could not be created'
+
+  echo '== §13.4: a separate child dataset is not covered by the parent =='
+  zfs create "$pool/child"
+  printf 'parent data\n' > "/$pool/parent.txt"
+  printf 'child data\n' > "/$pool/child/inner.txt"
+  # Appendix A.4 prefers the smallest recovery scope, and §15.2 bounds the file provider's copy:
+  # past its 16 MiB per-object limit, the child dataset's snapshot is the protection chosen.
+  truncate -s 17M "/$pool/child/inner.txt"
+  ono -c "plan copy file /$pool/parent.txt /$pool/child/inner.txt --overwrite | to json" > /tmp/z1.json 2>&1
+  id=$(plan_id /tmp/z1.json)
+  prove z1a "a plan against the child resolves to the child dataset (§13.4, Appendix B.8)" \
+    "[ \"\$(domain_of /tmp/z1.json)\" = '\"$pool/child\"' ]"
+  prove z1b "and the snapshot it prepares is of the child, never of the parent (§13.4, §2.5)" \
+    "grep -q '\"value\":\"$pool/child\"' /tmp/z1.json && ! grep -q '\"value\":\"$pool\"' /tmp/z1.json"
+
+  echo '== §4.5: the snapshot is created before the mutation, and it is a real snapshot =='
+  before=$(zfs list -H -t snapshot -o name -r "$pool/child" | wc -l)
+  ono -c "apply $id" > /tmp/z2.txt 2>&1
+  snapshot=$(zfs list -H -t snapshot -o name -r "$pool/child" | head -1)
+  prove z2a "applying created exactly one snapshot, of the child (§4.5, §13.1)" \
+    "[ \$(zfs list -H -t snapshot -o name -r '$pool/child' | wc -l) -eq \$(($before + 1)) ] && [ \"\${snapshot%@*}\" = '$pool/child' ]"
+  prove z2b "and the asset names that snapshot (§11.1)" \
+    "ono -c 'get recovery | where type == \"zfs-snapshot\" | select reference | to json' 2>&1 | grep -qx '\[{\"reference\":\"$snapshot\"}\]'"
+  prove z2c "the mutation happened after it (§2.3, §4.5)" \
+    "[ \"\$(cat /$pool/child/inner.txt)\" = 'parent data' ]"
+
+  echo '== §13.6: a rollback that would destroy newer history is enumerated and gated =='
+  zfs snapshot "$pool/child@later"
+  # §53 keeps a rollback that destroys newer history off the table unless the operator allows it,
+  # and a rollback is the goal of restoring the whole domain (Appendix C.2). Even allowed, §13.6
+  # makes the plan enumerate what it would destroy and refuse to run without the acceptance.
+  mkdir -p "$HOME/.config/ono"
+  printf 'set config recovery.zfs.allow_destructive_rollback true\n' > "$HOME/.config/ono/config.ono"
+  ono -c "recover $id --goal restore-domain --method dataset-rollback" > /tmp/z3.txt 2>&1
+  ono -c "recover $id --goal restore-domain --method dataset-rollback | to json" > /tmp/z3.json 2>&1
+  rid=$(plan_id /tmp/z3.json)
+  prove z3a "the recovery plan enumerates the newer snapshot it would destroy (§13.6, §56.1)" \
+    "grep -q '$pool/child@later' /tmp/z3.json"
+  prove z3b "and it performed nothing (§2.11)" 'grep -qx "RECOVERY NOT EXECUTED" /tmp/z3.txt'
+  # The risk is acknowledged, so the one gate left is §13.6's: the acceptance of lost history.
+  ono -c "apply $rid --accept-risk --confirm" > /tmp/z4.txt 2>&1
+  prove z3c "applying it without the acceptance is refused with §13.6's own code (§19.4)" \
+    'grep -q "recovery.destructive_history_not_accepted" /tmp/z4.txt'
+  prove z3d "and the newer snapshot is still on the pool (§2.12, §55.3 case 15)" \
+    "zfs list -H -t snapshot -o name | grep -qx '$pool/child@later'"
+
+  echo '== §56.1: no argument vector carries a recursive destroy =='
+  prove z4a "no action of the recovery plan passes -R or -r to a destructive command (§13.6, §56.1)" \
+    "[ -s /tmp/z3.json ] && ! grep -qE '\"argv\":\[[^]]*\"-[a-zA-Z]*[rR][a-zA-Z]*\"' /tmp/z3.json"
+
+  require_proved z1a z1b z2a z2b z2c z3a z3b z3c z3d z4a
+  echo 'zfs-against-a-real-pool: done'
+exit: 0
+stdout-contains: zfs-against-a-real-pool: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

@@ -59,7 +59,7 @@ impl CommandImpl for GetPlan {
                     None => super::plan_of(&state, reference)?,
                 };
                 return Ok(Outcome::Values(ValueStream::from_values([
-                    super::plan_value(&plan)?,
+                    super::stored_plan_value(&state, &plan)?,
                 ])));
             }
             let wanted = states_of(&arguments)?;
@@ -81,7 +81,7 @@ impl CommandImpl for GetPlan {
                     continue;
                 }
                 let plan = state.store().get(&summary.id)?;
-                values.push(super::plan_value(&plan)?);
+                values.push(super::stored_plan_value(&state, &plan)?);
             }
             Ok(Outcome::Values(ValueStream::from_values(values)))
         })
@@ -205,7 +205,11 @@ fn resolution_of(state: &super::session::ChangeState, plan: &ono_change_core::Ch
         if target.schema() != ono_change_plan::freeze::FILE_SCHEMA {
             continue;
         }
-        let domain = state.mounts().resolve(std::path::Path::new(target.label()));
+        let domain = super::world::file_domain(
+            state.providers(),
+            state.mounts(),
+            std::path::Path::new(target.label()),
+        );
         let mut row = MapValue::new();
         row.insert("target".into(), Value::string(target.identity()));
         row.insert("path".into(), Value::string(domain.path()));
@@ -266,14 +270,36 @@ impl CommandImpl for RebasePlan {
             // frozen a second time rather than copied: a unit that was restarted since the seal
             // has a new generation, and that is the fact the new revision is about.
             let mut targets = Vec::with_capacity(plan.targets().len());
+            // Each target beside the identity it was sealed under, so an action is matched to the
+            // object it names even where refreezing moved that object's identity.
+            let mut refrozen: Vec<(String, ono_change_core::FrozenTarget)> =
+                Vec::with_capacity(plan.targets().len());
             for target in plan.targets() {
-                targets.push(
-                    super::world::refreeze(&providers, state.mounts(), target)
-                        .await
-                        .unwrap_or_else(|_| target.clone()),
-                );
+                let next = super::world::refreeze(&providers, state.mounts(), target)
+                    .await
+                    .unwrap_or_else(|_| target.clone());
+                refrozen.push((target.identity().to_owned(), next.clone()));
+                targets.push(next);
             }
-            let revised = ono_change_plan::rebase(&plan, targets, now)?;
+            // §7.2's preconditions are facts about the world, so they are frozen again with the
+            // targets rather than copied: a revision carrying the digest the first one drifted
+            // from would be refused for the same reason (§7.5).
+            let refreeze = |action: &ono_change_core::PlanAction| {
+                let ono_change_core::Execution::ProviderAction { operation, .. } =
+                    action.execution()
+                else {
+                    return None;
+                };
+                let operation = super::actions::operation_of(operation)?;
+                let (_, target) = refrozen
+                    .iter()
+                    .find(|(sealed, _)| Some(sealed.as_str()) == action.target())?;
+                Some(ono_change_plan::Refrozen::new(
+                    target.identity(),
+                    super::actions::preconditions_of(operation, target),
+                ))
+            };
+            let revised = ono_change_plan::rebase_with(&plan, targets, &refreeze, now)?;
             state.store().put(&revised)?;
             super::session::note_last_plan(revised.id());
             Ok(Outcome::Values(ValueStream::from_values([
@@ -341,19 +367,40 @@ impl CommandImpl for ResumePlan {
                 if !blocked.is_empty() {
                     return Err(error::resume_refused(plan.id(), &blocked));
                 }
-                // Nothing blocked and nothing to continue: the plan is complete. §41.3 asks for
-                // a decision rather than a silent no-op, and an empty answer with a zero exit
-                // reads as "resumed" to a script.
-                return Err(error::resume_complete(plan.id(), outcome.state()));
+                // Nothing blocked and nothing to continue, and the plan has its verdict: it is
+                // complete. §41.3 asks for a decision rather than a silent no-op, and an empty
+                // answer with a zero exit reads as "resumed" to a script. A plan that mutated but
+                // was never verified is not complete — resuming it verifies it.
+                if plan.state().is_verdict() {
+                    return Err(error::resume_complete(plan.id(), outcome.state()));
+                }
             }
             // §41.3: what may be rerun is rerun through the ordinary apply path, so the same
             // gates, the same claim and the same ledger events apply to a resumed plan as to a
             // fresh one.
             let analysis = super::lifecycle::analysis_of(&state, &plan);
             let revalidate = |action: &_| super::world::revalidate(&handle, &providers, action);
-            let execute =
-                |action: &_| super::world::execute_with(&handle, &providers, Some(&state), action);
+            // §24.5: a recovery plan resumes through the same gate and the same provider routing
+            // as its first run, so a restore never runs past what the operator accepted.
+            let accepted = given.newer_state_loss;
+            let recovery = if plan.kind() == ono_change_core::PlanKind::Recovery {
+                Some(super::recovery::current(&state, &plan, accepted, now)?)
+            } else {
+                None
+            };
+            let acceptance = if accepted {
+                ono_change_core::RestoreAcceptance::none().accepting_newer_state_loss()
+            } else {
+                ono_change_core::RestoreAcceptance::none()
+            };
+            let execute = |action: &_| match &recovery {
+                Some((_, assets)) => {
+                    super::recovery::restore(&state, plan.id(), assets, &acceptance, action)
+                }
+                None => super::world::execute(&handle, &providers, action),
+            };
             let observe = |contract: &_| super::world::observe(&handle, &providers, contract);
+            let clock = Timestamp::now;
             let mut request = ono_change_executor::ApplyRequest::new(
                 &plan,
                 state.store(),
@@ -364,7 +411,10 @@ impl CommandImpl for ResumePlan {
                 &revalidate,
                 &execute,
                 &observe,
-            );
+            )
+            .with_authority(super::session::authority())
+            .stamping_with(&clock)
+            .resuming();
             let applied = ono_change_executor::apply(&mut request);
             for (id, status) in applied.statuses() {
                 let action = plan.actions().iter().find(|action| action.id() == id);

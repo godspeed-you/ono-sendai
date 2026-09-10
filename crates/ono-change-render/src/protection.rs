@@ -75,6 +75,7 @@ pub fn protection_block(
         // than by the engine.
         lines.push("  by domain".to_owned());
         lines.extend(matrix_rows(&rows, 4, width, charset));
+        lines.extend(not_protected_by(&rows, 2, width));
     }
     lines.push(String::new());
     lines.extend(exclusion_rows(plan, 2, width, charset));
@@ -98,9 +99,38 @@ pub fn coverage_matrix(plan: &RecordValue, width: usize, charset: Charset) -> Ve
         lines.push(fit("  no domain was analysed", width));
     } else {
         lines.extend(matrix_rows(&rows, 2, width, charset));
+        lines.extend(not_protected_by(&rows, 0, width));
     }
     lines.push(String::new());
     lines.extend(exclusion_rows(plan, 0, width, charset));
+    lines
+}
+
+/// §13.4's `NOT PROTECTED BY`: the enclosing objects whose snapshot would not reach a row's domain.
+///
+/// A row that names none draws nothing, so the block appears exactly where a snapshot of a parent
+/// or of the filesystem mounted above could be mistaken for the one that protects the target.
+fn not_protected_by(rows: &[Item], indent: usize, width: usize) -> Vec<String> {
+    let named: Vec<(String, String)> = rows
+        .iter()
+        .flat_map(|row| {
+            let domain = text(row, "domain").unwrap_or_default();
+            strings(row, "not_protected_by")
+                .into_iter()
+                .map(move |object| (domain.clone(), object))
+        })
+        .collect();
+    if named.is_empty() {
+        return Vec::new();
+    }
+    let pad = " ".repeat(indent);
+    let mut lines = vec![String::new(), format!("{pad}NOT PROTECTED BY")];
+    for (domain, object) in named {
+        lines.push(fit(
+            &format!("{pad}  a snapshot of {object}  ({domain})"),
+            width,
+        ));
+    }
     lines
 }
 

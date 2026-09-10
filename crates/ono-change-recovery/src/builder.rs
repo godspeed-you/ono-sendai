@@ -32,10 +32,10 @@ use std::sync::Arc;
 use jiff::Timestamp;
 use ono_change_core::{
     ActionRole, ActionStatus, AssetState, ChangePlan, DirectoryRestorePolicy, EffectDomain,
-    EffectKind, EquivalenceDomain, FrozenTarget, Intent, MetadataCoverage, PlanAction,
-    ProposedEffect, ProviderBinding, RecoveryAsset, RecoveryGoal, RecoveryPlan, RestoreMethod,
-    RiskAssessment, RiskClass, RiskDimension, RiskFinding, UnrecoverableEffect, VerificationClass,
-    VerificationContract, VerificationSet, error,
+    EffectKind, EquivalenceDomain, FrozenTarget, ImpactClass, ImpactGraph, ImpactNode, Intent,
+    MetadataCoverage, PlanAction, ProposedEffect, ProviderBinding, RecoveryAsset, RecoveryGoal,
+    RecoveryPlan, RestoreMethod, RiskAssessment, RiskClass, RiskDimension, RiskFinding,
+    UnrecoverableEffect, VerificationClass, VerificationContract, VerificationSet, error,
 };
 use ono_change_protection::ProviderRegistry;
 use ono_value::{ByteSize, ErrorValue, Value};
@@ -65,6 +65,7 @@ pub struct RecoveryRequest<'a> {
     captured: Vec<(Arc<str>, Arc<str>)>,
     destroyed_assets: Vec<Arc<str>>,
     discarded_bytes: Option<ByteSize>,
+    impact: Option<&'a dyn Fn(&[FrozenTarget], &[PlanAction]) -> ImpactGraph>,
 }
 
 impl std::fmt::Debug for RecoveryRequest<'_> {
@@ -110,6 +111,7 @@ impl<'a> RecoveryRequest<'a> {
             captured: Vec::new(),
             destroyed_assets: Vec::new(),
             discarded_bytes: None,
+            impact: None,
         }
     }
 
@@ -184,6 +186,22 @@ impl<'a> RecoveryRequest<'a> {
         self
     }
 
+    /// Derives the recovery plan's impact over the caller's topology (§2.12, §9).
+    ///
+    /// §2.12 puts a recovery through the same lifecycle as any other change, and `impact` is part
+    /// of it. This crate reads no topology, so the caller that holds one hands over the derivation
+    /// it runs for every other plan, and the recovery's own targets and actions are walked by it
+    /// before the plan is sealed. Without one, the plan names its direct targets and says the walk
+    /// beyond them was not made.
+    #[must_use]
+    pub const fn deriving_impact(
+        mut self,
+        derive: &'a dyn Fn(&[FrozenTarget], &[PlanAction]) -> ImpactGraph,
+    ) -> Self {
+        self.impact = Some(derive);
+        self
+    }
+
     /// The assets the recovery would restore from.
     #[must_use]
     pub const fn assets(&self) -> &[RecoveryAsset] {
@@ -222,6 +240,22 @@ impl<'a> RecoveryRequest<'a> {
 ///   method's provider contributed no action to run (§56.3).
 /// - whatever `ChangePlan::seal` refuses with, since §2.12 seals a recovery like any other plan.
 pub fn plan_recovery(request: &RecoveryRequest<'_>) -> Result<RecoveryPlan, ErrorValue> {
+    plan_recovery_explained(request).map(|(recovery, _)| recovery)
+}
+
+/// [`plan_recovery`], with the method selection that produced it (Appendix C.1, Appendix I.5).
+///
+/// Appendix I.5 shows the methods a recovery did *not* choose and what each would have
+/// discarded. Only the selection this function made can answer that: a second selection run by
+/// the caller would be asked a different question, without the metadata and semantics this one
+/// required, and could name a different choice than the one the plan rests on.
+///
+/// # Errors
+///
+/// As [`plan_recovery`].
+pub fn plan_recovery_explained(
+    request: &RecoveryRequest<'_>,
+) -> Result<(RecoveryPlan, MethodSelection), ErrorValue> {
     if request.assets.is_empty() {
         return Err(error::recovery_plan_incomplete(
             "a recovery asset to restore from",
@@ -251,13 +285,17 @@ pub fn plan_recovery(request: &RecoveryRequest<'_>) -> Result<RecoveryPlan, Erro
     let restore_set = restore_set(request);
     // The observations are taken once, here, so the analysis itself is a pure function of values
     // and two runs of it over the same world produce the same plan (§4.4).
-    let observations = observations(request, &restore_set);
-    let impact = crate::conflict::analyse(&conflict_request(
-        request,
-        &selection,
-        &restore_set,
+    let observations = observations(request, &restore_set, selection.chosen().fragment());
+    let impact = with_provider_items(
+        crate::conflict::analyse(&conflict_request(
+            request,
+            &selection,
+            &restore_set,
+            &observations,
+        )),
+        selection.chosen().fragment().newer_state(),
         &observations,
-    ));
+    );
     let unrecoverable = unrecoverable(request, &selection, &restore_set);
     let plan = change_plan(request, &selection, &restore_set)?;
 
@@ -292,7 +330,7 @@ pub fn plan_recovery(request: &RecoveryRequest<'_>) -> Result<RecoveryPlan, Erro
     if selection.chosen().fragment().requires_offline() {
         recovery = recovery.needing_offline();
     }
-    Ok(recovery)
+    Ok((recovery, selection))
 }
 
 /// Refuses an asset that is not in a state §11.4 calls usable.
@@ -387,9 +425,21 @@ fn dedupe(objects: Vec<Arc<str>>) -> Vec<Arc<str>> {
 }
 
 /// Asks the observation function about every object in the candidate restore scope.
-fn observations(request: &RecoveryRequest<'_>, restore_set: &[Arc<str>]) -> Vec<ObjectObservation> {
+///
+/// A scope entry that is not a path — a dataset, a subvolume reference — is a storage object, not
+/// an object with content an observer could read. Where the chosen provider established the newer
+/// state of its own storage (§13.6, §56.1), that reading is the one the plan carries, and the
+/// observer is not asked a question it cannot answer. Where the provider established nothing, the
+/// observer is asked, and what it cannot answer blocks as §56.3 requires.
+fn observations(
+    request: &RecoveryRequest<'_>,
+    restore_set: &[Arc<str>],
+    fragment: &ono_change_core::RecoveryPlanFragment,
+) -> Vec<ObjectObservation> {
+    let provider_established = fragment.newer_state().is_complete();
     scope_objects(request, restore_set)
         .into_iter()
+        .filter(|object| !provider_established || object.starts_with('/'))
         .map(|object| {
             let state = (request.observe)(&object);
             ObjectObservation::new(object, state)
@@ -424,13 +474,75 @@ fn conflict_request<'a>(
     for (object, digest) in &request.captured {
         conflict = conflict.captured(Arc::clone(object), Arc::clone(digest));
     }
-    for asset in &request.destroyed_assets {
-        conflict = conflict.destroying(Arc::clone(asset));
+    // Appendix C.3: the provider read these out of its own asset. They come after the request's
+    // so that a digest the caller established explicitly is the one consulted first.
+    for (object, digest) in selection.chosen().fragment().captured() {
+        conflict = conflict.captured(Arc::clone(object), Arc::clone(digest));
     }
-    if let Some(bytes) = request.discarded_bytes {
+    for asset in destroyed_assets(request, selection) {
+        conflict = conflict.destroying(asset);
+    }
+    if let Some(bytes) = discarded_bytes(request, selection) {
         conflict = conflict.discarding(bytes);
     }
     conflict
+}
+
+/// The provider-native objects the recovery would destroy: the ones the caller named, and the ones
+/// the chosen provider established itself (§13.6, §56.1).
+fn destroyed_assets(request: &RecoveryRequest<'_>, selection: &MethodSelection) -> Vec<Arc<str>> {
+    let established = selection.chosen().fragment().newer_state();
+    let mut destroyed = request.destroyed_assets.clone();
+    if established.is_complete() {
+        destroyed.extend(established.destroyed_assets().iter().cloned());
+    }
+    dedupe(destroyed)
+}
+
+/// The bytes the recovery would discard, as the caller or the chosen provider established them.
+fn discarded_bytes(request: &RecoveryRequest<'_>, selection: &MethodSelection) -> Option<ByteSize> {
+    let established = selection.chosen().fragment().newer_state();
+    request.discarded_bytes.or_else(|| {
+        if established.is_complete() {
+            established.discarded_bytes()
+        } else {
+            None
+        }
+    })
+}
+
+/// The items the chosen provider classified itself, for the objects the observer was not asked
+/// about — its own storage objects (§13.6, §56.1).
+///
+/// An object the observer was asked about is the observer's to classify, whatever it concluded:
+/// it read the object as it is now and knows which write was the plan's own (Appendix C.4), which
+/// a provider comparing the object against its asset does not. A provider that established nothing
+/// adds nothing.
+fn with_provider_items(
+    observed: ono_change_core::NewerStateImpact,
+    provider: &ono_change_core::NewerStateImpact,
+    asked: &[ObjectObservation],
+) -> ono_change_core::NewerStateImpact {
+    if !provider.is_complete() {
+        return observed;
+    }
+    let mut items = observed.items().to_vec();
+    for item in provider.items() {
+        let observer_owns = asked
+            .iter()
+            .any(|observation| observation.object() == item.object());
+        if !observer_owns && !items.iter().any(|kept| kept.object() == item.object()) {
+            items.push(item.clone());
+        }
+    }
+    let mut merged = ono_change_core::NewerStateImpact::analysed(items);
+    for asset in observed.destroyed_assets() {
+        merged = merged.destroying(Arc::clone(asset));
+    }
+    if let Some(bytes) = observed.discarded_bytes() {
+        merged = merged.discarding(bytes);
+    }
+    merged
 }
 
 /// Everything the recovery cannot reverse (§24.3, §35.2, §35.3, §55.8, Appendix F.2).
@@ -599,7 +711,36 @@ fn change_plan(
     for binding in bindings(request, selection) {
         plan = plan.binding(binding);
     }
-    plan.seal(request.now)
+    let impact = impact_of(request, &plan);
+    plan.with_impact(impact).seal(request.now)
+}
+
+/// The recovery plan's impact: the caller's derivation where there is one (§2.12, §9).
+///
+/// Without a topology the plan still names every object it restores as a direct target, and the
+/// graph says that nothing beyond them was walked (§9.5), so `impact` never reports as complete a
+/// graph nobody derived.
+fn impact_of(request: &RecoveryRequest<'_>, plan: &ChangePlan) -> ImpactGraph {
+    if let Some(derive) = request.impact {
+        return derive(plan.targets(), plan.actions());
+    }
+    let mut graph = ImpactGraph::empty();
+    for target in plan.targets() {
+        graph.add(
+            ImpactNode::new(
+                target.identity(),
+                target.label(),
+                target.schema(),
+                ImpactClass::DirectTarget,
+                0,
+            )
+            .citing(format!("target:{}", target.identity())),
+        );
+    }
+    graph.truncated(
+        "the recovery was planned without the session's topology, so nothing beyond the objects \
+         it restores was walked (§9.5)",
+    )
 }
 
 /// One provider action, re-anchored to this plan and put in the RECOVER role (§3.3).
@@ -624,6 +765,12 @@ fn recover_action(
     .with_idempotency(action.idempotency());
     if let Some(target) = action.target() {
         rebuilt = rebuilt.on(target);
+    }
+    // §2.12: the recovery plan's effect list is what its actions will do, so an effect the
+    // provider declared travels with the action it now belongs to.
+    let id = rebuilt.id().clone();
+    for effect in action.effects() {
+        rebuilt = rebuilt.effecting(effect.for_action(id.clone()));
     }
     if let Some(semantics) = action.declared_recovery() {
         rebuilt = rebuilt.recovery_semantics(semantics);
@@ -758,14 +905,15 @@ fn risk(request: &RecoveryRequest<'_>, selection: &MethodSelection) -> RiskAsses
             }
         ),
     ));
-    if !request.destroyed_assets.is_empty() {
+    let destroyed = destroyed_assets(request, selection);
+    if !destroyed.is_empty() {
         assessment = assessment.with(RiskFinding::new(
             RiskDimension::Scope,
             RiskClass::High,
             "recovery.destroyed-history",
             format!(
                 "{} provider-native object(s) would be destroyed (§13.6)",
-                request.destroyed_assets.len()
+                destroyed.len()
             ),
         ));
     }

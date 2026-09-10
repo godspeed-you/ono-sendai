@@ -56,6 +56,19 @@ fields:
     type: value
     nullable: true
     doc: The value proposed for it, where one is known (§8.2).
+  before_known:
+    type: bool
+    nullable: true
+    doc: >-
+      Whether `before` is known (§10.5). `true` with a null `before` says the object is known to
+      hold nothing, `false` says its value is not known. A record without the flag reads a null
+      `before` as not known.
+  proposed_known:
+    type: bool
+    nullable: true
+    doc: >-
+      Whether `proposed` is known (§10.5), with the same reading as `before_known`: a known null
+      is a proposal that the object hold nothing.
   evidence:
     type: list<string>
     required: true

@@ -10,8 +10,11 @@
 //! the frozen target set, because that is the thing §7.3 found stale. A plan whose actions should
 //! change is a new plan, and the revision counter would be lying about it.
 
+use std::collections::BTreeMap;
+
 use jiff::Timestamp;
-use ono_change_core::{ChangePlan, FrozenTarget, error};
+use ono_change_core::{ChangePlan, FrozenTarget, PlanAction, PlanKind, Precondition, error};
+use ono_core::ErrorCode;
 use ono_value::ErrorValue;
 
 /// Creates the next revision of `plan` against `targets`, resolved now (§7.5).
@@ -44,6 +47,115 @@ pub fn rebase(
         ));
     }
     plan.revise().resolve(targets)?.seal(now)
+}
+
+/// What one action of the next revision is resolved against (§7.5, §7.2).
+///
+/// The object the action now names and the §7.2 facts frozen about it as it is now: a file's
+/// bytes, a unit's generation, the persistence domain that holds the state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Refrozen {
+    target: String,
+    preconditions: Vec<Precondition>,
+}
+
+impl Refrozen {
+    /// `target`'s identity, with the preconditions frozen against it now.
+    #[must_use]
+    pub fn new(target: impl Into<String>, preconditions: Vec<Precondition>) -> Self {
+        Self {
+            target: target.into(),
+            preconditions,
+        }
+    }
+}
+
+/// Creates the next revision of `plan` with every action's preconditions frozen again (§7.5).
+///
+/// [`rebase`] moves the target set and keeps each action as it was sealed, preconditions
+/// included — so a plan refused because a file's bytes moved would carry the old digest into its
+/// next revision and be refused again for the same reason. §7.5's revision is created "against
+/// current state", and §7.2's preconditions are the part of the plan that *is* state. `refreeze`
+/// answers for each action with what it is resolved against now; an action it answers `None` for
+/// — a PREPARE action, which names a recovery provider rather than an object — keeps what it had.
+/// The intent, the actions, the strategy, the protection and the contracts are the ones the
+/// operator approved, exactly as in [`rebase`].
+///
+/// # Errors
+///
+/// Everything [`rebase`] refuses with, and `change.plan_store_corrupt` for a plan whose identity
+/// is not the one §3.2 derives from its intent, session and creation instant: its next revision
+/// could not carry the same identity.
+pub fn rebase_with(
+    plan: &ChangePlan,
+    targets: Vec<FrozenTarget>,
+    refreeze: &dyn Fn(&PlanAction) -> Option<Refrozen>,
+    now: Timestamp,
+) -> Result<ChangePlan, ErrorValue> {
+    if !plan.state().is_sealed() {
+        return Err(error::plan_not_sealed(plan.id(), plan.state()));
+    }
+    if targets.is_empty() {
+        return rebase(plan, targets, now);
+    }
+    let mut draft = ChangePlan::draft(plan.intent().clone(), plan.session(), plan.created_at());
+    if draft.id() != plan.id() {
+        return Err(ErrorValue::new(
+            ErrorCode::ChangePlanStoreCorrupt,
+            format!(
+                "plan {} does not carry the identity its intent, session and creation instant \
+                 derive",
+                plan.id().short()
+            ),
+        )
+        .with_help("§3.2 derives a plan's identity, and a revision keeps it; this one cannot"));
+    }
+    if plan.kind() == PlanKind::Recovery {
+        draft = draft.as_recovery();
+    }
+    let remap = BTreeMap::new();
+    for action in plan.actions() {
+        let next = match refreeze(action) {
+            Some(refrozen) => crate::builder::rebuilt(
+                plan.id(),
+                action.ordinal(),
+                action,
+                &remap,
+                &refrozen.preconditions,
+                Some(&refrozen.target),
+                None,
+            ),
+            None => crate::builder::rebuilt(
+                plan.id(),
+                action.ordinal(),
+                action,
+                &remap,
+                action.preconditions(),
+                action.target(),
+                None,
+            ),
+        };
+        draft = draft.with_action(next)?;
+    }
+    draft = draft
+        .with_impact(plan.impact().clone())
+        .with_protection(plan.protection().clone())
+        .with_protection_mode(plan.protection_mode())
+        .with_risk(plan.risk().clone())
+        .with_strategy(plan.strategy())
+        .with_verification(plan.verification().clone());
+    for binding in plan.providers() {
+        draft = draft.binding(binding.clone());
+    }
+    if let Some(at) = plan.expires_at() {
+        draft = draft.expiring_at(at);
+    }
+    // `revise` is what numbers a revision and records the one it supersedes, so the rebuilt draft
+    // is revised up to the plan's own revision and one past it.
+    for _ in 0..plan.revision() {
+        draft = draft.revise();
+    }
+    draft.resolve(targets)?.seal(now)
 }
 
 #[cfg(test)]
@@ -125,6 +237,54 @@ mod tests {
             .expect("the targets resolve")
             .seal(at(60))
             .expect("a plan seals")
+    }
+
+    #[test]
+    fn should_be_exactly_a_rebase_when_nothing_is_frozen_again() {
+        let original = sealed(&["a.service", "b.service"]);
+        let copied = rebase(&original, vec![service("a.service")], at(120))
+            .expect("§7.5 creates a new revision");
+        let rebuilt = rebase_with(&original, vec![service("a.service")], &|_| None, at(120))
+            .expect("§7.5 creates a new revision");
+        assert_eq!(
+            rebuilt, copied,
+            "§7.5: freezing no fact again changes nothing about the revision a rebase creates — \
+             the intent, the actions, the protection and the contracts are the approved ones"
+        );
+    }
+
+    #[test]
+    fn should_freeze_each_actions_preconditions_again_against_current_state() {
+        let original = sealed(&["a.service"]);
+        let now = ono_change_core::Precondition::new(
+            ono_change_core::PreconditionKind::ContentDigest,
+            "/etc/app.conf",
+            "sha256",
+            Value::string("current"),
+        );
+        let refreeze = |_: &PlanAction| {
+            Some(Refrozen::new(
+                "systemd:a.service#generation=2",
+                vec![now.clone()],
+            ))
+        };
+        let next = rebase_with(&original, vec![service("a.service")], &refreeze, at(120))
+            .expect("§7.5 creates a new revision");
+        let action = next.actions().first().expect("the action is kept");
+        assert_eq!(
+            action.preconditions(),
+            std::slice::from_ref(&now),
+            "§7.5 and §7.2: the next revision carries the facts as they are now, not the ones the \
+             refused revision froze"
+        );
+        assert_eq!(
+            action.target(),
+            Some("systemd:a.service#generation=2"),
+            "and the action names the object as it was resolved now"
+        );
+        assert_eq!(next.revision(), 2);
+        assert_eq!(next.id(), original.id());
+        assert!(next.digest_holds(), "§4.4: the new revision is sealed");
     }
 
     #[test]

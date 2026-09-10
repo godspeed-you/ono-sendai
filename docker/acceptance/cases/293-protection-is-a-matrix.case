@@ -1,11 +1,10 @@
-# v0.6 §50 phase P8 — §10.3, §55.6 cases 27 and 28, and §62.6: the plan-level protection summary
-# never hides the matrix beneath it, and protection is never rendered without what it leaves out.
+# v0.6 §50 phase P8 — §10.3, §55.6 case 27 and §62.6: the plan-level protection summary never
+# hides the matrix beneath it, and protection is never rendered without what it leaves out.
 #
-# The two scenarios §55.6 names are the ones a reasonable implementation gets wrong. A plan that
-# snapshots a filesystem and kills a process is not protected for the process — §33.1 says a
-# filesystem snapshot does not change that classification. A plan that snapshots a filesystem and
-# makes an outbound call is not protected for the call — §35.2 says the request has been served.
-# Both stay in the `not covered` block after protection, and that is §2.13.
+# The scenario §55.6 names is the one a reasonable implementation gets wrong: a plan that protects
+# a file and kills a process is not protected for the process — §33.1 says a filesystem recovery
+# asset does not change that classification. The process stays in the `not recoverable` block after
+# protection, and that is §2.13.
 case: protection is a matrix with its exclusions beside it, never a word on its own
 timeout: 120
 env: NO_COLOR=1
@@ -19,56 +18,61 @@ run: |
       printf '%s\n' "$out" | head -6 | sed 's/^/        /'
     fi
   }
+  # One JSON object per line: the rows of a `select <list> | to json` answer.
+  rows() { sed 's/^\[{"[a-z_]*":\[//; s/\]}\]$//; s/},{"/}\n{"/g'; }
 
   mkdir -p "$HOME/etc"
   printf 'worker_processes 4;\n' > "$HOME/etc/nginx.conf"
   printf 'worker_processes 8;\n' > "$HOME/etc/nginx.conf.new"
 
   echo '== §10.3: the plan carries one row per mutation domain =='
-  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | to json" > /tmp/m1.json 2>&1
-  prove m1a "the record carries a protection matrix, not a boolean (§10.1)" \
-    'grep -q "\"protection\"" /tmp/m1.json'
-  prove m1b "and a level composed from it (§10.2, Appendix A.5)" \
-    'grep -q "\"protection_level\"" /tmp/m1.json'
-  prove m1c "and the exclusions that travel with the level (§10.3, §62.6)" \
-    'grep -q "coverage_exclusions" /tmp/m1.json'
-  prove m1d "the level is one of §10.2's six words and nothing else" \
-    'grep -oE "\"protection_level\": *\"[a-z-]+\"" /tmp/m1.json | grep -qE "unprotected|compensatable|partially-protected|protected|transactional|unknown"'
+  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | select protection | to json" 2>&1 | rows > /tmp/m1.rows
+  prove m1a "the filesystem row is satisfied by a named asset, not by a boolean (§10.1, §10.3)" \
+    'grep "^{\"domain\":\"filesystem-persistent\"" /tmp/m1.rows | grep -q "\"protection\":\"protected\",\"satisfied\":true,.*\"assets\":\[\"[0-9a-f]\{16\}\"\]"'
+  prove m1b "the plan's level is composed from the rows: protected, because every required row is (Appendix A.5)" \
+    "[ \"\$(ono -c 'plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | select protection_level | to json' 2>&1)\" = '[{\"protection_level\":\"protected\"}]' ]"
+  prove m1c "and the exclusions travel with the level (§10.3, §62.6)" \
+    "! ono -c 'plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | select coverage_exclusions | to json' 2>&1 | grep -q '\"coverage_exclusions\":\[\]'"
 
   echo '== §55.6 case 27: a signal is unprotected for runtime state, whatever the filesystem offers =='
   sleep 600 &
   victim=$!
-  ono -c "plan kill process $victim --signal SIGKILL | to json" > /tmp/m2.json 2>&1
-  prove m2a "a SIGKILL plan does not report itself protected (§33.1, §59.4)" \
-    '! grep -q "\"protection_level\": *\"protected\"" /tmp/m2.json'
-  prove m2b "and the process is still running, because planning changed nothing (§2.1)" \
-    "kill -0 $victim"
-  prove m2c "the runtime effect is marked irreversible (§2.13, §33.1)" \
-    'grep -q "irreversible" /tmp/m2.json'
-  kill $victim 2>/dev/null || true
+  kill_and_copy="plan { copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite; kill process $victim --signal SIGKILL }"
+  ono -c "$kill_and_copy | to json" > /tmp/m2.json 2>&1
+  ono -c "$kill_and_copy | select protection | to json" 2>&1 | rows > /tmp/m2.rows
+  ono -c "$kill_and_copy | select effects | to json" 2>&1 | rows > /tmp/m2e.rows
+  prove m2a "the file in the same plan is still protected by its asset (§10.3)" \
+    'grep "^{\"domain\":\"filesystem-persistent\"" /tmp/m2.rows | grep -q "\"protection\":\"protected\",\"satisfied\":true"'
+  prove m2b "and the process runtime row is unprotected beside it (§33.1, §59.4)" \
+    'grep "^{\"domain\":\"process-runtime\"" /tmp/m2.rows | grep -q "\"protection\":\"unprotected\",\"satisfied\":false"'
+  prove m2c "so the plan is not protected: one unsatisfied required row caps it (Appendix A.5, §2.5)" \
+    'grep -qE "\"protection_level\":\"(partially-protected|unprotected)\"" /tmp/m2.json'
+  prove m2d "the runtime effect is marked irreversible (§2.13, §33.1)" \
+    'grep "\"domain\":\"process-runtime\"" /tmp/m2e.rows | grep -q "\"irreversible\":true"'
+  prove m2e "and the process is still running, because planning changed nothing (§2.1)" "kill -0 $victim"
 
-  echo '== §20.4 and Appendix E.8: the rendered view shows the exclusions with the word =='
-  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite" > /tmp/m3.txt 2>&1
-  prove m3a "the plan view carries a protection block (§20.4)" \
-    'grep -qi "^protection" /tmp/m3.txt'
-  prove m3b "and it names what is not covered beside it (§10.3, §62.6, Appendix E.8)" \
-    'grep -qiE "not covered|not recoverable" /tmp/m3.txt'
-  prove m3c "no rendering reduces protection to a single reassuring mark (Appendix E.8)" \
+  echo '== §20.4, §2.13 and Appendix E.8: the rendered view shows what protection leaves out =='
+  ono -c "$kill_and_copy" > /tmp/m3.txt 2>&1
+  prove m3a "the protection block lists the process-runtime row as UNPROTECTED (§10.3, §62.6)" \
+    "sed -n '/^protection\$/,/^not recoverable\$/p' /tmp/m3.txt | grep -qE '^ +process-runtime +[a-z-]+ +UNPROTECTED'"
+  prove m3b "and carries the exclusions beside the level (§62.6, Appendix E.8)" \
+    "sed -n '/^protection\$/,/^not recoverable\$/p' /tmp/m3.txt | grep -qx '  not covered'"
+  prove m3c "the killed process stays in the \`not recoverable\` block after protection (§2.13)" \
+    "sed -n '/^not recoverable\$/,/^risk\$/p' /tmp/m3.txt | grep -qE '^  ! sleep'"
+  prove m3d "no rendering reduces protection to a single reassuring mark (Appendix E.8)" \
     '! grep -qiE "^ *(safe|fully protected|reversible: *(true|yes))" /tmp/m3.txt'
-
-  echo '== §62.1: a plan on a filesystem with no snapshot provider says so honestly =='
-  prove m3d "an unprotected domain is reported rather than omitted (§10.2, §62.1)" \
-    'grep -qiE "protection" /tmp/m3.txt'
+  kill "$victim" 2>/dev/null
 
   echo 'protection-is-a-matrix: done'
 exit: 0
 stdout-contains: PROVED m1a
 stdout-contains: PROVED m1b
 stdout-contains: PROVED m1c
-stdout-contains: PROVED m1d
 stdout-contains: PROVED m2a
 stdout-contains: PROVED m2b
 stdout-contains: PROVED m2c
+stdout-contains: PROVED m2d
+stdout-contains: PROVED m2e
 stdout-contains: PROVED m3a
 stdout-contains: PROVED m3b
 stdout-contains: PROVED m3c

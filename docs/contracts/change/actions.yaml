@@ -1,15 +1,18 @@
 # The action model: the five roles of v0.6 §3.3, the idempotency classes of §41.1, the outcome
 # states of Appendix F.2, and the execution methods §2.17 permits.
 #
-# `xtask/src/change.rs::check_actions` compares every list here against
-# `ono_change_core::{ActionRole, Idempotency, ActionStatus}::ALL` in both directions, and checks
-# that no execution method admits a command line.
+# `xtask/src/change.rs::check_vocabularies` compares `roles`, `idempotency_classes`, `statuses` and
+# `precondition_kinds` against `ono_change_core::{ActionRole, Idempotency, ActionStatus,
+# PreconditionKind}::ALL` in both directions, and `check_execution_methods` checks
+# `execution_methods`.
 #
 # The file's reason for existing is `execution_methods:`. §2.17 says provider operations MUST be
 # structured execution plans, not interpolated shell command strings, and §12.3 repeats it for
-# recovery providers. A registry that enumerates the permitted methods makes that checkable: a
-# method added to the shell without a row here fails the gate, and a row here that admits a shell
-# string is refused by the check rather than by review.
+# recovery providers. A registry that enumerates the permitted methods makes that checkable:
+# `check_execution_methods` reads the variants of `ono_change_core::Execution` out of
+# `crates/ono-change-core/src` and compares them with the rows in both directions, so a method
+# added to the shell without a row here fails the gate and a row naming no variant fails it too,
+# and a row that admits a shell string is refused by the check rather than by review.
 #
 # Decisions: ADR-0800, ADR-0805.
 
@@ -166,10 +169,10 @@ plannable_operations:
     tolerances: []
     effects:
       - {domain: filesystem-persistent, kind: create, confidence: guaranteed, irreversible: false,
-         object: destination, compensation: "remove the copy",
+         object: destination, compensation: "remove the copy where the destination did not exist; an overwritten destination comes back only from a recovery asset",
          explanation: "the destination holds the source's content, and its metadata where `--preserve` was given"}
     verification:
-      - {class: required, subject: "the file", expression: "exists"}
+      - {class: required, subject: "the file", expression: "sha256 == {digest:source}"}
 
   - id: ono.file.move
     role: mutate

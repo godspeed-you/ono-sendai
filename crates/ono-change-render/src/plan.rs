@@ -285,20 +285,39 @@ fn contract_line(contract: &Item) -> String {
     line
 }
 
-/// §19.4's outstanding acknowledgements, as `accepted_risk_overrides` and `risk` leave them.
+/// The key under which the shell attaches the acknowledgements it will ask for (§19.4, §40.3).
 ///
-/// The record stores what the operator has already accepted; what remains is what §19.4 requires
-/// and the plan does not yet carry. A `high` or `critical` class needs `--accept-risk`, and any
-/// irreversible finding needs `--accept-irreversible` (§40.3).
+/// Which flag answers a gate is the shell's policy rather than a fact of the plan: §40.2's worked
+/// gate is answered by `--accept-service-outage` where every finding at the plan's class speaks to
+/// downtime, and `ono.change-plan/1` carries the findings but not that rule. So the shell puts the
+/// gates it would raise on the record, as a list of maps with a `flag` and a `reason`, and the
+/// view prints exactly those — a view that worked the flags out again would be a second answer
+/// to "what will I be asked for" (§50.1).
+pub const OUTSTANDING_ACKNOWLEDGEMENTS: &str = "ono.change/outstanding-acknowledgements";
+
+/// §19.4's outstanding acknowledgements.
+///
+/// Where the shell attached [`OUTSTANDING_ACKNOWLEDGEMENTS`], those are the answer. Otherwise the
+/// record's own facts give §19.4's two gates the way the risk assessment raises them: a `high` or
+/// `critical` class not yet accepted, and a rule that found an irreversible action not yet
+/// accepted. A coverage exclusion marked irreversible is §10.3's answer about protection and
+/// raises no gate, so it asks for nothing here.
 fn approvals(plan: &RecordValue) -> Vec<String> {
+    if plan.get(OUTSTANDING_ACKNOWLEDGEMENTS).is_some() {
+        return items(plan, OUTSTANDING_ACKNOWLEDGEMENTS)
+            .iter()
+            .filter_map(|gate| {
+                let flag = text(gate, "flag")?;
+                let reason = text(gate, "reason").unwrap_or_default();
+                Some(labelled(&flag, &reason, 24))
+            })
+            .collect();
+    }
     let accepted = crate::strings(plan, "accepted_risk_overrides");
     let class = text(plan, "risk").unwrap_or_else(|| "unknown".to_owned());
     let irreversible = items(plan, "risk_findings")
         .iter()
-        .any(|finding| text(finding, "dimension").as_deref() == Some("irreversibility"))
-        || items(plan, "coverage_exclusions")
-            .iter()
-            .any(|exclusion| flag(exclusion, "irreversible"));
+        .any(|finding| text(finding, "dimension").as_deref() == Some("irreversibility"));
     let mut lines = Vec::new();
     if matches!(class.as_str(), "high" | "critical")
         && !accepted.iter().any(|flag| flag == "--accept-risk")
@@ -365,10 +384,41 @@ fn unrecoverable(plan: &RecordValue, width: usize, charset: Charset) -> Vec<Stri
             unique.push(subject);
         }
     }
-    unique
+    let mut lines: Vec<String> = unique
         .into_iter()
         .map(|subject| fit(&format!("  {mark} {subject}"), width))
-        .collect()
+        .collect();
+    // §6.3 and §2.4: an effect whose kind or confidence nobody could establish has an unknown
+    // reversibility, and §19.4 does not gate it as irreversible. It still belongs here unless a
+    // recovery asset protects its domain, because "nothing was recorded" would promote it.
+    let unknown = Symbol::Unknown.glyph(charset);
+    for effect in items(plan, "effects") {
+        if flag(&effect, "irreversible")
+            || !(text(&effect, "kind").as_deref() == Some("unknown")
+                || text(&effect, "confidence").as_deref() == Some("unknown"))
+            || domain_is_protected(plan, text(&effect, "domain").as_deref())
+        {
+            continue;
+        }
+        if let Some(subject) = text(&effect, "object").or_else(|| text(&effect, "explanation")) {
+            lines.push(fit(
+                &format!("  {unknown} reversibility unknown: {subject}"),
+                width,
+            ));
+        }
+    }
+    lines
+}
+
+/// Whether the plan's coverage matrix says a recovery asset or a transaction covers `domain`.
+fn domain_is_protected(plan: &RecordValue, domain: Option<&str>) -> bool {
+    items(plan, "protection").iter().any(|row| {
+        text(row, "domain").as_deref() == domain
+            && matches!(
+                text(row, "protection").as_deref(),
+                Some("protected" | "transactional")
+            )
+    })
 }
 
 /// §19.2's class and the findings that produced it, which §40.2 shows instead of "Are you sure?".

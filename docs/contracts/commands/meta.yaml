@@ -175,6 +175,7 @@ commands:
     options:
       - {name: problems, type: bool, doc: "Return the diagnostics from loading the config layers instead of the settings, as `ono.error/1` values (ADR-0218). A bad setting never stops the shell from starting (ADR-0010), so the diagnostics stay available as values."}
       - {name: overridden, type: bool, doc: "Include the values of the layers each setting overrides."}
+      - {name: profile, type: bool, doc: "Return the v0.6 Appendix H profile in force, expanded: one row per setting with what the configuration wrote, what the profile asks for, the value in force and which of them supplied it (ADR-0836)."}
     privilege: none
     streaming: true
     phase: A

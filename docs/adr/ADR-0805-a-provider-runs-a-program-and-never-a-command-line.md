@@ -1,6 +1,6 @@
 # ADR-0805: A provider runs a program through a seam, and the seam replays real tool output
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0833
 - Date: 2026-09-09
 - Spec refs: v0.6 §2.17, §12.3, §43.6, §54.4, Appendix G.2, Appendix G.3
 - Decided by: agent (autonomous)

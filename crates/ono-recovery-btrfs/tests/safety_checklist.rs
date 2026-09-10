@@ -294,14 +294,20 @@ fn should_block_when_the_default_subvolume_cannot_be_read() {
 
 #[test]
 fn should_block_when_the_subvolume_is_not_mounted_anywhere_visible() {
+    // Neither the subvolume's own mount nor the top level, through which every subvolume is
+    // visible, is in the table.
     let without_root = BtrfsMounts::from_mountinfo(
         &fixture("mountinfo")
             .stdout()
             .lines()
-            .filter(|line| !line.contains(" /mnt/root "))
+            .filter(|line| !line.contains(" /mnt/root ") && !line.contains(" /mnt/top "))
             .collect::<Vec<_>>()
             .join("\n"),
-    );
+    )
+    .identified_by(&[ono_recovery_btrfs::parse::parse_filesystem_show(
+        fixture("fs-show").stdout(),
+    )
+    .expect("the recorded listing parses")]);
     let provider = BtrfsProvider::new(runner(root_recovery_script()))
         .with_mounts(without_root)
         .with_files(Arc::new(support::recorded_files()));
@@ -378,5 +384,37 @@ fn should_name_the_other_outstanding_facts_in_the_refusal_it_raises() {
             .help()
             .is_some_and(|help| help.contains("Nothing was changed")),
         "and a blocked recovery has changed nothing, which the refusal says outright"
+    );
+}
+
+#[test]
+fn should_not_read_an_exclusion_of_a_deeper_subvolume_as_one_of_its_parent() {
+    let partial = RecoveryAsset::proposed(
+        ono_recovery_btrfs::PROVIDER_ID,
+        RecoveryAssetType::BtrfsSnapshot,
+        ROOT_SNAPSHOT,
+        support::scope(ROOT_ID, "@", &[NGINX_CONF]),
+        jiff::Timestamp::UNIX_EPOCH,
+    )
+    .excluding(ono_change_core::RecoveryExclusion::new(
+        "the nested subvolume @home (257)",
+        "§14.3",
+    ))
+    .excluding(ono_change_core::RecoveryExclusion::new(
+        "the nested subvolume @var/lib-app (260)",
+        "§14.3",
+    ));
+    let error = provider_with_files(root_recovery_script())
+        .plan_recovery(&partial, None, RecoveryGoal::RestoreChangedObjects)
+        .expect_err(
+            "§14.3: the asset names `@var/lib-app` and says nothing about `@var`; the text \
+             `@var` inside `@var/lib-app` is not a statement about `@var`",
+        );
+    refuses(&error, SafetyFact::NoRecursiveCoverageAssumption);
+    assert!(
+        error
+            .help()
+            .is_some_and(|help| help.contains("says nothing about @var,")),
+        "and the refusal names exactly the subvolume left unstated: {error:?}"
     );
 }

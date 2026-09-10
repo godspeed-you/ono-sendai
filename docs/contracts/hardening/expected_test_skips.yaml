@@ -362,6 +362,18 @@ declared:
   - id: "crates/ono-cli/tests/change_gates.rs::should_change_nothing_when_a_risk_gate_refuses"
     category: fixture_not_applicable
     prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
+  - id: "crates/ono-cli/tests/change_views.rs::should_show_the_gate_apply_will_raise_with_the_rules_own_reason"
+    category: fixture_not_applicable
+    prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
+  - id: "crates/ono-cli/tests/change_plan_resolution.rs::should_record_no_persistence_domain_for_a_file_on_a_volatile_filesystem"
+    category: fixture_not_applicable
+    prerequisite: "a writable tmpfs mounted at `/dev/shm`, the volatile filesystem Appendix B.7 refuses as a persistence domain"
+  - id: "crates/ono-recovery-files/tests/restore.rs::should_restore_extended_attributes_where_the_filesystem_carries_them"
+    category: missing_kernel_feature
+    prerequisite: "the scratch filesystem under CARGO_TARGET_TMPDIR carries user extended attributes, so a restored xattr can be compared; without them only the reported Appendix C.7 gap is checked"
+  - id: "crates/ono-recovery-files/tests/scope.rs::should_exclude_a_device_node_as_a_device_when_it_classifies_one"
+    category: missing_kernel_feature
+    prerequisite: "the host has /dev/null, a real device node a test can classify without privilege"
   - id: "crates/ono-cli/tests/change_gates.rs::should_get_past_the_gate_when_the_risk_is_acknowledged"
     category: fixture_not_applicable
     prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
@@ -398,6 +410,15 @@ declared:
   - id: "crates/ono-cli/tests/change_planning.rs::should_record_the_strategy_in_the_sealed_plan"
     category: fixture_not_applicable
     prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
+  - id: "crates/ono-cli/tests/change_topology.rs::should_name_the_mounts_beneath_a_directory_and_its_size_when_a_recursive_removal_is_planned"
+    category: fixture_not_applicable
+    prerequisite: "a filesystem mounted beneath /dev (devpts, a /dev/shm tmpfs, mqueue), which every ordinary Linux host and container has"
+  - id: "crates/ono-cli/tests/change_topology.rs::should_walk_past_the_direct_target_or_name_a_boundary_when_a_restart_is_planned"
+    category: fixture_not_applicable
+    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has a place in the v0.4 topology to walk from"
+  - id: "crates/ono-cli/tests/change_revalidate.rs::should_freeze_the_installed_version_when_a_package_mutation_is_planned"
+    category: fixture_not_applicable
+    prerequisite: "a package manager on the host that lists at least one installed package, so a package plan has a version to freeze"
 
 canonical_ci:
   # The `ubuntu-latest` GitHub runner that `.github/workflows/ci.yml` runs the gate on: an
@@ -467,3 +488,23 @@ canonical_ci:
       doc: >-
         The same limit, reached from the registry side: this test builds every profile whose
         socket axis declares itself gate-buildable, and skips the ones the host cannot hold.
+
+# The acceptance suite's skips. `scripts/acceptance.sh` runs every case in
+# `docker/acceptance/cases/` inside the image `docker/Dockerfile` builds, and a case that cannot
+# observe what it is about there announces §38.1's marker, `SKIPPED <name>: <category>: <detail>`,
+# instead of passing silently. The harness holds those markers to this list exactly as
+# `skip-check` holds the cargo tests to `canonical_ci` (§38.3): a skip that is not listed here with
+# the category it announced fails its case, and a listed skip that did not happen fails it as well.
+#
+# The image is the only environment the suite runs in, so every row is expected: there is no
+# "permitted either way" list here. A row's id is `<case file without .case>::<name the marker
+# announces>`. Nothing goes here because a check is inconvenient — only a situation the
+# container genuinely cannot present, and the sentence that says why.
+acceptance:
+  expected_skips:
+    - id: "307-remote-protection-matrix::remote-protection-matrix"
+      category: fixture_not_applicable
+      prerequisite: "a linked remote host. The suite runs with `--network=none` and one container, so v0.6 §55.10 case 44's per-host matrix has no second host to be about; the case still proves the local half"
+    - id: "308-remote-disconnect::remote-disconnect"
+      category: fixture_not_applicable
+      prerequisite: "a linked remote host whose link can be dropped mid-plan (v0.6 §55.10 case 45). With `--network=none` nothing can be linked, so the case proves the unlinked-host refusal and the `unknown` vocabulary and says it could not observe the disconnect"

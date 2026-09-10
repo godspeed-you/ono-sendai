@@ -129,6 +129,16 @@ fn should_keep_the_copied_bytes_only_inside_the_store_when_an_asset_is_created()
         1,
         "§15.3: exactly one copy exists, and it is inside the recovery store"
     );
+    let outside: Vec<_> = walk(fixture.root())
+        .into_iter()
+        .filter(|path| !path.starts_with(&store))
+        .filter(|path| std::fs::read_to_string(path).is_ok_and(|text| text.contains("hunter2")))
+        .collect();
+    assert_eq!(
+        outside,
+        vec![configuration.clone()],
+        "§15.3: outside the store, the only file holding the protected content is the file itself"
+    );
     assert!(
         asset.reference().starts_with(&store.display().to_string()),
         "§15.3: the asset's reference names a place inside the Ono recovery store"

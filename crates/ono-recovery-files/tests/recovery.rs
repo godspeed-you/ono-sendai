@@ -10,10 +10,12 @@
 mod support;
 
 use ono_change_core::{
-    ActionRole, DirectoryRestorePolicy, Idempotency, NewerStateClass, RecoveryAssetType,
-    RecoveryGoal, RecoveryProvider, RecoveryScope, RestoreMethod, VerificationClass,
+    ActionRole, AssetState, DirectoryRestorePolicy, Idempotency, NewerStateClass,
+    RecoveryAssetType, RecoveryGoal, RecoveryProvider, RecoveryScope, RestoreMethod,
+    VerificationClass,
 };
 use ono_recovery_files::{FileRecoveryProvider, FileRecoveryStore};
+use sha2::{Digest as _, Sha256};
 use support::{Fixture, plan_touching};
 
 #[test]
@@ -80,6 +82,15 @@ fn should_verify_the_restored_digest_rather_than_an_exit_code() {
         .first()
         .expect("§25.1: recovery states what equivalence it will check");
     assert_eq!(contract.class(), VerificationClass::Required);
+    let protected: String = Sha256::digest(b"worker_processes 1;\n")
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    assert_eq!(
+        contract.expression(),
+        format!("sha256 == {protected}"),
+        "§25.1: the contract expects the digest of the bytes that were protected"
+    );
     assert!(
         contract.expression().starts_with("sha256 =="),
         "§62.9: an exit code is not verification; the observed state is — and §23.1 makes it a \
@@ -396,4 +407,44 @@ fn should_report_an_object_it_cannot_read_as_unknown_rather_than_as_unchanged() 
     );
     std::fs::set_permissions(&configuration, std::fs::Permissions::from_mode(0o600))
         .expect("the mode can be restored");
+}
+
+#[test]
+fn should_find_an_asset_invalid_once_its_stored_bytes_were_deleted_from_the_store() {
+    // NEW-11: the manifest is still there and the record still says ready; the bytes are not.
+    let fixture = Fixture::new();
+    let configuration = fixture.write("etc/nginx.conf", "worker_processes 1;\n");
+    let asset = fixture.protect(&configuration);
+    std::fs::remove_dir_all(std::path::Path::new(asset.reference()).join("objects"))
+        .expect("the stored bytes can be deleted");
+
+    let validation = fixture
+        .provider
+        .validate(&asset)
+        .expect("the check is made");
+    assert_eq!(
+        asset.validated(validation).state(),
+        AssetState::Invalid,
+        "§11.4 and §37: an asset whose bytes are gone is not a recovery point"
+    );
+}
+
+#[test]
+fn should_refuse_to_plan_a_recovery_from_a_ready_asset_whose_stored_bytes_are_gone() {
+    let fixture = Fixture::new();
+    let configuration = fixture.write("etc/nginx.conf", "worker_processes 1;\n");
+    let asset = fixture.protect(&configuration);
+    std::fs::remove_dir_all(std::path::Path::new(asset.reference()).join("objects"))
+        .expect("the stored bytes can be deleted");
+    assert_eq!(
+        asset.state(),
+        AssetState::Ready,
+        "the record still says ready"
+    );
+
+    let error = fixture
+        .provider
+        .plan_recovery(&asset, None, RecoveryGoal::RestoreChangedObjects)
+        .expect_err("§11.4: a recovery is not planned from bytes that are no longer there");
+    assert_eq!(error.code(), ono_core::ErrorCode::RecoveryAssetInvalid);
 }

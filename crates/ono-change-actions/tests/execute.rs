@@ -10,11 +10,12 @@ mod support;
 
 use std::sync::Arc;
 
-use ono_change_actions::{Observer, ProviderChangeProvider};
+use ono_change_actions::ProviderChangeProvider;
 use ono_change_core::{
     ChangeProvider, Execution, Intent, PlanAction, PlanFragment, PlanId, VerificationClass,
     VerificationContract, VerificationStatus,
 };
+use ono_core::ErrorCode;
 use ono_value::Value;
 use support::{FakeObserver, FakeProvider, change_provider, service, socket};
 
@@ -138,9 +139,14 @@ fn should_carry_a_declared_option_to_the_provider_as_a_typed_value() {
 fn should_refuse_to_execute_an_action_that_is_not_a_provider_action() {
     let (provider, change, _) = restart(Vec::new());
     let opaque = ono_change_actions::opaque_action(&plan(), 0, "something else", None, &[]);
-    change
+    let refusal = change
         .execute(&opaque)
         .expect_err("§6.3's escape runs through the tool runner, not through a provider action");
+    assert_eq!(
+        refusal.code(),
+        ErrorCode::ChangeActionNotPlannable,
+        "the refusal says the action is not one this provider can carry"
+    );
     assert_eq!(provider.act_count(), 0, "nothing was attempted");
 }
 
@@ -419,21 +425,4 @@ fn should_carry_the_provider_id_into_the_execution_so_the_executor_can_route() {
         }
         other => panic!("§51 resolves to a provider action, and this is {other:?}"),
     }
-}
-
-#[test]
-fn should_leave_the_observer_alone_when_nothing_asks_it_anything() {
-    // A trait object with no mutating method cannot mutate: this is the shape §51's prohibition
-    // rests on rather than a rule a reviewer has to remember.
-    let observer: Arc<dyn Observer> = Arc::new(FakeObserver::new());
-    assert!(
-        observer
-            .fact(
-                "nothing",
-                ono_change_core::PreconditionKind::Existence,
-                "identity"
-            )
-            .is_some(),
-        "an observer that has seen nothing answers `there is no such object`, and it answers"
-    );
 }

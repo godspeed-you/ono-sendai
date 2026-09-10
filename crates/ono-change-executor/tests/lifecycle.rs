@@ -675,3 +675,118 @@ fn should_not_stop_the_prepare_when_an_optional_protection_action_fails() {
         "§17.2: a failure in an extra degrades the coverage matrix rather than the plan"
     );
 }
+
+/// Appendix C.4 separates the plan's own write from a later edit by when the write settled. An
+/// action stamped with the instant `apply` *began* is stamped before its own write, so every write
+/// it made would read as newer state and gate the ordinary recovery (§40.1).
+#[test]
+fn should_stamp_each_action_with_the_instant_it_settled_rather_than_when_apply_began() {
+    let began = instant(1_000);
+    let settled = instant(2_000);
+    let (_directory, store) = store();
+    let plan = stored(&PlanSpec::over(2), &store, began);
+    let script = Script::healthy();
+    let observe = observing(VerificationStatus::Passed);
+    let providers = empty_registry();
+    let protection = Vec::new();
+    let drift = no_drift();
+    let execute = script.execute();
+    let clock = || settled;
+    let mut request = ApplyRequest::new(
+        &plan,
+        &store,
+        "session-a",
+        began,
+        &protection,
+        &providers,
+        &drift,
+        &execute,
+        &observe,
+    )
+    .stamping_with(&clock);
+    let outcome = apply(&mut request);
+    assert!(outcome.error().is_none(), "the fixture's plan applies");
+
+    assert_eq!(
+        store.applied_at(plan.id()).expect("the store answers"),
+        Some(settled),
+        "§41.2: a settled action carries the instant it settled"
+    );
+}
+
+/// §7.3: a target that no longer exists — or is no longer the object the plan froze — is a changed
+/// target, and the refusal says so by name rather than as generic drift.
+#[test]
+fn should_refuse_with_target_changed_when_a_planned_target_has_vanished() {
+    let now = instant(1_000);
+    let (_directory, store) = store();
+    let plan = stored(&PlanSpec::default(), &store, now);
+    let providers = empty_registry();
+    let protection = Vec::new();
+    let vanished = |action: &ono_change_core::PlanAction| {
+        let subject = action.target().unwrap_or("svc-1").to_owned();
+        let precondition = ono_change_core::Precondition::new(
+            ono_change_core::PreconditionKind::Existence,
+            subject,
+            "exists",
+            ono_value::Value::Bool(true),
+        );
+        Ok(vec![ono_change_core::DriftFinding::new(
+            &precondition,
+            ono_change_core::DriftVerdict::Material,
+            Some(ono_value::Value::Bool(false)),
+        )])
+    };
+    let script = Script::healthy();
+    let execute = script.execute();
+    let observe = observing(VerificationStatus::Passed);
+    let mut request = ApplyRequest::new(
+        &plan,
+        &store,
+        "session-a",
+        now,
+        &protection,
+        &providers,
+        &vanished,
+        &execute,
+        &observe,
+    );
+    let outcome = apply(&mut request);
+    assert_eq!(
+        outcome.error().map(|error| error.code().name().to_owned()),
+        Some("change.target_changed".to_owned()),
+        "§7.3: a vanished target is refused as a changed target"
+    );
+}
+
+/// §4.4: a sealed plan is immutable, and the seal is what makes that checkable. A plan whose
+/// recorded digest no longer matches its content was changed after it was sealed — in memory or
+/// in the store — and is not the plan the operator approved, so nothing of it runs.
+#[test]
+fn should_refuse_a_plan_whose_content_no_longer_matches_its_seal() {
+    let now = instant(1_000);
+    let (_directory, store) = store();
+    let plan = stored(&PlanSpec::over(2), &store, now);
+    let tampered = plan
+        .clone()
+        .with_strategy(ono_change_core::Strategy::parallel(8).expect("a bounded width"));
+    assert!(
+        !tampered.digest_holds(),
+        "the fixture changed what the seal covers"
+    );
+    let script = Script::healthy();
+    let observe = observing(VerificationStatus::Passed);
+    let outcome = plain_apply!(&tampered, &store, script, &observe, now);
+    assert_eq!(
+        outcome.error().map(|error| error.code().name().to_owned()),
+        Some("change.plan_store_corrupt".to_owned()),
+        "§4.4: a plan that does not match its seal is refused"
+    );
+    assert!(
+        outcome
+            .statuses()
+            .iter()
+            .all(|(_, status)| *status != ono_change_core::ActionStatus::Succeeded),
+        "and none of its actions ran"
+    );
+}

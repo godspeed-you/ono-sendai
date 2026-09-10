@@ -1,0 +1,63 @@
+# v0.6 §50 phase P2 — §29.1, §29.2 and §10.3: a remote change is a plan like any other, and its
+# coverage matrix is per host.
+#
+# §29.2's worked matrix — twelve ZFS hosts, six Btrfs, two unprotected, composing to PARTIALLY
+# PROTECTED — needs linked remote hosts. The suite runs with `--network=none` in one container, so
+# there is nobody to link, and the case says so with a declared skip rather than pretending. What
+# it proves is the local half every per-host answer is built from: coverage names the host it is
+# about, no link exists that could make a remote claim, and nothing claims coverage on a host
+# nobody reached.
+case: coverage is per host, and a host nobody reached claims nothing
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  count_of() { ono -c "$1 | count | to json" 2>&1 | tr -d '[:space:]' | sed 's/^\[//; s/\]$//'; }
+
+  mkdir -p "$HOME/etc"
+  for n in 1 2; do printf 'target %s\n' "$n" > "$HOME/etc/target$n"; done
+  printf 'source\n' > "$HOME/etc/source"
+
+  echo '== §11.1 and §29.2: every asset names the host it lives on =='
+  for n in 1 2; do
+    ono -c "plan copy file $HOME/etc/source $HOME/etc/target$n --overwrite | to json" > /tmp/rp0.json 2>&1
+    ono -c "apply $(plan_id /tmp/rp0.json)" > /dev/null 2>&1
+  done
+  ono -c 'get recovery | select host | to json' > /tmp/rp1.json 2>&1
+  prove rp1a "both assets name a host, and it is the same one (§11.1, §29.2)" \
+    "[ \"\$(grep -o '{\"host\":\"[^\"]\{1,\}\"}' /tmp/rp1.json | wc -l)\" -eq 2 ] && [ \"\$(grep -o '{\"host\":\"[^\"]*\"}' /tmp/rp1.json | sort -u | wc -l)\" -eq 1 ]"
+
+  echo '== §29.1: a remote link is what makes a remote plan possible =='
+  prove rp2a "the host registry answers with a list (v0.4.1 §9)" \
+    "ono -c 'get host | to json' 2>&1 | grep -qx '\[.*\]'"
+  prove rp2b "and there is no link, so no plan here can be about another host (§29.1)" \
+    "[ \"\$(count_of 'get link')\" = '0' ]"
+
+  echo '== §29.3 and §2.5: nothing claims coverage on a host nobody reached =='
+  prove rp3a "no plan names a host of its own on any target, because no remote target was resolved (§7.1, §29.1)" \
+    "ono -c 'get plan | select targets | to json' 2>&1 | grep -q '\"host\":null' && ! ono -c 'get plan | select targets | to json' 2>&1 | grep -q '\"host\":\"'"
+
+  echo '== §28.3: the bulk thresholds a per-host plan is measured against are configured =='
+  prove rp4a "\`change.bulk.high_risk_targets\` defaults to fifty (§28.3, §53)" \
+    "ono -c 'get config change.bulk.high_risk_targets | to json' 2>&1 | grep -q '^\[{\"key\":\"change.bulk.high_risk_targets\",\"value\":50,'"
+
+  echo 'SKIPPED remote-protection-matrix: fixture_not_applicable: no second host can be linked with --network=none, so the per-host matrix of v0.6 §55.10 case 44 has no hosts to compose'
+  echo 'remote-protection-matrix: done'
+exit: 0
+stdout-contains: PROVED rp1a
+stdout-contains: PROVED rp2a
+stdout-contains: PROVED rp2b
+stdout-contains: PROVED rp3a
+stdout-contains: PROVED rp4a
+stdout-contains: remote-protection-matrix: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

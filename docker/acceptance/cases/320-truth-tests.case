@@ -1,0 +1,116 @@
+# v0.6 §50 phase P2 — Appendix G.2 and §63.10: the protection matrix never overstates coverage,
+# on layouts designed to mislead.
+#
+# Appendix G.2 lists the layouts, and the rule is one: present a layout where the obvious answer
+# is wrong, and require the provider to refuse false coverage. §2.5 is the invariant — a
+# protection level must never overstate actual coverage — and §2.4 is what stands in for an
+# answer nobody could establish. The bind mount is real: the case runs as root with CAP_SYS_ADMIN
+# so it can mount a tmpfs and bind it beneath the home directory, where a prefix match would call
+# it part of the root filesystem.
+case: the coverage matrix refuses false coverage on misleading layouts
+timeout: 240
+capability: SYS_ADMIN
+user: root
+security: apparmor=unconfined
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  level() { sed -n 's/.*"protection_level":"\([a-z-]*\)".*/\1/p' "$1" | head -1; }
+  domain_of() { sed -n 's/.*"targets":\[{[^]]*"persistence_domain":\("[^"]*"\|null\).*/\1/p' "$1" | head -1; }
+  # §2.5 over one plan record: a required row nothing satisfies caps the level below PROTECTED.
+  # Prints the rows that make the plan's level an overstatement; prints nothing when it is honest.
+  overstated() {
+    local lvl rows
+    lvl=$(level "$1")
+    rows=$(grep -o '"protection":\[.*\],"protection_level"' "$1" | sed 's/},{"domain"/}\n{"domain"/g')
+    case "$lvl" in protected|transactional)
+      printf '%s\n' "$rows" | grep '"required":true' | grep '"satisfied":false' | grep '"declared_irrelevant":false' ;;
+    esac
+  }
+  store="${XDG_DATA_HOME:-$HOME/.local/share}/ono/change/recovery"
+
+  mkdir -p "$HOME/etc"
+  printf 'source\n' > "$HOME/etc/source"
+  printf 'plain\n' > "$HOME/etc/plain"
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/plain --overwrite | to json" > /tmp/t0.json 2>&1
+  home_domain=$(domain_of /tmp/t0.json)
+
+  echo '== Appendix B.7: a volatile filesystem is not a persistence domain =='
+  printf 'x\n' > /dev/shm/ono-truth
+  ono -c "plan copy file $HOME/etc/source /dev/shm/ono-truth --overwrite | to json" > /tmp/t1.json 2>&1
+  prove t1a "a tmpfs target is not called protected, and nothing is prepared for it (Appendix B.7, §2.5)" \
+    "[ \"\$(level /tmp/t1.json)\" = 'unprotected' ] && ! grep -q '\"role\":\"prepare\"' /tmp/t1.json"
+  prove t1b "and it resolves to no persistence domain at all (Appendix B.7)" \
+    "[ \"\$(domain_of /tmp/t1.json)\" = 'null' ]"
+  rm -f /dev/shm/ono-truth
+
+  echo '== Appendix B.3: a bind mount crossing to another filesystem =='
+  # A tmpfs bound beneath the home directory: the obvious answer is the home directory's
+  # filesystem, and the true one is a volatile filesystem that holds nothing across a reboot.
+  mkdir -p /run/ono-bind-source "$HOME/bound"
+  if ! { mount -t tmpfs ono-bind /run/ono-bind-source && mount --bind /run/ono-bind-source "$HOME/bound"; }; then
+    echo 'SKIPPED truth-tests/bind: missing_privilege: the bind mount was refused'
+  else
+    printf 'bound\n' > "$HOME/bound/file"
+    ono -c "plan copy file $HOME/etc/source $HOME/bound/file --overwrite | to json" > /tmp/t2.json 2>&1
+    ono -c "inspect plan $(plan_id /tmp/t2.json) --resolution" > /tmp/t2.txt 2>&1
+    prove t2a "the path resolves through the bind mount to the tmpfs, not to the home directory's filesystem (Appendix B.3)" \
+      "grep -qxF '    mount $HOME/bound (tmpfs) on ono-bind' /tmp/t2.txt && [ \"\$(domain_of /tmp/t2.json)\" != '$home_domain' ]"
+    prove t2b "so the plan claims no protection a snapshot of the home filesystem would appear to give (§2.5)" \
+      "[ \"\$(level /tmp/t2.json)\" = 'unprotected' ] && ! grep -q '\"role\":\"prepare\"' /tmp/t2.json"
+    umount "$HOME/bound"; umount /run/ono-bind-source
+  fi
+
+  echo '== §11.4: an asset that was recorded and whose bytes are gone =='
+  printf 'target\n' > "$HOME/etc/vanish"
+  ono -c "plan copy file $HOME/etc/source $HOME/etc/vanish --overwrite | to json" > /tmp/t3.json 2>&1
+  vanish=$(plan_id /tmp/t3.json)
+  ono -c "apply $vanish" > /dev/null 2>&1
+  prove t3pre "the apply created an asset whose bytes are in the store" \
+    "[ -n \"\$(find '$store' -type f)\" ]"
+  rm -rf "${store:?}"/*
+  ono -c "recover $vanish" > /tmp/t4.txt 2>&1
+  prove t3a "recovering from it is refused, because validation no longer holds (§11.4, §56.3)" \
+    'grep -qE "recovery\.(asset_not_found|asset_invalid|plan_incomplete)" /tmp/t4.txt'
+  prove t3b "and no recovery plan is offered from bytes that do not exist (§2.5, §62.1)" \
+    '! grep -q "^RECOVERY PLAN" /tmp/t4.txt'
+  prove t3c "the asset no longer claims to be ready (§11.1, §11.4)" \
+    "! ono -c 'get recovery | select state | to json' 2>&1 | grep -q '\"state\":\"ready\"'"
+
+  echo '== §2.5 and Appendix A.5, A.7: no level overstates its rows =='
+  examined=0
+  for record in /tmp/t0.json /tmp/t1.json /tmp/t2.json /tmp/t3.json; do
+    [ -s "$record" ] || continue
+    examined=$((examined + 1))
+    prove "t4-$(basename "$record" .json)" "the level of $(basename "$record") is no higher than its required rows allow (§2.5)" \
+      "[ -n \"\$(level $record)\" ] && [ -z \"\$(overstated $record)\" ]"
+  done
+  prove t4pre "the rule was applied to plans that do have an unsatisfied required row, so it was tested" \
+    "grep -h -o '\"required\":true,\"declared_irrelevant\":false' /tmp/t1.json > /dev/null && grep -q '\"satisfied\":false' /tmp/t1.json && [ $examined -ge 3 ]"
+
+  echo 'truth-tests: done'
+exit: 0
+stdout-contains: PROVED t1a
+stdout-contains: PROVED t1b
+stdout-contains: PROVED t2a
+stdout-contains: PROVED t2b
+stdout-contains: PROVED t3pre
+stdout-contains: PROVED t3a
+stdout-contains: PROVED t3b
+stdout-contains: PROVED t3c
+stdout-contains: PROVED t4-t0
+stdout-contains: PROVED t4-t1
+stdout-contains: PROVED t4-t3
+stdout-contains: PROVED t4pre
+stdout-contains: truth-tests: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

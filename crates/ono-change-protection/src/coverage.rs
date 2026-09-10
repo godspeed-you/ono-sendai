@@ -31,16 +31,39 @@
 //! objective. It therefore fails A.4's *first* key and can only be chosen when nothing else
 //! exists — at which point the row says `UNKNOWN` and §55.6 case 29 holds: unknown provider
 //! recovery semantics remain unknown.
+//!
+//! # A recursive mutation reaches every mount beneath it
+//!
+//! §32.3: *"Recursive path operations MUST NOT assume mounted filesystems or nested subvolumes
+//! belong to the same recovery scope."* When a request carries a mount table
+//! ([`CoverageRequest::within`]), a removal of a directory — or any mutation marked
+//! [`MutationDomain::recursive`] — gets one row per filesystem mounted beneath it: a child
+//! dataset, a nested subvolume, an ext4 disk or an NFS export is a persistence domain of its own,
+//! and the plan is protected only where something captures each one. A tmpfs or a pseudo
+//! filesystem beneath it holds no persistent state and stays visible as an exclusion (§32.4). A
+//! candidate that captures the mounts beneath outranks one that does not, because for a tree the
+//! objective of A.4's first key spans the whole tree.
+//!
+//! # Assets made one after another share no point in time
+//!
+//! Appendix D.7 forbids inventing atomicity. The actions a provider plans from one candidate are
+//! one creation — `zfs snapshot -r` over a dataset tree is one atomic operation — while assets
+//! from different candidates are created one after another. Where the rows of one effect domain
+//! rest on more than one such creation, each of those rows is crash-consistent at best, and its
+//! note says so.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use ono_change_core::{
     ConsistencyClass, CoverageExclusion, DomainCoverage, DomainProtection, EffectDomain,
-    EffectKind, PersistenceDomain, PlanAction, ProposedEffect, ProtectionAction, ProtectionLevel,
-    ProtectionMode, ProtectionSummary, RecoveryCandidate, RecoveryCost, RecoveryObjective,
+    EffectKind, NonPersistentReason, PersistenceDomain, PlanAction, ProposedEffect,
+    ProtectionAction, ProtectionLevel, ProtectionMode, ProtectionSummary, RecoveryAssetType,
+    RecoveryCandidate, RecoveryCost, RecoveryObjective,
 };
 
 use crate::cost;
+use crate::domain::{DomainReach, MountBoundary, MountTable, contains};
 use crate::policy::ProtectionPolicy;
 use crate::registry::{ProviderRefusal, ProviderRegistry};
 
@@ -57,6 +80,7 @@ pub struct MutationDomain {
     subject: Arc<str>,
     compensation: Option<Arc<str>>,
     detail: Arc<str>,
+    recursive: bool,
 }
 
 impl MutationDomain {
@@ -74,7 +98,27 @@ impl MutationDomain {
             subject: subject.into(),
             compensation: None,
             detail: detail.into(),
+            recursive: false,
         }
+    }
+
+    /// Declares that the mutation reaches everything beneath its subject (§32.2, §32.3).
+    ///
+    /// A removal already does, because removing a directory removes what it holds; this is for
+    /// any other mutation a provider knows descends — a recursive ownership or mode change.
+    #[must_use]
+    pub const fn recursive(mut self) -> Self {
+        self.recursive = true;
+        self
+    }
+
+    /// Whether the mutation reaches everything beneath its subject (§32.3).
+    ///
+    /// A removal does: `remove file <dir> --recursive` and `remove dir` both delete whatever is
+    /// mounted beneath, and a removal of a plain file reaches nothing beneath it anyway.
+    #[must_use]
+    pub const fn is_recursive(&self) -> bool {
+        self.recursive || matches!(self.kind, EffectKind::Remove)
     }
 
     /// Records the inverse action that would restore an acceptable semantic state (§27.4).
@@ -96,6 +140,7 @@ impl MutationDomain {
             subject: Arc::from(effect.object().unwrap_or(effect.explanation())),
             compensation: effect.compensation().map(Arc::from),
             detail: Arc::from(effect.explanation()),
+            recursive: false,
         }
     }
 
@@ -281,6 +326,10 @@ pub enum RejectionReason {
     Conflicting,
     /// The provider could not turn the candidate into a protection action (§12.1).
     NotPlannable,
+    /// Appendix B.4: the domain is an overlay whose writable layer cannot be followed, and the
+    /// candidate is not a copy of the visible bytes, so its protection would be the claim that
+    /// snapshotting the merged mount protects data that lives elsewhere.
+    SnapshotOfMergedView,
 }
 
 impl RejectionReason {
@@ -294,6 +343,7 @@ impl RejectionReason {
             RejectionReason::ProtectionOff => "protection-off",
             RejectionReason::Conflicting => "conflicting",
             RejectionReason::NotPlannable => "not-plannable",
+            RejectionReason::SnapshotOfMergedView => "snapshot-of-merged-view",
         }
     }
 }
@@ -337,6 +387,7 @@ pub struct CoverageRequest<'a> {
     policy: &'a ProtectionPolicy,
     mutations: Vec<MutationDomain>,
     persistence: Vec<PersistenceDomain>,
+    mounts: Option<&'a MountTable>,
 }
 
 impl<'a> CoverageRequest<'a> {
@@ -348,7 +399,20 @@ impl<'a> CoverageRequest<'a> {
             policy,
             mutations: Vec::new(),
             persistence: Vec::new(),
+            mounts: None,
         }
+    }
+
+    /// Resolves the plan's paths against `mounts` (Appendix B.1, §32.2).
+    ///
+    /// With a table, a subject beneath a resolved directory is resolved through the mount
+    /// boundaries between them rather than inherited from the directory (§13.4), and a recursive
+    /// mutation is analysed over every mount beneath its subject (§32.3). Without one, the only
+    /// boundaries known are the ones the resolved domains name.
+    #[must_use]
+    pub const fn within(mut self, mounts: &'a MountTable) -> Self {
+        self.mounts = Some(mounts);
+        self
     }
 
     /// Adds one of the plan's mutation domains (Appendix A.1).
@@ -391,18 +455,33 @@ impl<'a> CoverageRequest<'a> {
 
     /// The persistence domain holding `subject`, where one was resolved (§11.2).
     ///
-    /// An exact match first, then the deepest resolved domain whose path contains the subject:
-    /// a plan that resolved `/etc/nginx` covers an action on `/etc/nginx/nginx.conf`, and §11.2
-    /// still requires the mapping to have happened rather than being assumed here.
+    /// An exact match first. Then, where the request carries a mount table, `subject` is
+    /// resolved through it (Appendix B.1): a file beneath `/srv` that lives on the child dataset
+    /// mounted at `/srv/data` belongs to that dataset, and §13.4 is the rule that inheriting the
+    /// directory's dataset would break. Without a table, the deepest resolved domain whose path
+    /// contains the subject answers — but only when no mount any resolved domain names lies
+    /// between the two, because a boundary between them means the subject is on another
+    /// filesystem.
     #[must_use]
-    pub fn persistence_for(&self, subject: &str) -> Option<&PersistenceDomain> {
+    pub fn persistence_for(&self, subject: &str) -> Option<PersistenceDomain> {
         if let Some(exact) = self
             .persistence
             .iter()
             .find(|domain| domain.path() == subject)
         {
-            return Some(exact);
+            return Some(exact.clone());
         }
+        if let Some(mounts) = self.mounts
+            && subject.starts_with('/')
+        {
+            return Some(mounts.resolve(Path::new(subject)));
+        }
+        let serving = self
+            .persistence
+            .iter()
+            .map(|domain| domain.mount().mount_point())
+            .filter(|point| !point.is_empty() && contains(point, subject))
+            .max_by_key(|point| point.trim_end_matches('/').len())?;
         self.persistence
             .iter()
             .filter(|domain| {
@@ -410,6 +489,18 @@ impl<'a> CoverageRequest<'a> {
                 !path.is_empty() && subject.starts_with(&format!("{path}/"))
             })
             .max_by_key(|domain| domain.path().len())
+            .filter(|domain| domain.mount().mount_point() == serving)
+            .cloned()
+    }
+
+    /// The filesystems a mutation reaches beneath its subject (§32.3).
+    fn boundaries_reached_by(&self, mutation: &MutationDomain) -> Vec<MountBoundary> {
+        match self.mounts {
+            Some(mounts) if mutation.is_recursive() && mutation.subject().starts_with('/') => {
+                mounts.boundaries_beneath(Path::new(mutation.subject()))
+            }
+            _ => Vec::new(),
+        }
     }
 }
 
@@ -597,150 +688,489 @@ fn downtime(candidate: &RecoveryCandidate) -> u128 {
 #[must_use]
 pub fn analyse(request: &CoverageRequest<'_>) -> CoverageAnalysis {
     let policy = request.policy();
-    let mode = policy.mode();
     let mut analysis = CoverageAnalysis::default();
-    let mut rows: Vec<DomainCoverage> = Vec::new();
+    let mut drafts: Vec<RowDraft> = Vec::new();
 
     for mutation in request.mutations() {
         // A.2: what recovery this domain would need.
         let objective = mutation.objective();
         let irrelevant = policy.is_irrelevant(mutation.domain());
-        let mut chosen: Vec<RecoveryCandidate> = Vec::new();
-        let mut unknown_semantics = false;
-        let mut note;
-
-        if objective.is_required() {
-            // A.3: ask every provider that can run here, and remember the ones that could not.
-            let (candidates, mut note_from_discovery) = discover(request, mutation, &mut analysis);
-            let planned = analysis.actions.len();
-            let fitting = within_limits(request, &candidates, planned, &mut analysis);
-            let ordered = ranked(&fitting, objective);
-            let (usable, unusable): (Vec<RecoveryCandidate>, Vec<RecoveryCandidate>) = ordered
-                .into_iter()
-                .partition(|candidate| satisfies(candidate, objective));
-            for candidate in unusable {
-                // §39.1 and §55.6 case 29: a candidate whose consistency the provider could not
-                // establish satisfies nothing, and it makes the domain's recovery properties
-                // unknown rather than absent. The two are different answers and the row says so.
-                let detail = if candidate.consistency() == ConsistencyClass::Unknown {
-                    unknown_semantics = true;
-                    format!(
-                        "{} could not establish the consistency of what it would capture, so it \
-                         satisfies no objective and the domain's recovery properties stay unknown \
-                         (§39.1, §55.6 case 29)",
-                        candidate.provider()
-                    )
-                } else {
-                    format!(
-                        "the candidate does not satisfy the {objective} this domain requires \
-                         (Appendix A.4)"
-                    )
-                };
-                reject(
-                    &mut analysis,
-                    candidate,
-                    RejectionReason::ObjectiveUnsupported,
-                    detail,
-                );
-            }
-            if mode.creates_assets() {
-                chosen = choose(&mut analysis, usable, mode);
-            } else {
-                for candidate in usable {
-                    let detail = format!(
-                        "protection mode is off; {} would have protected {} (§17.2)",
-                        candidate.provider(),
-                        candidate.scope().domain()
-                    );
-                    reject(
-                        &mut analysis,
-                        candidate,
-                        RejectionReason::ProtectionOff,
-                        detail,
-                    );
-                }
-                note_from_discovery =
-                    "protection is off, and the opportunities that were available are \
-                     listed rather than taken (§17.2)"
-                        .to_owned();
-            }
-            note = note_from_discovery;
+        let boundaries = if objective.is_required() {
+            request.boundaries_reached_by(mutation)
         } else {
-            note = format!(
+            Vec::new()
+        };
+        let mut found = if objective.is_required() {
+            let persistence = request.persistence_for(mutation.subject());
+            cover(
+                request,
+                &mut analysis,
+                mutation,
+                persistence.as_ref(),
+                &boundaries,
+            )
+        } else {
+            Cover::nothing(format!(
                 "no recovery is required of {}, and it stays visible as an exclusion \
                  (Appendix A.5)",
                 mutation.domain()
-            );
+            ))
+        };
+        if !boundaries.is_empty() {
+            found.note.push_str(&format!(
+                "; the mutation reaches {} filesystem(s) mounted beneath {}, and each is a \
+                 persistence domain of its own (§32.3)",
+                boundaries.len(),
+                mutation.subject()
+            ));
         }
+        let mut tree: Vec<ProtectionAction> = found.actions.clone();
+        analysis.actions.extend(found.actions.iter().cloned());
+        let mut parent = RowDraft::of(mutation, found, irrelevant);
+        let mut children: Vec<RowDraft> = Vec::new();
+        for boundary in &boundaries {
+            let beneath: Vec<MountBoundary> = boundaries
+                .iter()
+                .filter(|other| {
+                    other.mount_point() != boundary.mount_point()
+                        && contains(boundary.mount_point(), other.mount_point())
+                })
+                .cloned()
+                .collect();
+            if let Some(child) = boundary_row(
+                request,
+                &mut analysis,
+                mutation,
+                boundary,
+                &beneath,
+                &mut tree,
+                &mut parent,
+                irrelevant,
+            ) {
+                children.push(child);
+            }
+        }
+        drafts.push(parent);
+        drafts.extend(children);
+    }
 
-        // A.3 continued: a candidate is a description until a provider turns it into a PREPARE
-        // action, and a provider that cannot do that has not protected anything (§12.1, §2.1).
-        let actions = plan_actions(request, &chosen, mode, &mut analysis);
+    compose_sequential(&mut drafts);
+    analysis.summary = ProtectionSummary::of(drafts.into_iter().map(RowDraft::build).collect());
+    analysis
+}
+
+/// What A.3 and A.4 produced for one persistence domain: the actions, and what the row says.
+struct Cover {
+    actions: Vec<ProtectionAction>,
+    note: String,
+    unknown_semantics: bool,
+    exclusions: Vec<CoverageExclusion>,
+}
+
+impl Cover {
+    fn nothing(note: String) -> Self {
+        Self {
+            actions: Vec::new(),
+            note,
+            unknown_semantics: false,
+            exclusions: Vec::new(),
+        }
+    }
+}
+
+/// A.3 and A.4 for one mutation over one persistence domain.
+///
+/// `boundaries` are the filesystems beneath the subject the mutation also reaches. They do not
+/// get candidates here — each has a row of its own — but they order the candidates: for a tree,
+/// one that captures the mounts beneath satisfies more of the objective than one that stops at
+/// the top, so it is preferred before A.4's scope key would pick the narrower one.
+fn cover(
+    request: &CoverageRequest<'_>,
+    analysis: &mut CoverageAnalysis,
+    mutation: &MutationDomain,
+    persistence: Option<&PersistenceDomain>,
+    boundaries: &[MountBoundary],
+) -> Cover {
+    let objective = mutation.objective();
+    let mode = request.policy().mode();
+    // A.3: ask every provider that can run here, and remember the ones that could not.
+    let (candidates, mut note, exclusions) = discover(request, mutation, persistence, analysis);
+    let copy_only =
+        persistence.is_some_and(|domain| DomainReach::of(domain) == DomainReach::CopyOnly);
+    let candidates = if copy_only {
+        copies_only(request, candidates, analysis)
+    } else {
+        candidates
+    };
+    let planned = analysis.actions.len();
+    let fitting = within_limits(request, &candidates, planned, analysis);
+    let mut ordered = ranked(&fitting, objective);
+    if !boundaries.is_empty() {
+        ordered.sort_by_key(|candidate| {
+            boundaries
+                .iter()
+                .filter(|boundary| {
+                    boundary.domain().is_protectable() && !captures(candidate, boundary)
+                })
+                .count()
+        });
+    }
+    let (usable, unusable): (Vec<RecoveryCandidate>, Vec<RecoveryCandidate>) = ordered
+        .into_iter()
+        .partition(|candidate| satisfies(candidate, objective));
+    let mut unknown_semantics = false;
+    for candidate in unusable {
+        // §39.1 and §55.6 case 29: a candidate whose consistency the provider could not
+        // establish satisfies nothing, and it makes the domain's recovery properties unknown
+        // rather than absent. The two are different answers and the row says so.
+        let detail = if candidate.consistency() == ConsistencyClass::Unknown {
+            unknown_semantics = true;
+            format!(
+                "{} could not establish the consistency of what it would capture, so it \
+                 satisfies no objective and the domain's recovery properties stay unknown \
+                 (§39.1, §55.6 case 29)",
+                candidate.provider()
+            )
+        } else {
+            format!(
+                "the candidate does not satisfy the {objective} this domain requires \
+                 (Appendix A.4)"
+            )
+        };
+        reject(
+            analysis,
+            candidate,
+            RejectionReason::ObjectiveUnsupported,
+            detail,
+        );
+    }
+    let mut chosen: Vec<RecoveryCandidate> = Vec::new();
+    if mode.creates_assets() {
+        chosen = choose(analysis, usable, mode);
+    } else {
+        for candidate in usable {
+            let detail = format!(
+                "protection mode is off; {} would have protected {} (§17.2)",
+                candidate.provider(),
+                candidate.scope().domain()
+            );
+            reject(analysis, candidate, RejectionReason::ProtectionOff, detail);
+        }
+        "protection is off, and the opportunities that were available are listed rather than \
+         taken (§17.2)"
+            .clone_into(&mut note);
+    }
+    // A.3 continued: a candidate is a description until a provider turns it into a PREPARE
+    // action, and a provider that cannot do that has not protected anything (§12.1, §2.1).
+    let actions = plan_actions(request, &chosen, mode, analysis);
+    if copy_only && !actions.is_empty() {
+        // Appendix B.5 and §11.5: the copy is kept inside the container, on the same overlay as
+        // what it protects, and a writable layer that is discarded takes both with it.
+        note.push_str(
+            "; the protection is container-local: the recovery copy lives on the same overlay as \
+             the target, whose writable layer may be ephemeral, so it shares the target's \
+             failure domain (Appendix B.5, §11.5)",
+        );
+    }
+    Cover {
+        actions,
+        note,
+        unknown_semantics,
+        exclusions,
+    }
+}
+
+/// The row of one filesystem mounted beneath a mutated directory (§32.2, §32.3).
+///
+/// A tmpfs or pseudo filesystem holds no persistent state, so it becomes an exclusion on the
+/// directory's row rather than a row of its own (§32.4, Appendix B.7). Everything else is a
+/// persistence domain the mutation reaches: captured by an action already planned for the tree
+/// where that action's scope names it, otherwise offered to the providers in its own right, and
+/// named as an exclusion when nothing captures it.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one boundary of one tree, and every argument is a fact the row is made of"
+)]
+fn boundary_row(
+    request: &CoverageRequest<'_>,
+    analysis: &mut CoverageAnalysis,
+    mutation: &MutationDomain,
+    boundary: &MountBoundary,
+    beneath: &[MountBoundary],
+    tree: &mut Vec<ProtectionAction>,
+    parent: &mut RowDraft,
+    irrelevant: bool,
+) -> Option<RowDraft> {
+    let point = boundary.mount_point();
+    let domain = boundary.domain();
+    if matches!(
+        domain.refusal(),
+        Some(NonPersistentReason::Volatile | NonPersistentReason::Pseudo)
+    ) {
+        parent.exclusions.push(CoverageExclusion::new(
+            mutation.domain(),
+            point,
+            format!(
+                "§32.3: the mutation of {} reaches {point}, and {}",
+                mutation.subject(),
+                domain.detail()
+            ),
+        ));
+        return None;
+    }
+    let child = MutationDomain::new(
+        mutation.domain(),
+        mutation.kind(),
+        point,
+        format!(
+            "{point} is mounted beneath {} and the mutation reaches it",
+            mutation.subject()
+        ),
+    );
+    if domain.is_protectable() {
+        let covering: Vec<ProtectionAction> = tree
+            .iter()
+            .filter(|action| captures(action.candidate(), boundary))
+            .cloned()
+            .collect();
+        if let Some(first) = covering.first() {
+            let note = format!(
+                "{point} is the separate {} {} beneath {}, captured by {} in the same operation \
+                 that captures the tree above it (§32.3)",
+                domain.object_kind(),
+                domain.object().unwrap_or(point),
+                mutation.subject(),
+                first.summary()
+            );
+            let mut draft = RowDraft::of(
+                &child,
+                Cover {
+                    actions: covering,
+                    note,
+                    unknown_semantics: false,
+                    exclusions: Vec::new(),
+                },
+                irrelevant,
+            );
+            // The candidate's own exclusions are on the directory's row already.
+            draft.exclusions.clear();
+            return Some(draft);
+        }
+    }
+    let mut found = cover(request, analysis, &child, Some(domain), beneath);
+    if found.actions.is_empty() && found.exclusions.is_empty() {
+        found.exclusions.push(CoverageExclusion::new(
+            mutation.domain(),
+            point,
+            format!(
+                "§32.3: the mutation of {} reaches {point}, a separate filesystem nothing \
+                 captures: {}",
+                mutation.subject(),
+                found.note
+            ),
+        ));
+    }
+    found.note = format!(
+        "{point} is a separate filesystem beneath {} that the mutation reaches: {}",
+        mutation.subject(),
+        found.note
+    );
+    tree.extend(found.actions.iter().cloned());
+    analysis.actions.extend(found.actions.iter().cloned());
+    Some(RowDraft::of(&child, found, irrelevant))
+}
+
+/// Whether `candidate` captures the filesystem mounted at `boundary` (§13.4, §14.3, §32.3).
+///
+/// Either its scope is that persistence object or names it — `zfs snapshot -r` lists the child
+/// datasets it takes — or it covers something strictly inside the mount, which only a copy that
+/// crossed into that filesystem can. Listing the mountpoint directory itself is not enough: that
+/// entry lives on the filesystem above.
+fn captures(candidate: &RecoveryCandidate, boundary: &MountBoundary) -> bool {
+    let scope = candidate.scope();
+    let point = boundary.mount_point();
+    let by_object = boundary
+        .domain()
+        .object()
+        .is_some_and(|object| scope.domain() == object || scope.covers_object(object));
+    by_object
+        || scope
+            .covers()
+            .iter()
+            .any(|covered| covered.as_ref() != point && contains(point, covered))
+}
+
+/// One row of the matrix before Appendix D.7's composition is applied to it.
+struct RowDraft {
+    domain: EffectDomain,
+    objective: RecoveryObjective,
+    protection: DomainProtection,
+    note: String,
+    actions: Vec<ProtectionAction>,
+    consistency: Option<ConsistencyClass>,
+    exclusions: Vec<CoverageExclusion>,
+    not_protected_by: Vec<std::sync::Arc<str>>,
+    irrelevant: bool,
+}
+
+impl RowDraft {
+    fn of(mutation: &MutationDomain, cover: Cover, irrelevant: bool) -> Self {
+        let Cover {
+            actions,
+            mut note,
+            unknown_semantics,
+            exclusions: refused,
+        } = cover;
         let protection = protection_of(&actions, mutation, unknown_semantics, &mut note);
-        let mut row = DomainCoverage::new(mutation.domain(), objective, protection, note);
-        if irrelevant {
-            row = row.declared_irrelevant();
-        }
-        for action in &actions {
-            row = row.by_asset(action.proposed_asset().id().clone());
-        }
-        if let Some(consistency) = weakest_consistency(&actions) {
-            row = row.at_consistency(consistency);
-        }
-        if protection == DomainProtection::Transactional
-            && let Some(action) = actions.first()
-        {
-            row = row.within_transaction(action.provider());
-        }
-        if let Some(exclusion) = exclusion_for(mutation) {
-            row = row.excluding(exclusion);
-        }
+        let mut exclusions: Vec<CoverageExclusion> = exclusion_for(mutation).into_iter().collect();
         for action in &actions {
             for exclusion in action.candidate().exclusions() {
-                row = row.excluding(CoverageExclusion::new(
+                exclusions.push(CoverageExclusion::new(
                     mutation.domain(),
                     exclusion.subject(),
                     exclusion.reason(),
                 ));
             }
         }
-        analysis.actions.extend(actions);
-        rows.push(row);
+        exclusions.extend(refused);
+        // §13.4: what encloses the target without reaching it, as the providers of the chosen
+        // candidates named it — less anything one of those candidates captures after all.
+        let mut not_protected_by: Vec<std::sync::Arc<str>> = Vec::new();
+        for object in actions
+            .iter()
+            .flat_map(|action| action.candidate().not_protecting())
+        {
+            let captured = actions.iter().any(|action| {
+                let scope = action.candidate().scope();
+                scope.domain() == object.as_ref() || scope.covers_object(object)
+            });
+            if !captured && !not_protected_by.contains(object) {
+                not_protected_by.push(std::sync::Arc::clone(object));
+            }
+        }
+        Self {
+            domain: mutation.domain(),
+            objective: mutation.objective(),
+            protection,
+            note,
+            consistency: weakest_consistency(&actions),
+            actions,
+            exclusions,
+            not_protected_by,
+            irrelevant,
+        }
     }
 
-    analysis.summary = ProtectionSummary::of(rows);
-    analysis
+    /// The candidate whose creation this row rests on.
+    fn creation(&self) -> Option<&RecoveryCandidate> {
+        self.actions.first().map(ProtectionAction::candidate)
+    }
+
+    fn build(self) -> DomainCoverage {
+        let mut row = DomainCoverage::new(self.domain, self.objective, self.protection, self.note);
+        if self.irrelevant {
+            row = row.declared_irrelevant();
+        }
+        for action in &self.actions {
+            row = row.by_asset(action.proposed_asset().id().clone());
+        }
+        if let Some(consistency) = self.consistency {
+            row = row.at_consistency(consistency);
+        }
+        if self.protection == DomainProtection::Transactional
+            && let Some(action) = self.actions.first()
+        {
+            row = row.within_transaction(action.provider());
+        }
+        for exclusion in self.exclusions {
+            row = row.excluding(exclusion);
+        }
+        for object in self.not_protected_by {
+            row = row.outside_of(object);
+        }
+        row
+    }
 }
 
-/// A.3: what the providers offer for this mutation domain, and what they could not be asked.
+/// Appendix D.7: rows of one domain that rest on separate creations share no point in time.
+///
+/// The actions a provider plans from one candidate are one creation — `zfs snapshot -r` is the
+/// case that matters — and assets from different candidates are made one after another. Where the
+/// rows of one effect domain rest on more than one creation, restoring them together yields a
+/// state that never existed as a whole, which is what crash-consistent means; each row is lowered
+/// to that at best and says why.
+fn compose_sequential(drafts: &mut [RowDraft]) {
+    for domain in EffectDomain::ALL {
+        let mut creations: Vec<&RecoveryCandidate> = Vec::new();
+        for draft in drafts.iter().filter(|draft| draft.domain == *domain) {
+            if let Some(creation) = draft.creation()
+                && !creations.contains(&creation)
+            {
+                creations.push(creation);
+            }
+        }
+        let count = creations.len();
+        if count < 2 {
+            continue;
+        }
+        for draft in drafts
+            .iter_mut()
+            .filter(|draft| draft.domain == *domain && !draft.actions.is_empty())
+        {
+            let composed = draft
+                .consistency
+                .map_or(ConsistencyClass::CrashConsistent, |class| {
+                    class.weakest_of(ConsistencyClass::CrashConsistent)
+                });
+            draft.consistency = Some(composed);
+            draft.note.push_str(&format!(
+                "; {domain} rests on {count} assets created one after another in separate \
+                 operations, so together they hold no common point in time and are {composed} at \
+                 best (Appendix D.7)"
+            ));
+        }
+    }
+}
+
+/// A.3: what the providers offer for this mutation domain, what they could not be asked, and
+/// what the resolution itself refused (§11.2, Appendix B, ADR-0807).
 fn discover(
     request: &CoverageRequest<'_>,
     mutation: &MutationDomain,
+    persistence: Option<&PersistenceDomain>,
     analysis: &mut CoverageAnalysis,
-) -> (Vec<RecoveryCandidate>, String) {
-    let Some(persistence) = request.persistence_for(mutation.subject()) else {
-        return (
-            Vec::new(),
-            format!(
-                "no persistence domain was resolved for {}, and §11.2 requires the mapping before \
-                 protection is claimed",
-                mutation.subject()
-            ),
-        );
+) -> (Vec<RecoveryCandidate>, String, Vec<CoverageExclusion>) {
+    let subject = mutation.subject();
+    let unresolved = || {
+        format!(
+            "no persistence domain was resolved for {subject}, and §11.2 requires the mapping \
+             before protection is claimed"
+        )
     };
-    if !persistence.is_protectable() {
+    if let Some(persistence) = persistence
+        && !persistence.is_protectable()
+    {
+        // Appendix B.6, B.7 and §32.4: a refusal is part of the coverage answer, and an exclusion
+        // is where the matrix states what the protection leaves out and why.
         return (
             Vec::new(),
             format!(
-                "{} has no persistence domain a local provider may protect: {}",
-                mutation.subject(),
+                "{subject} has no persistence domain a local provider may protect: {}",
                 persistence.detail()
             ),
+            vec![CoverageExclusion::new(
+                mutation.domain(),
+                subject,
+                persistence.detail(),
+            )],
         );
+    }
+    if persistence.is_none() && !subject.starts_with('/') {
+        return (Vec::new(), unresolved(), Vec::new());
     }
     let outcome = request
         .registry()
-        .discover(persistence, mutation.objective());
+        .discover_at(subject, persistence, mutation.objective());
     for refusal in outcome.refusals() {
         if !analysis
             .refusals
@@ -750,6 +1180,10 @@ fn discover(
             analysis.refusals.push(refusal.clone());
         }
     }
+    let resolutions = outcome.resolutions();
+    let Some(named) = persistence.or_else(|| resolutions.first().map(|(_, domain)| *domain)) else {
+        return (Vec::new(), unresolved(), Vec::new());
+    };
     let candidates: Vec<RecoveryCandidate> = outcome
         .candidates()
         .iter()
@@ -765,24 +1199,94 @@ fn discover(
         if outcome.is_conclusive() {
             format!(
                 "no registered provider offers protection for {} (Appendix A.3)",
-                persistence.object().unwrap_or(mutation.subject())
+                named.object().unwrap_or(subject)
             )
         } else {
+            let refused: Vec<String> = outcome
+                .refusals()
+                .iter()
+                .map(|refusal| format!("{} ({})", refusal.provider(), refusal.reason()))
+                .collect();
             format!(
-                "{} provider(s) could not be asked about {}, so the absence of a candidate \
+                "{} could not be asked about {subject}: {}. The absence of a candidate \
                  establishes nothing (§55.6 case 29)",
-                outcome.refusals().len(),
-                mutation.subject()
+                if refused.len() == 1 {
+                    "1 provider".to_owned()
+                } else {
+                    format!("{} providers", refused.len())
+                },
+                refused.join("; ")
             )
         }
     } else {
         format!(
             "{} covers {}",
-            persistence.object_kind(),
-            persistence.object().unwrap_or(mutation.subject())
+            named.object_kind(),
+            named.object().unwrap_or(subject)
         )
     };
-    (candidates, note)
+    (candidates, note, Vec::new())
+}
+
+/// Appendix B.4: over an overlay whose writable layer cannot be followed, only a copy protects.
+///
+/// A candidate's mechanism is the asset its provider would create for it, so each provider is
+/// asked to plan the candidate — side-effect free by §2.1 — and a candidate whose asset is not an
+/// independent copy of the bytes is refused with B.4's reason before the ranking can prefer it. A
+/// provider that cannot say what it would create has not shown it copies anything, and §56.3
+/// makes that a refusal too.
+fn copies_only(
+    request: &CoverageRequest<'_>,
+    candidates: Vec<RecoveryCandidate>,
+    analysis: &mut CoverageAnalysis,
+) -> Vec<RecoveryCandidate> {
+    let mut kept = Vec::new();
+    for candidate in candidates {
+        let proposed: Option<Vec<RecoveryAssetType>> = request
+            .registry()
+            .get(candidate.provider())
+            .and_then(|provider| {
+                provider
+                    .plan_protection(std::slice::from_ref(&candidate), ProtectionMode::Prefer)
+                    .ok()
+                    .map(|actions| {
+                        actions
+                            .iter()
+                            .map(|action| action.proposed_asset().asset_type())
+                            .collect()
+                    })
+            });
+        match proposed {
+            Some(types)
+                if !types.is_empty() && types.iter().all(|kind| kind.is_independent_copy()) =>
+            {
+                kept.push(candidate);
+            }
+            proposed => {
+                let mechanism = proposed
+                    .and_then(|types| types.first().copied())
+                    .map_or_else(
+                        || "a mechanism it could not name".to_owned(),
+                        |kind| format!("a {kind}"),
+                    );
+                let detail = format!(
+                    "{} would protect {} with {mechanism}, and the writable layer of this overlay \
+                     is not visible here: Appendix B.4 forbids claiming that snapshotting the \
+                     merged mount protects data whose writable layer resides elsewhere. Only a \
+                     copy of the visible bytes, written back through the same view, may",
+                    candidate.provider(),
+                    candidate.scope().domain()
+                );
+                reject(
+                    analysis,
+                    candidate,
+                    RejectionReason::SnapshotOfMergedView,
+                    detail,
+                );
+            }
+        }
+    }
+    kept
 }
 
 /// §38.3: drops the candidates a configured limit forbids, recording each one.
@@ -968,4 +1472,28 @@ fn reject(
         reason,
         detail: detail.into(),
     });
+}
+/// Every domain the sealed plan showed as protected that `fresh` no longer protects (§2.3, §10.3).
+///
+/// A sealed plan carries its coverage matrix and not the actions that produce it, so `apply`
+/// recomputes them. The operator approved the plan with the matrix in view, and a recomputation
+/// that can no longer protect one of its rows would turn protected execution into unprotected
+/// execution without saying so. The answer names each such domain so the refusal can.
+///
+/// A row the sealed plan did not show as satisfied is not a promise, so an unprotected plan
+/// applies unprotected, as it said it would.
+#[must_use]
+pub fn protection_lost(sealed: &ProtectionSummary, fresh: &ProtectionSummary) -> Vec<String> {
+    sealed
+        .rows()
+        .iter()
+        .filter(|row| row.is_satisfied() && row.protection() != DomainProtection::Unknown)
+        .filter(|row| {
+            !fresh
+                .rows()
+                .iter()
+                .any(|now| now.domain() == row.domain() && now.is_satisfied())
+        })
+        .map(|row| row.domain().as_str().to_owned())
+        .collect()
 }

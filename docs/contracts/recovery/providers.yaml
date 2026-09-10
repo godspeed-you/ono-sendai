@@ -45,7 +45,7 @@ change_capabilities:
 # the ones this release ships, and the rest arrive through KUANG/11 (§16, §48).
 #
 # `role` is §39.2 made checkable. `consistency.yaml` says which role owns each class, and
-# `check_consistency` reads every `at_consistency(ConsistencyClass::…)` in each provider's crate
+# `check_consistency_ownership` reads every `at_consistency(ConsistencyClass::…)` in each provider's crate
 # and refuses a claim the provider's role does not own. A storage provider that wrote
 # `ApplicationConsistent` would fail the gate rather than reach an operator.
 providers:
@@ -89,8 +89,12 @@ providers:
       §15.5 keeps their contents out of default rendering because they may hold secrets.
 
 # Appendix G.4: a provider tests the filesystem and tool versions it supports and degrades to
-# unsupported rather than executing semantics it has not validated. The versions each provider
-# validated against are declared in its own crate and checked against this policy.
+# unsupported rather than executing semantics it has not validated. A provider whose row names a
+# `tool` declares the versions it validated as `VALIDATED_VERSIONS` in its own crate and answers
+# `ProviderAvailability::Unsupported` for any other. `xtask/src/change.rs::check_shipped_providers`
+# requires `degrade_to: unsupported` here, and reads each such crate's source, as text, for a
+# non-empty `VALIDATED_VERSIONS`, a `VALIDATED_VERSIONS.contains(` test and an `Unsupported`
+# answer. `ono.recovery.file-copy` declares `tool: null` and is not held to it.
 version_variance:
   degrade_to: unsupported
   doc: >-
@@ -98,9 +102,9 @@ version_variance:
     unsupported or unknown rather than execute semantics they have not validated. §56.3 makes the
     same choice for a single unestablished fact: block rather than guess.
 
-# Appendix G.1's fixture set. Every provider owes a scenario for each of these, and
-# `xtask/src/change.rs::check_providers` holds the list to G.1's eleven entries. Which provider
-# covers which one is decided by the provider's own conformance suite rather than by this file.
+# Appendix G.1's fixture set, which G.1 asks of every provider. `xtask/src/change.rs::check_providers`
+# checks only that the list holds at least G.1's eleven entries; it does not check which provider's
+# suite covers which fixture, and nothing else in the gate does either.
 required_fixtures:
   - resource-discovery
   - scope-boundaries

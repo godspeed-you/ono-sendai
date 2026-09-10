@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use ono_value::Value;
 
-use crate::effect::ProposedEffect;
+use crate::effect::{EffectConfidence, EffectDomain, EffectKind, ProposedEffect};
 use crate::id::{ActionId, PlanId};
 use crate::target::Precondition;
 use crate::vocab::vocabulary;
@@ -334,6 +334,26 @@ impl PlanAction {
     pub fn effecting(mut self, effect: ProposedEffect) -> Self {
         self.effects.push(effect);
         self
+    }
+
+    /// Declares the one effect the action has on `object` (§8.2).
+    ///
+    /// The common case — one action, one object, one domain — written where the action is built,
+    /// so the effect is derived from this action's own identity and cannot be declared against
+    /// another. A recovery provider's restore actions are the reason it exists: §2.12 makes a
+    /// recovery a change, and a change states what it will do.
+    #[must_use]
+    pub fn declaring(
+        self,
+        domain: EffectDomain,
+        kind: EffectKind,
+        confidence: EffectConfidence,
+        object: impl Into<Arc<str>>,
+        explanation: impl Into<Arc<str>>,
+    ) -> Self {
+        let effect = ProposedEffect::new(self.id().clone(), domain, kind, confidence, explanation)
+            .on(object);
+        self.effecting(effect)
     }
 
     /// States the action's recovery semantics, or its explicit lack of them (§6.1).

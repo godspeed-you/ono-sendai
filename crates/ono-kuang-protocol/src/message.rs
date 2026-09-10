@@ -662,8 +662,15 @@ pub struct RecoveryProviderContribution {
     pub domain_kinds: Vec<String>,
     /// The asset type it creates, from `docs/contracts/recovery/assets.yaml` — `zfs-snapshot`,
     /// `file-archive`. §11.1 makes the asset the thing a person inspects, so it is named before
-    /// one exists.
+    /// one exists, and a type the registry does not define is refused at load.
     pub asset_type: String,
+    /// Whether its snapshots include guest memory: `memory-inclusive`, `disk-only`, or `both`
+    /// for a provider that can take either. v0.6 §16.2 says a VM provider MUST distinguish a
+    /// memory-inclusive snapshot from a disk-only one, so a `vm-snapshot` provider states this,
+    /// and a provider of any other asset type does not — a ZFS snapshot has no memory to include,
+    /// and a statement about it would be a false one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_inclusion: Option<String>,
     /// The strongest consistency it can claim, from §11.3. `application-consistent` requires
     /// `recovery.quiesce`: §39.2 says the provider must own the claim, and a provider that
     /// cannot pause the application cannot own it.

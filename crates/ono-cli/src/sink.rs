@@ -152,7 +152,23 @@ impl Sink {
             && let Ok(record) = value.as_record()
             && record.schema_id().to_string() == "ono.spatial-map/1"
         {
-            return ono_spatial_render::spatial_map(record, map_width(self.width), map_charset());
+            let width = map_width(self.width);
+            // v0.6 §21.2, §21.3: `map --plan` is the same drawing with the plan laid over it, so
+            // the overlay marks the lines the map drew rather than drawing a second map.
+            if let Some(overlay) = record.extra().get("ono.change/plan-overlay") {
+                let drawn = ono_spatial_render::map_lines(record, width, map_charset());
+                let pairs: Vec<(&str, Option<&str>)> = drawn
+                    .iter()
+                    .map(|line| (line.text(), line.node()))
+                    .collect();
+                return ono_change_render::plan_overlay(
+                    &pairs,
+                    overlay,
+                    width,
+                    crate::change::render::charset(),
+                );
+            }
+            return ono_spatial_render::spatial_map(record, width, map_charset());
         }
         // The v0.6 change views are presentation over one record each, and the renderer that
         // knows them is `ono-change-render` (§39.3). §20.2's plan view is the one that ends in

@@ -7,11 +7,11 @@
 )]
 
 use ono_change_render::recovery_assets;
-use ono_value::RecordValue;
+use ono_value::{RecordValue, Value};
 
 mod support;
 use support::{
-    contains, expired_asset, held_asset, later, ready_asset, unmeasured_asset, zfs_asset,
+    contains, expired_asset, held_asset, later, ready_asset, rewritten, unmeasured_asset, zfs_asset,
 };
 
 fn table(assets: &[RecordValue]) -> Vec<String> {
@@ -125,6 +125,16 @@ fn should_say_an_asset_under_a_hold_is_held_rather_than_expiring() {
     assert!(
         contains(&lines, "held"),
         "§37.2: a hold is what stops automatic removal, and a countdown beside one would mislead"
+    );
+    // The same asset without its hold counts down 23h46m to its expiry.
+    let unheld = table(&[rewritten(&held_asset(), "held", Value::Bool(false))]);
+    assert!(
+        contains(&unheld, "23h46m"),
+        "precondition: the asset has a countdown for a hold to replace"
+    );
+    assert!(
+        !contains(&lines, "23h46m"),
+        "§37.2: a held asset shows no countdown beside the hold"
     );
 }
 

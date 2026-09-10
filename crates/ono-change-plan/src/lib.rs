@@ -55,7 +55,7 @@ pub use freeze::{FileTarget, RemoteTarget, ServiceTarget};
 pub use historical::refuse_in_past;
 pub use migrate::STORE_VERSION;
 pub use path::{DATABASE_NAME, plan_store_directory, plan_store_path};
-pub use rebase::rebase;
+pub use rebase::{Refrozen, rebase, rebase_with};
 pub use references::{Reference, ReferenceKind};
 pub use secrets::{HANDLE_PREFIX, SENSITIVE_ARGUMENTS, SecretRedaction};
 pub use store::{CLAIM_LEASE, Claim, PlanFilter, PlanStore, PlanSummary, StoreOptions};

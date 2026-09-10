@@ -12,14 +12,15 @@
 //!
 //! | method | calls |
 //! |---|---|
+//! | `mounts` | none for an identified table; `filesystem show` otherwise |
 //! | `availability` | `--version` |
 //! | `resolve_domain` | `filesystem show`, `subvolume show`, `subvolume list` |
-//! | `discover` | `subvolume list`, `filesystem usage` |
+//! | `discover` | `subvolume list`, `filesystem usage` — after `resolve_domain`'s three for a domain named by its `subvol=` option |
 //! | `plan_protection` | none — §2.1 keeps planning side-effect free |
 //! | `create` | `subvolume snapshot -r`, `subvolume show`, `property get … ro` |
 //! | `validate` | `subvolume show` (snapshot), `property get … ro`, `subvolume show` (source) |
 //! | `plan_recovery` | `subvolume show` (snapshot), `property get … ro`, `filesystem show`, `subvolume show` (source), `subvolume list`, `subvolume get-default` |
-//! | `restore` | none, or `subvolume set-default` |
+//! | `restore_with` | derive: `subvolume snapshot`, `subvolume show`; replace or rename: `subvolume show` ×3; set-default: `subvolume show` ×3, `subvolume set-default`; restore a file: none |
 //! | `cleanup` | `subvolume delete` |
 //! | `estimate_cost` | `filesystem usage` |
 //!
@@ -33,23 +34,27 @@
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use jiff::Timestamp;
 use ono_change_core::{
-    ActionRole, ChangePlan, ConsistencyClass, EffectDomain, EquivalenceDomain, Execution,
-    NewerStateClass, NewerStateImpact, NewerStateItem, PersistenceDomain, PlanAction, PlanId,
-    ProtectionAction, ProtectionMode, ProviderAvailability, ProviderCapabilities, RecoveryAsset,
-    RecoveryAssetType, RecoveryCandidate, RecoveryCapability, RecoveryCost, RecoveryExclusion,
-    RecoveryGoal, RecoveryObjective, RecoveryPlanFragment, RecoveryProvider, RecoveryScope,
-    RecoveryValidation, ResolvedMount, RestoreMethod, ToolOutput, ToolRunner, UnrecoverableEffect,
-    VerificationClass, VerificationContract, error as core_error,
+    ActionRole, ChangePlan, ConsistencyClass, EffectConfidence, EffectDomain, EffectKind,
+    EquivalenceDomain, Execution, NewerStateClass, NewerStateImpact, NewerStateItem,
+    PersistenceDomain, PlanAction, PlanId, ProtectionAction, ProtectionMode, ProviderAvailability,
+    ProviderCapabilities, RecoveryAsset, RecoveryAssetType, RecoveryCandidate, RecoveryCapability,
+    RecoveryCost, RecoveryExclusion, RecoveryGoal, RecoveryObjective, RecoveryPlanFragment,
+    RecoveryProvider, RecoveryScope, RecoveryValidation, ResolvedMount, RestoreAcceptance,
+    RestoreMethod, RestoreOutcome, ToolOutput, ToolRunner, UnrecoverableEffect, VerificationClass,
+    VerificationContract, error as core_error,
 };
 use ono_value::{ErrorValue, Value};
 
-use crate::assets::{ProtectionShortfall, RecoveryAssetSet};
+use crate::assets::{
+    ProtectionShortfall, RecoveryAssetSet, SEQUENTIAL_CREATION, SEQUENTIAL_CREATION_REASON,
+};
+use crate::boot::{BootSelection, KERNEL_CMDLINE, boot_selection};
 use crate::boundary::{RequiredProtection, SubvolumeBoundary, SubvolumeLayout};
-use crate::config::{BtrfsConfig, RootRecovery, snapshot_name};
+use crate::config::{BtrfsConfig, RootRecovery, sanitised_name, snapshot_name};
 use crate::error::{
     PROVIDER_ID, command_failed, fact_not_established, no_btrfs_mount, recursive_snapshot_location,
     snapshot_failed,
@@ -59,8 +64,9 @@ use crate::mount::{BtrfsMount, BtrfsMounts};
 use crate::newer::{classify_object, classify_subvolume};
 use crate::parse::{
     BtrfsVersion, DefaultSubvolume, FilesystemInfo, FilesystemUsage, ShowOutcome, SubvolumeShow,
-    parse_filesystem_show, parse_filesystem_usage, parse_get_default, parse_read_only_property,
-    parse_subvolume_list, parse_version, read_subvolume_show, spoken_text,
+    parse_filesystem_list, parse_filesystem_show, parse_filesystem_usage, parse_get_default,
+    parse_read_only_property, parse_subvolume_list, parse_version, read_subvolume_show,
+    spoken_text,
 };
 use crate::safety::{SafetyChecklist, SafetyFact};
 use crate::subvolume::SubvolumeRef;
@@ -106,15 +112,27 @@ pub const OP_DERIVE_WRITABLE: &str = "derive-writable-subvolume";
 /// Point the next boot at a subvolume (Appendix D.9).
 pub const OP_SET_DEFAULT: &str = "set-default-subvolume";
 
-/// Put a derived subvolume in place of the live one (§14.4).
+/// Put a derived subvolume in place of the live one, with the live one unmounted (§14.4).
 pub const OP_REPLACE_SUBVOLUME: &str = "replace-subvolume";
+
+/// Give a derived subvolume the root's name, for a boot that selects the root by name (§14.6).
+///
+/// The same two renames as [`OP_REPLACE_SUBVOLUME`], made while the root is running: the running
+/// system keeps the subvolume it booted, whatever it is now called, until the reboot.
+pub const OP_SWAP_FOR_NEXT_BOOT: &str = "rename-subvolume-for-next-boot";
+
+/// The argument naming where the displaced subvolume is moved aside to (§14.4).
+pub const ARG_ASIDE: &str = "aside";
+
+/// The argument naming where the subvolume being recovered is visible now.
+pub const ARG_LIVE: &str = "live";
 
 /// The suffix a derived writable subvolume's name carries (§14.5).
 pub const DERIVED_SUFFIX: &str = "-rw";
 
-/// The suffix the subvolume being replaced is moved aside under (§14.4).
+/// The suffix the subvolume being replaced is moved aside under, before the plan id (§14.4).
 ///
-/// The live subvolume is renamed rather than deleted, so a replacement that turns out to have
+/// `@var` becomes `@var.ono-superseded-<plan>`. The live subvolume is renamed rather than deleted, so a replacement that turns out to have
 /// been the wrong idea still has the state it displaced. §2.15 and Appendix F both prefer keeping
 /// the evidence over a tidy tree.
 pub const SUPERSEDED_SUFFIX: &str = ".ono-superseded";
@@ -129,7 +147,44 @@ pub struct BtrfsProvider {
     host: Arc<str>,
     program: Arc<str>,
     plan: Option<PlanId>,
-    instant: Timestamp,
+    instant: Option<Timestamp>,
+    derived: Arc<Mutex<Vec<RecoveryAsset>>>,
+}
+
+/// Where a subvolume is visible now, and whether a mount names it or only leads to it.
+#[derive(Debug, Clone)]
+struct LiveSubvolume {
+    path: PathBuf,
+    mount: BtrfsMount,
+    /// The mount's own `subvolid=` is this subvolume's id. When it is not — a nested subvolume
+    /// reached through its parent's mount — the path is confirmed with `subvolume show` before
+    /// anything acts on it (Appendix B.9).
+    named_by_mount: bool,
+}
+
+/// The three paths of a subvolume swap, all visible through one mount (§14.4).
+#[derive(Debug, Clone)]
+struct SwapPaths {
+    mount_point: String,
+    derived: PathBuf,
+    live: PathBuf,
+    aside: PathBuf,
+}
+
+/// What a whole-subvolume step read about the three subvolumes it involves (§56.2).
+#[derive(Debug)]
+struct Lineage {
+    live: Box<SubvolumeShow>,
+    snapshot: Box<SubvolumeShow>,
+    derived: Box<SubvolumeShow>,
+}
+
+/// How a next-boot recovery of the root steers the boot (§14.6, Appendix D.9).
+#[derive(Debug, Clone)]
+struct Steering {
+    set_default: bool,
+    rename: bool,
+    evidence: String,
 }
 
 impl BtrfsProvider {
@@ -148,8 +203,23 @@ impl BtrfsProvider {
             host: Arc::from("localhost"),
             program: Arc::from(BTRFS),
             plan: None,
-            instant: Timestamp::UNIX_EPOCH,
+            instant: None,
+            derived: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    /// The writable subvolumes `restore_with` derived from recovery points, as assets (§14.5).
+    ///
+    /// §14.5 requires a writable subvolume derived from a retained snapshot to be tracked
+    /// separately. [`RecoveryProvider::restore_with`] returns nothing, so the asset each
+    /// derivation creates — depending on the recovery point it came from — is kept here for the
+    /// caller that persists assets to collect.
+    #[must_use]
+    pub fn derived_assets(&self) -> Vec<RecoveryAsset> {
+        self.derived
+            .lock()
+            .map(|derived| derived.clone())
+            .unwrap_or_default()
     }
 
     /// Resolves paths against `mounts` rather than against `/proc/self/mountinfo`.
@@ -199,13 +269,19 @@ impl BtrfsProvider {
 
     /// Sets the instant the provider stamps proposals and validations with.
     ///
-    /// The provider takes its clock from the caller rather than reading one, so a plan is a
-    /// deterministic function of its inputs. The instant a snapshot *exists* at is never this one:
-    /// that is read back from the filesystem's own record of when it was created (Appendix D.7).
+    /// A provider given an instant is a deterministic function of its inputs, which is what a test
+    /// needs; one given none reads the clock whenever it proposes or validates, which is what a
+    /// long-lived session needs. The instant a snapshot *exists* at is never this one: that is
+    /// read back from the filesystem's own record of when it was created (Appendix D.7).
     #[must_use]
     pub const fn at_instant(mut self, instant: Timestamp) -> Self {
-        self.instant = instant;
+        self.instant = Some(instant);
         self
+    }
+
+    /// The instant the provider stamps its work with: the one it was given, or the clock now.
+    fn now(&self) -> Timestamp {
+        self.instant.unwrap_or_else(Timestamp::now)
     }
 
     /// The settings in force (§53).
@@ -214,16 +290,36 @@ impl BtrfsProvider {
         &self.config
     }
 
-    /// The mount table resolutions are performed against (Appendix B.1).
+    /// The mount table resolutions are performed against, each mount tied to its filesystem UUID
+    /// (Appendix B.1, §56.2).
+    ///
+    /// A table supplied with [`BtrfsProvider::with_mounts`] that is already identified is used
+    /// as it is. Otherwise — `/proc/self/mountinfo`, or a supplied table without UUIDs — the
+    /// provider asks `btrfs filesystem show` which filesystem each device belongs to, because
+    /// subvolume ids start at 256 on every filesystem and an id means nothing without its UUID.
     ///
     /// # Errors
     ///
-    /// A structured error when no table was supplied and `/proc/self/mountinfo` cannot be read.
+    /// A structured error when no table was supplied and `/proc/self/mountinfo` cannot be read, or
+    /// when the filesystems could not be listed.
     pub fn mounts(&self) -> Result<Cow<'_, BtrfsMounts>, ErrorValue> {
-        match &self.mounts {
-            Some(mounts) => Ok(Cow::Borrowed(mounts)),
-            None => BtrfsMounts::from_proc().map(Cow::Owned),
+        let table = match &self.mounts {
+            Some(mounts) if mounts.is_identified() => return Ok(Cow::Borrowed(mounts)),
+            Some(mounts) => mounts.clone(),
+            None => BtrfsMounts::from_proc()?,
+        };
+        if table.is_identified() {
+            return Ok(Cow::Owned(table));
         }
+        let output = self.btrfs(&["filesystem", "show"])?;
+        if !output.succeeded() {
+            return Err(command_failed(
+                "btrfs filesystem show",
+                spoken_text(&output).trim(),
+            ));
+        }
+        let filesystems = parse_filesystem_list(spoken_text(&output))?;
+        Ok(Cow::Owned(table.identified_by(&filesystems)))
     }
 
     /// Runs one `btrfs` subcommand (§12.3).
@@ -288,17 +384,20 @@ impl BtrfsProvider {
             .collect())
     }
 
-    /// The subvolumes and the mounts that reach them, together (§14.3, Appendix B.9).
+    /// The subvolumes and the mounts of the same filesystem that reach them (§14.3, Appendix B.9).
     ///
     /// # Errors
     ///
-    /// A structured error when either half could not be established.
+    /// A structured error when either half could not be established, or when no Btrfs mount
+    /// serves `mount`.
     pub fn layout(&self, mount: &Path) -> Result<SubvolumeLayout, ErrorValue> {
-        let boundaries = self.boundaries(mount)?;
-        Ok(SubvolumeLayout::new(
-            boundaries,
-            self.mounts()?.into_owned(),
-        ))
+        let mounts = self.mounts()?;
+        let serving = mounts
+            .covering(mount)
+            .ok_or_else(|| no_btrfs_mount(&mount.to_string_lossy()))?;
+        // §56.2: the listing is one filesystem's, and so are the mounts it is laid out against.
+        let own = mounts.same_filesystem_as(serving);
+        Ok(SubvolumeLayout::new(self.boundaries(mount)?, own))
     }
 
     /// The subvolumes a plan changing `paths` must snapshot, each separately (§14.3, §59.3).
@@ -411,6 +510,13 @@ impl BtrfsProvider {
         asset: &RecoveryAsset,
         destination: &Path,
     ) -> Result<RecoveryAsset, ErrorValue> {
+        let Some(source) = SubvolumeRef::parse(asset.scope().domain()) else {
+            return Err(snapshot_failed(
+                asset.scope().domain(),
+                "the recovery point's scope names no filesystem and subvolume, so a subvolume \
+                 derived from it could not be tied to one (§56.2)",
+            ));
+        };
         let destination_text = destination.to_string_lossy().into_owned();
         let output = self.btrfs(&[
             "subvolume",
@@ -436,11 +542,9 @@ impl BtrfsProvider {
                 ));
             }
         };
-        let source = SubvolumeRef::parse(asset.scope().domain());
-        let filesystem = source.as_ref().map_or("unknown", SubvolumeRef::filesystem);
         let scope = RecoveryScope::new(
             SCOPE_KIND,
-            SubvolumeRef::new(filesystem, derived.id(), derived.tree_path()).reference(),
+            SubvolumeRef::new(source.filesystem(), derived.id(), derived.tree_path()).reference(),
             Arc::clone(&self.host),
         )
         .covering(destination_text.clone());
@@ -449,7 +553,7 @@ impl BtrfsProvider {
             RecoveryAssetType::BtrfsSnapshot,
             destination_text,
             scope,
-            derived.created_at().unwrap_or(self.instant),
+            derived.created_at().unwrap_or_else(|| self.now()),
         );
         if let Some(plan) = asset.source_plan() {
             writable = writable.for_plan(plan.clone());
@@ -530,7 +634,7 @@ impl BtrfsProvider {
                     reference.tree_path(),
                 ));
             }
-            let destination = self.snapshot_destination(&mounts, plan, &reference)?;
+            let destination = self.snapshot_destination(&mounts, plan, &reference, at)?;
             let destination_text = destination.to_string_lossy().into_owned();
             let mut asset = RecoveryAsset::proposed(
                 PROVIDER_ID,
@@ -597,7 +701,12 @@ impl BtrfsProvider {
             );
             return Err(refusal(&checklist));
         };
-        let Some((live_path, live_mount)) = self.live_path(&mounts, &reference) else {
+        let Some(LiveSubvolume {
+            path: live_path,
+            mount: live_mount,
+            ..
+        }) = self.live_path(&mounts, &reference)
+        else {
             checklist.block(
                 SafetyFact::MountAndRebootRequirement,
                 format!(
@@ -711,31 +820,38 @@ impl BtrfsProvider {
     }
 
     /// Where the snapshot of `reference` goes (Appendix D.8).
+    ///
+    /// The name carries the plan it was taken for, and — for a provider no single plan asked, as
+    /// a session's is — the instant it was proposed at, so two recovery points of one subvolume are
+    /// two snapshots rather than a second one refused because the first is in its place (§37).
     fn snapshot_destination(
         &self,
         mounts: &BtrfsMounts,
         plan: Option<&PlanId>,
         reference: &SubvolumeRef,
+        at: Timestamp,
     ) -> Result<PathBuf, ErrorValue> {
-        let name = snapshot_name(
-            plan.map_or("ono", |plan| plan.short()),
-            reference.tree_path(),
+        let owner = plan.map_or_else(
+            || format!("manual-{}", at.strftime("%Y%m%dT%H%M%SZ")),
+            |plan| plan.short().to_owned(),
         );
+        let name = snapshot_name(&owner, reference.tree_path());
         Ok(self
-            .recovery_namespace(mounts, reference.tree_path())?
+            .recovery_namespace(mounts, reference.filesystem(), reference.tree_path())?
             .join(name))
     }
 
-    /// Where the recovery namespace is visible in this mount namespace (Appendix D.8).
+    /// Where the recovery namespace of filesystem `filesystem` is visible (Appendix D.8).
     fn recovery_namespace(
         &self,
         mounts: &BtrfsMounts,
+        filesystem: &str,
         subject: &str,
     ) -> Result<PathBuf, ErrorValue> {
         let location = self.config.snapshot_location();
         mounts
-            .mounts()
-            .iter()
+            .of_filesystem(filesystem)
+            .into_iter()
             .filter(|mount| !mount.is_read_only())
             .find_map(|mount| mount.visible_path(location))
             .ok_or_else(|| {
@@ -744,31 +860,224 @@ impl BtrfsProvider {
                     subject,
                     &format!(
                         "the recovery namespace {location} is not reachable through any writable \
-                         mount of this filesystem, so a snapshot could not be placed on the same \
-                         Btrfs filesystem as its source (Appendix D.8). Nothing was changed"
+                         mount of Btrfs filesystem {filesystem}, so a snapshot could not be placed \
+                         on the same filesystem as its source (Appendix D.8)"
                     ),
                 )
             })
     }
 
-    /// Where a subvolume is visible now, and through which mount (§14.6, §56.2).
-    fn live_path(
+    /// Where a subvolume of the scope's own filesystem is visible now (§14.6, §56.2).
+    ///
+    /// A mount whose `subvolid=` is the subvolume's id is the answer. Otherwise the subvolume is
+    /// reached through the most specific mount of the same filesystem it is visible beneath — a
+    /// nested subvolume inside its mounted parent, or any subvolume under the top level — and
+    /// the caller confirms the path with `subvolume show`, because a tree path is not an
+    /// identity. A mount of another filesystem is never considered, whatever ids it shows.
+    fn live_path(&self, mounts: &BtrfsMounts, reference: &SubvolumeRef) -> Option<LiveSubvolume> {
+        let own = mounts.of_filesystem(reference.filesystem());
+        let wanted = reference.tree_path().trim_matches('/');
+        if let Some((mount, path)) = own
+            .iter()
+            .filter(|mount| mount.subvolume_id() == Some(reference.id()))
+            .find_map(|mount| mount.visible_path(wanted).map(|path| (*mount, path)))
+        {
+            return Some(LiveSubvolume {
+                path,
+                mount: mount.clone(),
+                named_by_mount: true,
+            });
+        }
+        own.iter()
+            // A mount of this tree path under another id shows a different subvolume now.
+            .filter(|mount| mount.tree_path() != wanted)
+            .filter_map(|mount| mount.visible_path(wanted).map(|path| (*mount, path)))
+            .max_by(|(left, _), (right, _)| {
+                left.tree_path()
+                    .len()
+                    .cmp(&right.tree_path().len())
+                    .then_with(|| right.mount_point().cmp(left.mount_point()))
+            })
+            .map(|(mount, path)| LiveSubvolume {
+                path,
+                mount: mount.clone(),
+                named_by_mount: false,
+            })
+    }
+
+    /// The paths a swap of `reference` with a derived subvolume renames, through one mount.
+    ///
+    /// rename(2) between two mounts fails with EXDEV even when both show one filesystem, so the
+    /// live subvolume, the derived one and the name the live one is moved aside to must all be
+    /// visible through the same writable mount — which is not the subvolume's own mount, because
+    /// a mountpoint cannot be renamed. The filesystem's top level is the one that always
+    /// qualifies, and it is preferred.
+    fn swap_paths(
         &self,
         mounts: &BtrfsMounts,
         reference: &SubvolumeRef,
-    ) -> Option<(PathBuf, BtrfsMount)> {
+        derived_tree: &str,
+        plan: &PlanId,
+    ) -> Option<SwapPaths> {
+        let target = reference.tree_path().trim_matches('/');
+        if target.is_empty() {
+            return None;
+        }
+        let aside_tree = format!(
+            "{target}{SUPERSEDED_SUFFIX}-{}",
+            sanitised_name(plan.short())
+        );
         mounts
-            .mounts()
-            .iter()
-            .find(|mount| {
-                mount.subvolume_id() == Some(reference.id())
-                    || mount.tree_path() == reference.tree_path()
+            .of_filesystem(reference.filesystem())
+            .into_iter()
+            .filter(|mount| !mount.is_read_only() && mount.tree_path() != target)
+            .filter_map(|mount| {
+                Some((
+                    mount.tree_path().len(),
+                    SwapPaths {
+                        mount_point: mount.mount_point().to_owned(),
+                        derived: mount.visible_path(derived_tree)?,
+                        live: mount.visible_path(target)?,
+                        aside: mount.visible_path(&aside_tree)?,
+                    },
+                ))
             })
-            .and_then(|mount| {
-                mount
-                    .visible_path(reference.tree_path())
-                    .map(|path| (path, mount.clone()))
-            })
+            .min_by_key(|(depth, _)| *depth)
+            .map(|(_, paths)| paths)
+    }
+
+    /// How the next boot can be steered to a recovered root, or why it cannot (§14.6).
+    fn next_boot_steering(
+        &self,
+        default: &DefaultSubvolume,
+        reference: &SubvolumeRef,
+        live_path: &Path,
+        mounts: &BtrfsMounts,
+    ) -> Result<Steering, String> {
+        let cmdline = match self.files.read(Path::new(KERNEL_CMDLINE)) {
+            Ok(bytes) => bytes.map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
+            Err(error) => {
+                return Err(format!(
+                    "the kernel command line at {KERNEL_CMDLINE} could not be read ({}), so how \
+                     the next boot selects its root could not be established",
+                    diagnosis(&error)
+                ));
+            }
+        };
+        let fstab = self
+            .files
+            .read(&live_path.join("etc/fstab"))
+            .ok()
+            .flatten()
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+        let own = mounts.of_filesystem(reference.filesystem());
+        let devices: Vec<&str> = own.iter().map(|mount| mount.source()).collect();
+        let tree = reference.tree_path().trim_matches('/');
+        match boot_selection(
+            cmdline.as_deref(),
+            fstab.as_deref(),
+            reference.filesystem(),
+            &devices,
+        ) {
+            BootSelection::Unobservable { reason } => Err(format!(
+                "{reason}, so how the next boot selects its root could not be established and \
+                 neither a new default subvolume nor a rename can be chosen (§14.6)"
+            )),
+            BootSelection::ById { id, evidence } => Err(format!(
+                "{evidence}: the next boot mounts subvolume {id} whatever the default subvolume \
+                 is and whatever it is called, so neither `btrfs subvolume set-default` nor a \
+                 rename changes what boots. Only the boot entry itself could, and this provider \
+                 does not edit boot entries"
+            )),
+            BootSelection::ByName {
+                tree_path,
+                evidence,
+            } => {
+                if tree_path.as_ref() == tree {
+                    Ok(Steering {
+                        set_default: false,
+                        rename: true,
+                        evidence: format!(
+                            "{evidence}, so this recovery leaves the default subvolume alone and \
+                             renames: the subvolume derived from the recovery point takes the \
+                             name `{tree}`, which changes what boots"
+                        ),
+                    })
+                } else {
+                    Err(format!(
+                        "{evidence}, and `{tree_path}` is not `{tree}`, the subvolume being \
+                         recovered, so recovering it would not change what boots"
+                    ))
+                }
+            }
+            BootSelection::ByDefault {
+                also_named,
+                evidence,
+            } => {
+                if default.id() != reference.id() {
+                    return Err(format!(
+                        "{evidence}, which is subvolume {} and not subvolume {} being recovered; \
+                         pointing the default at the recovered subvolume would change what boots \
+                         on the strength of a layout nobody has established",
+                        default.id(),
+                        reference.id()
+                    ));
+                }
+                match also_named.as_deref() {
+                    Some(named) if named != tree => Err(format!(
+                        "{evidence}, and the root's /etc/fstab names `{named}` for `/`, which is \
+                         not `{tree}`; the two disagree about what this root is"
+                    )),
+                    Some(_) => Ok(Steering {
+                        set_default: true,
+                        rename: true,
+                        evidence: format!(
+                            "{evidence}, and the root's /etc/fstab names `{tree}` for `/`, so \
+                             this recovery changes the default subvolume to the derived one and \
+                             gives it the name `{tree}` as well; it changes what boots"
+                        ),
+                    }),
+                    None => Ok(Steering {
+                        set_default: true,
+                        rename: false,
+                        evidence: format!(
+                            "{evidence}, so this recovery changes the default subvolume to the \
+                             derived one, which changes what boots"
+                        ),
+                    }),
+                }
+            }
+        }
+    }
+
+    /// The mount serving `path`, when it is a mount of the recovery point's own filesystem.
+    fn mount_on_filesystem(
+        action: &PlanAction,
+        mounts: &BtrfsMounts,
+        reference: &SubvolumeRef,
+        path: &Path,
+    ) -> Result<BtrfsMount, ErrorValue> {
+        match mounts.covering(path) {
+            Some(mount) if mount.filesystem_uuid() == Some(reference.filesystem()) => {
+                Ok(mount.clone())
+            }
+            other => Err(core_error::recovery_apply_failed(
+                action.summary(),
+                &format!(
+                    "{} is on {}, and the recovery point belongs to Btrfs filesystem {}. §56.2 \
+                     ties every step of a recovery to the exact filesystem, so nothing was changed",
+                    path.display(),
+                    other.map_or_else(
+                        || "no Btrfs mount this provider can see".to_owned(),
+                        |mount| format!(
+                            "filesystem {}",
+                            mount.filesystem_uuid().unwrap_or("of unestablished UUID")
+                        )
+                    ),
+                    reference.filesystem()
+                ),
+            )),
+        }
     }
 
     /// The candidate a snapshot of `boundary` would be (§11.1, §14.3, §14.7).
@@ -792,11 +1101,22 @@ impl BtrfsProvider {
             .mount_for(boundary)
             .is_some_and(|mount| layout.mounts().is_root_subvolume(mount));
         let detail = format!(
-            "a read-only Btrfs snapshot of {}. It shares extents with the live subvolume and lives \
+            "a {} Btrfs snapshot of {}. It shares extents with the live subvolume and lives \
              on the same filesystem and the same devices, so it is a local recovery point and \
              shares the storage failure domain of what it protects — it is not a backup \
-             (§14.7){}",
+             (§14.7){}{}",
+            if self.config.prefers_read_only_snapshots() {
+                "read-only"
+            } else {
+                "writable"
+            },
             reference.describe(),
+            if self.config.prefers_read_only_snapshots() {
+                ""
+            } else {
+                ". Being writable, it stops being provably the captured state the moment anything \
+                 writes to it (§14.5), because `prefer_read_only_snapshots` is off"
+            },
             if nested.is_empty() {
                 String::new()
             } else {
@@ -867,9 +1187,14 @@ impl BtrfsProvider {
             Ok(false) => checklist.block(
                 SafetyFact::ReadOnlySnapshotTreatment,
                 format!(
-                    "the snapshot at {} is writable, so what it holds is no longer provably the \
+                    "the snapshot at {} is writable{}, so what it holds is no longer provably the \
                      state that was captured (§14.5)",
-                    snapshot_path.display()
+                    snapshot_path.display(),
+                    if self.config.prefers_read_only_snapshots() {
+                        ""
+                    } else {
+                        " — `prefer_read_only_snapshots` is off, which is how it was taken"
+                    }
                 ),
             ),
             Err(error) => checklist.block(
@@ -902,7 +1227,8 @@ impl BtrfsProvider {
         let live_show = self.check_identity(&mut checklist, reference, live_path, query_mount)?;
 
         // §56.2's third and tenth facts: the nested boundaries, and no assumption about them.
-        let layout = self.check_boundaries(&mut checklist, asset, reference, query_mount, mounts);
+        let own = mounts.same_filesystem_as(live_mount);
+        let layout = self.check_boundaries(&mut checklist, asset, reference, query_mount, &own);
 
         // §56.2's fourth fact: whether a selected restore is possible.
         let restore_set = self.restore_set(asset, live_path, layout.as_ref(), &mut checklist);
@@ -920,13 +1246,38 @@ impl BtrfsProvider {
             method,
             goal,
         );
+        let plan_id = source.map_or_else(
+            || PlanId::of(PROVIDER_ID, asset.reference(), goal.as_str()),
+            |plan| plan.id().clone(),
+        );
 
-        // §56.2's sixth fact: the default subvolume and the boot impact.
+        // §56.2's sixth fact: the default subvolume and the boot impact — and, for a next-boot
+        // recovery of the root, which of the two steering methods the boot entry honours.
+        let mut steering = None;
         match self.default_subvolume(query_mount) {
-            Ok(default) => checklist.establish(
-                SafetyFact::DefaultSubvolumeAndBootImpact,
-                default_subvolume_evidence(&default, reference, method),
-            ),
+            Ok(default) => {
+                let what = default_description(&default, reference);
+                if is_root && method == Some(RestoreMethod::OfflineRootRecovery) {
+                    match self.next_boot_steering(&default, reference, live_path, mounts) {
+                        Ok(found) => {
+                            checklist.establish(
+                                SafetyFact::DefaultSubvolumeAndBootImpact,
+                                format!("{what}. {}", found.evidence),
+                            );
+                            steering = Some(found);
+                        }
+                        Err(reason) => checklist.block(
+                            SafetyFact::DefaultSubvolumeAndBootImpact,
+                            format!("{what}. {reason}"),
+                        ),
+                    }
+                } else {
+                    checklist.establish(
+                        SafetyFact::DefaultSubvolumeAndBootImpact,
+                        format!("{what}. {}", boot_impact(method, reference.tree_path())),
+                    );
+                }
+            }
             Err(error) => checklist.block(
                 SafetyFact::DefaultSubvolumeAndBootImpact,
                 format!(
@@ -938,17 +1289,61 @@ impl BtrfsProvider {
             ),
         }
 
-        // §56.2's seventh fact: the mount and reboot requirement.
-        checklist.establish(
-            SafetyFact::MountAndRebootRequirement,
-            mount_evidence(
-                live_mount,
-                live_path,
-                is_root,
-                method,
-                self.config.root_recovery(),
-            ),
+        // Where the derived subvolume goes, and whether one mount can swap it in (§14.4, §14.5).
+        let derived_name = format!(
+            "{}{DERIVED_SUFFIX}",
+            PathBuf::from(asset.reference()).file_name().map_or_else(
+                || "ono-derived".to_owned(),
+                |name| name.to_string_lossy().into_owned()
+            )
         );
+        let derived_tree = format!(
+            "{}/{derived_name}",
+            self.config.snapshot_location().trim_matches('/')
+        );
+        let needs_swap = method == Some(RestoreMethod::SubvolumeReplacement)
+            || steering.as_ref().is_some_and(|found| found.rename);
+        let swap = if needs_swap {
+            self.swap_paths(mounts, reference, &derived_tree, &plan_id)
+        } else {
+            None
+        };
+        let derived = swap.as_ref().map_or_else(
+            || {
+                self.recovery_namespace(mounts, reference.filesystem(), reference.tree_path())
+                    .map_or_else(
+                        |_| PathBuf::from(format!("{}{DERIVED_SUFFIX}", asset.reference())),
+                        |namespace| namespace.join(&derived_name),
+                    )
+            },
+            |paths| paths.derived.clone(),
+        );
+
+        // §56.2's seventh fact: the mount and reboot requirement.
+        if needs_swap && swap.is_none() {
+            checklist.block(
+                SafetyFact::MountAndRebootRequirement,
+                format!(
+                    "no writable mount of Btrfs filesystem {} shows both {} and {derived_tree}. \
+                     The recovery renames one into the other's place, and rename(2) between two \
+                     mounts fails with EXDEV even on one filesystem; mounting the filesystem's top \
+                     level (subvolid=5) makes both visible through one mount",
+                    reference.filesystem(),
+                    reference.tree_path()
+                ),
+            );
+        } else {
+            checklist.establish(
+                SafetyFact::MountAndRebootRequirement,
+                mount_evidence(
+                    live_mount,
+                    live_path,
+                    is_root,
+                    method,
+                    self.config.root_recovery(),
+                ),
+            );
+        }
 
         // §56.2's eighth fact: the later state this method would discard.
         let newer = self.newer_state(
@@ -969,10 +1364,6 @@ impl BtrfsProvider {
             return Err(refusal(&checklist));
         }
 
-        let plan_id = source.map_or_else(
-            || PlanId::of(PROVIDER_ID, asset.reference(), goal.as_str()),
-            |plan| plan.id().clone(),
-        );
         let fragment = self.fragment(
             &plan_id,
             asset,
@@ -983,7 +1374,9 @@ impl BtrfsProvider {
             live_path,
             live_mount,
             layout.as_ref(),
-            mounts,
+            &derived,
+            swap.as_ref(),
+            steering.as_ref(),
             newer,
         );
         Ok((fragment, checklist))
@@ -1120,7 +1513,7 @@ impl BtrfsProvider {
                 !asset
                     .exclusions()
                     .iter()
-                    .any(|exclusion| exclusion.subject().contains(nested.tree_path()))
+                    .any(|exclusion| names_subvolume(exclusion.subject(), nested.tree_path()))
             })
             .map(|nested| nested.tree_path())
             .collect();
@@ -1369,7 +1762,41 @@ impl BtrfsProvider {
         NewerStateImpact::analysed(items)
     }
 
-    /// Builds the fragment for `method` (§12.1, §14.4).
+    /// What a restore by `method` puts back (Appendix C.7).
+    ///
+    /// A copy out of the snapshot returns what [`crate::files::METADATA_COVERAGE`] names. A
+    /// method that makes the snapshot the live subvolume returns the recorded tree itself, so
+    /// every piece of metadata comes back with it. The two methods this provider never offers
+    /// claim nothing, because silence is not a claim.
+    const fn metadata_coverage(method: RestoreMethod) -> ono_change_core::MetadataCoverage {
+        match method {
+            RestoreMethod::SelectiveFileRestore | RestoreMethod::CloneAndCopy => {
+                crate::files::METADATA_COVERAGE
+            }
+            RestoreMethod::SubvolumeReplacement
+            | RestoreMethod::DatasetRollback
+            | RestoreMethod::OfflineRootRecovery => ono_change_core::MetadataCoverage {
+                content: true,
+                mode: true,
+                owner: true,
+                acl: true,
+                xattrs: true,
+                capabilities: true,
+                selinux: true,
+                hardlinks: true,
+            },
+            RestoreMethod::ProviderNativeRestore | RestoreMethod::Compensation => {
+                ono_change_core::MetadataCoverage::none()
+            }
+        }
+    }
+
+    /// Builds the fragment for `method` (§12.1, §14.4, §14.6).
+    ///
+    /// Every action carries everything `restore_with` needs to perform it and to re-check it at
+    /// the moment it runs: the paths, the subvolume's tree path and id, and — for a swap — the
+    /// name the live subvolume is moved aside to. A root recovery's actions each name the §14.6
+    /// workflow they belong to, so the plan shows it before anything executes.
     #[allow(clippy::too_many_arguments)]
     fn fragment(
         &self,
@@ -1382,22 +1809,27 @@ impl BtrfsProvider {
         live_path: &Path,
         live_mount: &BtrfsMount,
         layout: Option<&SubvolumeLayout>,
-        mounts: &BtrfsMounts,
+        derived: &Path,
+        swap: Option<&SwapPaths>,
+        steering: Option<&Steering>,
         newer: NewerStateImpact,
     ) -> RecoveryPlanFragment {
-        let mut fragment = RecoveryPlanFragment::new(PROVIDER_ID, method).with_newer_state(newer);
-        let derived = self
-            .recovery_namespace(mounts, reference.tree_path())
-            .map(|namespace| {
-                namespace.join(format!(
-                    "{}{DERIVED_SUFFIX}",
-                    PathBuf::from(asset.reference()).file_name().map_or_else(
-                        || "ono-derived".to_owned(),
-                        |name| name.to_string_lossy().into_owned()
-                    )
-                ))
-            })
-            .unwrap_or_else(|_| PathBuf::from(format!("{}{DERIVED_SUFFIX}", asset.reference())));
+        let mut fragment = RecoveryPlanFragment::new(PROVIDER_ID, method)
+            .with_newer_state(newer)
+            .restoring_metadata(Self::metadata_coverage(method));
+        let workflow = if is_root {
+            Self::root_workflow(method)
+                .map(|workflow| format!("§14.6 {}: ", workflow.workflow()))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let identity = || {
+            vec![
+                (ARG_SUBVOLUME, Value::string(reference.tree_path())),
+                (ARG_SUBVOLUME_ID, Value::string(&reference.id().to_string())),
+            ]
+        };
         let mut ordinal = 0usize;
         if matches!(
             method,
@@ -1411,8 +1843,8 @@ impl BtrfsProvider {
                     ordinal,
                     ActionRole::Prepare,
                     format!(
-                        "create the writable subvolume {} from the read-only recovery point {}, \
-                         tracked as its own recovery asset (§14.5)",
+                        "{workflow}create the writable subvolume {} from the read-only recovery \
+                         point {}, tracked as its own recovery asset (§14.5)",
                         derived.display(),
                         asset.reference()
                     ),
@@ -1435,7 +1867,7 @@ impl BtrfsProvider {
                 let root = if method == RestoreMethod::SelectiveFileRestore {
                     PathBuf::from(asset.reference())
                 } else {
-                    derived.clone()
+                    derived.to_path_buf()
                 };
                 for object in restore_set {
                     let Ok(relative) = object.strip_prefix(live_path) else {
@@ -1447,7 +1879,11 @@ impl BtrfsProvider {
                             plan_id,
                             ordinal,
                             ActionRole::Recover,
-                            format!("restore {} from {}", object.display(), from.display()),
+                            format!(
+                                "{workflow}restore {} from {}",
+                                object.display(),
+                                from.display()
+                            ),
                             recovery_operation(
                                 RecoveryCapability::Restore,
                                 OP_RESTORE_FILE,
@@ -1458,64 +1894,136 @@ impl BtrfsProvider {
                             ),
                         )
                         .on(object.to_string_lossy().into_owned())
+                        .declaring(
+                            EffectDomain::FilesystemPersistent,
+                            EffectKind::Replace,
+                            EffectConfidence::Guaranteed,
+                            object.to_string_lossy().into_owned(),
+                            "the live file is replaced by the snapshot's copy of it (§14.4)",
+                        )
                         .privileged(),
                     );
                     ordinal += 1;
                 }
             }
             RestoreMethod::SubvolumeReplacement => {
-                fragment = fragment
-                    .acting(
-                        PlanAction::new(
-                            plan_id,
-                            ordinal,
-                            ActionRole::Recover,
-                            format!(
-                                "with {} unmounted, move it aside and put {} in its place (§14.4)",
-                                live_path.display(),
-                                derived.display()
-                            ),
-                            recovery_operation(
-                                RecoveryCapability::Restore,
-                                OP_REPLACE_SUBVOLUME,
-                                vec![
-                                    (ARG_SOURCE, Value::string(&derived.to_string_lossy())),
-                                    (ARG_DESTINATION, Value::string(&live_path.to_string_lossy())),
-                                    (ARG_SUBVOLUME, Value::string(reference.tree_path())),
-                                ],
-                            ),
+                if let Some(swap) = swap {
+                    let label = if is_root {
+                        workflow.clone()
+                    } else {
+                        "§14.4 subvolume replacement: ".to_owned()
+                    };
+                    fragment = fragment
+                        .acting(
+                            PlanAction::new(
+                                plan_id,
+                                ordinal,
+                                ActionRole::Recover,
+                                format!(
+                                    "{label}with {} unmounted, rename {} to {} and {} to {} \
+                                     through the mount at {}{}",
+                                    reference.tree_path(),
+                                    swap.live.display(),
+                                    swap.aside.display(),
+                                    swap.derived.display(),
+                                    swap.live.display(),
+                                    swap.mount_point,
+                                    moved_aside_note(layout, reference)
+                                ),
+                                recovery_operation(
+                                    RecoveryCapability::Restore,
+                                    OP_REPLACE_SUBVOLUME,
+                                    swap_arguments(swap, identity()),
+                                ),
+                            )
+                            .on(swap.live.to_string_lossy().into_owned())
+                            .declaring(
+                                EffectDomain::FilesystemPersistent,
+                                EffectKind::Replace,
+                                EffectConfidence::Guaranteed,
+                                swap.live.to_string_lossy().into_owned(),
+                                "the live subvolume is set aside and the snapshot's writable copy takes its place (§14.4)",
+                            )
+                            .privileged(),
                         )
-                        .on(live_path.to_string_lossy().into_owned())
-                        .privileged(),
-                    )
-                    .needing_offline();
+                        .needing_offline();
+                }
             }
             RestoreMethod::OfflineRootRecovery => {
-                fragment = fragment
-                    .acting(
-                        PlanAction::new(
-                            plan_id,
-                            ordinal,
-                            ActionRole::Recover,
-                            format!(
-                                "point the next boot at {} by making it the default subvolume of \
-                                 {} (Appendix D.9)",
-                                derived.display(),
-                                live_mount.mount_point()
-                            ),
-                            recovery_operation(
-                                RecoveryCapability::Restore,
-                                OP_SET_DEFAULT,
-                                vec![
-                                    (ARG_SOURCE, Value::string(&derived.to_string_lossy())),
-                                    (ARG_MOUNT, Value::string(live_mount.mount_point())),
-                                ],
-                            ),
-                        )
-                        .on(live_mount.mount_point().to_owned())
-                        .privileged(),
-                    )
-                    .needing_reboot();
+                if let Some(steering) = steering {
+                    if steering.set_default {
+                        let mut arguments = vec![
+                            (ARG_SOURCE, Value::string(&derived.to_string_lossy())),
+                            (ARG_MOUNT, Value::string(live_mount.mount_point())),
+                            (ARG_LIVE, Value::string(&live_path.to_string_lossy())),
+                        ];
+                        arguments.extend(identity());
+                        fragment = fragment.acting(
+                            PlanAction::new(
+                                plan_id,
+                                ordinal,
+                                ActionRole::Recover,
+                                format!(
+                                    "{workflow}point the next boot at {} by making it the \
+                                     default subvolume of Btrfs filesystem {} (Appendix D.9)",
+                                    derived.display(),
+                                    reference.filesystem()
+                                ),
+                                recovery_operation(
+                                    RecoveryCapability::Restore,
+                                    OP_SET_DEFAULT,
+                                    arguments,
+                                ),
+                            )
+                            .on(live_mount.mount_point().to_owned())
+                            .declaring(
+                                EffectDomain::FilesystemPersistent,
+                                EffectKind::Modify,
+                                EffectConfidence::Guaranteed,
+                                live_mount.mount_point().to_owned(),
+                                "the filesystem's default subvolume changes, so the next boot mounts the recovered one (Appendix D.9)",
+                            )
+                            .privileged(),
+                        );
+                        ordinal += 1;
+                    }
+                    if steering.rename
+                        && let Some(swap) = swap
+                    {
+                        fragment = fragment.acting(
+                            PlanAction::new(
+                                plan_id,
+                                ordinal,
+                                ActionRole::Recover,
+                                format!(
+                                    "{workflow}for the next boot, rename {} to {} and {} to {} \
+                                     through the mount at {}; the running system keeps the \
+                                     subvolume it booted until the reboot (Appendix D.9)",
+                                    swap.live.display(),
+                                    swap.aside.display(),
+                                    swap.derived.display(),
+                                    swap.live.display(),
+                                    swap.mount_point
+                                ),
+                                recovery_operation(
+                                    RecoveryCapability::Restore,
+                                    OP_SWAP_FOR_NEXT_BOOT,
+                                    swap_arguments(swap, identity()),
+                                ),
+                            )
+                            .on(swap.live.to_string_lossy().into_owned())
+                            .declaring(
+                                EffectDomain::FilesystemPersistent,
+                                EffectKind::Replace,
+                                EffectConfidence::Guaranteed,
+                                swap.live.to_string_lossy().into_owned(),
+                                "at the next boot the recovered subvolume takes the live one's name (Appendix D.9)",
+                            )
+                            .privileged(),
+                        );
+                    }
+                }
+                fragment = fragment.needing_reboot();
             }
             _ => {}
         }
@@ -1563,6 +2071,327 @@ impl BtrfsProvider {
             );
         }
         fragment
+    }
+
+    /// Derives the writable subvolume a plan names, and records it as an asset (§14.5).
+    fn restore_derive(
+        &self,
+        action: &PlanAction,
+        asset: &RecoveryAsset,
+        reference: &SubvolumeRef,
+        source: &str,
+        destination: &str,
+    ) -> Result<(), ErrorValue> {
+        if source != asset.reference() || destination.is_empty() {
+            return Err(core_error::recovery_apply_failed(
+                action.summary(),
+                &format!(
+                    "the action derives {destination} from {source}, and the recovery point it was \
+                     handed is {}; a writable subvolume is only derived from the recovery point \
+                     the plan names. Nothing was changed",
+                    asset.reference()
+                ),
+            ));
+        }
+        let mounts = self.mounts()?;
+        Self::mount_on_filesystem(action, &mounts, reference, Path::new(destination))?;
+        if self.files.exists(Path::new(destination))? {
+            return Err(core_error::recovery_apply_failed(
+                action.summary(),
+                &format!(
+                    "{destination} already exists, and `btrfs subvolume snapshot` into an existing \
+                     directory creates the subvolume inside it rather than at it. Nothing was \
+                     changed"
+                ),
+            ));
+        }
+        let derived = self.derive_writable(asset, Path::new(destination))?;
+        self.derived
+            .lock()
+            .map_err(|_| {
+                core_error::recovery_apply_failed(
+                    action.summary(),
+                    &format!(
+                        "the writable subvolume {destination} was created and could not be \
+                         recorded as an asset; it is on the filesystem and must be tracked by hand \
+                         (§14.5)"
+                    ),
+                )
+            })?
+            .push(derived);
+        Ok(())
+    }
+
+    /// Copies one object back, onto the recovery point's own filesystem (§13.5, §15.4).
+    fn restore_file(
+        &self,
+        action: &PlanAction,
+        reference: &SubvolumeRef,
+        source: &str,
+        destination: &str,
+    ) -> Result<(), ErrorValue> {
+        let mounts = self.mounts()?;
+        Self::mount_on_filesystem(action, &mounts, reference, Path::new(source))?;
+        Self::mount_on_filesystem(action, &mounts, reference, Path::new(destination))?;
+        self.files.copy(Path::new(source), Path::new(destination))
+    }
+
+    /// Puts the derived subvolume in the live one's place by two renames (§14.4, §14.6).
+    ///
+    /// What is renamed aside is confirmed to be the subvolume the recovery point was taken of,
+    /// and what takes its place is confirmed to be derived from that recovery point, at the
+    /// moment of the act rather than at planning (§56.2, §43.5).
+    #[allow(clippy::too_many_arguments)]
+    fn restore_swap(
+        &self,
+        action: &PlanAction,
+        asset: &RecoveryAsset,
+        reference: &SubvolumeRef,
+        arguments: &[(Arc<str>, Value)],
+        acceptance: &RestoreAcceptance,
+        requires_unmounted: bool,
+    ) -> Result<(), ErrorValue> {
+        let source = argument(arguments, ARG_SOURCE).unwrap_or_default();
+        let destination = argument(arguments, ARG_DESTINATION).unwrap_or_default();
+        let aside = argument(arguments, ARG_ASIDE).unwrap_or_default();
+        Self::same_subvolume(action, reference, arguments)?;
+        if source.is_empty() || destination.is_empty() || aside.is_empty() {
+            return Err(core_error::recovery_apply_failed(
+                action.summary(),
+                "the action does not name the derived subvolume, the live one and where the live \
+                 one is moved aside to, so the swap could not be carried out. Nothing was changed",
+            ));
+        }
+        let mounts = self.mounts()?;
+        if requires_unmounted
+            && mounts
+                .of_filesystem(reference.filesystem())
+                .iter()
+                .any(|mount| {
+                    mount.subvolume_id() == Some(reference.id())
+                        || (mount.subvolume_id().is_none()
+                            && mount.tree_path() == reference.tree_path().trim_matches('/'))
+                })
+        {
+            return Err(core_error::requires_offline(
+                &reference.describe(),
+                RestoreMethod::SubvolumeReplacement.as_str(),
+            ));
+        }
+        let through =
+            Self::mount_on_filesystem(action, &mounts, reference, Path::new(&destination))?;
+        for other in [&source, &aside] {
+            let mount = Self::mount_on_filesystem(action, &mounts, reference, Path::new(other))?;
+            if mount.mount_point() != through.mount_point() {
+                return Err(core_error::recovery_apply_failed(
+                    action.summary(),
+                    &format!(
+                        "{other} is reached through {} and {destination} through {}; rename(2) \
+                         between two mounts fails with EXDEV. Nothing was changed",
+                        mount.mount_point(),
+                        through.mount_point()
+                    ),
+                ));
+            }
+        }
+        let lineage = self.confirm_lineage(action, asset, reference, &destination, &source)?;
+        Self::accept_displacement(
+            action,
+            reference,
+            &lineage.live,
+            &lineage.snapshot,
+            acceptance,
+        )?;
+        if self.files.exists(Path::new(&aside))? {
+            return Err(core_error::recovery_apply_failed(
+                action.summary(),
+                &format!(
+                    "{aside} already exists, and moving {destination} there would replace it. \
+                     Nothing was changed"
+                ),
+            ));
+        }
+        self.files
+            .rename(Path::new(&destination), Path::new(&aside))?;
+        if let Err(error) = self
+            .files
+            .rename(Path::new(&source), Path::new(&destination))
+        {
+            let restored = self
+                .files
+                .rename(Path::new(&aside), Path::new(&destination));
+            return Err(core_error::recovery_apply_failed(
+                action.summary(),
+                &format!(
+                    "{} was moved aside to {aside}, and putting {source} in its place failed: {}. \
+                     {}",
+                    destination,
+                    error.message(),
+                    match restored {
+                        Ok(()) => format!("{aside} was moved back to {destination}"),
+                        Err(back) => format!(
+                            "moving it back failed too ({}), so the live subvolume is at {aside}",
+                            back.message()
+                        ),
+                    }
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Points the default subvolume at the derived one (§14.6, Appendix D.9).
+    fn restore_set_default(
+        &self,
+        action: &PlanAction,
+        asset: &RecoveryAsset,
+        reference: &SubvolumeRef,
+        arguments: &[(Arc<str>, Value)],
+        acceptance: &RestoreAcceptance,
+    ) -> Result<(), ErrorValue> {
+        let source = argument(arguments, ARG_SOURCE).unwrap_or_default();
+        let mount = argument(arguments, ARG_MOUNT).unwrap_or_default();
+        let live_path = argument(arguments, ARG_LIVE).unwrap_or_default();
+        Self::same_subvolume(action, reference, arguments)?;
+        let mounts = self.mounts()?;
+        for path in [&source, &mount, &live_path] {
+            Self::mount_on_filesystem(action, &mounts, reference, Path::new(path))?;
+        }
+        let lineage = self.confirm_lineage(action, asset, reference, &live_path, &source)?;
+        Self::accept_displacement(
+            action,
+            reference,
+            &lineage.live,
+            &lineage.snapshot,
+            acceptance,
+        )?;
+        // The id `subvolume show` read from the derived subvolume a moment ago, so the default is
+        // pointed at the subvolume whose lineage was just confirmed.
+        let derived = lineage.derived.id().to_string();
+        let output = self.btrfs(&["subvolume", "set-default", &derived, &mount])?;
+        if output.succeeded() {
+            Ok(())
+        } else {
+            Err(core_error::recovery_apply_failed(
+                action.summary(),
+                spoken_text(&output).trim(),
+            ))
+        }
+    }
+
+    /// Refuses an action whose subvolume is not the one the asset was taken of.
+    fn same_subvolume(
+        action: &PlanAction,
+        reference: &SubvolumeRef,
+        arguments: &[(Arc<str>, Value)],
+    ) -> Result<(), ErrorValue> {
+        let tree = argument(arguments, ARG_SUBVOLUME).unwrap_or_default();
+        let id = argument(arguments, ARG_SUBVOLUME_ID).unwrap_or_default();
+        if tree.trim_matches('/') == reference.tree_path().trim_matches('/')
+            && id == reference.id().to_string()
+        {
+            Ok(())
+        } else {
+            Err(core_error::recovery_apply_failed(
+                action.summary(),
+                &format!(
+                    "the action names subvolume {id} `{tree}`, and the recovery point it was handed \
+                     is {}. Nothing was changed",
+                    reference.describe()
+                ),
+            ))
+        }
+    }
+
+    /// Confirms what a whole-subvolume step displaces and what it puts in place (§56.2).
+    ///
+    /// The live path must be the subvolume the recovery point was taken of, by id; the recovery
+    /// point must still be there; and the derived subvolume must be a snapshot of it, by parent
+    /// UUID. The live and recovery-point metadata come back for the newer-state check.
+    fn confirm_lineage(
+        &self,
+        action: &PlanAction,
+        asset: &RecoveryAsset,
+        reference: &SubvolumeRef,
+        live_path: &str,
+        derived_path: &str,
+    ) -> Result<Lineage, ErrorValue> {
+        let refuse = |detail: String| core_error::recovery_apply_failed(action.summary(), &detail);
+        let live = match self.show(Path::new(live_path))? {
+            ShowOutcome::Subvolume(show) if show.id() == reference.id() => show,
+            outcome => {
+                return Err(refuse(format!(
+                    "{live_path} is not subvolume {} any more: {}. Nothing was changed",
+                    reference.id(),
+                    describe_outcome(&outcome)
+                )));
+            }
+        };
+        let snapshot = match self.show(Path::new(asset.reference()))? {
+            ShowOutcome::Subvolume(show) => show,
+            outcome => {
+                return Err(refuse(format!(
+                    "the recovery point {} is not there: {}. Nothing was changed",
+                    asset.reference(),
+                    describe_outcome(&outcome)
+                )));
+            }
+        };
+        let derived = match self.show(Path::new(derived_path))? {
+            ShowOutcome::Subvolume(show) if show.parent_uuid() == Some(snapshot.uuid()) => show,
+            ShowOutcome::Subvolume(show) => {
+                return Err(refuse(format!(
+                    "{derived_path} is subvolume {} with parent uuid {}, and the recovery point's \
+                     uuid is {}; it is not derived from this recovery point. Nothing was changed",
+                    show.id(),
+                    show.parent_uuid().unwrap_or("-"),
+                    snapshot.uuid()
+                )));
+            }
+            outcome => {
+                return Err(refuse(format!(
+                    "the derived subvolume {derived_path} is not there: {}. Nothing was changed",
+                    describe_outcome(&outcome)
+                )));
+            }
+        };
+        Ok(Lineage {
+            live,
+            snapshot,
+            derived,
+        })
+    }
+
+    /// Refuses to displace later writes the operator did not accept losing (§24.5, Appendix C.3).
+    fn accept_displacement(
+        action: &PlanAction,
+        reference: &SubvolumeRef,
+        live: &SubvolumeShow,
+        snapshot: &SubvolumeShow,
+        acceptance: &RestoreAcceptance,
+    ) -> Result<(), ErrorValue> {
+        let Some(item) = classify_subvolume(
+            reference.tree_path(),
+            live.generation(),
+            snapshot.generation(),
+        ) else {
+            return Ok(());
+        };
+        if item.class() == NewerStateClass::Unknown {
+            return Err(core_error::recovery_apply_failed(
+                action.summary(),
+                &format!("{}. Nothing was changed", item.detail()),
+            ));
+        }
+        if acceptance.accepts_newer_state_loss() {
+            Ok(())
+        } else {
+            Err(core_error::newer_state_conflict(&[format!(
+                "{}: {}",
+                item.object(),
+                item.detail()
+            )]))
+        }
     }
 }
 
@@ -1625,9 +2454,25 @@ impl RecoveryProvider for BtrfsProvider {
         };
         let mount_point = PathBuf::from(mount.mount_point());
         let info = self.filesystem_info(&mount_point)?;
+        if let Some(known) = mount.filesystem_uuid()
+            && known != info.uuid()
+        {
+            return Err(fact_not_established(
+                SafetyFact::FilesystemAndSubvolumeId,
+                &format!(
+                    "the mount at {} was identified as Btrfs filesystem {known}, and `btrfs \
+                     filesystem show {}` now answers {}",
+                    mount.mount_point(),
+                    mount.mount_point(),
+                    info.uuid()
+                ),
+            ));
+        }
         let outcome = self.show(&target)?;
-        let layout =
-            SubvolumeLayout::new(self.boundaries(&mount_point)?, mounts.clone().into_owned());
+        let layout = SubvolumeLayout::new(
+            self.boundaries(&mount_point)?,
+            mounts.same_filesystem_as(mount),
+        );
         let (boundary, evidence) = match &outcome {
             ShowOutcome::Subvolume(show) => match layout.by_id(show.id()) {
                 Some(boundary) => (
@@ -1697,18 +2542,77 @@ impl RecoveryProvider for BtrfsProvider {
         ))
     }
 
+    // Two spellings of a Btrfs domain reach this method. `resolve_domain`'s own names the
+    // subvolume by filesystem UUID, id and tree path. The shell's generic resolver
+    // (`ono_change_protection::domain`) names the mount's `subvol=` option — `/@var` — which is
+    // neither tied to a filesystem nor, for a path inside a nested subvolume, the subvolume that
+    // holds the path. That spelling is resolved again here from the path, and the superblock the
+    // two resolutions went through must agree. Any other object is refused with the text quoted:
+    // an empty list would read as "nothing to protect here" (§55.6 case 29).
     fn discover(
         &self,
         domain: &PersistenceDomain,
         objective: RecoveryObjective,
     ) -> Result<Vec<RecoveryCandidate>, ErrorValue> {
-        if !domain.is_protectable() {
+        if domain.object_kind() != SCOPE_KIND || !domain.is_protectable() {
             return Ok(Vec::new());
         }
-        let Some(reference) = domain.object().and_then(SubvolumeRef::parse) else {
-            return Ok(Vec::new());
+        let object = domain.object().unwrap_or_default();
+        let (reference, mount_point) = if let Some(reference) = SubvolumeRef::parse(object) {
+            (reference, PathBuf::from(domain.mount().mount_point()))
+        } else if object.starts_with('/') {
+            let resolved = self
+                .resolve_domain(domain.path())?
+                .ok_or_else(|| no_btrfs_mount(domain.path()))?;
+            if resolved.mount().mount_id() != domain.mount().mount_id() {
+                return Err(fact_not_established(
+                    SafetyFact::FilesystemAndSubvolumeId,
+                    &format!(
+                        "the domain for {} was resolved through the mount at {} on superblock {}, \
+                         and this provider finds the path on the mount at {} on superblock {}; \
+                         the two resolutions disagree about which filesystem holds it",
+                        domain.path(),
+                        domain.mount().mount_point(),
+                        domain.mount().mount_id(),
+                        resolved.mount().mount_point(),
+                        resolved.mount().mount_id()
+                    ),
+                ));
+            }
+            let reference = resolved
+                .object()
+                .and_then(SubvolumeRef::parse)
+                .ok_or_else(|| no_btrfs_mount(domain.path()))?;
+            (reference, PathBuf::from(resolved.mount().mount_point()))
+        } else {
+            return Err(fact_not_established(
+                SafetyFact::FilesystemAndSubvolumeId,
+                &format!(
+                    "the Btrfs domain for {} names the object `{object}`, which is neither a \
+                     subvolume reference `<filesystem-uuid>:<id>:<tree-path>` nor a `subvol=` \
+                     path, so no subvolume could be discovered from it",
+                    domain.path()
+                ),
+            ));
         };
-        let mount_point = PathBuf::from(domain.mount().mount_point());
+        let mounts = self.mounts()?;
+        let serving = mounts
+            .covering(&mount_point)
+            .and_then(BtrfsMount::filesystem_uuid);
+        if serving != Some(reference.filesystem()) {
+            return Err(fact_not_established(
+                SafetyFact::FilesystemAndSubvolumeId,
+                &format!(
+                    "the domain names Btrfs filesystem {} and the mount at {} is {}",
+                    reference.filesystem(),
+                    mount_point.display(),
+                    serving.map_or_else(
+                        || "not one whose filesystem UUID is established".to_owned(),
+                        |uuid| format!("filesystem {uuid}")
+                    )
+                ),
+            ));
+        }
         let layout = self.layout(&mount_point)?;
         let usage = self.filesystem_usage(&mount_point)?;
         let Some(boundary) = layout.by_id(reference.id()) else {
@@ -1737,7 +2641,7 @@ impl RecoveryProvider for BtrfsProvider {
         candidates: &[RecoveryCandidate],
         mode: ProtectionMode,
     ) -> Result<Vec<ProtectionAction>, ErrorValue> {
-        self.plan_protection_for(candidates, mode, self.plan.as_ref(), self.instant)
+        self.plan_protection_for(candidates, mode, self.plan.as_ref(), self.now())
     }
 
     fn create(&self, action: &ProtectionAction) -> Result<RecoveryAsset, ErrorValue> {
@@ -1749,7 +2653,7 @@ impl RecoveryProvider for BtrfsProvider {
             ));
         };
         let mounts = self.mounts()?;
-        let Some((source_path, _)) = self.live_path(&mounts, &reference) else {
+        let Some(live) = self.live_path(&mounts, &reference) else {
             return Err(snapshot_failed(
                 proposed.scope().domain(),
                 &format!(
@@ -1759,8 +2663,62 @@ impl RecoveryProvider for BtrfsProvider {
                 ),
             ));
         };
-        let source_text = source_path.to_string_lossy().into_owned();
+        if !live.named_by_mount {
+            // Reached through a parent's mount, so the path is confirmed to be the subvolume
+            // rather than taken from its shape (Appendix B.9).
+            let confirmed = match self.show(&live.path) {
+                Ok(ShowOutcome::Subvolume(show)) if show.id() == reference.id() => Ok(()),
+                Ok(outcome) => Err(describe_outcome(&outcome)),
+                Err(error) => Err(diagnosis(&error)),
+            };
+            if let Err(detail) = confirmed {
+                return Err(snapshot_failed(
+                    proposed.scope().domain(),
+                    &format!(
+                        "{} is reached through the mount at {} and could not be confirmed to be \
+                         subvolume {}: {detail}. Nothing was changed",
+                        live.path.display(),
+                        live.mount.mount_point(),
+                        reference.id()
+                    ),
+                ));
+            }
+        }
         let destination = proposed.reference().to_owned();
+        if mounts
+            .covering(Path::new(&destination))
+            .and_then(BtrfsMount::filesystem_uuid)
+            != Some(reference.filesystem())
+        {
+            return Err(snapshot_failed(
+                proposed.scope().domain(),
+                &format!(
+                    "{destination} is not on Btrfs filesystem {}, and a snapshot can only be \
+                     created on the filesystem of its source (Appendix D.8). Nothing was changed",
+                    reference.filesystem()
+                ),
+            ));
+        }
+        // Appendix D.8: the recovery namespace is a subvolume at the top level of the source's
+        // filesystem, and a filesystem Ono has never protected has none. It is made here, as part
+        // of the protection that needs it, rather than failing the first snapshot taken on it.
+        if let Some(namespace) = Path::new(&destination).parent()
+            && std::fs::symlink_metadata(namespace).is_err()
+        {
+            let namespace_text = namespace.to_string_lossy().into_owned();
+            let made = self.btrfs(&["subvolume", "create", &namespace_text])?;
+            if !made.succeeded() {
+                return Err(snapshot_failed(
+                    proposed.scope().domain(),
+                    &format!(
+                        "the recovery namespace {namespace_text} does not exist and could not be \
+                         created: {}. Nothing was changed",
+                        spoken_text(&made).trim()
+                    ),
+                ));
+            }
+        }
+        let source_text = live.path.to_string_lossy().into_owned();
         let output = if self.config.prefers_read_only_snapshots() {
             self.btrfs(&["subvolume", "snapshot", "-r", &source_text, &destination])?
         } else {
@@ -1804,7 +2762,7 @@ impl RecoveryProvider for BtrfsProvider {
             RecoveryAssetType::BtrfsSnapshot,
             destination,
             proposed.scope().clone(),
-            created.created_at().unwrap_or(self.instant),
+            created.created_at().unwrap_or_else(|| self.now()),
         );
         if let Some(plan) = proposed.source_plan() {
             asset = asset.for_plan(plan.clone());
@@ -1813,6 +2771,10 @@ impl RecoveryProvider for BtrfsProvider {
             asset = asset.excluding(exclusion.clone());
         }
         Ok(asset
+            .excluding(RecoveryExclusion::new(
+                SEQUENTIAL_CREATION,
+                SEQUENTIAL_CREATION_REASON,
+            ))
             .at_consistency(ConsistencyClass::FilesystemConsistent)
             .restored_by(RestoreMethod::SelectiveFileRestore)
             .costing(proposed.cost().clone())
@@ -1839,7 +2801,7 @@ impl RecoveryProvider for BtrfsProvider {
             }
             other => {
                 return Ok(RecoveryValidation::none(
-                    self.instant,
+                    self.now(),
                     format!(
                         "{detail_prefix} is not there: {} (§11.4)",
                         describe_outcome(other)
@@ -1852,8 +2814,8 @@ impl RecoveryProvider for BtrfsProvider {
         let reference = SubvolumeRef::parse(asset.scope().domain());
         let live = match &reference {
             Some(reference) => match self.live_path(&mounts, reference) {
-                Some((path, mount)) => match self.show(&path)? {
-                    ShowOutcome::Subvolume(show) => Some((show, mount)),
+                Some(live) => match self.show(&live.path)? {
+                    ShowOutcome::Subvolume(show) => Some((show, live.mount)),
                     _ => None,
                 },
                 None => None,
@@ -1872,7 +2834,7 @@ impl RecoveryProvider for BtrfsProvider {
             .as_ref()
             .is_some_and(|(_, mount)| !mount.is_read_only());
         Ok(RecoveryValidation::complete(
-            self.instant,
+            self.now(),
             format!(
                 "{detail_prefix} is subvolume {} (ro={read_only}), taken from {}",
                 snapshot.id(),
@@ -1899,80 +2861,45 @@ impl RecoveryProvider for BtrfsProvider {
     }
 
     fn restore(&self, action: &PlanAction, asset: &RecoveryAsset) -> Result<(), ErrorValue> {
-        let Execution::RecoveryOperation { arguments, .. } = action.execution() else {
-            return Err(core_error::recovery_apply_failed(
-                action.summary(),
-                "this action is not a Btrfs recovery operation",
-            ));
-        };
-        let operation = argument(arguments, ARG_OPERATION).unwrap_or_default();
-        let source = argument(arguments, ARG_SOURCE).unwrap_or_default();
-        let destination = argument(arguments, ARG_DESTINATION).unwrap_or_default();
-        match operation.as_str() {
-            OP_RESTORE_FILE => self.files.copy(Path::new(&source), Path::new(&destination)),
-            OP_SET_DEFAULT => {
-                let mount = argument(arguments, ARG_MOUNT).unwrap_or_default();
-                let id = match self.show(Path::new(&source))? {
-                    ShowOutcome::Subvolume(show) => show.id().to_string(),
-                    outcome => {
-                        return Err(core_error::recovery_apply_failed(
-                            action.summary(),
-                            &format!(
-                                "{source} is not a subvolume, so the next boot could not be \
-                                 pointed at it: {}",
-                                describe_outcome(&outcome)
-                            ),
-                        ));
-                    }
-                };
-                let output = self.btrfs(&["subvolume", "set-default", &id, &mount])?;
-                if output.succeeded() {
-                    Ok(())
-                } else {
-                    Err(core_error::recovery_apply_failed(
-                        action.summary(),
-                        spoken_text(&output).trim(),
-                    ))
-                }
-            }
-            OP_REPLACE_SUBVOLUME => {
-                let mounts = self.mounts()?;
-                if mounts
-                    .mounts()
-                    .iter()
-                    .any(|mount| mount.mount_point() == destination)
-                {
-                    return Err(core_error::requires_offline(
-                        &destination,
-                        RestoreMethod::SubvolumeReplacement.as_str(),
-                    ));
-                }
-                let aside = PathBuf::from(format!("{destination}{SUPERSEDED_SUFFIX}"));
-                self.files.rename(Path::new(&destination), &aside)?;
-                self.files
-                    .rename(Path::new(&source), Path::new(&destination))
-            }
-            OP_DERIVE_WRITABLE => Err(core_error::recovery_apply_failed(
-                action.summary(),
-                &format!(
-                    "a writable subvolume derived from {} is a recovery asset in its own right \
-                     (§14.5), and this call cannot hand one back. Create it with \
-                     `BtrfsProvider::derive_writable`, which records it and its dependency on the \
-                     read-only snapshot it came from",
-                    asset.reference()
-                ),
-            )),
-            other => Err(core_error::recovery_apply_failed(
-                action.summary(),
-                &format!("`{other}` is not an operation this provider performs"),
-            )),
-        }
+        self.carry_out(action, asset, &RestoreAcceptance::none())
+    }
+
+    // Every action `plan_recovery` emits is performed here, including the derivation of the
+    // writable subvolume, and each whole-subvolume step re-reads what it displaces at the moment
+    // it runs. Displacing a subvolume written since the recovery point needs the operator's
+    // `--accept-newer-state-loss`; a restore of named objects is gated by the plan's own
+    // newer-state analysis and is not refused here.
+    fn restore_with(
+        &self,
+        action: &PlanAction,
+        asset: &RecoveryAsset,
+        acceptance: &RestoreAcceptance,
+    ) -> Result<RestoreOutcome, ErrorValue> {
+        // §14.5: a derived subvolume is an asset of its own, and only the store can give it a
+        // lifecycle, so the ones this action derived travel back in the outcome.
+        let before = self.derived_assets().len();
+        self.carry_out(action, asset, acceptance)?;
+        Ok(self
+            .derived_assets()
+            .into_iter()
+            .skip(before)
+            .fold(RestoreOutcome::default(), RestoreOutcome::creating))
     }
 
     fn cleanup(&self, asset: &RecoveryAsset) -> Result<(), ErrorValue> {
         let reference = PathBuf::from(asset.reference());
+        let Some(owner) = SubvolumeRef::parse(asset.scope().domain()) else {
+            return Err(core_error::asset_invalid(
+                asset.id(),
+                &[
+                    "the asset's scope names no filesystem and subvolume, so which recovery \
+                   namespace it belongs to could not be established (§56.2)",
+                ],
+            ));
+        };
         let mounts = self.mounts()?;
-        let namespace = self.recovery_namespace(&mounts, asset.scope().domain())?;
+        let namespace =
+            self.recovery_namespace(&mounts, owner.filesystem(), asset.scope().domain())?;
         if reference.parent() != Some(namespace.as_path()) {
             return Err(core_error::asset_invalid(
                 asset.id(),
@@ -2002,7 +2929,7 @@ impl RecoveryProvider for BtrfsProvider {
         let query_mount = reference
             .as_ref()
             .and_then(|reference| self.live_path(&mounts, reference))
-            .map(|(_, mount)| PathBuf::from(mount.mount_point()))
+            .map(|live| PathBuf::from(live.mount.mount_point()))
             .or_else(|| {
                 mounts
                     .covering(Path::new(asset.reference()))
@@ -2017,7 +2944,7 @@ impl RecoveryProvider for BtrfsProvider {
         let is_root = reference
             .as_ref()
             .and_then(|reference| self.live_path(&mounts, reference))
-            .is_some_and(|(_, mount)| mounts.is_root_subvolume(&mount));
+            .is_some_and(|live| mounts.is_root_subvolume(&live.mount));
         if is_root && self.config.root_recovery().requires_reboot() {
             cost = cost.needing_reboot();
         }
@@ -2159,39 +3086,104 @@ fn replacement_sentence(method: RestoreMethod) -> String {
     }
 }
 
-/// §56.2's default-subvolume and boot impact fact, as evidence (Appendix D.9).
-fn default_subvolume_evidence(
-    default: &DefaultSubvolume,
-    reference: &SubvolumeRef,
-    method: Option<RestoreMethod>,
-) -> String {
-    let names_this = default.id() == reference.id();
-    let changes_boot = method == Some(RestoreMethod::OfflineRootRecovery);
-    let what = if default.is_filesystem_tree() {
+/// What the filesystem's default subvolume is, relative to the one being recovered (§56.2).
+fn default_description(default: &DefaultSubvolume, reference: &SubvolumeRef) -> String {
+    if default.is_filesystem_tree() {
         format!(
-            "the filesystem's default is its top level (id {}), so which subvolume boots is \
-             decided by the bootloader and `/etc/fstab` rather than by the default",
+            "the filesystem's default subvolume is its top level (id {})",
             default.id()
         )
-    } else if names_this {
+    } else if default.id() == reference.id() {
         format!(
-            "the filesystem's default is subvolume {}, which is the one being recovered",
+            "the filesystem's default subvolume is {}, the one being recovered",
             default.id()
         )
     } else {
         format!(
-            "the filesystem's default is subvolume {}{}, which is not the one being recovered",
+            "the filesystem's default subvolume is {}{}, which is not the one being recovered",
             default.id(),
             default
                 .tree_path()
                 .map_or_else(String::new, |path| format!(" ({path})"))
         )
-    };
-    if changes_boot {
-        format!("{what}. This recovery changes the default subvolume, so it changes what boots")
-    } else {
-        format!("{what}. This recovery does not change the default subvolume")
     }
+}
+
+/// What a recovery that is not a next-boot recovery of the root does to what boots (§56.2).
+fn boot_impact(method: Option<RestoreMethod>, tree_path: &str) -> String {
+    if method == Some(RestoreMethod::SubvolumeReplacement) {
+        format!(
+            "This recovery leaves the default subvolume alone and gives the recovered subvolume \
+             the name `{tree_path}`: a boot entry that selects `{tree_path}` by name boots it, and \
+             one that selects by id or by default does not"
+        )
+    } else {
+        "This recovery does not change the default subvolume or any subvolume's name, so it does \
+         not change what boots"
+            .to_owned()
+    }
+}
+
+/// The arguments of a swap: the three paths, and the subvolume they are about.
+fn swap_arguments(
+    swap: &SwapPaths,
+    identity: Vec<(&'static str, Value)>,
+) -> Vec<(&'static str, Value)> {
+    let mut arguments = vec![
+        (ARG_SOURCE, Value::string(&swap.derived.to_string_lossy())),
+        (ARG_DESTINATION, Value::string(&swap.live.to_string_lossy())),
+        (ARG_ASIDE, Value::string(&swap.aside.to_string_lossy())),
+    ];
+    arguments.extend(identity);
+    arguments
+}
+
+/// What happens to subvolumes nested in the tree of one being replaced (§14.3).
+///
+/// They are children of the subvolume in the filesystem tree, so they move aside with it, and the
+/// derived subvolume holds an empty directory where each one was.
+fn moved_aside_note(layout: Option<&SubvolumeLayout>, reference: &SubvolumeRef) -> String {
+    let Some(layout) = layout else {
+        return String::new();
+    };
+    let Some(boundary) = layout.by_id(reference.id()) else {
+        return String::new();
+    };
+    let children: Vec<String> = layout
+        .boundaries()
+        .iter()
+        .filter(|candidate| candidate.is_nested_in(boundary))
+        .map(|nested| format!("{} ({})", nested.tree_path(), nested.id()))
+        .collect();
+    if children.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ". The nested {} move aside with it, and the derived subvolume holds an empty \
+             directory where each one was (§14.3)",
+            children.join(", ")
+        )
+    }
+}
+
+/// Whether an exclusion's subject names `tree_path` as a whole path rather than as part of one.
+///
+/// `the nested subvolume @var/lib-app (260)` names `@var/lib-app` and does not name `@var`.
+fn names_subvolume(subject: &str, tree_path: &str) -> bool {
+    let wanted = tree_path.trim_matches('/');
+    if wanted.is_empty() {
+        return false;
+    }
+    subject.match_indices(wanted).any(|(at, _)| {
+        let before = subject.get(..at).and_then(|text| text.chars().next_back());
+        let after = subject
+            .get(at + wanted.len()..)
+            .and_then(|text| text.chars().next());
+        before.is_none_or(|character| character.is_whitespace() || character == '(')
+            && after.is_none_or(|character| {
+                character.is_whitespace() || matches!(character, ')' | ',' | ';' | ':')
+            })
+    })
 }
 
 /// §56.2's mount and reboot fact, as evidence (§14.6).
@@ -2228,7 +3220,7 @@ fn mount_evidence(
             "recovery replaces the subvolume, which requires it to be unmounted first{}",
             if is_root {
                 " — and for the root subvolume that means an offline window under the \
-                 `offline-subvolume-replacement` policy"
+                 `offline-replacement` policy"
             } else {
                 ""
             }
@@ -2263,5 +3255,65 @@ fn restore_requirement(is_root: bool, policy: RootRecovery) -> String {
         "the live subvolume mounted read-write; replacing it instead of restoring into it needs \
          it unmounted (§14.4)"
             .to_owned()
+    }
+}
+
+impl BtrfsProvider {
+    /// Everything [`RecoveryProvider::restore_with`] does, answering only whether it was done.
+    fn carry_out(
+        &self,
+        action: &PlanAction,
+        asset: &RecoveryAsset,
+        acceptance: &RestoreAcceptance,
+    ) -> Result<(), ErrorValue> {
+        let Execution::RecoveryOperation {
+            provider,
+            arguments,
+            ..
+        } = action.execution()
+        else {
+            return Err(core_error::recovery_apply_failed(
+                action.summary(),
+                "this action is not a Btrfs recovery operation",
+            ));
+        };
+        if provider.as_ref() != PROVIDER_ID {
+            return Err(core_error::recovery_apply_failed(
+                action.summary(),
+                &format!("the action belongs to {provider}, not to {PROVIDER_ID}"),
+            ));
+        }
+        let Some(reference) = SubvolumeRef::parse(asset.scope().domain()) else {
+            return Err(core_error::recovery_apply_failed(
+                action.summary(),
+                &format!(
+                    "the recovery point's scope `{}` names no filesystem and subvolume, so no \
+                     step could be tied to one (§56.2). Nothing was changed",
+                    asset.scope().domain()
+                ),
+            ));
+        };
+        let operation = argument(arguments, ARG_OPERATION).unwrap_or_default();
+        let source = argument(arguments, ARG_SOURCE).unwrap_or_default();
+        let destination = argument(arguments, ARG_DESTINATION).unwrap_or_default();
+        match operation.as_str() {
+            OP_DERIVE_WRITABLE => {
+                self.restore_derive(action, asset, &reference, &source, &destination)
+            }
+            OP_RESTORE_FILE => self.restore_file(action, &reference, &source, &destination),
+            OP_REPLACE_SUBVOLUME => {
+                self.restore_swap(action, asset, &reference, arguments, acceptance, true)
+            }
+            OP_SWAP_FOR_NEXT_BOOT => {
+                self.restore_swap(action, asset, &reference, arguments, acceptance, false)
+            }
+            OP_SET_DEFAULT => {
+                self.restore_set_default(action, asset, &reference, arguments, acceptance)
+            }
+            other => Err(core_error::recovery_apply_failed(
+                action.summary(),
+                &format!("`{other}` is not an operation this provider performs"),
+            )),
+        }
     }
 }

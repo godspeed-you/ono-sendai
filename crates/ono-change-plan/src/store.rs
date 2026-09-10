@@ -31,10 +31,10 @@ use std::time::Duration;
 use jiff::Timestamp;
 use ono_change_core::{
     ActionId, ActionStatus, ChangePlan, ImpactGraph, PlanId, PlanKind, PlanState, RecoveryAsset,
-    RecoveryAssetId, error, value,
+    RecoveryAssetId, RecoveryPlan, error, value,
 };
 use ono_value::{ErrorValue, RecordValue, SchemaRegistry, Value, builtin_schemas};
-use rusqlite::{Connection, OpenFlags, OptionalExtension as _, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension as _, TransactionBehavior, params};
 
 use crate::migrate::{STEPS, STORE_ID_KEY, STORE_VERSION, VERSION_KEY};
 use crate::references::{Reference, plan_reference_width, render_asset, render_plan};
@@ -239,6 +239,14 @@ impl Drop for Claim<'_> {
     }
 }
 
+/// Whether the process that took a claim is still running (§42.3).
+///
+/// A claim written before the store recorded its holder's process says nothing about it, and is
+/// treated as live: its lease still bounds it, and erring that way keeps two applies apart.
+fn holder_is_alive(pid: Option<i64>) -> bool {
+    pid.is_none_or(|pid| std::path::Path::new(&format!("/proc/{pid}")).exists())
+}
+
 /// The persistent plan store (§36.1).
 #[derive(Debug)]
 pub struct PlanStore {
@@ -369,13 +377,81 @@ impl PlanStore {
     /// - `change.plan_store_unavailable` where the store cannot be written;
     /// - `ono.provider_schema_violation` where a contract of §46 is not in this build.
     pub fn put(&self, plan: &ChangePlan) -> Result<(), ErrorValue> {
+        self.put_revision(plan, None)
+    }
+
+    /// Persists a recovery plan: its `ChangePlan` and the analysis §24.5's gate is about.
+    ///
+    /// The analysis — newer state, source assets, the chosen method — is what makes a recovery
+    /// plan more than a list of actions, and `apply` has to see it as it was shown (§24.1).
+    ///
+    /// # Errors
+    ///
+    /// As [`PlanStore::put`].
+    pub fn put_recovery(
+        &self,
+        recovery: &RecoveryPlan,
+        notes: &value::RecoveryPlanNotes,
+    ) -> Result<(), ErrorValue> {
+        // Appendix I.5: the methods the plan did not choose, and what each would have discarded,
+        // are part of what the operator was shown, so the stored record keeps them. Reading the
+        // plan back does not need them: they describe the choice, not the recovery.
+        let record = value::recovery_plan_record_with(recovery, notes)?;
+        let record = map_actions(&record, &|action| {
+            self.redaction.action_record(action).map(Some)
+        })?;
+        let encoded = encode(&record)?;
+        self.put_revision(recovery.plan(), Some(encoded))
+    }
+
+    /// The latest revision of a recovery plan, with the analysis it was stored with (§24.1).
+    ///
+    /// # Errors
+    ///
+    /// - `change.plan_not_found` where the store holds no such plan;
+    /// - `recovery.plan_incomplete` where the plan carries no recovery analysis — it is an
+    ///   ordinary plan, and §24.5 has nothing to gate it on;
+    /// - `change.plan_store_corrupt` where the stored record will not decode.
+    pub fn get_recovery(&self, plan: &PlanId) -> Result<RecoveryPlan, ErrorValue> {
+        let revision = self.latest_revision(plan)?;
+        let restored = self.get_revision(plan, revision)?;
+        let stored: Option<Option<String>> = self
+            .locked()
+            .query_row(
+                "SELECT recovery FROM plans WHERE plan_id = ?1 AND revision = ?2",
+                params![plan.as_str(), i64::from(revision)],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|failure| self.unavailable(&failure))?;
+        let Some(encoded) = stored.flatten() else {
+            return Err(error::recovery_plan_incomplete(
+                "the recovery analysis this plan was sealed with",
+                "the plan carries none: it is not a recovery plan. `recover` builds one, with the \
+                 newer state §24.5 gates on",
+            ));
+        };
+        let record = self.decode(&encoded, "recovery")?;
+        value::recovery_plan_from_record(&record, restored)
+    }
+
+    /// Writes one revision row, with the recovery analysis where there is one.
+    ///
+    /// A revision written without an analysis keeps the one its plan already had: an
+    /// acknowledgement is a new revision (§19.4), and the recovery it acknowledged is still the
+    /// recovery it describes.
+    fn put_revision(&self, plan: &ChangePlan, recovery: Option<String>) -> Result<(), ErrorValue> {
         let record = value::plan_record(plan)?;
         // §36.3: the secret is replaced before the record reaches the database, not after.
         let record = map_actions(&record, &|action| {
             self.redaction.action_record(action).map(Some)
         })?;
         let encoded = encode(&record)?;
-        let impact = if plan.impact().nodes().is_empty() && plan.impact().boundaries().is_empty() {
+        // §9.6: a truncated graph is stored even when it found nothing, or it comes back complete.
+        let impact = if plan.impact().nodes().is_empty()
+            && plan.impact().boundaries().is_empty()
+            && plan.impact().is_complete()
+        {
             None
         } else {
             Some(encode(&value::impact_record(plan.id(), plan.impact())?)?)
@@ -395,13 +471,16 @@ impl PlanStore {
         transaction
             .execute(
                 "INSERT INTO plans (plan_id, revision, kind, state, session, intent, \
-                 created_nanos, sealed_nanos, expires_nanos, digest, record, impact) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
+                 created_nanos, sealed_nanos, expires_nanos, digest, record, impact, recovery) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, \
+                 COALESCE(?13, (SELECT recovery FROM plans WHERE plan_id = ?1 \
+                 AND revision < ?2 ORDER BY revision DESC LIMIT 1))) \
                  ON CONFLICT (plan_id, revision) DO UPDATE SET \
                  kind = excluded.kind, state = excluded.state, session = excluded.session, \
                  intent = excluded.intent, created_nanos = excluded.created_nanos, \
                  sealed_nanos = excluded.sealed_nanos, expires_nanos = excluded.expires_nanos, \
-                 digest = excluded.digest, record = excluded.record, impact = excluded.impact",
+                 digest = excluded.digest, record = excluded.record, impact = excluded.impact, \
+                 recovery = COALESCE(excluded.recovery, plans.recovery)",
                 params![
                     plan.id().as_str(),
                     i64::from(plan.revision()),
@@ -415,6 +494,7 @@ impl PlanStore {
                     plan.digest(),
                     encoded,
                     impact,
+                    recovery,
                 ],
             )
             .map_err(|failure| self.unavailable(&failure))?;
@@ -687,6 +767,38 @@ impl PlanStore {
             .map_err(|failure| self.unavailable(&failure))
     }
 
+    /// When the latest revision of `plan` last had an action settle against the system (§41.2).
+    ///
+    /// Appendix C.4 needs it: the write the plan made is what a recovery undoes, and only an edit
+    /// after it is newer state. An action that succeeded, failed or left an unknown outcome may
+    /// have written; one still pending or skipped did not. `None` means nothing ever settled.
+    ///
+    /// # Errors
+    ///
+    /// - `change.plan_not_found` where the store holds no such plan;
+    /// - `change.plan_store_unavailable` where the store cannot be read.
+    pub fn applied_at(&self, plan: &PlanId) -> Result<Option<Timestamp>, ErrorValue> {
+        let revision = self.latest_revision(plan)?;
+        let latest: Option<i64> = self
+            .locked()
+            .query_row(
+                "SELECT MAX(settled_nanos) FROM action_status \
+                 WHERE plan_id = ?1 AND revision = ?2 AND status IN (?3, ?4, ?5)",
+                params![
+                    plan.as_str(),
+                    i64::from(revision),
+                    ActionStatus::Succeeded.as_str(),
+                    ActionStatus::Failed.as_str(),
+                    ActionStatus::Unknown.as_str(),
+                ],
+                |row| row.get(0),
+            )
+            .map_err(|failure| self.unavailable(&failure))?;
+        latest
+            .map(|nanos| instant(nanos, "settled_nanos"))
+            .transpose()
+    }
+
     /// Records the lifecycle state a plan revision has reached (§4.1, §22.2, §41.2).
     ///
     /// The state is written where the transition happens rather than at the end, so a shell that
@@ -828,18 +940,18 @@ impl PlanStore {
         plan: &PlanId,
         now: Timestamp,
     ) -> Result<Option<Arc<str>>, ErrorValue> {
-        let held: Option<(String, i64)> = self
+        let held: Option<(String, i64, Option<i64>)> = self
             .locked()
             .query_row(
-                "SELECT session, expires_nanos FROM apply_claims WHERE plan_id = ?1",
+                "SELECT session, expires_nanos, holder_pid FROM apply_claims WHERE plan_id = ?1",
                 params![plan.as_str()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
             .map_err(|failure| self.unavailable(&failure))?;
         Ok(held
-            .filter(|(_, expires)| *expires > nanos(now))
-            .map(|(session, _)| Arc::from(session.as_str())))
+            .filter(|(_, expires, pid)| *expires > nanos(now) && holder_is_alive(*pid))
+            .map(|(session, _, _)| Arc::from(session.as_str())))
     }
 
     /// Writes the claim row, refusing a live one held by another session (§42.4).
@@ -852,36 +964,65 @@ impl PlanStore {
     ) -> Result<Timestamp, ErrorValue> {
         let expires_at = plus(now, lease);
         let mut connection = self.locked();
+        // IMMEDIATE takes the write lock at BEGIN, where the busy handler waits for it. A deferred
+        // transaction reads first and fails the upgrade at once when another session committed in
+        // between — which is the race §42.4 is about, reported as a broken store.
         let transaction = connection
-            .transaction()
-            .map_err(|failure| self.unavailable(&failure))?;
-        let held: Option<(String, i64)> = transaction
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|failure| self.contended(plan, &failure))?;
+        let held: Option<(String, i64, Option<i64>)> = transaction
             .query_row(
-                "SELECT session, expires_nanos FROM apply_claims WHERE plan_id = ?1",
+                "SELECT session, expires_nanos, holder_pid FROM apply_claims WHERE plan_id = ?1",
                 params![plan.as_str()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
-            .map_err(|failure| self.unavailable(&failure))?;
-        if let Some((holder, expires)) = held
+            .map_err(|failure| self.contended(plan, &failure))?;
+        // §42.3: a claim is bounded twice over — by its lease, and by the life of the process that
+        // took it. A holder whose process is gone crashed mid-apply, and its claim is taken over
+        // at once rather than making `resume` wait out the lease; a live holder's never is.
+        if let Some((holder, expires, pid)) = held
             && expires > nanos(now)
             && holder != session
+            && holder_is_alive(pid)
         {
-            return Err(error::plan_already_applying(plan, &holder));
+            let refusal = error::plan_already_applying(plan, &holder);
+            return Err(match pid {
+                Some(pid) => refusal.with_metadata("holder_pid", ono_value::Value::Int(pid.into())),
+                None => refusal,
+            });
         }
         transaction
             .execute(
-                "INSERT INTO apply_claims (plan_id, session, claimed_nanos, expires_nanos) \
-                 VALUES (?1, ?2, ?3, ?4) ON CONFLICT (plan_id) DO UPDATE SET \
+                "INSERT INTO apply_claims \
+                 (plan_id, session, claimed_nanos, expires_nanos, holder_pid) \
+                 VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (plan_id) DO UPDATE SET \
                  session = excluded.session, claimed_nanos = excluded.claimed_nanos, \
-                 expires_nanos = excluded.expires_nanos",
-                params![plan.as_str(), session, nanos(now), nanos(expires_at),],
+                 expires_nanos = excluded.expires_nanos, holder_pid = excluded.holder_pid",
+                params![
+                    plan.as_str(),
+                    session,
+                    nanos(now),
+                    nanos(expires_at),
+                    i64::from(std::process::id()),
+                ],
             )
-            .map_err(|failure| self.unavailable(&failure))?;
+            .map_err(|failure| self.contended(plan, &failure))?;
         transaction
             .commit()
-            .map_err(|failure| self.unavailable(&failure))?;
+            .map_err(|failure| self.contended(plan, &failure))?;
         Ok(expires_at)
+    }
+
+    /// A claim write that failed: another writer holding the store past the busy timeout is
+    /// §42.4's contention and answers `change.plan_already_applying`; anything else is the store.
+    fn contended(&self, plan: &PlanId, failure: &rusqlite::Error) -> ErrorValue {
+        match failure.sqlite_error_code() {
+            Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked) => {
+                error::plan_already_applying(plan, "another session holding the plan store")
+            }
+            _ => self.unavailable(failure),
+        }
     }
 
     /// Releases a claim this session holds. A claim somebody else took over is left alone.

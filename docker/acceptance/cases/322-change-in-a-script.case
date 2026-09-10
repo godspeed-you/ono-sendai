@@ -6,7 +6,7 @@
 # hangs, at three in the morning, holding a lock on a plan. §40.3 is the rule and a timeout is the
 # only honest way to prove it.
 case: every change command is deterministic and non-blocking in a script
-timeout: 180
+timeout: 240
 env: NO_COLOR=1
 run: |
   prove() {
@@ -18,36 +18,51 @@ run: |
       printf '%s\n' "$out" | head -6 | sed 's/^/        /'
     fi
   }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
 
   mkdir -p "$HOME/etc"
   printf 'worker_processes 4;\n' > "$HOME/etc/nginx.conf"
   printf 'worker_processes 8;\n' > "$HOME/etc/nginx.conf.new"
+  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | to json" < /dev/null > /tmp/s0.json 2>&1
+  id=$(plan_id /tmp/s0.json)
+  sleep 600 &
+  victim=$!
+  ono -c "plan kill process $victim --signal SIGKILL | to json" < /dev/null > /tmp/s0k.json 2>&1
+  gated=$(plan_id /tmp/s0k.json)
 
   echo '== §40.3: nothing waits for a prompt with stdin closed =='
+  n=0
   for spelling in \
     "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite" \
     "get plan" \
-    "get recovery" ; do
-    if timeout 30 ono -c "$spelling" < /dev/null > /dev/null 2>&1 || [ $? -ne 124 ]; then
-      printf 'PROVED s1-%s: `%s` returns without waiting (§40.3)\n' "$(echo "$spelling" | tr ' /$' '---' | cut -c1-16)" "$spelling"
-    else
-      printf 'FAILED s1: `%s` did not return within 30s\n' "$spelling"
-    fi
+    "get recovery" \
+    "apply $gated" \
+    "remove recovery r-nothing-here" \
+    "resume plan $id" ; do
+    n=$((n + 1))
+    timeout 30 ono -c "$spelling" < /dev/null > "/tmp/s1-$n.txt" 2>&1
+    status=$?
+    prove "s1-$n" "\`${spelling%% /*}\` returns without waiting (§40.3)" "[ $status -ne 124 ]"
   done
+  prove s1g "the gated apply refused with the flag that answers it rather than asking (§40.2, §40.3)" \
+    'grep -q "change.risk_not_accepted" /tmp/s1-4.txt && grep -q -- "--accept-risk" /tmp/s1-4.txt && ! grep -qiE "are you sure|\[y/n\]|continue\?" /tmp/s1-4.txt'
+  prove s1h "and the process it would have killed is untouched (§40.3)" "kill -0 $victim"
+  kill "$victim" 2>/dev/null
 
   echo '== §12.3 and §33.5: every answer is a value a pipeline can read =='
-  prove s2a "\`plan\` serialises" \
-    "timeout 30 ono -c 'plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | to json' < /dev/null 2>&1 | grep -qE '^\{'"
-  prove s2b "\`get plan\` serialises as a stream (§12.3)" \
-    "timeout 30 ono -c 'get plan | to json' < /dev/null 2>&1 | grep -qE '^\['"
-  prove s2c "\`get recovery\` serialises as a stream" \
-    "timeout 30 ono -c 'get recovery | to json' < /dev/null 2>&1 | grep -qE '^\['"
-  prove s2d "and a plan can be filtered like any other value (§28.1 of v0.5, §12.3)" \
-    "timeout 30 ono -c 'get plan | where state == \"sealed\" | count | to json' < /dev/null 2>&1 | grep -qE '^[0-9]+$'"
+  prove s2a "\`plan\` serialises as a sealed change plan" \
+    "[ \"\$(timeout 30 ono -c 'plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | select kind state | to json' < /dev/null 2>&1)\" = '[{\"kind\":\"change\",\"state\":\"sealed\"}]' ]"
+  prove s2b "\`get plan\` serialises as one JSON list (§12.3)" \
+    "timeout 30 ono -c 'get plan | to json' < /dev/null 2>&1 | grep -qx '\[{\"id\":.*\]'"
+  prove s2c "\`get recovery\` serialises as one JSON list" \
+    "timeout 30 ono -c 'get recovery | to json' < /dev/null 2>&1 | grep -qx '\[.*\]'"
+  sealed=$(ono -c 'get plan | select state | to json' 2>/dev/null | grep -o '"state":"sealed"' | wc -l)
+  prove s2d "and a plan can be filtered like any other value, to the right count (§12.3)" \
+    "[ \"\$(timeout 30 ono -c 'get plan | where state == \"sealed\" | count | to json' < /dev/null 2>&1 | tr -d '[:space:]' | sed 's/^\[//; s/\]\$//')\" = '$sealed' ] && [ '$sealed' -ge 2 ]"
 
-  echo '== §40.3: a gate that is not satisfied fails, and names the flag that would satisfy it =='
-  prove s3a "a refusal names a flag rather than asking a question (§40.2, §40.3)" \
-    "! timeout 30 ono -c 'remove recovery r-nothing-here' < /dev/null 2>&1 | grep -qiE 'are you sure|\\[y/n\\]|continue\\?'"
+  echo '== §40.3: a gate that is not satisfied fails with a structured code, never a question =='
+  prove s3a "removing an asset that does not exist is a structured refusal, with a non-zero exit (§40.3, §45)" \
+    'grep -qE "Ono-Sendai-E1[789][0-9]{2} (change|recovery)\." /tmp/s1-5.txt && ! grep -qiE "are you sure|\[y/n\]|continue\?" /tmp/s1-5.txt'
 
   echo '== §45: every refusal carries a stable code =='
   for spelling in \
@@ -56,15 +71,23 @@ run: |
     "recover nothing-here-1a2b" \
     "inspect plan nothing-here-1a2b" \
     "inspect recovery nothing-here-1a2b" ; do
-    if timeout 30 ono -c "$spelling" < /dev/null 2>&1 | grep -qE 'Ono-Sendai-E1[789]'; then
-      printf 'PROVED s4-%s: `%s` refuses with a v0.6 code\n' "$(echo "$spelling" | cut -d' ' -f1-2 | tr ' ' '-')" "$spelling"
-    else
-      printf 'FAILED s4: `%s` did not carry a v0.6 code\n' "$spelling"
-    fi
+    tag=$(echo "$spelling" | cut -d' ' -f1-2 | tr ' ' '-')
+    timeout 30 ono -c "$spelling" < /dev/null > "/tmp/s4-$tag.txt" 2>&1
+    status=$?
+    prove "s4-$tag" "\`$spelling\` refuses with a v0.6 code and a non-zero exit (§45)" \
+      "[ $status -ne 0 ] && [ $status -ne 124 ] && grep -qE 'Ono-Sendai-E1[789][0-9]{2} (change|recovery)\.' /tmp/s4-$tag.txt"
   done
 
   echo 'change-in-a-script: done'
 exit: 0
+stdout-contains: PROVED s1-1
+stdout-contains: PROVED s1-2
+stdout-contains: PROVED s1-3
+stdout-contains: PROVED s1-4
+stdout-contains: PROVED s1-5
+stdout-contains: PROVED s1-6
+stdout-contains: PROVED s1g
+stdout-contains: PROVED s1h
 stdout-contains: PROVED s2a
 stdout-contains: PROVED s2b
 stdout-contains: PROVED s2c
@@ -73,6 +96,8 @@ stdout-contains: PROVED s3a
 stdout-contains: PROVED s4-apply-nothing-here-1a2b
 stdout-contains: PROVED s4-impact-nothing-here-1a2b
 stdout-contains: PROVED s4-recover-nothing-here-1a2b
+stdout-contains: PROVED s4-inspect-plan
+stdout-contains: PROVED s4-inspect-recovery
 stdout-contains: change-in-a-script: done
 stdout-not-contains: FAILED
 stdout-not-contains: panicked

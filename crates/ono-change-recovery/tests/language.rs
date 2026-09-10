@@ -2,11 +2,15 @@
 //!
 //! *"User-visible language MUST describe the verified scope."* Everything this crate produces is
 //! read by somebody — a refusal's message and help, a newer-state item's detail, a rejected
-//! method's reason — and every one of those sentences is a string literal in `src/`. So the check
-//! is a grep, and it lives in the suite because that is what keeps it true as the crate grows.
+//! method's reason. Those sentences are string literals in this crate's `src/` and, for the
+//! refusals, in `ono-change-core`'s `error.rs`, which is where this crate's `ErrorValue`s are
+//! built. So the check is a grep over both, and it lives in the suite because that is what keeps
+//! it true as either grows.
 //!
-//! The scan skips whole-line comments, so a future reader may still explain the rule in prose.
-//! Anything the compiler could put in front of a person is fair game.
+//! A literal continued across lines with a trailing `\` is joined before it is matched, so a
+//! phrase split by the line break is still found. The scan skips whole-line comments, so a future
+//! reader may still explain the rule in prose. Anything the compiler could put in front of a
+//! person is fair game.
 
 #![allow(
     clippy::expect_used,
@@ -27,11 +31,17 @@ const FORBIDDEN: &[&str] = &[
 ];
 
 fn sources() -> Vec<PathBuf> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut files = Vec::new();
-    collect(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut files,
+    collect(&manifest.join("src"), &mut files);
+    // The refusals this crate returns are composed in the core crate's error module.
+    let refusals = manifest.join("../ono-change-core/src/error.rs");
+    assert!(
+        refusals.is_file(),
+        "the refusal messages this crate emits are in {}",
+        refusals.display()
     );
+    files.push(refusals);
     files
 }
 
@@ -47,14 +57,33 @@ fn collect(directory: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-/// Every line of code, with whole-line comments removed.
+/// Every logical line of code, lower-cased, with whole-line comments removed.
+///
+/// A line ending in `\\` continues a string literal on the next line, whose leading whitespace
+/// the literal does not contain; the two are joined, numbered by the line the literal started on.
 fn code_lines(path: &Path) -> Vec<(usize, String)> {
     let text = std::fs::read_to_string(path).expect("the source file is readable");
-    text.lines()
-        .enumerate()
-        .filter(|(_, line)| !line.trim_start().starts_with("//"))
-        .map(|(number, line)| (number + 1, line.to_lowercase()))
-        .collect()
+    let mut joined: Vec<(usize, String)> = Vec::new();
+    let mut open: Option<(usize, String)> = None;
+    for (index, line) in text.lines().enumerate() {
+        if line.trim_start().starts_with("//") {
+            continue;
+        }
+        let (number, mut logical) = match open.take() {
+            Some((number, head)) => (number, head + line.trim_start()),
+            None => (index + 1, line.to_owned()),
+        };
+        if let Some(head) = logical.strip_suffix('\\') {
+            logical = head.to_owned();
+            open = Some((number, logical));
+            continue;
+        }
+        joined.push((number, logical.to_lowercase()));
+    }
+    if let Some((number, logical)) = open {
+        joined.push((number, logical.to_lowercase()));
+    }
+    joined
 }
 
 #[test]
@@ -122,5 +151,19 @@ fn should_scan_lines_that_are_not_whole_line_comments() {
     assert!(
         lines.iter().any(|(_, line)| line.contains("pub fn verify")),
         "the scanner reads code, and it found none in verify.rs"
+    );
+}
+
+#[test]
+fn should_join_a_literal_continued_across_lines_before_matching_it() {
+    // A guard on the joining: core's `error.rs` continues this sentence across a line break
+    // (`... The \` / `metadata reports ...`), and the scan has to read it as one sentence.
+    let module = Path::new(env!("CARGO_MANIFEST_DIR")).join("../ono-change-core/src/error.rs");
+    let lines = code_lines(&module);
+    assert!(
+        lines
+            .iter()
+            .any(|(_, line)| line.contains("recovered. the metadata reports per")),
+        "the scanner joins a continued literal, and found no joined sentence in error.rs"
     );
 }

@@ -30,7 +30,8 @@ use std::sync::Arc;
 
 use jiff::Timestamp;
 use ono_change_core::{
-    FrozenTarget, ImpactClass, ImpactGraph, ImpactNode, PlanAction, ProposedEffect, UnknownBoundary,
+    EffectConfidence, EffectDomain, FrozenTarget, ImpactClass, ImpactGraph, ImpactNode, PlanAction,
+    ProposedEffect, UnknownBoundary,
 };
 use ono_spatial_core::{
     AcquisitionCost, Confidence, PermissionState, RelationshipEdge, SpatialId, relation,
@@ -451,6 +452,7 @@ impl<'a> Walk<'a> {
         let frontier = self.seed_effects(frontier);
         self.expand(frontier);
         self.external_boundaries();
+        self.unknown_boundaries();
         self.graph.sort();
         let graph = match self.truncation {
             Some(reason) => self.graph.truncated(reason),
@@ -730,6 +732,48 @@ impl<'a> Walk<'a> {
                     effect.explanation()
                 ),
             ));
+        }
+    }
+
+    /// §6.3 and §8.1: an effect Ono cannot classify is where the graph stops being an answer.
+    ///
+    /// An effect in the `unknown` domain, or one whose confidence is `unknown`, says that the
+    /// action reaches *something* Ono has no model of. §2.4 forbids promoting that to "nothing
+    /// else", so the effect leaves a boundary behind and the graph stops claiming to be
+    /// complete. No node is added for what lies beyond: the effect does not name it, and
+    /// inventing one is the future §1.3 forbids. An external effect already ended the graph in
+    /// [`Walk::external_boundaries`], and a second boundary for it would be one place counted
+    /// twice.
+    fn unknown_boundaries(&mut self) {
+        for (action, effect) in self.request.effects() {
+            if effect.domain() != EffectDomain::Unknown
+                && effect.confidence() != EffectConfidence::Unknown
+            {
+                continue;
+            }
+            if !effect.domain().is_external() {
+                let at = action
+                    .target()
+                    .or_else(|| effect.object())
+                    .unwrap_or_else(|| action.summary());
+                let beyond = effect.object().unwrap_or_else(|| action.summary());
+                self.graph.add_boundary(UnknownBoundary::new(
+                    at,
+                    beyond,
+                    format!(
+                        "{} — Ono has no model of what this reaches, so its impact is unknown \
+                         rather than empty (§6.3, §8.1, §9.6)",
+                        effect.explanation()
+                    ),
+                ));
+            }
+            if self.truncation.is_none() {
+                self.truncation = Some(format!(
+                    "{} has effects Ono cannot classify, so what it touches is not in this graph \
+                     (§6.3, §8.1)",
+                    action.summary()
+                ));
+            }
         }
     }
 }

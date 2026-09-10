@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use ono_change_core::error;
 use ono_change_core::{
-    EffectDomain, PlanId, ProtectionLevel, ProtectionMode, RecoveryCost, RetentionPolicy,
+    EffectDomain, PlanId, ProtectionLevel, ProtectionMode, RecoveryCost, RetentionPolicy, RiskClass,
 };
 use ono_value::{ByteSize, ErrorValue, Percent};
 
@@ -36,6 +36,14 @@ pub enum FreeSpaceFloor {
     Share(Percent),
     /// An absolute quantity, for a filesystem whose size makes a share meaningless.
     Absolute(ByteSize),
+    /// A share and a quantity together, both in force: what [`FreeSpaceFloor::stricter_of`]
+    /// answers for one of each when no filesystem size is known (Appendix H.5).
+    Both {
+        /// The share of the filesystem that must stay free.
+        share: Percent,
+        /// The quantity that must stay free.
+        absolute: ByteSize,
+    },
 }
 
 impl FreeSpaceFloor {
@@ -45,31 +53,94 @@ impl FreeSpaceFloor {
         FreeSpaceFloor::Share(Percent::new(10.0))
     }
 
-    /// The stricter of two floors (Appendix H.5).
+    /// The stricter of two floors, for filesystems of any size (Appendix H.5).
     ///
-    /// Two shares and two quantities compare directly; a share and a quantity do not, and the
-    /// share wins because it is the form §53 states the default in and the one that stays
-    /// meaningful as a filesystem grows.
+    /// Two shares and two quantities compare directly. A share and a quantity do not: ten percent
+    /// is stricter than 50 GiB on 2 TiB and looser on 100 GiB, so without a size neither may be
+    /// dropped — H.5 forbids a profile from weakening a floor, and dropping either would weaken
+    /// it on some filesystem. The answer is [`FreeSpaceFloor::Both`], which
+    /// [`FreeSpaceFloor::is_cleared_by`] clears only where both parts clear, and which is
+    /// therefore the stricter one at every size. [`FreeSpaceFloor::stricter_at`] picks one of
+    /// the two where the size is known.
     #[must_use]
     pub fn stricter_of(self, other: Self) -> Self {
-        match (self, other) {
-            (FreeSpaceFloor::Share(left), FreeSpaceFloor::Share(right)) => {
-                FreeSpaceFloor::Share(if left.value() >= right.value() {
-                    left
+        let (left_share, left_absolute) = self.parts();
+        let (right_share, right_absolute) = other.parts();
+        let share = match (left_share, right_share) {
+            (Some(left), Some(right)) => Some(if left.value() >= right.value() {
+                left
+            } else {
+                right
+            }),
+            (only, None) | (None, only) => only,
+        };
+        let absolute = match (left_absolute, right_absolute) {
+            (Some(left), Some(right)) => Some(if left.bytes() >= right.bytes() {
+                left
+            } else {
+                right
+            }),
+            (only, None) | (None, only) => only,
+        };
+        match (share, absolute) {
+            (Some(share), Some(absolute)) => FreeSpaceFloor::Both { share, absolute },
+            (Some(share), None) => FreeSpaceFloor::Share(share),
+            (None, Some(absolute)) => FreeSpaceFloor::Absolute(absolute),
+            (None, None) => self,
+        }
+    }
+
+    /// The stricter of two floors on a filesystem of `capacity` (Appendix H.5).
+    ///
+    /// Both are evaluated against the size, and the one that demands more free room wins; a tie
+    /// keeps the share, the form §53 states the default in.
+    #[must_use]
+    pub fn stricter_at(self, other: Self, capacity: ByteSize) -> Self {
+        match self.stricter_of(other) {
+            FreeSpaceFloor::Both { share, absolute } => {
+                if FreeSpaceFloor::Share(share).required_at(capacity).bytes() >= absolute.bytes() {
+                    FreeSpaceFloor::Share(share)
                 } else {
-                    right
-                })
+                    FreeSpaceFloor::Absolute(absolute)
+                }
             }
-            (FreeSpaceFloor::Absolute(left), FreeSpaceFloor::Absolute(right)) => {
-                FreeSpaceFloor::Absolute(if left.bytes() >= right.bytes() {
-                    left
+            single => single,
+        }
+    }
+
+    /// How much room the floor demands on a filesystem of `capacity`.
+    #[must_use]
+    pub fn required_at(self, capacity: ByteSize) -> ByteSize {
+        match self {
+            FreeSpaceFloor::Absolute(minimum) => minimum,
+            FreeSpaceFloor::Share(share) => {
+                #[allow(
+                    clippy::cast_precision_loss,
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "a share of a filesystem is a proportion, rounded up to a whole byte; \
+                              no filesystem's size makes the sixteenth digit of it matter"
+                )]
+                let bytes = (capacity.bytes() as f64 * share.as_fraction()).ceil() as u128;
+                ByteSize::from_bytes(bytes)
+            }
+            FreeSpaceFloor::Both { share, absolute } => {
+                let by_share = FreeSpaceFloor::Share(share).required_at(capacity);
+                if by_share.bytes() >= absolute.bytes() {
+                    by_share
                 } else {
-                    right
-                })
+                    absolute
+                }
             }
-            (FreeSpaceFloor::Share(share), _) | (_, FreeSpaceFloor::Share(share)) => {
-                FreeSpaceFloor::Share(share)
-            }
+        }
+    }
+
+    /// The share and the quantity this floor holds, either of which may be absent.
+    const fn parts(self) -> (Option<Percent>, Option<ByteSize>) {
+        match self {
+            FreeSpaceFloor::Share(share) => (Some(share), None),
+            FreeSpaceFloor::Absolute(absolute) => (None, Some(absolute)),
+            FreeSpaceFloor::Both { share, absolute } => (Some(share), Some(absolute)),
         }
     }
 
@@ -78,6 +149,10 @@ impl FreeSpaceFloor {
     pub fn is_cleared_by(self, free: ByteSize, capacity: ByteSize) -> bool {
         match self {
             FreeSpaceFloor::Absolute(minimum) => free.bytes() >= minimum.bytes(),
+            FreeSpaceFloor::Both { share, absolute } => {
+                FreeSpaceFloor::Share(share).is_cleared_by(free, capacity)
+                    && FreeSpaceFloor::Absolute(absolute).is_cleared_by(free, capacity)
+            }
             FreeSpaceFloor::Share(share) => {
                 if capacity.bytes() == 0 {
                     return false;
@@ -99,6 +174,9 @@ impl FreeSpaceFloor {
         match self {
             FreeSpaceFloor::Share(share) => format!("{share}"),
             FreeSpaceFloor::Absolute(size) => format!("{size}"),
+            FreeSpaceFloor::Both { share, absolute } => {
+                format!("{share} and {absolute}, whichever leaves more room")
+            }
         }
     }
 }
@@ -451,6 +529,28 @@ impl Profile {
         !matches!(self, Profile::Scripted)
     }
 
+    /// The lowest risk class the profile requires an acknowledgement for (Appendix H.1–H.4, §19.4).
+    ///
+    /// Appendix H writes it `moderate+` and `high+`: this class and every class above it. §19.2's
+    /// `unknown` sits between `moderate` and `high`, so `moderate+` gates a plan whose risk nobody
+    /// could classify as well, which is §2.4's rule that unknown is never read as ordinary.
+    #[must_use]
+    pub const fn risk_gate(self) -> RiskClass {
+        match self {
+            Profile::Cautious => RiskClass::Moderate,
+            Profile::Interactive | Profile::Fleet | Profile::Scripted => RiskClass::High,
+        }
+    }
+
+    /// The execution strategy the profile names, in §28.4's spelling (Appendix H.1–H.3).
+    #[must_use]
+    pub const fn strategy(self) -> &'static str {
+        match self {
+            Profile::Fleet => "canary 1 then batch 10%",
+            Profile::Interactive | Profile::Cautious | Profile::Scripted => "sequential",
+        }
+    }
+
     /// The profile expanded into the settings it stands for (Appendix H).
     ///
     /// Appendix H requires a profile to *"expand to inspectable settings"* and forbids it hiding
@@ -472,14 +572,8 @@ impl Profile {
                 if self.prompts() { "yes" } else { "no" }.to_owned(),
             ),
         ];
-        settings.push(match self {
-            Profile::Cautious => ("risk gate", "moderate+".to_owned()),
-            _ => ("risk gate", "high+".to_owned()),
-        });
-        settings.push(match self {
-            Profile::Fleet => ("strategy", "canary 1 then batch 10%".to_owned()),
-            _ => ("strategy", "sequential".to_owned()),
-        });
+        settings.push(("risk gate", format!("{}+", self.risk_gate().as_str())));
+        settings.push(("strategy", self.strategy().to_owned()));
         if self == Profile::Fleet {
             settings.push(("remote unknown", "stop new batches".to_owned()));
         }
@@ -496,6 +590,7 @@ pub struct ProtectionPolicy {
     retention: RetentionPolicy,
     limits: CostLimits,
     irrelevant_domains: Vec<EffectDomain>,
+    excluded_hosts: Vec<Arc<str>>,
     authorises_early_removal: bool,
     profile: Option<Profile>,
 }
@@ -510,6 +605,7 @@ impl Default for ProtectionPolicy {
             retention: RetentionPolicy::default(),
             limits: CostLimits::default(),
             irrelevant_domains: Vec::new(),
+            excluded_hosts: Vec::new(),
             authorises_early_removal: false,
             profile: None,
         }
@@ -573,6 +669,28 @@ impl ProtectionPolicy {
         self
     }
 
+    /// Excludes `host` from a remote plan's protection claim (§29.2).
+    ///
+    /// §29.2 calls a fleet with unprotected hosts partially protected "unless policy excludes the
+    /// unprotected targets". The exclusion is an operator decision recorded in the plan, and the
+    /// excluded host stays named among the plan's exclusions ([`crate::hosts::compose`]).
+    #[must_use]
+    pub fn excluding_host(mut self, host: impl Into<Arc<str>>) -> Self {
+        let host = host.into();
+        if !self.excluded_hosts.contains(&host) {
+            self.excluded_hosts.push(host);
+        }
+        self
+    }
+
+    /// Whether the policy excludes `host` from the plan's protection claim (§29.2).
+    #[must_use]
+    pub fn excludes_host(&self, host: &str) -> bool {
+        self.excluded_hosts
+            .iter()
+            .any(|excluded| &**excluded == host)
+    }
+
     /// Authorises removing recovery assets before their retention ends (§37.4).
     #[must_use]
     pub const fn authorising_early_removal(mut self) -> Self {
@@ -586,15 +704,42 @@ impl ProtectionPolicy {
         self.mode
     }
 
-    /// What the plan asked for, where the configuration answered with something else (§17.3, §53).
+    /// What the plan asked for, where the mode in force does not deliver it (§17.3, §53, ADR-0815).
     ///
-    /// `None` when the plan asked for nothing, or when it got what it asked for. `Some(requested)`
-    /// is a narrowing an operator is told about: §53 forbids configuration weakening an explicit
-    /// plan requirement, and the only reason this is not that is that the two modes are
-    /// incomparable rather than ordered — so it is reported rather than refused.
+    /// `None` when the plan asked for nothing, got what it asked for, or got a mode that contains
+    /// it: a stricter mode than the plan asked for is a raise ([`ProtectionPolicy::raised`]), and
+    /// raising is what §53 requires. The one pair that is a narrowing is `maximize` requested
+    /// under `require`: `require` refuses on a shortfall and does not attempt every mechanism, so
+    /// the plan lost the breadth it asked for. It is reported rather than refused.
     #[must_use]
     pub fn narrowed(&self) -> Option<ProtectionMode> {
-        self.requested.filter(|requested| *requested != self.mode)
+        self.requested
+            .filter(|requested| !delivers(self.mode, *requested))
+    }
+
+    /// What the plan asked for, where configuration raised it to a stricter mode (§53, ADR-0834).
+    ///
+    /// `Some(requested)` when the plan asked for less than a mode the operator configured — `off`
+    /// under a configured `prefer` — and runs under the configured one. Nothing was lost, and the
+    /// operator is still told, because a plan that said `off` and created an asset would otherwise
+    /// look like a plan that ignored its own words.
+    #[must_use]
+    pub fn raised(&self) -> Option<ProtectionMode> {
+        self.requested
+            .filter(|requested| *requested != self.mode && delivers(self.mode, *requested))
+    }
+
+    /// The sentence a raise is shown as (§17.3, §53).
+    #[must_use]
+    pub fn raising_note(&self) -> Option<String> {
+        self.raised().map(|requested| {
+            format!(
+                "the plan asked for `{requested}` protection and runs under `{}`, the mode the \
+                 configuration requires; a plan may ask for more than configuration and never for \
+                 less (§17.3, §53, ADR-0834)",
+                self.mode
+            )
+        })
     }
 
     /// The sentence a narrowing is shown as (§17.3).
@@ -734,6 +879,21 @@ pub const fn mode_rank(mode: ProtectionMode) -> u8 {
         ProtectionMode::Prefer => 1,
         ProtectionMode::Maximize => 2,
         ProtectionMode::Require => 3,
+    }
+}
+
+/// Whether a plan running in `got` receives everything a request for `asked` would do (ADR-0815).
+///
+/// §17.2's modes are two properties — how much protection is attempted, and whether a shortfall
+/// refuses — so containment is not the rank. `off` asks for nothing and every mode delivers it;
+/// `prefer` is contained in `maximize` and `require`, which both attempt what it attempts;
+/// `maximize` and `require` are each contained only in themselves.
+const fn delivers(got: ProtectionMode, asked: ProtectionMode) -> bool {
+    match asked {
+        ProtectionMode::Off => true,
+        ProtectionMode::Prefer => !matches!(got, ProtectionMode::Off),
+        ProtectionMode::Maximize => matches!(got, ProtectionMode::Maximize),
+        ProtectionMode::Require => matches!(got, ProtectionMode::Require),
     }
 }
 

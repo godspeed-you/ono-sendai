@@ -6,6 +6,10 @@
 # that the two say different things. `temporal.read_only` says the command changes the system;
 # `change.historical_context_read_only` says the command changes nothing and still cannot be
 # resolved from here, because what it would freeze is a world that no longer exists (ADR-0803).
+#
+# The session ledger reaches back to the session's start, so each script first lets a few seconds
+# pass inside one `ono -c` and then stands two seconds in the past: a coordinate the ledger really
+# covers, rather than one it refuses with `temporal.not_recorded` before §6.4 is ever asked.
 case: a plan cannot be resolved from the past, and says why
 env: ONO_TEMPORAL_RECORDING_ENABLED=true
 timeout: 120
@@ -20,43 +24,48 @@ run: |
       printf '%s\n' "$out" | head -6 | sed 's/^/        /'
     fi
   }
+  count_of() { ono -c "$1 | count | to json" 2>&1 | tr -d '[:space:]' | sed 's/^\[//; s/\]$//'; }
 
   mkdir -p "$HOME/etc"
   printf 'worker_processes 4;\n' > "$HOME/etc/nginx.conf"
   printf 'worker_processes 8;\n' > "$HOME/etc/nginx.conf.new"
+  copy="plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite"
 
   echo '== §6.4: planning from a historical coordinate refuses =='
-  ono -c "at -1m
-  plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite" > /tmp/p4.txt 2>&1
-  prove p4a "the refusal carries a code a script can match on (§45)" \
-    'grep -qE "Ono-Sendai-E1715|change\.historical_context_read_only" /tmp/p4.txt'
+  ono -c "sleep 3
+  at -2s
+  $copy
+  $copy" > /tmp/p4.txt 2>&1
+  prove p4pre "the script really stood in the past, rather than being refused an unrecorded instant" \
+    '! grep -q "temporal.not_recorded" /tmp/p4.txt && grep -q "PAST" /tmp/p4.txt'
+  prove p4a "the refusal carries §6.4's own code (§45)" \
+    'grep -q "Ono-Sendai-E1715 change.historical_context_read_only" /tmp/p4.txt'
   prove p4b "and it names \`now\` as the way back (§6.4)" \
-    'grep -qi "now" /tmp/p4.txt'
-  prove p4c "no plan was produced" \
-    '! grep -q "PLAN NOT EXECUTED" /tmp/p4.txt'
-
-  echo '== §6.4: the coordinate is unchanged by the refusal (v0.5 §12.1) =='
-  ono -c "at -1m
-  plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite
-  look" > /tmp/p4b.txt 2>&1
-  prove p4d "the session is still in the past after the refusal" \
-    'grep -q "PAST" /tmp/p4b.txt'
+    'grep -qF "\`now\` returns to the present" /tmp/p4.txt'
+  prove p4c "no plan was produced (§2.5)" \
+    "! grep -qx 'PLAN NOT EXECUTED' /tmp/p4.txt && [ \"\$(count_of 'get plan')\" = '0' ]"
+  prove p4d "the refusal left the session in the past, so the second plan is refused too (v0.5 §12.1)" \
+    '[ "$(grep -c "change.historical_context_read_only" /tmp/p4.txt)" -eq 2 ]'
 
   echo '== §6.4: `now` makes it work again =='
-  ono -c "at -1m
+  ono -c "sleep 2
+  at -1s
   now
-  plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite" > /tmp/p4c.txt 2>&1
-  prove p4e "returning to the present resolves the plan (§6.4)" \
-    'grep -q "PLAN NOT EXECUTED" /tmp/p4c.txt'
+  $copy | select state | to json" > /tmp/p4c.txt 2>&1
+  prove p4e "returning to the present resolves and seals the plan (§6.4)" \
+    '[ "$(tail -1 /tmp/p4c.txt)" = "[{\"state\":\"sealed\"}]" ]'
 
-  echo '== §6.4: inspecting an existing plan from the past is still allowed =='
-  ono -c "plan copy file $HOME/etc/nginx.conf.new $HOME/etc/nginx.conf --overwrite | to json" > /tmp/p4d.json 2>&1
-  prove p4f "a plan made in the present can be listed from the past — history is readable (§6.4)" \
-    'ono -c "at -1m
-  get plan | count | to json" 2>&1 | grep -qE "^[0-9]+$|^\{|^\["'
+  echo '== §6.4: inspecting existing plans from the past is still allowed =='
+  present=$(count_of 'get plan')
+  ono -c "sleep 2
+  at -1s
+  get plan | count | to json" > /tmp/p4f.txt 2>&1
+  prove p4f "the plans the present holds are listed from the past too — history is readable (§6.4)" \
+    "[ '$present' -ge 1 ] && [ \"\$(tail -1 /tmp/p4f.txt | tr -d '[:space:]' | sed 's/^\[//; s/\]\$//')\" = '$present' ]"
 
   echo 'plan-refuses-the-past: done'
 exit: 0
+stdout-contains: PROVED p4pre
 stdout-contains: PROVED p4a
 stdout-contains: PROVED p4b
 stdout-contains: PROVED p4c

@@ -35,17 +35,24 @@ use ono_value::ErrorValue;
 /// check a sealer runs and not a runtime decision to roll back.
 pub fn admits_auto_recovery(
     plan: &ChangePlan,
-    recovery: &RecoveryPlan,
+    recovery: Option<&RecoveryPlan>,
     policy_enabled: bool,
 ) -> Result<(), ErrorValue> {
     let mut unmet: Vec<String> = Vec::new();
 
-    if !fully_constructed(recovery) {
-        unmet.push(
+    match recovery {
+        None => unmet.push(
+            "the recovery plan cannot be fully constructed before mutation: no recovery asset \
+             exists until the plan's protection is created, immediately before mutation (§26.3, \
+             §4.5, §18.1)"
+                .to_owned(),
+        ),
+        Some(recovery) if !fully_constructed(recovery) => unmet.push(
             "the recovery plan cannot be fully constructed before mutation: it is not sealed, it \
              carries no RECOVER action, or its newer-state analysis did not run (§26.3, §62.8)"
                 .to_owned(),
-        );
+        ),
+        Some(_) => {}
     }
     let irreversible = irreversible_external(plan, recovery);
     if !irreversible.is_empty() {
@@ -54,7 +61,7 @@ pub fn admits_auto_recovery(
             irreversible.join(", ")
         ));
     }
-    let destroyed = unrelated_newer_state(recovery);
+    let destroyed = recovery.map(unrelated_newer_state).unwrap_or_default();
     if !destroyed.is_empty() {
         unmet.push(format!(
             "recovery would destroy unrelated newer state: {} (§26.3, Appendix C.3)",
@@ -68,7 +75,7 @@ pub fn admits_auto_recovery(
             shortfall.join(", ")
         ));
     }
-    if !recovery_verification_exists(recovery) {
+    if !recovery.is_some_and(recovery_verification_exists) {
         unmet.push(
             "the recovery carries no verification that states which equivalence domain it \
              establishes (§26.3, §25.1)"
@@ -96,7 +103,7 @@ fn fully_constructed(recovery: &RecoveryPlan) -> bool {
 }
 
 /// §26.3's second condition: no known irreversible external side effect exists.
-fn irreversible_external(plan: &ChangePlan, recovery: &RecoveryPlan) -> Vec<String> {
+fn irreversible_external(plan: &ChangePlan, recovery: Option<&RecoveryPlan>) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
     for effect in plan.effects() {
         let irreversible = effect.kind() == EffectKind::Emit
@@ -105,7 +112,10 @@ fn irreversible_external(plan: &ChangePlan, recovery: &RecoveryPlan) -> Vec<Stri
             found.push(effect.object().unwrap_or(effect.explanation()).to_owned());
         }
     }
-    for effect in recovery.unrecoverable() {
+    for effect in recovery
+        .map(RecoveryPlan::unrecoverable)
+        .unwrap_or_default()
+    {
         if effect.domain().is_external() && !found.iter().any(|seen| seen == effect.subject()) {
             found.push(effect.subject().to_owned());
         }

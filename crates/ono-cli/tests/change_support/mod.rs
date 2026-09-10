@@ -25,6 +25,75 @@ pub fn home() -> Scratch {
     scratch()
 }
 
+/// A home on the disk the build uses, removed when the test ends.
+///
+/// A protected change needs an asset, and §11.2 refuses to protect a volatile filesystem. [`home`]
+/// is under the system temporary directory, which is tmpfs on many hosts, so a suite that needs a
+/// real asset makes its home under Cargo's per-target temporary directory instead.
+pub struct BuildDiskHome(std::path::PathBuf);
+
+impl BuildDiskHome {
+    /// The home's directory.
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for BuildDiskHome {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A [`BuildDiskHome`] for one test of `suite`, unique within the run.
+pub fn build_disk_home(suite: &str) -> BuildDiskHome {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let unique = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("{suite}-{}-{unique}", std::process::id()));
+    std::fs::create_dir_all(&path).expect("a home on the build disk");
+    BuildDiskHome(path)
+}
+
+/// A process a test owns — `sleep 600` — killed and reaped when the test ends, whatever the plan
+/// did to it.
+///
+/// A plan that kills a process needs a real one to freeze (§4.3, §21.4), and the process must
+/// outlive the plan while never outliving the test.
+pub struct Sleeper(std::process::Child);
+
+impl Sleeper {
+    /// Starts the process.
+    pub fn start() -> Self {
+        Self(
+            std::process::Command::new("sleep")
+                .arg("600")
+                .spawn()
+                .expect("a sleeping process can be started"),
+        )
+    }
+
+    /// Its process id.
+    pub fn pid(&self) -> u32 {
+        self.0.id()
+    }
+
+    /// Whether it is still running.
+    pub fn is_alive(&mut self) -> bool {
+        self.0
+            .try_wait()
+            .expect("the child can be polled")
+            .is_none()
+    }
+}
+
+impl Drop for Sleeper {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// Runs `script` in a shell whose plan store, configuration and state live under `home`.
 pub fn ono_at(home: &Path, script: &str) -> Run {
     let root = home.to_string_lossy().into_owned();

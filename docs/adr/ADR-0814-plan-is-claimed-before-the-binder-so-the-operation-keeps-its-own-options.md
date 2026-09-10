@@ -1,6 +1,6 @@
 # ADR-0814: `plan` is claimed before the binder, so the operation it wraps keeps its own options
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0833
 - Date: 2026-09-09
 - Spec refs: v0.6 §5.1, §5.2, §5.3, §6.1; v0.2 §27.2, §50; ADR-0803, ADR-0813
 - Decided by: agent (autonomous)

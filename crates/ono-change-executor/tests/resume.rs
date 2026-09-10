@@ -205,8 +205,12 @@ fn should_say_that_a_new_recovery_or_rebase_decision_is_required() {
     assert!(refusal.metadata().get("reasons").is_some());
 }
 
+/// Contract change: §41.1 makes RETRY_SAFE_WITH_TOKEN safe to retry only when the *original*
+/// request token is presented. The token path is not wired — no execution in the workspace carries
+/// or honours one — so a retry here would be blind, and §41.2 forbids that. Resume refuses it until
+/// the token can be presented.
 #[test]
-fn should_retry_a_failed_action_whose_contract_accepts_a_request_token() {
+fn should_refuse_to_retry_a_failed_token_retry_action_while_its_token_cannot_be_presented() {
     let now = instant(1_000);
     let (_directory, store) = store();
     let plan = stored(
@@ -220,8 +224,24 @@ fn should_retry_a_failed_action_whose_contract_accepts_a_request_token() {
 
     assert_eq!(
         outcome.decision(),
-        ResumeDecision::Continue,
-        "§41.1: RETRY_SAFE_WITH_TOKEN is safe to retry when the same token is presented"
+        ResumeDecision::RequiresRecoveryOrRebase,
+        "§41.1 and §41.2: without the original token, a retry is a blind retry"
+    );
+    let refusal = outcome.refusal().expect("§41.3 refuses");
+    assert_eq!(refusal.code().name(), "change.resume_refused");
+    assert_eq!(
+        refusal.metadata().get("blocked_actions").cloned(),
+        Some(Value::list([Value::string(
+            plan.actions()[0].id().as_str()
+        )])),
+        "the refusal names the action"
+    );
+    assert!(
+        outcome.blocked()[0]
+            .reason()
+            .contains("token cannot be presented"),
+        "and says why: {}",
+        outcome.blocked()[0].reason()
     );
 }
 
@@ -423,4 +443,596 @@ fn should_report_the_reconstructed_state_even_when_it_refuses_to_continue() {
         "the refusal does not erase what the records already established"
     );
     assert_eq!(outcome.completed().len(), 1);
+}
+
+// ---- §41.2 and §41.3 through `apply`: the durable in-flight record and the continue path -------
+
+/// The whole outside world, scripted, for a plan that needs no protection.
+fn applying<'a>(
+    plan: &'a ChangePlan,
+    store: &'a PlanStore,
+    execute: &'a dyn Fn(&ono_change_core::PlanAction) -> ono_change_executor::ExecutionOutcome,
+    now: jiff::Timestamp,
+) -> ono_change_executor::ApplyOutcome {
+    let providers = common::empty_registry();
+    let protection = Vec::new();
+    let drift = common::no_drift();
+    let observe = common::observing(ono_change_core::VerificationStatus::Passed);
+    let mut request = ono_change_executor::ApplyRequest::new(
+        plan,
+        store,
+        "session-a",
+        now,
+        &protection,
+        &providers,
+        &drift,
+        execute,
+        &observe,
+    );
+    ono_change_executor::apply(&mut request)
+}
+
+/// [`applying`], continuing an interrupted apply (§41.3).
+fn resuming<'a>(
+    plan: &'a ChangePlan,
+    store: &'a PlanStore,
+    execute: &'a dyn Fn(&ono_change_core::PlanAction) -> ono_change_executor::ExecutionOutcome,
+    now: jiff::Timestamp,
+) -> ono_change_executor::ApplyOutcome {
+    let providers = common::empty_registry();
+    let protection = Vec::new();
+    let drift = common::no_drift();
+    let observe = common::observing(ono_change_core::VerificationStatus::Passed);
+    let mut request = ono_change_executor::ApplyRequest::new(
+        plan,
+        store,
+        "session-b",
+        now,
+        &protection,
+        &providers,
+        &drift,
+        execute,
+        &observe,
+    )
+    .resuming();
+    ono_change_executor::apply(&mut request)
+}
+
+/// Stages what a shell killed mid-apply leaves in the store: `applying`, and the records it wrote.
+fn killed_during_apply(
+    plan: &ChangePlan,
+    store: &PlanStore,
+    settled: &[(usize, ActionStatus)],
+    now: jiff::Timestamp,
+) -> ChangePlan {
+    store
+        .record_state(plan.id(), plan.revision(), PlanState::Applying)
+        .expect("the store records the transition");
+    crashed_after(plan, store, settled, now);
+    store
+        .get(plan.id())
+        .expect("the interrupted plan reads back")
+}
+
+fn code_of(outcome: &ono_change_executor::ApplyOutcome) -> String {
+    outcome
+        .error()
+        .map(|error| error.code().name().to_owned())
+        .unwrap_or_default()
+}
+
+#[test]
+fn should_hold_a_durable_running_record_while_an_action_executes() {
+    let now = instant(1_000);
+    let (_directory, store) = store();
+    let plan = stored(&PlanSpec::over(1), &store, now);
+    let seen = std::cell::RefCell::new(None);
+    let execute = |action: &ono_change_core::PlanAction| {
+        *seen.borrow_mut() = store
+            .action_statuses(plan.id(), plan.revision())
+            .expect("the store answers mid-apply")
+            .get(action.id().as_str())
+            .copied();
+        ono_change_executor::ExecutionOutcome::Succeeded
+    };
+
+    let outcome = applying(&plan, &store, &execute, now);
+
+    assert!(outcome.error().is_none(), "the fixture's plan applies");
+    assert_eq!(
+        *seen.borrow(),
+        Some(ActionStatus::Running),
+        "§41.2 and Appendix F.2: a shell killed while the action runs must leave `running` \
+         behind, or resume would read `pending` and rerun it blindly"
+    );
+}
+
+#[test]
+fn should_refuse_to_resume_a_non_idempotent_action_a_crash_left_running() {
+    let now = instant(1_000);
+    let (_directory, store) = store();
+    let plan = stored(
+        &PlanSpec::over(2).declaring(Idempotency::NonIdempotent),
+        &store,
+        now,
+    );
+    let plan = killed_during_apply(&plan, &store, &[(0, ActionStatus::Running)], now);
+    let script = common::Script::healthy();
+    let execute = script.execute();
+
+    let outcome = resuming(&plan, &store, &execute, now);
+
+    assert_eq!(
+        code_of(&outcome),
+        "change.resume_refused",
+        "§41.2: an action that was in flight has an unknown outcome and is not rerun blindly"
+    );
+    let blocked = outcome
+        .error()
+        .and_then(|error| error.metadata().get("blocked_actions").cloned())
+        .expect("the refusal names the action");
+    assert_eq!(
+        blocked,
+        Value::list([Value::string(plan.actions()[0].id().as_str())]),
+        "the refusal names the in-flight action and no other"
+    );
+    assert!(
+        script.calls().is_empty(),
+        "§41.2: nothing is executed, not even the action that never started"
+    );
+    assert!(!outcome.has_mutated(), "this run changed nothing");
+    assert_eq!(
+        outcome.status_of(plan.actions()[0].id()),
+        Some(ActionStatus::Running),
+        "the refusal reports what the records say, never a `pending` nobody observed"
+    );
+    assert_eq!(
+        outcome.uncertainty_boundary(),
+        &[plan.actions()[0].id().clone()],
+        "Appendix F.2: the in-flight action is the uncertainty boundary"
+    );
+}
+
+#[test]
+fn should_rerun_an_idempotent_action_a_crash_left_running_and_then_continue() {
+    let now = instant(1_000);
+    let (_directory, store) = store();
+    let plan = stored(
+        &PlanSpec::over(2).declaring(Idempotency::Idempotent),
+        &store,
+        now,
+    );
+    let plan = killed_during_apply(&plan, &store, &[(0, ActionStatus::Running)], now);
+    let script = common::Script::healthy();
+    let execute = script.execute();
+
+    let outcome = resuming(&plan, &store, &execute, now);
+
+    assert!(outcome.error().is_none(), "{:?}", outcome.error());
+    assert_eq!(
+        script.calls(),
+        vec!["svc-1".to_owned(), "svc-2".to_owned()],
+        "§41.1: an idempotent action may run again, and the rest of the plan follows it"
+    );
+    assert_eq!(outcome.state(), PlanState::Verified);
+}
+
+#[test]
+fn should_continue_after_a_failure_midway_without_rerunning_what_succeeded() {
+    let now = instant(1_000);
+    let (_directory, store) = store();
+    let plan = stored(
+        &PlanSpec::over(3).declaring(Idempotency::Idempotent),
+        &store,
+        now,
+    );
+    let first = common::Script::healthy().failing("svc-2");
+    let execute = first.execute();
+    let failed = applying(&plan, &store, &execute, now);
+    assert_eq!(
+        failed.state(),
+        PlanState::ApplyFailed,
+        "the fixture fails midway"
+    );
+    let plan = store.get(plan.id()).expect("the failed plan reads back");
+
+    let second = common::Script::healthy();
+    let execute = second.execute();
+    let outcome = resuming(&plan, &store, &execute, now);
+
+    assert!(outcome.error().is_none(), "{:?}", outcome.error());
+    assert_eq!(
+        second.calls(),
+        vec!["svc-2".to_owned(), "svc-3".to_owned()],
+        "§41.3: resume continues from the first unsettled action and never reruns a success"
+    );
+    assert_eq!(
+        outcome.state(),
+        PlanState::Verified,
+        "§4.8: the resumed plan is verified once its mutation completes"
+    );
+    assert!(
+        outcome
+            .statuses()
+            .iter()
+            .all(|(_, status)| *status == ActionStatus::Succeeded),
+        "every action reports what is now known about it, including the one that ran earlier"
+    );
+}
+
+#[test]
+fn should_verify_a_plan_whose_every_action_succeeded_before_the_crash() {
+    let now = instant(1_000);
+    let (_directory, store) = store();
+    let plan = stored(&PlanSpec::over(2), &store, now);
+    let plan = killed_during_apply(
+        &plan,
+        &store,
+        &[(0, ActionStatus::Succeeded), (1, ActionStatus::Succeeded)],
+        now,
+    );
+    let script = common::Script::healthy();
+    let execute = script.execute();
+
+    let outcome = resuming(&plan, &store, &execute, now);
+
+    assert!(script.calls().is_empty(), "nothing is left to execute");
+    assert_eq!(
+        outcome.state(),
+        PlanState::Verified,
+        "§4.8: the interruption fell between mutation and verification, so resume verifies"
+    );
+    assert_eq!(
+        store.get(plan.id()).expect("the plan reads back").state(),
+        PlanState::Verified,
+        "§41.2: the state resume reached is durable"
+    );
+}
+
+#[test]
+fn should_refuse_a_fresh_apply_of_a_plan_whose_records_say_it_already_began() {
+    let now = instant(1_000);
+    let (_directory, store) = store();
+    let sealed = stored(&PlanSpec::over(2), &store, now);
+    // The durable state write never landed, and the action record did: the plan still *reads*
+    // sealed, and only the record says the world may have changed.
+    crashed_after(&sealed, &store, &[(0, ActionStatus::Running)], now);
+    let script = common::Script::healthy();
+    let execute = script.execute();
+
+    let outcome = applying(&sealed, &store, &execute, now);
+
+    assert!(
+        outcome.error().is_some(),
+        "§2.7 and §41.2: a plan whose records say it began is resumed, never applied again"
+    );
+    assert!(script.calls().is_empty(), "nothing is executed twice");
+}
+
+#[test]
+fn should_refuse_to_resume_a_plan_that_already_reached_its_verdict() {
+    let now = instant(1_000);
+    let (_directory, store) = store();
+    let plan = stored(&PlanSpec::over(1), &store, now);
+    let script = common::Script::healthy();
+    let execute = script.execute();
+    let applied = applying(&plan, &store, &execute, now);
+    assert_eq!(applied.state(), PlanState::Verified, "the fixture applies");
+    let plan = store.get(plan.id()).expect("the plan reads back");
+
+    let again = common::Script::healthy();
+    let execute = again.execute();
+    let outcome = resuming(&plan, &store, &execute, now);
+
+    assert!(
+        outcome.error().is_some(),
+        "a verified plan has nothing to resume"
+    );
+    assert!(again.calls().is_empty());
+    assert_eq!(
+        outcome.state(),
+        PlanState::Verified,
+        "and it stays verified"
+    );
+}
+
+// ---- §4.6 and §17.2 on resume: the protection the plan rests on is re-established ------------
+
+/// [`resuming`], with protection and the providers that answer for it.
+fn resuming_protected<'a>(
+    plan: &'a ChangePlan,
+    store: &'a PlanStore,
+    protection: &'a [ono_change_core::ProtectionAction],
+    providers: &'a ono_change_protection::ProviderRegistry,
+    execute: &'a dyn Fn(&ono_change_core::PlanAction) -> ono_change_executor::ExecutionOutcome,
+    resume: bool,
+) -> ono_change_executor::ApplyOutcome {
+    let drift = common::no_drift();
+    let observe = common::observing(ono_change_core::VerificationStatus::Passed);
+    let request = ono_change_executor::ApplyRequest::new(
+        plan,
+        store,
+        "session-b",
+        instant(1_000),
+        protection,
+        providers,
+        &drift,
+        execute,
+        &observe,
+    );
+    let mut request = if resume { request.resuming() } else { request };
+    ono_change_executor::apply(&mut request)
+}
+
+/// A `require` plan over two targets whose first apply protected it and failed on the second.
+fn protected_and_failed_midway(
+    store: &PlanStore,
+) -> (ChangePlan, Vec<ono_change_core::ProtectionAction>) {
+    let now = instant(1_000);
+    let plan = stored(
+        &PlanSpec::over(2)
+            .declaring(Idempotency::Idempotent)
+            .under(ono_change_core::ProtectionMode::Require),
+        store,
+        now,
+    );
+    let protection = vec![common::protection(
+        &plan,
+        common::PROVIDER,
+        "tank/data",
+        now,
+    )];
+    let providers = common::registry(common::FakeRecoveryProvider::healthy());
+    let first = common::Script::healthy().failing("svc-2");
+    let execute = first.execute();
+    let failed = resuming_protected(&plan, store, &protection, &providers, &execute, false);
+    assert_eq!(
+        failed.state(),
+        PlanState::ApplyFailed,
+        "the fixture fails midway"
+    );
+    let plan = store.get(plan.id()).expect("the failed plan reads back");
+    (plan, protection)
+}
+
+#[test]
+fn should_keep_the_protection_it_created_where_a_crash_would_leave_it() {
+    let (_directory, store) = store();
+
+    let (plan, _) = protected_and_failed_midway(&store);
+
+    assert!(
+        !store
+            .assets_for(plan.id())
+            .expect("the store answers")
+            .is_empty(),
+        "§41.2: the assets a resume rests on are durable before the first mutation"
+    );
+}
+
+#[test]
+fn should_refuse_to_resume_a_protected_plan_whose_asset_no_longer_validates() {
+    let (_directory, store) = store();
+    let (plan, protection) = protected_and_failed_midway(&store);
+    let providers = common::registry(common::FakeRecoveryProvider::with_script(
+        common::ProviderScript::ValidatesWrongScope,
+    ));
+    let script = common::Script::healthy();
+    let execute = script.execute();
+
+    let outcome = resuming_protected(&plan, &store, &protection, &providers, &execute, true);
+
+    assert_eq!(
+        code_of(&outcome),
+        "recovery.coverage_insufficient",
+        "§4.6 and §17.2: a resume does not go on mutating without the protection it rests on"
+    );
+    assert!(script.calls().is_empty(), "nothing further is executed");
+    assert!(!outcome.has_mutated(), "this run changed nothing");
+    assert_eq!(
+        outcome.state(),
+        PlanState::ApplyFailed,
+        "and the plan stays where it was"
+    );
+}
+
+#[test]
+fn should_refuse_to_resume_a_protected_plan_whose_provider_is_gone() {
+    let (_directory, store) = store();
+    let (plan, protection) = protected_and_failed_midway(&store);
+    let providers = common::empty_registry();
+    let script = common::Script::healthy();
+    let execute = script.execute();
+
+    let outcome = resuming_protected(&plan, &store, &protection, &providers, &execute, true);
+
+    assert_eq!(code_of(&outcome), "recovery.coverage_insufficient");
+    assert!(
+        script.calls().is_empty(),
+        "an asset nobody can check is not protection"
+    );
+}
+
+#[test]
+fn should_refuse_to_resume_a_protected_plan_whose_asset_was_never_recorded() {
+    let now = instant(1_000);
+    let (_directory, store) = store();
+    let plan = stored(
+        &PlanSpec::over(2).under(ono_change_core::ProtectionMode::Require),
+        &store,
+        now,
+    );
+    let protection = vec![common::protection(
+        &plan,
+        common::PROVIDER,
+        "tank/data",
+        now,
+    )];
+    let plan = killed_during_apply(&plan, &store, &[(0, ActionStatus::Succeeded)], now);
+    let providers = common::registry(common::FakeRecoveryProvider::healthy());
+    let script = common::Script::healthy();
+    let execute = script.execute();
+
+    let outcome = resuming_protected(&plan, &store, &protection, &providers, &execute, true);
+
+    assert_eq!(code_of(&outcome), "recovery.coverage_insufficient");
+    assert!(
+        script.calls().is_empty(),
+        "§4.6: a fresh asset now would protect the half-changed state, so none is taken"
+    );
+}
+
+#[test]
+fn should_resume_a_protected_plan_whose_asset_still_validates() {
+    let (_directory, store) = store();
+    let (plan, protection) = protected_and_failed_midway(&store);
+    let provider = common::FakeRecoveryProvider::healthy();
+    let providers = common::registry(provider);
+    let script = common::Script::healthy();
+    let execute = script.execute();
+
+    let outcome = resuming_protected(&plan, &store, &protection, &providers, &execute, true);
+
+    assert!(outcome.error().is_none(), "{:?}", outcome.error());
+    assert_eq!(script.calls(), vec!["svc-2".to_owned()]);
+    assert_eq!(outcome.state(), PlanState::Verified);
+}
+
+// ---- §42.3: the claim is renewed while the apply runs --------------------------------------
+
+#[test]
+fn should_stop_before_the_next_action_when_another_session_took_the_plan_over() {
+    let now = instant(1_000);
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let path = directory.path().join("plans.sqlite3");
+    let store = PlanStore::open(&path).expect("the store opens");
+    let other = PlanStore::open(&path).expect("another session opens the same store");
+    let plan = stored(&PlanSpec::over(2), &store, now);
+    let taken: std::cell::RefCell<Option<ono_change_plan::Claim<'_>>> =
+        std::cell::RefCell::new(None);
+    let script = common::Script::healthy();
+    let inner = script.execute();
+    let execute = |action: &ono_change_core::PlanAction| {
+        // The first action outlives the lease, and another session takes the expired claim.
+        if taken.borrow().is_none() {
+            let later = instant(1_000 + 301);
+            *taken.borrow_mut() = Some(
+                other
+                    .claim_for(plan.id(), "session-x", later, ono_change_plan::CLAIM_LEASE)
+                    .expect("an expired claim is taken over"),
+            );
+        }
+        inner(action)
+    };
+
+    let outcome = applying(&plan, &store, &execute, now);
+
+    assert_eq!(
+        script.calls(),
+        vec!["svc-1".to_owned()],
+        "§42.4: once the plan is another session's, nothing further runs here"
+    );
+    assert_eq!(code_of(&outcome), "change.plan_already_applying");
+    assert_eq!(
+        outcome.status_of(plan.actions()[1].id()),
+        Some(ActionStatus::Pending),
+        "the action that never started says so"
+    );
+    assert_eq!(
+        outcome.failure_point(),
+        Some(ono_change_executor::FailurePoint::ActionNotStarted)
+    );
+    assert!(outcome.has_mutated(), "the first action did run");
+    assert_eq!(
+        store
+            .action_statuses(plan.id(), plan.revision())
+            .expect("the store answers")
+            .get(plan.actions()[0].id().as_str())
+            .copied(),
+        Some(ActionStatus::Succeeded),
+        "§4.7: what ran is recorded"
+    );
+    assert_eq!(
+        store.get(plan.id()).expect("the plan reads back").state(),
+        PlanState::Applying,
+        "a session that lost the claim writes no state over the one that holds it"
+    );
+    drop(taken);
+}
+
+// ---- §41.2: an action whose in-flight record could not be written never started -------------
+
+#[test]
+fn should_say_nothing_changed_when_the_first_in_flight_record_could_not_be_written() {
+    let now = instant(1_000);
+    let (_directory, store) = store();
+    let plan = stored(&PlanSpec::over(1), &store, now);
+    let providers = common::empty_registry();
+    let protection = Vec::new();
+    // The store loses the plan between the checks and the first action.
+    let drift = |_action: &ono_change_core::PlanAction| {
+        let _ = store.remove(plan.id());
+        Ok(Vec::new())
+    };
+    let script = common::Script::healthy();
+    let execute = script.execute();
+    let observe = common::observing(ono_change_core::VerificationStatus::Passed);
+    let mut request = ono_change_executor::ApplyRequest::new(
+        &plan,
+        &store,
+        "session-a",
+        now,
+        &protection,
+        &providers,
+        &drift,
+        &execute,
+        &observe,
+    );
+
+    let outcome = ono_change_executor::apply(&mut request);
+
+    assert!(script.calls().is_empty(), "the action was not started");
+    assert_eq!(
+        outcome.failure_point(),
+        Some(ono_change_executor::FailurePoint::ActionNotStarted)
+    );
+    assert!(
+        !outcome.has_mutated(),
+        "Appendix F: nothing ran, so nothing may say the system may have changed"
+    );
+    assert!(!outcome.state().has_mutated(), "nor may the state");
+    assert_eq!(
+        outcome.status_of(plan.actions()[0].id()),
+        Some(ActionStatus::Pending)
+    );
+}
+
+#[test]
+fn should_label_only_the_unstarted_action_when_a_later_in_flight_record_could_not_be_written() {
+    let now = instant(1_000);
+    let (_directory, store) = store();
+    let plan = stored(&PlanSpec::over(2), &store, now);
+    let script = common::Script::healthy();
+    let inner = script.execute();
+    let execute = |action: &ono_change_core::PlanAction| {
+        let outcome = inner(action);
+        let _ = store.remove(plan.id());
+        outcome
+    };
+
+    let outcome = applying(&plan, &store, &execute, now);
+
+    assert_eq!(script.calls(), vec!["svc-1".to_owned()]);
+    assert_eq!(
+        outcome.failure_point(),
+        Some(ono_change_executor::FailurePoint::ActionNotStarted)
+    );
+    assert!(
+        outcome.has_mutated(),
+        "the first action ran, and the outcome says so"
+    );
+    assert_eq!(
+        outcome.status_of(plan.actions()[1].id()),
+        Some(ActionStatus::Pending)
+    );
 }

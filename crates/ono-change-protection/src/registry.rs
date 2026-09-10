@@ -18,7 +18,8 @@ use std::sync::Arc;
 
 use ono_change_core::error;
 use ono_change_core::{
-    PersistenceDomain, ProviderCapabilities, RecoveryCandidate, RecoveryObjective, RecoveryProvider,
+    AssetState, PersistenceDomain, ProviderAvailability, ProviderCapabilities, RecoveryAsset,
+    RecoveryCandidate, RecoveryObjective, RecoveryProvider,
 };
 use ono_value::ErrorValue;
 
@@ -69,6 +70,7 @@ impl ProviderRefusal {
 pub struct DiscoveryOutcome {
     candidates: Vec<RecoveryCandidate>,
     refusals: Vec<ProviderRefusal>,
+    resolutions: Vec<(Arc<str>, PersistenceDomain)>,
 }
 
 impl DiscoveryOutcome {
@@ -84,6 +86,24 @@ impl DiscoveryOutcome {
         &self.refusals
     }
 
+    /// The domain `provider` resolved for itself, where it answered (ADR-0807).
+    #[must_use]
+    pub fn resolved_by(&self, provider: &str) -> Option<&PersistenceDomain> {
+        self.resolutions
+            .iter()
+            .find(|(id, _)| id.as_ref() == provider)
+            .map(|(_, domain)| domain)
+    }
+
+    /// Every domain a provider resolved for itself, with the provider that resolved it.
+    #[must_use]
+    pub fn resolutions(&self) -> Vec<(&str, &PersistenceDomain)> {
+        self.resolutions
+            .iter()
+            .map(|(id, domain)| (id.as_ref(), domain))
+            .collect()
+    }
+
     /// Whether this outcome establishes that nothing can protect the domain.
     ///
     /// An empty candidate list from a complete set of providers is an answer; an empty list from
@@ -97,6 +117,7 @@ impl DiscoveryOutcome {
     #[must_use]
     pub fn merged_with(mut self, other: Self) -> Self {
         self.candidates.extend(other.candidates);
+        self.resolutions.extend(other.resolutions);
         for refusal in other.refusals {
             if !self
                 .refusals
@@ -231,6 +252,7 @@ impl ProviderRegistry {
         let mut outcome = DiscoveryOutcome {
             candidates: Vec::new(),
             refusals: self.unavailable(),
+            resolutions: Vec::new(),
         };
         if !domain.is_protectable() {
             return outcome;
@@ -249,6 +271,165 @@ impl ProviderRegistry {
         outcome
     }
 
+    /// Asks every available provider what it could offer for `path`, each over the domain it
+    /// resolved itself (Appendix A.3, Appendix B, ADR-0807).
+    ///
+    /// `fallback` is Appendix B's resolution from the mount table. It decides first: a path the
+    /// core refused — a network filesystem, a pseudo or volatile one, an overlay whose writable
+    /// layer is elsewhere — is not offered to any provider, whatever that provider would say
+    /// (Appendix B.6, B.7, §32.4). Otherwise each provider is asked `resolve_domain(path)`:
+    ///
+    /// - `Some(domain)` is the provider's own identity for the object — the Btrfs provider's
+    ///   filesystem-and-subvolume-id reference rather than the `subvol=` option — and that is
+    ///   the domain its `discover` is handed;
+    /// - `None` means "not mine to map", and the provider is handed `fallback`;
+    /// - an error is §56.3's "could not establish this", and it becomes that provider's
+    ///   [`ProviderRefusal`] rather than an empty answer, so the outcome is not conclusive;
+    /// - a domain resolved through a different mount than `fallback`'s is a refusal too: the
+    ///   kernel's table decides which filesystem serves the path, and a provider that reads only
+    ///   its own filesystem's mounts can mistake an ext4 disk beneath its root for its root.
+    ///
+    /// Only an absolute path is offered to `resolve_domain`: a unit name or an endpoint is not a
+    /// path any provider maps.
+    #[must_use]
+    pub fn discover_at(
+        &self,
+        path: &str,
+        fallback: Option<&PersistenceDomain>,
+        objective: RecoveryObjective,
+    ) -> DiscoveryOutcome {
+        let mut outcome = DiscoveryOutcome {
+            candidates: Vec::new(),
+            refusals: self.unavailable(),
+            resolutions: Vec::new(),
+        };
+        if fallback.is_some_and(|domain| !domain.is_protectable()) {
+            return outcome;
+        }
+        for provider in self.available() {
+            let own = if path.starts_with('/') {
+                match provider.resolve_domain(path) {
+                    Ok(own) => own,
+                    Err(error) => {
+                        let reason = format!(
+                            "the persistence domain of {path} could not be established: {}",
+                            error.message()
+                        );
+                        outcome
+                            .refusals
+                            .push(ProviderRefusal::new(provider.id(), reason, error));
+                        continue;
+                    }
+                }
+            } else {
+                None
+            };
+            if let (Some(own), Some(fallback)) = (&own, fallback)
+                && own.is_protectable()
+                && !same_mount(own, fallback)
+            {
+                // §56.3 and Appendix B.1: the kernel's table says which filesystem serves the
+                // path. A provider that reached it through another mount is describing another
+                // filesystem, and a claim is not made over an object two readings disagree about.
+                let reason = format!(
+                    "the provider resolved {path} through the mount at {} while the kernel mount \
+                     table serves it from {}, so its answer describes another filesystem",
+                    display_point(own.mount().mount_point()),
+                    display_point(fallback.mount().mount_point())
+                );
+                let error = error::provider_unavailable(provider.id(), &reason);
+                outcome
+                    .refusals
+                    .push(ProviderRefusal::new(provider.id(), reason, error));
+                continue;
+            }
+            let domain = match (own, fallback) {
+                (Some(own), _) => {
+                    outcome
+                        .resolutions
+                        .push((Arc::from(provider.id()), own.clone()));
+                    own
+                }
+                (None, Some(fallback)) => fallback.clone(),
+                (None, None) => continue,
+            };
+            if !domain.is_protectable() {
+                continue;
+            }
+            match provider.discover(&domain, objective) {
+                Ok(candidates) => outcome.candidates.extend(candidates),
+                Err(error) => {
+                    let reason = error.message().to_owned();
+                    outcome
+                        .refusals
+                        .push(ProviderRefusal::new(provider.id(), reason, error));
+                }
+            }
+        }
+        outcome
+    }
+
+    /// The persistence domain of `path`: what the first available provider that maps it to an
+    /// object of its own resolves — the Btrfs subvolume that holds a file rather than the mount's
+    /// `subvol=` option (Appendix B.9) — and `fallback`, Appendix B's reading of the mount table,
+    /// where none does.
+    ///
+    /// The rules are [`Self::discover_at`]'s, without the discovery: a path the core refused is
+    /// offered to no provider, a provider that answers "not mine" or could not establish the
+    /// domain changes nothing (§56.3), and a domain resolved through another mount than
+    /// `fallback`'s describes another filesystem and is set aside. A provider that names the path
+    /// itself as its object — a copy provider, which protects a file by copying it — says how it
+    /// would protect the path and not what holds its state (Appendix B.1), so it changes nothing
+    /// either.
+    #[must_use]
+    pub fn resolve_at(&self, path: &str, fallback: &PersistenceDomain) -> PersistenceDomain {
+        if !fallback.is_protectable() || !path.starts_with('/') {
+            return fallback.clone();
+        }
+        self.available()
+            .into_iter()
+            .find_map(|provider| {
+                provider.resolve_domain(path).ok().flatten().filter(|own| {
+                    own.is_protectable()
+                        && same_mount(own, fallback)
+                        && own.object().is_some_and(|object| object != path)
+                })
+            })
+            .unwrap_or_else(|| fallback.clone())
+    }
+
+    /// Asks an asset's own provider whether a READY asset still is (§11.4, §37.5).
+    ///
+    /// A record says what was true when the asset was validated. The bytes behind it can be
+    /// deleted afterwards — a store emptied by hand, a snapshot destroyed outside Ono — and a
+    /// listing that repeats the record would show a recovery point that no longer exists. This is
+    /// the check a caller makes before it shows, plans from or relies on an asset: a READY asset is
+    /// validated again and comes back READY or INVALID on the strength of that validation. Any
+    /// other state is returned as it is, because only READY makes a claim a validation can
+    /// withdraw.
+    ///
+    /// # Errors
+    ///
+    /// `recovery.provider_unavailable` when the owning provider is not registered or cannot run
+    /// here, and the provider's own error when validation itself fails. §56.3: an asset nobody
+    /// could check is not thereby confirmed READY, and the caller decides how to show that.
+    pub fn revalidate(&self, asset: &RecoveryAsset) -> Result<RecoveryAsset, ErrorValue> {
+        if asset.state() != AssetState::Ready {
+            return Ok(asset.clone());
+        }
+        let Some(provider) = self.get(asset.provider()) else {
+            return Err(error::provider_unavailable(
+                asset.provider(),
+                "it is not registered here, so nothing can confirm the asset still exists",
+            ));
+        };
+        if let ProviderAvailability::Unavailable { reason } = provider.availability() {
+            return Err(error::provider_unavailable(asset.provider(), &reason));
+        }
+        let validation = provider.validate(asset)?;
+        Ok(asset.clone().validated(validation))
+    }
+
     /// The §12.2 capabilities `capabilities` would have to add before registration succeeds.
     #[must_use]
     pub fn registration_shortfall(capabilities: &ProviderCapabilities) -> Vec<&'static str> {
@@ -258,4 +439,15 @@ impl ProviderRegistry {
             .map(|capability| capability.as_str())
             .collect()
     }
+}
+
+/// Whether two resolutions of one path went through the same mount (Appendix B.1).
+fn same_mount(left: &PersistenceDomain, right: &PersistenceDomain) -> bool {
+    display_point(left.mount().mount_point()) == display_point(right.mount().mount_point())
+}
+
+/// A mount point as a person reads it, with `/` for the root rather than the empty string.
+fn display_point(point: &str) -> &str {
+    let trimmed = point.trim_end_matches('/');
+    if trimmed.is_empty() { "/" } else { trimmed }
 }

@@ -44,9 +44,11 @@ pub(crate) use field::{
 mod field;
 
 pub mod assets;
+pub mod cleanup;
 pub mod collapsed;
 pub mod impact;
 pub mod keys;
+pub mod overlay;
 pub mod plan;
 pub mod progress;
 pub mod protection;
@@ -55,11 +57,13 @@ pub mod symbols;
 pub mod verify;
 
 pub use assets::{recovery_assets, recovery_table};
+pub use cleanup::{NOTHING_REMOVED, cleanup_preview};
 pub use collapsed::{ActionGroup, action_groups, collapsed_plan};
 pub use impact::{blast_radius, boundaries, impact_block};
 pub use keys::{BINDINGS, Binding, InspectorAction, binding_for, key_help};
-pub use plan::{PLAN_NOT_EXECUTED, QUESTIONS, Section, plan_view};
-pub use progress::{Phase, apply_failure, apply_progress, next_steps};
+pub use overlay::plan_overlay;
+pub use plan::{OUTSTANDING_ACKNOWLEDGEMENTS, PLAN_NOT_EXECUTED, QUESTIONS, Section, plan_view};
+pub use progress::{Phase, apply_failure, apply_progress, failure_display, next_steps};
 pub use protection::{coverage_matrix, protection_block, recovery_asset_block};
 pub use recovery::{NEWER_STATE_AT_RISK, RECOVERY_NOT_EXECUTED, recovery_view};
 pub use symbols::{Charset, Symbol, legend};

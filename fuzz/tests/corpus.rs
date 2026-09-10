@@ -34,6 +34,11 @@ const AREAS: &[&str] = &[
     "plan and recovery asset deserialization",
     "persistence domain resolution",
     "storage provider tool output",
+    "plan parser/block grammar",
+    "provider protocol messages",
+    "snapshot names and paths",
+    "impact graph inputs",
+    "recovery metadata",
 ];
 
 /// The entry points v0.4.1 §41.2 requires the coverage-guided tier to cover, in its own words,
@@ -69,6 +74,14 @@ const GUIDED: &[(&str, &str)] = &[
     ("plan and recovery asset deserialization", "change-records"),
     ("persistence domain resolution", "persistence-domains"),
     ("storage provider tool output", "storage-tool-output"),
+    // The rest of v0.6 §54.3's list: the block an operator types, what a KUANG/11 provider sends,
+    // the names a provider derives, the graph a store hands back, and the recovery records a store
+    // and a file archive keep.
+    ("plan parser/block grammar", "plan-grammar"),
+    ("provider protocol messages", "provider-messages"),
+    ("snapshot names and paths", "snapshot-paths"),
+    ("impact graph inputs", "impact-graph"),
+    ("recovery metadata", "recovery-metadata"),
 ];
 
 #[test]

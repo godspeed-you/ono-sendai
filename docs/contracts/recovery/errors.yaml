@@ -64,6 +64,9 @@ groups:
     errors:
       - {code: Ono-Sendai-E1722, name: change.irreversible_not_accepted, nothing_changed: true, flag: "--accept-irreversible"}
       - {code: Ono-Sendai-E1723, name: change.risk_not_accepted, nothing_changed: true, flag: "--accept-risk"}
+      # `risk.yaml`'s service-outage gate: §28.3's guard that no healthy serving member of a
+      # targeted group is excluded. The shell raises it where every finding at the plan's class
+      # comes from `risk.bulk.whole-role` or `risk.downtime.service-restart`.
       - {code: Ono-Sendai-E1724, name: change.bulk_guard_failed, nothing_changed: true, flag: "--accept-service-outage"}
       - {code: Ono-Sendai-E1810, name: recovery.destructive_history_not_accepted, nothing_changed: true, flag: "--accept-newer-state-loss"}
 
@@ -89,6 +92,13 @@ groups:
       - {code: Ono-Sendai-E1807, name: recovery.coverage_insufficient, nothing_changed: true}
       - {code: Ono-Sendai-E1816, name: recovery.storage_pressure, nothing_changed: true}
       - {code: Ono-Sendai-E1817, name: recovery.asset_stale, nothing_changed: true}
+      # E1818 and E1819 are reserved by §45 for §18.4's quiesce window. The executor's quiesce
+      # path (`PrepareRequest::quiescing`) returns the `Quiesce` implementor's pause error
+      # unchanged, and its resume error unchanged or, when creation failed too, on the
+      # `QuiesceReport` beside the creation refusal. In this build nothing outside tests implements
+      # `Quiesce` or calls `quiescing`: no first-party provider declares `recovery.quiesce`
+      # (`check_quiesce` refuses one that does), and no KUANG/11 package is wired to the executor's
+      # quiesce path. So no shipped code path raises either.
       - {code: Ono-Sendai-E1818, name: recovery.quiesce_failed, nothing_changed: true}
 
   - id: execution
@@ -99,6 +109,7 @@ groups:
       - {code: Ono-Sendai-E1718, name: change.apply_failed, nothing_changed: false}
       - {code: Ono-Sendai-E1725, name: change.remote_state_unknown, nothing_changed: false}
       - {code: Ono-Sendai-E1813, name: recovery.apply_failed, nothing_changed: false}
+      # Reserved, and raised by no shipped code path in this build; see E1818 above.
       - {code: Ono-Sendai-E1819, name: recovery.resume_failed, nothing_changed: false}
 
   - id: interruption
@@ -119,6 +130,9 @@ groups:
     doc: "§24 and §56.3: what recovery would cost, and what could not be established about it."
     errors:
       - {code: Ono-Sendai-E1804, name: recovery.asset_expired, nothing_changed: true}
+      # Reserved by §45. No first-party provider or planner raises it in this build; recovery
+      # method selection records a provider's own refusal as it came, so a provider that returned
+      # it would surface it.
       - {code: Ono-Sendai-E1808, name: recovery.consistency_unknown, nothing_changed: true}
       - {code: Ono-Sendai-E1809, name: recovery.newer_state_conflict, nothing_changed: true}
       - {code: Ono-Sendai-E1811, name: recovery.requires_offline, nothing_changed: true}
@@ -131,7 +145,11 @@ groups:
       - {code: Ono-Sendai-E1815, name: recovery.cleanup_blocked, nothing_changed: true}
 
   - id: transaction
-    doc: "§27: the word, and the two refusals that keep it honest."
+    doc: >-
+      §27: the word, and the two refusals that keep it honest. Both are reserved by §45 and raised
+      by no code path in this build: no first-party provider declares `recovery.transaction`
+      (`xtask/src/change.rs::check_quiesce` refuses one that does), and their constructors in
+      `ono_change_core::error` have no caller outside tests.
     errors:
       - {code: Ono-Sendai-E1901, name: transaction.atomicity_unavailable, nothing_changed: true}
       - {code: Ono-Sendai-E1902, name: transaction.cross_provider_not_atomic, nothing_changed: true}
