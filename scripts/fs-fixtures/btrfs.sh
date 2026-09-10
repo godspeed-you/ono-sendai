@@ -17,7 +17,7 @@ mkdir -p /mnt/top && mount "$LOOP" /mnt/top
 btrfs subvolume create /mnt/top/@ >/dev/null
 btrfs subvolume create /mnt/top/@home >/dev/null
 btrfs subvolume create /mnt/top/@var >/dev/null
-btrfs subvolume create /mnt/top/@snapshots >/dev/null
+emit subvolume-create btrfs subvolume create /mnt/top/@snapshots
 mkdir -p /mnt/top/@/etc/nginx /mnt/top/@/var
 echo "worker_processes 4;" > /mnt/top/@/etc/nginx/nginx.conf
 # a plain directory named like a subvolume — Appendix B.9's trap

@@ -34,6 +34,8 @@ stdout-contains: one
 | `capability:` | a Linux capability the case needs, as `--cap-add` names it (`NET_ADMIN`, `SYS_ADMIN`). Repeatable. Only for a case whose whole point is a privileged path; the default is no capability at all. |
 | `user:` | the container user to run as. Only `root`, and only together with `capability:` — a capability is useless to the unprivileged `case` user. |
 | `security:` | a `--security-opt` value the case needs, such as `apparmor=unconfined` for a case that mounts. Repeatable, and only for a privileged case: the host's AppArmor profile denies `mount(2)` even to `CAP_SYS_ADMIN`. |
+| `privileged:` | `true` runs the case in a privileged container with the host's `/dev`, for a case that builds its own disposable loop filesystem (v0.6 Appendix G.3). Only for such a case; the network stays `none` and every other case runs unprivileged (ADR-0843). |
+| `image:` | `filesystems` runs the case in the `runtime-filesystems` stage of `docker/Dockerfile`, whose btrfs-progs and OpenZFS userland the recovery providers validate (v0.6 Appendix G.4). Only for a case that builds a real Btrfs filesystem or ZFS pool; the harness builds that image only when a selected case names it (ADR-0846). |
 | `timeout:` | seconds before the case is killed and failed. Defaults to `30`. |
 | `stdout-contains:` | literal text that must appear. Repeatable. |
 | `stdout-not-contains:` | literal text that must not appear. Repeatable. |

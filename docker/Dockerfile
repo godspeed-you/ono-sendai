@@ -41,14 +41,35 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     && install -m 0755 target/release/kuang-sign /usr/local/bin/kuang-sign \
     && install -m 0755 target/release/xtask /usr/local/bin/ono-release-tool
 
+# v0.6 §63.8 and §63.9 (ADR-0846): the cases that build a disposable Btrfs filesystem or ZFS pool
+# on a loop file (Appendix G.3) run in this stage. Each recovery provider validates the userland it
+# drives (Appendix G.4) — btrfs-progs 6.16 or 6.17, OpenZFS 2.4.1 — and that userland has to match
+# the host's kernel module. Debian bookworm carries neither; Ubuntu 26.04 carries both. Only a case
+# declaring `image: filesystems` runs here, and the main image below stays the file's last stage.
+FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d AS runtime-filesystems
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+        ca-certificates bash coreutils util-linux mount findutils grep sed gawk procps diffutils \
+        btrfs-progs zfsutils-linux \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /usr/local/bin/ono /usr/local/bin/ono
+RUN useradd --create-home --shell /usr/local/bin/ono case
+USER case
+WORKDIR /home/case
+ENV ONO_IN_CONTAINER=1
+CMD ["ono"]
+
 FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS runtime
 
 # Fixtures the provider phases need: real processes, real services, real sockets, real users,
 # and the ordinary programs a shell must be able to run.
+# The cases that build a real Btrfs filesystem or ZFS pool run in the `runtime-filesystems` stage
+# above, whose userland the providers validate (ADR-0846); `zfsutils-linux` is absent here, and
+# Debian's `btrfs-progs` is a version the Btrfs provider degrades at.
 RUN apt-get update && apt-get install --yes --no-install-recommends \
         ca-certificates bash coreutils procps iproute2 util-linux \
         findutils grep sed gawk diffutils less file psmisc \
         git curl lsof \
+        btrfs-progs \
         ncurses-base ncurses-bin \
     && rm -rf /var/lib/apt/lists/*
 
