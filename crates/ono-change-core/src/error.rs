@@ -645,7 +645,9 @@ pub fn resume_refused(plan: &PlanId, blocked: &[(String, String)]) -> ErrorValue
         ),
     )
     .with_help(
-        "v0.6 §41.3: resuming re-checks the preconditions of the actions that have not run, and          refuses where one already ran, where its outcome is unknown, or where the world moved.          The plan stays inspectable (§41.2)"
+        "v0.6 §41.3: resuming re-checks the preconditions of the actions that have not run, and \
+         refuses where one already ran, where its outcome is unknown, or where the world moved. \
+         The plan stays inspectable (§41.2)"
             .to_owned(),
     )
     .with_metadata("plan", Value::string(&plan.to_string()))
@@ -661,6 +663,29 @@ pub fn resume_refused(plan: &PlanId, blocked: &[(String, String)]) -> ErrorValue
                 .map(|(action, reason)| Value::string(&format!("{action}: {reason}"))),
         ),
     )
+}
+
+/// Every action of the plan has settled, so §41.3 has nothing to resume.
+///
+/// A separate sentence from [`resume_refused`] because it is a separate fact: nothing is blocked
+/// and nothing is left, and counting the actions that "cannot be re-established" would report
+/// one where there are none.
+#[must_use]
+pub fn resume_complete(plan: &PlanId, state: crate::state::PlanState) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::ChangeResumeRefused,
+        format!(
+            "plan {} has nothing to resume: it is {state} and every action has settled",
+            plan.short()
+        ),
+    )
+    .with_help(
+        "v0.6 §41.3: resuming continues the actions that have not run. `inspect plan` shows what \
+         this one did, and `recover` plans the way back."
+            .to_owned(),
+    )
+    .with_metadata("plan", Value::string(&plan.to_string()))
+    .with_metadata("state", Value::string(state.as_str()))
 }
 
 /// A recovery provider cannot run here (§12.2, Appendix G.4).

@@ -91,6 +91,23 @@ impl PlanState {
         )
     }
 
+    /// Whether §4.8 has already answered for this plan.
+    ///
+    /// `VERIFIED`, `DEGRADED` and `FAILED` are the three verdicts, and a plan that has one has
+    /// finished being applied. §41.2's reconstruction from action records stops at `VERIFYING`,
+    /// which is less than the store knows once the verdict is durable (ADR-0817).
+    #[must_use]
+    pub const fn is_verdict(self) -> bool {
+        matches!(
+            self,
+            PlanState::Verified
+                | PlanState::Degraded
+                | PlanState::Failed
+                | PlanState::Recovered
+                | PlanState::RecoveryFailed
+        )
+    }
+
     /// Whether §37.2 forbids ordinary success retention from removing this plan's assets.
     ///
     /// A plan that failed is a plan somebody may still need to recover, so its recovery assets

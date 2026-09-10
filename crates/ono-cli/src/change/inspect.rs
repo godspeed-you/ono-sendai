@@ -47,7 +47,17 @@ impl CommandImpl for GetPlan {
                 .and_then(|value| value.as_str().ok())
                 .filter(|text| !text.trim().is_empty())
             {
-                let plan = super::plan_of(&state, reference)?;
+                // §7.5: a rebase leaves the revision it came from exactly as it was, and the
+                // plan that was refused is the evidence for why. `--revision` is how it is read
+                // back; without it the answer is the latest, which is what an operator acting on
+                // a plan means by naming it.
+                let plan = match revision_of(&arguments)? {
+                    Some(revision) => {
+                        let id = state.store().resolve(reference)?;
+                        state.store().get_revision(&id, revision)?
+                    }
+                    None => super::plan_of(&state, reference)?,
+                };
                 return Ok(Outcome::Values(ValueStream::from_values([
                     super::plan_value(&plan)?,
                 ])));
@@ -76,6 +86,28 @@ impl CommandImpl for GetPlan {
             Ok(Outcome::Values(ValueStream::from_values(values)))
         })
     }
+}
+
+/// `--revision`, refused rather than rounded when it is not a revision number (§7.5).
+fn revision_of(arguments: &ono_command::BoundArguments) -> Result<Option<u32>, ErrorValue> {
+    let Some(value) = arguments.option("revision") else {
+        return Ok(None);
+    };
+    if matches!(value, Value::Null) {
+        return Ok(None);
+    }
+    let number = value.as_int()?;
+    u32::try_from(number).map(Some).map_err(|_| {
+        ErrorValue::new(
+            ono_core::ErrorCode::TypeMismatch,
+            format!("`--revision {number}` is not a revision number"),
+        )
+        .with_help(
+            "v0.6 §7.5: revisions are numbered from 1, and each rebase adds one. `get plan <id>` \
+             without it answers with the latest"
+                .to_owned(),
+        )
+    })
 }
 
 /// The `--state` values, refused by name rather than silently ignored (§4.1).
@@ -309,7 +341,10 @@ impl CommandImpl for ResumePlan {
                 if !blocked.is_empty() {
                     return Err(error::resume_refused(plan.id(), &blocked));
                 }
-                return Ok(Outcome::Values(ValueStream::from_values(values)));
+                // Nothing blocked and nothing to continue: the plan is complete. §41.3 asks for
+                // a decision rather than a silent no-op, and an empty answer with a zero exit
+                // reads as "resumed" to a script.
+                return Err(error::resume_complete(plan.id(), outcome.state()));
             }
             // §41.3: what may be rerun is rerun through the ordinary apply path, so the same
             // gates, the same claim and the same ledger events apply to a resumed plan as to a

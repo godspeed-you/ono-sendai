@@ -224,6 +224,20 @@ pub fn resume_with(
     }
 
     let state = reconstructed_state(plan, &statuses);
+    // §41.3 resumes the actions that have *not* run. A plan with none left is complete, and
+    // drift about the objects the actions already changed is exactly what applying them did —
+    // reporting it as a reason not to resume would answer a question nobody asked.
+    if resumable.is_empty() && blocked.is_empty() {
+        return ResumeOutcome {
+            state,
+            decision: ResumeDecision::AlreadyComplete,
+            resumable,
+            completed,
+            blocked,
+            uncertain,
+            refusal: None,
+        };
+    }
     let blocking_drift: Vec<&DriftFinding> = drift
         .iter()
         .filter(|finding| finding.verdict().blocks_apply())
@@ -279,6 +293,13 @@ fn reconstructed_state(
     plan: &ChangePlan,
     statuses: &std::collections::BTreeMap<String, ActionStatus>,
 ) -> PlanState {
+    // A state the store already holds is evidence, not a guess: §4.1's transitions are durable
+    // (ADR-0817), so a plan the store calls VERIFIED is verified and reconstructing `VERIFYING`
+    // from the action records would answer with less than is known. The reconstruction is for
+    // the case the store cannot answer — a run interrupted between the mutation and the write.
+    if plan.state().is_terminal() || plan.state().is_verdict() {
+        return plan.state();
+    }
     let mutating: Vec<&PlanAction> = plan
         .actions()
         .iter()

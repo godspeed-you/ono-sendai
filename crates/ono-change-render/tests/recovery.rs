@@ -22,17 +22,33 @@ fn should_title_a_recovery_plan_distinctly_from_a_change_plan() {
 }
 
 #[test]
-fn should_put_the_newer_state_block_above_the_restore_block() {
+fn should_name_the_objects_it_would_restore_under_the_restore_target() {
+    // Appendix E.6's `RESTORE TARGET` is the objects being restored, which is what an operator
+    // scans the block for. The state they would be restored *from* is a fact about the source,
+    // and it sits with the plan and the asset that hold it.
     let lines = recovery_view(&selective_recovery(), 80, Charset::Ascii);
-    let newer = index_of(&lines, NEWER_STATE_AT_RISK).expect("the newer-state block exists");
-    let restore = lines
+    let target = index_of(&lines, "RESTORE TARGET").expect("the restore target exists");
+    let named = lines[target + 1..]
         .iter()
-        .position(|line| line == "restore")
-        .expect("the restore block exists");
+        .take_while(|line| line.starts_with("  "))
+        .any(|line| line.contains('/'));
     assert!(
-        newer < restore,
-        "Appendix E.6: recovery always shows newer-state impact above action details"
+        named,
+        "the objects the recovery would put back are under `RESTORE TARGET`. Got {lines:?}"
     );
+    let source = index_of(&lines, "source").expect("the source block exists");
+    assert!(
+        newer_first(&lines) && target < source,
+        "Appendix E.6: newer-state impact, then the target, then where it comes from. \
+         Got {lines:?}"
+    );
+}
+
+/// Whether Appendix E.6's newer-state block is above everything else it orders.
+fn newer_first(lines: &[String]) -> bool {
+    let newer = index_of(lines, NEWER_STATE_AT_RISK).unwrap_or(usize::MAX);
+    let target = index_of(lines, "RESTORE TARGET").unwrap_or(0);
+    newer < target
 }
 
 #[test]

@@ -49,14 +49,18 @@ pub fn recovery_view(recovery: &RecordValue, width: usize, charset: Charset) -> 
     heading(&mut lines, NEWER_STATE_AT_RISK);
     lines.extend(newer_state_lines(recovery, width, charset));
 
+    // Appendix E.6's `RESTORE TARGET` is the objects being restored — the thing an operator
+    // scans this block for. `target_state` is the state they would be restored *from*, and it
+    // belongs with the plan and the asset in `source` rather than under a heading that reads as
+    // the destination.
     heading(&mut lines, "RESTORE TARGET");
-    lines.push(fit(
-        &format!(
-            "  {}",
-            text(recovery, "target_state").unwrap_or_else(|| "unknown".to_owned())
-        ),
-        width,
-    ));
+    let restores = strings(recovery, "restores");
+    if restores.is_empty() {
+        lines.push(fit("  no object was named for restore", width));
+    }
+    for object in &restores {
+        lines.push(fit(&format!("  {object}"), width));
+    }
 
     heading(&mut lines, "source");
     match text(recovery, "source_plan") {
@@ -77,15 +81,13 @@ pub fn recovery_view(recovery: &RecordValue, width: usize, charset: Charset) -> 
         let short: String = body.chars().take(crate::SHORT).collect();
         lines.push(fit(&format!("  recovery asset recovery/{short}"), width));
     }
-
-    heading(&mut lines, "restore");
-    let restores = strings(recovery, "restores");
-    if restores.is_empty() {
-        lines.push(fit("  no object was named for restore", width));
-    }
-    for object in &restores {
-        lines.push(fit(&format!("  {object}"), width));
-    }
+    lines.push(fit(
+        &format!(
+            "  state {}",
+            text(recovery, "target_state").unwrap_or_else(|| "unknown".to_owned())
+        ),
+        width,
+    ));
 
     heading(&mut lines, "method");
     for field in ["method", "goal", "directory_policy"] {

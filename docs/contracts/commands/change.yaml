@@ -84,6 +84,7 @@ commands:
       - {name: state, type: string, repeatable: true, doc: "Restrict to plans in these lifecycle states (§4.1), such as `failed` or `verified`."}
       - {name: all, type: bool, doc: "Include closed and expired plans, which are hidden by default."}
       - {name: since, type: duration, doc: "Restrict to plans created within this window."}
+      - {name: revision, type: int, doc: "One earlier revision of a named plan (§7.5). A rebase leaves the revision it came from exactly as it was, and this is how it is read: the plan that was refused is the evidence for why it was."}
     privilege: none
     streaming: true
     phase: P
@@ -91,6 +92,7 @@ commands:
       - get plan
       - get plan a82f
       - get plan --state failed
+      - get plan a82f --revision 1
 
   - id: ono.change-plan.inspect
     verb: inspect
