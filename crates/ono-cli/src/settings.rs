@@ -611,6 +611,131 @@ pub const CATALOGUE: &[SettingSpec] = &[
         default: DefaultValue::Bool(true),
         range: None,
     },
+    // ---------------------------------------------------------------------------------------
+    // v0.6 §53's reference configuration, exactly as §53 prints it. The seventeen keys and their
+    // defaults are held to `ono_change_protection::settings::ChangeSettings::defaults()` by
+    // `xtask/src/change.rs::check_settings`, because §53's closing line — configuration MUST NOT
+    // silently weaken explicit plan requirements — is only checkable if the two agree.
+    // ---------------------------------------------------------------------------------------
+    SettingSpec {
+        key: "change.default_protection",
+        ty: SettingType::String,
+        description: "The protection mode a plan runs under when it asks for none (v0.6 §17.1, §17.2, §53). `off`, `prefer`, `require` or `maximize`. A plan may ask for more and never for less (§53).",
+        default: DefaultValue::Str("prefer"),
+        range: None,
+    },
+    SettingSpec {
+        key: "change.default_strategy",
+        ty: SettingType::String,
+        description: "The execution strategy a plan takes when it states none (v0.6 §28.4, §53). `sequential`, `batch <n>`, `canary <n>` or `parallel <n>`.",
+        default: DefaultValue::Str("sequential"),
+        range: None,
+    },
+    SettingSpec {
+        key: "change.high_risk_requires_ack",
+        ty: SettingType::Bool,
+        description: "Whether a HIGH plan needs an explicit acknowledgement before it applies (v0.6 §19.4, §53). §40.3 makes the acknowledgement a flag, so a script never waits for it.",
+        default: DefaultValue::Bool(true),
+        range: None,
+    },
+    SettingSpec {
+        key: "change.critical_risk_requires_ack",
+        ty: SettingType::Bool,
+        description: "Whether a CRITICAL plan needs an explicit acknowledgement before it applies (v0.6 §19.4, §53).",
+        default: DefaultValue::Bool(true),
+        range: None,
+    },
+    SettingSpec {
+        key: "change.allow_opaque_actions",
+        ty: SettingType::Bool,
+        description: "Whether §6.3's escape may be used on this host at all (v0.6 §6.2, §6.3, §53). Off by default: an arbitrary external command has no declared effects, and Appendix A.7 caps a plan that carries one at partially protected.",
+        default: DefaultValue::Bool(false),
+        range: None,
+    },
+    SettingSpec {
+        key: "change.bulk.warn_targets",
+        ty: SettingType::Int,
+        description: "The target count above which a plan's scope is called out (v0.6 §28.3, §53).",
+        default: DefaultValue::Int(10),
+        range: None,
+    },
+    SettingSpec {
+        key: "change.bulk.high_risk_targets",
+        ty: SettingType::Int,
+        description: "The target count above which a plan's scope is HIGH risk (v0.6 §28.3, §53), and therefore needs §19.4's acknowledgement.",
+        default: DefaultValue::Int(50),
+        range: None,
+    },
+    SettingSpec {
+        key: "recovery.retention",
+        ty: SettingType::Duration,
+        description: "How long a recovery asset is kept after a plan verified (v0.6 §37.1, §53). §37.2 exempts the assets of a failed plan from it entirely.",
+        default: DefaultValue::Nanos(86_400_000_000_000),
+        range: None,
+    },
+    SettingSpec {
+        key: "recovery.max_auto_snapshot_count",
+        ty: SettingType::Int,
+        description: "How many automatic recovery assets one plan may propose (v0.6 §38.3, §53).",
+        default: DefaultValue::Int(32),
+        range: None,
+    },
+    SettingSpec {
+        key: "recovery.min_filesystem_free",
+        ty: SettingType::String,
+        description: "The free-space floor automatic protection stays above (v0.6 §38.3, §53, Appendix D.3). A share such as `10%` or a quantity such as `2GiB`; below it, protection fails closed rather than worsening exhaustion.",
+        default: DefaultValue::Str("10%"),
+        range: None,
+    },
+    SettingSpec {
+        key: "recovery.prefer_read_only_snapshots",
+        ty: SettingType::Bool,
+        description: "Whether recovery snapshots are made read-only where the mechanism allows it (v0.6 §14.5, §53). A writable recovery point is not the state that was captured.",
+        default: DefaultValue::Bool(true),
+        range: None,
+    },
+    SettingSpec {
+        key: "recovery.zfs.enabled",
+        ty: SettingType::Bool,
+        description: "Whether the ZFS recovery provider is registered at all (v0.6 §53). Switching it off is an operator saying do not ask; a provider whose tool is merely absent stays registered and reports why (§12.2).",
+        default: DefaultValue::Bool(true),
+        range: None,
+    },
+    SettingSpec {
+        key: "recovery.zfs.prefer_selective_restore",
+        ty: SettingType::Bool,
+        description: "Whether recovery prefers reading the wanted objects out of a snapshot over rolling the dataset back (v0.6 §13.5, §53). Appendix C.1 orders the methods least-destructive first, and this is that order applied.",
+        default: DefaultValue::Bool(true),
+        range: None,
+    },
+    SettingSpec {
+        key: "recovery.zfs.allow_destructive_rollback",
+        ty: SettingType::Bool,
+        description: "Whether a rollback that destroys newer snapshots, bookmarks or clones may be planned (v0.6 §13.6, §53). Off by default, and §56.1 keeps what it would destroy enumerated whatever this says.",
+        default: DefaultValue::Bool(false),
+        range: None,
+    },
+    SettingSpec {
+        key: "recovery.btrfs.enabled",
+        ty: SettingType::Bool,
+        description: "Whether the Btrfs recovery provider is registered at all (v0.6 §53).",
+        default: DefaultValue::Bool(true),
+        range: None,
+    },
+    SettingSpec {
+        key: "recovery.btrfs.prefer_read_only_snapshots",
+        ty: SettingType::Bool,
+        description: "Whether Btrfs recovery snapshots are created read-only (v0.6 §14.5, §53).",
+        default: DefaultValue::Bool(true),
+        range: None,
+    },
+    SettingSpec {
+        key: "recovery.btrfs.root_recovery",
+        ty: SettingType::String,
+        description: "How root recovery is carried out by default (v0.6 §14.6, §53, Appendix D.9). `online-selective`, `offline-replacement` or `next-boot`.",
+        default: DefaultValue::Str("next-boot"),
+        range: None,
+    },
 ];
 
 /// The declaration of `key`, if there is one.
