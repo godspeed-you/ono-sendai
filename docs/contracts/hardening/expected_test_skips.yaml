@@ -353,6 +353,51 @@ declared:
   - id: "crates/ono-recovery-btrfs/tests/real_btrfs.rs::should_report_a_real_cost_that_is_estimated_and_never_zero"
     category: fixture_not_applicable
     prerequisite: "`ONO_BTRFS_TESTS=1`, a validated `btrfs-progs`, and the privilege to make and mount a loop device, so the suite may build its own disposable filesystem and tear it down (v0.6 Appendix G.3)"
+  - id: "crates/ono-cli/tests/change_gates.rs::should_refuse_a_high_risk_plan_when_the_risk_was_not_acknowledged"
+    category: fixture_not_applicable
+    prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
+  - id: "crates/ono-cli/tests/change_gates.rs::should_name_the_rule_that_fired_when_a_risk_gate_refuses"
+    category: fixture_not_applicable
+    prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
+  - id: "crates/ono-cli/tests/change_gates.rs::should_change_nothing_when_a_risk_gate_refuses"
+    category: fixture_not_applicable
+    prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
+  - id: "crates/ono-cli/tests/change_gates.rs::should_get_past_the_gate_when_the_risk_is_acknowledged"
+    category: fixture_not_applicable
+    prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
+  - id: "crates/ono-cli/tests/change_gates.rs::should_seal_the_acknowledgement_into_a_new_revision"
+    category: fixture_not_applicable
+    prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
+  - id: "crates/ono-cli/tests/change_gates.rs::should_name_the_flag_that_answers_the_gate"
+    category: fixture_not_applicable
+    prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
+  - id: "crates/ono-cli/tests/change_gates.rs::should_require_the_commitment_to_be_confirmed_outside_a_terminal"
+    category: fixture_not_applicable
+    prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
+  - id: "crates/ono-cli/tests/change_planning.rs::should_leave_the_service_untouched_when_a_restart_is_planned"
+    category: fixture_not_applicable
+    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
+  - id: "crates/ono-cli/tests/change_planning.rs::should_answer_with_a_sealed_plan_when_a_mutation_is_planned"
+    category: fixture_not_applicable
+    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
+  - id: "crates/ono-cli/tests/change_planning.rs::should_say_that_nothing_ran_when_a_plan_is_shown"
+    category: fixture_not_applicable
+    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
+  - id: "crates/ono-cli/tests/change_planning.rs::should_produce_one_plan_when_a_pipeline_supplies_the_targets"
+    category: fixture_not_applicable
+    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
+  - id: "crates/ono-cli/tests/change_planning.rs::should_freeze_exactly_the_objects_the_pipeline_resolved"
+    category: fixture_not_applicable
+    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
+  - id: "crates/ono-cli/tests/change_planning.rs::should_produce_one_plan_per_object_when_it_is_asked_for"
+    category: fixture_not_applicable
+    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
+  - id: "crates/ono-cli/tests/change_planning.rs::should_split_a_block_into_actions_and_verification_contracts"
+    category: fixture_not_applicable
+    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
+  - id: "crates/ono-cli/tests/change_planning.rs::should_record_the_strategy_in_the_sealed_plan"
+    category: fixture_not_applicable
+    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
 
 canonical_ci:
   # The `ubuntu-latest` GitHub runner that `.github/workflows/ci.yml` runs the gate on: an

@@ -28,7 +28,7 @@
 use std::sync::{Arc, OnceLock, RwLock};
 
 use jiff::{Timestamp, tz::TimeZone};
-use ono_temporal_core::{LedgerRead, TemporalContext, TimeSelector};
+use ono_temporal_core::{EventQuery, LedgerRead, LedgerWrite, TemporalContext, TimeSelector};
 use ono_temporal_ledger::Ledger;
 use ono_temporal_query::search::EventReferences;
 use tokio::sync::{Mutex, MutexGuard};
@@ -74,11 +74,19 @@ impl TemporalState {
     /// [`Ledger::default`] is that: it opens nothing, creates nothing and reads nothing.
     #[must_use]
     pub fn new(zone: TimeZone) -> Self {
+        // The session *adopts* the published ledger rather than creating a second one. v0.6
+        // §22.1 writes plan lifecycle events through `writable_ledger`, and `plan` is claimed by
+        // the evaluator before the registry path (ADR-0814), so it can write before a session
+        // exists. A session that made its own would discard those writes — the plan's history
+        // would have happened and `timeline` would show none of it. §29.2 has the two histories
+        // share one ledger, and there is one per process from whichever of them touches it
+        // first.
+        let ledger = writable_ledger();
         Self {
             context: Arc::new(TemporalContext::Present),
             started_at: observation_origin(),
             trail: Vec::new(),
-            ledger: Arc::new(Ledger::default()),
+            ledger,
             references: EventReferences::new(),
             zone,
             show_source_tags: true,
@@ -169,6 +177,13 @@ impl TemporalState {
     /// and writes the same handle rather than a second one, so `get recorder` and `timeline`
     /// cannot disagree about how much history there is.
     pub fn set_shared_ledger(&mut self, ledger: Arc<Ledger>) {
+        // Whatever the ledger being replaced already holds moves across. Configuration is lazy —
+        // the first temporal command applies `temporal.session.max_events` by swapping the
+        // ledger — and v0.6 §22.1's plan events are written before any temporal command runs,
+        // so a straight replacement dropped the history of a plan that had already been sealed.
+        // §6.8 makes an event's identity its content digest, so re-appending what is already
+        // there is a duplicate rather than a second event.
+        carry_over(self.ledger.as_ref(), ledger.as_ref());
         self.ledger = Arc::clone(&ledger);
         if let Ok(mut held) = published_ledger().write() {
             *held = ledger;
@@ -246,6 +261,30 @@ fn published() -> &'static RwLock<Arc<TemporalContext>> {
 fn published_ledger() -> &'static RwLock<Arc<Ledger>> {
     static LEDGER: OnceLock<RwLock<Arc<Ledger>>> = OnceLock::new();
     LEDGER.get_or_init(|| RwLock::new(Arc::new(Ledger::default())))
+}
+
+/// Moves every event `from` holds into `into`, with the evidence behind it (§6.8, §22.1).
+///
+/// A failure to read or to write is not reported: this runs while a session is being configured,
+/// and a ledger that could not be carried over is a history that is shorter than it might have
+/// been rather than a reason to refuse the configuration. §10.7's bound applies to the
+/// destination, so an over-full carry-over is trimmed by the ledger itself.
+fn carry_over(from: &Ledger, into: &Ledger) {
+    if std::ptr::eq(from, into) {
+        return;
+    }
+    let Ok(events) = from.events(&EventQuery::default()) else {
+        return;
+    };
+    if events.is_empty() {
+        return;
+    }
+    let ids: Vec<_> = events
+        .iter()
+        .flat_map(|event| event.evidence.iter().cloned())
+        .collect();
+    let evidence = from.evidence(&ids).unwrap_or_default();
+    let _ = into.append(&events, &evidence);
 }
 
 /// Where in time this process is standing, without taking the lock (§4.1).

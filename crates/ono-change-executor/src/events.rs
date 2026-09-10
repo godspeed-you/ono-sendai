@@ -134,6 +134,26 @@ impl PlanLifecycle {
         lifecycle
     }
 
+    /// A recorder for a plan whose `PlanCreated` is already in the ledger (§22.1, §6.8).
+    ///
+    /// `apply` records what *this* run did; the plan was created and sealed earlier, by `plan`,
+    /// and re-staging `PlanCreated` writes a second creation event for one creation. §6.8 makes
+    /// an event's identity a content digest, so the two differ only by their instant — which is
+    /// enough for both to be kept, and neither of them is wrong, which is what makes it worth
+    /// not writing.
+    #[must_use]
+    pub fn continuing(plan: &ChangePlan, scope: SpatialScope) -> Self {
+        Self {
+            plan: plan.id().clone(),
+            revision: plan.revision(),
+            intent: Arc::from(plan.intent().text()),
+            session: Arc::from(plan.session()),
+            scope,
+            events: Vec::new(),
+            evidence: Vec::new(),
+        }
+    }
+
     /// The plan the lifecycle is about, which §22.4 makes the causal anchor.
     #[must_use]
     pub const fn plan(&self) -> &PlanId {

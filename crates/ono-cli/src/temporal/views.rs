@@ -158,16 +158,28 @@ impl CommandImpl for Timeline {
             // from, because the command the reader types next is a shell that issued none.
             let timeline = timeline.with_references(ledger.as_ref(), state.references());
             let record = timeline.to_record()?;
+            // v0.6 §22.4: the plan identity is a causal anchor. `ono-change-executor` writes it
+            // into the payload of every `ono.plan.*` event, so `timeline --plan a82f` is a filter
+            // on this window rather than a second history to read (v0.6 §22.1). The window itself
+            // is published unfiltered below, because the coverage and the gaps §11.7 obliges the
+            // renderer to draw are facts about the interval and not about the events kept.
+            let plan = arguments
+                .option("plan")
+                .and_then(|value| value.as_str().ok())
+                .map(str::to_owned);
             // §11.4 fixes the value: `Stream<TemporalEvent>`, and "this MUST work" —
             // `timeline --since 1h | where kind == "object.changed"`. So the events are the
             // stream, and everything the window is a statement *about* — its bounds, its
             // coverage, its gaps, whether a limit cut it — is published for the renderer instead
             // of wrapped around them, because §11.7 makes drawing a gap the renderer's obligation
             // and §11.4 makes the renderer "only a presentation" (ADR-0778).
-            let events = match record.get("events") {
+            let mut events = match record.get("events") {
                 Some(Value::List(items)) => items.to_vec(),
                 _ => Vec::new(),
             };
+            if let Some(plan) = plan.as_deref() {
+                events.retain(|event| crate::change::names_plan(event, plan));
+            }
             crate::sink::publish_timeline(record);
             // §11.5's default rendering is a row per event, so `RenderOptions::group_repeats`
             // stays off in `crate::sink`. §19.4's grouping belongs to the full-screen timeline of

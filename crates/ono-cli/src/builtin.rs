@@ -391,6 +391,18 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         ));
     }
 
+    // v0.6 §5's list of what an operator may ask includes "why does it say that", and a sealed
+    // plan is where that question lands: `explain plan a82f` shows the provider bindings §4.4
+    // sealed, the risk rules §19.2 fired with the sentence each carries, and the coverage
+    // reasoning Appendix A produced. It is answered here rather than as a stage because `plan
+    // a82f` is a reference and not a mutation the pipeline planner could explain (ADR-0814).
+    if let Some(lines) = crate::change::explanation(session, &source)? {
+        for line in lines {
+            print_safely(&line);
+        }
+        return Ok(ExitStatus::SUCCESS);
+    }
+
     let mut source = source;
     let mut parsed = ono_parser::parse(&source);
     // Step 3 of the resolution order (ADR-0011, ADR-0070): an alias is reported as one, with

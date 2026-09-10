@@ -24,7 +24,7 @@ use ono_value::ErrorValue;
 use crate::action::{ActionRole, ActionStatus, PlanAction, topological_order};
 use crate::digest::DigestBuilder;
 use crate::effect::ProposedEffect;
-use crate::id::PlanId;
+use crate::id::{ActionId, PlanId};
 use crate::impact::ImpactGraph;
 use crate::protection::{ProtectionMode, ProtectionSummary};
 use crate::risk::{RequiredAcknowledgement, RiskAssessment};
@@ -429,6 +429,31 @@ impl ChangePlan {
     #[must_use]
     pub fn targets(&self) -> &[FrozenTarget] {
         &self.targets
+    }
+
+    /// The plan with each action's status replaced by the one a run settled it at (§4.7).
+    ///
+    /// A sealed plan holds `pending` for every action, because that is what was sealed. §4.7
+    /// requires every action result to be recorded independently, and a caller with those results
+    /// — a renderer, a resume — needs them *on* the plan to answer "what is done" without
+    /// carrying a second list beside it. An action nobody reports is left as it was.
+    #[must_use]
+    pub fn settled(mut self, statuses: &[(ActionId, ActionStatus)]) -> Self {
+        self.actions = self
+            .actions
+            .into_iter()
+            .map(|action| {
+                match statuses
+                    .iter()
+                    .find(|(id, _)| id == action.id())
+                    .map(|(_, status)| *status)
+                {
+                    Some(status) => action.with_status(status),
+                    None => action,
+                }
+            })
+            .collect();
+        self
     }
 
     /// The actions.

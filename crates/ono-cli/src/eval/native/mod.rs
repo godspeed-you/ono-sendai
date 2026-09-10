@@ -122,6 +122,24 @@ fn implementations(session: &mut Session) -> Result<&'static CommandTable, Error
     built.register(std::sync::Arc::new(crate::temporal::StartRecorder));
     built.register(std::sync::Arc::new(crate::temporal::StopRecorder));
     built.register(std::sync::Arc::new(crate::temporal::RemoveTemporalHistory));
+    // The v0.6 change commands of §5 and §37.5 are the shell's to dispatch for a third time the
+    // same reason: each of them reads the plan store, the recovery provider registry, the spatial
+    // index or the terminal a gate is asked at, and none of those is reachable from the library
+    // (§55.7, `docs/contracts/commands/change.yaml`). `plan` itself is not here — it carries
+    // another command inside it, so the evaluator claims it before the registry path (ADR-0814).
+    crate::change::configure_from(session.settings());
+    built.register(std::sync::Arc::new(crate::change::GetPlan));
+    built.register(std::sync::Arc::new(crate::change::InspectPlan));
+    built.register(std::sync::Arc::new(crate::change::RebasePlan));
+    built.register(std::sync::Arc::new(crate::change::ResumePlan));
+    built.register(std::sync::Arc::new(crate::change::Impact));
+    built.register(std::sync::Arc::new(crate::change::Protect));
+    built.register(std::sync::Arc::new(crate::change::Apply));
+    built.register(std::sync::Arc::new(crate::change::Verify));
+    built.register(std::sync::Arc::new(crate::change::Recover));
+    built.register(std::sync::Arc::new(crate::change::GetRecovery));
+    built.register(std::sync::Arc::new(crate::change::InspectRecovery));
+    built.register(std::sync::Arc::new(crate::change::RemoveRecovery));
     Ok(TABLE.get_or_init(|| built))
 }
 

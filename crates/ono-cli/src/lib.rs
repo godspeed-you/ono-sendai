@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod builtin;
+pub mod change;
 pub mod complete;
 pub mod config;
 pub mod context;

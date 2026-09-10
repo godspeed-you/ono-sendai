@@ -167,6 +167,7 @@ commands:
       - {name: type, type: string, doc: "Keep only nodes of these spatial types, comma-separated — `process`, `service`, `listener`. It narrows the bounded map rather than re-selecting what fills it, so the answer is always a subset of the same map without it, and what it removed is counted in `hidden` (v0.4 §6.9, §3.3, §43.2)."}
       - {name: all, type: bool, doc: "The explicit larger bound the default is not, still inside `spatial.map.node_budget` (v0.4 §6.9, §34.2, §47)."}
       - {name: live, type: bool, doc: "Keep the map current. At an interactive terminal it is the full-screen view of §23.3, redrawn from a polling source and saying so in §25.3's vocabulary; where the values are consumed instead, it is a stream that subscribes to the change events of everything this place is drawn from — the first value is the current state, every value after it is something that moved (v0.4 §25.1, §25.2, §25.3, §29.1)."}
+      - {name: plan, type: string, doc: "Overlay a v0.6 change plan on the map: which drawn objects it would touch, and which of them a recovery asset covers (v0.6 §21.2, §21.3). The overlay names the objects the plan resolved and fabricates no future identity — a restarted service shows that a replacement worker is expected, never a PID that does not exist yet (v0.6 §21.4)."}
     privilege: conditional
     streaming: true
     execution: live_view   # v0.4.1 Appendix E, docs/contracts/hardening/streaming_classification.yaml

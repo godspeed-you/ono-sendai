@@ -378,13 +378,20 @@ registries:
   - file: ../change/actions.yaml
     domain: null
     validated_by: [xtask/src/change.rs::check]
-    consumed_by: [xtask]
+    consumed_by: [xtask, ono-change-actions, ono-cli]
     spec: "v0.6 §3.3, §7.2, §41.1, §2.17, Appendix F.2"
     doc: >-
       The action model: §3.3's five roles, §41.1's four idempotency classes, the six outcome states
       including Appendix F.2's `unknown`, §7.2's precondition kinds, and the four execution methods
       — every one of which declares `admits_command_line: false`, which is how §2.17 becomes a
       thing the gate checks rather than a thing a reviewer remembers.
+
+      Its `plannable_operations:` block is §6.1's own registry and the only declaration of what
+      the shell may plan: `ono-change-actions` embeds it at build time and `ono-cli` reads it
+      through that crate. `check_plannable_operations` holds every row to a command contract that
+      exists, to a verb that mutates, to at least one effect and to at least one verification —
+      §6.2's refusal is the default, so a row nobody can reach is an operation quietly missing
+      from the shell (ADR-0820).
 
   - file: ../change/effects.yaml
     domain: null

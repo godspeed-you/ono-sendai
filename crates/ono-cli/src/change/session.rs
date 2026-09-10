@@ -113,9 +113,9 @@ pub async fn change_session() -> Result<Arc<ChangeState>, ErrorValue> {
 fn build(now: Timestamp) -> Result<ChangeState, ErrorValue> {
     let settings = configured();
     let directory = store_directory()?;
-    let store = PlanStore::open_with(&StoreOptions::at(&directory.join(
-        ono_change_plan::DATABASE_NAME,
-    )))?;
+    let store = PlanStore::open_with(&StoreOptions::at(
+        &directory.join(ono_change_plan::DATABASE_NAME),
+    ))?;
     let mounts = MountTable::from_proc().unwrap_or_else(|_| MountTable::from_text(""));
     Ok(ChangeState {
         providers: registry(&settings, &directory, now),
@@ -139,9 +139,7 @@ fn build(now: Timestamp) -> Result<ChangeState, ErrorValue> {
 pub fn store_directory() -> Result<PathBuf, ErrorValue> {
     ono_change_plan::plan_store_directory(
         |name| std::env::var(name).ok(),
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .as_deref(),
+        std::env::var_os("HOME").map(PathBuf::from).as_deref(),
     )
     .ok_or_else(|| {
         error::store_unavailable(
@@ -161,12 +159,17 @@ pub fn store_directory() -> Result<PathBuf, ErrorValue> {
 /// A provider the configuration switches off is a different case and is left unregistered:
 /// `recovery.zfs.enabled = false` is an operator saying "do not ask", and a refusal claiming the
 /// tool was missing would be untrue.
-fn registry(settings: &ChangeSettings, directory: &std::path::Path, now: Timestamp) -> ProviderRegistry {
+fn registry(
+    settings: &ChangeSettings,
+    directory: &std::path::Path,
+    now: Timestamp,
+) -> ProviderRegistry {
     let mut registry = ProviderRegistry::new();
-    if let Ok(store) = ono_recovery_files::FileRecoveryStore::open(directory.join(RECOVERY_DIRECTORY))
+    if let Ok(store) =
+        ono_recovery_files::FileRecoveryStore::open(directory.join(RECOVERY_DIRECTORY))
     {
         let provider = ono_recovery_files::FileRecoveryProvider::new(store, now)
-            .retaining(settings.retention_policy());
+            .with_retention(settings.retention_policy());
         let _ = registry.register(Arc::new(provider));
     }
     if settings.zfs_enabled() {
@@ -233,7 +236,7 @@ pub fn configure_from(settings: &crate::settings::Settings) {
         std::env::var(variable)
             .ok()
             .filter(|text| !text.is_empty())
-            .map(|text| Value::string(&text))
+            .map(|text| typed(&text))
     };
     let resolved = match ChangeSettings::from_settings(&lookup) {
         Ok(resolved) => resolved,
@@ -246,6 +249,22 @@ pub fn configure_from(settings: &crate::settings::Settings) {
     if let Ok(mut held) = published_settings().write() {
         *held = resolved;
     }
+}
+
+/// An environment variable as the value the setting's declared type wants.
+///
+/// The settings catalogue types a key and the environment does not, so `ONO_CHANGE_ALLOW_OPAQUE_
+/// ACTIONS=true` has to arrive as a boolean rather than as the word "true" — `ChangeSettings`
+/// refuses a value of the wrong shape (§53), and refusing the operator's own configuration for
+/// the way an environment stores it would be a rule nobody could satisfy.
+fn typed(text: &str) -> Value {
+    if let Ok(flag) = text.parse::<bool>() {
+        return Value::Bool(flag);
+    }
+    if let Ok(count) = text.parse::<i128>() {
+        return Value::Int(count);
+    }
+    Value::string(text)
 }
 
 /// The plan `@` names: the last one this process produced (§36.4, ADR-0803).

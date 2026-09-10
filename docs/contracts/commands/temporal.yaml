@@ -109,6 +109,7 @@ commands:
       - {name: all, type: bool, doc: "Widen to the whole visible scope rather than the current place, subject to retention and permission (v0.5 §11.3)."}
       - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
       - {name: view, type: bool, doc: "Open the full-screen timeline over the same window (v0.5 §19.1). It is a presentation of the values `timeline` already answers with; where no terminal can be taken — a script, a pipe, a redirected stream, `TERM=dumb` — the ordinary text timeline answers instead, so the option never writes escape sequences into a pipe (v0.2 §50, ADR-0781)."}
+      - {name: plan, type: string, doc: "Restrict the window to one v0.6 change plan's own events (v0.6 §22.4). The plan identity is the causal anchor: the executor writes it into the payload of every `ono.plan.*` event it records, and this filters on it rather than opening a second history (v0.6 §22.1)."}
     privilege: none
     streaming: true
     phase: T

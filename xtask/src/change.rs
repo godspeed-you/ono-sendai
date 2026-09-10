@@ -155,6 +155,7 @@ pub fn check(root: &Path) -> Vec<Problem> {
     problems.extend(check_verification(&registries));
     problems.extend(check_policies(&registries));
     problems.extend(check_assets(&registries));
+    problems.extend(check_plannable_operations(root));
     problems.extend(check_inventory(root));
     problems
 }
@@ -1509,6 +1510,84 @@ fn check_providers(root: &Path, registries: &Registries) -> Vec<Problem> {
             "`destructive_tests.production_filesystems` is not `forbidden`. Appendix G.3: \
              production host filesystems MUST never be used for test rollback",
         ));
+    }
+    problems
+}
+
+/// §6.1's plannable operations, against the command contracts they are the mutating half of.
+///
+/// §6.2's default is refusal, so the registry is the whole of what a shell may plan. A row whose
+/// command id no contract declares is an operation nothing can resolve — it is dropped silently,
+/// and the registry goes on describing it. A mutating command with no row is the other direction
+/// and is not a defect: §6.2 refuses it deliberately, and the refusal names what is missing.
+fn check_plannable_operations(root: &Path) -> Vec<Problem> {
+    let location = "docs/contracts/change/actions.yaml";
+    let path = root
+        .join("docs")
+        .join("contracts")
+        .join("change")
+        .join("actions.yaml");
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+        return Vec::new();
+    };
+    let Ok(commands) = ono_command::CommandRegistry::load() else {
+        return Vec::new();
+    };
+    let mutating = read_verbs(root);
+    let mut problems = Vec::new();
+    for entry in document
+        .get("plannable_operations")
+        .and_then(Yaml::as_sequence)
+        .map(|items| items.as_slice())
+        .unwrap_or_default()
+    {
+        let Some(id) = entry.get("id").and_then(Yaml::as_str) else {
+            continue;
+        };
+        let Some(contract) = commands.get(id) else {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "`{id}` is declared plannable and no command contract declares it. §6.1 makes                      an operation plannable through its contract, and a row naming a command that                      does not exist is an operation nobody can reach"
+                ),
+            ));
+            continue;
+        };
+        if mutating.get(contract.verb()) == Some(&false) {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "`{id}` is declared plannable and its verb does not mutate. §6.1's registry                      describes mutations; a query has no effects to declare and nothing to protect"
+                ),
+            ));
+        }
+        if entry
+            .get("effects")
+            .and_then(Yaml::as_sequence)
+            .is_none_or(Vec::is_empty)
+        {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "`{id}` declares no effect. §6.1 requires the expected direct effects, and an                      operation with none is one a plan would show as changing nothing"
+                ),
+            ));
+        }
+        if entry
+            .get("verification")
+            .and_then(Yaml::as_sequence)
+            .is_none_or(Vec::is_empty)
+        {
+            problems.push(Problem::new(
+                location,
+                format!(
+                    "`{id}` declares no verification. §23.1: every plan containing a MUTATE action                      MUST carry at least one contract, and a plan of this operation alone would                      have none"
+                ),
+            ));
+        }
     }
     problems
 }

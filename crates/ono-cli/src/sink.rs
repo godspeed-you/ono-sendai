@@ -154,6 +154,38 @@ impl Sink {
         {
             return ono_spatial_render::spatial_map(record, map_width(self.width), map_charset());
         }
+        // The v0.6 change views are presentation over one record each, and the renderer that
+        // knows them is `ono-change-render` (§39.3). §20.2's plan view is the one that ends in
+        // `PLAN NOT EXECUTED`, which §2.1 and §62.3 both turn on: an operator who reads a plan
+        // and walks away has to know that nothing has happened yet.
+        if let [value] = values
+            && let Ok(record) = value.as_record()
+        {
+            let charset = crate::change::render::charset();
+            match record.schema_id().to_string().as_str() {
+                "ono.change-plan/1" => {
+                    return crate::change::render::plan_lines(record, &[], self.width);
+                }
+                "ono.recovery-plan/1" => {
+                    return ono_change_render::recovery_view(record, self.width, charset);
+                }
+                "ono.impact-graph/1" => {
+                    return ono_change_render::impact_block(record, self.width, charset);
+                }
+                "ono.recovery-asset/1" => {
+                    return ono_change_render::recovery_asset_block(record, self.width, charset);
+                }
+                _ => {}
+            }
+        }
+        // §37.5's inventory is a table over the whole stream rather than one block per asset,
+        // because the question it answers — what is retained, what does it cost, when does it
+        // expire — is a comparison between assets.
+        if values.len() > 1
+            && let Some(assets) = every_asset(values)
+        {
+            return ono_change_render::recovery_assets(&assets, jiff::Timestamp::now(), self.width);
+        }
         // §13.3 renders a whole comparison at once: the classes are headings and the objects are
         // grouped under them, so a stream of `ono.temporal-change/1` is one rendering rather than
         // one per row.
@@ -343,6 +375,18 @@ pub(crate) fn temporal_options() -> ono_temporal_render::RenderOptions {
         show_source_tags: crate::temporal::session::show_source_tags(),
         ..ono_temporal_render::RenderOptions::default()
     }
+}
+
+/// Every value as an `ono.recovery-asset/1`, or `None` where one of them is something else.
+fn every_asset(values: &[Value]) -> Option<Vec<RecordValue>> {
+    values
+        .iter()
+        .map(|value| {
+            let record = value.as_record().ok()?;
+            (record.schema_id().to_string() == "ono.recovery-asset/1")
+                .then(|| RecordValue::clone(record))
+        })
+        .collect()
 }
 
 /// Every value as an `ono.temporal-change/1`, or `None` where one of them is something else.

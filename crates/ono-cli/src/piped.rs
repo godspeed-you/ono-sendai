@@ -25,6 +25,8 @@ pub enum Piped {
     Link,
     /// `load plugin`.
     LoadPlugin,
+    /// `… | plan <mutation>` — v0.6 §5.3's pipeline form (ADR-0814).
+    Plan,
 }
 
 /// The first stage after the head that a seam claims, with what claims it.
@@ -43,6 +45,9 @@ fn claim(stage: &Stage) -> Option<Piped> {
     }
     if let Some(request) = crate::plugins::claims(stage) {
         return Some(Piped::Plugin(request));
+    }
+    if crate::change::claims(stage) {
+        return Some(Piped::Plan);
     }
     match crate::context::claims(stage) {
         Some(crate::context::Request::Link) => Some(Piped::Link),
@@ -113,6 +118,13 @@ pub fn run(
                 return Ok(ExitStatus::FAILURE);
             }
             Ok(status)
+        }
+        Piped::Plan => {
+            // §5.3: the stages before it resolve the objects, and the plan is one plan over the
+            // frozen set. §2.6 fixes that membership at this instant — a fifth object that
+            // starts matching afterwards does not join the plan.
+            let values = crate::change::answer(session, stage, source, &targets)?;
+            crate::eval::native::run_seeded_from(session, list, source, index + 1, values)
         }
         Piped::LoadPlugin => {
             let words = stage_words(session, stage, source)?;

@@ -244,6 +244,22 @@ pub(super) fn run_stage_list(
         return super::native::run_seeded(session, list, source, values);
     }
 
+    // v0.6 §5.1: `plan` carries another command inside it, and that command has options of its
+    // own. Binding every argument against `plan`'s contract would refuse the first inner option
+    // with `type.unknown_field`, so the head is claimed here and the split is made where the
+    // options end — the shape `sudo -u x cmd --flag` already has (ADR-0814). The plan it produces
+    // seeds the pipeline after it, exactly as a producer's stream would.
+    if !background
+        && let Some(stage) = list.stages.first()
+        && crate::change::claims(stage)
+    {
+        if session.mode() == Mode::Config {
+            return Err(Flow::Failed(config_refusal("this command")));
+        }
+        let values = crate::change::answer(session, stage, source, &[])?;
+        return super::native::run_seeded(session, list, source, values);
+    }
+
     // The link definitions of spec §21 are the session's too (ADR-0104): `add`, `set`, `rename`,
     // `remove` and `detach link` change the link table and the frame stack, and their
     // ActionResult seeds whatever follows.

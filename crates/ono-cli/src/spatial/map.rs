@@ -197,6 +197,21 @@ impl CommandImpl for Map {
                 }
             };
 
+            // v0.6 §21.2: `map --plan` overlays the proposed change on the current map. It is an
+            // overlay and not a second projection: the nodes are the ones the map already drew,
+            // and the plan says which of them it would touch and which a recovery asset covers
+            // (§21.3). §21.4 forbids fabricating a future identity, so a restarted service is
+            // marked as expecting a replacement worker rather than given a PID that does not
+            // exist. The overlay travels as a namespaced extension because §22's schema declares
+            // no field for it (v0.2 §10.4).
+            let record = match arguments
+                .option("plan")
+                .and_then(|value| value.as_str().ok())
+            {
+                Some(reference) => crate::change::overlay(record, reference).await?,
+                None => record,
+            };
+
             if json {
                 let document = ono_value::to_json_data(&Value::Record(Arc::new(record)));
                 let text = serde_json::to_string(&document).map_err(|error| {
