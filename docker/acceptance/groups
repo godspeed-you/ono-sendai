@@ -1,0 +1,15 @@
+# The acceptance cases, split by the tranche that introduced them, so that CI runs each group in a
+# job of its own and a red job names the area that broke (ADR-0851). A group is a name and the
+# inclusive range of case numbers it holds, read from the number a case file's name starts with.
+#
+# Every case belongs to exactly one group. `scripts/acceptance.sh` refuses to run while one does
+# not, so the case that opens a new tranche comes with a new line here.
+#
+# name            first  last
+core              000    089
+spatial           090    119
+hardening         120    199
+packages          200    229
+temporal          230    259
+temporal-ledger   260    279
+change            280    329

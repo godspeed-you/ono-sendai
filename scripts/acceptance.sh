@@ -3,23 +3,112 @@
 # inside it. This is the referee for "does the shell actually work", as opposed to "do the unit
 # tests pass" (docs/ACCEPTANCE.md).
 #
-# usage: scripts/acceptance.sh [--keep-image] [--no-build] [name-fragment ...]
+# usage: scripts/acceptance.sh [--keep-image] [--no-build] [--group NAME]... [--fail-fast]
+#                              [name-fragment ...]
+#        scripts/acceptance.sh --build-only
+#        scripts/acceptance.sh --list-groups
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 IMAGE="${ONO_ACCEPTANCE_IMAGE:-ono-sendai:acceptance}"
 CASE_DIR="docker/acceptance/cases"
+GROUPS_FILE="docker/acceptance/groups"
 KEEP_IMAGE=0
 NO_BUILD=0
+BUILD_ONLY=0
+LIST_GROUPS=0
+FAIL_FAST=0
 SELECTED=()
+SELECTED_GROUPS=()
 
-for arg in "$@"; do
-  case "$arg" in
-    --keep-image) KEEP_IMAGE=1 ;;
-    --no-build)   NO_BUILD=1; KEEP_IMAGE=1 ;;
-    *) SELECTED+=("$arg") ;;
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --keep-image)  KEEP_IMAGE=1 ;;
+    --no-build)    NO_BUILD=1; KEEP_IMAGE=1 ;;
+    # CI builds the images once and hands them to one job per group (ADR-0851).
+    --build-only)  BUILD_ONLY=1; KEEP_IMAGE=1 ;;
+    --list-groups) LIST_GROUPS=1 ;;
+    --fail-fast)   FAIL_FAST=1 ;;
+    --group)
+      if [[ $# -lt 2 ]]; then
+        echo "acceptance: --group needs the name of a group in $GROUPS_FILE" >&2
+        exit 1
+      fi
+      SELECTED_GROUPS+=("$2")
+      shift ;;
+    *) SELECTED+=("$1") ;;
   esac
+  shift
+done
+
+if [[ $BUILD_ONLY -eq 1 && ( $NO_BUILD -eq 1 || ${#SELECTED[@]} -gt 0 || ${#SELECTED_GROUPS[@]} -gt 0 ) ]]; then
+  echo "acceptance: --build-only builds the images the whole suite needs, and takes no selection" >&2
+  exit 1
+fi
+
+# --- groups ----------------------------------------------------------------------------------
+#
+# Every case belongs to exactly one group of $GROUPS_FILE, by the number its file name starts
+# with. The check runs on every invocation, whatever is selected: a case outside every range
+# would otherwise drop out of the CI job that should run it without anyone noticing.
+
+group_names=(); group_first=(); group_last=()
+while IFS= read -r line; do
+  read -r group first last rest <<<"$line"
+  [[ -z "$group" || "$group" == \#* ]] && continue
+  if [[ -n "$rest" || ! "$first" =~ ^[0-9]+$ || ! "$last" =~ ^[0-9]+$ ]] || (( 10#$first > 10#$last )); then
+    echo "acceptance: $GROUPS_FILE: \`$line\` is not a \`<name> <first> <last>\` line" >&2
+    exit 1
+  fi
+  if [[ " ${group_names[*]} " == *" $group "* ]]; then
+    echo "acceptance: $GROUPS_FILE names the group \`$group\` twice" >&2
+    exit 1
+  fi
+  group_names+=("$group"); group_first+=($((10#$first))); group_last+=($((10#$last)))
+done < "$GROUPS_FILE"
+
+# Sets `owners` to the indices of the groups whose range holds the case file's number.
+case_groups() {
+  local stem="${1##*/}" number index
+  number="${stem%%-*}"
+  owners=()
+  [[ "$number" =~ ^[0-9]+$ ]] || return 0
+  for index in "${!group_names[@]}"; do
+    if (( 10#$number >= group_first[index] && 10#$number <= group_last[index] )); then
+      owners+=("$index")
+    fi
+  done
+}
+
+all_cases=()
+while IFS= read -r found; do all_cases+=("$found"); done < <(find "$CASE_DIR" -name '*.case' | sort)
+
+group_problem=""
+for file in "${all_cases[@]}"; do
+  case_groups "$file"
+  if [[ ${#owners[@]} -eq 0 ]]; then
+    group_problem+="  $file is in no group"$'\n'
+  elif [[ ${#owners[@]} -gt 1 ]]; then
+    group_problem+="  $file is in more than one group"$'\n'
+  fi
+done
+if [[ -n "$group_problem" ]]; then
+  printf 'acceptance: every case belongs to exactly one group of %s (ADR-0851):\n%s' \
+    "$GROUPS_FILE" "$group_problem" >&2
+  exit 1
+fi
+
+if [[ $LIST_GROUPS -eq 1 ]]; then
+  printf '%s\n' "${group_names[@]}"
+  exit 0
+fi
+
+for group in "${SELECTED_GROUPS[@]}"; do
+  if [[ " ${group_names[*]} " != *" $group "* ]]; then
+    echo "acceptance: there is no group \`$group\`; $GROUPS_FILE has: ${group_names[*]}" >&2
+    exit 1
+  fi
 done
 
 runtime=""
@@ -47,8 +136,18 @@ if [[ ${#SELECTED[@]} -gt 0 ]]; then
       < <(find "$CASE_DIR" -name "*${fragment}*.case" | sort)
   done
 else
-  while IFS= read -r found; do cases+=("$found"); done \
-    < <(find "$CASE_DIR" -name '*.case' | sort)
+  cases=("${all_cases[@]}")
+fi
+
+if [[ ${#SELECTED_GROUPS[@]} -gt 0 ]]; then
+  in_groups=()
+  for file in "${cases[@]}"; do
+    case_groups "$file"
+    if [[ " ${SELECTED_GROUPS[*]} " == *" ${group_names[${owners[0]}]} "* ]]; then
+      in_groups+=("$file")
+    fi
+  done
+  cases=("${in_groups[@]}")
 fi
 
 if [[ ${#cases[@]} -eq 0 ]]; then
@@ -70,6 +169,25 @@ if [[ $NO_BUILD -eq 0 ]] && grep -qx 'image: filesystems' "${cases[@]}"; then
   fi
   fs_built=1
 fi
+
+if [[ $BUILD_ONLY -eq 1 ]]; then
+  printf '\nacceptance: built %s' "$IMAGE"
+  if [[ $fs_built -eq 1 ]]; then printf ' and %s' "$FS_IMAGE"; fi
+  printf '\n'
+  exit 0
+fi
+
+# The cases with a short declared budget run first. On the CI run this ordering was measured
+# against, every case declaring 60 seconds or less finished within six, and every case that took
+# half a minute or more declared 90 or more — so a red quick case shows in the first minutes of
+# a run rather than after the slow ones, and `--fail-fast` stops there (ADR-0851).
+ordered=()
+while IFS=$'\t' read -r _ found; do ordered+=("$found"); done < <(
+  for file in "${cases[@]}"; do
+    printf '%s\t%s\n' "$(awk '/^timeout:/ { budget = $2 } END { print budget ? budget : 30 }' "$file")" "$file"
+  done | sort -t $'\t' -k1,1n -k2,2 -u
+)
+cases=("${ordered[@]}")
 
 # --- case file parsing ---------------------------------------------------------------------
 #
@@ -282,11 +400,21 @@ check_skips() {
 
 # --- running ---------------------------------------------------------------------------------
 
+# Wall-clock seconds between two $EPOCHREALTIME readings, to a tenth. It is shown, never judged:
+# a case that must be fast says so with its own budget. The radix is the locale's, so either.
+seconds_between() {
+  local from="${1/[.,]/}" to="${2/[.,]/}" tenths
+  tenths=$(( (10#$to - 10#$from) / 100000 ))
+  printf '%d.%ds' $((tenths / 10)) $((tenths % 10))
+}
+
 passed=0
 failed=0
 failed_names=()
+not_run=0
 
-for file in "${cases[@]}"; do
+for index in "${!cases[@]}"; do
+  file="${cases[$index]}"
   parse_case "$file"
 
   case "$want_image" in
@@ -318,11 +446,13 @@ $run"
     inner=(bash -lc 'eval "$ONO_CASE_SCRIPT"')
   fi
 
+  started="$EPOCHREALTIME"
   set +e
   output="$(printf '%s' "$stdin_text" \
     | timeout --kill-after=5 "$want_timeout" "$runtime" "${runtime_args[@]}" "$image" "${inner[@]}" 2>&1)"
   code=$?
   set -e
+  elapsed="$(seconds_between "$started" "$EPOCHREALTIME")"
 
   problem=""
   if [[ $code -eq 124 || $code -eq 137 ]]; then
@@ -337,17 +467,21 @@ $run"
   fi
 
   if [[ -z "$problem" ]]; then
-    printf '  \033[32mpass\033[0m  %s\n' "$name"
+    printf '  \033[32mpass\033[0m %7s  %s\n' "$elapsed" "$name"
     # A declared skip is still a check that did not run, so it is shown beside the pass.
     if grep -q '^SKIPPED ' <<<"$output"; then
       grep '^SKIPPED ' <<<"$output" | sed 's/^/        declared: /'
     fi
     passed=$((passed + 1))
   else
-    printf '  \033[31mFAIL\033[0m  %s\n        %s\n        case:    %s\n        output:  %s\n' \
-      "$name" "$problem" "$file" "${output//$'\n'/ | }"
+    printf '  \033[31mFAIL\033[0m %7s  %s\n        %s\n        case:    %s\n        output:  %s\n' \
+      "$elapsed" "$name" "$problem" "$file" "${output//$'\n'/ | }"
     failed=$((failed + 1))
     failed_names+=("$name")
+    if [[ $FAIL_FAST -eq 1 ]]; then
+      not_run=$(( ${#cases[@]} - index - 1 ))
+      break
+    fi
   fi
 done
 
@@ -358,7 +492,9 @@ if [[ $KEEP_IMAGE -eq 0 ]]; then
   fi
 fi
 
-printf '\nacceptance: %d passed, %d failed\n' "$passed" "$failed"
+printf '\nacceptance: %d passed, %d failed' "$passed" "$failed"
+if [[ $not_run -gt 0 ]]; then printf ', %d not run (--fail-fast)' "$not_run"; fi
+printf '\n'
 if [[ $failed -gt 0 ]]; then
   printf 'failed cases: %s\n' "${failed_names[*]}"
   exit 1

@@ -68,7 +68,20 @@ every later case pass while proving nothing (AGENTS.md §14).
 ## Running
 
 ```bash
-scripts/acceptance.sh                  # build the image, run every case
-scripts/acceptance.sh --keep-image     # keep the image for the next run
-scripts/acceptance.sh --no-build pty   # reuse the image, run cases whose name contains "pty"
+scripts/acceptance.sh                             # build the image, run every case
+scripts/acceptance.sh --keep-image                # keep the image for the next run
+scripts/acceptance.sh --no-build pty              # reuse the image, run cases whose name contains "pty"
+scripts/acceptance.sh --no-build --group temporal # reuse the image, run one group
+scripts/acceptance.sh --fail-fast                 # stop at the first failing case
+scripts/acceptance.sh --list-groups               # the groups of acceptance/groups
+scripts/acceptance.sh --build-only                # build the images the suite needs, run nothing
 ```
+
+Every case belongs to exactly one group of `acceptance/groups`, by the number its file name
+starts with, and the harness refuses to run while one does not — a case that opens a new tranche
+comes with a new line there. CI builds the images once and runs each group in a job of its own
+(ADR-0851).
+
+Within a run, the cases with the shortest declared `timeout:` go first, so a quick case that
+fails shows early and `--fail-fast` stops there. Each result line carries the case's wall-clock
+time. The cases always run one after another, because many of them measure time or load.
