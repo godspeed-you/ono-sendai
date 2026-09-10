@@ -662,10 +662,15 @@ fn verification(
         set = set.with(rebind(plan, contract));
     }
     for object in restore_set {
+        // A provider's own contract names the object as `<target> <identity>` where the shell can
+        // observe it that way, so "is this object already covered" is asked of the subject's
+        // words rather than of the whole string. Comparing the two verbatim added a second
+        // contract for an object the provider had already stated one for, and the duplicate was
+        // the unobservable one.
         if set
             .contracts()
             .iter()
-            .any(|contract| contract.subject() == object.as_ref())
+            .any(|contract| is_about(contract.subject(), object))
         {
             continue;
         }
@@ -674,13 +679,22 @@ fn verification(
             .iter()
             .find(|(name, _)| name == object)
             .map(|(_, digest)| Arc::clone(digest));
+        // §62.9: a contract has to be answerable to establish anything, so it is written in the
+        // form the shell observes. Without a captured digest the honest condition is that the
+        // object is back at all — a restore that put nothing there has failed, and claiming more
+        // than that from nothing is what §25.3 forbids.
+        let subject: Arc<str> = if object.starts_with('/') {
+            Arc::from(format!("file {object}"))
+        } else {
+            Arc::clone(object)
+        };
         let mut contract = VerificationContract::new(
             plan,
             VerificationClass::Required,
-            Arc::clone(object),
+            subject,
             digest.as_ref().map_or_else(
-                || "content == recovery-point".to_owned(),
-                |digest| format!("digest == {digest}"),
+                || "exists == true".to_owned(),
+                |digest| format!("sha256 == {digest}"),
             ),
         )
         .about(EquivalenceDomain::PersistentState);
@@ -690,6 +704,17 @@ fn verification(
         set = set.with(contract);
     }
     set
+}
+
+/// Whether `subject` is a contract about `object`.
+///
+/// A subject is either the object's own identity or `<target> <identity>` — §23.3's own two
+/// spellings — so the identity is what is compared.
+fn is_about(subject: &str, object: &str) -> bool {
+    subject == object
+        || subject
+            .split_once(char::is_whitespace)
+            .is_some_and(|(_, identity)| identity.trim() == object)
 }
 
 /// The same contract, anchored to the recovery plan that will carry it (§4.4).

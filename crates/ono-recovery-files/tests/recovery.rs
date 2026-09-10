@@ -81,8 +81,20 @@ fn should_verify_the_restored_digest_rather_than_an_exit_code() {
         .expect("§25.1: recovery states what equivalence it will check");
     assert_eq!(contract.class(), VerificationClass::Required);
     assert!(
-        contract.expression().contains("SHA-256"),
-        "§62.9: an exit code is not verification; the observed state is"
+        contract.expression().starts_with("sha256 =="),
+        "§62.9: an exit code is not verification; the observed state is — and §23.1 makes it a \
+         condition the shell can answer rather than a sentence about one. Got {:?}",
+        contract.expression()
+    );
+    assert!(
+        contract.subject().starts_with("file "),
+        "§23.1's check is asked of the world through a provider, and the provider is found by \
+         target. Got {:?}",
+        contract.subject()
+    );
+    assert!(
+        contract.expected().is_some(),
+        "the digest the archive recorded is what the check is against, so it travels with it"
     );
 }
 

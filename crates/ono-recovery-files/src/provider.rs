@@ -753,12 +753,16 @@ impl RecoveryProvider for FileRecoveryProvider {
                 ),
             );
             if entry.kind() != ObjectKind::Directory {
+                // §25.1: a contract nobody can answer establishes nothing, so it is written in
+                // the `<target> <identity>` / `<field> == <value>` form the shell observes rather
+                // than as a sentence. `sha256` is the field, because the bytes coming back is
+                // exactly what a byte-consistent restore claims and the only thing it claims.
                 fragment = fragment.verifying(
                     VerificationContract::new(
                         &plan_id,
                         VerificationClass::Required,
-                        object.clone(),
-                        format!("the SHA-256 of `{object}` is the digest the archive recorded"),
+                        format!("file {object}"),
+                        format!("sha256 == {}", entry.digest()),
                     )
                     .expecting(Value::string(entry.digest()))
                     .about(EquivalenceDomain::PersistentState),
