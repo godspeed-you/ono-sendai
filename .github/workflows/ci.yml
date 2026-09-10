@@ -61,6 +61,30 @@ jobs:
       groups: ${{ steps.groups.outputs.groups }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # The image keeps cargo's registry and target directory in BuildKit cache mounts, and a
+      # fresh runner has none, so every run compiled every dependency again — eight of the
+      # suite's twenty-two minutes. These two steps carry the mounts from one run to the next.
+      # What they restore is only a starting point: the build stamps the workspace sources before
+      # compiling, so a restored artifact never stands in for a changed source (ADR-0251).
+      - name: restore the image's cargo caches
+        id: cargo-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            acceptance-cargo-registry
+            acceptance-cargo-target
+          key: acceptance-cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: acceptance-cargo-
+      - name: hand them to the image build
+        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
+        with:
+          cache-map: |
+            {
+              "acceptance-cargo-registry": {"target": "/usr/local/cargo/registry", "sharing": "locked"},
+              "acceptance-cargo-target": {"target": "/build/target", "sharing": "locked"}
+            }
+          utility-image: ghcr.io/containerd/busybox:1.36@sha256:7b3ccabffc97de872a30dfd234fd972a66d247c8cfc69b0550f276481852627c
+          skip-extraction: ${{ steps.cargo-cache.outputs.cache-hit }}
       - name: build the images
         run: scripts/acceptance.sh --build-only
       - name: pack them
