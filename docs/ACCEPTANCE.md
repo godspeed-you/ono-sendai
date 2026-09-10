@@ -3101,7 +3101,7 @@ Conventions this subsection relies on:
 
 #### 4.12.1 Contracts, vocabulary and the drift referee (§45, §46, §47)
 
-- [ ] **This subsection is held to the tree.** Every proof a ticked box names resolves to a test
+- [x] **This subsection is held to the tree.** Every proof a ticked box names resolves to a test
       that exists and is not `#[ignore]`d, or to a case file the referee collects; every box sits
       at column 0 where `release-check.sh`'s `^- \[ \]` grep can see it; and the case numbers stay
       inside the block this subsection claims — `xtask/tests/change_evidence.rs`. This box closes

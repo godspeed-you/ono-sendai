@@ -316,34 +316,6 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [v06 | 2026-09-10] **The v0.6 tranche — §29's change over a link is what remains.** The audit
-  round of ADR-0822 … ADR-0837 and this session's corrections are in the tree, and the whole
-  acceptance suite passes — 248 of 248 cases, the ZFS and Btrfs ones against real loop filesystems
-  in an image whose userland the providers validate (ADR-0846). The first full container run failed
-  eight v0.6 cases, all fixed (ADR-0842), among them a plan sealed as protected that mutated
-  unprotected when its store broke. Running the filesystem cases for real found what no recorded
-  fixture had:
-  - two recovery points of one file in one session shared an asset id, because the file provider
-    lived on the session's first instant; it now reads a clock;
-  - a path holding `@` — a Btrfs subvolume is conventionally `@var` — drifted at every `apply`,
-    because revalidation cut the path at the first `@`;
-  - a file in a nested Btrfs subvolume recorded the mount's `subvol=` option; a file now records
-    the storage object its provider resolves (ADR-0847);
-  - the Btrfs provider stamped assets with 1970, named every snapshot `ono-ono-<subvolume>`, never
-    created its `@snapshots` namespace and declared no metadata coverage, so no Btrfs recovery could
-    be chosen;
-  - the recovery builder ignored the newer state the ZFS provider established, so every dataset
-    rollback was blocked as unestablished and §13.6's acceptance was unreachable (ADR-0849).
-  §13.4's `NOT PROTECTED BY` reaches the plan view (ADR-0845). §29 runs through the shell: inside
-  `enter link` a plan freezes through the link's providers, runs only where its host is, is
-  protected and recovered per host, and an action whose link drops is left unknown (ADR-0848,
-  superseding ADR-0844); a plan that stops the interface a network link leaves by is CRITICAL
-  (ADR-0850). Cases 307 and 308 drive a live link and take no declared skip, and the five §29
-  boxes are ticked. Wiring it found that a piped object was acted on by its label (fixed,
-  `f8fb9d8f`) and that `apply` wraps an unknown outcome's refusal twice. Next: that fix, then the
-  box that closes last and `scripts/release-check.sh`. Files: `crates/ono-change-executor`,
-  `docs/ACCEPTANCE.md`.
-
 ## What is left, and why
 
 **The v0.5 Temporal & Causal Systems Interface is delivered.** Six crates, the machine-readable
@@ -3847,6 +3819,24 @@ records. It was removed from this board rather than carried as an open box.
 ---
 
 ## Done
+
+**The v0.6 tranche is finished, §29 included (2026-09-10, ADR-0822 … ADR-0850).** The audit round
+of ADR-0822 … ADR-0837 and this session's corrections are in the tree, and the whole acceptance
+suite passes in the container, the ZFS and Btrfs cases against real loop filesystems in an image
+whose userland the providers validate (ADR-0846). Running the filesystem cases for real found what
+no recorded fixture had: two recovery points of one file in one session shared an asset id; a path
+holding `@` drifted at every `apply`; a file in a nested Btrfs subvolume recorded the mount's
+`subvol=` option (ADR-0847); the Btrfs provider stamped assets with 1970, never created its
+`@snapshots` namespace and declared no metadata coverage; and the recovery builder ignored the newer
+state the ZFS provider established (ADR-0849). §13.4's `NOT PROTECTED BY` reaches the plan view
+(ADR-0845). §29 runs through the shell: inside `enter link` a plan freezes through the link's
+providers, runs only where its host is, is protected and recovered per host, and an action whose
+link drops is left unknown (ADR-0848, superseding ADR-0844); a plan that stops the interface a
+network link leaves by is CRITICAL (ADR-0850). Cases 307 and 308 drive a live link — the local
+transport, and a loopback `tcp` agent — and take no declared skip. Wiring §29 found two defects on
+the way, both fixed in their own commits: a piped object was acted on by its label rather than by
+the value it was frozen by (`f8fb9d8f`), and `apply` wrapped an unknown outcome's refusal twice.
+Commits: `fdda8ab`, `c935073`, `f8fb9d8f`, `351da5b6`, `7dbc7efa`, and the close-out.
 
 **A contribution declares its own arguments, and its own refusal (2026-09-06, ADR-0587).** Five
 findings from a real external-system provider, settled in one increment. `contributions.v1.yaml`
