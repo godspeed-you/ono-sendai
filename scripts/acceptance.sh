@@ -120,15 +120,6 @@ if [[ -z "$runtime" ]]; then
   exit 127
 fi
 
-if [[ $NO_BUILD -eq 0 ]]; then
-  printf '\n\033[1m== building %s with %s\033[0m\n' "$IMAGE" "$runtime"
-  if ! build_log="$("$runtime" build --file docker/Dockerfile --tag "$IMAGE" . 2>&1)"; then
-    echo "$build_log" >&2
-    echo "acceptance: the image did not build" >&2
-    exit 1
-  fi
-fi
-
 cases=()
 if [[ ${#SELECTED[@]} -gt 0 ]]; then
   for fragment in "${SELECTED[@]}"; do
@@ -158,8 +149,45 @@ fi
 # The real-filesystem cases run in the stage whose userland the recovery providers validate
 # (ADR-0846). It is built only when a selected case asks for it.
 FS_IMAGE="${IMAGE}-filesystems"
-fs_built=0
+fs_wanted=0
 if [[ $NO_BUILD -eq 0 ]] && grep -qx 'image: filesystems' "${cases[@]}"; then
+  fs_wanted=1
+fi
+fs_built=0
+
+if [[ $NO_BUILD -eq 0 ]]; then
+  # The filesystem stage's packages need nothing from the builder, and on a CI runner they are a
+  # download of three minutes or more from the Ubuntu archive. So `filesystems-base` is built in
+  # the background while the main image compiles, and the filesystem image below finds it ready.
+  base_pid=""
+  base_log=""
+  if [[ $fs_wanted -eq 1 ]]; then
+    base_log="$(mktemp)"
+    "$runtime" build --file docker/Dockerfile --target filesystems-base . >"$base_log" 2>&1 &
+    base_pid=$!
+  fi
+  printf '\n\033[1m== building %s with %s\033[0m\n' "$IMAGE" "$runtime"
+  if ! build_log="$("$runtime" build --file docker/Dockerfile --tag "$IMAGE" . 2>&1)"; then
+    echo "$build_log" >&2
+    echo "acceptance: the image did not build" >&2
+    if [[ -n "$base_pid" ]]; then
+      wait "$base_pid" || true
+      rm -f "$base_log"
+    fi
+    exit 1
+  fi
+  if [[ -n "$base_pid" ]]; then
+    if ! wait "$base_pid"; then
+      cat "$base_log" >&2
+      rm -f "$base_log"
+      echo "acceptance: the filesystem image's packages did not install" >&2
+      exit 1
+    fi
+    rm -f "$base_log"
+  fi
+fi
+
+if [[ $fs_wanted -eq 1 ]]; then
   printf '\n\033[1m== building %s with %s\033[0m\n' "$FS_IMAGE" "$runtime"
   if ! build_log="$("$runtime" build --file docker/Dockerfile --target runtime-filesystems \
       --tag "$FS_IMAGE" . 2>&1)"; then

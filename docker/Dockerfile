@@ -46,11 +46,17 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 # drives (Appendix G.4) — btrfs-progs 6.16 or 6.17, OpenZFS 2.4.1 — and that userland has to match
 # the host's kernel module. Debian bookworm carries neither; Ubuntu 26.04 carries both. Only a case
 # declaring `image: filesystems` runs here, and the main image below stays the file's last stage.
-FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d AS runtime-filesystems
+#
+# The packages are a stage of their own because they need nothing from the builder: on a CI
+# runner they are a download of three minutes or more from the Ubuntu archive, and
+# `scripts/acceptance.sh` fetches them while the builder compiles rather than after it.
+FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d AS filesystems-base
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
         ca-certificates bash coreutils util-linux mount findutils grep sed gawk procps diffutils \
         btrfs-progs zfsutils-linux \
     && rm -rf /var/lib/apt/lists/*
+
+FROM filesystems-base AS runtime-filesystems
 COPY --from=builder /usr/local/bin/ono /usr/local/bin/ono
 RUN useradd --create-home --shell /usr/local/bin/ono case
 USER case
