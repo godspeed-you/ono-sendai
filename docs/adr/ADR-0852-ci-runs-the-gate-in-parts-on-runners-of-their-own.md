@@ -30,9 +30,15 @@ gate` job was the whole of it. Measured on run 34567215461 (`main`, b11e3f3e):
 1. **`scripts/gate.sh` runs in parts on request.** Bare, it runs every step in order, as before.
    `--static` runs format, lint, fuzz, supply chain, contracts and docs. `--tests [SELECTION]`
    runs the test step over a cargo package selection, `--workspace` when none is given. A part
-   builds `ono` before its tests, because `ono_testkit::ono_binary()` finds the binary in the
-   target directory and tests outside `ono-cli` — `xtask/tests/perf.rs`,
-   `xtask/tests/adapter_evidence.rs`, `crates/ono-testkit/tests/harness.rs` — drive it.
+   builds every binary of the workspace, `--locked`, before its tests, because tests find the
+   binaries of other packages in the target directory in both directions: `xtask/tests/perf.rs`,
+   `xtask/tests/adapter_evidence.rs` and `crates/ono-testkit/tests/harness.rs` drive `ono`
+   through `ono_testkit::ono_binary()`, and `crates/ono-cli/tests/acquisition.rs` installs
+   `kuang-example-plugin` from beside it. A workspace run builds each binary for the tests of its
+   own package; a selection builds only its own, and the first CI run of the parts (34571056830)
+   failed on exactly that, from both sides. Listing the binaries instead would go stale with the
+   next test that reaches for one. Every tool a test runs is installed in the part that runs it —
+   `xtask/tests/supply_chain.rs` runs `cargo deny` over its fixtures.
 2. **CI runs the parts as jobs.** `quality gate (static)` runs `--static`. `quality gate (tests of
    …)` is a matrix of two parts cut at the package boundary: `--package ono-cli`, and `--workspace
    --exclude ono-cli`. Each part is a runner of its own, so the tests share a machine with no

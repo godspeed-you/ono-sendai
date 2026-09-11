@@ -82,9 +82,11 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/implementation' }}
       - uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
-          # Exact versions, because each of these decides what an artifact means (spec §44.2,
-          # ADR-0450). xtask/tests/packaging.rs drives both packagers in the gate (ADR-0121).
-          tool: cargo-deb@3.7.0,cargo-generate-rpm@0.21.0
+          # Exact versions, because each of these decides what an artifact or a verification
+          # means (spec §44.2, ADR-0450). xtask/tests/packaging.rs drives both packagers in the
+          # gate (ADR-0121), and xtask/tests/supply_chain.rs runs the dependency policy over its
+          # fixtures (ADR-0449).
+          tool: cargo-deb@3.7.0,cargo-generate-rpm@0.21.0,cargo-deny@0.20.2
       - name: run the gate's tests
         env:
           SELECTION: ${{ matrix.part.selection }}

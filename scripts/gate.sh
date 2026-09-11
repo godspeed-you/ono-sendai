@@ -148,11 +148,12 @@ if runs tests; then
     fi
   fi
 
-  # Tests outside ono-cli drive the `ono` binary through `ono_testkit::ono_binary()`, which looks
-  # for it in the target directory. A workspace run builds it for ono-cli's own tests; a selection
-  # without ono-cli builds nothing that puts it there, so a part builds it first.
+  # Tests find the binaries of other packages in the target directory: xtask's and ono-testkit's
+  # drive `ono` through `ono_testkit::ono_binary()`, and ono-cli's install `kuang-example-plugin`
+  # from beside it. A workspace run builds every binary for the tests of the package that declares
+  # it; a selection builds only its own, so a part builds all of them first.
   if [[ "$part" == tests ]]; then
-    cargo build --package ono-cli --bin ono
+    cargo build --locked --workspace --bins
   fi
 
   cargo test "${selection[@]}" --all-features "${test_filter[@]}" 2>&1 | tee "$TEST_LOG"
