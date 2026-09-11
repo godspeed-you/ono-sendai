@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod affected;
 pub mod architecture;
 pub mod baseline;
 pub mod bindings;

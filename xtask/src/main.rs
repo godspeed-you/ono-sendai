@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use xtask::{
-    architecture, baseline, bindings, change, conformance, contracts, metrics as repo_metrics,
-    narrative, notices, perf, provenance, reference, reproducibility, scan, supply_chain, temporal,
-    terminology, verification,
+    affected, architecture, baseline, bindings, change, conformance, contracts,
+    metrics as repo_metrics, narrative, notices, perf, provenance, reference, reproducibility,
+    scan, supply_chain, temporal, terminology, verification,
 };
 
 fn main() -> ExitCode {
@@ -22,6 +22,7 @@ fn main() -> ExitCode {
         Some("spec-check") => spec_check(),
         Some("state-check") => state_check(),
         Some("skip-check") => skip_check(&rest),
+        Some("affected") => affected_packages(&rest),
         Some("terminology") => terminology(&rest),
         Some("metrics") => metrics(&rest),
         Some("build-manifest") => build_manifest(&rest),
@@ -44,6 +45,40 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The packages an increment's tests have to cover, as `cargo test` arguments (ADR-0853).
+///
+/// Takes the changed paths relative to the repository root. The arguments go to standard output,
+/// one per line, and what was chosen and why to standard error, so `scripts/gate.sh` can read the
+/// one and show the other.
+fn affected_packages(changed: &[String]) -> ExitCode {
+    let workspace = match affected::Workspace::read(&repo_root()) {
+        Ok(workspace) => workspace,
+        Err(message) => {
+            eprintln!("affected: {message}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let selection = affected::select(&workspace, changed);
+    match &selection {
+        affected::Selection::Everything { reason } => {
+            eprintln!("affected: every package — {reason}");
+        }
+        affected::Selection::Packages(names) => eprintln!(
+            "affected: {} package(s) — {}",
+            names.len(),
+            names
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+    for argument in selection.cargo_arguments() {
+        println!("{argument}");
+    }
+    ExitCode::SUCCESS
 }
 
 /// The frozen v0.4.1 baseline of spec section 57 phase H0 (ADR-0548).
@@ -87,6 +122,10 @@ fn usage() {
     eprintln!(
         "  skip-check     a test log's SKIPPED markers against the declared expectation \
 (spec section 38.3) <log>"
+    );
+    eprintln!(
+        "  affected       the packages the tests of a change have to cover, as cargo arguments \
+(ADR-0853) [<changed path>...]"
     );
     eprintln!("  build-manifest write the release input manifest of Appendix H [--output <path>]");
     eprintln!(

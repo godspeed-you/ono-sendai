@@ -5,8 +5,11 @@
 #
 # usage: scripts/gate.sh                      every step, in order
 #        scripts/gate.sh --static             every step but the tests
-#        scripts/gate.sh --tests [SELECTION]  the tests of a cargo package selection, `--workspace`
-#                                             when none is given — e.g. `--tests --package ono-cli`
+#        scripts/gate.sh --tests [SELECTION]  the tests of a cargo package selection, e.g.
+#                                             `--tests --package ono-cli`
+#
+# Without a selection the tests cover the packages the increment can break (ADR-0853);
+# ONO_TESTS=all covers every package.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -32,14 +35,16 @@ GUARD
 fi
 
 part=all
-selection=(--workspace)
+# The packages the test step covers. Empty until that step decides — the packages this increment
+# can break, or every package (ADR-0853) — unless `--tests SELECTION` names them here.
+selection=()
 case "${1:-}" in
   "") ;;
   --static) part=static ;;
   --tests)
     part=tests
     shift
-    [[ $# -gt 0 ]] && selection=("$@")
+    selection=("$@")
     ;;
   *)
     echo "gate: unknown argument \`$1\` — run it bare, with --static, or with --tests [SELECTION]" >&2
@@ -117,6 +122,34 @@ packaging_selected() {
   [[ -n "$changed" ]]
 }
 
+# The packages this increment's tests have to cover (ADR-0853): the ones it changed, every one
+# that depends on them, and xtask, whose tests read the whole repository — or every package, when
+# a changed file belongs to no package and is not one only xtask reads, or when nothing changed.
+# `cargo test` runs its binaries one after another, so an increment that touched the state board
+# otherwise waited eight minutes for tests of code it never touched. The baseline is the working
+# tree against `HEAD`, as for the packaging suite; a `git` that cannot answer, and CI, cover
+# every package.
+select_packages() {
+  selection=(--workspace)
+  if [[ "${ONO_TESTS:-auto}" == all || "${ONO_CANONICAL_CI:-0}" == "1" ]]; then
+    return 0
+  fi
+  local changed chosen=()
+  changed="$(
+    git diff --name-only --no-renames HEAD -- &&
+      git ls-files --others --exclude-standard
+  )" || return 0
+  local paths=()
+  [[ -n "$changed" ]] && mapfile -t paths <<<"$changed"
+  mapfile -t chosen < <(cargo run --quiet --package xtask -- affected "${paths[@]}")
+  if [[ ${#chosen[@]} -gt 0 ]]; then
+    selection=("${chosen[@]}")
+  fi
+  if [[ "${selection[*]}" != "--workspace" ]]; then
+    printf 'gate: the other packages are not tested — ONO_TESTS=all tests every one (ADR-0853)\n'
+  fi
+}
+
 if runs tests; then
   step "test"
   # Not selected is not skipped. `ono_testkit::skipped` and `expected_test_skips.yaml` are the
@@ -151,8 +184,11 @@ if runs tests; then
   # Tests find the binaries of other packages in the target directory: xtask's and ono-testkit's
   # drive `ono` through `ono_testkit::ono_binary()`, and ono-cli's install `kuang-example-plugin`
   # from beside it. A workspace run builds every binary for the tests of the package that declares
-  # it; a selection builds only its own, so a part builds all of them first.
-  if [[ "$part" == tests ]]; then
+  # it; a selection builds only its own, so it builds all of them first.
+  if [[ ${#selection[@]} -eq 0 ]]; then
+    select_packages
+  fi
+  if [[ "${selection[*]}" != "--workspace" ]]; then
     cargo build --locked --workspace --bins
   fi
 
@@ -208,7 +244,15 @@ if runs static; then
 fi
 
 case "$part" in
-  all) printf '\n\033[1;32mgate: green\033[0m\n' ;;
+  all)
+    # A green gate that tested a selection says which, so nobody reads it as a full run.
+    if [[ "${selection[*]}" == "--workspace" ]]; then
+      printf '\n\033[1;32mgate: green\033[0m\n'
+    else
+      printf '\n\033[1;32mgate: green — tested %s; ONO_TESTS=all tests every package\033[0m\n' \
+        "${selection[*]//--package /}"
+    fi
+    ;;
   static) printf '\n\033[1;32mgate: the static steps are green\033[0m\n' ;;
   tests) printf '\n\033[1;32mgate: the tests of %s are green\033[0m\n' "${selection[*]}" ;;
 esac
