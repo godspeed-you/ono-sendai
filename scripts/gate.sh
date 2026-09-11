@@ -249,8 +249,12 @@ case "$part" in
     if [[ "${selection[*]}" == "--workspace" ]]; then
       printf '\n\033[1;32mgate: green\033[0m\n'
     else
+      tested=()
+      for argument in "${selection[@]}"; do
+        [[ "$argument" == --package ]] || tested+=("$argument")
+      done
       printf '\n\033[1;32mgate: green — tested %s; ONO_TESTS=all tests every package\033[0m\n' \
-        "${selection[*]//--package /}"
+        "${tested[*]}"
     fi
     ;;
   static) printf '\n\033[1;32mgate: the static steps are green\033[0m\n' ;;
