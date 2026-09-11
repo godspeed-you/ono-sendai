@@ -2277,6 +2277,19 @@ the provider samples — and no assertion changed.
 
 ## Found, not yet filed
 
+- **The acceptance image job downloads the filesystem stage's packages from the Ubuntu archive on
+  every CI run, and that download is what makes the job take 9 to 18 minutes (2026-09-11).** Two
+  diagnostic runs on `implementation-image-timing` (34581843204, 34584197815) timed the stages:
+  `builder` 5m11 with the cargo cache working — the 53 workspace crates compile, no dependency
+  does — `runtime` 12 s (59 packages from `deb.debian.org` in 7 s), and `runtime-filesystems`
+  3m38, 212 s of it `apt-get install btrfs-progs zfsutils-linux` against `archive.ubuntu.com`: 27 s
+  to the first response, about three minutes for 50 packages. In 34581843204
+  `scripts/acceptance.sh --build-only` took 17m32 with the builder stage already in the layer
+  cache, which leaves the Ubuntu stage as the time. The Actions caches carry cargo's registry and
+  target only, so the layer is rebuilt on every run, and `acceptance.sh` builds the two images one
+  after the other, so the download never overlaps the Rust build. A buildx layer cache in
+  GitHub's cache backend closes it; a mirror build argument or building both images at once
+  narrows it.
 - **Planning a restart costs about 0.75 s per target, because every target reads every unit and
   every process again (2026-09-11).** On an idle machine `get service | take 50 | plan restart
   service` takes 38.5 s, `take 5` 3.5 s, and `get service | take 50` alone 0.2 s. `strace` counts
@@ -3854,6 +3867,11 @@ records. It was removed from this board rather than carried as an open box.
 ---
 
 ## Done
+
+**Local image builds send 36 MB of context instead of 1.5 GB (2026-09-11).** `.dockerignore`'s
+`target/` matched the root only, so `fuzz/coverage-guided/target/` — 1.4 GB of cargo-fuzz
+artifacts — went into every local build's context and through `COPY fuzz` into the builder stage.
+`**/target/` excludes every target directory.
 
 **The local gate tests the packages an increment can break (2026-09-11, ADR-0853).** A local
 gate took 10m02, 8m24 of it `cargo test` running 568 binaries one after another. Without a
