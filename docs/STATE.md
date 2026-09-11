@@ -2277,6 +2277,24 @@ the provider samples — and no assertion changed.
 
 ## Found, not yet filed
 
+- **Planning a restart costs about 0.75 s per target, because every target reads every unit and
+  every process again (2026-09-11).** On an idle machine `get service | take 50 | plan restart
+  service` takes 38.5 s, `take 5` 3.5 s, and `get service | take 50` alone 0.2 s. `strace` counts
+  1,831 `openat`, 1,031 `readlink` and 880 `sendmsg` to the system bus for one target and 8,782,
+  5,162 and 2,468 for five — linear per target, about one full pass over `/proc` and the unit list
+  each. It is also the suite's largest single cost: seven tests of
+  `crates/ono-cli/tests/change_gates.rs` plan fifty targets each (94–99 s, in parallel) and one of
+  `change_views.rs` does too (40 s), about 2.3 of a 10-minute local gate (ADR-0853). Reading the
+  units and the process table once per plan closes it — a `perf` increment with a benchmark over
+  the fifty-target plan.
+- **Two tests of `change_claims.rs` take 31 s each, the length of the default verification
+  timeout (2026-09-11).** `should_refuse_a_second_apply_naming_the_session_that_holds_the_plan`
+  and `should_resume_at_once_a_plan_whose_applier_was_killed_mid_action` block a copy on a FIFO
+  and then release it; both finish 31 s after their binary starts, and
+  `crates/ono-change-core/src/verification.rs:25` sets `DEFAULT_TIMEOUT` to 30 s. Not confirmed:
+  the likely cause is a verification reading the FIFO source after its writer is gone, until the
+  timeout ends it. A timed run of one of them confirms or refutes it, and then says whether the
+  product or the fixture is wrong.
 - **`timeline::should_carry_a_rendered_reference_into_inspect_at_and_why` failed once in CI
   (2026-09-11).** In the first attempt of CI run 34562940989 (`implementation` 0eb0ce34),
   `at event @efa3` answered `temporal.invalid_time … no event with that reference is retained`,
@@ -3836,6 +3854,16 @@ records. It was removed from this board rather than carried as an open box.
 ---
 
 ## Done
+
+**The local gate tests the packages an increment can break (2026-09-11, ADR-0853).** A local
+gate took 10m02, 8m24 of it `cargo test` running 568 binaries one after another. Without a
+selection of its own the test step now covers the packages the changed files belong to, every
+package that depends on them, and xtask; a file only xtask reads selects xtask alone, and anything
+else — the lockfile, the contracts, the toolchain, the workflows, an unknown file, a clean tree —
+every package. `ONO_TESTS=all` and CI cover everything. 77 of the last 300 commits would have
+tested xtask alone. `xtask/tests/affected.rs` checks the harness list against every string
+literal outside xtask, and found `fuzz.yml` on its first run. The two slow test groups that remain
+the cost of a Rust change are under *Found, not yet filed*.
 
 **CI runs the gate in parts, on runners of their own (2026-09-11, ADR-0852).** The single gate
 job was the whole of CI's twenty minutes, because `cargo test` runs its test binaries one after
