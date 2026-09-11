@@ -5,10 +5,15 @@
 # Every case belongs to exactly one group. `scripts/acceptance.sh` refuses to run while one does
 # not, so the case that opens a new tranche comes with a new line here.
 #
-# name            first  last
-core              000    089
-spatial           090    119
-hardening         120    199
+#
+# A tranche whose cases outgrow the others splits into two neighbouring ranges, so the slowest
+# job does not set the pace for the rest (ADR-0852).
+#
+# name              first  last
+core                000    089
+spatial-journeys    090    099
+spatial-surface     100    119
+hardening           120    199
 packages          200    229
 temporal          230    259
 temporal-ledger   260    279
