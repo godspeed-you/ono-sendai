@@ -2277,21 +2277,6 @@ the provider samples — and no assertion changed.
 
 ## Found, not yet filed
 
-- **`change_gates::should_stream_an_action_result_for_every_action_it_ran` is red in CI
-  (2026-09-10).** It panics at `crates/ono-cli/tests/change_gates.rs:252` in the gate of CI run
-  34515787631 (`implementation` 5dd35264) and of runs 34519670522 and 34521286897 (0519ef6e plus
-  the acceptance-harness commits, which touch no Rust); the test binary took 62 s and 87 s. The
-  gate stops at that binary, so the test binaries after it did not run in those runs. What closes
-  it: the reproduction from those logs, then a fix or a case against the cause.
-
-- **Acceptance case 324 is numbered inside the v0.6 block (2026-09-10).**
-  `docker/acceptance/cases/324-targets-are-not-buried-in-files.case`, merged from
-  `implementation-completion`, proves a completion fix, and §4.12 of `docs/ACCEPTANCE.md` claims
-  280–329 for the v0.6 tranche; `cargo test -p xtask` fails
-  `change_evidence::should_keep_the_case_numbers_of_the_v06_checklist_inside_its_own_block` on
-  0519ef6e. What closes it: a number outside the block — and inside a group of
-  `docker/acceptance/groups`, which the harness checks — or a §4.12 box that names it.
-
 - **`ono_testkit::scratch()` falls back to `/tmp` outside a test binary's own crate.** `Scratch`
   reads `CARGO_TARGET_TMPDIR`, which cargo exports at compile time only, so a helper compiled into
   `ono-testkit` and called from another crate's suite lands in `/tmp`. On this machine `/tmp` is a
@@ -3835,6 +3820,13 @@ records. It was removed from this board rather than carried as an open box.
 
 ## Done
 
+**The two tests that kept CI red pass on every filesystem (2026-09-11).**
+`change_gates::should_stream_an_action_result_for_every_action_it_ran` counted one action result,
+which held only where the system temporary directory is tmpfs and §11.2 declines to protect the
+destination; on the CI runners' disk the protection is a second result. The test now runs on the
+build disk and expects both. The completion case 324 sat in the 280–329 block §4.12 claims for
+v0.6 and is now case 218.
+
 **The acceptance suite runs in groups, one job each (2026-09-10, ADR-0851).** CI builds the images
 once, with cargo's cache mounts carried between runs, and runs the seven groups of
 `docker/acceptance/groups` in parallel jobs, each case after the other. The acceptance part of CI
@@ -3850,7 +3842,8 @@ the two together, so `get <Tab>` in any sizeable directory buried `process` and 
 file names. Where the registry answers with targets or with the fields flowing into a filter, the
 filesystem is no longer asked; elsewhere paths are offered as before. Developed on
 `implementation-completion` (commit 339506e, CI run 34457050938 green: gate, acceptance,
-packages) and merged here. Proven by the three new `repl::tests` and acceptance case 324.
+packages) and merged here. Proven by the three new `repl::tests` and acceptance case 218
+(numbered 324 until it left the v0.6 block).
 
 **The v0.6 tranche is finished, §29 included (2026-09-10, ADR-0822 … ADR-0850).** The audit round
 of ADR-0822 … ADR-0837 and this session's corrections are in the tree, and the whole acceptance
