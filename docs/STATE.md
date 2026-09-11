@@ -2286,10 +2286,11 @@ the provider samples — and no assertion changed.
   to the first response, about three minutes for 50 packages. In 34581843204
   `scripts/acceptance.sh --build-only` took 17m32 with the builder stage already in the layer
   cache, which leaves the Ubuntu stage as the time. The Actions caches carry cargo's registry and
-  target only, so the layer is rebuilt on every run, and `acceptance.sh` builds the two images one
-  after the other, so the download never overlaps the Rust build. A buildx layer cache in
-  GitHub's cache backend closes it; a mirror build argument or building both images at once
-  narrows it.
+  target only, so the layer is rebuilt on every run. Since 08e89270 the download runs beside the
+  Rust build (see *Done*) and costs the job only what it takes beyond the builder; it still
+  happens on every run, and its length still varies with the archive. A buildx layer cache in
+  GitHub's cache backend would remove it — judged on 2026-09-11 not worth a workflow rebuild and a
+  share of the 10 GB cache budget while nobody waits on CI.
 - **Planning a restart costs about 0.75 s per target, because every target reads every unit and
   every process again (2026-09-11).** On an idle machine `get service | take 50 | plan restart
   service` takes 38.5 s, `take 5` 3.5 s, and `get service | take 50` alone 0.2 s. `strace` counts
@@ -3867,6 +3868,13 @@ records. It was removed from this board rather than carried as an open box.
 ---
 
 ## Done
+
+**The acceptance image's filesystem packages download while the builder compiles (2026-09-11).**
+The Ubuntu packages of `runtime-filesystems` are the stage `filesystems-base` now, which needs
+nothing from the builder, and `scripts/acceptance.sh` builds it in the background beside the main
+image. On the first run after it (34592199743) `acceptance.sh --build-only` took 6m59 against 9m46
+to 17m32 on the five runs before, the image job 7m42, and CI 11m18 against 22m. One run; the
+archive's speed varies, and the gain with it.
 
 **Local image builds send 36 MB of context instead of 1.5 GB (2026-09-11).** `.dockerignore`'s
 `target/` matched the root only, so `fuzz/coverage-guided/target/` — 1.4 GB of cargo-fuzz
