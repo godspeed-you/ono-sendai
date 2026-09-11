@@ -514,7 +514,7 @@ tests=6948
 tests_that_can_skip=126
 expected_ci_skips=15
 acceptance_cases=249
-adrs=581
+adrs=582
 command_contract_files=15
 commands=222
 ```
