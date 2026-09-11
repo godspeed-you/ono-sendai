@@ -2277,6 +2277,23 @@ the provider samples — and no assertion changed.
 
 ## Found, not yet filed
 
+- **`timeline::should_carry_a_rendered_reference_into_inspect_at_and_why` failed once in CI
+  (2026-09-11).** In the first attempt of CI run 34562940989 (`implementation` 0eb0ce34),
+  `at event @efa3` answered `temporal.invalid_time … no event with that reference is retained`,
+  although `inspect event @efa3`, one shell earlier, had resolved the same reference; the re-run
+  of that commit was green. Locally it never failed: 40 isolated runs, five runs of the whole
+  binary, runs with `TZ=UTC`, `LANG=C.UTF-8` and the CI variables, 20 under full load on all
+  cores, and 600 `at event` calls against a recorded home, 300 of them under full load. Three
+  places turn a failure into exactly that answer without saying so: `configure_from` in
+  `crates/ono-cli/src/temporal/mod.rs` skips the whole temporal setup, recorder included, when
+  `session_state().try_lock()` does not succeed at once, and it discards `start_recorder`'s result
+  (`Ok(_) | Err(_) => {}`), so a shell whose store did not open reads the empty session ledger;
+  and `LedgerAnchors::instant_of` in `crates/ono-cli/src/temporal/coordinate.rs` drops the
+  ledger's error with `.ok()`, so an ambiguous prefix or an unavailable store reads as "not
+  retained". What closes it: the three report what happened — the recorder's health through
+  `get recorder`, the ledger's error through `at` — and the next failure's cause is read off the
+  CI log.
+
 - **`ono_testkit::scratch()` falls back to `/tmp` outside a test binary's own crate.** `Scratch`
   reads `CARGO_TARGET_TMPDIR`, which cargo exports at compile time only, so a helper compiled into
   `ono-testkit` and called from another crate's suite lands in `/tmp`. On this machine `/tmp` is a
