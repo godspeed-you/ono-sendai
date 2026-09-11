@@ -3837,6 +3837,20 @@ records. It was removed from this board rather than carried as an open box.
 
 ## Done
 
+**CI runs the gate in parts, on runners of their own (2026-09-11, ADR-0852).** The single gate
+job was the whole of CI's twenty minutes, because `cargo test` runs its test binaries one after
+another. `scripts/gate.sh` now takes `--static` and `--tests [SELECTION]`, bare it runs as before,
+and CI runs the static steps, two test parts (`ono-cli`, and every other package) and one skip
+verification over both parts' logs as four jobs. `spatial` split into `spatial-journeys` and
+`spatial-surface`. On the first green run (34572270897, every gate cache cold) CI took 14m19
+against 20m07 before: static 6m06, the two test parts 8m00 and 12m07 (4m45 of it compiling), the
+skip verification saw all 15 declared skips, and the slowest acceptance group is now
+`temporal-ledger` at 3m34. The longest path is now the acceptance image, 10m42 on that run. The
+first run of the parts failed on three things a package selection exposes — tests reach for
+other packages' binaries in both directions, an unlocked `cargo build`, `cargo deny` missing in
+the test job — and a part now builds every workspace binary first. Six stale Actions caches were
+deleted, 9.9 GB down to 3.7. Developed on `implementation-ci-shards`.
+
 **The two tests that kept CI red pass on every filesystem (2026-09-11).**
 `change_gates::should_stream_an_action_result_for_every_action_it_ran` counted one action result,
 which held only where the system temporary directory is tmpfs and §11.2 declines to protect the
