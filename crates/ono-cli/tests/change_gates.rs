@@ -15,7 +15,7 @@
 #[path = "change_support/mod.rs"]
 mod change_support;
 
-use change_support::{home, one, ono_at, requires_a_service, text};
+use change_support::{build_disk_home, home, one, ono_at, requires_a_service, text};
 use ono_testkit::{SkipReason, skipped};
 
 /// What a host that serves no systemd unit cannot present (v0.4.1 §38.1).
@@ -245,19 +245,27 @@ fn should_refuse_to_apply_an_expired_plan() {
 
 #[test]
 fn should_stream_an_action_result_for_every_action_it_ran() {
-    let home = home();
+    // On the build disk: §11.2 protects the overwritten destination only on a persistent
+    // filesystem, so under a tmpfs temporary directory the executor settles the copy alone, and
+    // on any other disk the copy and its protection.
+    let home = build_disk_home("change-gates-results");
     let reference = ordinary_plan(home.path());
     let run = ono_at(home.path(), &format!("apply {reference} | to json"));
     let rows = change_support::rows(&run);
-    assert_eq!(
-        rows.len(),
-        1,
+    assert!(
+        rows.len() == 2
+            && rows.iter().any(|row| {
+                row["operation"]
+                    .as_str()
+                    .is_some_and(|operation| operation.starts_with("copy file "))
+            }),
         "v0.6 §5.6: `apply` answers with a stream of `ono.action-result/1`, one per action the \
-         executor settled. Got {rows:?}"
+         executor settled — the copy, and the protection §11.2 takes of the destination it \
+         overwrites. Got {rows:?}"
     );
-    assert_eq!(
-        rows[0]["status"].as_str(),
-        Some("success"),
+    assert!(
+        rows.iter()
+            .all(|row| row["status"].as_str() == Some("success")),
         "v0.6 §4.7: every action result is recorded independently. Got {rows:?}"
     );
 }
