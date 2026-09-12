@@ -207,9 +207,13 @@ socket types, #132 REPL output without a trailing newline, and #133–#136 as on
 workstream — context before provider, expression-aware field/operator/value/connector
 completion, typed value candidates and candidate documentation in the UI (§9–§21). It excludes
 #124–#127 and #129 by name (§22, §23) and bars pulling v0.7 work forward (§2). Checksummed and
-enumerated, **not implemented**, and **ahead of v0.7** in build order. It brings no
-`docs/ACCEPTANCE.md` checklist of its own; its §39 Definition of Done is the list to derive one
-from, the way §4.7 was written from v0.4.
+enumerated, and **implemented the same day**, ahead of v0.7 in build order: #133–#136 as one
+completion pipeline in `c543c50e` (ADR-0860), #130 in `9645022a`, #128 in `5d79b3c5`
+(ADR-0857), #131 in `5f9578fa` (ADR-0854) and #132 in `f8b32f8b` (ADR-0855). Like v0.4.2–v0.4.4
+it is a patch release and brings no `docs/ACCEPTANCE.md` checklist: each issue is proven by the
+regression tests its commit names, and the new cases sit in the group `stabilization`
+(330–349). The milestone `v0.6.1` (GitHub milestone 16) holds exactly the eight issues;
+`docs/releases/v0.6.1.md` is the note.
 
 **The v0.3 tranche is complete** (started 2026-08-27, delivered by ADR-0052 … ADR-0067; all 39
 boxes of `docs/ACCEPTANCE.md` §4.6 are ticked, cases `070`–`089`). **The v0.4 tranche is complete**
@@ -2290,6 +2294,26 @@ the provider samples — and no assertion changed.
 
 
 ## Found, not yet filed
+
+- **Two expression evaluators implement the same binary operators side by side (2026-09-12, found
+  while typing the operators for completion, ADR-0860).** `crates/ono-command/src/expr.rs`
+  `binary_op` (the pipeline filter's evaluator) and `crates/ono-cli/src/eval/expression.rs`
+  `eval_binary` (the session evaluator) carry the same match over `BinaryOp` and their own copies
+  of `equals`, `contains`, `regex_matches`, `remainder`, `kleene_and` and `kleene_or`. They agree
+  today; nothing makes them. `tests/operator_typing.rs` proves the completion table against the
+  first only. One evaluator behind both — the session one supplying variables and pipelines
+  through `Scope` — closes it; a `refactor` with no test changing.
+- **`ss`'s own stderr reaches the terminal unfiltered (2026-09-12, side note of #131).** Bare `ss`
+  on a kernel that refuses one netlink family prints `RTNETLINK answers: Invalid argument` above
+  the decoded table; the adapter passes the program's stderr through untouched. Whether an
+  adapter may hold back a diagnostic its program prints for a family it did not ask about is an
+  adapter-contract decision (spec v0.3 §1.59), not a decoding fix — which is why #131 left it.
+- **Two wiki pages describe v0.6.0 completion and permission behaviour (2026-09-12).**
+  `ono-sendai-kubernetes-wiki/User-Guide.md:865` lists "`get permission` still shows the declared
+  scope after `--scope`" as a known issue, which #128 fixed; its troubleshooting row at line 817
+  can now point at the notice `set permission` prints. `ono-sendai-wiki/Help-and-Discovery.md`
+  §"Completion" (lines 186–225) is correct but stops at fields: operators, values, units and the
+  docs beside each candidate (#134–#136) are not mentioned. Both wikis are separate repositories.
 
 - **The acceptance image job downloads the filesystem stage's packages from the Ubuntu archive on
   every CI run, and that download is what makes the job take 9 to 18 minutes (2026-09-11).** Two
