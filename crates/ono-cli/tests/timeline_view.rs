@@ -61,6 +61,9 @@ const STARTUP: Duration = Duration::from_secs(60);
 const ALTERNATE_SCREEN_ON: &str = "\u{1b}[?1049h";
 const ALTERNATE_SCREEN_OFF: &str = "\u{1b}[?1049l";
 
+/// The cursor-position report a prompt asks for after a command (issue #132, ADR-0855).
+const CURSOR_QUESTION: &str = "\u{1b}[6n";
+
 /// §19.3's canonical keys, in the spelling a terminal delivers.
 const UP: &[u8] = b"\x1b[A";
 const ENTER: &[u8] = b"\r";
@@ -146,8 +149,18 @@ impl Terminal {
                 .pty
                 .read_timeout(&mut buffer, Duration::from_millis(120))
             {
+                // Since issue #132 the prompt after a command asks the terminal where its cursor
+                // is (`ESC [ 6 n`; ADR-0855, ADR-0861), and every terminal emulator answers. This
+                // bare pseudo-terminal answers as one would — the first column, where the views
+                // this suite closes leave the cursor — so no prompt waits out the shell's
+                // two-second bound. Counting over the whole transcript answers a question split
+                // across two reads as well.
+                let asked = self.seen.matches(CURSOR_QUESTION).count();
                 self.seen
                     .push_str(&String::from_utf8_lossy(&buffer[..count]));
+                for _ in asked..self.seen.matches(CURSOR_QUESTION).count() {
+                    self.keys(b"\x1b[1;1R");
+                }
             }
         }
     }

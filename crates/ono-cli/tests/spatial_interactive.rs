@@ -91,6 +91,8 @@ struct Session {
     pty: PtySession,
     seen: String,
     buffer: [u8; 16384],
+    /// How many cursor-position reports the shell asked for have been answered.
+    answered: usize,
 }
 
 impl Session {
@@ -109,12 +111,33 @@ impl Session {
             pty,
             seen: String::new(),
             buffer: [0u8; 16384],
+            answered: 0,
         }
     }
 
     /// Everything the terminal has shown so far, escape sequences included.
     fn seen(&self) -> &str {
         &self.seen
+    }
+
+    /// Keeps the first `count` bytes of the read buffer as painted, and answers every
+    /// cursor-position report the shell asked for on the way.
+    ///
+    /// Since issue #132 the shell asks the terminal where its cursor is before the prompt that
+    /// follows a command (`ESC [ 6 n`; ADR-0855, ADR-0861), and every terminal emulator answers.
+    /// A bare pseudo-terminal does not, so the shell would wait out its two-second bound before
+    /// each such prompt. These tests are about spatial views, and they answer as the terminal
+    /// they stand in for would: the first column, which is where every command they run — an
+    /// `echo` — leaves the cursor. The questions are counted over the whole transcript, so one
+    /// split across two reads is answered too.
+    fn absorb(&mut self, count: usize) {
+        let chunk = String::from_utf8_lossy(&self.buffer[..count]).into_owned();
+        self.seen.push_str(&chunk);
+        let asked = self.seen.matches("\u{1b}[6n").count();
+        for _ in self.answered..asked {
+            self.keys(b"\x1b[1;1R");
+        }
+        self.answered = asked;
     }
 
     /// Reads until `ready` accepts the transcript or the budget runs out.
@@ -131,8 +154,7 @@ impl Session {
                 .pty
                 .read_timeout(&mut self.buffer, Duration::from_millis(120))
             {
-                let chunk = String::from_utf8_lossy(&self.buffer[..count]).into_owned();
-                self.seen.push_str(&chunk);
+                self.absorb(count);
             }
         }
     }
@@ -172,8 +194,7 @@ impl Session {
                 && count > 0
             {
                 let elapsed = started.elapsed();
-                let chunk = String::from_utf8_lossy(&self.buffer[..count]).into_owned();
-                self.seen.push_str(&chunk);
+                self.absorb(count);
                 return Some(elapsed);
             }
         }
@@ -212,8 +233,7 @@ impl Session {
                 .pty
                 .read_timeout(&mut self.buffer, Duration::from_millis(100))
             {
-                let chunk = String::from_utf8_lossy(&self.buffer[..count]).into_owned();
-                self.seen.push_str(&chunk);
+                self.absorb(count);
             }
         }
     }
