@@ -1,0 +1,21 @@
+# Issue #135 (v0.6.1 §14, spec §15.1): after a comparison Tab offers what the field can be compared
+# with: the byte units after a number ("`memory > 5<tab>` MAY suggest byte units rather than
+# unrelated filenames"), an enum's declared variants, and `true`/`false`.
+case: Tab after an operator offers the values the field's type knows
+pty: true
+columns: 120
+lines: 40
+timeout: 60
+stdin: |
+  get filesystem | where size > 5		GiB | count
+  get socket | where state == 		listen | count
+  get filesystem | where read_only == fa	 | count
+  exit
+run: |
+  ono
+exit: 0
+stdout-contains: 5TiB
+stdout-contains: gibibyte
+stdout-contains: time-wait
+stdout-contains: where read_only == false
+stdout-contains: VALUE

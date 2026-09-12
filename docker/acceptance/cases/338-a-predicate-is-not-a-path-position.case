@@ -1,0 +1,21 @@
+# Issue #133 (v0.6.1 §10, §16): inside a predicate Tab offered the working directory's entries
+# whenever the registry had nothing to say, which after the first word was always. A predicate is
+# not a path position: from `/`, two Tabs after a field and after an operator list nothing of the
+# root filesystem, and the line still runs.
+case: Tab inside a predicate offers nothing from the disk
+pty: true
+columns: 100
+lines: 40
+timeout: 60
+stdin: |
+  cd /
+  get process | where cpu 		> 0 | count
+  get process | where cpu > 		0 | count
+  exit
+run: |
+  ono
+exit: 0
+stdout-contains: VALUE
+stdout-not-contains: etc/
+stdout-not-contains: usr/
+stdout-not-contains: proc/

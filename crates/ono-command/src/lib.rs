@@ -59,12 +59,15 @@ mod help;
 mod impls;
 mod invoke;
 mod narrow;
+mod operators;
 mod registry;
 mod suggest;
 
 pub use bind::{Binding, BoundArguments};
 pub use check::{check_pipeline, check_pipeline_with};
-pub use complete::{Candidate, CandidateKind, StageContext, ValueCompleter, complete};
+pub use complete::{
+    Candidate, CandidateKind, StageContext, ValueCompleter, accepts_path, complete,
+};
 pub use contract::{
     ArgumentMode, CapabilitySpec, CommandContract, Confirmation, ContributedCommand,
     ContributedParameter, DeclaredType, Elevation, ExecutionClass, IoType, Origin, ParameterSpec,
@@ -88,5 +91,6 @@ pub use invoke::{
     CommandImpl, CommandTable, ContextFrame, FrameKind, Invocation, Outcome, OutcomeFuture,
     Resolver, must_be_awaited, unbound_stable_commands,
 };
+pub use operators::{comparisons_for, operator_symbol};
 pub use registry::{CommandRegistry, Resolved};
 pub use suggest::closest;

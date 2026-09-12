@@ -22,6 +22,12 @@ pub struct Completion {
     /// is that the neighbourhood is *shown*, with the compact count or state each entry may
     /// carry — which is why these lines are text to read and not text to insert.
     pub listing: Vec<String>,
+    /// The one-line doc of each candidate, index for index, where it has one; empty when no
+    /// candidate is documented.
+    ///
+    /// A doc is shown beside its candidate when the candidates are listed, and is never part of
+    /// what gets inserted (issue #136).
+    pub docs: Vec<Option<String>>,
 }
 
 impl Completion {
@@ -32,6 +38,7 @@ impl Completion {
             span,
             candidates,
             listing: Vec::new(),
+            docs: Vec::new(),
         }
     }
 
@@ -39,6 +46,17 @@ impl Completion {
     #[must_use]
     pub fn shown(mut self, listing: Vec<String>) -> Self {
         self.listing = listing;
+        self
+    }
+
+    /// The same candidates, each with its doc where it has one, index for index.
+    #[must_use]
+    pub fn documented(mut self, docs: Vec<Option<String>>) -> Self {
+        self.docs = if docs.iter().any(Option::is_some) {
+            docs
+        } else {
+            Vec::new()
+        };
         self
     }
 

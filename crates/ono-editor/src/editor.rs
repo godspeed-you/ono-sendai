@@ -10,7 +10,7 @@ use ono_render::{Presentation, Theme, Token};
 
 use crate::buffer::LineBuffer;
 use crate::complete::{Completer, Completion, NoCompleter};
-use crate::frame::{Frame, RowDraft, candidate_lines, display_char};
+use crate::frame::{Frame, RowDraft, candidate_lines, described_lines, display_char};
 use crate::highlight::{Highlighter, PlainHighlighter};
 use crate::key::KeyPress;
 use crate::keymap::{EditAction, Keymap};
@@ -82,6 +82,8 @@ pub struct Editor {
     navigation: Option<HistoryNav>,
     search: Option<SearchState>,
     listing: Vec<String>,
+    /// The doc of each listed candidate, index for index; empty when none is documented.
+    listing_docs: Vec<Option<String>>,
     completion_offered: bool,
 }
 
@@ -101,8 +103,15 @@ impl Editor {
             navigation: None,
             search: None,
             listing: Vec::new(),
+            listing_docs: Vec::new(),
             completion_offered: false,
         }
+    }
+
+    /// Takes the candidate list off the screen.
+    fn clear_listing(&mut self) {
+        self.listing.clear();
+        self.listing_docs.clear();
     }
 
     /// Uses `highlighter` for the colours of the line being typed.
@@ -188,7 +197,7 @@ impl Editor {
         self.buffer.set_text(text);
         self.navigation = None;
         self.search = None;
-        self.listing.clear();
+        self.clear_listing();
         self.completion_offered = false;
         self.refresh_highlight();
     }
@@ -288,7 +297,12 @@ impl Editor {
             .into_iter()
             .map(|row| row.finish(theme, presentation))
             .collect();
-        for line in candidate_lines(&self.listing, width) {
+        let listed = if self.listing_docs.is_empty() {
+            candidate_lines(&self.listing, width)
+        } else {
+            described_lines(&self.listing, &self.listing_docs, width)
+        };
+        for line in listed {
             lines.push(theme.paint(&line, Token::Foreground, presentation));
         }
         Frame {
@@ -300,7 +314,7 @@ impl Editor {
 
     fn apply(&mut self, action: EditAction) -> Outcome {
         if action != EditAction::Complete {
-            self.listing.clear();
+            self.clear_listing();
             self.completion_offered = false;
         }
         if action.changes_text()
@@ -456,7 +470,7 @@ impl Editor {
             .completer
             .complete(self.buffer.text(), self.buffer.cursor());
         if completion.is_empty() {
-            self.listing.clear();
+            self.clear_listing();
             self.completion_offered = false;
             return Outcome::Continue;
         }
@@ -467,7 +481,7 @@ impl Editor {
         if let [only] = completion.candidates.as_slice() {
             let candidate = only.clone();
             self.buffer.replace_range(start..end, &candidate);
-            self.listing.clear();
+            self.clear_listing();
             self.completion_offered = false;
             return Outcome::Continue;
         }
@@ -481,12 +495,14 @@ impl Editor {
                 self.buffer.replace_range(start..end, &prefix);
             }
             self.listing = completion.listing;
+            self.listing_docs.clear();
             self.completion_offered = true;
             return Outcome::Continue;
         }
 
         if self.completion_offered {
             self.listing = completion.candidates;
+            self.listing_docs = completion.docs;
             return Outcome::Continue;
         }
 
@@ -494,7 +510,7 @@ impl Editor {
         if prefix.len() > end - start {
             self.buffer.replace_range(start..end, &prefix);
         }
-        self.listing.clear();
+        self.clear_listing();
         self.completion_offered = true;
         Outcome::Continue
     }

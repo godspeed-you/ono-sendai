@@ -73,67 +73,31 @@ struct ShellCompleter {
     resolver: Option<ono_command::Resolver>,
 }
 
-/// Completes a selector from whichever source can answer it.
-///
-/// An expression-mode selector — `where <field>`, `select <field>` — names a field of the schema
-/// flowing into the stage, which only the contracts know. A words-mode selector names an object,
-/// which only a provider knows (spec §15.1). One hook, two questions, and the command's own
-/// argument mode says which is being asked.
-struct SelectorCompleter {
-    fields: Vec<String>,
-    values: Option<crate::complete::ProviderValues>,
-}
-
-impl ono_command::ValueCompleter for SelectorCompleter {
-    fn complete(
-        &self,
-        command: &ono_command::CommandContract,
-        parameter: &ono_command::ParameterSpec,
-        prefix: &str,
-    ) -> Vec<ono_command::Candidate> {
-        if command.argument_mode() == ono_command::ArgumentMode::Expression {
-            return self
-                .fields
-                .iter()
-                .filter(|field| field.starts_with(prefix))
-                .map(ono_command::Candidate::field)
-                .collect();
-        }
-        self.values
-            .as_ref()
-            .map(|values| ono_command::ValueCompleter::complete(values, command, parameter, prefix))
-            .unwrap_or_default()
-    }
-}
-
 impl ShellCompleter {
     /// The schema flowing out of the stages before the one under the cursor, planned the way
-    /// the pipeline would be — so an adapted `ps aux |` answers with Process fields exactly as
-    /// `get process |` does (spec v0.3 §1.59, §1.61).
-    fn upstream_fields(&self, line: &str, cursor: usize) -> Vec<String> {
+    /// the pipeline would be — so an adapted `ps aux |` answers with Process fields, operators
+    /// and values exactly as `get process |` does (spec v0.3 §1.59, §1.61).
+    fn upstream_schema(
+        &self,
+        line: &str,
+        cursor: usize,
+    ) -> Option<std::sync::Arc<ono_value::Schema>> {
         let typed = &line[..cursor.min(line.len())];
-        let Some(cut) = typed.rfind('|') else {
-            return Vec::new();
-        };
+        let cut = typed.rfind('|')?;
         let upstream = typed[..cut].trim();
         if upstream.is_empty() || upstream.ends_with([';', '&']) {
-            return Vec::new();
+            return None;
         }
-        let Ok(registry) = crate::eval::native::registry() else {
-            return Vec::new();
-        };
+        let registry = crate::eval::native::registry().ok()?;
         // Planned with a structured consumer after it, because that is what the stage under
         // the cursor is about to be: alone, a program at the end of a line is raw bytes.
         let upstream = format!("{upstream} | count");
         let parsed = ono_parser::parse(&upstream);
-        let Some(pipeline) = parsed
+        let pipeline = parsed
             .program()
             .statements
             .first()
-            .and_then(ono_parser::Statement::as_pipeline)
-        else {
-            return Vec::new();
-        };
+            .and_then(ono_parser::Statement::as_pipeline)?;
         let resolver = self.resolver.clone();
         let executables = |name: &str| resolver.as_ref().and_then(|resolve| resolve(name));
         let plan = ono_command::plan_with(
@@ -157,14 +121,6 @@ impl ShellCompleter {
             .and_then(ono_command::StagePlan::element_schema)
             .and_then(|id| id.parse::<ono_value::SchemaId>().ok())
             .and_then(|id| ono_value::builtin_schemas().get(&id))
-            .map(|schema| {
-                schema
-                    .fields()
-                    .iter()
-                    .map(|field| field.name().to_owned())
-                    .collect()
-            })
-            .unwrap_or_default()
     }
 
     /// The flags an adapter declares for the program at the head of the stage under the
@@ -187,7 +143,7 @@ impl ShellCompleter {
 
 impl Completer for ShellCompleter {
     fn complete(&self, line: &str, cursor: usize) -> Completion {
-        let start = line[..cursor]
+        let mut start = line[..cursor]
             .rfind(|c: char| c.is_whitespace() || c == '|')
             .map_or(0, |at| at + 1);
         let prefix = &line[start..cursor];
@@ -202,36 +158,49 @@ impl Completer for ShellCompleter {
             spatial_offers(line, start, prefix)
         };
 
-        let mut candidates: Vec<String> = Vec::new();
-        // A verb's targets and the fields flowing into a filter are vocabulary only the registry
-        // has; where it offers some, the working directory's entries would only bury it.
-        let mut vocabulary = false;
+        // Each candidate with the doc the registry gives it, which the editor shows beside it and
+        // never inserts (issue #136).
+        let mut candidates: Vec<(String, Option<String>)> = Vec::new();
+        // Whether a path can stand here is a property of the position, decided with everything
+        // else the registry knows about it — not a fallback for an empty answer (issue #133).
+        let mut paths = true;
 
         if let Ok(registry) = crate::eval::native::registry() {
-            let context = ono_command::StageContext::from_line(line, cursor);
-            let fields = SelectorCompleter {
-                fields: if is_head {
-                    Vec::new()
+            let context =
+                ono_command::StageContext::from_line(line, cursor).with_schema(if is_head {
+                    None
                 } else {
-                    self.upstream_fields(line, cursor)
-                },
-                values: if is_head { None } else { self.values.clone() },
+                    self.upstream_schema(line, cursor)
+                });
+            paths = ono_command::accepts_path(registry, &context);
+            // In an expression the token under the cursor is the lexer's, not the word's: in
+            // `size>5G` it is `5G`, and that is what a candidate replaces.
+            if context.in_expression() {
+                start = cursor - context.prefix().len();
+            }
+            let values = if is_head {
+                None
+            } else {
+                self.values
+                    .as_ref()
+                    .map(|values| values as &dyn ono_command::ValueCompleter)
             };
-            for candidate in ono_command::complete(registry, &context, Some(&fields)) {
-                vocabulary |= matches!(
-                    candidate.kind(),
-                    ono_command::CandidateKind::Target | ono_command::CandidateKind::Field
-                );
-                candidates.push(candidate.text().to_owned());
+            for candidate in ono_command::complete(registry, &context, values) {
+                candidates.push((
+                    candidate.text().to_owned(),
+                    candidate.doc().map(str::to_owned),
+                ));
             }
         }
 
+        let undocumented = |text: String| (text, None);
         if is_head {
             candidates.extend(
                 self.commands
                     .iter()
                     .filter(|name| name.starts_with(prefix))
-                    .cloned(),
+                    .cloned()
+                    .map(undocumented),
             );
         } else if prefix.starts_with('-') {
             // An adapter's declared invocations are the only flags it can vouch for (spec v0.3
@@ -239,19 +208,30 @@ impl Completer for ShellCompleter {
             candidates.extend(
                 self.declared_flags(line, start)
                     .into_iter()
-                    .filter(|flag| flag.starts_with(prefix)),
+                    .filter(|flag| flag.starts_with(prefix))
+                    .map(undocumented),
             );
-        } else if !vocabulary {
+        } else if paths {
             // An option is the registry's business; a path is the filesystem's.
-            candidates.extend(path_candidates(prefix));
+            candidates.extend(path_candidates(prefix).into_iter().map(undocumented));
         }
 
-        candidates.sort_unstable();
-        candidates.dedup();
+        // One candidate per text, keeping a doc wherever one of its sources had it.
+        candidates.sort_by(|left, right| left.0.cmp(&right.0));
+        candidates.dedup_by(|later, kept| {
+            if later.0 != kept.0 {
+                return false;
+            }
+            if kept.1.is_none() {
+                kept.1 = later.1.take();
+            }
+            true
+        });
 
         let span = Span::new(start as u32, cursor as u32);
         if neighbourhood.is_empty() {
-            return Completion::new(span, candidates);
+            let (texts, docs) = candidates.into_iter().unzip();
+            return Completion::new(span, texts).documented(docs);
         }
 
         // §9.4: "prioritize services visible in the current neighborhood and then offer broader
@@ -264,7 +244,7 @@ impl Completer for ShellCompleter {
             .into_iter()
             .map(|offer| offer.insert)
             .collect();
-        for candidate in candidates {
+        for (candidate, _) in candidates {
             if !merged.contains(&candidate) {
                 listing.push(format!("  {candidate}"));
                 merged.push(candidate);
@@ -965,6 +945,62 @@ mod tests {
                 && !completion.candidates.contains(&"src/".to_owned()),
             "a field position is not a path, got {:?}",
             completion.candidates
+        );
+    }
+
+    #[test]
+    fn should_offer_no_directory_entry_inside_a_predicate() {
+        // Issue #133: after the first word of a predicate the registry had nothing to say, and
+        // the working directory answered instead. The tests run in the crate's directory, so
+        // `Cargo.toml` and `src/` are always there to leak.
+        for line in ["get process | where cpu ", "get process | where cpu > "] {
+            let completion = completer().complete(line, line.len());
+            assert!(
+                !completion.candidates.contains(&"Cargo.toml".to_owned())
+                    && !completion.candidates.contains(&"src/".to_owned()),
+                "`{line}` is not a path position, got {:?}",
+                completion.candidates
+            );
+        }
+    }
+
+    #[test]
+    fn should_offer_the_operators_of_a_field_at_the_prompt() {
+        let line = "get process | where cpu ";
+        let completion = completer().complete(line, line.len());
+        assert!(
+            completion.candidates.contains(&">=".to_owned()),
+            "issue #134: after a field its comparisons, got {:?}",
+            completion.candidates
+        );
+    }
+
+    #[test]
+    fn should_replace_only_the_token_under_the_cursor_in_a_compact_expression() {
+        // `size>5G` is one word; the candidate `5GiB` replaces the `5G` and nothing before it.
+        let line = "get filesystem | where size>5G";
+        let completion = completer().complete(line, line.len());
+        assert!(
+            completion.candidates.contains(&"5GiB".to_owned()),
+            "got {:?}",
+            completion.candidates
+        );
+        assert_eq!(completion.span.start() as usize, line.len() - 2);
+    }
+
+    #[test]
+    fn should_carry_each_candidates_doc_to_the_editor() {
+        // Issue #136: the registry's docs used to be dropped here, before the editor saw them.
+        let line = "get process | where pi";
+        let completion = completer().complete(line, line.len());
+        let pid = completion
+            .candidates
+            .iter()
+            .position(|candidate| candidate == "pid")
+            .expect("`pid` is offered");
+        assert_eq!(
+            completion.docs.get(pid).cloned().flatten().as_deref(),
+            Some("The process id.")
         );
     }
 

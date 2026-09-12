@@ -1,0 +1,17 @@
+# Issue #136: every field carries a doc in its schema and every operator one in the language
+# contract, and the listing showed names alone. Two Tabs list each candidate beside its doc;
+# what gets inserted is still the candidate alone.
+case: a Tab listing shows each candidate's doc beside it
+pty: true
+columns: 120
+lines: 40
+timeout: 60
+stdin: |
+  get process | where 		pi	 > 0 | count
+  exit
+run: |
+  ono
+exit: 0
+stdout-contains: The process id.
+stdout-contains: where pid > 0 | count
+stdout-contains: VALUE

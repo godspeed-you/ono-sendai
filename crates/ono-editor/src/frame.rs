@@ -124,6 +124,49 @@ pub(crate) fn candidate_lines(candidates: &[String], width: usize) -> Vec<String
     lines
 }
 
+/// Lays documented candidates out one to a line, each doc in a column beside its name, the whole
+/// line shortened to `width` cells (issue #136).
+///
+/// A doc is data from a schema or a plugin, so it is flattened to one line and every control
+/// character in it is shown as its escape, exactly as a candidate is. Where the names alone
+/// leave no room for a doc beside them, the docs are left out rather than squeezed.
+pub(crate) fn described_lines(
+    candidates: &[String],
+    docs: &[Option<String>],
+    width: usize,
+) -> Vec<String> {
+    let names: Vec<String> = candidates.iter().map(|name| visible(name)).collect();
+    let widest = names.iter().map(|name| cell_width(name)).max().unwrap_or(0);
+    let room = widest + COLUMN_GAP < width;
+    names
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let doc = docs
+                .get(index)
+                .and_then(Option::as_deref)
+                .map(|doc| doc.split_whitespace().collect::<Vec<_>>().join(" "))
+                .filter(|doc| room && !doc.is_empty());
+            let line = match doc {
+                Some(doc) => {
+                    let padding = widest - cell_width(&name) + COLUMN_GAP;
+                    format!("{name}{}{}", " ".repeat(padding), visible(&doc))
+                }
+                None => name,
+            };
+            shorten(&line, width)
+        })
+        .collect()
+}
+
+/// `text` with every character in its display form, control characters as visible escapes.
+fn visible(text: &str) -> String {
+    let mut scratch = String::new();
+    text.chars()
+        .map(|character| display_char(character, &mut scratch).0.to_owned())
+        .collect()
+}
+
 /// The width of `text` in terminal cells, counting control characters as they are displayed.
 pub(crate) fn cell_width(text: &str) -> usize {
     let mut scratch = String::new();

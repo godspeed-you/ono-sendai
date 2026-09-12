@@ -94,6 +94,37 @@ impl Completer for WordCompleter {
     }
 }
 
+/// A completer over a fixed list of candidates that carry a one-line doc, or none.
+pub struct DocCompleter {
+    candidates: Vec<(String, Option<String>)>,
+}
+
+impl DocCompleter {
+    /// A completer offering `candidates`, each with its doc where it has one.
+    pub fn new(candidates: &[(&str, Option<&str>)]) -> Self {
+        Self {
+            candidates: candidates
+                .iter()
+                .map(|(text, doc)| ((*text).to_owned(), doc.map(str::to_owned)))
+                .collect(),
+        }
+    }
+}
+
+impl Completer for DocCompleter {
+    fn complete(&self, line: &str, cursor: usize) -> Completion {
+        let start = line[..cursor].rfind(' ').map_or(0, |index| index + 1);
+        let prefix = &line[start..cursor];
+        let (texts, docs): (Vec<String>, Vec<Option<String>>) = self
+            .candidates
+            .iter()
+            .filter(|(text, _)| text.starts_with(prefix))
+            .cloned()
+            .unzip();
+        Completion::new(Span::new(start as u32, cursor as u32), texts).documented(docs)
+    }
+}
+
 /// Feeds every character of `text` to the editor as an unmodified key press.
 pub fn type_text(editor: &mut Editor, text: &str) {
     for character in text.chars() {

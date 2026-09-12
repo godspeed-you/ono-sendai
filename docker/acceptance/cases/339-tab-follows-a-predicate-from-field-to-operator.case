@@ -1,0 +1,20 @@
+# Issue #134 (v0.6.1 §11–§15): completion read a predicate as a list of words and stopped after
+# the first field. It follows the grammar: after `size` the comparisons a bytesize supports, after
+# a whole comparison `and` and `or`, and after `and` the fields again, spaced or compact.
+case: Tab follows a predicate from field to operator to connector
+pty: true
+columns: 120
+lines: 40
+timeout: 60
+stdin: |
+  get filesystem | where size 		> 0 | count
+  get filesystem | where size>1GB 		or size >= 0 | count
+  get filesystem | where size>0 and re	 == false | count
+  exit
+run: |
+  ono
+exit: 0
+stdout-contains: Greater than or equal.
+stdout-contains: Logical disjunction over truth values.
+stdout-contains: where size>0 and read_only == false
+stdout-contains: VALUE

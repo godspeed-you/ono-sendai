@@ -307,3 +307,56 @@ fn should_complete_two_dots_to_the_parent_directory_at_the_prompt() {
     shell.write_all(b"exit\n").expect("input");
     let _ = shell.wait();
 }
+
+// --- inside a predicate (issues #133–#136) ------------------------------------------------------
+
+#[test]
+fn should_list_each_field_with_its_doc_when_a_predicate_waits_for_one() {
+    // Issue #136: the schema documents every field, and the listing showed names alone.
+    let directory = scratch();
+    let mut shell = interactive_shell_in(&directory);
+    let _ = read_until(&mut shell, "local://", Duration::from_secs(10));
+
+    shell.write_all(b"get process | where \t\t").expect("input");
+    let seen = read_until(&mut shell, "The process id.", Duration::from_secs(10));
+    assert!(
+        seen.contains("The process id."),
+        "issue #136: two Tabs list `pid` beside the doc `ono.process/1` gives it; saw:\n{seen:?}"
+    );
+
+    shell.write_all(b"\x03").expect("abandon the line");
+    shell.write_all(b"exit\n").expect("input");
+    let _ = shell.wait();
+}
+
+#[test]
+fn should_list_the_operators_of_a_field_and_no_file_after_it() {
+    // Issues #133 and #134: after `where size ` two Tabs listed the working directory's entries.
+    // They list the comparisons a bytesize supports, each with its doc, and nothing from disk.
+    let directory = scratch();
+    directory.write("alpha.txt", "a");
+    directory.write("beta.log", "b");
+    let mut shell = interactive_shell_in(&directory);
+    let _ = read_until(&mut shell, "local://", Duration::from_secs(10));
+
+    shell
+        .write_all(b"get filesystem | where size \t\t")
+        .expect("input");
+    let seen = read_until(
+        &mut shell,
+        "Greater than or equal.",
+        Duration::from_secs(10),
+    );
+    assert!(
+        seen.contains(">=") && seen.contains("Greater than or equal."),
+        "issue #134: the operators of `size` are listed with their docs; saw:\n{seen:?}"
+    );
+    assert!(
+        !seen.contains("alpha.txt") && !seen.contains("beta.log"),
+        "issue #133: a predicate is not a path position; saw:\n{seen:?}"
+    );
+
+    shell.write_all(b"\x03").expect("abandon the line");
+    shell.write_all(b"exit\n").expect("input");
+    let _ = shell.wait();
+}
