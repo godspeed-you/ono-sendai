@@ -265,6 +265,18 @@ pub(crate) fn continuable_list(session: &Session, list: &StageList) -> bool {
     let Ok(registry) = registry() else {
         return false;
     };
+    // A head a KUANG/11 package contributed is answered by the pipeline evaluator's contribution
+    // route, which loads the package at first use (spec §31.68) — the route the same pipeline
+    // takes typed at the prompt or through an alias. The native table implements nothing for a
+    // package nobody has loaded, so claiming the head here made a function body the one place
+    // where `get <target>` was "declared but … implements nothing" (issue #130, v0.6.1 §6).
+    if list
+        .stages
+        .first()
+        .is_some_and(|stage| crate::plugins::contributed_command(stage).is_some())
+    {
+        return false;
+    }
     !list.stages.is_empty()
         && list.stages.iter().all(|stage| {
             stage.redirections.is_empty()

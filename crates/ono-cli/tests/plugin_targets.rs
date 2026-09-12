@@ -137,6 +137,74 @@ fn should_answer_a_contributed_target_without_an_explicit_load() {
 }
 
 #[test]
+fn should_answer_a_contributed_target_alike_typed_aliased_or_called_from_a_function() {
+    // Issue #130, v0.6.1 §6, §28: a function body resolves `get <target>` the way the prompt
+    // does, including a target an installed package contributes and nobody has loaded yet. The
+    // call is followed by a stage — `kprod | select name` in the report — because that is the
+    // shape that failed with `resolve.command_not_found`. Each form runs in a session of its own,
+    // so each one is the first use that has to load the package.
+    let home = echo_plugin_home(ECHO, TARGETS);
+    let answer = |form: &str, script: &str| {
+        let run = ono_with_plugins(&home, script);
+        assert!(
+            run.status().is_success(),
+            "a contributed target {form} answers without an explicit load, got {:?}",
+            run.output()
+        );
+        last_json(&run)
+    };
+
+    // Without arguments: the report's exact failure, `… is declared but this build implements
+    // nothing for it`.
+    let typed = answer("typed", "get echo-item | select seq | to json");
+    assert_eq!(typed.as_sequence().expect("a sequence").len(), 3);
+    for (form, script) in [
+        (
+            "aliased",
+            "alias items = get echo-item; items | select seq | to json",
+        ),
+        (
+            "called from a function",
+            "fn items() { get echo-item }; items | select seq | to json",
+        ),
+    ] {
+        assert_eq!(
+            answer(form, script),
+            typed,
+            "the target {form} answers exactly what it answers typed"
+        );
+    }
+
+    // With an option the body takes from a parameter's default, as `kprod` does.
+    let typed = answer("typed", "get echo-item --count 2 | select seq | to json");
+    assert_eq!(
+        typed.as_sequence().expect("a sequence").len(),
+        2,
+        "`--count 2` reaches the provider, got {typed:?}"
+    );
+    for (form, script) in [
+        (
+            "aliased",
+            "alias items = get echo-item; items --count 2 | select seq | to json",
+        ),
+        (
+            "called from a function",
+            "fn items(n: Int = 2) { get echo-item --count $n }; items | select seq | to json",
+        ),
+        (
+            "called from a function whose body is a pipeline",
+            "fn items(n: Int = 2) { get echo-item --count $n | where seq > 0 }; items | select seq | to json",
+        ),
+    ] {
+        assert_eq!(
+            answer(form, script),
+            typed,
+            "the target {form} answers exactly what it answers typed"
+        );
+    }
+}
+
+#[test]
 fn should_carry_the_schema_the_target_declared() {
     // A target names its schema in the declaration, and the records that arrive must be of it.
     // This is what separates a provider answer from a command that happens to be spelled `get`.
