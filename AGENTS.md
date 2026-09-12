@@ -181,6 +181,7 @@ Concretely:
 0. docs/specs/ono_sendai_shell_spec_v0.9_live_view_integration.md
 0. docs/specs/ono_sendai_shell_spec_v0.8_deck_workspace_composition.md
 0. docs/specs/ono_sendai_shell_spec_v0.7_presentation_consolidation_rich_tty.md
+0. docs/specs/ono_sendai_shell_spec_v0.6.1_stabilization_polish.md
 0. docs/specs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md
 0. docs/specs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md
 0. docs/specs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md
@@ -246,6 +247,12 @@ The enhancements present, newest first:
   render hints, presentation profiles and constrained view tree into a production-quality rich
   terminal path, ahead of the Deck workspace v0.8 later composes. Added 2026-09-01, **not
   implemented**; `docs/STATE.md` records it behind v0.6.
+- `docs/specs/ono_sendai_shell_spec_v0.6.1_stabilization_polish.md` — Stabilization and Polish:
+  a patch release over the released v0.6.0 that fixes and consolidates existing behaviour —
+  permission/scope state, plugin target resolution in functions, unknown `ss` socket types, REPL
+  output without a trailing newline, and one expression-aware completion workstream — with the
+  GitHub milestone `v0.6.1` as its release inventory and no new product capability. Added
+  2026-09-12, **not implemented**; `docs/STATE.md` records it ahead of v0.7.
 - `docs/specs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md` — Prospective
   Change, Protection & Recovery: the `ChangePlan` as a first-class object, so a mutation can be
   inspected for its consequences and its recoverability before it is made real. Added 2026-08-31,
