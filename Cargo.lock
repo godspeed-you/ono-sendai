@@ -1600,7 +1600,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "ono-adapter"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-core",
@@ -1614,7 +1614,7 @@ dependencies = [
 
 [[package]]
 name = "ono-change-actions"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "jiff",
@@ -1632,7 +1632,7 @@ dependencies = [
 
 [[package]]
 name = "ono-change-core"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-core",
@@ -1644,7 +1644,7 @@ dependencies = [
 
 [[package]]
 name = "ono-change-executor"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-change-core",
@@ -1663,7 +1663,7 @@ dependencies = [
 
 [[package]]
 name = "ono-change-impact"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-change-core",
@@ -1678,7 +1678,7 @@ dependencies = [
 
 [[package]]
 name = "ono-change-plan"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-change-core",
@@ -1692,7 +1692,7 @@ dependencies = [
 
 [[package]]
 name = "ono-change-protection"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-change-core",
@@ -1704,7 +1704,7 @@ dependencies = [
 
 [[package]]
 name = "ono-change-recovery"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-change-core",
@@ -1716,7 +1716,7 @@ dependencies = [
 
 [[package]]
 name = "ono-change-render"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-render",
@@ -1727,7 +1727,7 @@ dependencies = [
 
 [[package]]
 name = "ono-cli"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -1795,7 +1795,7 @@ dependencies = [
 
 [[package]]
 name = "ono-command"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1818,11 +1818,11 @@ dependencies = [
 
 [[package]]
 name = "ono-core"
-version = "0.6.0"
+version = "0.6.1"
 
 [[package]]
 name = "ono-editor"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "crossterm",
  "ono-core",
@@ -1832,7 +1832,7 @@ dependencies = [
 
 [[package]]
 name = "ono-fuzz"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "bytes",
  "jiff",
@@ -1864,7 +1864,7 @@ dependencies = [
 
 [[package]]
 name = "ono-graph"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "jiff",
@@ -1879,7 +1879,7 @@ dependencies = [
 
 [[package]]
 name = "ono-history"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-core",
@@ -1892,7 +1892,7 @@ dependencies = [
 
 [[package]]
 name = "ono-kuang-protocol"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "ed25519-dalek",
  "globset",
@@ -1907,7 +1907,7 @@ dependencies = [
 
 [[package]]
 name = "ono-kuang-sdk"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1929,7 +1929,7 @@ dependencies = [
 
 [[package]]
 name = "ono-kuang-supervisor"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "globset",
@@ -1953,7 +1953,7 @@ dependencies = [
 
 [[package]]
 name = "ono-kuang-testhost"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "ono-adapter",
  "ono-change-core",
@@ -1969,7 +1969,7 @@ dependencies = [
 
 [[package]]
 name = "ono-model-broker"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "jiff",
@@ -1982,14 +1982,14 @@ dependencies = [
 
 [[package]]
 name = "ono-parser"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "ono-core",
 ]
 
 [[package]]
 name = "ono-pipeline"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "ono-core",
  "ono-value",
@@ -1998,7 +1998,7 @@ dependencies = [
 
 [[package]]
 name = "ono-process"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "nix",
  "ono-core",
@@ -2009,7 +2009,7 @@ dependencies = [
 
 [[package]]
 name = "ono-protocol"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2029,7 +2029,7 @@ dependencies = [
 
 [[package]]
 name = "ono-provider-api"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "jiff",
@@ -2042,7 +2042,7 @@ dependencies = [
 
 [[package]]
 name = "ono-provider-container"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "jiff",
@@ -2057,7 +2057,7 @@ dependencies = [
 
 [[package]]
 name = "ono-provider-linux"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "globset",
@@ -2078,7 +2078,7 @@ dependencies = [
 
 [[package]]
 name = "ono-provider-net"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "jiff",
@@ -2092,7 +2092,7 @@ dependencies = [
 
 [[package]]
 name = "ono-provider-netlink"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "jiff",
@@ -2108,7 +2108,7 @@ dependencies = [
 
 [[package]]
 name = "ono-provider-systemd"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "futures",
@@ -2125,7 +2125,7 @@ dependencies = [
 
 [[package]]
 name = "ono-recorder"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-core",
@@ -2144,7 +2144,7 @@ dependencies = [
 
 [[package]]
 name = "ono-recovery-btrfs"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-change-core",
@@ -2155,7 +2155,7 @@ dependencies = [
 
 [[package]]
 name = "ono-recovery-files"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-change-core",
@@ -2168,7 +2168,7 @@ dependencies = [
 
 [[package]]
 name = "ono-recovery-zfs"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-change-core",
@@ -2179,7 +2179,7 @@ dependencies = [
 
 [[package]]
 name = "ono-remote"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "jiff",
@@ -2202,7 +2202,7 @@ dependencies = [
 
 [[package]]
 name = "ono-render"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "bytes",
  "jiff",
@@ -2215,7 +2215,7 @@ dependencies = [
 
 [[package]]
 name = "ono-spatial-core"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-core",
@@ -2230,7 +2230,7 @@ dependencies = [
 
 [[package]]
 name = "ono-spatial-events"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-spatial-core",
@@ -2242,7 +2242,7 @@ dependencies = [
 
 [[package]]
 name = "ono-spatial-index"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-core",
@@ -2254,7 +2254,7 @@ dependencies = [
 
 [[package]]
 name = "ono-spatial-query"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-core",
@@ -2269,7 +2269,7 @@ dependencies = [
 
 [[package]]
 name = "ono-spatial-render"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "ono-render",
  "ono-value",
@@ -2277,7 +2277,7 @@ dependencies = [
 
 [[package]]
 name = "ono-temporal-core"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-core",
@@ -2290,7 +2290,7 @@ dependencies = [
 
 [[package]]
 name = "ono-temporal-ledger"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "ciborium",
  "jiff",
@@ -2305,7 +2305,7 @@ dependencies = [
 
 [[package]]
 name = "ono-temporal-query"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-core",
@@ -2320,7 +2320,7 @@ dependencies = [
 
 [[package]]
 name = "ono-temporal-reconstruct"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-core",
@@ -2332,7 +2332,7 @@ dependencies = [
 
 [[package]]
 name = "ono-temporal-render"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "ono-render",
  "ono-testkit",
@@ -2341,7 +2341,7 @@ dependencies = [
 
 [[package]]
 name = "ono-testkit"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "nix",
@@ -2351,7 +2351,7 @@ dependencies = [
 
 [[package]]
 name = "ono-value"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "bytes",
  "csv",
@@ -3900,7 +3900,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "jiff",
  "ono-adapter",

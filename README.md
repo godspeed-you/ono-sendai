@@ -97,9 +97,9 @@ Each [GitHub release](https://github.com/godspeed-you/ono-sendai/releases) carri
 
 ```bash
 # Debian, Ubuntu and relatives
-sudo apt install ./ono_0.6.0_amd64.deb          # or ono_0.6.0_arm64.deb
+sudo apt install ./ono_0.6.1_amd64.deb          # or ono_0.6.1_arm64.deb
 # Fedora, RHEL and relatives
-sudo dnf install ./ono-0.6.0-1.x86_64.rpm       # or ono-0.6.0-1.aarch64.rpm
+sudo dnf install ./ono-0.6.1-1.x86_64.rpm       # or ono-0.6.1-1.aarch64.rpm
 
 chsh -s /usr/bin/ono                             # make it your login shell
 ```
@@ -127,7 +127,7 @@ before you install anything. `cosign` is the one tool you add
 ([sigstore/cosign](https://github.com/sigstore/cosign)); everything else is coreutils.
 
 ```bash
-VERSION=0.6.0; ARCH=amd64
+VERSION=0.6.1; ARCH=amd64
 BASE=https://github.com/godspeed-you/ono-sendai/releases/download/v$VERSION
 curl -fLO $BASE/ono_${VERSION}_${ARCH}.deb
 curl -fLO $BASE/SHA256SUMS
@@ -490,11 +490,13 @@ in this shell is a side effect of telling the truth about the system.
 
 ## Project status
 
-**Current release: v0.6.0.** All ten phases of the specification are implemented, with the
+**Current release: v0.6.1.** All ten phases of the specification are implemented, with the
 External Command Adaptation Layer (v0.3), the Spatial Systems Interface (v0.4), the hardening
 layer (v0.4.1), the Temporal & Causal Systems Interface (v0.5) and Prospective Change, Protection
-& Recovery (v0.6) on top of them. Every ticked box of `docs/ACCEPTANCE.md` names an automated
-proof, and the v0.6 boxes still open are listed as recorded exclusions in
+& Recovery (v0.6) on top of them. v0.6.1 is a stabilization and polish release on top of v0.6.0:
+completion that follows an expression, a prompt that keeps unterminated output, and five further
+corrections (`docs/releases/v0.6.1.md`). Every ticked box of `docs/ACCEPTANCE.md` names an
+automated proof, and the v0.6 boxes still open are listed as recorded exclusions in
 `docs/releases/v0.6.0.md`. Primary platform is Linux (x86_64 and aarch64). Three further enhancement
 specifications — Presentation Consolidation & Rich TTY (v0.7), Deck Workspace Composition (v0.8)
 and Live View Integration (v0.9) — are specified but not yet implemented.
