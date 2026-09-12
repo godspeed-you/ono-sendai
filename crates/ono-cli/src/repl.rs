@@ -398,16 +398,28 @@ pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> Exi
     // terminal can answer, and a dumb one would print the question instead.
     let mut cursor_reports = std::io::stdout().is_terminal()
         && session.env_var("TERM").is_none_or(|term| term != "dumb");
+    // Until the first command runs, everything on the terminal is the shell's own — the identity
+    // line and the startup horizon, written line by line — so the first prompt knows its cursor
+    // stands in the first column and asks nothing. The question would cost a round trip inside
+    // the §34 startup budget, and two seconds at a terminal that never answers (ADR-0861).
+    let mut first_prompt = true;
 
     loop {
         editor.set_prompt(prompt_of(session));
-        let line = match read_line(
+        let asking = cursor_reports && !first_prompt;
+        let mut answered = asking;
+        let read = read_line(
             &mut editor,
             &mut renderer,
             &theme,
             presentation,
-            &mut cursor_reports,
-        ) {
+            &mut answered,
+        );
+        if asking {
+            cursor_reports = answered;
+        }
+        first_prompt = false;
+        let line = match read {
             Some(line) => line,
             None => break,
         };

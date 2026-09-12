@@ -1,6 +1,6 @@
 # ADR-0855: A prompt starts on a line of its own
 
-- Status: accepted
+- Status: accepted; its rule for the first prompt of a session superseded by ADR-0861
 - Date: 2026-09-12
 - Spec refs: v0.6.1 §8, §27; v0.2 §4.2, §29.3; ADR-0013
 - Decided by: agent (autonomous)

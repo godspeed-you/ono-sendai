@@ -389,3 +389,31 @@ fn should_not_ask_a_dumb_terminal_where_its_cursor_is() {
     );
     terminal.leave();
 }
+
+#[test]
+fn should_reach_the_first_prompt_without_asking_where_the_cursor_is() {
+    // Until the first command runs, everything on the terminal is the shell's own — the identity
+    // line and the startup horizon, written line by line — so the cursor is known to stand in the
+    // first column. Asking there costs a round trip inside the §34 startup budget, and two
+    // seconds at a terminal that never answers: case `100-spatial-performance-budgets` measured
+    // exactly that (ADR-0861). The question belongs to the prompts after a command.
+    let directory = scratch();
+    let mut terminal = Terminal::new(interactive_shell_in(&directory), true);
+    let screen = terminal.until_prompts(1);
+    assert!(
+        screen.queries.is_empty(),
+        "ADR-0861: the first prompt asks the terminal nothing; the screen was:\n{}",
+        screen.lines().join("\n")
+    );
+
+    terminal.type_line("printf abc");
+    let screen = terminal.until_prompts(2);
+    assert_eq!(
+        screen.queries.len(),
+        1,
+        "issue #132: the prompt after a command still asks where the cursor is; the screen \
+         was:\n{}",
+        screen.lines().join("\n")
+    );
+    terminal.leave();
+}
