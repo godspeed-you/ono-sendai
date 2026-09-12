@@ -209,7 +209,13 @@ completion, typed value candidates and candidate documentation in the UI (§9–
 #124–#127 and #129 by name (§22, §23) and bars pulling v0.7 work forward (§2). Checksummed and
 enumerated, and **implemented the same day**, ahead of v0.7 in build order: #133–#136 as one
 completion pipeline in `c543c50e` (ADR-0860), #130 in `9645022a`, #128 in `5d79b3c5`
-(ADR-0857), #131 in `5f9578fa` (ADR-0854) and #132 in `f8b32f8b` (ADR-0855). Like v0.4.2–v0.4.4
+(ADR-0857), #131 in `5f9578fa` (ADR-0854) and #132 in `f8b32f8b` (ADR-0855), amended by
+`8bd9d22c` (ADR-0861) after the first CI run found the cursor question inside the §34 startup
+budget (case `100-spatial-performance-budgets`); `b709bb4e` gave a cache-filling completion test
+a process of its own after the same run caught the two tests racing. Because the prompt after a
+command now asks the terminal for its cursor, the PTY harnesses of `spatial_interactive.rs` and
+`timeline_view.rs` answer that report as every terminal emulator does; a bare pseudo-terminal
+made each of their sessions wait out crossterm's two-second bound. Like v0.4.2–v0.4.4
 it is a patch release and brings no `docs/ACCEPTANCE.md` checklist: each issue is proven by the
 regression tests its commit names, and the new cases sit in the group `stabilization`
 (330–349). The milestone `v0.6.1` (GitHub milestone 16) holds exactly the eight issues;
