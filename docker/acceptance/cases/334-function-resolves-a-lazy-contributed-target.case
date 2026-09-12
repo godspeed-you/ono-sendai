@@ -57,7 +57,7 @@ exit: 0
 stdout-contains: typed: [{"seq":1},{"seq":2}]
 stdout-contains: alias: [{"seq":1},{"seq":2}]
 stdout-contains: function: [{"seq":1},{"seq":2}]
-stdout-contains: bare function: 3
+stdout-contains: bare function: [3]
 stdout-not-contains: command_not_found
 stdout-not-contains: implements nothing
 stdout-not-contains: panicked

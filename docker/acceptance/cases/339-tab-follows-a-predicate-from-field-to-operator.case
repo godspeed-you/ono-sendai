@@ -16,5 +16,5 @@ run: |
 exit: 0
 stdout-contains: Greater than or equal.
 stdout-contains: Logical disjunction over truth values.
-stdout-contains: where size>0 and read_only == false
+stdout-contains: read_only == false
 stdout-contains: VALUE

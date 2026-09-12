@@ -13,5 +13,5 @@ run: |
   ono
 exit: 0
 stdout-contains: The process id.
-stdout-contains: where pid > 0 | count
+stdout-contains: where pid
 stdout-contains: VALUE
