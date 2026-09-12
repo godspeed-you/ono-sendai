@@ -54,6 +54,6 @@ pub use key::{KeyCode, KeyPress, Modifiers};
 pub use keymap::{EditAction, Keymap};
 pub use prompt::Prompt;
 pub use terminal::{
-    AlternateScreen, RawMode, Renderer, TerminalEvent, key_press, paint, read_event_timeout,
-    read_key, remember_terminal_size, terminal_size,
+    AlternateScreen, RawMode, Renderer, TerminalEvent, cursor_column, key_press, paint,
+    read_event_timeout, read_key, remember_terminal_size, terminal_size,
 };

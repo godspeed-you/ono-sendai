@@ -394,10 +394,20 @@ pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> Exi
     // The renderer is stateful: it remembers how tall the last frame was so it can paint over it.
     // A fresh one per keystroke would leave every previous frame on the screen.
     let mut renderer = ono_editor::Renderer::new(std::io::stdout());
+    // Whether the terminal is asked where its cursor is before each prompt (issue #132). Only a
+    // terminal can answer, and a dumb one would print the question instead.
+    let mut cursor_reports = std::io::stdout().is_terminal()
+        && session.env_var("TERM").is_none_or(|term| term != "dumb");
 
     loop {
         editor.set_prompt(prompt_of(session));
-        let line = match read_line(&mut editor, &mut renderer, &theme, presentation) {
+        let line = match read_line(
+            &mut editor,
+            &mut renderer,
+            &theme,
+            presentation,
+            &mut cursor_reports,
+        ) {
             Some(line) => line,
             None => break,
         };
@@ -439,8 +449,21 @@ fn read_line(
     renderer: &mut ono_editor::Renderer<std::io::Stdout>,
     theme: &Theme,
     presentation: Presentation,
+    cursor_reports: &mut bool,
 ) -> Option<String> {
     let raw = ono_editor::RawMode::enter().ok()?;
+
+    // The first frame of a prompt starts on a line of its own, because a program may have left
+    // the cursor after output without a trailing newline (issue #132). Only the first frame
+    // asks — a redraw of the same prompt stays where it is — and a terminal that let the
+    // question go unanswered is not asked again, so its bounded wait is paid once.
+    let column = if *cursor_reports {
+        ono_editor::cursor_column()
+    } else {
+        None
+    };
+    *cursor_reports &= column.is_some();
+    let _ = renderer.start_prompt(column);
 
     loop {
         let frame = editor.frame(terminal_width(), presentation, theme);

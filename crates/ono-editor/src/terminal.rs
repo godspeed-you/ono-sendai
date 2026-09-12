@@ -134,6 +134,17 @@ pub fn read_event_timeout(patience: std::time::Duration) -> io::Result<Option<Te
     }
 }
 
+/// The column the terminal's cursor stands in, as the terminal itself reports it (`ESC [ 6 n`).
+///
+/// `None` when no report came back: crossterm waits a bounded two seconds for it, and a key typed
+/// meanwhile is kept for the next read rather than lost.
+#[must_use]
+pub fn cursor_column() -> Option<usize> {
+    cursor::position()
+        .ok()
+        .map(|(column, _)| usize::from(column))
+}
+
 /// The size the terminal was last known to have, as `columns << 32 | rows`; zero until the first
 /// read establishes it.
 static LAST_SIZE: AtomicU64 = AtomicU64::new(0);
@@ -288,6 +299,25 @@ impl<W: Write> Renderer<W> {
     /// What has been written so far, for a caller that is inspecting rather than displaying.
     pub const fn output(&self) -> &W {
         &self.out
+    }
+
+    /// Starts a new prompt on a line of its own; called once, before the prompt's first frame.
+    ///
+    /// A frame starts by clearing the row the cursor stands on, and a program the shell ran may
+    /// have left the cursor after output that ends without a newline — `printf abc` — which would
+    /// be cleared with it (issue #132). `column` is where the terminal reports the cursor:
+    /// anywhere but the first column, the prompt moves to the next line first. Output that ended
+    /// in a newline left the cursor in the first column and gains no blank line, and `None` — a
+    /// terminal that did not say — writes nothing, because nothing is known.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the terminal cannot be written to.
+    pub fn start_prompt(&mut self, column: Option<usize>) -> io::Result<()> {
+        if column.is_some_and(|column| column > 0) {
+            self.out.write_all(b"\r\n")?;
+        }
+        Ok(())
     }
 
     /// Draws `frame` over the frame drawn before it and leaves the terminal cursor where the
