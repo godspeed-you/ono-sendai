@@ -111,10 +111,11 @@ immutable (AGENTS.md §5.2, ADR-0026). `spec-check` fails if either is missing a
 `docs/specs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
 
 **Build order for the enhancements now on `implementation`, next tranche first: v0.4.1, then
-v0.5, then v0.6, then v0.7, then v0.8, then v0.9** — v0.4.1 because its own spec text (§0.1–§0.2,
+v0.5, then v0.6, then v0.6.1, then v0.7, then v0.8, then v0.9** — v0.4.1 because its own spec text (§0.1–§0.2,
 below) says the v0.5/v0.6 feature work must inherit its hardened guarantees rather than re-solve
 them; v0.6 because its own §0.1 places it behind v0.5's evidence and causality model, already
-noted below; v0.7, v0.8 and v0.9 because each one's own §0.1 progression diagram names the
+noted below; v0.6.1 because its own §1 makes it the stabilization pass over v0.6.0 "before
+development proceeds toward v0.7"; v0.7, v0.8 and v0.9 because each one's own §0.1 progression diagram names the
 tranche directly before it as its prerequisite — v0.8 stacks on v0.7, v0.9 on v0.8 — so for these
 three, unlike v0.4.1, arrival order and build order coincide.
 
@@ -196,6 +197,19 @@ backpressure model) in favour of small, bounded, presentation-local bindings tha
 responsive inside the v0.8 Deck over minutes or hours, without a second live-data model. Merged,
 checksummed and enumerated, **not implemented**, and **behind v0.8** — the last tranche in the
 current build order.
+
+**v0.6.1 arrived on `implementation` on 2026-09-12** as
+`docs/specs/ono_sendai_shell_spec_v0.6.1_stabilization_polish.md` — Stabilization and Polish, 986
+lines, a patch release over the released v0.6.0 rather than a feature tranche. Its inventory is
+eight GitHub issues, and the spec makes the `v0.6.1` milestone their operational list (§3):
+#128 permission/scope state, #130 plugin target resolution inside functions, #131 unknown `ss`
+socket types, #132 REPL output without a trailing newline, and #133–#136 as one completion
+workstream — context before provider, expression-aware field/operator/value/connector
+completion, typed value candidates and candidate documentation in the UI (§9–§21). It excludes
+#124–#127 and #129 by name (§22, §23) and bars pulling v0.7 work forward (§2). Checksummed and
+enumerated, **not implemented**, and **ahead of v0.7** in build order. It brings no
+`docs/ACCEPTANCE.md` checklist of its own; its §39 Definition of Done is the list to derive one
+from, the way §4.7 was written from v0.4.
 
 **The v0.3 tranche is complete** (started 2026-08-27, delivered by ADR-0052 … ADR-0067; all 39
 boxes of `docs/ACCEPTANCE.md` §4.6 are ticked, cases `070`–`089`). **The v0.4 tranche is complete**
