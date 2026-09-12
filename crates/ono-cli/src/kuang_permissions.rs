@@ -319,7 +319,7 @@ impl Host {
     ) -> Result<RecordValue, ErrorValue> {
         let id = package.manifest.package.id.as_str();
         let decision = self.decision(id, &descriptor.id);
-        let mut grants = Vec::new();
+        let mut chosen: Vec<(&GrantTemplate, Option<&Grant>)> = Vec::new();
         let mut held = true;
         let mut exact = true;
         for template in &descriptor.grants {
@@ -345,31 +345,7 @@ impl Host {
                     }
                 }
             }
-            let (broker_decision, source, duration, grant_id) = match grant {
-                Some(grant) => ("allow", grant.source, grant.duration, Value::Uuid(grant.id)),
-                None => ("deny", "default", "always", Value::Null),
-            };
-            grants.push(map([
-                ("capability", Value::string(template.capability.id())),
-                (
-                    "scope",
-                    template
-                        .scope
-                        .as_ref()
-                        .map_or(Value::Null, |scope| json_value(&scope.as_json())),
-                ),
-                (
-                    "enforcement",
-                    Value::string(match template.enforcement() {
-                        Enforcement::Broker => "broker",
-                        Enforcement::Advisory => "advisory",
-                    }),
-                ),
-                ("decision", Value::string(broker_decision)),
-                ("source", Value::string(source)),
-                ("duration", Value::string(duration)),
-                ("grant", grant_id),
-            ]));
+            chosen.push((template, grant));
         }
         let (state, when) = match decision.map(|decision| decision.record.decision.as_str()) {
             Some("deny") => ("denied", "always"),
@@ -423,10 +399,51 @@ impl Host {
             (None, "custom") => Some("prompt"),
             _ => None,
         };
-        let scope_text = descriptor
-            .grants
+        // A `custom` permission is held by grants that differ from its mapping, so the scope it
+        // declares is not the one the broker enforces: its record carries the stored scope of the
+        // standing grants, in the human column and in the exact one (issue #128, K11P §19.2,
+        // ADR-0857). `custom` implies every template is held, so each has a grant to read.
+        let enforced = |template: &GrantTemplate, grant: Option<&Grant>| -> Option<ScopeTemplate> {
+            match grant {
+                Some(grant) if state == "custom" => {
+                    grant.scope.clone().map(ScopeTemplate::Concrete)
+                }
+                _ => template.scope.clone(),
+            }
+        };
+        let grants: Vec<Value> = chosen
             .iter()
-            .map(|template| describe_scope(template.capability, template.scope.as_ref()))
+            .map(|&(template, grant)| {
+                let (broker_decision, source, duration, grant_id) = match grant {
+                    Some(grant) => ("allow", grant.source, grant.duration, Value::Uuid(grant.id)),
+                    None => ("deny", "default", "always", Value::Null),
+                };
+                map([
+                    ("capability", Value::string(template.capability.id())),
+                    (
+                        "scope",
+                        enforced(template, grant)
+                            .map_or(Value::Null, |scope| json_value(&scope.as_json())),
+                    ),
+                    (
+                        "enforcement",
+                        Value::string(match template.enforcement() {
+                            Enforcement::Broker => "broker",
+                            Enforcement::Advisory => "advisory",
+                        }),
+                    ),
+                    ("decision", Value::string(broker_decision)),
+                    ("source", Value::string(source)),
+                    ("duration", Value::string(duration)),
+                    ("grant", grant_id),
+                ])
+            })
+            .collect();
+        let scope_text = chosen
+            .iter()
+            .map(|&(template, grant)| {
+                describe_scope(template.capability, enforced(template, grant).as_ref())
+            })
             .filter(|text| !text.is_empty())
             .collect::<Vec<_>>()
             .join("; ");
@@ -1187,8 +1204,10 @@ pub fn set_permission(session: &mut Session, request: &SetPermission) -> Eval<Pr
                 )?;
             }
             let outcome = session.with_kuang(|host| {
+                let mut dropped = Vec::new();
                 match decision.as_str() {
                     "allow" => {
+                        dropped = dropped_by_scope(host, &package, &descriptor, scope.as_ref());
                         allow(
                             host,
                             &package,
@@ -1203,9 +1222,25 @@ pub fn set_permission(session: &mut Session, request: &SetPermission) -> Eval<Pr
                     "deny" => deny(host, &package, &descriptor, &correlation),
                     _ => ask(host, &package, &descriptor, &correlation),
                 }
-                host.persist_permissions()
+                host.persist_permissions().map(|()| dropped)
             });
-            outcome.map_err(Flow::Failed)?;
+            let dropped = outcome.map_err(Flow::Failed)?;
+            // `--scope` replaces the values of each key it names (ADR-0857). A replacement that
+            // leaves out a value the permission declared or held narrows it, and that is said
+            // on the line that did it rather than discovered at the next refusal (issue #128).
+            if !dropped.is_empty() {
+                crate::report::notice(&format!(
+                    "{name} {}: `--scope` sets the whole list for each key it names, so the \
+                     permission no longer covers {}; name every value to keep, e.g. `--scope \
+                     \"paths=<one>,<two>\"`",
+                    descriptor.id,
+                    dropped
+                        .iter()
+                        .map(|(key, values)| format!("{key} {}", values.join(", ")))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                ));
+            }
             vec![descriptor.id.clone()]
         }
         (Some(_), Some(_)) => {
@@ -1414,6 +1449,62 @@ fn scope_from_words(
         );
     }
     Ok(Some(scope))
+}
+
+/// What a `--scope` replacement leaves out, per key it names, in first-seen order: the values
+/// the permission's declared scope and its standing grant listed that the new value does not
+/// (issue #128, ADR-0857). Read before the replacement revokes the grant it replaces.
+fn dropped_by_scope(
+    host: &Host,
+    package: &Installed,
+    descriptor: &PermissionDescriptor,
+    named: Option<&JsonMap<String, Json>>,
+) -> Vec<(String, Vec<String>)> {
+    let Some(named) = named else {
+        return Vec::new();
+    };
+    let words = |value: &Json| -> Vec<String> {
+        match value {
+            Json::Array(items) => items
+                .iter()
+                .map(|item| match item {
+                    Json::String(text) => text.clone(),
+                    other => other.to_string(),
+                })
+                .collect(),
+            Json::String(text) => vec![text.clone()],
+            other => vec![other.to_string()],
+        }
+    };
+    let id = package.manifest.package.id.as_str();
+    let mut before: Vec<JsonMap<String, Json>> = Vec::new();
+    for template in &descriptor.grants {
+        before.extend(resolve_scope(package, template, None));
+        before.extend(
+            host.standing_grants(id)
+                .filter(|grant| {
+                    grant.capability == template.capability
+                        && grant.permission.as_deref() == Some(descriptor.id.as_str())
+                })
+                .filter_map(|grant| grant.scope.clone()),
+        );
+    }
+    let mut dropped = Vec::new();
+    for (key, value) in named {
+        let kept = words(value);
+        let mut left_out: Vec<String> = Vec::new();
+        for scope in &before {
+            for word in scope.get(key).map(&words).unwrap_or_default() {
+                if !kept.contains(&word) && !left_out.contains(&word) {
+                    left_out.push(word);
+                }
+            }
+        }
+        if !left_out.is_empty() {
+            dropped.push((key.clone(), left_out));
+        }
+    }
+    dropped
 }
 
 /// Prints a question on stderr and reads one line of stdin. `None` when stdin is gone.

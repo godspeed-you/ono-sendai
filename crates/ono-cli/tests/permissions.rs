@@ -658,6 +658,162 @@ fn should_show_a_manual_grant_as_custom_and_an_unmapped_one_as_legacy() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Issue #128, v0.6.1 §5, §30: `--scope` on an install-phase permission
+// ---------------------------------------------------------------------------------------------
+
+/// Writes a file under the scratch home and answers its path.
+fn home_file(home: &ono_testkit::Scratch, relative: &str) -> String {
+    let path = home.path().join("home").join(relative);
+    std::fs::create_dir_all(path.parent().expect("a parent")).expect("the directory");
+    std::fs::write(&path, "apiVersion: v1\n").expect("the file");
+    path.display().to_string()
+}
+
+/// The paths `policy.yaml` — what the broker enforces — holds for the package's
+/// `filesystem.read` grant.
+fn stored_read_paths(home: &ono_testkit::Scratch) -> Vec<String> {
+    let text = std::fs::read_to_string(home.path().join("config/ono/kuang/policy.yaml"))
+        .expect("the policy store");
+    let policy: Value = serde_yaml_ng::from_str(&text).expect("the policy store is YAML");
+    fn find<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+        match value {
+            Value::Mapping(map) => map
+                .get(key)
+                .or_else(|| map.values().find_map(|v| find(v, key))),
+            Value::Sequence(items) => items.iter().find_map(|v| find(v, key)),
+            _ => None,
+        }
+    }
+    let grant = find(&policy, ECHO)
+        .and_then(|plugin| find(plugin, "filesystem.read"))
+        .unwrap_or_else(|| panic!("a stored filesystem.read grant for {ECHO}, got {text}"));
+    find(grant, "paths")
+        .and_then(Value::as_sequence)
+        .unwrap_or_else(|| panic!("the grant is scoped to paths, got {text}"))
+        .iter()
+        .map(|path| path.as_str().expect("a path").to_owned())
+        .collect()
+}
+
+/// Whether the loaded package may read `path` through the broker.
+fn broker_reads(home: &ono_testkit::Scratch, path: &str) -> ono_testkit::Run {
+    ono(
+        home,
+        &format!("load plugin {ECHO}; echo:read-file --path {path} | to json"),
+    )
+}
+
+#[test]
+fn should_enforce_and_show_the_stored_scope_when_a_scope_replaces_the_declared_paths() {
+    // The report: `kubeconfig-read` declares the kubeconfig path; `--scope paths=<other>` stored
+    // only the other path, every command that read the kubeconfig failed, the `set permission`
+    // line said nothing about it, and `get permission` kept showing the declared path.
+    let home = root();
+    let declared = kubeconfig_of(&home);
+    std::fs::create_dir_all(home.path().join("home/.kube")).expect("the kube directory");
+    std::fs::write(&declared, "apiVersion: v1\n").expect("the kubeconfig");
+    let elsewhere = home_file(&home, "elsewhere.yaml");
+    ono(&home, "install plugin echo --confirm").assert_success();
+
+    let set = ono(
+        &home,
+        &format!("set permission echo kubeconfig-read --scope paths={elsewhere} | to json"),
+    );
+    set.assert_success();
+
+    // The effective state: the scope was replaced — the stored grant holds the named path and
+    // nothing else, and the broker enforces exactly that.
+    assert_eq!(
+        stored_read_paths(&home),
+        vec![elsewhere.clone()],
+        "`--scope paths=…` replaces the declared paths in the policy store"
+    );
+    broker_reads(&home, &elsewhere).assert_success();
+    let refused = broker_reads(&home, &declared);
+    assert!(
+        !refused.status().is_success() && refused.stderr().contains("outside the granted scope"),
+        "the declared path is no longer granted, got {:?}",
+        refused.output()
+    );
+
+    // The moment it happens: the confirmation names the path the replacement dropped.
+    assert!(
+        set.stderr().contains(&declared) && set.stderr().contains("no longer"),
+        "the `set permission` line names the dropped path, got {:?}",
+        set.stderr()
+    );
+
+    // The representation: the row `set permission` answers and the one `get permission` shows
+    // both carry the stored scope the broker enforces, not the declared one.
+    let answered = only(&set, &last_json_document(&set));
+    let shown = permissions(&home, "echo", false);
+    for (view, row) in [
+        ("set permission", &answered),
+        ("get permission", permission(&shown, "kubeconfig-read")),
+    ] {
+        assert_eq!(str_field(row, "state"), "custom", "{view}: {row:?}");
+        let scope = str_field(row, "scope");
+        assert!(
+            scope.contains(&elsewhere) && !scope.contains(&declared),
+            "{view}: SCOPE shows the enforced scope, got {scope:?}"
+        );
+        let grants = serde_yaml_ng::to_string(field(row, "grants")).expect("renders");
+        assert!(
+            grants.contains(&elsewhere) && !grants.contains(&declared),
+            "{view}: the exact grant scope is the stored one, got {grants}"
+        );
+    }
+}
+
+#[test]
+fn should_keep_every_path_the_scope_names_and_drop_nothing_silently_or_otherwise() {
+    // Writing the full list is how a person widens the declared scope; nothing is dropped, so
+    // nothing is announced, and both paths are granted.
+    let home = root();
+    let declared = kubeconfig_of(&home);
+    std::fs::create_dir_all(home.path().join("home/.kube")).expect("the kube directory");
+    std::fs::write(&declared, "apiVersion: v1\n").expect("the kubeconfig");
+    let elsewhere = home_file(&home, "elsewhere.yaml");
+    ono(&home, "install plugin echo --confirm").assert_success();
+
+    let set = ono(
+        &home,
+        &format!(
+            "set permission echo kubeconfig-read --scope \"paths={declared},{elsewhere}\" | to json"
+        ),
+    );
+    set.assert_success();
+    assert!(
+        !set.stderr().contains("no longer"),
+        "nothing was dropped, so nothing is announced, got {:?}",
+        set.stderr()
+    );
+    assert_eq!(
+        stored_read_paths(&home),
+        vec![declared.clone(), elsewhere.clone()]
+    );
+    broker_reads(&home, &declared).assert_success();
+    broker_reads(&home, &elsewhere).assert_success();
+    let row = only(&set, &last_json_document(&set));
+    let scope = str_field(&row, "scope");
+    assert!(
+        scope.contains(&declared) && scope.contains(&elsewhere),
+        "SCOPE shows both paths, got {scope:?}"
+    );
+}
+
+#[test]
+fn should_describe_scope_replacement_for_an_install_permission_in_the_help() {
+    let run = ono(&root(), "help set permission");
+    run.assert_success();
+    let page = run.stdout();
+    assert!(
+        page.contains("install") && page.contains("replaces"),
+        "`help set permission` says what `--scope` does to an install-phase permission, got {page}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
 // Gates N, O, and K11P §34.4, §34.5: upgrades
 // ---------------------------------------------------------------------------------------------
 

@@ -2689,7 +2689,7 @@ Apply an access profile, or decide one permission of a package.
 | `--profile` | `string` | Apply this access profile: every permission it names is allowed. A profile that adds mutation shows its summary and asks (K11P §15.2); non-interactively it needs `--confirm`. |
 | `--decision` | `string` | `allow`, `deny` or `ask` for the named permission (K11P §16.2). |
 | `--duration` | `string` | `session` or `always` (the default) for an `allow`. Precision that ordinary guided flows do not need. |
-| `--scope` | `string` | `key=value[,value]`, repeatable: the scope an `allow` carries, for a just-in-time permission decided ahead of its use, e.g. `programs=/usr/bin/aws`. The keys are the capability's own (spec §31.16). |
+| `--scope` | `string` | `key=value[,value]`, repeatable: the scope an `allow` carries. For an install permission it replaces the declared values of each key it names: `paths=~/elsewhere.yaml` grants that path alone, the line names what the permission no longer covers, and `get permission` then shows it `custom` with the stored scope. List every value to keep, quoted: `"paths=~/.kube/config,~/elsewhere.yaml"`. For a just-in-time permission it decides the scope ahead of use, e.g. `programs=/usr/bin/aws`. The keys are the capability's own (spec §31.16, ADR-0857). |
 | `--confirm` | `bool` | Accept a mutating profile or permission non-interactively. Never a destructive one (K11P §7.5). |
 
 **Examples**

@@ -67,7 +67,10 @@ fields:
   scope:
     type: string
     nullable: true
-    doc: The human rendering of the scope (K11P §19.1). Null for a permission with nothing to scope.
+    doc: >-
+      The human rendering of the scope (K11P §19.1): the declared one, or for a `custom`
+      permission the scope its standing grants carry, which is what the broker enforces
+      (ADR-0857). Null for a permission with nothing to scope.
   capabilities:
     type: list<string>
     required: true
@@ -77,7 +80,8 @@ fields:
     required: true
     doc: >-
       One `{capability, scope, enforcement, decision, source, duration, grant}` per capability:
-      the exact scope record or scope word, whether the broker enforces it, the broker's standing
+      the exact scope record or scope word — the stored grant's for a `custom` permission, the
+      declared one otherwise (ADR-0857) — whether the broker enforces it, the broker's standing
       decision for it, which layer produced that decision, how long it lasts, and the grant id
       when a grant stands. This is where `details` and `get permission --all` read from.
   enforcement:
