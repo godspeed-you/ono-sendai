@@ -351,8 +351,8 @@ async fn should_shape_ono_socket_1_the_way_linux_sock_diag_declares_it() {
         identity_fallback: &["protocol", "local", "remote"],
         default_view: &["protocol", "local", "remote", "state", "process"],
         fields: &[
-            harness::FieldContract { name: "protocol", ty: "enum<tcp|udp|unix|raw|sctp|dccp|packet|unknown>", required: true, nullable: false, unit: None },
-            harness::FieldContract { name: "family", ty: "enum<inet|inet6|unix|packet|netlink|other>", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "protocol", ty: "enum<tcp|udp|unix|raw|sctp|dccp|packet|icmp|icmp6|unknown>", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "family", ty: "enum<inet|inet6|unix|packet|netlink|other>", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "local", ty: "record<ono.endpoint/1>", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "remote", ty: "record<ono.endpoint/1>", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "state", ty: "enum<established|syn-sent|syn-recv|fin-wait-1|fin-wait-2|time-wait|close|close-wait|last-ack|listen|closing|unknown>", required: false, nullable: true, unit: None },

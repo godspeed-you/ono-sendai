@@ -12,16 +12,20 @@ identity: [inode]
 # (ADR-0554).
 identity_fallback: [protocol, local, remote]
 fields:
+  # `ss` lists ICMP ping sockets as `icmp`/`icmp6`, and socket types newer than any vocabulary
+  # this file can list. The first two are protocols of their own; a type nobody here knows is
+  # `unknown` with a null family, rather than failing every socket listed beside it (issue #131,
+  # ADR-0854). Both widenings are additive: no record valid before is invalid now.
   protocol:
     type: enum
     required: true
-    values: [tcp, udp, unix, raw, sctp, dccp, packet, unknown]
+    values: [tcp, udp, unix, raw, sctp, dccp, packet, icmp, icmp6, unknown]
     doc: The transport protocol.
   family:
     type: enum
-    required: true
+    nullable: true
     values: [inet, inet6, unix, packet, netlink, other]
-    doc: The address family.
+    doc: The address family; null when it cannot be told, as for a socket type the provider does not know.
   local:
     type: ono.endpoint/1
     nullable: true

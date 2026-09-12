@@ -1,0 +1,15 @@
+# Bare `ss` lists every socket type, among them ICMP ping sockets and types newer than the
+# adapter (issue #131). `icmp` and `icmp6` are protocols of their own; `icmp6` is IPv6 because its
+# netid says so, since `*` carries no `:` to infer it from. `v_str` (vsock) is a netid the adapter
+# does not know: its protocol is `unknown`, its family is null, and the tcp sockets around it
+# decode exactly as they would without it.
+invocation: [ss]
+tool_version: "6.19.0"
+distro: debian
+expect:
+  records:
+    - {protocol: tcp, family: inet, state: listen, inode: 23456}
+    - {protocol: icmp, family: inet, state: null, user: 1000, inode: 87654}
+    - {protocol: icmp6, family: inet6, state: null, user: 1000, inode: 98765}
+    - {protocol: unknown, family: null, state: listen, inode: 43210}
+    - {protocol: tcp, family: inet, state: established, inode: 34567}

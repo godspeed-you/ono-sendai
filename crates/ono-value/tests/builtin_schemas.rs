@@ -178,7 +178,8 @@ fn should_define_the_socket_schema_exactly_as_the_spec_does() {
         shape(&socket),
         vec![
             ("protocol", false),
-            ("family", false),
+            // Nullable since issue #131: the family of a socket type nobody knows is unknown.
+            ("family", true),
             ("local", true),
             ("remote", true),
             ("state", true),

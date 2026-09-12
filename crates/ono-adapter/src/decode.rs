@@ -767,6 +767,8 @@ fn ss_text_v6(bytes: &[u8]) -> Result<Vec<Item>, String> {
         ("raw", "raw", "inet"),
         ("sctp", "sctp", "inet"),
         ("dccp", "dccp", "inet"),
+        ("icmp", "icmp", "inet"),
+        ("icmp6", "icmp6", "inet6"),
         ("u_str", "unix", "unix"),
         ("u_dgr", "unix", "unix"),
         ("u_seq", "unix", "unix"),
@@ -782,15 +784,20 @@ fn ss_text_v6(bytes: &[u8]) -> Result<Vec<Item>, String> {
         }
         let mut tokens = line.split_whitespace();
         let first = tokens.next().unwrap_or("");
+        // The Netid column as `(protocol, family, known)`. A netid the table does not know is
+        // still a socket ss listed (issue #131, ADR-0854): it decodes with protocol `unknown`
+        // and no family, keeps the word ss printed in the extension map, and leaves every other
+        // line alone. A line that is no socket at all still fails on its state word below.
         let (netid, state_word) = if STATES.iter().any(|(word, _)| *word == first) {
             (None, first)
-        } else if let Some(netid) = NETIDS.iter().find(|(word, _, _)| *word == first) {
-            (Some(netid), tokens.next().unwrap_or(""))
         } else {
-            return Err(format!(
-                "line {} starts with `{first}`, which is neither a socket type nor a state ss prints",
-                number + 1
-            ));
+            let netid = NETIDS
+                .iter()
+                .find(|(word, _, _)| *word == first)
+                .map_or(("unknown", None, false), |(_, protocol, family)| {
+                    (*protocol, Some(*family), true)
+                });
+            (Some(netid), tokens.next().unwrap_or(""))
         };
         let Some((_, state)) = STATES.iter().find(|(word, _)| *word == state_word) else {
             return Err(format!(
@@ -805,7 +812,7 @@ fn ss_text_v6(bytes: &[u8]) -> Result<Vec<Item>, String> {
         if local.is_empty() || peer.is_empty() {
             return Err(format!("line {} has no endpoints", number + 1));
         }
-        let unix = netid.is_some_and(|(_, _, family)| *family == "unix");
+        let unix = netid.is_some_and(|(_, family, _)| family == Some("unix"));
         // Unix sockets print `* <inode> * <peer-inode>`: the endpoints are nothing ss can name.
         let (local, peer, unix_inode) = if unix {
             let inode = peer.parse::<i64>().ok();
@@ -814,16 +821,16 @@ fn ss_text_v6(bytes: &[u8]) -> Result<Vec<Item>, String> {
             (Some(local), Some(peer), None)
         };
         let mut fields = serde_json::Map::new();
-        let mut family = netid.map_or("inet", |(_, _, family)| *family).to_owned();
+        let mut family = netid.map_or(Some("inet"), |(_, family, _)| family);
         let endpoint = |spec: &str,
                         fields: &mut serde_json::Map<String, Json>,
-                        family: &mut String,
+                        family: &mut Option<&str>,
                         key: &str| {
             let (address, port) = spec.rsplit_once(':').unwrap_or((spec, "*"));
             let (address, scope) = address.split_once('%').unwrap_or((address, ""));
             let address = address.trim_start_matches('[').trim_end_matches(']');
             if address.contains(':') {
-                *family = "inet6".to_owned();
+                *family = Some("inet6");
             }
             if !scope.is_empty() {
                 fields.insert(format!("{key}_scope"), Json::String(scope.to_owned()));
@@ -850,10 +857,16 @@ fn ss_text_v6(bytes: &[u8]) -> Result<Vec<Item>, String> {
         let remote_value = peer.map_or(Json::Null, |spec| {
             endpoint(spec, &mut fields, &mut family, "remote")
         });
-        if let Some((_, protocol, _)) = netid {
-            fields.insert("protocol".into(), Json::String((*protocol).to_owned()));
+        if let Some((protocol, _, known)) = netid {
+            fields.insert("protocol".into(), Json::String(protocol.to_owned()));
+            if !known {
+                fields.insert("netid".into(), Json::String(first.to_owned()));
+            }
         }
-        fields.insert("family".into(), Json::String(family));
+        fields.insert(
+            "family".into(),
+            family.map_or(Json::Null, |family| Json::String(family.to_owned())),
+        );
         fields.insert(
             "state".into(),
             state.map_or(Json::Null, |s| Json::String(s.to_owned())),

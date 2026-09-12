@@ -468,3 +468,70 @@ fn should_decode_ss_endpoints_into_nested_endpoint_records() {
         "spec v0.3 §1.8: a human-output parser says so"
     );
 }
+
+#[test]
+fn should_keep_every_other_socket_when_ss_lists_a_socket_type_the_adapter_does_not_know() {
+    // Issue #131, v0.6.1 §7 and §29: bare `ss` lists every socket type the host has, and one line
+    // of a type the adapter has never heard of used to reject the whole output, tcp sockets
+    // included. The unknown type degrades that one record; it never destroys the others.
+    let adapter = ono_adapter::first_party()
+        .iter()
+        .find(|pack| pack.id() == "org.ono.compat.iproute2")
+        .unwrap()
+        .adapters()
+        .iter()
+        .find(|adapter| adapter.id() == "ss")
+        .unwrap();
+    let bytes = std::fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/contracts/adapters/fixtures/iproute2/ss/unknown-netid.out"),
+    )
+    .unwrap();
+    let rows = records(
+        ono_adapter::decode(adapter, &bytes, &trace("ss"), builtin_schemas())
+            .expect("an unknown socket type must not fail the sockets beside it"),
+    );
+    assert_eq!(rows.len(), 5, "one record per socket line");
+
+    let protocols: Vec<_> = rows
+        .iter()
+        .map(|row| row.get("protocol").cloned())
+        .collect();
+    assert_eq!(
+        protocols,
+        ["tcp", "icmp", "icmp6", "unknown", "tcp"].map(|name| Some(Value::string(name))),
+        "icmp and icmp6 are protocols of their own; a type the adapter does not know is `unknown`"
+    );
+
+    let Some(Value::Record(local)) = rows[4].get("local") else {
+        panic!("the established tcp socket keeps its local endpoint");
+    };
+    assert!(
+        matches!(local.get("address"), Some(Value::Ip(ip)) if ip.to_string() == "192.168.0.10")
+    );
+    assert_eq!(local.get("port"), Some(&Value::Port(22)));
+    let Some(Value::Record(remote)) = rows[4].get("remote") else {
+        panic!("the established tcp socket keeps its peer");
+    };
+    assert_eq!(remote.get("port"), Some(&Value::Port(51234)));
+
+    assert_eq!(
+        rows[2].get("family"),
+        Some(&Value::string("inet6")),
+        "icmp6 is IPv6 by its netid, even though `*` carries no `:` to say so"
+    );
+    assert_eq!(
+        rows[3].get("family"),
+        Some(&Value::Null),
+        "the family of a socket type the adapter does not know is unknown, not guessed"
+    );
+    let extensions = rows[3].extra();
+    let Some(Value::Map(tool)) = extensions.get("org.ono.compat.iproute2.ss") else {
+        panic!("the netid ss printed is kept under the adapter's namespace, got {extensions:?}");
+    };
+    assert_eq!(
+        tool.get("netid"),
+        Some(&Value::string("v_str")),
+        "nothing ss said is lost: the unknown netid stays readable"
+    );
+}

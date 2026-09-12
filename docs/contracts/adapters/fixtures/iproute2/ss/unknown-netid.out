@@ -1,0 +1,5 @@
+tcp   LISTEN 0      4096                                  127.0.0.1:631                       0.0.0.0:*     ino:23456 sk:1 cgroup:/system.slice/cups.service <->
+icmp  UNCONN 0      0                                       0.0.0.0:7                               *:*     uid:1000 ino:87654 sk:2 cgroup:/user.slice/user-1000.slice/session-2.scope <->
+icmp6 UNCONN 0      0                                             *:58                              *:*     uid:1000 ino:98765 sk:3 cgroup:/user.slice/user-1000.slice/session-2.scope <->
+v_str LISTEN 0      0                                             *:1024                            *:*     ino:43210 sk:4 <->
+tcp   ESTAB  0      0                                  192.168.0.10:22                     192.168.0.20:51234 ino:34567 sk:5 cgroup:/system.slice/ssh.service <->

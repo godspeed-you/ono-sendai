@@ -2058,7 +2058,7 @@ Default view: `protocol`, `local`, `remote`, `state`, `process`
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
 | `protocol` | `enum` | — | required | The transport protocol. |
-| `family` | `enum` | — | required | The address family. |
+| `family` | `enum` | — | nullable | The address family; null when it cannot be told, as for a socket type the provider does not know. |
 | `local` | `ono.endpoint/1` | — | nullable | The local endpoint; null for socket kinds that have none. |
 | `remote` | `ono.endpoint/1` | — | nullable | The peer endpoint; null for listening and connectionless sockets. |
 | `state` | `enum` | — | nullable | The connection state; null for protocols that have none, such as UDP. |

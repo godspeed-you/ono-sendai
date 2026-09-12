@@ -252,7 +252,8 @@ pub fn socket_schema() -> Arc<Schema> {
                     FieldDef::new(
                         "protocol",
                         FieldType::enumeration(&[
-                            "tcp", "udp", "unix", "raw", "sctp", "dccp", "packet", "unknown",
+                            "tcp", "udp", "unix", "raw", "sctp", "dccp", "packet", "icmp", "icmp6",
+                            "unknown",
                         ]),
                     )
                     .required()
@@ -265,8 +266,11 @@ pub fn socket_schema() -> Arc<Schema> {
                             "inet", "inet6", "unix", "packet", "netlink", "other",
                         ]),
                     )
-                    .required()
-                    .with_doc("The address family."),
+                    .nullable()
+                    .with_doc(
+                        "The address family; null when it cannot be told, as for a socket type \
+                         the provider does not know.",
+                    ),
                 )
                 .field(
                     FieldDef::new("local", FieldType::Record(SchemaId::new("ono.endpoint", 1)))
