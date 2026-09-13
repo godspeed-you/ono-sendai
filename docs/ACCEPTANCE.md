@@ -1590,13 +1590,15 @@ bytes behind them are unbounded.
       next capture has its whole allowance —
       `crates/ono-cli/tests/resource_limits.rs::should_stop_capture_growth_within_the_cancellation_budget`,
       `crates/ono-pipeline/tests/cancellation.rs::should_stop_a_capture_growing_when_the_scope_is_cancelled`.
-      **The p95 < 100 ms / p99 < 250 ms half of §23.3 is not ticked here.** §37.2 measures a target
-      on a *named reference environment*, which #84 delivers, and a millisecond threshold asserted
-      on whatever ran `cargo test` is issue #21's defect rather than a proof; the measured
-      distribution is owed by the benchmark harness of §4.8.8 (#83, #84). ADR-0459 records what was
-      measured while writing this — 100 cancellations in 0.07 s, two orders of magnitude inside the
-      p95 target — and why it is not asserted. This box is ticked when that benchmark reports
-      (#71, §23.3, §61.5, Appendix A).
+      **The p95 < 100 ms / p99 < 250 ms half of §23.3 is not a `cargo test` assertion.** §37.2
+      measures a target on a *named reference environment*, and a millisecond threshold asserted on
+      whatever ran `cargo test` is issue #21's defect rather than a proof. The benchmark harness of
+      §4.8.8 (#83, #84) measures it there: `cancel_ms` in
+      `docs/contracts/hardening/performance_baseline.json` is the p95 from interrupt to exit on
+      `ryzen-3900x-ubuntu-2604`, 3.5 ms for `spatial.look` at Profile S. No p99 is reported: the
+      harness takes twenty samples, and a p99 wants about a hundred. ADR-0459 records what was
+      measured while writing this — 100 cancellations in 0.07 s — and why it is not asserted (#71,
+      §23.3, §61.5, Appendix A).
 - [x] **P1 · Retained history is bounded and says when it truncated.** Sixteen slots, 10 000 values
       and 16 MiB per result, 64 MiB in total with oldest-first eviction, a truthful marker on any
       truncated entry, and — the invariant that matters — the pipeline's own output is unaffected by
@@ -2024,13 +2026,13 @@ mutable inputs.
       custody, rotation, revocation and offline verification and is named in this box —
       `xtask/tests/provenance.rs::should_verify_the_published_signature_over_the_checksum_manifest`,
       `::should_fail_verification_when_the_checksum_manifest_is_altered` (#107, §47.3, ADR-0529).
-      **Deliberately open.** The signing model is keyless Sigstore, so there is no key to define
+      **Open until the first tag, and closed by it.** The signing model is keyless Sigstore, so there is no key to define
       custody for — and the token it needs exists only inside a run of `publish`, and verifying
       one needs Fulcio and Rekor, which the gate and the networkless acceptance container (§40.2)
       have no route to. Everything up to the signature is implemented and green: the workflow
       signs and verifies itself before publishing, the verification is identity-constrained and
       fails closed, and the two tests own the verification path against a stand-in `cosign`. The
-      first tag push produces the end-to-end proof this box waits for. **It did.** The `v0.4.1`
+      first tag push was to produce the end-to-end proof this box waited for. **It did.** The `v0.4.1`
       run signed `SHA256SUMS` and `build-provenance.json` with a Fulcio certificate issued to
       `https://github.com/godspeed-you/ono-sendai/.github/workflows/release.yml@refs/tags/v0.4.1`
       by `https://token.actions.githubusercontent.com`, verified both against that identity before
@@ -2102,11 +2104,11 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       `::should_leave_the_other_artifacts_verifiable_when_one_is_missing`,
       `::should_declare_a_sequence_that_fits_in_a_document_and_needs_no_proprietary_service`,
       `::should_print_the_same_commands_in_the_readme_and_the_generated_reference` (#115, §47.5,
-      §67.7; ADR-0542, ADR-0545). **The box stays open**, for the reason ADR-0529 left #107's open:
+      §67.7; ADR-0542, ADR-0545). **The box stayed open until the first tag**, for the reason ADR-0529 left #107's open:
       keyless signing needs an OIDC token that exists only inside a run of the release workflow,
-      and verifying one needs Sigstore over a network §40.2 denies the container — so no release
-      has been signed and the two `cosign` steps have never been executed against one. The first
-      `v*` tag is the run that closes both boxes, and the `v0.4.1` run executed both of them: the
+      and verifying one needs Sigstore over a network §40.2 denies the container — so until then no release
+      had been signed and the two `cosign` steps had never been executed against one. The first
+      `v*` tag was the run that closed both boxes, and the `v0.4.1` run executed both of them: the
       published `SHA256SUMS.sigstore.json` and `build-provenance.json.sigstore.json` were checked
       by the documented sequence against the documented identity, in the run and again before
       publication. The commands are `scripts/verify-release.sh`'s, byte for byte, rather than a
@@ -2239,7 +2241,7 @@ non-interactive and deterministic with no terminal attached (#91).
       and an absent signature. The signature itself is made and checked by the release workflow
       rather than here: keyless Sigstore needs an OIDC token that exists only inside a release run
       and a route to Fulcio that §40.2 denies on purpose, so the case proves the refusal instead
-      and §4.8.11's `#107` box carries the open end-to-end proof (§62.5, §62.6, #106, #107, #108,
+      and §4.8.11's `#107` box carries the end-to-end proof the `v0.4.1` release run made (§62.5, §62.6, #106, #107, #108,
       #110, #115, ADR-0528, ADR-0529, ADR-0530).
 
 #### 4.8.14 Zero unresolved P0/P1, and what may be excluded (§66.9)
