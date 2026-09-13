@@ -735,9 +735,9 @@ this board).** The *Deferred* entry that called the relation unobservable was wr
 `ProviderBridge` composes the edge from a listener and a connection that share a local endpoint
 (`crates/ono-spatial-index/src/bridge.rs`, ADR-0147), and `crates/ono-cli/src/spatial/session.rs`
 observes through that bridge. No test drives a real listener and a real accepted connection
-through it — the only test that names the relation is the synthetic fixture in
-`crates/ono-spatial-events/tests/common/mod.rs` — and ADR-0132 and ADR-0135 still describe it as
-underived, against ADR-0147. **Exit test:** a test that accepts a loopback connection and finds the
+through it; the only test that names the relation is the synthetic fixture in
+`crates/ono-spatial-events/tests/common/mod.rs`. ADR-0132 and ADR-0135, which called it underived,
+are superseded in that part by ADR-0147. **Exit test:** a test that accepts a loopback connection and finds the
 `socket.accepts_connection` edge between the two sockets.
 
 ### Carried over from the session records removed on 2026-09-13
