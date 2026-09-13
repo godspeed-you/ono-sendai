@@ -246,28 +246,30 @@ The enhancements present, newest first:
   Consolidation & Rich TTY Interface: one deterministic policy that unifies the existing v0.2
   render hints, presentation profiles and constrained view tree into a production-quality rich
   terminal path, ahead of the Deck workspace v0.8 later composes. Added 2026-09-01, **not
-  implemented**; `docs/STATE.md` records it behind v0.6.
+  implemented**; `docs/STATE.md` records it as the next tranche.
 - `docs/specs/ono_sendai_shell_spec_v0.6.1_stabilization_polish.md` — Stabilization and Polish:
   a patch release over the released v0.6.0 that fixes and consolidates existing behaviour —
   permission/scope state, plugin target resolution in functions, unknown `ss` socket types, REPL
   output without a trailing newline, and one expression-aware completion workstream — with the
   GitHub milestone `v0.6.1` as its release inventory and no new product capability. Added
-  2026-09-12, **not implemented**; `docs/STATE.md` records it ahead of v0.7.
+  2026-09-12, implemented and released as 0.6.1 the same day; as a patch release it brings no
+  `docs/ACCEPTANCE.md` checklist of its own.
 - `docs/specs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md` — Prospective
   Change, Protection & Recovery: the `ChangePlan` as a first-class object, so a mutation can be
   inspected for its consequences and its recoverability before it is made real. Added 2026-08-31,
-  **not implemented**; `docs/STATE.md` records it behind v0.5.
+  implemented and released as 0.6.0 (2026-09-11); `docs/ACCEPTANCE.md` §4.12 holds its checklist.
 - `docs/specs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md` — the Temporal & Causal
   Systems Interface: time as a coordinate, an evidence-backed event ledger, state reconstruction,
-  timelines and causal explanation. Added 2026-08-31, **not implemented**; `docs/STATE.md`
-  records it as the next tranche.
+  timelines and causal explanation. Added 2026-08-31, implemented and released as 0.5.0
+  (2026-09-09); `docs/ACCEPTANCE.md` §4.11 holds its checklist.
 - `docs/specs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md` — Hardening, Trust &
   Release Integrity: a maintenance layer over the implemented v0.4 substrate — security
   boundaries, remote trust, KUANG/11 confinement, resource boundedness, streaming correctness,
-  performance stability, test truthfulness and release provenance. Added 2026-09-01, **not
-  implemented**. The spec states its own place in the sequence: a prerequisite hardening pass
-  that v0.5 and v0.6 implementation MUST inherit rather than re-solve, so it is listed here
-  ahead of them despite arriving later; `docs/STATE.md` should schedule it before v0.5.
+  performance stability, test truthfulness and release provenance. Added 2026-09-01, implemented
+  and released as 0.4.1 (2026-09-04); `docs/ACCEPTANCE.md` §4.8 holds its checklist. The spec
+  states its own place in the sequence: a prerequisite hardening pass that v0.5 and v0.6
+  implementation MUST inherit rather than re-solve, which is why it was built ahead of them
+  despite arriving later.
 - `docs/specs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — the Spatial Systems
   Interface. Added 2026-08-27, implemented 2026-08-28/29 (ADR-0124 … ADR-0402) and released as
   0.4.0; `docs/ACCEPTANCE.md` §4.7 holds its checklist.
