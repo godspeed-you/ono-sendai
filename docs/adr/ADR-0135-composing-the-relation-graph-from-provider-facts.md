@@ -1,6 +1,6 @@
 # ADR-0135: The relation graph is composed from provider facts, and says so when it is a derivation
 
-- Status: accepted
+- Status: superseded by ADR-0147 (in part: the bridge composes `socket.accepts_connection` from a shared local endpoint)
 - Date: 2026-08-28
 - Spec refs: v0.4 §2.5, §2.6, §2.16, §3.4, §3.5, §11.2, §11.3, §11.4, §11.5, §12–§18, §32, §42.3, §50 Phase S2
 - Decided by: agent (autonomous, `S2`)

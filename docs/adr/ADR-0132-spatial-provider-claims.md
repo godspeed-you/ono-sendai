@@ -1,6 +1,6 @@
 # ADR-0132: The §42 provider claims live in the provider registry, and a claim may only be weaker than the type allows
 
-- Status: accepted
+- Status: superseded by ADR-0147 (in part: `socket.accepts_connection` is composed by the bridge, not underived)
 - Date: 2026-08-28
 - Spec refs: v0.4 §10.1, §11.3, §26, §32, §35.2, §41, §42, §50 Phase S2; v0.2 §47
 - Decided by: agent (autonomous, `S2`)
