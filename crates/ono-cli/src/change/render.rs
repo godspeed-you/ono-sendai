@@ -176,7 +176,7 @@ fn resolution_lines(plan: &RecordValue, width: usize) -> Vec<String> {
                 .to_owned()
         };
         lines.push(String::new());
-        lines.push(fit(&format!("  {}", field("path")), width));
+        lines.push(fit_path("  ", &field("path"), width));
         lines.push(fit(
             &format!(
                 "    mount {} ({}) on {}",
@@ -208,6 +208,23 @@ fn blank(lines: &mut Vec<String>) {
     if !lines.is_empty() {
         lines.push(String::new());
     }
+}
+
+/// A path on a line of its own, shortened at its start when it does not fit.
+///
+/// What tells two targets apart is the end of their paths, so a path wider than the line keeps
+/// its end and gives up its beginning to `...` — `fit` would cut the file name, and two targets in
+/// one deep directory would print the same line. ASCII, because this drawing has no charset.
+fn fit_path(indent: &str, path: &str, width: usize) -> String {
+    const ELIDED: &str = "...";
+    let whole = format!("{indent}{path}");
+    let room = width.saturating_sub(indent.chars().count() + ELIDED.len());
+    if whole.chars().count() <= width || room == 0 {
+        return fit(&whole, width);
+    }
+    let count = path.chars().count();
+    let tail: String = path.chars().skip(count - room).collect();
+    format!("{indent}{ELIDED}{tail}")
 }
 
 /// One line, cut to `width` so a narrow terminal wraps nothing.
