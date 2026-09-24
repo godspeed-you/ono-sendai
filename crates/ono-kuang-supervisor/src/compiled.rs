@@ -332,3 +332,59 @@ pub fn compile(component: &Path, store: &Path) -> Result<PathBuf, String> {
     }
     Ok(artifact)
 }
+
+#[cfg(all(test, feature = "compiler"))]
+mod portable {
+    #![allow(
+        clippy::expect_used,
+        reason = "AGENTS.md §16: a test states its preconditions directly"
+    )]
+
+    /// The smallest component the engine accepts: a preamble and nothing else.
+    const EMPTY_COMPONENT: &[u8] = b"\0asm\x0d\x00\x01\x00";
+
+    #[test]
+    fn should_write_an_artifact_that_loads_on_a_machine_of_the_same_architecture_without_optional_cpu_features()
+     {
+        // An artifact is written where the package is installed, and an image, a fleet or a
+        // system store carries it to other machines of the same architecture. One compiled for
+        // the CPU that happened to run the compiler (AVX-512 on a CI runner) is refused on every
+        // older one, so the compile step targets the architecture, not the machine.
+        let home = ono_testkit::scratch();
+        let component = home.path().join("empty.wasm");
+        std::fs::write(&component, EMPTY_COMPONENT).expect("the component");
+        let store = home.path().join("store");
+        let artifact = super::compile(&component, &store).expect("the tool compiles it");
+
+        let mut config = wasmtime::Config::new();
+        config.wasm_component_model(true).epoch_interruption(true);
+        // This engine's own compiler must not infer the machine it runs on either, or it would
+        // refuse itself on the simulated host before it is asked about the artifact.
+        config
+            .target(&target_lexicon::Triple::host().to_string())
+            .expect("the host triple");
+        #[allow(
+            unsafe_code,
+            reason = "the host a portable artifact has to load on is simulated"
+        )]
+        // SAFETY: the detector answers from no state; it claims a CPU with no optional feature,
+        // which only makes the engine refuse more, never map code the host cannot run.
+        unsafe {
+            config.detect_host_feature(|_| Some(false));
+        }
+        let baseline = wasmtime::Engine::new(&config).expect("a baseline engine");
+        #[allow(unsafe_code, reason = "the load under test is the shell's own mapping")]
+        // SAFETY: the artifact was written by `compile` above into a scratch store only this
+        // test writes (ADR-0870).
+        let loaded =
+            unsafe { wasmtime::component::Component::deserialize_file(&baseline, &artifact) };
+        assert!(
+            loaded.is_ok(),
+            "a machine of this architecture without optional CPU features loads the artifact: {:#}",
+            loaded
+                .err()
+                .map(|error| format!("{error:#}"))
+                .unwrap_or_default()
+        );
+    }
+}

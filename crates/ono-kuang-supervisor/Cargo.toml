@@ -36,6 +36,7 @@ thiserror.workspace = true
 tokio.workspace = true
 wasmtime.workspace = true
 wasmtime-wasi.workspace = true
+target-lexicon.workspace = true
 
 [features]
 # Cranelift, for `kuang-compile` and nothing else: the shell loads what the tool compiled, and a

@@ -105,6 +105,12 @@ pub(crate) fn engine() -> Result<&'static Engine, String> {
         .get_or_init(|| {
             let mut config = Config::new();
             config.wasm_component_model(true).epoch_interruption(true);
+            // Named explicitly, the host's triple makes the compiler infer none of this machine's
+            // CPU features: an artifact is compiled for the architecture, so an image or a
+            // system store built on one machine loads on every other of its kind (ADR-0914).
+            config
+                .target(&target_lexicon::Triple::host().to_string())
+                .map_err(|error| error.to_string())?;
             Engine::new(&config).map_err(|error| error.to_string())
         })
         .as_ref()

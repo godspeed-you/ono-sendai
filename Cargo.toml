@@ -72,6 +72,10 @@ async-trait = "0.1"
 # `ono-kuang-supervisor`'s `compiler` feature adds Cranelift for the tool alone (ADR-0870).
 wasmtime = { version = "47", default-features = false, features = ["runtime", "component-model", "async", "std"] }
 wasmtime-wasi = { version = "47", default-features = false, features = ["p2"] }
+# The host's own triple, named to the engine so it infers no CPU features of the machine it runs
+# on: a compiled component loads on every machine of the architecture (ADR-0914). Already in the
+# graph through wasmtime.
+target-lexicon = "0.13"
 bytes = "1"
 crossterm = "0.29"
 # The versioned binary payload of a persisted temporal event (spec v0.5 §31.4). CBOR keeps a
