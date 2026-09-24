@@ -513,10 +513,10 @@ canonical CI environment expects to.
 crates=48
 workspace_members=50
 tests=7053
-tests_that_can_skip=127
+tests_that_can_skip=130
 expected_ci_skips=15
 acceptance_cases=262
-adrs=606
+adrs=609
 command_contract_files=15
 commands=222
 ```
