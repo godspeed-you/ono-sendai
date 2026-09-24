@@ -120,7 +120,7 @@ fn should_fail_to_load_the_store_when_one_non_comment_line_is_malformed() {
 
     let message = ono_at_home(
         &home,
-        "try { get client-key } catch e { $e | select message }",
+        "try { get client-key } catch e { $e | select message | to json }",
     );
     assert!(
         message.stdout().contains("line 2"),
