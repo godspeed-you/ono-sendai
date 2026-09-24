@@ -1598,3 +1598,85 @@ fn should_package_the_tracked_files_and_nothing_the_working_tree_merely_holds() 
         "the .rpm ships a file nobody committed: {rpm:?}"
     );
 }
+
+#[test]
+fn should_package_the_binaries_the_build_step_wrote_whatever_the_target_directory_says() {
+    // The build runs in a container that writes /project/target, the checkout's own target/; the
+    // packaging read `${CARGO_TARGET_DIR:-target}` on the host, so with CARGO_TARGET_DIR exported
+    // it packaged whatever sat there. A stand-in container runtime "builds" by placing `true`
+    // where the container writes; a stale `false` waits in CARGO_TARGET_DIR.
+    let copy = tracked_copy();
+    let bin = copy.path().join("stand-in-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let runtime = bin.join("docker");
+    std::fs::write(
+        &runtime,
+        format!(
+            "#!/usr/bin/env bash\n\
+             [ \"$1\" = run ] || exit 0\n\
+             while [ $# -gt 0 ]; do\n\
+               if [ \"$1\" = --volume ]; then project=\"${{2%%:/project}}\"; fi\n\
+               shift\n\
+             done\n\
+             release=\"$project/target/{triple}/release\"\n\
+             mkdir -p \"$release\"\n\
+             cp {fresh} \"$release/ono\"\n\
+             cp {fresh} \"$release/kuang-compile\"\n",
+            triple = host_triple(),
+            fresh = small_elf("true").display(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        &runtime,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    let stale = copy.path().join("stale-target");
+    let release = stale.join(host_triple()).join("release");
+    std::fs::create_dir_all(&release).unwrap();
+    for binary in SHIPPED_BINARIES {
+        std::fs::copy(small_elf("false"), release.join(binary)).unwrap();
+    }
+    let dist = copy.path().join("out");
+    let output = Command::new("bash")
+        .arg(copy.path().join("scripts/package.sh"))
+        .args(["--dist"])
+        .arg(&dist)
+        .current_dir(copy.path())
+        .env("CARGO_TARGET_DIR", &stale)
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                bin.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "packaging the copy failed:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let deb = std::fs::read_dir(&dist)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|e| e == "deb"))
+        .expect("a .deb");
+    let extracted = copy.path().join("extracted");
+    let status = Command::new("dpkg-deb")
+        .arg("-x")
+        .arg(&deb)
+        .arg(&extracted)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert_eq!(
+        sha256_of(&std::fs::read(extracted.join("usr/bin/ono")).unwrap()),
+        sha256_of(&std::fs::read(small_elf("true")).unwrap()),
+        "the package carries the binary CARGO_TARGET_DIR held, not the one the build step wrote"
+    );
+}

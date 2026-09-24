@@ -197,6 +197,9 @@ if [[ $no_build -eq 0 ]]; then
       --env LC_ALL=C.UTF-8 --env LANG=C.UTF-8 --env TZ=UTC \
       "$BUILD_IMAGE" \
       sh -c "$build_both"
+    # The container wrote the checkout's own target/, whatever CARGO_TARGET_DIR says on this
+    # host: package what was just built, not what happens to sit there.
+    target_dir="target"
   else
     require_tool cross@0.2.5
     step "building ono for $target in cross's toolchain image"
