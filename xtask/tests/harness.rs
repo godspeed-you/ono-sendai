@@ -304,3 +304,112 @@ fn should_leave_an_image_in_place_while_another_run_is_still_using_it() {
         "the last run to finish removes the image, so nothing is left behind"
     );
 }
+
+// --- #196: the sub-branch convention can be carried out as written ----------------------------
+
+/// Whether a GitHub branch filter matches `branch`: `**` crosses `/`, `*` does not.
+fn filter_matches(pattern: &str, branch: &str) -> bool {
+    if let Some(rest) = pattern.strip_prefix("**") {
+        return (0..=branch.len())
+            .filter(|at| branch.is_char_boundary(*at))
+            .any(|at| filter_matches(rest, &branch[at..]));
+    }
+    if let Some(rest) = pattern.strip_prefix('*') {
+        return (0..=branch.len())
+            .filter(|at| branch.is_char_boundary(*at))
+            .take_while(|at| !branch[..*at].contains('/'))
+            .any(|at| filter_matches(rest, &branch[at..]));
+    }
+    match (pattern.chars().next(), branch.chars().next()) {
+        (Some(p), Some(b)) if p == b => {
+            filter_matches(&pattern[p.len_utf8()..], &branch[b.len_utf8()..])
+        }
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+#[test]
+fn should_document_a_sub_branch_form_git_can_create_and_ci_runs_on() {
+    // Issue #196: AGENTS.md §12.1 named `implementation/<crate>`, and git refuses to create it
+    // beside a branch called `implementation` — a ref cannot be a file and a directory at once.
+    let agents = support::read("AGENTS.md");
+    let rule = agents
+        .split("\n- ")
+        .find(|item| item.starts_with("Sub-branches are allowed"))
+        .expect("AGENTS.md §12.1 still says which sub-branches parallel agents may use");
+    let form = rule
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .find(|token| token.starts_with("implementation") && token.contains('<'))
+        .unwrap_or_else(|| panic!("the rule names no `implementation…<slug>` form:\n{rule}"));
+    let open = form.find('<').unwrap();
+    let close = form[open..].find('>').map(|at| open + at).unwrap();
+    let branch = format!(
+        "{}h7-spatial-performance{}",
+        &form[..open],
+        &form[close + 1..]
+    );
+
+    let git = scratch();
+    let run = |arguments: &[&str]| {
+        let output = Command::new("git")
+            .args(arguments)
+            .current_dir(git.path())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .expect("git must be runnable in the gate");
+        (output.status.success(), text(&output))
+    };
+    for arguments in [
+        &["init", "--quiet", "--initial-branch", "main"][..],
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "--quiet",
+            "--allow-empty",
+            "--message",
+            "baseline",
+        ],
+        &["branch", "implementation"],
+    ] {
+        let (ok, said) = run(arguments);
+        assert!(ok, "git {arguments:?} failed: {said}");
+    }
+    let (created, said) = run(&["branch", &branch, "implementation"]);
+    assert!(
+        created,
+        "AGENTS.md §12.1 names the sub-branch form `{form}`, and git refuses to create \
+         `{branch}` beside `implementation` (issue #196): {said}"
+    );
+
+    // And a push of it gets CI, as a push of `implementation` does.
+    let workflow: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&support::read(".github/workflows/ci.yml")).unwrap();
+    let on = workflow
+        .get("on")
+        .or_else(|| workflow.get(serde_yaml_ng::Value::Bool(true)))
+        .expect("ci.yml has triggers");
+    let branches: Vec<&str> = on
+        .get("push")
+        .and_then(|push| push.get("branches"))
+        .and_then(serde_yaml_ng::Value::as_sequence)
+        .map(|list| {
+            list.iter()
+                .filter_map(serde_yaml_ng::Value::as_str)
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        branches
+            .iter()
+            .any(|pattern| filter_matches(pattern, &branch)),
+        "a push to the documented sub-branch `{branch}` starts no CI run; ci.yml pushes on \
+         {branches:?}"
+    );
+}

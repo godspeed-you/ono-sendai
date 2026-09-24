@@ -618,8 +618,12 @@ Rules:
 - Never delete or recreate `implementation` yourself. Discarding a run is the user's call.
 - `scripts/gate.sh` refuses to run on `main`. That guard is not to be removed or worked around;
   the user sets `ONO_ALLOW_MAIN=1` when they work on the harness itself.
-- Sub-branches are allowed for parallel agents (`implementation/<crate>`), merged back into
-  `implementation` — never into `main`.
+- Sub-branches are allowed for parallel agents, named `implementation-<slug>`
+  (`implementation-h7-spatial-performance`, `implementation-release-tooling`), and merged back
+  into `implementation` — never into `main`. Not `implementation/<slug>`: git stores a branch as
+  a file under `refs/heads/`, and `refs/heads/implementation` cannot be a file and a directory at
+  once, so git refuses to create one (ADR-0900). CI runs on `implementation-*` pushes as it does
+  on `implementation`.
 
 ### 12.2 Commits
 
