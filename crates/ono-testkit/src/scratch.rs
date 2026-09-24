@@ -26,21 +26,41 @@ pub struct Scratch {
 /// instead, from the running test binary: cargo puts every test executable under its target
 /// directory, and marks that directory with a `CACHEDIR.TAG` (issue #143, ADR-0890).
 fn scratch_root() -> PathBuf {
-    if let Some(directory) = std::env::var_os("CARGO_TARGET_TMPDIR") {
-        return PathBuf::from(directory);
+    let mut workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    workspace.pop();
+    workspace.pop();
+    scratch_root_in(&Surroundings {
+        target_tmpdir: std::env::var_os("CARGO_TARGET_TMPDIR").map(PathBuf::from),
+        executable: std::env::current_exe().ok(),
+        workspace,
+    })
+}
+
+/// What the scratch root is decided from, gathered in one place so the decision can be tested
+/// against surroundings a test builds.
+struct Surroundings {
+    /// `CARGO_TARGET_TMPDIR` from the environment, if a runner set it.
+    target_tmpdir: Option<PathBuf>,
+    /// The running test binary.
+    executable: Option<PathBuf>,
+    /// The workspace root the testkit was built in.
+    workspace: PathBuf,
+}
+
+/// The scratch root for `surroundings`.
+fn scratch_root_in(surroundings: &Surroundings) -> PathBuf {
+    if let Some(directory) = &surroundings.target_tmpdir {
+        return directory.clone();
     }
-    std::env::current_exe()
-        .ok()
-        .and_then(|executable| cargo_target_of(&executable))
+    surroundings
+        .executable
+        .as_deref()
+        .and_then(cargo_target_of)
         .unwrap_or_else(|| {
             // Not a binary cargo built in place — a doc test, which rustdoc links in a temporary
             // directory of its own. The workspace's own target directory is still the right
             // filesystem, and it is where `ono_binary` looks too.
-            let mut workspace_target = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            workspace_target.pop();
-            workspace_target.pop();
-            workspace_target.push("target");
-            workspace_target
+            surroundings.workspace.join("target")
         })
         .join("tmp")
 }
