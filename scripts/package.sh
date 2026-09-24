@@ -139,24 +139,26 @@ version="$(cargo pkgid --package ono-cli | sed 's/.*[#@]//')"
 
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
-# A release directory holds one build (issue #145). Packages of another version, or a checksum
-# manifest written over an earlier build, would sit beside what this run writes: `xtask checksums`
-# covers every file there, and package validation compares the new digests with the old manifest
-# and refuses. So the run refuses first, before a build it could not use, and names what is in
-# the way. Its own packages, from an earlier run of this version, it simply replaces.
+# A release directory holds one build (issue #145). Anything already in it that this run does
+# not write — packages of another version or architecture, a manifest, its signature, provenance,
+# build inputs, a stray file — would sit beside what this run writes: `xtask checksums` covers
+# every file there, and package validation compares the new digests with an old manifest. So the
+# run refuses first, before a build it could not use, and names what is in the way. The two files
+# it writes itself, from an earlier run of this version and architecture, it replaces.
 if [[ -d "$dist_dir" ]]; then
   foreign=()
-  for found in "$dist_dir"/ono_*.deb "$dist_dir"/ono-*.rpm "$dist_dir"/SHA256SUMS; do
-    [[ -e "$found" ]] || continue
+  shopt -s dotglob nullglob
+  for found in "$dist_dir"/*; do
     case "${found##*/}" in
-      "ono_${version}_"*.deb | "ono-${version}-1."*.rpm) ;;
+      "ono_${version}_${deb_arch}.deb" | "ono-${version}-1.${rpm_arch}.rpm") ;;
       *) foreign+=("$found") ;;
     esac
   done
+  shopt -u dotglob nullglob
   if [[ ${#foreign[@]} -gt 0 ]]; then
     echo "package: $dist_dir already holds artifacts of another build:" >&2
     printf 'package:   %s\n' "${foreign[@]}" >&2
-    echo "package: this run builds $version, and a release directory holds one build — remove" >&2
+    echo "package: this run writes $version for $deb_arch, and a release directory holds one build — remove" >&2
     echo "package: them, or write this one elsewhere with --dist <dir>" >&2
     exit 1
   fi

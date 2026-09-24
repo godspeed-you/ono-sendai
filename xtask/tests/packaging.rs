@@ -1217,10 +1217,30 @@ fn should_refuse_to_package_beside_the_artifacts_of_another_build() {
     let empty_target = scratch.path().join("target");
     std::fs::create_dir_all(&empty_target).expect("a scratch target directory");
 
+    // Anything this run would not write itself: packages of another version or of another
+    // architecture, the manifest and its signature, the provenance and inputs a release step put
+    // there — `xtask checksums --dir` hashes every file in the directory.
+    let other_arch = if debian_arch() == "amd64" {
+        "arm64"
+    } else {
+        "amd64"
+    };
+    let other_arch_package = format!("ono_{}_{other_arch}.deb", env!("CARGO_PKG_VERSION"));
     for (stale, bytes) in [
         ("ono_0.0.1_amd64.deb", "a package of an earlier release"),
         ("ono-0.0.1-1.x86_64.rpm", "a package of an earlier release"),
         ("SHA256SUMS", "0000  ono_0.0.1_amd64.deb\n"),
+        (
+            "SHA256SUMS.sigstore.json",
+            "a signature over another manifest",
+        ),
+        ("build-inputs.json", "{}"),
+        ("build-provenance.json", "{}"),
+        (
+            other_arch_package.as_str(),
+            "this version, another architecture",
+        ),
+        ("notes.txt", "anything at all"),
     ] {
         let dist = scratch.path().join(format!("dist-{stale}"));
         std::fs::create_dir_all(&dist).expect("a release directory");
