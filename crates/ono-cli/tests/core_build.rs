@@ -19,6 +19,8 @@ use std::time::Duration;
 
 use ono_testkit::{Run, Scratch, Shell};
 
+mod support;
+
 /// A shell that reads and writes nothing outside `home`.
 fn core(home: &Scratch, args: &[&str]) -> Run {
     Shell::new()
@@ -279,5 +281,24 @@ fn should_neither_offer_nor_accept_a_setting_of_a_compiled_out_tier() {
         refused.stderr().contains("Ono-Sendai-E0104"),
         "{}",
         refused.stderr()
+    );
+}
+
+#[test]
+fn should_open_an_interactive_session_without_reaching_for_a_compiled_out_tier() {
+    // The full build draws the spatial horizon (`look`) before the first prompt. The core build
+    // has no spatial tier, so a session must start at a clean prompt rather than with a refusal
+    // it never asked for (ADR-0911).
+    let home = ono_testkit::scratch();
+    let mut shell = support::interactive_shell_in(&home);
+    let seen = support::read_until(&mut shell, "> ", Duration::from_secs(10));
+    shell.write_all(b"exit\n").expect("input");
+    assert!(
+        seen.contains("> "),
+        "the session reaches its prompt: {seen:?}"
+    );
+    assert!(
+        !seen.contains("Ono-Sendai-E"),
+        "nothing is refused before the user typed anything: {seen:?}"
     );
 }

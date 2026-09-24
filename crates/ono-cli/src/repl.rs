@@ -370,6 +370,9 @@ pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> Exi
     // From here on this process is an interactive session: a picker may open, and a map may take
     // the screen (spec v0.4 §29.1, §29.3).
     crate::spatial::mark_interactive();
+    // The horizon is the spatial tier's `look`; a build without that tier starts at the prompt
+    // (ADR-0911).
+    #[cfg(feature = "spatial")]
     if std::io::stdin().is_terminal() {
         print_startup_horizon(session, reporter);
     }
@@ -761,6 +764,7 @@ fn spatial_place(session: &Session) -> Option<String> {
 /// answers at the root, so the horizon is `look`, not a second renderer that could disagree with
 /// it (§49.5). §29.1 is the other half: it is drawn only at a terminal, so a script's streams
 /// carry nothing it did not ask for.
+#[cfg(feature = "spatial")]
 fn print_startup_horizon(session: &mut Session, reporter: &Reporter) {
     if session.settings().flag("spatial.enabled") == Some(false)
         || session.settings().flag("spatial.startup_horizon") == Some(false)
