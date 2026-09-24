@@ -186,6 +186,9 @@ declared:
   - id: "crates/ono-cli/tests/spatial_map.rs::should_return_the_same_node_identities_when_the_terminal_width_changes"
     category: fixture_not_applicable
     prerequisite: "the host's ranked object population holds still across two reads at one width, so a difference at another width can be attributed to the width"
+  - id: "crates/ono-cli/tests/spatial_topology.rs::should_show_the_mounts_the_mount_provider_answers_for_when_entering_storage_mounts"
+    category: fixture_not_applicable
+    prerequisite: "the host's mount table holds still across one `near` at `storage/mounts`, read before and after it in the same run, so a place the provider did not know can be attributed to the spatial layer (ADR-0880)"
   - id: "crates/ono-cli/tests/spatial_map.rs::should_yield_exactly_the_members_and_keep_the_place_when_a_cluster_is_expanded"
     category: fixture_not_applicable
     prerequisite: "the host has more processes than the text map's view budget"
@@ -486,6 +489,14 @@ canonical_ci:
         at another width disagreed because of the width. Three attempts on a machine at load 124
         of 8 processors never reached it; a busier one might, and the honest answer there is that
         the run could not observe what the test is about (ADR-0552).
+    - id: "crates/ono-cli/tests/spatial_topology.rs::should_show_the_mounts_the_mount_provider_answers_for_when_entering_storage_mounts"
+      condition: "the host's mount table reads the same before and after one `near` at `storage/mounts`, in at least one of three attempts"
+      doc: >-
+        The places `near` shows at `storage/mounts` are compared with what `get mount` answers,
+        and those are two readings of a table a container changes whenever it starts or stops
+        (an overlay and a network-namespace mount each). The provider is read before and after
+        `near` in one run; a host whose table moved across all three attempts cannot say whether
+        a place it did not know came from the spatial layer or from the host (ADR-0880).
     - id: "crates/ono-spatial-query/tests/profiles.rs::should_build_every_declared_profile_at_the_cardinality_the_registry_states"
       condition: "`ulimit -Hn` is at least 101024"
       doc: >-

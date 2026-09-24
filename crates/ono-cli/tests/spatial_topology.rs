@@ -629,30 +629,96 @@ fn should_show_the_users_the_user_provider_answers_for_when_entering_identity_us
 fn should_show_the_mounts_the_mount_provider_answers_for_when_entering_storage_mounts() {
     // §2.16 again, on the mount table: every mount that is a place must be a mount `get mount`
     // answers for, and `/` is always one of them (§15.3: mount boundaries are real objects).
-    let known = rows(&ono("get mount | to json"));
-    let known: Vec<String> = known
-        .iter()
-        .filter_map(|mount| text(mount, "target").map(str::to_owned))
-        .collect();
-    assert!(
-        known.iter().any(|target| target == "/"),
-        "precondition: the mount provider answers for the root filesystem, saw {known:?}"
-    );
-
-    let run = ono("home; enter storage; enter mounts; near | to json");
-    run.assert_success();
-    let seen: Vec<String> = rows(&run).iter().map(name_of).collect();
-
-    assert!(
-        seen.iter().any(|target| target == "/"),
-        "§7.4/§15.3: the root mount is a place, saw {seen:?}"
-    );
-    for target in &seen {
+    //
+    // The mount table is the host's, and a container starting beside the suite mounts an
+    // overlay and a network namespace while it runs (issue #215). So the provider is asked in
+    // the same run as `near`, once before it and once after: a place the first reading does not
+    // know is a defect only when the second reading agrees with the first, because then the
+    // table held still across `near` and nothing but the spatial layer can have produced the
+    // place. When the two readings differ the host moved, and the run cannot answer the
+    // question; the attempt is repeated, and after three the skip says what moved (ADR-0552,
+    // ADR-0880).
+    let script = "let before = (get mount); home; enter storage; enter mounts; let seen = (near); \
+                  let after = (get mount); $before | to json; $seen | to json; $after | to json";
+    let mut moved = String::new();
+    for _ in 0..HELD_STILL_ATTEMPTS {
+        let run = ono(script);
+        run.assert_success();
+        let [before, seen, after] = json_lines(&run);
+        let targets = |mounts: &[Value]| -> Vec<String> {
+            mounts
+                .iter()
+                .filter_map(|mount| text(mount, "target").map(str::to_owned))
+                .collect()
+        };
+        let (before, after) = (targets(&before), targets(&after));
+        let seen: Vec<String> = seen.iter().map(name_of).collect();
         assert!(
-            known.contains(target),
-            "§2.16: `{target}` is a place the mount provider does not know: {known:?}"
+            before.iter().any(|target| target == "/"),
+            "precondition: the mount provider answers for the root filesystem, saw {before:?}"
         );
+        assert!(
+            seen.iter().any(|target| target == "/"),
+            "§7.4/§15.3: the root mount is a place, saw {seen:?}"
+        );
+        let unknown: Vec<&String> = seen
+            .iter()
+            .filter(|target| !before.contains(target))
+            .collect();
+        if !unknown.is_empty() {
+            assert_ne!(
+                before, after,
+                "§2.16: {unknown:?} are places the mount provider does not know. The provider was \
+                 asked before and after `near` in the same run and answered the same both times, \
+                 so the mount table held still and the spatial layer produced them: {before:?}"
+            );
+            moved = format!(
+                "`get mount` answered {} mounts before `near` and {} after it; `near` showed \
+                 {unknown:?}",
+                before.len(),
+                after.len()
+            );
+            continue;
+        }
+        // Every place `near` showed is one the provider answered for.
+        return;
     }
+    ono_testkit::skipped(
+        ono_testkit::SkipReason::FixtureNotApplicable,
+        &format!(
+            "the host's mount table changed across every one of {HELD_STILL_ATTEMPTS} attempts, so \
+             a place the provider did not know cannot be told from a mount that arrived: {moved}"
+        ),
+    );
+}
+
+/// How many times a comparison of two readings of the host may ask the host to hold still.
+///
+/// Only a disagreement costs an attempt, and a disagreement with a host that held still fails on
+/// the first one. Three, as for the width comparison of ADR-0552: this retries a fixture's
+/// precondition, never an assertion that failed.
+const HELD_STILL_ATTEMPTS: usize = 3;
+
+/// The three JSON arrays a script printed with `to json`, one per line, in order.
+fn json_lines(run: &ono_testkit::Run) -> [Vec<Value>; 3] {
+    let documents: Vec<Vec<Value>> = run
+        .stdout()
+        .lines()
+        .filter(|line| line.starts_with('['))
+        .map(|line| {
+            serde_yaml_ng::from_str::<Value>(line)
+                .ok()
+                .and_then(|document| document.as_sequence().cloned())
+                .unwrap_or_else(|| panic!("spec §29.4: `to json` prints an array, got {line:?}"))
+        })
+        .collect();
+    documents.try_into().unwrap_or_else(|documents: Vec<_>| {
+        panic!(
+            "the script prints three arrays, got {}: {}",
+            documents.len(),
+            run.output()
+        )
+    })
 }
 
 #[test]
@@ -1195,11 +1261,15 @@ fn should_complete_the_relations_available_from_the_current_place_when_tab_follo
     shell
         .write_all(walk.as_bytes())
         .expect("the terminal accepts the walk");
+    // The walk is waited for by the place it arrives at, which the prompt names once `enter`
+    // has run: `local/process/sleep`. The child's pid is no evidence of that, because the walk's
+    // own echo already carries it (`pid == …`), and a wait satisfied by the echo hands the walk's
+    // running time to the completion's budget below (issue #215).
     assert!(
         wait_for(
             &mut shell,
             &mut seen,
-            &child.pid().to_string(),
+            "process/sleep",
             Duration::from_secs(10)
         ),
         "§9.3: the discovered process becomes the current place; saw:\n{seen}"
