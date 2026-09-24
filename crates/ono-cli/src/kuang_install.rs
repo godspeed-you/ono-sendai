@@ -947,9 +947,11 @@ fn transact(
     // package is loadable the moment it is installed. The artifact goes to the operator's
     // store, named by the component's digest; one left there by a transaction that later fails
     // is inert, because it is only ever found by the bytes it was compiled from.
-    compile_component(&staging, &package.manifest, environment).inspect_err(|_| {
-        let _ = std::fs::remove_dir_all(&staging);
-    })?;
+    compile_component(&staging, &package.directory, &package.manifest, environment).inspect_err(
+        |_| {
+            let _ = std::fs::remove_dir_all(&staging);
+        },
+    )?;
 
     let mut undo = Undo::default();
     let outcome = (|| -> Result<(), ErrorValue> {
@@ -1070,10 +1072,11 @@ fn transact(
 /// store as that environment names it, which is the one the loader reads (ADR-0917).
 fn compile_component(
     directory: &Path,
+    source: &Path,
     manifest: &ono_kuang_protocol::Manifest,
     environment: &std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString>,
 ) -> Result<(), ErrorValue> {
-    use ono_kuang_supervisor::compiled::COMPILE_TOOL;
+    use ono_kuang_supervisor::compiled::{COMPILE_TOOL, engine_identity, user_store_in};
     let Some(runtime) = manifest
         .runtime
         .as_ref()
@@ -1085,46 +1088,77 @@ fn compile_component(
         return Ok(());
     };
     let id = &manifest.package.id;
-    let refuse = |why: String| {
-        ErrorValue::new(ErrorCode::KuangLoadComponentNotCompiled, why).with_help(format!(
-            "a component is compiled once, by the SDK's `{COMPILE_TOOL}`, when it is installed \
-             (ADR-0870); install `{COMPILE_TOOL}` beside `ono` or on `PATH`, then install again"
-        ))
-    };
-    let beside = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf));
     let variable = |name: &str| {
         environment
             .get(std::ffi::OsStr::new(name))
             .map(std::ffi::OsString::as_os_str)
     };
+    let store = user_store_in(variable("XDG_CACHE_HOME"), variable("HOME"));
+    // What the refusal names (ADR-0917 §3): the component in the package source, not the
+    // staged copy that is removed with the failed transaction, and the command that compiles it
+    // into the store the loader reads.
+    let component = source.join(entry);
+    let command = match &store {
+        Some(store) => format!(
+            "{COMPILE_TOOL} --store {} {}",
+            store.display(),
+            component.display()
+        ),
+        None => format!("{COMPILE_TOOL} {}", component.display()),
+    };
+    let refuse = |reason: &str, why: String, help: String| {
+        ErrorValue::new(ErrorCode::KuangLoadComponentNotCompiled, why)
+            .with_help(help)
+            .with_metadata("reason", Value::string(reason))
+            .with_metadata("component", Value::string(&component.display().to_string()))
+            .with_metadata("command", Value::string(&command))
+            .with_metadata("engine", Value::string(&engine_identity()))
+    };
+    let unavailable = |why: String| {
+        refuse(
+            "tool_unavailable",
+            why,
+            format!(
+                "a component is compiled once, by the SDK's `{COMPILE_TOOL}`, when it is \
+                 installed (ADR-0870); install `{COMPILE_TOOL}` beside `ono` or in a directory \
+                 of `PATH`, then install again"
+            ),
+        )
+    };
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf));
     let Some(tool) = locate_compile_tool(beside.as_deref(), variable("PATH")) else {
-        return Err(refuse(format!(
+        return Err(unavailable(format!(
             "`{id}` is a component and `{COMPILE_TOOL}`, which compiles it, is neither beside \
              `ono` nor on `PATH`"
         )));
     };
-    let mut command = std::process::Command::new(&tool);
-    command.env_clear().envs(environment);
-    if let Some(store) =
-        ono_kuang_supervisor::compiled::user_store_in(variable("XDG_CACHE_HOME"), variable("HOME"))
-    {
-        command.arg("--store").arg(store);
+    let mut run = std::process::Command::new(&tool);
+    run.env_clear().envs(environment);
+    if let Some(store) = &store {
+        run.arg("--store").arg(store);
     }
-    let output = command
+    let output = run
         .arg(directory.join(entry))
         .stdin(std::process::Stdio::null())
         .output()
-        .map_err(|error| refuse(format!("`{}` could not be run: {error}", tool.display())))?;
+        .map_err(|error| unavailable(format!("`{}` could not be run: {error}", tool.display())))?;
     if output.status.success() {
         return Ok(());
     }
-    Err(refuse(format!(
-        "`{id}` is a component and `{}` could not compile it: {}",
-        tool.display(),
-        String::from_utf8_lossy(&output.stderr).trim()
-    )))
+    Err(refuse(
+        "compile_failed",
+        format!(
+            "`{id}` is a component and `{}` could not compile it: {}",
+            tool.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ),
+        format!(
+            "the package's component is not one this engine can compile; nothing was installed. \
+             `{command}` shows the same refusal"
+        ),
+    ))
 }
 
 /// `kuang-compile` beside the running `ono`, else in the first absolute directory of `path`
@@ -1235,6 +1269,53 @@ mod compile_tool {
             locate_compile_tool(Some(&beside), Some(&path)).as_deref(),
             Some(working.as_path()),
             "nor beside `ono`"
+        );
+    }
+}
+
+#[cfg(test)]
+mod compile_refusal {
+    #![allow(
+        clippy::expect_used,
+        reason = "AGENTS.md §16: a test states its preconditions directly"
+    )]
+
+    use ono_value::Value;
+
+    #[test]
+    fn should_say_the_tool_is_unavailable_in_the_metadata() {
+        // The test binary has no `kuang-compile` beside it, and the environment names no PATH.
+        let source = ono_testkit::scratch();
+        let manifest = ono_kuang_protocol::Manifest::parse(
+            "format: kuang-package/1\npackage:\n  id: dev.example.echo\n  name: echo\n  \
+             version: 0.1.0\n  description: d\n  publisher: dev.example\n  license: MIT\n\
+             compatibility:\n  kuang_api: \">=11.1 <12\"\n  ono_language: \">=0.2\"\n  \
+             platforms: [linux-amd64, linux-arm64]\nruntime:\n  kind: wasm-component\n  \
+             entry: runtime/echo.wasm\n  memory_max: 64MiB\n  cpu_budget: interactive\n  \
+             startup: lazy\nroles: [provider]\nnetwork:\n  outbound: none\n",
+        )
+        .expect("a manifest");
+        let environment = [("HOME".into(), source.path().as_os_str().to_owned())].into();
+        let refused =
+            super::compile_component(source.path(), source.path(), &manifest, &environment)
+                .expect_err("no tool");
+        let fact = |key: &str| match refused.metadata().get(key) {
+            Some(Value::String(text)) => text.to_string(),
+            other => panic!("{key}: {other:?}"),
+        };
+        assert_eq!(fact("reason"), "tool_unavailable");
+        assert_eq!(
+            fact("component"),
+            source
+                .path()
+                .join("runtime/echo.wasm")
+                .display()
+                .to_string()
+        );
+        assert!(
+            fact("command").starts_with("kuang-compile --store "),
+            "{}",
+            fact("command")
         );
     }
 }

@@ -105,10 +105,13 @@ errors:
       the component changed; `incompatible` — the artifact was written by another engine version or
       for another architecture, as after a shell upgrade; `untrusted` — someone other than this
       user or root could have written the artifact, its store or a directory above them, or one of
-      them is a symbolic link (ADR-0915); `unreadable` — one of them could not be read. The
-      metadata names the component, the reason and the exact command, which carries `--store
-      <store>` when the store looked in first is not the one `kuang-compile` chooses by itself
-      (ADR-0917); running it fixes `missing` and `incompatible`.
+      them is a symbolic link (ADR-0915); `unreadable` — one of them could not be read. Raised by
+      `install plugin`, it says why the compile step failed: `tool_unavailable` — no executable
+      `kuang-compile` beside `ono` or on an absolute `PATH` entry; `compile_failed` — the tool
+      refused the component, in its own words, and nothing was installed. The metadata names the
+      component, the reason, the engine and the exact command, which carries `--store <store>` when
+      the store looked in first is not the one `kuang-compile` chooses by itself (ADR-0917);
+      running it fixes `missing` and `incompatible`.
 
   # --- runtime: the instance misbehaved, spec §31.15, §31.34 ----------------------------------
   - code: Ono-Sendai-K11201

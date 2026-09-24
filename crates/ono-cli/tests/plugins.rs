@@ -995,6 +995,42 @@ fn should_not_install_a_component_package_whose_component_cannot_be_compiled() {
     );
 }
 
+#[test]
+fn should_say_why_and_how_in_the_metadata_when_install_cannot_compile() {
+    // K11105's contract: the metadata names the component, the reason and the exact command
+    // (ADR-0917 §3) — for the refusal `install plugin` raises as much as for a load.
+    let root = ono_testkit::scratch();
+    root.write(
+        "source/dev.example.echo/manifest.yaml",
+        component_manifest(),
+    );
+    let component = root.write(
+        "source/dev.example.echo/runtime/echo.wasm",
+        b"this is not webassembly",
+    );
+    let run = support::ono_with_plugins(
+        &root,
+        &format!(
+            "install plugin path:{} --confirm | to json",
+            root.path().join("source/dev.example.echo").display()
+        ),
+    );
+    let shown = run.stdout();
+    let command = format!(
+        "kuang-compile --store {} {}",
+        root.path().join("cache/ono/kuang/compiled").display(),
+        component.display()
+    );
+    for fact in [
+        r#""reason":"compile_failed""#.to_owned(),
+        format!(r#""component":"{}""#, component.display()),
+        format!(r#""command":"{command}""#),
+        r#""engine":"wasmtime "#.to_owned(),
+    ] {
+        assert!(shown.contains(&fact), "{fact} in {shown:?}");
+    }
+}
+
 // --- a contributed command declares its own arguments (spec §31.22, ADR-0587) -----------------
 
 #[test]
