@@ -858,43 +858,56 @@ fn should_stream_neighbors_as_pipeline_objects_when_near_runs_at_the_root() {
     // pipelines. §6.2 shows the shape: a relation, the object, its state. §2.20: spatial state is
     // inspectable and scriptable, which means the v0.2 stages compose with it unchanged.
     //
-    // `near` runs once, and both readings are taken from that one stream: the root's neighbors
-    // include live objects, so two runs of `near` can see two hosts, and a count taken from one
-    // compared with the rows of another measures the host rather than the pipeline (issue #165).
-    let run = ono(
-        "home; let neighbors = (near); $neighbors | select relation | count; $neighbors | to json",
-    );
+    // `near` runs once, and its own stream is what the v0.2 stages consume: every value it
+    // produces passes an `each` that notes its relation and name on the way, then `select` and
+    // `count`. Both readings therefore come from the same stream in the same run. Two runs of
+    // `near` can see two hosts — the root's neighbors include live objects such as containers —
+    // and a count from one against the rows of another measured the host (issue #165). Reading
+    // the rows out of a variable instead avoided that, but then no stage consumed `near`'s own
+    // stream at all.
+    let dir = ono_testkit::scratch();
+    let noted = dir.path().join("neighbors.tsv");
+    let run = ono(&format!(
+        "home; near | each {{ let noted = (raw sh -c \"printf '%s\\t%s\\n' \\\"$0\\\" \\\"$1\\\" >> {}\" @.relation @.name); @ }} | select relation | count | to json",
+        noted.display()
+    ));
     run.assert_success();
-    let neighbors = rows(&run);
+    let neighbors: Vec<(String, String)> = std::fs::read_to_string(&noted)
+        .unwrap_or_default()
+        .lines()
+        .map(|line| {
+            let (relation, name) = line.split_once('\t').unwrap_or((line, ""));
+            (relation.to_owned(), name.to_owned())
+        })
+        .collect();
     assert!(
         neighbors.len() >= 6,
         "§4: the six canonical domains are neighbors of the root, got {neighbors:?}"
     );
-    for neighbor in &neighbors {
+    for (relation, name) in &neighbors {
         assert!(
-            text(neighbor, "relation").is_some(),
-            "§6.2: a neighbor names the relation that reaches it, got {neighbor:?}"
+            !relation.is_empty(),
+            "§6.2: a neighbor names the relation that reaches it, got {neighbors:?}"
         );
         assert!(
-            !name_of(neighbor).is_empty(),
-            "§6.2: a neighbor names the object, got {neighbor:?}"
+            !name.is_empty(),
+            "§6.2: a neighbor names the object, got {neighbors:?}"
         );
     }
-
-    // The count is the last line printed before the JSON document begins.
-    let stdout = run.stdout();
-    let before_document = &stdout[..stdout.find("\n[").map_or(0, |index| index + 1)];
-    let counted: i64 = before_document
-        .lines()
-        .rfind(|line| !line.trim().is_empty())
-        .and_then(|line| line.trim().parse().ok())
+    let counted = serde_yaml_ng::from_str::<Value>(run.stdout().trim())
+        .ok()
+        .and_then(|document| document.as_sequence()?.first()?.as_i64())
         .unwrap_or_else(|| {
-            panic!("`$neighbors | select relation | count` printed a number, got {stdout:?}")
+            panic!(
+                "`near | … | select relation | count | to json` printed one number, got {:?}",
+                run.output()
+            )
         });
     assert_eq!(
         counted,
         i64::try_from(neighbors.len()).unwrap_or(i64::MAX),
-        "§29.4/§2.20: `near` composes with the v0.2 pipeline unchanged, got {}",
+        "§29.4/§2.20: `near`'s stream composes with the v0.2 pipeline unchanged: `count` saw every \
+         neighbor that passed through `each` and `select`, got {}",
         run.output()
     );
 }
