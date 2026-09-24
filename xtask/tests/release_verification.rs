@@ -18,7 +18,7 @@ use ono_testkit::{Scratch, scratch};
 use xtask::verification::{Step, check_document, check_sequence, sequence};
 
 mod support;
-use support::repo;
+use support::{read, repo};
 
 /// A release directory holding two artifacts and a `SHA256SUMS` over them.
 ///
@@ -170,5 +170,57 @@ fn should_report_a_document_that_prints_a_command_the_registry_does_not() {
     assert!(
         !problems.is_empty(),
         "a document printing its own spelling of the sequence is reported"
+    );
+}
+
+// --- the tag a release is published under names the version it builds -------------------------
+
+fn release_version(tag: &str) -> (bool, String) {
+    let output = std::process::Command::new("bash")
+        .arg(repo().join("scripts/release-version.sh"))
+        .arg(tag)
+        .current_dir(repo())
+        .output()
+        .expect("bash must be runnable in the gate");
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    (output.status.success(), text)
+}
+
+#[test]
+fn should_refuse_to_release_under_a_tag_that_names_another_version() {
+    // Nothing compared the tag with the workspace version, so `v0.7.0` could publish packages that
+    // call themselves 0.6.2 — every check downstream agrees with the package, none with the tag.
+    let version = env!("CARGO_PKG_VERSION");
+    let (accepted, report) = release_version(&format!("v{version}"));
+    assert!(accepted, "the tag of this version was refused:\n{report}");
+
+    for tag in ["v0.0.1", version, "v", "release-1"] {
+        let (accepted, report) = release_version(tag);
+        assert!(
+            !accepted && report.contains(version),
+            "the tag `{tag}` was accepted for version {version}, or the refusal does not say \
+             which version the tree builds:\n{report}"
+        );
+    }
+
+    // Both places a release is published from ask the question before anything is built or
+    // attached.
+    let workflow = read(".github/workflows/release.yml");
+    let package = support::workflow_job(&workflow, "package");
+    assert!(
+        package.contains("scripts/release-version.sh"),
+        "the release workflow builds packages without checking the tag against the version:\n\
+         {package}"
+    );
+    let publish = support::workflow_job(&workflow, "publish");
+    let check = publish
+        .find("release-version.sh")
+        .expect("publishing does not check the tag it publishes under against the version");
+    assert!(
+        publish
+            .find("publish-release.sh")
+            .is_some_and(|at| check < at),
+        "the tag is checked after it has been published under:\n{publish}"
     );
 }

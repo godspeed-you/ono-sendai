@@ -47,6 +47,11 @@ jobs:
           # tool decides what the artifact is, so it is an input to the release and not a
           # detail of the day it ran (spec §44.2, ADR-0450).
           tool: cargo-deb@3.7.0,cargo-generate-rpm@0.21.0,cross@0.2.5
+      # A tag names a version, and the packages are built of the version Cargo.toml states: the
+      # two must agree before anything is built (a manual dispatch from a branch has no tag).
+      - name: check the tag names the version this tree builds
+        if: startsWith(github.ref, 'refs/tags/')
+        run: scripts/release-version.sh "$GITHUB_REF_NAME"
       - name: build the packages
         run: scripts/package.sh
       - name: install and run them in fresh containers
@@ -220,6 +225,10 @@ jobs:
       # §49.4: verify, draft, upload, check the asset inventory by digest, and only then make the
       # release visible. A first-party script rather than an action, because the order is the
       # guarantee and §43.2 asks that critical release logic be readable here (ADR-0532).
+      # The tag names the version the packages were built as; `package` asked before it built,
+      # and this asks again where the tag is used to publish.
+      - name: check the tag names the version this tree builds
+        run: repository/scripts/release-version.sh "$GITHUB_REF_NAME"
       - name: publish the already-tested bytes
         env:
           GH_TOKEN: ${{ github.token }}
