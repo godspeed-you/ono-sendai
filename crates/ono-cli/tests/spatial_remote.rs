@@ -259,8 +259,9 @@ fn should_mark_the_remote_host_in_the_prompt_after_a_jump() {
         .env("TERM", "xterm")
         .env("NO_COLOR", "1")
         .env("HOME", std::env::temp_dir().display().to_string());
-    let mut shell: PtySession = executor
+    let mut shell: ono_testkit::Guarded<ono_process::PtySession> = executor
         .run_pty(&command, WindowSize::new(30, 100))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal");
 
     let mut seen = String::new();

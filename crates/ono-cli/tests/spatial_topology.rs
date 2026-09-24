@@ -290,7 +290,7 @@ impl Drop for SleepChild {
 
 /// A pseudo-terminal running the interactive shell, for the two behaviours that only exist
 /// interactively (spec §43.4).
-fn interactive_shell() -> PtySession {
+fn interactive_shell() -> ono_testkit::Guarded<ono_process::PtySession> {
     let mut executor = Executor::detached();
     let command = PtyCommand::new(ono_testkit::ono_binary())
         .env("TERM", "xterm")
@@ -298,6 +298,7 @@ fn interactive_shell() -> PtySession {
         .env("HOME", std::env::temp_dir().display().to_string());
     executor
         .run_pty(&command, WindowSize::new(30, 100))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal")
 }
 

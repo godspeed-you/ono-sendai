@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
-use ono_process::{Command, Executor, PtySession, WindowSize};
+use ono_process::{Command, Executor, WindowSize};
 use ono_testkit::{Scratch, scratch};
 
 /// A query evaluated at a historical coordinate that takes far longer than any interrupt this
@@ -175,7 +175,7 @@ fn ended_within(child: &mut Child, budget: Duration) -> Option<std::process::Exi
 ///
 /// Recording is on, because the events that make the query long were written by [`seed`] in an
 /// earlier shell and only a session that opens the same store can read them back (§56.6).
-fn interactive_shell(home: &Scratch) -> PtySession {
+fn interactive_shell(home: &Scratch) -> ono_testkit::Guarded<ono_process::PtySession> {
     let root = home.path().display().to_string();
     let mut executor = Executor::detached();
     let command = Command::new(ono_testkit::ono_binary())
@@ -189,6 +189,7 @@ fn interactive_shell(home: &Scratch) -> PtySession {
         .current_dir(home.path());
     executor
         .run_pty(&command, WindowSize::new(24, 100))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal must be available")
 }
 

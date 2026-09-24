@@ -15,7 +15,7 @@
 
 use std::time::{Duration, Instant};
 
-use ono_process::{Command, Executor, PtySession, WindowSize};
+use ono_process::{Command, Executor, WindowSize};
 use ono_testkit::Shell;
 use serde_yaml_ng::Value;
 
@@ -392,8 +392,9 @@ fn screen_of(columns: u16, script: &str) -> String {
         .env("TERM", "xterm")
         .env("NO_COLOR", "1")
         .env("HOME", std::env::temp_dir().display().to_string());
-    let mut shell: PtySession = executor
+    let mut shell: ono_testkit::Guarded<ono_process::PtySession> = executor
         .run_pty(&command, WindowSize::new(30, columns))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal");
 
     let mut seen = String::new();

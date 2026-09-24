@@ -50,7 +50,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use ono_process::{Command, Executor, PtySession, Signal, WindowSize};
+use ono_process::{Command, Executor, Signal, WindowSize};
 use ono_testkit::scratch;
 
 mod support;
@@ -89,7 +89,7 @@ const NUDGE_SECONDS: i64 = 30;
 
 /// An interactive `ono` on a pseudo-terminal, and everything it has painted so far.
 struct Terminal {
-    pty: PtySession,
+    pty: ono_testkit::Guarded<ono_process::PtySession>,
     seen: String,
 }
 
@@ -114,6 +114,7 @@ impl Terminal {
             .current_dir(&work);
         let pty = Executor::detached()
             .run_pty(&command, size)
+            .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
             .expect("a pseudo-terminal must be allocatable");
         Self {
             pty,

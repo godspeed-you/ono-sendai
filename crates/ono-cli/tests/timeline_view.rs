@@ -42,7 +42,7 @@
 
 use std::time::{Duration, Instant};
 
-use ono_process::{Command, Executor, PtySession, Signal, WindowSize};
+use ono_process::{Command, Executor, Signal, WindowSize};
 use ono_testkit::Scratch;
 
 mod support;
@@ -89,7 +89,7 @@ const LEGEND: &str = "Enter inspect";
 
 /// An interactive `ono` on a pseudo-terminal, and everything it has painted so far.
 struct Terminal {
-    pty: PtySession,
+    pty: ono_testkit::Guarded<ono_process::PtySession>,
     seen: String,
 }
 
@@ -114,6 +114,7 @@ impl Terminal {
             .current_dir(&work);
         let pty = Executor::detached()
             .run_pty(&command, WindowSize::new(30, 100))
+            .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
             .expect("a pseudo-terminal must be allocatable");
         let mut session = Self {
             pty,

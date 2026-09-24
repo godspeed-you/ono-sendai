@@ -264,6 +264,7 @@ fn should_keep_bytes_verbatim_at_a_terminal_under_raw() {
         .env("HOME", std::env::temp_dir().display().to_string());
     let mut session = executor
         .run_pty(&command, ono_process::WindowSize::new(24, 80))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal must be available");
     let mut seen = Vec::new();
     let mut buffer = [0u8; 4096];

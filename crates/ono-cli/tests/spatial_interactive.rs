@@ -38,7 +38,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
-use ono_process::{Command, Executor, PtySession, Signal, WindowSize};
+use ono_process::{Command, Executor, Signal, WindowSize};
 use ono_testkit::{Scratch, scratch};
 
 /// How long any single screen change may take before the test calls it missing.
@@ -91,7 +91,7 @@ const INTERRUPT: &[u8] = &[0x03];
 
 /// An interactive `ono` on a pseudo-terminal, plus everything it has painted so far.
 struct Session {
-    pty: PtySession,
+    pty: ono_testkit::Guarded<ono_process::PtySession>,
     seen: String,
     buffer: [u8; 16384],
     /// How many cursor-position reports the shell asked for have been answered.
@@ -109,6 +109,7 @@ impl Session {
             .current_dir(cwd);
         let pty = executor
             .run_pty(&command, size)
+            .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
             .expect("a pseudo-terminal must be allocatable");
         Self {
             pty,

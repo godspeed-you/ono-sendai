@@ -21,7 +21,7 @@ mod support;
 use support::{ono_with_plugins, read_until};
 
 /// Starts `ono` interactively on a pseudo-terminal, with the package directory of `home`.
-fn interactive_shell_with_plugins(home: &Scratch) -> ono_process::PtySession {
+fn interactive_shell_with_plugins(home: &Scratch) -> ono_testkit::Guarded<ono_process::PtySession> {
     let mut executor = ono_process::Executor::detached();
     let command = ono_process::Command::new(ono_testkit::ono_binary())
         .env("TERM", "xterm")
@@ -42,6 +42,7 @@ fn interactive_shell_with_plugins(home: &Scratch) -> ono_process::PtySession {
         .current_dir(home.path());
     executor
         .run_pty(&command, ono_process::WindowSize::new(24, 100))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal must be available")
 }
 

@@ -22,7 +22,7 @@
 
 use std::time::{Duration, Instant};
 
-use ono_process::{Command, Executor, PtySession, WindowSize};
+use ono_process::{Command, Executor, WindowSize};
 use ono_testkit::{Scratch, scratch};
 
 mod support;
@@ -185,7 +185,7 @@ fn session(screen: &Screen) -> Vec<String> {
 
 /// A shell on a pseudo-terminal, and everything it has written there.
 struct Terminal {
-    shell: PtySession,
+    shell: ono_testkit::Guarded<ono_process::PtySession>,
     transcript: Vec<u8>,
     answered: usize,
     /// Whether the terminal answers a cursor-position report, as every terminal emulator does.
@@ -193,7 +193,7 @@ struct Terminal {
 }
 
 impl Terminal {
-    fn new(shell: PtySession, answers: bool) -> Self {
+    fn new(shell: ono_testkit::Guarded<ono_process::PtySession>, answers: bool) -> Self {
         Self {
             shell,
             transcript: Vec::new(),
@@ -257,7 +257,10 @@ impl Terminal {
 }
 
 /// Starts `ono` interactively with `TERM` set to `term`.
-fn shell_with_term(directory: &Scratch, term: &str) -> PtySession {
+fn shell_with_term(
+    directory: &Scratch,
+    term: &str,
+) -> ono_testkit::Guarded<ono_process::PtySession> {
     let mut executor = Executor::detached();
     let command = Command::new(ono_testkit::ono_binary())
         .env("TERM", term)
@@ -266,6 +269,7 @@ fn shell_with_term(directory: &Scratch, term: &str) -> PtySession {
         .current_dir(directory.path());
     executor
         .run_pty(&command, WindowSize::new(ROWS as u16, 100))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal must be available")
 }
 

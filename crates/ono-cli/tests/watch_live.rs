@@ -46,6 +46,7 @@ fn should_render_in_place_at_a_terminal_and_stop_on_ctrl_c() {
         .env("HOME", std::env::temp_dir().display().to_string());
     let mut shell = executor
         .run_pty(&command, WindowSize::new(30, 100))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal");
 
     let mut seen = String::new();
@@ -116,6 +117,7 @@ fn should_reattach_a_backgrounded_watch_and_end_it_with_ctrl_c() {
         .env("HOME", std::env::temp_dir().display().to_string());
     let mut shell = executor
         .run_pty(&command, WindowSize::new(30, 100))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal");
 
     let mut seen = String::new();

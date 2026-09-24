@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use ono_process::{Command, Executor, PtySession, WindowSize};
 
-fn interactive_shell() -> PtySession {
+fn interactive_shell() -> ono_testkit::Guarded<ono_process::PtySession> {
     let mut executor = Executor::detached();
     let command = Command::new(ono_testkit::ono_binary())
         .env("TERM", "xterm")
@@ -17,6 +17,7 @@ fn interactive_shell() -> PtySession {
         .env("HOME", std::env::temp_dir().display().to_string());
     executor
         .run_pty(&command, WindowSize::new(30, 100))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal")
 }
 

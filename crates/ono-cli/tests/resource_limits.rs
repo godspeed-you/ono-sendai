@@ -612,7 +612,7 @@ fn should_stop_capture_growth_within_the_cancellation_budget() {
 }
 
 /// Starts `ono` interactively on a pseudo-terminal, as a person would.
-fn interactive_shell() -> ono_process::PtySession {
+fn interactive_shell() -> ono_testkit::Guarded<ono_process::PtySession> {
     let mut executor = ono_process::Executor::detached();
     let command = ono_process::Command::new(ono_testkit::ono_binary())
         .env("TERM", "xterm")
@@ -620,6 +620,7 @@ fn interactive_shell() -> ono_process::PtySession {
         .env("HOME", std::env::temp_dir().display().to_string());
     executor
         .run_pty(&command, ono_process::WindowSize::new(24, 80))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal must be available")
 }
 

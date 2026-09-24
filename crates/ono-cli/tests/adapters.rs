@@ -212,6 +212,7 @@ fn at_terminal(path: Option<&Scratch>, source: &str) -> String {
     }
     let mut session = executor
         .run_pty(&command, ono_process::WindowSize::new(40, 120))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal must be available");
     read_until(&mut session, "\u{0}never", Duration::from_secs(15))
 }
@@ -436,11 +437,11 @@ fn should_follow_the_journal_live_at_the_terminal_until_interrupted() {
         );
     let mut session = executor
         .run_pty(&command, ono_process::WindowSize::new(30, 120))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal must be available");
-    // Declared after the session, so it is dropped first: a failing assertion below must not
-    // leave the follower behind, and the session's own `Drop` reaches only the shell's process
-    // group — the follower runs in a group of its own (ADR-0892).
-    let _tree = ono_testkit::OwnedTree::of(session.pid());
+    // Guarded, so a failing assertion below does not leave the follower behind: the session's own
+    // `Drop` reaches only the shell's process group, and the follower runs in a group of its own
+    // (ADR-0892, ADR-0894).
     let _ = read_until(&mut session, "> ", Duration::from_secs(10));
     session.write_all(b"journalctl -f\n").expect("typed");
     let seen = read_until(&mut session, "second", Duration::from_secs(10));
@@ -770,7 +771,9 @@ fn should_explain_and_document_forced_adaptation() {
     );
 }
 
-fn completion_shell(path_prefix: Option<&Scratch>) -> ono_process::PtySession {
+fn completion_shell(
+    path_prefix: Option<&Scratch>,
+) -> ono_testkit::Guarded<ono_process::PtySession> {
     let mut executor = ono_process::Executor::detached();
     let mut command = ono_process::Command::new(ono_testkit::ono_binary())
         .env("TERM", "xterm")
@@ -788,6 +791,7 @@ fn completion_shell(path_prefix: Option<&Scratch>) -> ono_process::PtySession {
     }
     executor
         .run_pty(&command, ono_process::WindowSize::new(30, 120))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal must be available")
 }
 
@@ -833,6 +837,7 @@ fn should_record_the_adapter_in_history() {
         .env("PATH", std::env::var("PATH").unwrap_or_default());
     let mut shell = executor
         .run_pty(&command, ono_process::WindowSize::new(30, 120))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal must be available");
     let _ = read_until(&mut shell, "> ", Duration::from_secs(10));
     shell

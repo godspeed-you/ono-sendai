@@ -141,6 +141,7 @@ fn should_complete_a_contributed_target_before_its_package_is_loaded() {
         .current_dir(directory.path());
     let mut shell = executor
         .run_pty(&command, WindowSize::new(24, 100))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal must be available");
     let _ = read_until(&mut shell, "> ", Duration::from_secs(10));
 

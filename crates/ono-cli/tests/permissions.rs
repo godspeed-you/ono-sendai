@@ -562,6 +562,7 @@ fn should_ask_at_first_use_and_keep_an_always_answer_for_that_program_at_a_termi
         .current_dir(root.join("home"));
     let mut session = executor
         .run_pty(&command, ono_process::WindowSize::new(24, 100))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal must be available");
     support::read_until(&mut session, ">", Duration::from_secs(20));
     session
@@ -1297,6 +1298,7 @@ fn should_show_the_recommended_access_in_plain_words_and_install_on_yes_at_a_ter
         .current_dir(root.join("home"));
     let mut session = executor
         .run_pty(&command, ono_process::WindowSize::new(40, 120))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal must be available");
     support::read_until(&mut session, ">", Duration::from_secs(20));
     session.write_all(b"install plugin echo\n").expect("typed");

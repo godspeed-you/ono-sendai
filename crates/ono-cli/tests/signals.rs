@@ -17,13 +17,13 @@
 
 use std::time::{Duration, Instant};
 
-use ono_process::{Command, Executor, PtySession, Signal, WindowSize};
+use ono_process::{Command, Executor, Signal, WindowSize};
 
 mod support;
 use support::read_until;
 
 /// Starts `ono` interactively on a pseudo-terminal of a known size.
-fn interactive_shell() -> PtySession {
+fn interactive_shell() -> ono_testkit::Guarded<ono_process::PtySession> {
     let mut executor = Executor::detached();
     let command = Command::new(ono_testkit::ono_binary())
         .env("TERM", "xterm")
@@ -31,6 +31,7 @@ fn interactive_shell() -> PtySession {
         .env("HOME", std::env::temp_dir().display().to_string());
     executor
         .run_pty(&command, WindowSize::new(24, 80))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal must be available")
 }
 
@@ -141,6 +142,7 @@ fn should_kill_the_shell_when_a_non_interactive_run_is_interrupted() {
         .env("HOME", std::env::temp_dir().display().to_string());
     let mut session = executor
         .run_pty(&command, WindowSize::new(24, 80))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal");
 
     std::thread::sleep(Duration::from_millis(600));

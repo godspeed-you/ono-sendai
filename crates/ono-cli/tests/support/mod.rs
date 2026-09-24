@@ -300,7 +300,7 @@ pub fn binary() -> std::path::PathBuf {
 }
 
 /// Starts `ono` interactively on a pseudo-terminal, in `directory`.
-pub fn interactive_shell_in(directory: &Scratch) -> PtySession {
+pub fn interactive_shell_in(directory: &Scratch) -> ono_testkit::Guarded<ono_process::PtySession> {
     let mut executor = Executor::detached();
     let command = Command::new(ono_testkit::ono_binary())
         .env("TERM", "xterm")
@@ -309,6 +309,7 @@ pub fn interactive_shell_in(directory: &Scratch) -> PtySession {
         .current_dir(directory.path());
     executor
         .run_pty(&command, WindowSize::new(24, 100))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal must be available")
 }
 
@@ -318,7 +319,10 @@ pub fn interactive_shell_in(directory: &Scratch) -> PtySession {
 /// declared option can be proven to reach it only from a pty. The plugin path is an argument
 /// rather than a fixed subdirectory because the two package fixtures lay their packages out
 /// differently, and neither layout is the point of the test.
-pub fn interactive_shell_with_plugins(directory: &Scratch, plugin_path: &Path) -> PtySession {
+pub fn interactive_shell_with_plugins(
+    directory: &Scratch,
+    plugin_path: &Path,
+) -> ono_testkit::Guarded<ono_process::PtySession> {
     let mut executor = Executor::detached();
     let command = Command::new(ono_testkit::ono_binary())
         .env("TERM", "xterm")
@@ -328,6 +332,7 @@ pub fn interactive_shell_with_plugins(directory: &Scratch, plugin_path: &Path) -
         .current_dir(directory.path());
     executor
         .run_pty(&command, WindowSize::new(24, 100))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
         .expect("a pseudo-terminal must be available")
 }
 
