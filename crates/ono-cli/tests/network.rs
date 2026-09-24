@@ -548,13 +548,36 @@ fn should_include_the_listening_socket_when_tracing_its_interface() {
     let run = ono("trace interface lo | to json");
     run.assert_success();
     let graph = single(&run);
+    let drawn = node_where(&graph, "ono.socket/1", |socket| {
+        socket["local"]["port"].as_u64() == Some(u64::from(port))
+    })
+    .is_some();
+    // A trace is bounded, and it says so: a graph that reached its node limit carries the limit
+    // and how many objects it did not draw. `lo` is the host's, and on a machine running other
+    // suites it holds hundreds of sockets — the graph drew 256 objects and left 341 out on the
+    // one this was written on — so the test's listener can be one of those left out, and the same
+    // graph says so. That is the host
+    // outgrowing the bound, which is the contract working, not the listener missing from it
+    // (ADR-0880). A graph that drew everything and still lacks the listener is the defect.
+    let truncation = &graph["ono.graph.truncation"];
+    if !drawn && truncation["node_limit"].as_u64().is_some() {
+        ono_testkit::skipped(
+            SkipReason::FixtureNotApplicable,
+            &format!(
+                "`lo` holds more objects than one trace graph draws ({}), so the test's listener \
+                 on 127.0.0.1:{port} cannot be told apart from the ones the bound left out",
+                truncation["message"]
+                    .as_str()
+                    .unwrap_or("truncated at its node limit")
+            ),
+        );
+        return;
+    }
     assert!(
-        node_where(&graph, "ono.socket/1", |socket| socket["local"]["port"]
-            .as_u64()
-            == Some(u64::from(port)))
-        .is_some(),
+        drawn,
         "network.yaml: the sockets bound to the interface are part of its graph; the test's \
-         listener on 127.0.0.1:{port} is missing from {graph:?}"
+         listener on 127.0.0.1:{port} is missing from a graph that was not truncated at its node \
+         limit: {graph:?}"
     );
 }
 

@@ -63,6 +63,9 @@ declared:
   - id: "crates/ono-cli/tests/agent_startup.rs::should_keep_listening_when_its_diagnostics_cannot_be_written"
     category: fixture_not_applicable
     prerequisite: "the host has a `/dev/full`, so a stream that refuses every write can be handed to the agent"
+  - id: "crates/ono-cli/tests/network.rs::should_include_the_listening_socket_when_tracing_its_interface"
+    category: fixture_not_applicable
+    prerequisite: "`lo` holds fewer objects than one trace graph draws (256), so a missing listener cannot be one the node limit left out; the graph itself says when it was truncated (ADR-0880)"
   - id: "crates/ono-cli/tests/network.rs::should_act_on_the_piped_interface_when_a_record_arrives_instead_of_a_selector"
     category: missing_privilege
     prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
@@ -486,6 +489,14 @@ canonical_ci:
         The second condition is ADR-0881's: §33.3's 30 s is measured on a machine at most 1.5
         times loaded per processor, and a map that stays silent on a busier one is reported as
         `fixture_not_applicable` with the load it saw, not as a defect in the shell.
+    - id: "crates/ono-cli/tests/network.rs::should_include_the_listening_socket_when_tracing_its_interface"
+      condition: "`trace interface lo` on the host draws its graph without reaching the node limit of 256 objects"
+      doc: >-
+        `trace interface lo` is bounded at 256 objects and says when it stopped. On a host where
+        other suites hold hundreds of sockets on `lo`, the test's listener can be among the
+        objects the bound left out, and the graph reports that it left some out; the test then
+        cannot say whether its listener was left out or lost. A runner with fewer objects on `lo`
+        than the bound draws the whole graph and runs the assertion (ADR-0880).
     - id: "crates/ono-cli/tests/spatial_map.rs::should_return_the_same_node_identities_when_the_terminal_width_changes"
       condition: "the host's ranked object population holds still across two `map --json` reads at the same width, in at least one of three attempts"
       doc: >-
