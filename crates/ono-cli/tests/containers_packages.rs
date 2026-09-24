@@ -128,13 +128,17 @@ enum Runtime {
 
 /// A Unix socket speaking just enough of the Docker Engine API for one container and one image.
 struct FakeRuntime {
+    /// The socket's own short directory: a path under the scratch tree can exceed the Unix
+    /// socket limit in a deep checkout (ADR-0896).
+    _sockets: Scratch,
     socket: PathBuf,
     requests: Arc<Mutex<Vec<String>>>,
 }
 
 impl FakeRuntime {
-    fn start(directory: &Scratch, behaviour: Runtime) -> Self {
-        let socket = directory.path().join("docker.sock");
+    fn start(behaviour: Runtime) -> Self {
+        let sockets = ono_testkit::socket_scratch();
+        let socket = sockets.path().join("docker.sock");
         let listener = UnixListener::bind(&socket).expect("bind the fake runtime socket");
         let requests = Arc::new(Mutex::new(Vec::new()));
         let log = Arc::clone(&requests);
@@ -147,7 +151,11 @@ impl FakeRuntime {
                 std::thread::spawn(move || serve(stream, behaviour, &log));
             }
         });
-        Self { socket, requests }
+        Self {
+            _sockets: sockets,
+            socket,
+            requests,
+        }
     }
 
     fn url(&self) -> String {
@@ -372,8 +380,7 @@ fn should_report_provider_unavailable_when_no_runtime_answers_for_images() {
 #[test]
 #[cfg(feature = "container")]
 fn should_list_containers_from_the_engine_api_when_a_runtime_socket_answers() {
-    let directory = scratch();
-    let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
+    let runtime = FakeRuntime::start(Runtime::Accepting);
 
     // Spec §9.1: `get container` enumerates through the installed provider; spec §23/§31.57 and
     // AGENTS.md §6: the provider speaks the daemon's API, so the record is built from the JSON
@@ -405,8 +412,7 @@ fn should_list_containers_from_the_engine_api_when_a_runtime_socket_answers() {
 #[test]
 #[cfg(feature = "container")]
 fn should_list_images_from_the_engine_api_when_a_runtime_socket_answers() {
-    let directory = scratch();
-    let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
+    let runtime = FakeRuntime::start(Runtime::Accepting);
 
     let run = ono_with_runtime(&runtime, "get image | select id reference size | to json");
     run.assert_success();
@@ -446,8 +452,7 @@ fn should_list_images_from_the_engine_api_when_a_runtime_socket_answers() {
 #[test]
 #[cfg(feature = "container")]
 fn should_start_a_container_through_the_engine_api_when_the_runtime_accepts() {
-    let directory = scratch();
-    let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
+    let runtime = FakeRuntime::start(Runtime::Accepting);
 
     let run = ono_with_runtime(&runtime, "start container web | to json");
     run.assert_success();
@@ -462,8 +467,7 @@ fn should_start_a_container_through_the_engine_api_when_the_runtime_accepts() {
 #[test]
 #[cfg(feature = "container")]
 fn should_stop_a_container_through_the_engine_api_when_the_runtime_accepts() {
-    let directory = scratch();
-    let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
+    let runtime = FakeRuntime::start(Runtime::Accepting);
 
     let run = ono_with_runtime(&runtime, "stop container web | to json");
     run.assert_success();
@@ -478,8 +482,7 @@ fn should_stop_a_container_through_the_engine_api_when_the_runtime_accepts() {
 #[test]
 #[cfg(feature = "container")]
 fn should_restart_a_container_through_the_engine_api_when_the_runtime_accepts() {
-    let directory = scratch();
-    let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
+    let runtime = FakeRuntime::start(Runtime::Accepting);
 
     let run = ono_with_runtime(&runtime, "restart container web | to json");
     run.assert_success();
@@ -494,8 +497,7 @@ fn should_restart_a_container_through_the_engine_api_when_the_runtime_accepts() 
 #[test]
 #[cfg(feature = "container")]
 fn should_remove_a_container_through_the_engine_api_when_the_runtime_accepts() {
-    let directory = scratch();
-    let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
+    let runtime = FakeRuntime::start(Runtime::Accepting);
 
     let run = ono_with_runtime(&runtime, "remove container web | to json");
     run.assert_success();
@@ -513,8 +515,7 @@ fn should_remove_a_container_through_the_engine_api_when_the_runtime_accepts() {
 #[test]
 #[cfg(feature = "container")]
 fn should_update_a_memory_limit_through_the_engine_api_when_setting_a_container() {
-    let directory = scratch();
-    let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
+    let runtime = FakeRuntime::start(Runtime::Accepting);
 
     let run = ono_with_runtime(&runtime, "set container web --memory 512MiB | to json");
     run.assert_success();
@@ -529,8 +530,7 @@ fn should_update_a_memory_limit_through_the_engine_api_when_setting_a_container(
 #[test]
 #[cfg(feature = "container")]
 fn should_fail_with_not_found_when_stopping_a_container_the_runtime_does_not_know() {
-    let directory = scratch();
-    let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
+    let runtime = FakeRuntime::start(Runtime::Accepting);
 
     // Spec §16.5 + ADR-0006: the failure is one `failed` row carrying io.not_found, and any
     // failed row makes the exit status 1.
@@ -546,8 +546,7 @@ fn should_fail_with_not_found_when_stopping_a_container_the_runtime_does_not_kno
 #[test]
 #[cfg(feature = "container")]
 fn should_fail_with_permission_denied_when_the_runtime_refuses_the_stop() {
-    let directory = scratch();
-    let runtime = FakeRuntime::start(&directory, Runtime::Refusing);
+    let runtime = FakeRuntime::start(Runtime::Refusing);
 
     // The engine's 403 is the system saying no; errors.yaml E0302 is its structured form.
     let run = ono_with_runtime(&runtime, "stop container web | to json");
@@ -561,8 +560,7 @@ fn should_fail_with_permission_denied_when_the_runtime_refuses_the_stop() {
 
 #[test]
 fn should_name_the_provider_and_the_risk_when_explaining_a_container_stop() {
-    let directory = scratch();
-    let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
+    let runtime = FakeRuntime::start(Runtime::Accepting);
 
     // Spec §17.1: the risk of a native mutation is visible before it runs; spec §27: the plan
     // names the provider that will carry it out, as `explain stop service nginx` names systemd.
@@ -589,8 +587,7 @@ fn should_name_the_provider_and_the_risk_when_explaining_a_container_stop() {
 #[test]
 #[cfg(feature = "container")]
 fn should_push_a_container_frame_when_entering_a_container() {
-    let directory = scratch();
-    let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
+    let runtime = FakeRuntime::start(Runtime::Accepting);
 
     // Spec §14.3 and context.v1: `enter container web` pushes a frame of kind `container` whose
     // identity is the container.
@@ -625,8 +622,7 @@ fn should_push_a_container_frame_when_entering_a_container() {
 #[test]
 #[cfg(feature = "container")]
 fn should_pop_the_container_frame_when_leaving_it() {
-    let directory = scratch();
-    let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
+    let runtime = FakeRuntime::start(Runtime::Accepting);
 
     let run = ono_with_runtime(
         &runtime,
@@ -650,8 +646,7 @@ fn should_pop_the_container_frame_when_leaving_it() {
 #[test]
 #[cfg(feature = "container")]
 fn should_begin_with_a_snapshot_when_watching_containers() {
-    let directory = scratch();
-    let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
+    let runtime = FakeRuntime::start(Runtime::Accepting);
 
     // Spec §18.2 + ADR-0024: a live stream begins with a snapshot of what exists, so a piped
     // consumer that takes one value gets the current state rather than waiting for an event.
@@ -669,8 +664,7 @@ fn should_begin_with_a_snapshot_when_watching_containers() {
 #[test]
 #[cfg(feature = "container")]
 fn should_relate_a_container_to_its_image_when_tracing_it() {
-    let directory = scratch();
-    let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
+    let runtime = FakeRuntime::start(Runtime::Accepting);
 
     // Spec §9.1: `trace container` shows "... and image relation"; graph.v1 carries it as a node
     // for the container, a node for the image and one directed edge between them.

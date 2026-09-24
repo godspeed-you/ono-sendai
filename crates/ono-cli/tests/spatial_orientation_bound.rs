@@ -42,7 +42,7 @@ mod support;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use ono_testkit::{Scratch, Shell, SkipReason, scratch, skipped};
+use ono_testkit::{Scratch, Shell, SkipReason, skipped};
 use serde_yaml_ng::Value;
 use zbus::zvariant::OwnedObjectPath;
 
@@ -210,7 +210,7 @@ struct FixtureServiceManager {
 impl FixtureServiceManager {
     /// Starts the bus and the manager, or `None` where this host has no `dbus-daemon`.
     fn try_start(units: i64) -> Option<Self> {
-        let home = scratch();
+        let home = ono_testkit::socket_scratch();
         let socket = home.path().join("bus");
         let config = home.path().join("bus.conf");
         std::fs::write(
