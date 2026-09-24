@@ -20,7 +20,15 @@ scripts/release-check.sh   # both, plus the release checklist in docs/ACCEPTANCE
 `scripts/gate.sh` is what every commit must pass: `cargo fmt --check`, `clippy -D warnings`, the
 whole test suite, `cargo xtask spec-check` (contract-to-implementation drift, including the
 checksums over the immutable specifications and the `ono` examples in `README.md`), and
-`cargo doc` with warnings denied.
+`cargo doc` with warnings denied. When a current release build is there, it also holds the
+stripped binaries to their size budgets in `docs/contracts/hardening/limits.yaml`
+(`cargo xtask binary-size`, ADR-0864); CI's image build requires the measurement, so a binary that
+outgrows its budget fails the push that grew it.
+
+Tests scratch in cargo's own `target/tmp`, never in `/tmp`, and a test owns every process it
+starts: when it fails or overruns, the testkit ends the whole process tree it started and reaps it
+(ADR-0890, ADR-0892). A test that compares two readings of the live machine is a flaky test, not a
+slow one — read the host once, or own the fixture you read (ADR-0880).
 
 `scripts/acceptance.sh` is the interesting one. It builds a clean Debian image, installs `ono` as
 the login shell of an unprivileged user, cuts the network, and asks the binary to prove each
@@ -30,6 +38,12 @@ real child agent, and a KUANG/11 package loaded under the broker.
 
 > **A capability without a passing acceptance case is not delivered.** Write the case in the same
 > change as the feature, not afterwards.
+
+Each checkout builds its acceptance image under a tag of its own, so two worktrees can run the
+suite at once (ADR-0901); `scripts/acceptance.sh --group NAME` runs one group of
+`docker/acceptance/groups`, and `--profile core` runs the cases the core build claims in its
+`FROM scratch` image (ADR-0913). A parallel line of work lives on a branch named
+`implementation-<slug>`, which CI also builds (ADR-0900).
 
 ## The rules that are not negotiable
 

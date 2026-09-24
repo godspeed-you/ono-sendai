@@ -97,9 +97,9 @@ Each [GitHub release](https://github.com/godspeed-you/ono-sendai/releases) carri
 
 ```bash
 # Debian, Ubuntu and relatives
-sudo apt install ./ono_0.6.1_amd64.deb          # or ono_0.6.1_arm64.deb
+sudo apt install ./ono_0.6.2_amd64.deb          # or ono_0.6.2_arm64.deb
 # Fedora, RHEL and relatives
-sudo dnf install ./ono-0.6.1-1.x86_64.rpm       # or ono-0.6.1-1.aarch64.rpm
+sudo dnf install ./ono-0.6.2-1.x86_64.rpm       # or ono-0.6.2-1.aarch64.rpm
 
 chsh -s /usr/bin/ono                             # make it your login shell
 ```
@@ -110,8 +110,18 @@ Or build it, with Rust 1.94+ (`rust-toolchain.toml` pins the toolchain, Cargo pi
 git clone https://github.com/godspeed-you/ono-sendai
 cd ono-sendai
 cargo build --release -p ono-cli
-install -m 0755 target/release/ono ~/.local/bin/ono   # or anywhere on your PATH
+# `install plugin` compiles a component package with this tool, once; build it in a cargo run of
+# its own, so the shell does not link the compiler (docs/MIGRATION.md §10)
+cargo build --release -p ono-kuang-sdk --bin kuang-compile
+install -m 0755 target/release/ono target/release/kuang-compile ~/.local/bin/   # or anywhere on your PATH
 ```
+
+For container images and embedded Linux there is a **core build**: the language, the evaluator,
+typed pipelines, the native commands and the Linux and network providers, as one static binary of
+about 7 MB, without the systemd, container, remote, spatial, temporal, change, graph, adapter and
+KUANG/11 tiers. A command of a tier it leaves out answers `resolve.not_in_build`; a provider it
+leaves out answers `provider.unavailable`, as a full build does on a host without that service.
+`scripts/build-core.sh` builds and checks it (ADR-0910 … ADR-0913).
 
 Configuration lives at `~/.config/ono/config.ono` and is deliberately restricted: it sets values,
 functions and aliases, and cannot run commands at startup.
@@ -127,7 +137,7 @@ before you install anything. `cosign` is the one tool you add
 ([sigstore/cosign](https://github.com/sigstore/cosign)); everything else is coreutils.
 
 ```bash
-VERSION=0.6.1; ARCH=amd64
+VERSION=0.6.2; ARCH=amd64
 BASE=https://github.com/godspeed-you/ono-sendai/releases/download/v$VERSION
 curl -fLO $BASE/ono_${VERSION}_${ARCH}.deb
 curl -fLO $BASE/SHA256SUMS
@@ -490,12 +500,13 @@ in this shell is a side effect of telling the truth about the system.
 
 ## Project status
 
-**Current release: v0.6.1.** All ten phases of the specification are implemented, with the
+**Current release: v0.6.2.** All ten phases of the specification are implemented, with the
 External Command Adaptation Layer (v0.3), the Spatial Systems Interface (v0.4), the hardening
 layer (v0.4.1), the Temporal & Causal Systems Interface (v0.5) and Prospective Change, Protection
-& Recovery (v0.6) on top of them. v0.6.1 is a stabilization and polish release on top of v0.6.0:
-completion that follows an expression, a prompt that keeps unterminated output, and five further
-corrections (`docs/releases/v0.6.1.md`). Every ticked box of `docs/ACCEPTANCE.md` names an
+& Recovery (v0.6) on top of them. v0.6.1 polished v0.6.0; v0.6.2 is the verification foundation
+under both: a 22 MB binary instead of 46 MB with a size budget the gate enforces, KUANG/11
+components compiled once at install, a static core build, and a test suite and release tooling
+that give the same answer on a busy machine as on a quiet one (`docs/releases/v0.6.2.md`). Every ticked box of `docs/ACCEPTANCE.md` names an
 automated proof, and the v0.6 boxes still open are listed as recorded exclusions in
 `docs/releases/v0.6.0.md`. Primary platform is Linux (x86_64 and aarch64). Three further enhancement
 specifications — Presentation Consolidation & Rich TTY (v0.7), Deck Workspace Composition (v0.8)

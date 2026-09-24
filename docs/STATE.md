@@ -34,10 +34,12 @@ request.
 git push origin implementation && git push origin --tags
 ```
 
-**The workspace declares `0.6.1`.** `v0.6.1`, the Stabilization and Polish patch over `v0.6.0`,
-is tagged, published (2026-09-12) and on `main`. Its note is `docs/releases/v0.6.1.md` and its run
-record `docs/runs/v0.6.1-2026-09-12.md`; every earlier release has its note beside it in
-`docs/releases/`, and `gh release list` shows what is published.
+**The workspace declares `0.6.2`.** `v0.6.2`, the Verification Foundation over `v0.6.1`, is the
+GitHub milestone `v0.6.2` implemented on `implementation` (ADR-0862: the milestone is the release
+inventory and each issue its requirement). Its note, with the traceability of all 24 issues, is
+`docs/releases/v0.6.2.md`, and its run record `docs/runs/v0.6.2-2026-09-24.md`. `v0.6.1` (2026-09-12)
+and every earlier release are tagged, published and on `main`; `gh release list` shows what is
+published.
 
 ---
 
@@ -97,31 +99,11 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-**v0.6.2 — Verification Foundation** (milestone `v0.6.2`, 24 issues; ADR-0862: the milestone is
-the release inventory and each issue is its requirement). Claimed 2026-09-24 by one coordinator and
-six Opus sub-agents, each in a worktree `../ono-sendai-<slug>` on branch `implementation-<slug>`,
-integrated here:
-
-- [coordinator | 2026-09-24] integration, ADR-0862, release note, run record — files:
-  `docs/STATE.md`, `docs/releases/v0.6.2.md`, `docs/runs/`, `Cargo.toml` version
-- [release-tooling | 2026-09-24] #145 #146 #151 #169 #185 #139 #196 — files: `scripts/`,
-  `xtask/src/perf*`, `xtask/src/reproducibility.rs`, `.github/workflows/`, `AGENTS.md` §12.1
-- [size-profile | 2026-09-24] #124 #125 #218 — files: `Cargo.toml` `[profile.release]`,
-  `xtask/src/metrics.rs`, `xtask/src/provenance.rs`, hardening limits, `scripts/gate.sh`
-- [kuang-precompile | 2026-09-24] #126 — files: `crates/ono-kuang-*`, KUANG/11 wiring in
-  `crates/ono-cli`, `docker/Dockerfile`, cases 350–354
-- [core-build | 2026-09-24] #127 — files: `[features]` of `crates/ono-cli` and the provider
-  crates, `scripts/acceptance.sh` (additive), cases 355–359
-- [determinism | 2026-09-24] #141 #155 #160 #164 #165 #166 #189 #215 — files: the named test
-  files, `crates/ono-change-core/src/verification.rs`, case 152
-- [hygiene | 2026-09-24] #143 #162 #188 #204 — files: `crates/ono-testkit/`, `adapters.rs`,
-  `spatial_relationships.rs`, the four suites of #188
-
 ## What is left, and why
 
 **v0.7 is the next tranche** (above), and nothing of it is started. The known problems are in the
-tracker: the nine subsystem milestones of 2026-09-15 (#137–#224, and #129), and #124–#127 in
-*Binary size — measured, budgeted, reduced*. Promoting `implementation` to `main` is the user's
+tracker, by release milestone (`v0.6.3` … `v0.10.0`); `v0.6.2` — the test suite, the harness, CI,
+packaging, release tooling and binary size, including #124–#127 — is implemented. Promoting `implementation` to `main` is the user's
 decision; an agent carries it out only when told to, in that request (AGENTS.md §12.1).
 
 ---
@@ -144,6 +126,20 @@ gh issue list --limit 100        # the backlog
 gh issue view <NN>               # the evidence for one problem
 gh issue list --label class-c    # the large ones, a tranche each
 ```
+
+**Found during the v0.6.2 run (2026-09-24).** Outside the milestone, so not fixed in it (v0.6.1 §24):
+
+- `ono -c 'help' | head -3` panics "failed printing to stdout: Broken pipe", exit 101 (full and core; `| head -30` fine). Likely `println!` in the help builtin (crates/ono-cli/src/builtin.rs). Found by core-build agent 2026-09-24.
+- `cargo test -p ono-cli --test plugins` fails 19/26 unless `kuang-example-plugin` and `kuang-compile` are already in target/debug (`cargo build -p ono-kuang-sdk`); the gate builds `--workspace --bins` first, a narrow run does not know it. Found 2026-09-24.
+- Possible ETXTBSY in the product: `crates/ono-cli/src/kuang_host.rs:2630` copies plugin files with `std::fs::copy` inside a multi-threaded ono that may later exec them (ADR-0891's mechanism). Not reproduced. Found 2026-09-24.
+- Journal follower may survive Ctrl-C under load: one `/bin/sh …/journalctl --output=json --no-pager --follow` shim outlived an adapters.rs run at load ~40; not reproduced in 55 runs with the new death assertion (#162). Hypothesis: the stream is not always dropped before the session ends. Found 2026-09-24.
+- Stale processes in a session's maps: within one `ono` run, later maps keep an ended and reaped process with its old state and freshness `polled`. Reproduce: child `sleep 2` of the caller; `enter <caller pid>`; `map --json --all --type Process`; `sleep 4`; `map --json --all`; `sleep 3`; `map --json --all` — the dead pid in all three. Found by the determinism agent 2026-09-24.
+- Esc unanswered after a resize in a paused live map: `spatial_interactive.rs::should_show_the_paused_marker_and_keep_its_instant_when_the_terminal_is_resized` fails 1/10 at load 10–15 and 2/8 at +32 busy loops, always as Esc unanswered for 45 s after the resized paused frame. Suspect `ready_key`/`read_event_timeout` around the resize projection; unproven. Found 2026-09-24.
+- `get socket | take 1` does not stream its first row: it costs what `get socket | count` costs (35–38 ms of case 152's 50 ms budget in the container). Found 2026-09-24.
+- Profile L live map spends most of its 5.7 s CPU projecting every socket (`Projection::project_as`, `ProviderBridge::absorb`) — v0.4 §34.4 incremental-neighbourhood work. Found 2026-09-24.
+- Case 152: `stdout-contains: first-socket-row: within budget` also matches `baseline-first-socket-row: within budget` (pre-existing; still guarded by `stdout-not-contains: OVER BUDGET`).
+- `xtask perf --profile S --compare docs/contracts/hardening/performance_baseline.json` reports `Regressed` on a quiet machine (load 2.6, below the baseline's 3.84 allowance) for six rows, and the same rows exceed the baseline with the pre-v0.6.2 release profile too (A/B on one tree, 2026-09-24: e.g. `spatial.selector_miss` first 605 ms old profile / 614 ms new vs 571 ms baseline, `completion.first_candidate` 8.6 ms vs 6.44, `spatial.look` cache-hit 3.07 ms vs 1.36, `process.enumeration` estimated_bytes 416k vs 340k — schema growth). The checked-in baseline predates the v0.5/v0.6 growth and no longer describes the tree; every §34 target still holds. What closes it: re-measure the baseline on the reference machine, or record per-row why each figure moved.
+- A redirected `inspect plan <ref> --resolution` cuts each target's path at column 80 from the end side (`fit` in crates/ono-cli/src/change/render.rs), so a deep path shows as `…/second.con` and two targets in one deep directory can print identical headings. Deterministic (spec §4.6) but lossy; eliding the middle would keep the file name. Found 2026-09-24 when scratch paths moved into `target/tmp` (#143) and CI's checkout depth cut `second.conf`.
 
 **Filed on 2026-09-15.** Every problem this section held went to the tracker as #137–#224, in nine
 milestones cut by subsystem — the subsystem whose code a fix changes: *Shell language, pipelines
