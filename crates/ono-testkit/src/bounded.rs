@@ -16,8 +16,9 @@ use crate::Scratch;
 
 /// What a run produced within a budget it was not allowed to exceed.
 ///
-/// [`Shell`](crate::Shell) panics when a run overruns and leaves the child behind, which is the
-/// right shape for a suite whose subject is expected to answer. A test whose *subject is the
+/// [`Shell`](crate::Shell) panics when a run overruns, after ending the child and everything it
+/// started (ADR-0516, ADR-0892), which is the right shape for a suite whose subject is expected
+/// to answer. A test whose *subject is the
 /// hang* needs the opposite: the overrun is the observation, and the child must be gone before
 /// the assertion is written, so an ignored proof cannot leak a shell onto the machine that ran
 /// it (issue #22 found two such strays holding a pipeline open for seven hours).
