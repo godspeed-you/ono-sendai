@@ -69,6 +69,42 @@ fn plan_blocked_on_a_pipe(home: &Path) -> (String, PathBuf, PathBuf) {
     (plan, source, target)
 }
 
+/// How long a released apply, or a resume, may take before the test calls it the regression of
+/// issue #141 — a copy that then waits out the 30 s default verification timeout
+/// (`ono_change_core::DEFAULT_TIMEOUT`). Ten seconds is more than ten times what either step takes
+/// here (0.8 s per test), and it is stretched for the machine's load like every other testkit
+/// watchdog — but never past [`TRIPWIRE_CEILING`], because a bound at or above the 30 s timeout
+/// could no longer tell the regression from a busy machine.
+const WELL_UNDER_THE_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The most the load may stretch that bound: five seconds short of the verification timeout.
+const TRIPWIRE_CEILING: Duration = Duration::from_secs(25);
+
+/// The bound on a released apply or a resume, for this machine's load.
+fn tripwire() -> Duration {
+    ono_testkit::under_load(WELL_UNDER_THE_VERIFICATION_TIMEOUT).min(TRIPWIRE_CEILING)
+}
+
+/// Waits for the released apply to finish, and fails naming issue #141 if it does not do so well
+/// under the verification timeout.
+fn finishes_promptly(first: &mut OwnedChild) {
+    let budget = tripwire();
+    let deadline = Instant::now() + budget;
+    while first
+        .try_wait()
+        .expect("the applier can be polled")
+        .is_none()
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the first apply was released and has not finished within {budget:?}: a copy whose \
+             pipe was closed is waiting on something, which is what issue #141 recorded as a 31 s \
+             run — the length of the 30 s verification timeout"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// Waits until the plan's durable state is `applying`, which is where the copy blocks.
 fn await_applying(home: &Path, plan: &str) {
     let deadline = Instant::now() + Duration::from_secs(60);
@@ -97,7 +133,7 @@ fn should_refuse_a_second_apply_naming_the_session_that_holds_the_plan() {
 
     // Writing nothing and closing the pipe lets the first apply's copy return.
     std::fs::write(&source, b"").expect("the pipe is closed");
-    let _ = first.wait();
+    finishes_promptly(&mut first);
     assert!(
         !second.status().is_success() && second.stderr().contains("change.plan_already_applying"),
         "§42.4: the second apply is refused while another session holds the plan. Got {:?}",
@@ -125,12 +161,20 @@ fn should_resume_at_once_a_plan_whose_applier_was_killed_mid_action() {
     std::fs::remove_file(&source).expect("the pipe is removed");
     std::fs::write(&source, "source\n").expect("the source is a file again");
 
+    let started = Instant::now();
     let resumed = ono_at(
         home.path(),
         &format!("resume plan {} --confirm", &plan[..8]),
     );
 
     resumed.assert_success();
+    let budget = tripwire();
+    assert!(
+        started.elapsed() < budget,
+        "the resume took {:?}, more than {budget:?}: a resumed copy of a regular file does not \
+         wait, and a resume that does is issue #141's 31 s run — the 30 s verification timeout",
+        started.elapsed()
+    );
     assert_eq!(
         std::fs::read_to_string(&target).expect("the target is readable"),
         "source\n",
