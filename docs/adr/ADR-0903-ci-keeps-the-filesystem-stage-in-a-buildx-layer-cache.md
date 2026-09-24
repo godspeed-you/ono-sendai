@@ -1,6 +1,6 @@
 # ADR-0903: CI keeps the filesystem stage in a buildx layer cache
 
-- Status: accepted
+- Status: accepted; superseded by ADR-0918 (in part: which branches read the layer cache, and whether a cached layer can make a build wrong)
 - Date: 2026-09-24
 - Spec refs: v0.4.1 §43.3, §43.4, §44.1; ADR-0251, ADR-0846, ADR-0851, ADR-0852; issue #139
 - Decided by: agent (autonomous)

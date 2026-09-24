@@ -1,6 +1,6 @@
 # ADR-0900: A sub-branch is named `implementation-<slug>`
 
-- Status: accepted
+- Status: accepted; superseded by ADR-0918 (in part: a sub-branch run reads `main`'s caches, not `implementation`'s)
 - Date: 2026-09-24
 - Spec refs: none — process decision; amends one clause of ADR-0004; AGENTS.md §12.1; issue #196
 - Decided by: agent (autonomous)
