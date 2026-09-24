@@ -196,9 +196,9 @@ fi
 # --- profiles (ADR-0913) ---------------------------------------------------------------------
 #
 # A case runs in the profiles its `profile:` lines name, and in `full` alone when it names none.
-# A selection with nothing left in this profile is not a failure: `--group` asks for a range of
-# numbers, and a range may hold only cases of the other profile. It says so rather than passing
-# silently.
+# A narrowed selection with nothing left in this profile is not a failure: `--group` asks for a
+# range of numbers, and a range may hold only cases of the other profile. It says so rather than
+# passing silently. The whole suite with nothing in the profile is a failure (ADR-0869).
 
 case_profiles() {
   local named
@@ -222,6 +222,12 @@ if [[ -n "$profile_problem" ]]; then
   exit 1
 fi
 if [[ ${#in_profile[@]} -eq 0 && $BUILD_ONLY -eq 0 ]]; then
+  # Without a name or a group, the selection is the whole suite, and a profile the whole suite
+  # holds no case of is a claim proven by nothing — it fails rather than passing (ADR-0869).
+  if [[ ${#SELECTED[@]} -eq 0 && ${#SELECTED_GROUPS[@]} -eq 0 ]]; then
+    echo "acceptance: no case of the suite runs in the $PROFILE profile, so it proves nothing about that build (ADR-0869)" >&2
+    exit 1
+  fi
   echo "acceptance: none of the ${#cases[@]} selected cases runs in the $PROFILE profile"
   exit 0
 fi

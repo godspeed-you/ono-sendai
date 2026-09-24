@@ -1251,3 +1251,31 @@ fn should_refuse_to_package_against_a_stale_record_when_asked_to_keep_it_current
         );
     }
 }
+
+// --- a profile with no case is not a pass (issue #127, ADR-0869) ------------------------------
+
+#[test]
+fn should_fail_a_profile_that_holds_no_case_unless_the_selection_narrowed_it() {
+    // The checkout's two cases both run in `full`. The core claim of #127 rests on
+    // `scripts/acceptance.sh --profile core`; with no case in that profile it proved nothing and
+    // exited 0.
+    let checkout = checkout("ono-sendai");
+    let log = checkout.root.with_file_name("profile.log");
+    let whole = checkout.run(&["--no-build", "--profile", "core"], &log);
+    assert!(
+        !whole.status.success() && text(&whole).contains("core"),
+        "the whole suite with no core case fails: {}",
+        text(&whole)
+    );
+    for narrowed in [
+        vec!["--no-build", "--profile", "core", "runs"],
+        vec!["--no-build", "--profile", "core", "--group", "core"],
+    ] {
+        let output = checkout.run(&narrowed, &log);
+        assert!(
+            output.status.success() && text(&output).contains("none of the"),
+            "a selection may hold only cases of the other profile, and says so: {narrowed:?}: {}",
+            text(&output)
+        );
+    }
+}

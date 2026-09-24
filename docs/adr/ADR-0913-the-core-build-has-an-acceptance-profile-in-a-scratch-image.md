@@ -1,6 +1,6 @@
 # ADR-0913: The core build has an acceptance profile, run in a `FROM scratch` image
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0869
 - Date: 2026-09-24
 - Spec refs: AGENTS.md §10, §14; docs/ACCEPTANCE.md §2; v0.4.1 §44.1; ADR-0851, ADR-0846,
   ADR-0910, ADR-0911, ADR-0912
