@@ -237,12 +237,13 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/implementation' }}
       - name: lint the core profile, every target included
         run: cargo clippy --locked --package ono-cli --no-default-features --features core --all-targets -- -D warnings
-      - name: run the core profile's own suites
+      # The whole suites, not a selection: a tier test that forgot its `cfg` fails here (ADR-0925).
+      - name: run the core profile's suites whole
         run: |
-          cargo test --locked --package ono-cli --no-default-features --features core --test core_build
-          cargo test --locked --package ono-provider-linux --no-default-features --test storage
-      - name: build the static core binary and hold it to its budget
-        run: scripts/build-core.sh
+          cargo test --locked --package ono-cli --no-default-features --features core
+          cargo test --locked --package ono-provider-linux --no-default-features
+      - name: build the static core binary, hold it to its budget, and run the image as it ships
+        run: scripts/build-core.sh --stage target/core-image --run-image
       - name: run the core acceptance profile in the scratch image
         run: scripts/acceptance.sh --profile core
 
