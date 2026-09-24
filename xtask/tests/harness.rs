@@ -40,6 +40,10 @@ case " $* " in
   *" --target filesystems-base "*)
     for fd in /proc/$$/fd/*; do readlink "$fd"; done >> "$STUB_LOG.base-fds" 2>/dev/null ;;
 esac
+# A build prints what `STUB_BUILD_OUTPUT` holds, the way BuildKit's plain progress would.
+if [ "$1" = build ] || [ "$2" = build ]; then
+  printf '%s' "${STUB_BUILD_OUTPUT:-}"
+fi
 # A build of the main image holds when `STUB_HOLD_BUILD` names a path, the way `run` does below.
 if [ "$1" = build ] && [ -n "${STUB_HOLD_BUILD:-}" ] && [[ " $* " == *" --tag "* ]]; then
   : > "$STUB_HOLD_BUILD.started"
@@ -170,7 +174,8 @@ impl Checkout {
             .env_remove("ONO_ACCEPTANCE_IMAGE")
             .env_remove("ONO_ACCEPTANCE_LAYER_CACHE")
             .env_remove("STUB_HOLD")
-            .env_remove("STUB_HOLD_BUILD");
+            .env_remove("STUB_HOLD_BUILD")
+            .env_remove("STUB_BUILD_OUTPUT");
         command
     }
 
@@ -960,5 +965,63 @@ fn should_require_the_manifest_to_record_every_package_that_was_validated() {
         !output.status.success() && text(&output).contains("SHA256SUMS"),
         "a manifest that leaves a validated package out was accepted:\n{}",
         text(&output)
+    );
+}
+
+// --- #139 follow-up: the cached layer ages out, and a run says whether it was cached ---------
+
+#[test]
+fn should_rebuild_the_filesystem_stage_weekly_and_say_whether_it_came_from_the_cache() {
+    // The layer cache kept the unpinned `apt-get install` of the filesystem stage from its first
+    // write onwards, re-read on every push and never evicted, so CI stopped seeing what the Ubuntu
+    // archive serves. An ISO week in the stage's build arguments is a new cache key every week.
+    let checkout = checkout("ono-sendai");
+    let log = checkout.root.with_file_name("week.log");
+    let output = checkout
+        .command(&["--build-only"], &log)
+        .env("ONO_ACCEPTANCE_LAYER_CACHE", "gha-read")
+        .env(
+            "STUB_BUILD_OUTPUT",
+            "#7 [filesystems-base 2/2] RUN apt-get update && apt-get install\n#7 CACHED\n",
+        )
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", text(&output));
+    let base = logged(&log)
+        .into_iter()
+        .find(|line| line.contains("--target filesystems-base"))
+        .expect("the filesystem stage was built");
+    let week = base
+        .split_whitespace()
+        .find_map(|word| word.strip_prefix("ONO_ARCHIVE_WEEK="))
+        .unwrap_or_else(|| panic!("the stage is built without an archive week: {base}"));
+    assert!(
+        week.len() == 8 && week.as_bytes()[4] == b'-' && week.as_bytes()[5] == b'W',
+        "the archive week is an ISO week, `YYYY-Www`: {week}"
+    );
+    let fs = logged(&log)
+        .into_iter()
+        .find(|line| line.contains("--target runtime-filesystems"))
+        .expect("the filesystem image was built");
+    assert!(
+        fs.contains(&format!("ONO_ARCHIVE_WEEK={week}")),
+        "the filesystem image is built on a different week's stage than the one just built: {fs}"
+    );
+    assert!(
+        text(&output).contains("from the layer cache"),
+        "a cache hit on the filesystem stage is not reported:\n{}",
+        text(&output)
+    );
+
+    let dockerfile = support::read("docker/Dockerfile");
+    let stage = dockerfile
+        .split("AS filesystems-base")
+        .nth(1)
+        .and_then(|rest| rest.split("apt-get install").next())
+        .expect("the filesystem stage installs packages");
+    assert!(
+        stage.contains("ARG ONO_ARCHIVE_WEEK"),
+        "the filesystem stage does not declare the archive week before it installs, so the week \
+         does not reach the cache key:\n{stage}"
     );
 }

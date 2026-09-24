@@ -248,6 +248,12 @@ fs_built=0
 build=("$runtime" build)
 load=()
 base_cache=()
+# The filesystem stage's `apt-get install` is not pinned by version, and a cached layer of it
+# would keep one day's answer from the archive for as long as the cache lives — in CI, re-read on
+# every push and never evicted. The ISO week is a build argument the stage declares before it
+# installs, so the layer is a new one every week, locally and in CI alike (ADR-0918).
+archive_week="$(date -u +%G-W%V)"
+week_arg=(--build-arg "ONO_ARCHIVE_WEEK=$archive_week")
 case "${ONO_ACCEPTANCE_LAYER_CACHE:-}" in
   "") ;;
   gha | gha-read)
@@ -291,8 +297,8 @@ elif [[ $NO_BUILD -eq 0 ]]; then
   if [[ $fs_wanted -eq 1 ]]; then
     base_log="$(mktemp)"
     # Without the lock: a child that outlived this run would hold the images against removal.
-    "${build[@]}" --file docker/Dockerfile --target filesystems-base "${base_cache[@]}" . \
-      >"$base_log" 2>&1 {image_lock}<&- &
+    "${build[@]}" --file docker/Dockerfile --target filesystems-base "${week_arg[@]}" \
+      "${base_cache[@]}" . >"$base_log" 2>&1 {image_lock}<&- &
     base_pid=$!
   fi
   printf '\n\033[1m== building %s with %s\033[0m\n' "$IMAGE" "$runtime"
@@ -312,6 +318,14 @@ elif [[ $NO_BUILD -eq 0 ]]; then
       echo "acceptance: the filesystem image's packages did not install" >&2
       exit 1
     fi
+    # Whether the package install came from a cache or from the archive, said rather than
+    # discarded with the log: a layer nobody can see the age of is one nobody questions.
+    install_step="$(sed -n 's/^\(#[0-9][0-9]*\) .*filesystems-base.*RUN apt-get.*/\1/p' "$base_log" | head -1)"
+    if [[ -n "$install_step" ]] && grep -qx "$install_step CACHED" "$base_log"; then
+      printf 'acceptance: filesystems-base (archive week %s) came from the layer cache\n' "$archive_week"
+    else
+      printf 'acceptance: filesystems-base (archive week %s) was installed from the archive\n' "$archive_week"
+    fi
     rm -f "$base_log"
   fi
 fi
@@ -319,7 +333,7 @@ fi
 if [[ $fs_wanted -eq 1 ]]; then
   printf '\n\033[1m== building %s with %s\033[0m\n' "$FS_IMAGE" "$runtime"
   if ! build_log="$("${build[@]}" --file docker/Dockerfile --target runtime-filesystems \
-      --tag "$FS_IMAGE" "${load[@]}" . 2>&1)"; then
+      "${week_arg[@]}" --tag "$FS_IMAGE" "${load[@]}" . 2>&1)"; then
     echo "$build_log" >&2
     echo "acceptance: the filesystem image did not build" >&2
     exit 1

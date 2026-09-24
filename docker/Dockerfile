@@ -70,6 +70,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 # runner they are a download of three minutes or more from the Ubuntu archive, and
 # `scripts/acceptance.sh` fetches them while the builder compiles rather than after it.
 FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d AS filesystems-base
+# The install below is not pinned by version, so a cached layer of it keeps one day's archive. The
+# ISO week scripts/acceptance.sh passes is part of this layer's cache key, and ages it out weekly
+# (issue #139, ADR-0918). Unset, the key is the empty week, as before.
+ARG ONO_ARCHIVE_WEEK=
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
         ca-certificates bash coreutils util-linux mount findutils grep sed gawk procps diffutils \
         btrfs-progs zfsutils-linux \

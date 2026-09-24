@@ -37,7 +37,9 @@ jobs:
   # them the jobs run every step the bare script runs.
   #
   # A repository keeps 10 GB of caches, and a gate cache is about one of them. So only `main`
-  # and `implementation` save one; a side branch or a pull request starts from theirs.
+  # and `implementation` save one. A run restores what its own ref, `main` and — for a pull
+  # request — its base wrote, so a side branch starts from `main`'s, not from `implementation`'s
+  # (ADR-0918).
   gate-static:
     name: quality gate (static)
     runs-on: ubuntu-latest
@@ -182,8 +184,10 @@ jobs:
           skip-extraction: ${{ steps.cargo-cache.outputs.cache-hit }}
       - name: build the images
         env:
-          # Every branch reads the layer cache; only `main` and `implementation` write it, as with
-          # the gate's caches, so a side branch spends none of the 10 GB budget.
+          # Only `main` and `implementation` write the layer cache, as with the gate's caches, so a
+          # side branch spends none of the 10 GB budget. What a run can read is its own ref's,
+          # `main`'s and a pull request's base's entries (ADR-0918). The stage ages out weekly, and
+          # the build log says whether it came from the cache.
           ONO_ACCEPTANCE_LAYER_CACHE: ${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/implementation') && 'gha' || 'gha-read' }}
         run: scripts/acceptance.sh --build-only
       - name: pack them
