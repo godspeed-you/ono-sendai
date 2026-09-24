@@ -645,3 +645,31 @@ fn should_leave_nothing_under_a_guarded_handle_behind_when_a_test_holding_it_pan
     assert!(failed.is_err(), "the guarded scope panicked");
     assert_all_gone(&recorded_pids(&marker, 2));
 }
+
+#[test]
+fn should_give_a_socket_a_directory_whose_path_fits_the_unix_socket_limit() {
+    // Issue #143 moved scratch into cargo's target directory, and a Unix socket path is limited
+    // to 107 bytes: under a deep checkout — a CI runner's `/home/runner/work/<repo>/<repo>/target`
+    // — a socket bound in `scratch()` no longer fits. A socket gets a short, private directory of
+    // its own instead, removed with the value (ADR-0896).
+    let directory = ono_testkit::socket_scratch();
+    let socket = directory.path().join("a-socket-name-of-some-length.sock");
+    assert!(
+        socket.as_os_str().len() <= 80,
+        "a socket path leaves room under the 107-byte limit, got {} bytes: {}",
+        socket.as_os_str().len(),
+        socket.display()
+    );
+    let listener = std::os::unix::net::UnixListener::bind(&socket).expect("the socket binds");
+    drop(listener);
+    use std::os::unix::fs::PermissionsExt as _;
+    let mode = std::fs::metadata(directory.path())
+        .expect("the directory exists")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o700, "no other user can reach a test's sockets");
+    let path = directory.path().to_path_buf();
+    drop(directory);
+    assert!(!path.exists(), "the directory goes with the value");
+}

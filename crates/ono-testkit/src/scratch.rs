@@ -122,6 +122,36 @@ pub fn scratch() -> Scratch {
     Scratch { path }
 }
 
+/// Creates a short, private directory for Unix sockets, removed when the value is dropped.
+///
+/// A Unix socket's path is limited to 107 bytes, and [`scratch`] lives in cargo's target directory
+/// (ADR-0890), which under a deep checkout — a CI runner's `/home/runner/work/<repo>/<repo>/…` —
+/// leaves too little of that for a socket name. This directory is made in `$XDG_RUNTIME_DIR`, the
+/// per-user runtime directory meant for sockets, or in `/tmp` where there is none, with mode
+/// `0700`. Nothing but sockets and their small companions belongs here: it is usually a tmpfs
+/// (ADR-0896).
+///
+/// # Panics
+///
+/// Panics if the directory cannot be created, which means the test cannot run at all.
+#[must_use]
+pub fn socket_scratch() -> Scratch {
+    use std::os::unix::fs::DirBuilderExt as _;
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|directory| directory.is_absolute() && directory.is_dir())
+        .unwrap_or_else(|| PathBuf::from("/tmp"));
+    let path = root.join(format!("ono-s-{}-{unique}", std::process::id()));
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&path)
+        .unwrap_or_else(|error| panic!("cannot create {}: {error}", path.display()));
+    Scratch { path }
+}
+
 /// Creates a scratch directory that belongs to no source-control checkout.
 ///
 /// [`scratch`] lives in cargo's target directory, which is usually inside the checkout under
