@@ -52,6 +52,10 @@ if [ "$1" = build ] && [ -n "${STUB_HOLD_BUILD:-}" ] && [[ " $* " == *" --tag "*
     sleep 0.1
   done
 fi
+# What a build step printed, as BuildKit's plain progress shows it.
+if [ "$1" = build ] && [ -n "${STUB_BUILD_SAYS:-}" ]; then
+  printf '%s\n' "$STUB_BUILD_SAYS" >&2
+fi
 if [ "$1" = run ]; then
   cat > /dev/null
   if [ -n "${STUB_HOLD:-}" ]; then
@@ -175,7 +179,8 @@ impl Checkout {
             .env_remove("ONO_ACCEPTANCE_LAYER_CACHE")
             .env_remove("STUB_HOLD")
             .env_remove("STUB_HOLD_BUILD")
-            .env_remove("STUB_BUILD_OUTPUT");
+            .env_remove("STUB_BUILD_OUTPUT")
+            .env_remove("STUB_BUILD_SAYS");
         command
     }
 
@@ -1278,4 +1283,37 @@ fn should_fail_a_profile_that_holds_no_case_unless_the_selection_narrowed_it() {
             text(&output)
         );
     }
+}
+
+// --- a passing size check leaves a trace (issue #125, ADR-0866) -------------------------------
+
+#[test]
+fn should_print_the_size_check_of_the_image_build_when_the_build_passes() {
+    // The image build's output is shown only when it fails; a push whose shell passed its budget
+    // said nothing about how large the shell was.
+    let checkout = checkout("ono-sendai");
+    let log = checkout.root.with_file_name("sizes.log");
+    let said = "#14 212.7 binary-size: /usr/local/bin/ono (x86_64-unknown-linux-gnu) is 22134752 \
+                bytes, within its budget of 24350304 bytes (93.0 %)";
+    let output = checkout
+        .command(&["--build-only"], &log)
+        .env("STUB_BUILD_SAYS", said)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output)
+            .lines()
+            .any(|line| line.starts_with("binary-size: /usr/local/bin/ono")
+                && line.contains("22134752")),
+        "the size check's verdict is in the log of a passing build: {}",
+        text(&output)
+    );
+
+    let quiet = checkout.run(&["--build-only"], &log);
+    assert!(
+        text(&quiet).contains("printed no size check"),
+        "a build whose step came from the cache says it measured nothing this time: {}",
+        text(&quiet)
+    );
 }

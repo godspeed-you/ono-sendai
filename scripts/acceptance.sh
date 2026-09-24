@@ -317,6 +317,15 @@ elif [[ $NO_BUILD -eq 0 ]]; then
     fi
     exit 1
   fi
+  # The builder stage holds the shell to its size budget (issue #125); a failure is in the log
+  # above, and a pass is stated here, so every push's log says how large the shell it built is
+  # (ADR-0866). A step that came from the layer cache ran no check this time, and says so.
+  sizes="$(grep -o 'binary-size: .*' <<<"$build_log" || true)"
+  if [[ -n "$sizes" ]]; then
+    printf '%s\n' "$sizes"
+  else
+    echo "acceptance: the image build printed no size check — its build step came from the layer cache, and was checked when it was built"
+  fi
   if [[ -n "$base_pid" ]]; then
     if ! wait "$base_pid"; then
       cat "$base_log" >&2
