@@ -140,13 +140,8 @@ pub fn executable_script(directory: &std::path::Path, name: &str, body: &str) ->
     use std::io::Write as _;
     use std::os::unix::fs::PermissionsExt;
 
-    static STAGED: AtomicU64 = AtomicU64::new(0);
     let path = directory.join(name);
-    let staged = directory.join(format!(
-        ".{name}.{}-{}.staged",
-        std::process::id(),
-        STAGED.fetch_add(1, Ordering::Relaxed)
-    ));
+    let staged = staging_name(&path);
 
     let mut writer = std::process::Command::new("/bin/sh")
         .args(["-c", "cat > \"$1\"", "sh"])
@@ -177,6 +172,60 @@ pub fn executable_script(directory: &std::path::Path, name: &str, body: &str) ->
     std::fs::rename(&staged, &path)
         .unwrap_or_else(|error| panic!("cannot move the script to {}: {error}", path.display()));
     path
+}
+
+/// Copies the program at `source` to `destination`, executable, in a state any thread may `exec`
+/// at once.
+///
+/// `std::fs::copy` holds the copy open for writing in this process, which is the race
+/// [`executable_script`] exists to avoid; the copy here is made by a `cp` of its own under a
+/// staging name, then made executable and renamed into place (issue #188, ADR-0891).
+///
+/// # Panics
+///
+/// Panics if the program cannot be copied or made executable.
+pub fn executable_copy(source: impl AsRef<Path>, destination: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let source = source.as_ref();
+    let staged = staging_name(destination);
+    let copied = std::process::Command::new("cp")
+        .arg("--")
+        .arg(source)
+        .arg(&staged)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .expect("cp must be available to copy a program");
+    assert!(
+        copied.status.success(),
+        "cannot copy {} to {}: {}",
+        source.display(),
+        staged.display(),
+        String::from_utf8_lossy(&copied.stderr)
+    );
+    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))
+        .expect("the copy must be made executable");
+    std::fs::rename(&staged, destination).unwrap_or_else(|error| {
+        panic!("cannot move the copy to {}: {error}", destination.display())
+    });
+    destination.to_path_buf()
+}
+
+/// A name beside `destination`, unique to this process and call, for a file that is renamed into
+/// place once it is complete.
+fn staging_name(destination: &Path) -> PathBuf {
+    static STAGED: AtomicU64 = AtomicU64::new(0);
+    let name = destination
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    destination.with_file_name(format!(
+        ".{name}.{}-{}.staged",
+        std::process::id(),
+        STAGED.fetch_add(1, Ordering::Relaxed)
+    ))
 }
 
 /// Runs `attempt` again while it answers that the file it is running is busy.

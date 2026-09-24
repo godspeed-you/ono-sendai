@@ -365,10 +365,49 @@ fn should_run_a_script_it_has_just_written_while_other_threads_are_starting_proc
     // writing hands the child a copy of that descriptor, and until the child execs, `execve` of
     // the script answers ETXTBSY — for a file that is executable and that nobody is writing any
     // more. The shared helper must leave no such descriptor anywhere, so the script runs at once,
-    // however busy the neighbours are (ADR-0891). Before the fix, three hundred runs answered
-    // ETXTBSY between five and sixteen times on the development host and a hundred about once, so
-    // two hundred reproduce the race reliably while the fixed helper passes whatever the count.
-    const ATTEMPTS: u32 = 200;
+    // however busy the neighbours are (ADR-0891).
+    let busy = busy_among_fresh_executables(|directory, attempt| {
+        ono_testkit::executable_script(
+            directory,
+            &format!("script-{attempt}"),
+            "#!/bin/sh\nexit 0\n",
+        )
+    });
+    assert_eq!(
+        busy, 0,
+        "a script the helper wrote is never busy when it is run, but {busy} of \
+         {FRESH_EXECUTABLES} runs answered ETXTBSY"
+    );
+}
+
+#[test]
+fn should_run_a_program_it_has_just_copied_while_other_threads_are_starting_processes() {
+    // The same race with a copied program — a plugin binary put where the shell will load it, or a
+    // renamed `sleep` whose name a test selects on — because `std::fs::copy` holds the copy open
+    // for writing in this process exactly as `std::fs::write` does (issue #188, ADR-0891).
+    let busy = busy_among_fresh_executables(|directory, attempt| {
+        ono_testkit::executable_copy("/bin/true", &directory.join(format!("true-{attempt}")))
+    });
+    assert_eq!(
+        busy, 0,
+        "a program the helper copied is never busy when it is run, but {busy} of \
+         {FRESH_EXECUTABLES} runs answered ETXTBSY"
+    );
+}
+
+/// How many executables each race test makes and runs. Before the fix, three hundred runs
+/// answered ETXTBSY between five and sixteen times on the development host and a hundred about
+/// once, so two hundred reproduce the race reliably, and a fixed helper passes whatever the count.
+const FRESH_EXECUTABLES: u32 = 200;
+
+/// Makes [`FRESH_EXECUTABLES`] executables with `make` and runs each at once, while six threads
+/// start processes as fast as they can, and answers how many runs the kernel refused as busy.
+#[allow(
+    clippy::panic,
+    clippy::expect_used,
+    reason = "a helper of two tests states their preconditions the way a #[test] body does"
+)]
+fn busy_among_fresh_executables(make: impl Fn(&std::path::Path, u32) -> std::path::PathBuf) -> u32 {
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let spawners: Vec<_> = (0..6)
         .map(|_| {
@@ -383,25 +422,21 @@ fn should_run_a_script_it_has_just_written_while_other_threads_are_starting_proc
 
     let directory = ono_testkit::scratch();
     let mut busy = 0;
-    for attempt in 0..ATTEMPTS {
-        let script = ono_testkit::executable_script(
-            directory.path(),
-            &format!("script-{attempt}"),
-            "#!/bin/sh\nexit 0\n",
-        );
-        match std::process::Command::new(&script).status() {
+    for attempt in 0..FRESH_EXECUTABLES {
+        let program = make(directory.path(), attempt);
+        match std::process::Command::new(&program).status() {
             Err(error) if error.raw_os_error() == Some(26) => busy += 1,
-            Err(error) => panic!("the script this test wrote could not be run: {error}"),
-            Ok(status) => assert!(status.success(), "the script exits 0, got {status}"),
+            Err(error) => panic!("{} could not be run: {error}", program.display()),
+            Ok(status) => assert!(
+                status.success(),
+                "{} exits 0, got {status}",
+                program.display()
+            ),
         }
     }
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     for spawner in spawners {
         spawner.join().expect("a spawner thread finishes");
     }
-    assert_eq!(
-        busy, 0,
-        "a script the helper wrote is never busy when it is run, but {busy} of {ATTEMPTS} runs answered \
-         ETXTBSY"
-    );
+    busy
 }
