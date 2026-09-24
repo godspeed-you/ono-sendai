@@ -1,6 +1,6 @@
 # ADR-0004: Implementation runs on a disposable feature branch
 
-- Status: accepted
+- Status: accepted; the sub-branch form `implementation/<crate>` is superseded by ADR-0900 (in part: sub-branches are `implementation-<slug>`)
 - Date: 2026-08-26
 - Spec refs: none — process decision
 - Decided by: user instruction, mechanism chosen by the agent
