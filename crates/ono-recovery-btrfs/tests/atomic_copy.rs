@@ -12,14 +12,10 @@ use std::path::{Path, PathBuf};
 
 use ono_recovery_btrfs::{FileStore, SystemFiles};
 
-/// A fresh directory for one test, under the target directory rather than a shared `/tmp`.
-fn scratch(name: &str) -> PathBuf {
-    let directory = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join("ono-recovery-btrfs-atomic-copy")
-        .join(name);
-    let _ = std::fs::remove_dir_all(&directory);
-    std::fs::create_dir_all(&directory).expect("the scratch directory is created");
-    directory
+/// A fresh directory for one test, under the target directory rather than a shared `/tmp`, and
+/// removed when the test ends (ADR-0890).
+fn scratch() -> ono_testkit::Scratch {
+    ono_testkit::scratch()
 }
 
 fn entries(directory: &Path) -> Vec<String> {
@@ -39,7 +35,8 @@ fn entries(directory: &Path) -> Vec<String> {
 
 #[test]
 fn should_replace_the_live_file_by_rename_rather_than_truncating_it_in_place() {
-    let root = scratch("rename");
+    let scratch = scratch();
+    let root = scratch.path().to_path_buf();
     let snapshot = root.join("snapshot.conf");
     let live_dir = root.join("live");
     std::fs::create_dir_all(&live_dir).unwrap();
@@ -78,7 +75,8 @@ fn should_replace_the_live_file_by_rename_rather_than_truncating_it_in_place() {
 
 #[test]
 fn should_refuse_to_write_through_a_symlink_at_the_destination() {
-    let root = scratch("symlink-destination");
+    let scratch = scratch();
+    let root = scratch.path().to_path_buf();
     let snapshot = root.join("snapshot.conf");
     let precious = root.join("precious");
     let live = root.join("nginx.conf");
@@ -110,7 +108,8 @@ fn should_refuse_to_write_through_a_symlink_at_the_destination() {
 
 #[test]
 fn should_refuse_when_a_directory_on_the_way_to_the_destination_is_a_symlink() {
-    let root = scratch("symlink-component");
+    let scratch = scratch();
+    let root = scratch.path().to_path_buf();
     let snapshot = root.join("snapshot.conf");
     let elsewhere = root.join("elsewhere");
     std::fs::create_dir_all(&elsewhere).unwrap();
@@ -129,7 +128,8 @@ fn should_refuse_when_a_directory_on_the_way_to_the_destination_is_a_symlink() {
 
 #[test]
 fn should_restore_a_symlink_as_a_symlink() {
-    let root = scratch("symlink-source");
+    let scratch = scratch();
+    let root = scratch.path().to_path_buf();
     let snapshot = root.join("snapshot-link");
     let live = root.join("live-link");
     symlink("sites-available/default", &snapshot).unwrap();
@@ -148,7 +148,8 @@ fn should_restore_a_symlink_as_a_symlink() {
 
 #[test]
 fn should_create_a_missing_parent_directory_it_then_owns() {
-    let root = scratch("missing-parent");
+    let scratch = scratch();
+    let root = scratch.path().to_path_buf();
     let snapshot = root.join("snapshot.conf");
     std::fs::write(&snapshot, "restored\n").unwrap();
     let live = root.join("etc").join("nginx").join("nginx.conf");
@@ -162,7 +163,8 @@ fn should_create_a_missing_parent_directory_it_then_owns() {
 
 #[test]
 fn should_leave_the_live_file_and_no_temporary_behind_when_the_source_cannot_be_read() {
-    let root = scratch("missing-source");
+    let scratch = scratch();
+    let root = scratch.path().to_path_buf();
     let live = root.join("nginx.conf");
     std::fs::write(&live, "live\n").unwrap();
 
@@ -176,7 +178,8 @@ fn should_leave_the_live_file_and_no_temporary_behind_when_the_source_cannot_be_
 
 #[test]
 fn should_say_whether_anything_is_at_a_path_without_following_a_symlink() {
-    let root = scratch("exists");
+    let scratch = scratch();
+    let root = scratch.path().to_path_buf();
     symlink(root.join("nowhere"), root.join("dangling")).unwrap();
     assert!(
         SystemFiles.exists(&root.join("dangling")).unwrap(),
