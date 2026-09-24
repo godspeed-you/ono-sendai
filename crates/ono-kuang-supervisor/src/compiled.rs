@@ -786,6 +786,9 @@ mod ownership_rule {
     }
 }
 
+// These modules compile `kuang-compile`'s compiler in, so they exist only with the `compiler`
+// feature: `cargo test -p ono-kuang-supervisor` alone skips them, and the gate's test step, which
+// runs `--all-features` (scripts/gate.sh), is where they run.
 #[cfg(all(test, feature = "compiler"))]
 mod descriptor {
     #![allow(
@@ -860,6 +863,9 @@ mod engine_version {
     }
 }
 
+// These modules compile `kuang-compile`'s compiler in, so they exist only with the `compiler`
+// feature: `cargo test -p ono-kuang-supervisor` alone skips them, and the gate's test step, which
+// runs `--all-features` (scripts/gate.sh), is where they run.
 #[cfg(all(test, feature = "compiler"))]
 mod patch_release {
     #![allow(
@@ -911,6 +917,9 @@ mod patch_release {
     }
 }
 
+// These modules compile `kuang-compile`'s compiler in, so they exist only with the `compiler`
+// feature: `cargo test -p ono-kuang-supervisor` alone skips them, and the gate's test step, which
+// runs `--all-features` (scripts/gate.sh), is where they run.
 #[cfg(all(test, feature = "compiler"))]
 mod portable {
     #![allow(
