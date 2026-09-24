@@ -6,6 +6,8 @@
 //! gap has a gap to show, and that returning to now summarises through the canonical `changes`
 //! engine rather than through a second comparison.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0913).
+#![cfg(feature = "spatial")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

@@ -24,6 +24,9 @@
 //!
 //! The agent here is a real second `ono` process on the loopback interface, so nothing needs a
 //! network or a fixture host.
+
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0913).
+#![cfg(feature = "remote")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

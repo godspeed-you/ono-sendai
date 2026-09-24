@@ -10,6 +10,8 @@
 //! recorded, and a shell that observed nothing must answer with nothing (§13.4, §55.5). Each test
 //! therefore lays down a ledger, runs the real `ono`, and reads the JSON it printed.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0913).
+#![cfg(feature = "temporal")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

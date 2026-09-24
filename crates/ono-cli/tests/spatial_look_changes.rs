@@ -18,6 +18,8 @@
 //! `ono-spatial-events` for the live map that legitimately compares snapshots, and `look` no
 //! longer answers from one (ADR-0775's spec deviation against v0.4 §25.4).
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0913).
+#![cfg(feature = "spatial")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

@@ -19,6 +19,8 @@
 //! as good as what was recorded, and a test that seeded nothing would be asking the shell to
 //! invent the past.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0913).
+#![cfg(feature = "temporal")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

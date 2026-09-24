@@ -753,6 +753,14 @@ pub fn spec(key: &str) -> Option<&'static SettingSpec> {
     CATALOGUE.iter().find(|setting| setting.key == key)
 }
 
+/// The settings this build carries: the catalogue, without the keys of a tier it was compiled
+/// without (#127, ADR-0911). The full build carries every one.
+pub fn carried() -> impl Iterator<Item = &'static SettingSpec> {
+    CATALOGUE
+        .iter()
+        .filter(|setting| crate::absent::carries_setting(setting.key))
+}
+
 /// One value a layer gave a setting, with where it came from.
 #[derive(Debug, Clone)]
 pub struct Resolved {
@@ -900,6 +908,9 @@ impl Settings {
         source: Option<PathBuf>,
         line: Option<u32>,
     ) -> Result<bool, ErrorValue> {
+        if let Some(tier) = crate::absent::tier_of_setting(key).filter(|tier| !tier.is_built()) {
+            return Err(crate::absent::not_in_build(key, tier));
+        }
         let setting = spec(key).ok_or_else(|| {
             let error = ErrorValue::new(
                 ErrorCode::TypeUnknownField,
@@ -961,7 +972,9 @@ impl Settings {
         variables: &BTreeMap<OsString, OsString>,
         report: &mut dyn FnMut(&ErrorValue),
     ) {
-        for setting in CATALOGUE {
+        // A variable for a setting this build does not carry is not this shell's to read: the
+        // environment may well have been set up for the full build (ADR-0911).
+        for setting in carried() {
             let name = setting.environment_variable();
             let Some(raw) = variables.get(OsStr::new(&name)) else {
                 continue;
@@ -1000,7 +1013,7 @@ impl Settings {
             Some(exact) => key == exact,
         };
         let mut rows = Vec::new();
-        for setting in CATALOGUE {
+        for setting in carried() {
             if !matches(setting.key) {
                 continue;
             }
@@ -1111,8 +1124,7 @@ fn with_article(ty: SettingType) -> &'static str {
 
 /// The declared key nearest to `key`, for a suggestion.
 fn closest(key: &str) -> Option<&'static str> {
-    CATALOGUE
-        .iter()
+    carried()
         .map(|setting| (crate::resolve::edit_distance(key, setting.key), setting.key))
         .filter(|(distance, _)| *distance <= key.len().div_ceil(3).max(1))
         .min()

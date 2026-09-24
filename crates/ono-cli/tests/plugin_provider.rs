@@ -16,6 +16,8 @@
 //! package — records, refusals and cancellation are outcomes of that contract, and nothing
 //! smaller than a running package proves them.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0913).
+#![cfg(feature = "kuang")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

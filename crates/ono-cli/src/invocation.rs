@@ -94,9 +94,7 @@ impl Invocation {
                                     Some(next) if !next.starts_with('-') => rest.next(),
                                     _ => None,
                                 };
-                                agent.listen = Some(given.unwrap_or_else(|| {
-                                    ono_remote::DEFAULT_LISTEN_ADDRESS.to_owned()
-                                }));
+                                agent.listen = Some(given.unwrap_or_else(default_listen_address));
                             }
                             "--host-key" => match rest.next() {
                                 Some(path) => agent.host_key = Some(PathBuf::from(path)),
@@ -150,4 +148,17 @@ impl Invocation {
             None => Self::Interactive(options),
         }
     }
+}
+
+/// Where `--agent --listen` binds when no address follows it (v0.4.1 §11.1).
+#[cfg(feature = "remote")]
+fn default_listen_address() -> String {
+    ono_remote::DEFAULT_LISTEN_ADDRESS.to_owned()
+}
+
+/// A build without the remote tier refuses `--agent` before anything binds (ADR-0910), so there
+/// is no address to default to.
+#[cfg(not(feature = "remote"))]
+const fn default_listen_address() -> String {
+    String::new()
 }

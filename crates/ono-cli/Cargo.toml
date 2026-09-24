@@ -12,6 +12,48 @@ authors.workspace = true
 name = "ono"
 path = "src/main.rs"
 
+[features]
+# The default build is the whole product, exactly as it was before the core build existed (#127).
+default = ["full"]
+# Every tier. `cargo build -p ono-cli` builds this, and every test and acceptance case of the
+# default profile is written against it.
+full = ["adapter", "change", "container", "graph", "kuang", "remote", "spatial", "systemd", "temporal"]
+# The object shell alone, for container images and embedded Linux targets: the language, the
+# evaluator, typed pipelines, the native commands and the Linux and network providers, and none
+# of the tiers below. A compiled-out command refuses with `resolve.not_in_build`, a compiled-out
+# provider with `provider.unavailable` (ADR-0910, ADR-0911). `core` enables nothing: it names the
+# profile, so the exit test's `--no-default-features --features core` says what it builds.
+core = []
+# The tiers. They are named one by one so a reader can find what each `cfg` belongs to, but they
+# are one decision: the build is `full` or `core`, and `lib.rs` refuses any mixture, because a
+# combination nobody builds is a combination that does not compile (ADR-0910).
+adapter = []
+change = [
+    "spatial", "temporal",
+    "dep:ono-change-actions", "dep:ono-change-core", "dep:ono-change-executor",
+    "dep:ono-change-impact", "dep:ono-change-plan", "dep:ono-change-protection",
+    "dep:ono-change-recovery", "dep:ono-change-render", "dep:ono-recovery-btrfs",
+    "dep:ono-recovery-files", "dep:ono-recovery-zfs", "dep:sha2",
+]
+container = ["dep:ono-provider-container"]
+graph = []
+kuang = [
+    "dep:ono-kuang-protocol", "dep:ono-kuang-supervisor", "dep:ono-model-broker", "dep:ring",
+    "dep:rustls-pki-types", "dep:rustls-webpki", "dep:x509-parser", "dep:base64", "dep:tar",
+    "dep:ureq", "dep:sha2",
+]
+remote = ["dep:ono-protocol", "dep:ono-remote"]
+spatial = [
+    "dep:ono-spatial-core", "dep:ono-spatial-events", "dep:ono-spatial-index",
+    "dep:ono-spatial-query", "dep:ono-spatial-render", "dep:sha2",
+]
+systemd = ["dep:ono-provider-systemd", "ono-provider-linux/systemd"]
+temporal = [
+    "spatial",
+    "dep:ono-recorder", "dep:ono-temporal-ledger",
+    "dep:ono-temporal-query", "dep:ono-temporal-reconstruct", "dep:ono-temporal-render",
+]
+
 [dependencies]
 # v0.6 §32.2: the size of a filesystem mounted beneath a recursive removal, from statvfs(3).
 nix = { workspace = true, features = ["fs"] }
@@ -21,59 +63,61 @@ futures.workspace = true
 jiff.workspace = true
 ono-adapter.workspace = true
 ono-command.workspace = true
-ono-change-actions.workspace = true
-ono-change-core.workspace = true
-ono-change-executor.workspace = true
-ono-change-impact.workspace = true
-ono-change-plan.workspace = true
-ono-change-protection.workspace = true
-ono-change-recovery.workspace = true
-ono-change-render.workspace = true
+ono-change-actions = { workspace = true, optional = true }
+ono-change-core = { workspace = true, optional = true }
+ono-change-executor = { workspace = true, optional = true }
+ono-change-impact = { workspace = true, optional = true }
+ono-change-plan = { workspace = true, optional = true }
+ono-change-protection = { workspace = true, optional = true }
+ono-change-recovery = { workspace = true, optional = true }
+ono-change-render = { workspace = true, optional = true }
 ono-core.workspace = true
 ono-editor.workspace = true
 ono-graph.workspace = true
 ono-history.workspace = true
-ono-kuang-protocol.workspace = true
-ono-kuang-supervisor.workspace = true
-ono-model-broker.workspace = true
+ono-kuang-protocol = { workspace = true, optional = true }
+ono-kuang-supervisor = { workspace = true, optional = true }
+ono-model-broker = { workspace = true, optional = true }
 ono-parser.workspace = true
 ono-process.workspace = true
 ono-render.workspace = true
 ono-pipeline.workspace = true
 ono-provider-api.workspace = true
-ono-protocol.workspace = true
-ono-remote.workspace = true
+ono-protocol = { workspace = true, optional = true }
+ono-remote = { workspace = true, optional = true }
 ono-provider-linux.workspace = true
 ono-provider-net.workspace = true
 ono-provider-netlink.workspace = true
-ono-provider-systemd.workspace = true
-ono-provider-container.workspace = true
-ono-recorder.workspace = true
-ono-recovery-btrfs.workspace = true
-ono-recovery-files.workspace = true
-ono-recovery-zfs.workspace = true
-ono-spatial-core.workspace = true
-ono-spatial-events.workspace = true
-ono-spatial-index.workspace = true
-ono-spatial-query.workspace = true
-ono-spatial-render.workspace = true
+ono-provider-systemd = { workspace = true, optional = true }
+ono-provider-container = { workspace = true, optional = true }
+ono-recorder = { workspace = true, optional = true }
+ono-recovery-btrfs = { workspace = true, optional = true }
+ono-recovery-files = { workspace = true, optional = true }
+ono-recovery-zfs = { workspace = true, optional = true }
+ono-spatial-core = { workspace = true, optional = true }
+ono-spatial-events = { workspace = true, optional = true }
+ono-spatial-index = { workspace = true, optional = true }
+ono-spatial-query = { workspace = true, optional = true }
+ono-spatial-render = { workspace = true, optional = true }
+# The temporal coordinate every invocation carries (v0.5 §4) is a type `ono-command` already
+# links; a core build puts the present there (ADR-0910).
 ono-temporal-core.workspace = true
-ono-temporal-ledger.workspace = true
-ono-temporal-query.workspace = true
-ono-temporal-reconstruct.workspace = true
-ono-temporal-render.workspace = true
+ono-temporal-ledger = { workspace = true, optional = true }
+ono-temporal-query = { workspace = true, optional = true }
+ono-temporal-reconstruct = { workspace = true, optional = true }
+ono-temporal-render = { workspace = true, optional = true }
 ono-value.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
-ring.workspace = true
-rustls-pki-types.workspace = true
-rustls-webpki.workspace = true
-sha2.workspace = true
-x509-parser.workspace = true
-base64.workspace = true
-tar.workspace = true
-ureq.workspace = true
+ring = { workspace = true, optional = true }
+rustls-pki-types = { workspace = true, optional = true }
+rustls-webpki = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+x509-parser = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+tar = { workspace = true, optional = true }
+ureq = { workspace = true, optional = true }
 tokio.workspace = true
 
 [dev-dependencies]

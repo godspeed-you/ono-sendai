@@ -7,6 +7,8 @@
 //! under it, and — where the network is the source — a local HTTP server on a loopback port
 //! serving a `.kuang` archive `kuang-sign pack` would write.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0913).
+#![cfg(feature = "kuang")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

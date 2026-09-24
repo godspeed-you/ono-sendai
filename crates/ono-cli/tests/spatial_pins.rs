@@ -10,6 +10,8 @@
 //! that a pin survives the identity of the object it named changing, and that a pin nothing
 //! answers stays in the store rather than disappearing.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0913).
+#![cfg(feature = "spatial")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

@@ -7,6 +7,8 @@
 //! nothing else, so the tests below can hand it a present index full of things that never existed
 //! at `T` and watch none of them arrive.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0913).
+#![cfg(feature = "spatial")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

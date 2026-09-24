@@ -11,19 +11,28 @@
 
 use std::sync::Arc;
 
+#[cfg(feature = "temporal")]
 use jiff::Timestamp;
+#[cfg(feature = "temporal")]
 use ono_core::ErrorCode;
+#[cfg(feature = "temporal")]
 use ono_pipeline::ValueStream;
+use ono_provider_api::ProviderRegistry;
+#[cfg(feature = "temporal")]
 use ono_provider_api::{
-    Action, ActionOutcome, Availability, Capability, EventStream, ObjectRef, Provider,
-    ProviderRegistry, Query, Selector, TemporalCapabilities, TimeWindow,
+    Action, ActionOutcome, Availability, Capability, EventStream, ObjectRef, Provider, Query,
+    Selector, TemporalCapabilities, TimeWindow,
 };
+#[cfg(feature = "temporal")]
 use ono_spatial_core::{SpatialScope, SpatialType, types_of_target};
+#[cfg(feature = "temporal")]
 use ono_temporal_core::LedgerRead;
+#[cfg(feature = "temporal")]
 use ono_temporal_reconstruct::{
     ReconstructedCollection, ReconstructedWorld, ReconstructionRequest, Reconstructor,
     SourceMatrix, attach_temporal,
 };
+#[cfg(feature = "temporal")]
 use ono_value::{ErrorValue, MapValue, Value};
 
 /// Every provider this build knows about, in the order they are asked.
@@ -62,6 +71,7 @@ pub fn registry_with_tables(
     ono_provider_linux::register_with_env(&mut registry, env);
     // The container runtime is found the way `docker` and `podman` find it: through
     // DOCKER_HOST / CONTAINER_HOST, or the well-known sockets (ADR-0112).
+    #[cfg(feature = "container")]
     registry.register(Arc::new(
         ono_provider_container::ContainerProvider::from_environment(
             environment
@@ -74,6 +84,7 @@ pub fn registry_with_tables(
     registry.register(Arc::new(ono_provider_netlink::RouteProvider::new()));
     registry.register(Arc::new(ono_provider_netlink::NeighborProvider::new()));
     registry.register(Arc::new(ono_provider_netlink::SocketProvider::new()));
+    #[cfg(feature = "systemd")]
     registry.register(Arc::new(ono_provider_systemd::JournalProvider::new()));
 
     registry.register(Arc::new(crate::session_provider::SessionProvider::new(
@@ -81,6 +92,12 @@ pub fn registry_with_tables(
     )));
     registry.register(Arc::new(ono_provider_net::DnsProvider::new()));
     registry.register(Arc::new(ono_provider_net::PortProvider::new()));
+    // A tier this build leaves out still has its targets answered: by a provider that is not
+    // there, through the same `provider.unavailable` a host without the system gives (#127,
+    // ADR-0910). The full build registers none.
+    for absent in crate::absent::AbsentProvider::missing() {
+        registry.register(Arc::new(absent));
+    }
 
     // v0.5 §4.5, §9.6: every provider is asked through the temporal seam, so `get <target>` at a
     // historical coordinate reads the reconstruction and never the live system (§55.2). The
@@ -90,6 +107,7 @@ pub fn registry_with_tables(
 }
 
 /// The same providers, each behind the temporal seam of [`TemporalProvider`].
+#[cfg(feature = "temporal")]
 fn through_time(registry: &ProviderRegistry) -> ProviderRegistry {
     let mut wrapped = ProviderRegistry::new();
     for provider in registry.providers() {
@@ -98,22 +116,38 @@ fn through_time(registry: &ProviderRegistry) -> ProviderRegistry {
     wrapped
 }
 
+/// A build without the temporal tier asks every provider in the present, directly (ADR-0910).
+#[cfg(not(feature = "temporal"))]
+fn through_time(registry: &ProviderRegistry) -> ProviderRegistry {
+    let mut direct = ProviderRegistry::new();
+    for provider in registry.providers() {
+        direct.register(Arc::clone(provider));
+    }
+    direct
+}
+
 /// Adds the providers that have to be reached asynchronously.
 ///
 /// systemd is behind D-Bus, so building its provider is an `await`. It is registered separately
 /// rather than being made synchronous, because pretending an I/O-bound constructor is not one is
 /// how a shell acquires a hang at startup.
+#[cfg_attr(not(feature = "systemd"), allow(clippy::unused_async))]
 pub async fn register_async(registry: &mut ProviderRegistry) {
-    // Two connections to the same bus, each a handshake and a round trip to its manager, and
-    // neither waiting on the other: opened side by side, they cost one of them (spec §34).
-    // Registration order is what decides which provider answers a target (see `registry`), and
-    // it is kept.
-    let (systemd, logind) = tokio::join!(
-        ono_provider_systemd::SystemdProvider::connect(),
-        ono_provider_systemd::SessionProvider::connect(),
-    );
-    registry.register(Arc::new(TemporalProvider::new(Arc::new(systemd))));
-    registry.register(Arc::new(TemporalProvider::new(Arc::new(logind))));
+    #[cfg(not(feature = "systemd"))]
+    let _ = registry;
+    #[cfg(feature = "systemd")]
+    {
+        // Two connections to the same bus, each a handshake and a round trip to its manager, and
+        // neither waiting on the other: opened side by side, they cost one of them (spec §34).
+        // Registration order is what decides which provider answers a target (see `registry`), and
+        // it is kept.
+        let (systemd, logind) = tokio::join!(
+            ono_provider_systemd::SystemdProvider::connect(),
+            ono_provider_systemd::SessionProvider::connect(),
+        );
+        registry.register(Arc::new(TemporalProvider::new(Arc::new(systemd))));
+        registry.register(Arc::new(TemporalProvider::new(Arc::new(logind))));
+    }
 }
 
 /// One provider, asked at the session's temporal coordinate rather than only in the present
@@ -130,17 +164,20 @@ pub async fn register_async(registry: &mut ProviderRegistry) {
 /// Everything except [`Provider::snapshot`] is delegated untouched. The provider's identity, its
 /// targets, its capabilities and its declared temporal reach are the inner provider's, so the
 /// registry, `spec-check` and the conformance suites see exactly the surface they saw before.
+#[cfg(feature = "temporal")]
 #[derive(Debug)]
 struct TemporalProvider {
     inner: Arc<dyn Provider>,
 }
 
+#[cfg(feature = "temporal")]
 impl TemporalProvider {
     const fn new(inner: Arc<dyn Provider>) -> Self {
         Self { inner }
     }
 }
 
+#[cfg(feature = "temporal")]
 #[async_trait::async_trait]
 impl Provider for TemporalProvider {
     fn id(&self) -> &str {
@@ -196,6 +233,7 @@ impl Provider for TemporalProvider {
 }
 
 /// A coordinate in the past, and the ledger that can answer about it.
+#[cfg(feature = "temporal")]
 struct PastQuery {
     at: Timestamp,
     ledger: Arc<dyn LedgerRead>,
@@ -212,6 +250,7 @@ struct PastQuery {
 /// legislates, and `find`, which walks a source to build the same kind of set. `resolve dns`,
 /// `test port`, `test host` and `tail journal` probe a live system rather than enumerating a
 /// state, and §4.8 rather than §9.6 is what governs those; they are left as they were (ADR-0780).
+#[cfg(feature = "temporal")]
 fn coordinate_of(query: &Query) -> Result<Option<PastQuery>, ErrorValue> {
     if !matches!(query.verb(), "get" | "find") {
         return Ok(None);
@@ -245,6 +284,7 @@ fn coordinate_of(query: &Query) -> Result<Option<PastQuery>, ErrorValue> {
 }
 
 /// The text of an `--at` option, or `None` where it was not written.
+#[cfg(feature = "temporal")]
 fn option_text(value: Option<&Value>) -> Option<String> {
     let text = match value? {
         Value::Null => return None,
@@ -265,6 +305,7 @@ fn option_text(value: Option<&Value>) -> Option<String> {
 ///
 /// `temporal.unsupported_source` for a target no source reconstructs, `temporal.not_recorded`
 /// where nothing covers the class at `at`, and whatever §34 refusal the ledger raises.
+#[cfg(feature = "temporal")]
 fn reconstructed(
     query: &Query,
     at: Timestamp,
@@ -323,6 +364,7 @@ fn reconstructed(
 /// window, whether the enumeration could be proven complete, and the gaps that qualify it. A
 /// reader that sees `enumeration_proven: false` has been told the rows are not the whole list,
 /// which is the sentence §9.6 makes a MUST.
+#[cfg(feature = "temporal")]
 fn collection_metadata(
     world: &ReconstructedWorld,
     collection: &ReconstructedCollection,
@@ -363,6 +405,7 @@ fn collection_metadata(
 }
 
 /// §34's `temporal.unsupported_source` for a target the reconstruction cannot carry (§21.1).
+#[cfg(feature = "temporal")]
 fn unsupported_target(target: &str, at: Timestamp) -> ErrorValue {
     ErrorValue::new(
         ErrorCode::TemporalUnsupportedSource,
@@ -380,6 +423,7 @@ fn unsupported_target(target: &str, at: Timestamp) -> ErrorValue {
 ///
 /// The filesystem tree is kept apart because §14.5 already has a word for it: it is not that
 /// nothing was recorded, it is that no source of the four §14.5 names is present at all.
+#[cfg(feature = "temporal")]
 fn nothing_reconstructs(
     target: &str,
     types: &[SpatialType],

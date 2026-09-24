@@ -17,7 +17,9 @@ fn main() -> ExitCode {
 
     let status = match invocation {
         Invocation::Version => {
-            println!("{} {}", ono_core::SHORT_NAME, ono_core::VERSION);
+            // The full build prints the one line it always has; the core build adds the profile
+            // and the tiers it leaves out on a second line (ADR-0911).
+            println!("{}", ono_cli::absent::version_text());
             ExitStatus::SUCCESS
         }
         Invocation::Help => {
@@ -29,6 +31,11 @@ fn main() -> ExitCode {
             eprintln!("try `{} --help`", ono_core::SHORT_NAME);
             ExitStatus::USAGE
         }
+        #[cfg(not(feature = "remote"))]
+        Invocation::PrintPeerKey => not_in_build("--print-peer-key"),
+        #[cfg(not(feature = "remote"))]
+        Invocation::Agent(..) => not_in_build("--agent"),
+        #[cfg(feature = "remote")]
         Invocation::PrintPeerKey => {
             // What a person pins this machine by, on stdout so it can be read by a script or
             // copied into `add host-key` on the machine that will link here (v0.4.1 §8.5). The
@@ -47,6 +54,7 @@ fn main() -> ExitCode {
                 }
             }
         }
+        #[cfg(feature = "remote")]
         Invocation::Agent(_, agent_options) => {
             // The remote end of a link (spec §21.2): serve this machine's providers over
             // stdin/stdout. The transport already carried authentication (ADR-0037), and the
@@ -155,6 +163,15 @@ fn main() -> ExitCode {
     ExitCode::from(status)
 }
 
+/// Refuses a remote-tier flag in a build without the remote tier (ADR-0911), on stderr and with
+/// the status a compiled-out command gets.
+#[cfg(not(feature = "remote"))]
+fn not_in_build(flag: &str) -> ExitStatus {
+    let error = ono_cli::absent::not_in_build(flag, ono_cli::absent::Tier::Remote);
+    Reporter::new(Presentation::choose(std::io::stderr().is_terminal(), &[])).error(&error);
+    ono_cli::eval::status_for(&error)
+}
+
 /// Builds the session and reads configuration (ADR-0010).
 fn start(interactive: bool, options: &Options) -> (Session, Reporter) {
     let mut session = Session::new(interactive);
@@ -199,6 +216,7 @@ fn start(interactive: bool, options: &Options) -> (Session, Reporter) {
 /// same ladder: v0.4.1 §8.5 requires `--agent --print-host-key` and `--print-peer-key` to print
 /// the same fingerprint when the default path is used, and they do because there is one default
 /// path (§8.1, §8.2, ADR-0435).
+#[cfg(feature = "remote")]
 fn agent_identity(
     options: &ono_cli::invocation::AgentOptions,
 ) -> Result<ono_remote::PeerIdentity, ono_value::ErrorValue> {
@@ -209,6 +227,7 @@ fn agent_identity(
 }
 
 /// This shell's own peer identity, from the configuration directory of ADR-0010 (v0.4.1 §8.1).
+#[cfg(feature = "remote")]
 fn default_identity() -> Result<ono_remote::PeerIdentity, ono_value::ErrorValue> {
     let environment: Vec<(String, String)> = std::env::vars().collect();
     let sources = ono_cli::hosts::HostSources::from_environment(
@@ -224,6 +243,7 @@ fn default_identity() -> Result<ono_remote::PeerIdentity, ono_value::ErrorValue>
 /// `(target, verb) -> provider_capability`, read from the command registry: `stop process` needs
 /// `process.signal`, `restart service` needs `service.manage`. An action the registry does not
 /// map is denied under a policy, because Appendix C denies an unknown capability id always.
+#[cfg(feature = "remote")]
 fn with_action_capabilities(config: ono_remote::AgentConfig) -> ono_remote::AgentConfig {
     let Ok(registry) = ono_cli::eval::native::registry() else {
         // Without the registry no action can be named, so every action is denied. That is the
@@ -248,6 +268,7 @@ fn with_action_capabilities(config: ono_remote::AgentConfig) -> ono_remote::Agen
 /// deterministic startup/configuration failure". So a corrupt store stops the agent before it
 /// binds, rather than being read as an empty one — which would authorize nobody today and be one
 /// edit away from authorizing everybody.
+#[cfg(feature = "remote")]
 fn authorization_store() -> Result<ono_protocol::AuthorizedClients, ono_value::ErrorValue> {
     let environment: Vec<(String, String)> = std::env::vars().collect();
     let sources = ono_cli::hosts::HostSources::from_environment(
@@ -259,6 +280,7 @@ fn authorization_store() -> Result<ono_protocol::AuthorizedClients, ono_value::E
 }
 
 /// Where a listening agent reads the clients it may serve (v0.4.1 §9.2).
+#[cfg(feature = "remote")]
 fn authorization_store_path() -> Option<std::path::PathBuf> {
     let environment: Vec<(String, String)> = std::env::vars().collect();
     let sources = ono_cli::hosts::HostSources::from_environment(
@@ -277,6 +299,7 @@ fn authorization_store_path() -> Option<std::path::PathBuf> {
 /// clients that store holds and the ceilings the agent will enforce. An operator reads that block
 /// to know what they have just put on a network, and the host's own console is the one channel
 /// that makes a first pin worth anything.
+#[cfg(feature = "remote")]
 async fn serve_authenticated(
     address: &str,
     identity: &ono_remote::PeerIdentity,
@@ -331,6 +354,7 @@ async fn serve_authenticated(
 /// Five fields, in §11.2's order, on stderr: an agent carried over stdio owns stdout for the wire
 /// and never writes diagnostics there, and a listening one keeps the same discipline so the two
 /// modes are not two contracts (§14.1).
+#[cfg(feature = "remote")]
 fn print_startup_summary(
     bound: std::net::SocketAddr,
     identity: &ono_remote::PeerIdentity,
@@ -378,6 +402,7 @@ fn print_startup_summary(
 /// Agent mode reads the environment layer and no file, which is what agent mode does for every
 /// other setting: `ono --agent` is a protocol endpoint and has never had a configuration file
 /// execution surface. Honouring `config.ono` here as well is recorded for the board.
+#[cfg(feature = "remote")]
 fn configured_limits() -> ono_protocol::Limits {
     let mut settings = ono_cli::settings::Settings::new();
     let variables: std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString> =

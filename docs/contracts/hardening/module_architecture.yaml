@@ -129,6 +129,10 @@ composition_root:
   root: src
   spec: "§56.3, §30.4"
   modules:
+    # The core build's seam (#127, ADR-0910, ADR-0911): what a build that leaves tiers out says
+    # about them, and the inert modules it mounts in their place. No domain logic: it decides which
+    # names this binary carries, and every answer it gives is a refusal.
+    - absent
     - builtin.rs
     - change
     - complete.rs

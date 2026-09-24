@@ -1,6 +1,8 @@
 //! KUANG/11 at the shell boundary (spec §31): a package is discovered, loaded under the
 //! capability broker, and its contributed command runs like any other stage.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0913).
+#![cfg(feature = "kuang")]
 #![allow(
     clippy::expect_used,
     reason = "a test states its preconditions directly (AGENTS.md section 16)"

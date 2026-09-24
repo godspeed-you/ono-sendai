@@ -1,17 +1,26 @@
 //! A stage that runs on a remote agent (spec v0.4 §31, ADR-0118).
 
 use ono_adapter::OutputDemand;
+#[cfg(feature = "remote")]
 use ono_core::{ErrorCode, ExitStatus};
-use ono_parser::{Stage, StageHead, StageList};
+use ono_parser::Stage;
+#[cfg(feature = "remote")]
+use ono_parser::{StageHead, StageList};
+#[cfg(feature = "remote")]
 use ono_pipeline::StreamEvent;
+#[cfg(feature = "remote")]
 use ono_value::{ErrorValue, Value};
 
+#[cfg(feature = "remote")]
 use crate::eval::{Eval, Flow};
+#[cfg(feature = "remote")]
 use crate::resolve::Namespace;
 use crate::session::Session;
 
+#[cfg(feature = "remote")]
 use super::foreground::run_native_segment;
 use super::segment::adaptable_program;
+#[cfg(feature = "remote")]
 use super::{Seed, registry};
 
 /// Negotiates a stage from its source text alone, for decisions made before anything runs.
@@ -20,6 +29,7 @@ use super::{Seed, registry};
 /// twice — so they ask with the words as written. Execution asks again with the expanded words;
 /// where the two differ, the run's answer is the one that counts.
 /// What the remote side of a link frame would do with an invocation (spec v0.3 §1.54).
+#[cfg(feature = "remote")]
 pub(crate) struct RemoteDecision {
     pub(crate) adapted: bool,
     pub(crate) state: String,
@@ -29,6 +39,7 @@ pub(crate) struct RemoteDecision {
 ///
 /// `None` when the session is not inside a link frame or the agent cannot answer — an older
 /// agent, a lost link — in which case the caller falls back to local semantics and says so.
+#[cfg(feature = "remote")]
 pub(crate) fn remote_decision(
     session: &mut Session,
     argv: &[String],
@@ -69,6 +80,7 @@ pub(crate) fn remote_decision(
 }
 
 /// The words a stage would hand its program, from the source alone, program first.
+#[cfg(feature = "remote")]
 pub(crate) fn literal_argv(stage: &Stage) -> Option<Vec<String>> {
     let StageHead::Command(name) = &stage.head else {
         return None;
@@ -93,6 +105,7 @@ pub(super) fn negotiate_literally(
 ) -> Option<ono_adapter::Negotiation> {
     // Inside a link frame the remote decides (spec v0.3 §1.54); its answer is folded into the
     // two states the callers here distinguish — a plan, or not.
+    #[cfg(feature = "remote")]
     if session.link_host().is_some()
         && !ono_command::is_raw(stage)
         && let Some(argv) = literal_argv(stage)
@@ -137,6 +150,7 @@ pub(super) fn literal_words(stage: &Stage) -> Vec<String> {
 }
 
 /// What a remote adaptation came to.
+#[cfg(feature = "remote")]
 pub(super) enum RemoteRun {
     /// The remote adapted the invocation and its records were consumed; the status stands.
     Adapted(ExitStatus),
@@ -146,6 +160,7 @@ pub(super) enum RemoteRun {
 
 /// The invocation a stage would run, with its arguments expanded, program first; `None` for a
 /// stage that is not a program.
+#[cfg(feature = "remote")]
 pub(super) fn remote_argv(
     session: &mut Session,
     stage: &Stage,
@@ -186,6 +201,7 @@ pub(super) fn remote_argv(
 /// # Errors
 ///
 /// The remote's refusal under a structured demand, as the structured error it sent.
+#[cfg(feature = "remote")]
 pub(super) fn run_remote_adapted(
     session: &mut Session,
     list: &StageList,

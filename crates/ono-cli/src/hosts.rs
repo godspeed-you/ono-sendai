@@ -61,11 +61,13 @@ pub struct HostSources {
     /// The shell's own host file, read and written.
     pub own: Option<PathBuf>,
     /// The pinned host keys of spec §21.5, read and written (ADR-0355).
+    #[cfg(feature = "remote")]
     pub trust_store: Option<PathBuf>,
     /// The client keys this machine authorizes, read and written (v0.4.1 §9.2, ADR-0468).
     ///
     /// The mirror of `trust_store`: that file says which machines this shell will link *to*,
     /// this one says which clients its listening agent will serve.
+    #[cfg(feature = "remote")]
     pub authorized_clients: Option<PathBuf>,
     /// The configuration directory this shell's own peer identity lives in (v0.4.1 §8.1).
     ///
@@ -90,9 +92,11 @@ impl HostSources {
             own: config_dir
                 .as_ref()
                 .map(|directory| directory.join(OWN_FILE)),
+            #[cfg(feature = "remote")]
             trust_store: config_dir
                 .as_ref()
                 .map(|directory| directory.join(crate::trust::STORE_FILE)),
+            #[cfg(feature = "remote")]
             authorized_clients: config_dir
                 .as_ref()
                 .map(|directory| directory.join(crate::trust::AUTHORIZED_CLIENTS_FILE)),

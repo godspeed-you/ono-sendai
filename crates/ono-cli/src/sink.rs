@@ -6,11 +6,14 @@
 //! nothing about the values themselves changes either way.
 
 use std::io::{IsTerminal, Write};
+#[cfg(feature = "temporal")]
 use std::sync::Arc;
 
 use ono_pipeline::{StreamEvent, ValueStream};
 use ono_render::{Layout, Presentation, Renderer, Theme, View};
-use ono_value::{ErrorValue, RecordValue, Value};
+#[cfg(feature = "spatial")]
+use ono_value::RecordValue;
+use ono_value::{ErrorValue, Value};
 
 /// How wide the output is, and how much decoration it may carry.
 #[derive(Debug, Clone)]
@@ -135,6 +138,24 @@ impl Sink {
                 .flat_map(|tree| layout.render_tree_styled(tree, &self.theme, self.presentation))
                 .collect();
         }
+        #[cfg(feature = "spatial")]
+        if let Some(lines) = self.render_tier_view(values) {
+            return lines;
+        }
+        let renderer = Renderer::new();
+        let mut layout = Layout::new(self.width);
+        if let Some(max_rows) = self.max_rows {
+            layout = layout.max_rows(max_rows);
+        }
+
+        layout.render_view_styled(&renderer, values, self.view, &self.theme, self.presentation)
+    }
+
+    /// The views of the spatial, change and temporal tiers, which never render as a table: each
+    /// is presentation over a structured record its own renderer knows (spec v0.4 §23, v0.5
+    /// §39.3, v0.6 §39.3). `None` for anything else.
+    #[cfg(feature = "spatial")]
+    fn render_tier_view(&self, values: &[Value]) -> Option<Vec<String>> {
         // A place view never renders as a table (spec v0.4 §6.1, §23.1): its headings are
         // presentation over a structured object, and the renderer that knows them is
         // `ono-spatial-render`, which may not invent an exit the view did not declare (§45.4).
@@ -142,7 +163,7 @@ impl Sink {
             && let Ok(record) = value.as_record()
             && record.schema_id().to_string() == "ono.place-view/1"
         {
-            return ono_spatial_render::place_view(record, self.width);
+            return Some(ono_spatial_render::place_view(record, self.width));
         }
         // Nor does a map (spec v0.4 §23.2): "Every terminal MUST have a non-fullscreen textual
         // map representation", and §39.3 makes that representation adapt to the width rather than
@@ -161,14 +182,18 @@ impl Sink {
                     .iter()
                     .map(|line| (line.text(), line.node()))
                     .collect();
-                return ono_change_render::plan_overlay(
+                return Some(ono_change_render::plan_overlay(
                     &pairs,
                     overlay,
                     width,
                     crate::change::render::charset(),
-                );
+                ));
             }
-            return ono_spatial_render::spatial_map(record, width, map_charset());
+            return Some(ono_spatial_render::spatial_map(
+                record,
+                width,
+                map_charset(),
+            ));
         }
         // The v0.6 change views are presentation over one record each, and the renderer that
         // knows them is `ono-change-render` (§39.3). §20.2's plan view is the one that ends in
@@ -180,16 +205,20 @@ impl Sink {
             let charset = crate::change::render::charset();
             match record.schema_id().to_string().as_str() {
                 "ono.change-plan/1" => {
-                    return crate::change::render::plan_lines(record, &[], self.width);
+                    return Some(crate::change::render::plan_lines(record, &[], self.width));
                 }
                 "ono.recovery-plan/1" => {
-                    return ono_change_render::recovery_view(record, self.width, charset);
+                    return Some(ono_change_render::recovery_view(
+                        record, self.width, charset,
+                    ));
                 }
                 "ono.impact-graph/1" => {
-                    return ono_change_render::impact_block(record, self.width, charset);
+                    return Some(ono_change_render::impact_block(record, self.width, charset));
                 }
                 "ono.recovery-asset/1" => {
-                    return ono_change_render::recovery_asset_block(record, self.width, charset);
+                    return Some(ono_change_render::recovery_asset_block(
+                        record, self.width, charset,
+                    ));
                 }
                 _ => {}
             }
@@ -200,7 +229,11 @@ impl Sink {
         if values.len() > 1
             && let Some(assets) = every_asset(values)
         {
-            return ono_change_render::recovery_assets(&assets, jiff::Timestamp::now(), self.width);
+            return Some(ono_change_render::recovery_assets(
+                &assets,
+                jiff::Timestamp::now(),
+                self.width,
+            ));
         }
         // §13.3 renders a whole comparison at once: the classes are headings and the objects are
         // grouped under them, so a stream of `ono.temporal-change/1` is one rendering rather than
@@ -208,14 +241,22 @@ impl Sink {
         if values.len() > 1
             && let Some(changes) = every_change(values)
         {
-            return ono_temporal_render::changes(&changes, self.width, &temporal_options());
+            return Some(ono_temporal_render::changes(
+                &changes,
+                self.width,
+                &temporal_options(),
+            ));
         }
         // §11.4 makes `timeline` a stream of events and the renderer "only a presentation"; §11.7
         // obliges that presentation to draw a coverage gap inside the window. The window is not in
         // the stream, so the command published it and this is where the two meet again: the events
         // at hand — filtered or not — are drawn against the interval they came from (ADR-0778).
         if let Some(view) = timeline_view_of(values) {
-            return ono_temporal_render::timeline(&view, self.width, &temporal_options());
+            return Some(ono_temporal_render::timeline(
+                &view,
+                self.width,
+                &temporal_options(),
+            ));
         }
         // The temporal views are presentation over one record each, and the renderer that knows
         // them is `ono-temporal-render` (v0.5 §39.3). Every arm is keyed on one schema id, and
@@ -227,37 +268,37 @@ impl Sink {
             let options = temporal_options();
             match record.schema_id().to_string().as_str() {
                 "ono.temporal-change/1" => {
-                    return ono_temporal_render::changes(
+                    return Some(ono_temporal_render::changes(
                         &[RecordValue::clone(record)],
                         self.width,
                         &options,
-                    );
+                    ));
                 }
                 "ono.temporal-timeline/1" => {
-                    return ono_temporal_render::timeline(record, self.width, &options);
+                    return Some(ono_temporal_render::timeline(record, self.width, &options));
                 }
                 "ono.causal-explanation/1" => {
-                    return ono_temporal_render::causal_explanation(record, self.width, &options);
+                    return Some(ono_temporal_render::causal_explanation(
+                        record, self.width, &options,
+                    ));
                 }
                 "ono.recorder-status/1" => {
-                    return ono_temporal_render::recorder_status(record, self.width, &options);
+                    return Some(ono_temporal_render::recorder_status(
+                        record, self.width, &options,
+                    ));
                 }
                 "ono.temporal-context/1" => {
-                    return ono_temporal_render::temporal_hud(record, self.width, &options);
+                    return Some(ono_temporal_render::temporal_hud(
+                        record, self.width, &options,
+                    ));
                 }
                 "ono.temporal-gap/1" => {
-                    return ono_temporal_render::gap_frame(record, self.width, &options);
+                    return Some(ono_temporal_render::gap_frame(record, self.width, &options));
                 }
                 _ => {}
             }
         }
-        let renderer = Renderer::new();
-        let mut layout = Layout::new(self.width);
-        if let Some(max_rows) = self.max_rows {
-            layout = layout.max_rows(max_rows);
-        }
-
-        layout.render_view_styled(&renderer, values, self.view, &self.theme, self.presentation)
+        None
     }
 }
 
@@ -292,6 +333,7 @@ fn terminal_width(is_terminal: bool) -> usize {
 /// into ranked tree/list projections" — and a map is the one view whose whole point is to fit.
 /// So `COLUMNS` is honoured wherever it is stated, including for redirected output, which stays
 /// deterministic because the environment is part of the run (spec v0.2 §4.6).
+#[cfg(feature = "spatial")]
 fn map_width(fallback: usize) -> usize {
     const NARROWEST_USABLE: usize = 20;
     std::env::var("COLUMNS")
@@ -307,6 +349,7 @@ fn map_width(fallback: usize) -> usize {
 /// is `dumb`, and a locale that does not promise UTF-8, both get ASCII — guessing wrong here
 /// prints mojibake, which is worse than a plainer drawing.
 #[must_use]
+#[cfg(feature = "spatial")]
 pub fn map_charset() -> ono_spatial_render::Charset {
     let utf8 = ["LC_ALL", "LC_CTYPE", "LANG"]
         .iter()
@@ -335,6 +378,7 @@ pub fn map_charset() -> ono_spatial_render::Charset {
 /// stream narrows what is drawn and leaves the window it was drawn from intact, which is the
 /// honest reading: the gap was in the interval whether or not a `where` kept the events on either
 /// side of it.
+#[cfg(feature = "temporal")]
 fn published_timeline() -> &'static std::sync::RwLock<Option<Arc<RecordValue>>> {
     static PUBLISHED: std::sync::OnceLock<std::sync::RwLock<Option<Arc<RecordValue>>>> =
         std::sync::OnceLock::new();
@@ -342,6 +386,7 @@ fn published_timeline() -> &'static std::sync::RwLock<Option<Arc<RecordValue>>> 
 }
 
 /// Records the window `timeline` just answered over, for the renderer that draws it.
+#[cfg(feature = "temporal")]
 pub fn publish_timeline(record: RecordValue) {
     if let Ok(mut held) = published_timeline().write() {
         *held = Some(Arc::new(record));
@@ -353,6 +398,7 @@ pub fn publish_timeline(record: RecordValue) {
 /// Every value has to be an `ono.temporal-event/1` and the last `timeline` in this process has to
 /// have published its window; anything else is a stream of events from somewhere else — `find
 /// event`, a `--kind` filter over a saved list — and the ordinary renderer draws it as rows.
+#[cfg(feature = "temporal")]
 fn timeline_view_of(values: &[Value]) -> Option<RecordValue> {
     if values.is_empty() {
         return None;
@@ -383,6 +429,7 @@ fn timeline_view_of(values: &[Value]) -> Option<RecordValue> {
 /// The session's zone offset and `temporal.ui.show_source_tags` reach the renderer as data. §39.2
 /// keeps the clock out of pure logic and the same discipline applies to settings: a renderer that
 /// read the configuration itself could not be tested and could not be told what to draw.
+#[cfg(feature = "temporal")]
 pub(crate) fn temporal_options() -> ono_temporal_render::RenderOptions {
     let now = jiff::Timestamp::now();
     let offset = i128::from(jiff::tz::TimeZone::system().to_offset(now).seconds());
@@ -394,6 +441,7 @@ pub(crate) fn temporal_options() -> ono_temporal_render::RenderOptions {
 }
 
 /// Every value as an `ono.recovery-asset/1`, or `None` where one of them is something else.
+#[cfg(feature = "change")]
 fn every_asset(values: &[Value]) -> Option<Vec<RecordValue>> {
     values
         .iter()
@@ -406,6 +454,7 @@ fn every_asset(values: &[Value]) -> Option<Vec<RecordValue>> {
 }
 
 /// Every value as an `ono.temporal-change/1`, or `None` where one of them is something else.
+#[cfg(feature = "temporal")]
 fn every_change(values: &[Value]) -> Option<Vec<RecordValue>> {
     values
         .iter()

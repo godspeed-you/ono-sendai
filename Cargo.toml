@@ -23,7 +23,9 @@ ono-pipeline = { path = "crates/ono-pipeline", version = "0.6.1" }
 ono-command = { path = "crates/ono-command", version = "0.6.1" }
 ono-render = { path = "crates/ono-render", version = "0.6.1" }
 ono-provider-api = { path = "crates/ono-provider-api", version = "0.6.1" }
-ono-provider-linux = { path = "crates/ono-provider-linux", version = "0.6.1" }
+# Without default features, so the core build of #127 can leave out its systemd mount units; the
+# members that want them ask for `systemd` (ADR-0910).
+ono-provider-linux = { path = "crates/ono-provider-linux", version = "0.6.1", default-features = false }
 ono-provider-net = { path = "crates/ono-provider-net", version = "0.6.1" }
 ono-provider-netlink = { path = "crates/ono-provider-netlink", version = "0.6.1" }
 ono-provider-systemd = { path = "crates/ono-provider-systemd", version = "0.6.1" }

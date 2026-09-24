@@ -105,6 +105,9 @@ pub fn run_program(
 pub fn status_for(error: &ErrorValue) -> ExitStatus {
     match error.code() {
         ErrorCode::ResolveCommandNotFound => ExitStatus::NOT_FOUND,
+        // A name this build knows and cannot run is found and not executable, POSIX's 126,
+        // which keeps it apart from a typo's 127 (#127, ADR-0911).
+        ErrorCode::ResolveNotInBuild => ExitStatus::NOT_EXECUTABLE,
         ErrorCode::ParseSyntax | ErrorCode::ParseIncomplete => ExitStatus::USAGE,
         _ => ExitStatus::FAILURE,
     }

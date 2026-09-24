@@ -5,6 +5,8 @@
 //! the ones installed, whether a key signed them, whether the operator accepts that key, and
 //! what each wrong answer does to `install plugin` and `load plugin`.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0913).
+#![cfg(feature = "kuang")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

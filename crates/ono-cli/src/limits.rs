@@ -135,8 +135,7 @@ impl Default for HistoryLimits {
 /// `security_boundaries.yaml` (ADR-0547).
 #[must_use]
 pub fn rows(settings: &Settings) -> Vec<Value> {
-    CATALOGUE
-        .iter()
+    crate::settings::carried()
         .filter(|setting| setting.key.starts_with(PREFIX))
         .map(|setting| {
             let effective = settings.effective(setting.key);

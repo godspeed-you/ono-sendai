@@ -200,6 +200,15 @@ fn get_config(session: &Session, words: &[OsString]) -> Result<Vec<Value>, Error
     }
     // v0.6 Appendix H: a profile expands to inspectable settings. Each row says what the
     // configuration wrote, what the profile asks for, what is in force and which of them won.
+    // A build without the change tier has no protection profile to expand (ADR-0910).
+    #[cfg(not(feature = "change"))]
+    if profile {
+        return Err(crate::absent::not_in_build(
+            "get config --profile",
+            crate::absent::Tier::Change,
+        ));
+    }
+    #[cfg(feature = "change")]
     if profile {
         let text = |value: &Option<String>| value.as_deref().map_or(Value::Null, Value::string);
         return Ok(crate::change::session::configured()

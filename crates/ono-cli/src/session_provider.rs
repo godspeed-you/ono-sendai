@@ -24,12 +24,16 @@ use ono_provider_api::{
 };
 use ono_value::{ErrorValue, Provenance, RecordValue, Schema, SchemaId, Value};
 
-use crate::hosts::{HostEntry, HostSources};
+#[cfg(feature = "remote")]
+use crate::hosts::HostEntry;
+use crate::hosts::HostSources;
 
 /// The severities `ono.finding/1` carries, weakest first (spec §31.24's closed set).
+#[cfg(feature = "kuang")]
 const SEVERITIES: &[&str] = &["info", "low", "medium", "high", "critical"];
 
 /// Where `severity` sits in that order, or `None` when it is not one of them.
+#[cfg(feature = "kuang")]
 fn severity_rank(severity: &str) -> Option<usize> {
     SEVERITIES.iter().position(|known| *known == severity)
 }
@@ -38,6 +42,7 @@ fn severity_rank(severity: &str) -> Option<usize> {
 pub const PROVIDER_ID: &str = "ono.shell";
 
 /// Everything `ono.shell` answers for on the machine it runs on.
+#[cfg(feature = "kuang")]
 const ALL_TARGETS: &[&str] = &[
     "job",
     "link",
@@ -53,12 +58,22 @@ const ALL_TARGETS: &[&str] = &[
     "finding",
 ];
 
+/// Everything `ono.shell` answers for in a build without links or packages: the jobs this
+/// session started (#127, ADR-0910).
+#[cfg(not(feature = "kuang"))]
+const ALL_TARGETS: &[&str] = &["job"];
+
 /// The subset that describes the session rather than the machine (spec §14.4, ADR-0269).
 ///
 /// A package loaded on the far side is a fact about the far side and stays remote; the links
 /// this session holds, the jobs it started and the hosts it knows are not.
 /// The targets the shell answers about itself: session facts, not observations of a machine.
+#[cfg(feature = "remote")]
 pub const SESSION_TARGETS: &[&str] = &["job", "link", "host", "host-key", "client-key"];
+
+/// The targets the shell answers about itself, in a build without links: its jobs (ADR-0910).
+#[cfg(not(feature = "remote"))]
+pub const SESSION_TARGETS: &[&str] = &["job"];
 
 /// One job as the session publishes it — the fields of `ono.job/1`, before they are a record.
 #[derive(Debug, Clone, PartialEq)]
@@ -130,6 +145,7 @@ pub struct SessionTables {
     jobs: Vec<JobRow>,
     links: Vec<LinkRow>,
     /// The KUANG/11 host: where packages are, and which of them run (ADR-0107).
+    #[cfg(feature = "kuang")]
     pub kuang: crate::kuang_host::Host,
     /// The context stack as `context.get` answers it to a package (spec §31.12, ADR-0567):
     /// published by the session before every pipeline, so a plugin sees where the session
@@ -158,6 +174,7 @@ impl SessionTables {
 #[derive(Debug)]
 pub struct SessionProvider {
     tables: Arc<Mutex<SessionTables>>,
+    #[cfg_attr(not(feature = "remote"), allow(dead_code))]
     sources: HostSources,
     /// Which of `ono.shell`'s targets this instance answers for (spec §14.4, ADR-0269).
     targets: &'static [&'static str],
@@ -204,10 +221,15 @@ impl SessionProvider {
     fn table(&self, target: &str) -> Result<(Vec<RecordValue>, Vec<ErrorValue>), ErrorValue> {
         match target {
             "job" => Ok((self.jobs()?, Vec::new())),
+            #[cfg(feature = "remote")]
             "link" => Ok((self.links()?, Vec::new())),
+            #[cfg(feature = "remote")]
             "host" => self.hosts(None),
+            #[cfg(feature = "remote")]
             "host-key" => Ok((self.host_keys()?, Vec::new())),
+            #[cfg(feature = "remote")]
             "client-key" => Ok((self.client_keys()?, Vec::new())),
+            #[cfg(feature = "kuang")]
             "plugin" => {
                 let (records, mut failures) = self.lock().kuang.plugin_records()?;
                 // A declaration the shell refused to register must not be a command that is
@@ -215,17 +237,22 @@ impl SessionProvider {
                 failures.extend(crate::plugin_registry::refusals());
                 Ok((records, failures))
             }
+            #[cfg(feature = "kuang")]
             "capability" => Ok((self.lock().kuang.capability_records(None)?, Vec::new())),
+            #[cfg(feature = "kuang")]
             "permission" => Ok((
                 self.lock().kuang.permission_records(None, false)?,
                 Vec::new(),
             )),
+            #[cfg(feature = "kuang")]
             "audit" => Ok((self.lock().kuang.audit_records()?, Vec::new())),
             // The operator's model providers, from `<config>/kuang/models.yaml` (spec §31.43,
             // ADR-0566); no file is the typed, empty answer.
+            #[cfg(feature = "kuang")]
             "model" => self.lock().kuang.model_records(),
             // No assistant package is loaded, no analysis has run: the typed, empty answer
             // (ADR-0111 §3).
+            #[cfg(feature = "kuang")]
             "assistant" | "finding" => Ok((Vec::new(), Vec::new())),
             other => Err(ErrorValue::new(
                 ErrorCode::ResolveTargetNotFound,
@@ -239,6 +266,7 @@ impl SessionProvider {
     /// What the record needs is gathered under the lock; the record itself is built by the
     /// stream's producer, because an unloaded package may have to be run through its
     /// handshake to learn what it contributes (ADR-0108 §3), and that is asynchronous.
+    #[cfg(feature = "kuang")]
     fn inspect(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
         let id = query
             .selectors()
@@ -307,6 +335,7 @@ impl SessionProvider {
     }
 
     /// The package id and version an action names.
+    #[cfg(feature = "kuang")]
     fn plugin_identity(action: &Action) -> Result<(String, String), ErrorValue> {
         let values = action.target().values();
         match (values.first(), values.get(1)) {
@@ -321,6 +350,7 @@ impl SessionProvider {
     }
 
     /// Takes the instance of `id` out of the host and shuts it down (lifecycle.v1 `unload`).
+    #[cfg(feature = "kuang")]
     async fn unload_instance(&self, id: &str) -> bool {
         let instance = self.lock().kuang.remove_instance(id);
         match instance {
@@ -337,6 +367,7 @@ impl SessionProvider {
 
     /// `unload plugin` (lifecycle.v1 `unload`): the instance is shut down and its
     /// contributions are withdrawn; a package that is not loaded is left as it is.
+    #[cfg(feature = "kuang")]
     async fn unload_plugin(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
         let (id, _) = Self::plugin_identity(action)?;
         if self.lock().kuang.instance(&id).is_none() {
@@ -359,6 +390,7 @@ impl SessionProvider {
 
     /// `set plugin --enabled … --background …` (spec §31.3, §31.38): management state on disk,
     /// with a disabled package unloaded first (lifecycle.v1 `disable`).
+    #[cfg(feature = "kuang")]
     async fn set_plugin(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
         let (id, _) = Self::plugin_identity(action)?;
         let mut management = self.lock().kuang.management(&id);
@@ -393,6 +425,7 @@ impl SessionProvider {
 
     /// `revoke capability` (spec §31.18: every grant is revocable): the grant is marked revoked
     /// and the running instance's broker evaluates the new policy at its next call.
+    #[cfg(feature = "kuang")]
     async fn revoke_capability(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
         let Some(Value::Uuid(id)) = action.target().values().first() else {
             return Err(ErrorValue::new(
@@ -475,6 +508,7 @@ impl SessionProvider {
 
     /// `remove plugin` (spec §31.81): a loaded instance is unloaded first, the directory is
     /// removed, and state is retained only when asked.
+    #[cfg(feature = "kuang")]
     async fn remove_plugin(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
         let (id, _) = Self::plugin_identity(action)?;
         let package = self.lock().kuang.installed_package(&id).ok_or_else(|| {
@@ -545,6 +579,7 @@ impl SessionProvider {
     }
 
     /// The link records as of the last publication, oldest first.
+    #[cfg(feature = "remote")]
     fn links(&self) -> Result<Vec<RecordValue>, ErrorValue> {
         let schema = Self::schema("ono.link")?;
         self.lock()
@@ -555,6 +590,7 @@ impl SessionProvider {
     }
 
     /// The pinned host keys, in the order the trust store's file records them (spec §21.5).
+    #[cfg(feature = "remote")]
     fn host_keys(&self) -> Result<Vec<RecordValue>, ErrorValue> {
         let schema = Self::schema("ono.host-key")?;
         crate::trust::rows(&self.sources)?
@@ -565,6 +601,7 @@ impl SessionProvider {
 
     /// The clients this machine authorizes, in the order the store's file records them
     /// (v0.4.1 §9.2, §9.7).
+    #[cfg(feature = "remote")]
     fn client_keys(&self) -> Result<Vec<RecordValue>, ErrorValue> {
         let schema = Self::schema("ono.client-key")?;
         crate::trust::client_key_rows(&self.sources)?
@@ -577,6 +614,7 @@ impl SessionProvider {
     /// sources are consulted — the shell's own file, the OpenSSH configuration, the links held.
     /// A source that cannot be read is reported on the stream's failure channel and the other
     /// sources still answer (spec §16.5).
+    #[cfg(feature = "remote")]
     fn hosts(
         &self,
         only_source: Option<&str>,
@@ -626,6 +664,7 @@ impl SessionProvider {
     /// `add`, `set` and `remove` of a host, against the shell's own host file (ADR-0103 §2,
     /// ADR-0104). The OpenSSH configuration is never written: a host it lists cannot be changed
     /// from here.
+    #[cfg(feature = "remote")]
     async fn act_host(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
         let Some(name) = host_name(action) else {
             return Ok(ActionOutcome::failed(
@@ -757,6 +796,7 @@ fn job_record(
 
 /// The `ono.link/1` record of one published row, for a command that answers with the link it
 /// just made (`connect host`, ADR-0104).
+#[cfg(feature = "remote")]
 pub fn link_value(link: &LinkRow) -> Result<Value, ErrorValue> {
     let schema = SessionProvider::schema("ono.link")?;
     link_record(link, &schema).map(RecordValue::into_value)
@@ -767,11 +807,13 @@ pub fn link_value(link: &LinkRow) -> Result<Value, ErrorValue> {
 /// # Errors
 ///
 /// `provider.schema_violation` when the contract that defines the schema is missing.
+#[cfg(feature = "remote")]
 pub fn host_key_value(row: &crate::trust::KeyRow) -> Result<Value, ErrorValue> {
     let schema = SessionProvider::schema("ono.host-key")?;
     host_key_record(row, &schema).map(RecordValue::into_value)
 }
 
+#[cfg(feature = "remote")]
 fn host_key_record(
     row: &crate::trust::KeyRow,
     schema: &Arc<Schema>,
@@ -797,11 +839,13 @@ fn host_key_record(
 /// # Errors
 ///
 /// `provider.schema_violation` when the contract that defines the schema is missing.
+#[cfg(feature = "remote")]
 pub fn client_key_value(row: &crate::trust::ClientKeyRow) -> Result<Value, ErrorValue> {
     let schema = SessionProvider::schema("ono.client-key")?;
     client_key_record(row, &schema).map(RecordValue::into_value)
 }
 
+#[cfg(feature = "remote")]
 fn client_key_record(
     row: &crate::trust::ClientKeyRow,
     schema: &Arc<Schema>,
@@ -829,6 +873,7 @@ fn client_key_record(
     .build())
 }
 
+#[cfg(feature = "remote")]
 fn link_record(link: &LinkRow, schema: &Arc<Schema>) -> Result<RecordValue, ErrorValue> {
     let strings = |items: &[String]| Value::list(items.iter().map(|item| Value::string(item)));
     Ok(RecordValue::builder(
@@ -920,6 +965,7 @@ fn link_record(link: &LinkRow, schema: &Arc<Schema>) -> Result<RecordValue, Erro
     .build())
 }
 
+#[cfg(feature = "remote")]
 fn host_record(
     entry: &HostEntry,
     source: &str,
@@ -948,6 +994,7 @@ fn host_record(
 }
 
 /// The name a `host` action names, from the selector the user wrote or the object's identity.
+#[cfg(feature = "remote")]
 fn host_name(action: &Action) -> Option<String> {
     action
         .argument("name")
@@ -958,6 +1005,7 @@ fn host_name(action: &Action) -> Option<String> {
 
 /// A bounded stream of `values`, with each per-object failure after them: a package that cannot
 /// be read is one object's failure beside the others' records (spec §16.5).
+#[cfg(feature = "kuang")]
 fn stream_of(values: Vec<Value>, failures: Vec<ErrorValue>) -> ValueStream {
     if failures.is_empty() {
         return ValueStream::from_values(values);
@@ -991,16 +1039,19 @@ impl Provider for SessionProvider {
     }
 
     fn schemas(&self) -> Vec<Arc<Schema>> {
-        [
+        #[cfg(feature = "remote")]
+        let own = [
             "ono.job",
             "ono.link",
             "ono.host",
             "ono.host-key",
             "ono.client-key",
-        ]
-        .into_iter()
-        .filter_map(|name| Self::schema(name).ok())
-        .chain(
+        ];
+        #[cfg(not(feature = "remote"))]
+        let own = ["ono.job"];
+        let schemas = own.into_iter().filter_map(|name| Self::schema(name).ok());
+        #[cfg(feature = "kuang")]
+        let schemas = schemas.chain(
             [
                 "ono.plugin",
                 "ono.plugin-package",
@@ -1014,8 +1065,8 @@ impl Provider for SessionProvider {
             ]
             .into_iter()
             .filter_map(|name| crate::kuang_host::schema(name).ok()),
-        )
-        .collect()
+        );
+        schemas.collect()
     }
 
     fn temporal(&self) -> TemporalCapabilities {
@@ -1036,13 +1087,18 @@ impl Provider for SessionProvider {
     }
 
     fn capabilities(&self) -> Vec<Capability> {
-        vec![
-            Capability::new("job.list", Risk::Read),
+        #[cfg_attr(not(feature = "remote"), allow(unused_mut))]
+        let mut capabilities = vec![Capability::new("job.list", Risk::Read)];
+        #[cfg(feature = "remote")]
+        capabilities.extend([
             Capability::new("link.list", Risk::Read),
             Capability::new("host.list", Risk::Read),
             // Reading, recording and forgetting a pin: `get host-key` is a read of session
             // state, and the three mutations are the shell's own (ADR-0355).
             Capability::new("host.trust", Risk::Mutate),
+        ]);
+        #[cfg(feature = "kuang")]
+        capabilities.extend([
             Capability::new("plugin.list", Risk::Read),
             Capability::new("plugin.search", Risk::Read),
             Capability::new("plugin.inspect", Risk::Read),
@@ -1056,7 +1112,8 @@ impl Provider for SessionProvider {
             Capability::new("assistant.list", Risk::Read),
             Capability::new("model.list", Risk::Read),
             Capability::new("finding.list", Risk::Read),
-        ]
+        ]);
+        capabilities
     }
 
     fn availability(&self) -> Availability {
@@ -1071,7 +1128,9 @@ impl Provider for SessionProvider {
             "job" | "link" | "host" => {
                 let (records, failures) = match query.target_name() {
                     "job" => (self.jobs()?, Vec::new()),
+                    #[cfg(feature = "remote")]
                     "link" => (self.links()?, Vec::new()),
+                    #[cfg(feature = "remote")]
                     "host" => {
                         let source = query
                             .option_value("source")
@@ -1095,6 +1154,7 @@ impl Provider for SessionProvider {
                 Ok(ValueStream::from_values(values))
             }
             // The KUANG/11 tables (ADR-0107, ADR-0108, ADR-0111).
+            #[cfg(feature = "kuang")]
             _ => {
                 if query.target_name() == "plugin" {
                     // `find plugin <term>`: the search selector answers packages as their sources
@@ -1290,6 +1350,11 @@ impl Provider for SessionProvider {
                     .collect();
                 Ok(stream_of(values, failures))
             }
+            #[cfg(not(feature = "kuang"))]
+            other => Err(ErrorValue::new(
+                ErrorCode::ProviderUnsupported,
+                format!("{PROVIDER_ID} answers no target named `{other}`"),
+            )),
         }
     }
 
@@ -1301,6 +1366,7 @@ impl Provider for SessionProvider {
     async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
         // `revoke capability <selector>`: the grant to revoke, by its capability or its id
         // (kuang.yaml); definitions are not grants and are never resolved.
+        #[cfg(feature = "kuang")]
         if let Selector::Field { name, value } = selector
             && name == "selector"
         {
@@ -1328,6 +1394,7 @@ impl Provider for SessionProvider {
                 .filter_map(ObjectRef::of)
                 .collect());
         }
+        #[cfg(feature = "remote")]
         if selector.field_name() == Some("name") {
             return Ok(self
                 .hosts(None)?
@@ -1341,7 +1408,11 @@ impl Provider for SessionProvider {
         // tables' identity fields are typed differently (a job's `id` is a number, a grant's a
         // uuid).
         let mut found = Vec::new();
-        for target in ["job", "plugin", "capability"] {
+        #[cfg(feature = "kuang")]
+        let tables = ["job", "plugin", "capability"];
+        #[cfg(not(feature = "kuang"))]
+        let tables = ["job"];
+        for target in tables {
             let (records, _) = self.table(target)?;
             found.extend(
                 records
@@ -1352,6 +1423,7 @@ impl Provider for SessionProvider {
         }
         // A package by its short name, when exactly one installed package carries it
         // (K11P §10.4, ADR-0601 §1): `remove plugin kubernetes`, `set plugin kubernetes …`.
+        #[cfg(feature = "kuang")]
         if found.is_empty()
             && let Selector::Field { value, .. } = selector
             && let Ok(name) = value.as_str()
@@ -1377,10 +1449,15 @@ impl Provider for SessionProvider {
 
     async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
         match (action.target_name(), action.operation()) {
+            #[cfg(feature = "remote")]
             ("host", _) => self.act_host(action).await,
+            #[cfg(feature = "kuang")]
             ("plugin", "remove") => self.remove_plugin(action).await,
+            #[cfg(feature = "kuang")]
             ("plugin", "unload") => self.unload_plugin(action).await,
+            #[cfg(feature = "kuang")]
             ("plugin", "set") => self.set_plugin(action).await,
+            #[cfg(feature = "kuang")]
             ("capability", "revoke") => self.revoke_capability(action).await,
             (target, operation) => Err(ErrorValue::new(
                 ErrorCode::ProviderUnsupported,

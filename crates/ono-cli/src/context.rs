@@ -108,6 +108,7 @@ pub fn enter(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitSta
     };
     let identity = words.next().map(|word| word.into_owned());
 
+    #[cfg(feature = "spatial")]
     if crate::spatial::storage::looks_like_a_path(target.as_ref()) {
         return enter_place_at(session, target.as_ref());
     }
@@ -117,6 +118,7 @@ pub fn enter(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitSta
             ErrorCode::ResolveTargetNotFound,
             "`enter dir` needs a directory",
         ))),
+        #[cfg(feature = "remote")]
         ("link", Some(name)) => enter_link(session, name),
         (target, _) => enter_object(session, stage, target),
     }
@@ -127,6 +129,7 @@ pub fn enter(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitSta
 ///
 /// §53 settles the sharp case: "Entering a directory changes cwd; entering other object types
 /// does not." A file has a path and is not a directory, so entering one leaves `cd` alone.
+#[cfg(feature = "spatial")]
 fn enter_place_at(session: &mut Session, word: &str) -> Eval<ExitStatus> {
     let path = crate::spatial::storage::absolute(session, word);
     let (_, is_directory) =
@@ -170,6 +173,7 @@ fn enter_directory(session: &mut Session, path: &str) -> Eval<ExitStatus> {
 
 /// Spec §14.4: entering a link makes it decide where provider calls run. The link must already
 /// be held — entering is navigation, not connection.
+#[cfg(feature = "remote")]
 fn enter_link(session: &mut Session, name: String) -> Eval<ExitStatus> {
     if session.link_registry(&name).is_none() {
         return Err(Flow::Failed(
@@ -290,6 +294,7 @@ fn is_absence(error: &ErrorValue) -> bool {
 ///
 /// Which of the two it is, is a question only the session can answer: a tombstone exists exactly
 /// where this session watched the place go (§10.3).
+#[cfg(feature = "spatial")]
 fn missing_destination(
     session: &mut Session,
     target: &str,
@@ -328,12 +333,31 @@ fn missing_destination(
     ))
 }
 
+/// The refusal for an object that is not there, in a build without the spatial tier.
+///
+/// There is no place to have watched go and no spatial refusal to give: the object is simply not
+/// there, which is v0.2 §14.3's answer (ADR-0910).
+#[cfg(not(feature = "spatial"))]
+fn missing_destination(
+    _session: &mut Session,
+    target: &str,
+    _bound: &ono_command::BoundArguments,
+    asked: &str,
+) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::ResolveTargetNotFound,
+        format!("no {target} answers to `{asked}`"),
+    )
+    .with_help(format!("`get {target}` shows what exists"))
+}
+
 /// The tombstone of the place a `enter <target> <identity>` names, where this session knew it.
 ///
 /// The provider has just been asked about this one object and has said it is not there, so this
 /// *is* the observation that ends its lifetime (§33.2): a place this session has seen becomes a
 /// tombstone here, and a place it never saw stays unknown. That is the whole difference between
 /// §40's `spatial.destination_gone` and its `spatial.not_found`.
+#[cfg(feature = "spatial")]
 fn tombstone_for(
     session: &mut Session,
     target: &str,
@@ -554,6 +578,7 @@ pub fn leave(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitSta
         }
         // A one-shot connection (`connect host`) exists for its frame and goes with it
         // (ADR-0104 §3): leaving hangs up.
+        #[cfg(feature = "remote")]
         if matches!(popped.frame.kind(), ono_command::FrameKind::Link) {
             let name = popped.frame.identity().to_string();
             let one_shot = session.link(&name).is_some_and(|link| !link.persistent);
@@ -577,6 +602,7 @@ pub fn leave(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitSta
 ///
 /// The structured refusals of the handshake and the trust decision — `remote.host_key_changed`,
 /// `safety.policy_denied`, `remote.unreachable` — exactly as the protocol raises them.
+#[cfg(feature = "remote")]
 pub fn link(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitStatus> {
     let words = crate::eval::stage_arguments(session, stage, source)?;
     let mut host = None;
@@ -639,6 +665,19 @@ pub fn link(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitStat
     Ok(ExitStatus::SUCCESS)
 }
 
+/// `link host` in a build without the remote tier (ADR-0910).
+///
+/// # Errors
+///
+/// Always `resolve.not_in_build`.
+#[cfg(not(feature = "remote"))]
+pub fn link(_session: &mut Session, _stage: &Stage, _source: &str) -> Eval<ExitStatus> {
+    Err(Flow::Failed(crate::absent::not_in_build(
+        "link host",
+        crate::absent::Tier::Remote,
+    )))
+}
+
 /// Connects to `host` over `transport`, negotiates and mounts (spec §21.2): the connection
 /// behind `link host`, `connect host` and an unlinked `test host` (ADR-0104). `timeout` bounds
 /// the whole of it; without one the transport's own limits apply.
@@ -648,6 +687,7 @@ pub fn link(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitStat
 /// The structured refusals of the handshake and the trust decision — `remote.host_key_changed`,
 /// `safety.policy_denied`, `remote.unreachable` — exactly as the protocol raises them; a
 /// timeout is `remote.unreachable` naming the bound.
+#[cfg(feature = "remote")]
 pub fn establish(
     session: &mut Session,
     host: &str,
@@ -680,6 +720,7 @@ pub fn establish(
 ///
 /// The exit status is the evidence spec §21.3's fallback turns on, so it travels with the
 /// refusal rather than being thrown away where the refusal is built.
+#[cfg(feature = "remote")]
 struct AgentFailure {
     error: ErrorValue,
     exit: Option<std::process::ExitStatus>,
@@ -689,6 +730,7 @@ struct AgentFailure {
 ///
 /// The far side is reached with one command per query — over ssh for the `ssh` transport, as a
 /// child of this process for `local`, which is the same path with the network removed.
+#[cfg(feature = "remote")]
 fn connect_agentless(
     session: &mut Session,
     host: &str,
@@ -748,6 +790,7 @@ fn connect_agentless(
 
 /// The targets this shell could ask an agent about: its own provider vocabulary, minus the
 /// session's own facts, which are never observations of a machine (spec §14.4, ADR-0269).
+#[cfg(feature = "remote")]
 fn agent_targets(session: &mut Session) -> Vec<String> {
     let mut targets: Vec<String> = Vec::new();
     for provider in session.providers().providers() {
@@ -765,6 +808,7 @@ fn agent_targets(session: &mut Session) -> Vec<String> {
 }
 
 /// The refusal for a transport word `ono.link/1` does not define.
+#[cfg(feature = "remote")]
 fn unknown_transport(other: &str) -> ErrorValue {
     ErrorValue::new(
         ErrorCode::ResolveTargetNotFound,
@@ -779,6 +823,7 @@ fn unknown_transport(other: &str) -> ErrorValue {
 /// reports the key the peer proved it holds, and `TrustPolicy::Pinned` — named here, never a
 /// silent default — means an unknown key is refused rather than recorded (ADR-0354). The pin is
 /// kept under the host, not under `host:port`: a port is where a host answers, not who it is.
+#[cfg(feature = "remote")]
 fn connect_over_tcp(
     session: &mut Session,
     address: &str,
@@ -843,6 +888,7 @@ fn connect_over_tcp(
 }
 
 /// Connects to the Ono agent of spec §21.4 over `transport`.
+#[cfg(feature = "remote")]
 fn connect_agent(
     session: &mut Session,
     host: &str,
@@ -959,6 +1005,7 @@ fn connect_agent(
 }
 
 /// The user this side identifies as, for the handshake.
+#[cfg(feature = "remote")]
 fn whoami() -> String {
     std::env::var("USER").unwrap_or_else(|_| "ono".to_owned())
 }

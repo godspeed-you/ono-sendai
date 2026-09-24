@@ -607,18 +607,15 @@ fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
     // v0.4 §19.2/§21.1: standing on a linked host is the same fact about where the next command
     // operates, whether `enter link` or `jump` put the session there, and §21.3 requires it to be
     // recognisable without colour — so the host takes `local`'s place in the text itself.
-    let location = session
-        .frames()
-        .iter()
-        .rev()
-        .find_map(|frame| {
-            matches!(frame.frame.kind(), ono_command::FrameKind::Link)
-                .then(|| frame.frame.identity().to_string())
-        })
-        .or_else(|| {
-            ono_spatial_core::space::standing_in().map(|scope| scope.host_scope().id().to_owned())
-        })
-        .unwrap_or_else(|| "local".to_owned());
+    let linked = session.frames().iter().rev().find_map(|frame| {
+        matches!(frame.frame.kind(), ono_command::FrameKind::Link)
+            .then(|| frame.frame.identity().to_string())
+    });
+    #[cfg(feature = "spatial")]
+    let linked = linked.or_else(|| {
+        ono_spatial_core::space::standing_in().map(|scope| scope.host_scope().id().to_owned())
+    });
+    let location = linked.unwrap_or_else(|| "local".to_owned());
     let mut prompt = ono_editor::Prompt::plain("").segment(location, Token::PromptLink);
 
     // Spec v0.4 §21.1: the current spatial place is a semantic component of the prompt beside the

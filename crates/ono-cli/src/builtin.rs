@@ -342,6 +342,13 @@ fn help(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         return Ok(ExitStatus::SUCCESS);
     }
 
+    // A topic naming a command of a compiled-out tier is answered with the refusal that command
+    // gets, rather than as a topic nobody wrote (ADR-0911).
+    let words: Vec<String> = topic.split_whitespace().map(str::to_owned).collect();
+    if let Some(refusal) = crate::absent::topic(&words) {
+        return Err(Flow::Failed(refusal));
+    }
+
     let registry = match crate::eval::native::registry() {
         Ok(registry) => registry,
         Err(error) => return Err(Flow::Failed(error)),
@@ -440,6 +447,12 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         )));
     };
 
+    // A stage of a compiled-out tier has no plan to report: `explain` says what running it would
+    // say (ADR-0911).
+    if let Some(refusal) = pipeline.head.stages.iter().find_map(crate::absent::claims) {
+        return Err(Flow::Failed(refusal));
+    }
+
     let registry = crate::eval::native::registry().map_err(Flow::Failed)?;
     // The last stage's consumer is whatever the shell's stdout is, and a plan that assumed a
     // terminal would promise interactive rendering to a script (spec v0.3 §1.4).
@@ -495,6 +508,7 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
     // Spec §42.2: while connected, the plan shows the execution context, so the risk of acting
     // on the wrong machine is inspectable; and a mutation says what it does, not only which
     // capability it needs (ADR-0106).
+    #[cfg(feature = "remote")]
     if let Some(host) = &remote_host
         && let Some(link) = session.link(host)
     {
@@ -569,6 +583,7 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         print_safely(&block);
     }
 
+    #[cfg(feature = "remote")]
     if let Some(host) = remote_host {
         for (stage, planned) in pipeline.head.stages.iter().zip(plan.stages()) {
             let Some(demand) = planned.demand() else {

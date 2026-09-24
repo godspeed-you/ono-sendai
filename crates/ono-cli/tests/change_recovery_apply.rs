@@ -5,6 +5,8 @@
 //! the promise §24.5 makes — nothing newer is discarded without the explicit gate — or silently
 //! breaks it.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0913).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

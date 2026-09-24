@@ -12,6 +12,8 @@
 //! `dev.example.echo@0.1.0`, so every package a test loads carries that identity; a package a
 //! test only installs may be anything.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0913).
+#![cfg(feature = "kuang")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

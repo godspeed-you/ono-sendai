@@ -57,6 +57,7 @@ pub enum Definition {
 /// Closing the agent's input ends it in about a millisecond, so this bound is never reached in
 /// practice; it exists so that a far end which ignores end of input cannot make the shell wait
 /// for it forever.
+#[cfg(feature = "remote")]
 pub(crate) const AGENT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// The deepest `@-N` the language admits, whatever the configured retention is.
@@ -147,6 +148,7 @@ struct NavigationState {
     /// frame every command sees with what popping it must restore.
     frames: Vec<ShellFrame>,
     /// The remote links this session holds (spec §21.1), by the name the user gave them.
+    #[cfg(feature = "remote")]
     links: Vec<SessionLink>,
     /// What the last interactive view left selected — the referent of bare `@` (spec §6.4,
     /// ADR-0033, ADR-0050).
@@ -199,6 +201,7 @@ struct ProviderState {
     /// The contributed targets already mounted in `providers`, so a package reaches the registry
     /// once and a reload re-points the entry it already has rather than adding a second
     /// (ADR-0583).
+    #[cfg(feature = "kuang")]
     plugin_providers: Vec<std::sync::Arc<crate::plugin_provider::PluginProvider>>,
 }
 
@@ -217,6 +220,7 @@ struct PresentationState {
 }
 
 /// One remote link the session knows: a definition, established or not (spec §21.1, ADR-0103).
+#[cfg(feature = "remote")]
 #[derive(Debug)]
 pub struct SessionLink {
     /// The link's name, as the user gave it: the prompt's spelling, `enter link`'s argument.
@@ -235,6 +239,7 @@ pub struct SessionLink {
     pub connection: Option<LinkConnection>,
 }
 
+#[cfg(feature = "remote")]
 impl SessionLink {
     /// The row `get link` shows for this link (ADR-0090 §3).
     #[must_use]
@@ -274,6 +279,7 @@ impl SessionLink {
 /// fallback of §21.3, which is a reduced set of providers reading the far side with standard
 /// commands. Everything above the registry is identical for both — that is the point — so the
 /// difference lives here, where the shell describes a link rather than where it uses one.
+#[cfg(feature = "remote")]
 pub enum FarEnd {
     /// The Ono agent of spec §21.4, reached over the link protocol.
     Agent(ono_remote::RemoteLink),
@@ -282,6 +288,7 @@ pub enum FarEnd {
 }
 
 /// An established link: the connection, and the registry its providers are mounted in.
+#[cfg(feature = "remote")]
 pub struct LinkConnection {
     /// What is answering over there, kept so dropping the session hangs up.
     pub far_end: FarEnd,
@@ -294,6 +301,7 @@ pub struct LinkConnection {
     pub agent: Option<ono_remote::ChildProcess>,
 }
 
+#[cfg(feature = "remote")]
 impl LinkConnection {
     /// What the link's context can answer, in mount order.
     ///
@@ -459,6 +467,7 @@ impl LinkConnection {
     }
 }
 
+#[cfg(feature = "remote")]
 impl std::fmt::Debug for LinkConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let host = match &self.far_end {
@@ -675,6 +684,7 @@ impl Session {
             },
             navigation: NavigationState {
                 frames: Vec::new(),
+                #[cfg(feature = "remote")]
                 links: Vec::new(),
                 selection: None,
             },
@@ -690,6 +700,7 @@ impl Session {
                 providers: None,
                 adapters: None,
                 adaptations: Vec::new(),
+                #[cfg(feature = "kuang")]
                 plugin_providers: Vec::new(),
             },
             presentation: PresentationState {
@@ -808,6 +819,7 @@ impl Session {
     }
 
     /// Runs `body` over the KUANG/11 host, locked for that one operation.
+    #[cfg(feature = "kuang")]
     pub fn with_kuang<T>(&self, body: impl FnOnce(&mut crate::kuang_host::Host) -> T) -> T {
         let mut tables = self
             .jobs
@@ -819,6 +831,7 @@ impl Session {
 
     /// Tells the host where this session's plugin home and state directory are, so the tables
     /// it answers from follow the environment (spec §31.9, §31.31).
+    #[cfg(feature = "kuang")]
     pub fn publish_host(&mut self) {
         let plugin_path = crate::plugins::plugin_path(self);
         let state_dir = crate::config::state_dir(self);
@@ -858,6 +871,7 @@ impl Session {
     /// The context stack as a package may see it through `context.get` (spec §31.12,
     /// ADR-0567): where the session stands, what it entered, which link it is on, whether a
     /// person is at the terminal — and nothing beyond it. No environment, no history.
+    #[cfg(feature = "kuang")]
     fn context_for_packages(&self) -> serde_json::Value {
         use std::io::IsTerminal;
         let object = self
@@ -892,6 +906,7 @@ impl Session {
 
     /// Keeps a loaded KUANG/11 package on the session (spec §31.10), answering the instance it
     /// replaces so the caller can shut it down.
+    #[cfg(feature = "kuang")]
     pub fn add_plugin(
         &mut self,
         id: String,
@@ -901,18 +916,21 @@ impl Session {
     }
 
     /// A loaded package by its manifest id.
+    #[cfg(feature = "kuang")]
     #[must_use]
     pub fn plugin(&self, id: &str) -> Option<std::sync::Arc<ono_kuang_supervisor::LoadedPlugin>> {
         self.with_kuang(|host| host.plugin(id))
     }
 
     /// The ids of every loaded package.
+    #[cfg(feature = "kuang")]
     #[must_use]
     pub fn plugin_ids(&self) -> Vec<String> {
         self.with_kuang(|host| host.plugin_ids().map(str::to_owned).collect())
     }
 
     /// Adds a remote link to the session's table, ending whatever link held the name before it.
+    #[cfg(feature = "remote")]
     pub fn add_link(&mut self, link: SessionLink) {
         while let Some(replaced) = self.remove_link(&link.name) {
             self.hang_up(replaced);
@@ -921,18 +939,21 @@ impl Session {
     }
 
     /// The links this session holds, oldest first.
+    #[cfg(feature = "remote")]
     #[must_use]
     pub fn links(&self) -> &[SessionLink] {
         &self.navigation.links
     }
 
     /// The named link, if the session knows it.
+    #[cfg(feature = "remote")]
     #[must_use]
     pub fn link(&self, name: &str) -> Option<&SessionLink> {
         self.navigation.links.iter().find(|link| link.name == name)
     }
 
     /// The named link, to change its definition.
+    #[cfg(feature = "remote")]
     pub fn link_mut(&mut self, name: &str) -> Option<&mut SessionLink> {
         self.navigation
             .links
@@ -943,6 +964,7 @@ impl Session {
     /// Forgets the named link and hands it back, so the caller decides when the connection
     /// drops — and with it, hangs up (ADR-0036 §8). A caller that is letting the link go for
     /// good passes it to [`hang_up`](Self::hang_up), which also ends the process serving it.
+    #[cfg(feature = "remote")]
     pub fn remove_link(&mut self, name: &str) -> Option<SessionLink> {
         let index = self
             .navigation
@@ -959,6 +981,7 @@ impl Session {
     /// `ssh` that carries the agent under `ssh`, are started by `link host` and are therefore
     /// the shell's to end: hanging up closes their input, which is the ordinary way an agent
     /// loop finishes, and this waits for that to happen rather than leaving an orphan behind.
+    #[cfg(feature = "remote")]
     pub fn hang_up(&self, link: SessionLink) {
         let Some(connection) = link.connection else {
             return;
@@ -976,6 +999,7 @@ impl Session {
 
     /// Ends every link the session still holds. Called when the session goes, so no agent it
     /// started can outlive the shell and reparent to init.
+    #[cfg(feature = "remote")]
     fn hang_up_all(&mut self) {
         for link in std::mem::take(&mut self.navigation.links) {
             self.hang_up(link);
@@ -983,6 +1007,7 @@ impl Session {
     }
 
     /// How many frames on the stack stand on the named link.
+    #[cfg(feature = "remote")]
     #[must_use]
     pub fn link_frames(&self, name: &str) -> usize {
         self.navigation
@@ -995,6 +1020,7 @@ impl Session {
     /// Pops every frame standing on the named link, wherever it is in the stack, and answers
     /// how many went. Frames above it stay: an entered directory inside a link is still the
     /// directory (spec §14.1 nests frames; only the link's own are the link's).
+    #[cfg(feature = "remote")]
     pub fn pop_link_frames(&mut self, name: &str) -> usize {
         let before = self.navigation.frames.len();
         self.navigation.frames.retain(|frame| !frame.is_link(name));
@@ -1002,6 +1028,7 @@ impl Session {
     }
 
     /// The mounted registry of the named link, if the session holds it established.
+    #[cfg(feature = "remote")]
     #[must_use]
     pub fn link_registry(&self, name: &str) -> Option<std::sync::Arc<ProviderRegistry>> {
         self.navigation
@@ -1034,6 +1061,7 @@ impl Session {
     }
 
     /// Publishes the link table as it is now, for `get link` and `get host` (ADR-0103).
+    #[cfg(feature = "remote")]
     pub fn publish_links(&mut self) {
         let rows: Vec<crate::session_provider::LinkRow> =
             self.navigation.links.iter().map(SessionLink::row).collect();
@@ -1250,21 +1278,9 @@ impl Session {
         self.navigation.frames.pop()
     }
 
-    /// The runtime and the providers together, for a caller that needs both at once.
-    ///
-    /// Both are borrowed from the same `&mut self`, and a native pipeline needs to hold them for
-    /// as long as it runs. Asking for them one at a time would mean two overlapping borrows of the
-    /// session, so they are handed out together.
-    ///
-    /// Returns `None` only if the operating system refuses to start the runtime.
-    pub fn pipeline_context(&mut self) -> Option<(&tokio::runtime::Runtime, &ProviderRegistry)> {
-        self.runtime()?;
-        // What `get job`, `get link` and `get plugin` answer is what is true when the pipeline
-        // starts (ADR-0090, ADR-0103, ADR-0107).
-        self.publish_jobs();
-        self.publish_links();
-        self.publish_host();
-        self.publish_env();
+    /// The index of the link whose registry answers this pipeline, where one does (spec §14.4).
+    #[cfg(feature = "remote")]
+    fn linked_registry(&self) -> Option<usize> {
         // Spec §14.4: the active link frame decides where provider calls run. The innermost
         // link frame wins; without one, the local registry answers.
         let remote = self
@@ -1285,15 +1301,34 @@ impl Session {
                     .map(|scope| scope.host_scope().id().to_owned())
                     .filter(|name| crate::spatial::links::reachable(name))
             });
-        if let Some(host) = remote
-            && let Some(index) = self
-                .navigation
-                .links
-                .iter()
-                .position(|link| link.name == host && link.connection.is_some())
-        {
+        let host = remote?;
+        self.navigation
+            .links
+            .iter()
+            .position(|link| link.name == host && link.connection.is_some())
+    }
+
+    /// The runtime and the providers together, for a caller that needs both at once.
+    ///
+    /// Both are borrowed from the same `&mut self`, and a native pipeline needs to hold them for
+    /// as long as it runs. Asking for them one at a time would mean two overlapping borrows of the
+    /// session, so they are handed out together.
+    ///
+    /// Returns `None` only if the operating system refuses to start the runtime.
+    pub fn pipeline_context(&mut self) -> Option<(&tokio::runtime::Runtime, &ProviderRegistry)> {
+        self.runtime()?;
+        // What `get job`, `get link` and `get plugin` answer is what is true when the pipeline
+        // starts (ADR-0090, ADR-0103, ADR-0107).
+        self.publish_jobs();
+        #[cfg(feature = "remote")]
+        self.publish_links();
+        #[cfg(feature = "kuang")]
+        self.publish_host();
+        self.publish_env();
+        #[cfg(feature = "remote")]
+        if let Some(linked) = self.linked_registry() {
             let runtime = self.execution.runtime.as_ref()?;
-            let held = self.navigation.links[index].connection.as_ref()?;
+            let held = self.navigation.links[linked].connection.as_ref()?;
             return Some((runtime, &held.registry));
         }
         self.providers();
@@ -1324,9 +1359,7 @@ impl Session {
     /// editor's completion, hold it alongside the session (ADR-0067).
     pub fn shared_adapters(&mut self) -> std::sync::Arc<ono_adapter::Registry> {
         if self.provider.adapters.is_none() {
-            self.provider.adapters = Some(std::sync::Arc::new(ono_adapter::Registry::bundled(
-                Box::new(probe_version),
-            )));
+            self.provider.adapters = Some(std::sync::Arc::new(adapter_registry()));
         }
         self.provider
             .adapters
@@ -1356,6 +1389,7 @@ impl Session {
     }
 
     /// The connection the innermost link frame stands on, when the session is inside one.
+    #[cfg(feature = "remote")]
     #[must_use]
     pub fn remote_link(&self) -> Option<&LinkConnection> {
         let host = self.link_host()?;
@@ -1402,6 +1436,7 @@ impl Session {
             }
             self.provider.providers = Some(registry);
         }
+        #[cfg(feature = "kuang")]
         self.mount_loaded_packages();
         self.provider
             .providers
@@ -1422,6 +1457,7 @@ impl Session {
     /// Registration order is kept: the built-in providers were registered first, so a package
     /// that names a target the shell already answers extends it rather than displacing it, which
     /// is what §31.23 asks for.
+    #[cfg(feature = "kuang")]
     fn mount_loaded_packages(&mut self) {
         let loaded: Vec<std::sync::Arc<ono_kuang_supervisor::LoadedPlugin>> = self
             .plugin_ids()
@@ -1721,11 +1757,27 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         // Spec §31.37: the last pipeline's audit events are written before the session goes.
+        #[cfg(feature = "kuang")]
         self.with_kuang(crate::kuang_host::Host::persist_audit);
         // Fields are dropped after this runs, so the runtime is still here to wait on: a link
         // torn down after the runtime has gone could only abandon its agent (ADR-0161).
+        #[cfg(feature = "remote")]
         self.hang_up_all();
     }
+}
+
+/// The external command adapters this build carries: the bundled packs (spec v0.3 §1.24).
+#[cfg(feature = "adapter")]
+fn adapter_registry() -> ono_adapter::Registry {
+    ono_adapter::Registry::bundled(Box::new(probe_version))
+}
+
+/// A build without the adapter tier carries no pack, so every program runs as the bytes it
+/// writes — what v0.3 calls a program no adapter names — and `adapt` is refused before it gets
+/// here (#127, ADR-0910).
+#[cfg(not(feature = "adapter"))]
+fn adapter_registry() -> ono_adapter::Registry {
+    ono_adapter::Registry::new(Vec::new(), Box::new(|_, _| None))
 }
 
 /// Runs an adapter's version probe and returns what the program wrote (spec v0.3 §1.46).
@@ -1766,6 +1818,7 @@ fn redaction_policy() -> &'static ono_history::Policy {
 /// A target whose schema the package did not register, or whose schema declares no identity, is
 /// left alone: §3.1 composes a place's identity from what makes the object that object, and a
 /// schema that declares none has not said what that is. Such a target stays a `get` and no more.
+#[cfg(feature = "kuang")]
 fn contribute_spatial_type(
     plugin: &ono_kuang_supervisor::LoadedPlugin,
     registered: &ono_kuang_supervisor::RegisteredTarget,

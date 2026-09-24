@@ -32,6 +32,7 @@ mod segment;
 
 pub(crate) use bind::stream_segment;
 pub(crate) use drive::run_background;
+#[cfg(feature = "remote")]
 pub(crate) use remote::{literal_argv, remote_decision};
 pub(crate) use result::live_geometry;
 pub(crate) use segment::{adapts_at_terminal, claims, continuable_body, continuable_list};
@@ -41,6 +42,7 @@ use self::external::{
     seed_bytes,
 };
 use self::foreground::run_native_segment;
+#[cfg(feature = "remote")]
 use self::remote::{RemoteRun, remote_argv, run_remote_adapted};
 use self::result::{write_failed, write_result};
 use self::segment::{Segment, consumer_needing_objects, segments, unstructured_refusal};
@@ -70,7 +72,18 @@ fn implementations(session: &mut Session) -> Result<&'static CommandTable, Error
     // §47 names the settings. They are read here, once, because this is the only point where the
     // shell's resolved configuration and the process-wide spatial state (§29.2) meet.
     crate::spatial::configure_from(session.settings());
+    #[cfg_attr(not(feature = "spatial"), allow(unused_mut))]
     let mut built = ono_command::builtin_commands_for(registry()?, session.providers());
+    // The commands of v0.4, v0.5 and v0.6 are the shell's own to dispatch; a core build leaves
+    // those tiers out, and their commands are refused before they resolve (ADR-0910).
+    #[cfg(feature = "spatial")]
+    register_tiers(session, &mut built);
+    Ok(TABLE.get_or_init(|| built))
+}
+
+/// Registers the spatial, temporal and change commands the shell dispatches itself.
+#[cfg(feature = "spatial")]
+fn register_tiers(session: &mut Session, built: &mut CommandTable) {
     // The spatial commands of v0.4 §6 are the shell's to dispatch (§45.6): they need the host and
     // boot the session belongs to, which no library crate can know. Selection, ranking and
     // identity stay in `ono-spatial-query` and `ono-spatial-index`, where §45.2 and §45.3 put
@@ -142,7 +155,6 @@ fn implementations(session: &mut Session) -> Result<&'static CommandTable, Error
     built.register(std::sync::Arc::new(crate::change::GetRecovery));
     built.register(std::sync::Arc::new(crate::change::InspectRecovery));
     built.register(std::sync::Arc::new(crate::change::RemoveRecovery));
-    Ok(TABLE.get_or_init(|| built))
 }
 
 /// Checks every expression in `pipeline` against the schema that would reach it.
@@ -411,6 +423,7 @@ fn run_from(
                     segments.get(position + 1),
                     last,
                 );
+                #[cfg(feature = "remote")]
                 if let Some(demand_kind) = demand.as_ref()
                     && session.link_host().is_some()
                     && matches!(

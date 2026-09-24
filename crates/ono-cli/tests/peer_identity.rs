@@ -9,6 +9,9 @@
 //!
 //! Everything runs against a scratch directory, so no suite here needs a network, a real home
 //! directory or a key that matters.
+
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0913).
+#![cfg(feature = "remote")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

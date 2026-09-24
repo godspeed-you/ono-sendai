@@ -9,6 +9,8 @@
 //! what one shell wrote and then read back: the session ledger is in-memory unless a recorder is
 //! running (v0.5 §10.2), so a second process would legitimately see nothing.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0913).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

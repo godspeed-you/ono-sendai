@@ -613,6 +613,7 @@ pub fn last_json_document(run: &ono_testkit::Run) -> serde_yaml_ng::Value {
 }
 
 /// A deterministic signing key for a fixture, seeded so two suites agree on the publisher.
+#[cfg(feature = "kuang")]
 pub fn key(seed: u8) -> ono_kuang_protocol::SecretKey {
     ono_kuang_protocol::SecretKey::from_bytes(&[seed; 32])
 }
@@ -620,6 +621,7 @@ pub fn key(seed: u8) -> ono_kuang_protocol::SecretKey {
 /// Signs the package in `directory` with `key`, as a package author would (v0.4.1 §17.2).
 ///
 /// Two suites had written it identically before it moved here (v0.4.1 §39.1).
+#[cfg(feature = "kuang")]
 pub fn sign(directory: &Path, key: &ono_kuang_protocol::SecretKey) {
     let text = std::fs::read_to_string(directory.join("manifest.yaml")).expect("the manifest");
     let manifest =

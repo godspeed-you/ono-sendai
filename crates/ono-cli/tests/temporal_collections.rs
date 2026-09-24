@@ -19,6 +19,8 @@
 //! The evidence is written into the store the shell opens, because a reconstruction can only be
 //! as good as what was recorded.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0913).
+#![cfg(feature = "temporal")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

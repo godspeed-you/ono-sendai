@@ -69,6 +69,7 @@ pub(crate) fn interrupted_flow_now() -> Flow {
 ///
 /// Only a thread actually running a foreground pipeline may answer yes: a recorder flush or a
 /// background job reading the same store is nobody's Ctrl-C to cancel.
+#[cfg(feature = "temporal")]
 fn cancelled_inside_a_long_read() -> bool {
     RUNNING.with(std::cell::Cell::get) > 0 && interrupt_reached()
 }
@@ -90,6 +91,7 @@ impl ForegroundRun {
                 // The shell is the only place that knows both how a long read is asked for and
                 // how it is told to stop, so it is the shell that tells the store what to poll
                 // between batches of a scan (v0.5 §32.6).
+                #[cfg(feature = "temporal")]
                 ono_temporal_ledger::watch_for_cancellation(cancelled_inside_a_long_read);
             }
             running.set(running.get() + 1);
@@ -190,6 +192,13 @@ pub(super) fn run_stage_list(
         let outcome = run_pipeline(session, &pipeline, &expanded);
         session.finish_expanding();
         return outcome;
+    }
+
+    // A name that belongs to a tier this build was compiled without is refused before anything
+    // else resolves it, in whichever stage it stands: it is Ono's vocabulary, never a program's
+    // to answer by accident (#127, ADR-0911). The full build refuses nothing here.
+    if let Some(refusal) = list.stages.iter().find_map(crate::absent::claims) {
+        return Err(Flow::Failed(refusal));
     }
 
     // `kill %N` names a job, and a job is the shell's (spec §18.1, §18.4; ADR-0071 §4). Any
