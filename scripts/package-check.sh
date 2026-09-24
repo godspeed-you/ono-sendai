@@ -86,8 +86,11 @@ checkout="$(pwd -P)"
 checkout_label="$(basename "$checkout" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-48)"
 checkout_digest="$(printf '%s' "$checkout" | sha256sum | cut -c1-12)"
 fedora_check_image="ono-package-check:fedora-${checkout_label%-}-${checkout_digest}"
-lock_dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
-exec {image_lock}>>"$lock_dir/ono-package-check-$(printf '%s' "$fedora_check_image" | tr -c 'A-Za-z0-9_.-' '_').lock"
+# Where every run against this checkout agrees, `sudo` or not (scripts/image-lock.sh, ADR-0919).
+# shellcheck source=scripts/image-lock.sh
+source scripts/image-lock.sh
+image_lock_open package-check
+image_lock="$image_lock_fd"
 flock --shared "$image_lock"
 
 native=0

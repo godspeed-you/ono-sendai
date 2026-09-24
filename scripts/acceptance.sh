@@ -147,14 +147,25 @@ if [[ -z "$runtime" ]]; then
   exit 127
 fi
 
-# Every run holds a shared lock on its image for as long as it lasts, and removes the image only
-# if it can then take the lock exclusively — that is, only if no other run is still using it. Two
-# runs of one checkout share an image by construction, so the tag alone does not protect them.
-# The lock lives beside the runtime's other per-user state, keyed by the image it guards.
-lock_dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
-lock_file="$lock_dir/ono-acceptance-$(printf '%s' "$IMAGE" | tr -c 'A-Za-z0-9_.-' '_').lock"
-exec {image_lock}>>"$lock_file"
+# Every run holds a shared lock for as long as it lasts, and removes images only if it can then
+# take the lock exclusively — that is, only if no other run of this checkout is still using them.
+# Two runs of one checkout share an image by construction, so the tag alone does not protect them.
+# One lock per checkout covers every image it names — full, filesystems and core — and lives where
+# a `sudo` run and a user run agree (scripts/image-lock.sh, ADR-0919).
+# shellcheck source=scripts/image-lock.sh
+source scripts/image-lock.sh
+image_lock_open acceptance
+image_lock="$image_lock_fd"
 flock --shared "$image_lock"
+# `--build-only` builds for `--no-build` runs that come after it; a full run finishing in between
+# must not remove what they are about to use. It pins the images until the pin is deleted.
+pin_file="${image_lock_file%.lock}.pinned"
+
+# The background build's log, whatever way the run ends.
+base_log=""
+trap 'if [[ -n "$base_log" ]]; then rm -f "$base_log"; fi' EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 
 cases=()
 if [[ ${#SELECTED[@]} -gt 0 ]]; then
@@ -277,11 +288,11 @@ elif [[ $NO_BUILD -eq 0 ]]; then
   # download of three minutes or more from the Ubuntu archive. So `filesystems-base` is built in
   # the background while the main image compiles, and the filesystem image below finds it ready.
   base_pid=""
-  base_log=""
   if [[ $fs_wanted -eq 1 ]]; then
     base_log="$(mktemp)"
+    # Without the lock: a child that outlived this run would hold the images against removal.
     "${build[@]}" --file docker/Dockerfile --target filesystems-base "${base_cache[@]}" . \
-      >"$base_log" 2>&1 &
+      >"$base_log" 2>&1 {image_lock}<&- &
     base_pid=$!
   fi
   printf '\n\033[1m== building %s with %s\033[0m\n' "$IMAGE" "$runtime"
@@ -316,6 +327,9 @@ if [[ $fs_wanted -eq 1 ]]; then
   fs_built=1
 fi
 
+if [[ $BUILD_ONLY -eq 1 ]]; then
+  : > "$pin_file" 2>/dev/null || true
+fi
 if [[ $BUILD_ONLY -eq 1 && $PROFILE == "core" ]]; then
   printf '\nacceptance: built %s\n' "$CORE_IMAGE"
   exit 0
@@ -642,7 +656,10 @@ $run"
   fi
 done
 
-if [[ $KEEP_IMAGE -eq 0 ]]; then
+if [[ $KEEP_IMAGE -eq 0 && -e "$pin_file" ]]; then
+  printf '\nacceptance: keeping %s — a --build-only run built it for later --no-build runs; delete %s to let the next run remove it\n' \
+    "$IMAGE" "$pin_file"
+elif [[ $KEEP_IMAGE -eq 0 ]]; then
   if flock --exclusive --nonblock "$image_lock"; then
     # A core run built the core image and nothing else (ADR-0913).
     if [[ $core_built -eq 1 ]]; then

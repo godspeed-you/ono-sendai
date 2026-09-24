@@ -34,6 +34,20 @@ printf '%s\n' "$*" >> "$STUB_LOG"
 if [ "$1" = build ] && [ "${!#}" = - ]; then
   cat > /dev/null
 fi
+# What the background build of the filesystem stage holds open, for the test that the image
+# lock is not among it.
+case " $* " in
+  *" --target filesystems-base "*)
+    for fd in /proc/$$/fd/*; do readlink "$fd"; done >> "$STUB_LOG.base-fds" 2>/dev/null ;;
+esac
+# A build of the main image holds when `STUB_HOLD_BUILD` names a path, the way `run` does below.
+if [ "$1" = build ] && [ -n "${STUB_HOLD_BUILD:-}" ] && [[ " $* " == *" --tag "* ]]; then
+  : > "$STUB_HOLD_BUILD.started"
+  for _ in $(seq 600); do
+    [ -e "$STUB_HOLD_BUILD.release" ] && break
+    sleep 0.1
+  done
+fi
 if [ "$1" = run ]; then
   cat > /dev/null
   if [ -n "${STUB_HOLD:-}" ]; then
@@ -66,11 +80,13 @@ fn checkout(name: &str) -> Checkout {
         path
     };
     std::fs::create_dir_all(root.join("scripts")).unwrap();
-    std::fs::copy(
-        repo().join("scripts/acceptance.sh"),
-        root.join("scripts/acceptance.sh"),
-    )
-    .expect("the harness is copied");
+    for script in ["acceptance.sh", "image-lock.sh", "package-check.sh"] {
+        std::fs::copy(
+            repo().join("scripts").join(script),
+            root.join("scripts").join(script),
+        )
+        .expect("the harness is copied");
+    }
     write("docker/acceptance/groups", "core 000 099\n");
     write(
         "docker/acceptance/cases/000-runs.case",
@@ -85,11 +101,6 @@ fn checkout(name: &str) -> Checkout {
         "acceptance:\n",
     );
     // What `scripts/package-check.sh` reads: the version of `ono-cli`, and the packages of it.
-    std::fs::copy(
-        repo().join("scripts/package-check.sh"),
-        root.join("scripts/package-check.sh"),
-    )
-    .expect("package validation is copied");
     write(
         "Cargo.toml",
         "[workspace]\nmembers = [\"crates/ono-cli\"]\nresolver = \"2\"\n",
@@ -158,7 +169,8 @@ impl Checkout {
             .stdin(Stdio::null())
             .env_remove("ONO_ACCEPTANCE_IMAGE")
             .env_remove("ONO_ACCEPTANCE_LAYER_CACHE")
-            .env_remove("STUB_HOLD");
+            .env_remove("STUB_HOLD")
+            .env_remove("STUB_HOLD_BUILD");
         command
     }
 
@@ -318,8 +330,18 @@ fn should_leave_an_image_in_place_while_another_run_is_still_using_it() {
         .expect("bash must be runnable in the gate");
     wait_for(&hold.with_extension("started"), &mut held);
 
+    // The second run is another user's — `sudo` in the same checkout — with a runtime
+    // directory of its own. The image tag is the daemon's, so the lock has to be one both agree
+    // on, not one in either user's runtime directory.
     let other_log = checkout.root.with_file_name("other.log");
-    let other = checkout.run(&["000-runs"], &other_log);
+    let elsewhere = checkout.root.with_file_name("another-users-runtime");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let other = checkout
+        .command(&["000-runs"], &other_log)
+        .env("XDG_RUNTIME_DIR", &elsewhere)
+        .env("TMPDIR", &elsewhere)
+        .output()
+        .unwrap();
     let _ = std::fs::write(hold.with_extension("release"), "");
     let held = held.wait_with_output().expect("the held run finishes");
 
@@ -711,5 +733,131 @@ fn should_select_the_packaging_suite_when_a_file_the_packages_ship_is_added_or_r
     assert!(
         unselected.is_empty(),
         "shipped by the packages but selecting no packaging run in scripts/gate.sh: {unselected:?}"
+    );
+}
+
+// --- #185 follow-up: what the lock does not cover yet ----------------------------------------
+
+#[test]
+fn should_keep_an_image_built_for_later_runs_until_it_is_released() {
+    // `--build-only` builds the images for `--no-build` runs that come after it. A full run in
+    // the same checkout finishing in between used to remove them, and the `--no-build` runs then
+    // found no image.
+    let checkout = checkout("ono-sendai");
+    let built_log = checkout.root.with_file_name("built.log");
+    let built = checkout.run(&["--build-only"], &built_log);
+    assert!(built.status.success(), "{}", text(&built));
+
+    let full_log = checkout.root.with_file_name("full.log");
+    let full = checkout.run(&["000-runs"], &full_log);
+    assert!(full.status.success(), "{}", text(&full));
+    assert!(
+        removed_images(&logged(&full_log)).is_empty(),
+        "a full run removed the images a `--build-only` run built for later `--no-build` runs:\n{}",
+        text(&full)
+    );
+    assert!(
+        text(&full).contains("--build-only"),
+        "the run says why it kept the image:\n{}",
+        text(&full)
+    );
+}
+
+#[test]
+fn should_hand_the_background_build_no_copy_of_the_image_lock() {
+    // The filesystem stage builds in the background while the main image compiles. A copy of the
+    // lock in that child outlives the run when the run dies, and holds the image against removal.
+    let checkout = checkout("ono-sendai");
+    let log = checkout.root.with_file_name("fds.log");
+    let output = checkout.run(&["--build-only"], &log);
+    assert!(output.status.success(), "{}", text(&output));
+    let fds = std::fs::read_to_string(log.with_extension("log.base-fds"))
+        .expect("the background build ran");
+    assert!(
+        !fds.contains(".lock"),
+        "the background build holds the image lock open:\n{fds}"
+    );
+}
+
+#[test]
+fn should_leave_no_build_log_behind_when_a_run_is_stopped() {
+    let checkout = checkout("ono-sendai");
+    let tmp = checkout.root.with_file_name("tmp");
+    std::fs::create_dir_all(&tmp).unwrap();
+    let hold = checkout.root.with_file_name("hold-build");
+    let log = checkout.root.with_file_name("stopped.log");
+    let mut run = checkout
+        .command(&["--build-only"], &log)
+        .env("STUB_HOLD_BUILD", &hold)
+        .env("TMPDIR", &tmp)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for(&hold.with_extension("started"), &mut run);
+    let stopped = Command::new("kill")
+        .args(["-TERM", &run.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(stopped.success());
+    // The stand-in build outlives the stopped script and holds its output open until released.
+    let _ = std::fs::write(hold.with_extension("release"), "");
+    let _ = run.wait_with_output();
+    let left: Vec<_> = std::fs::read_dir(&tmp)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert!(
+        left.is_empty(),
+        "a stopped run left its temporary build log behind: {left:?}"
+    );
+}
+
+#[test]
+fn should_keep_the_image_lock_in_the_repository_every_run_of_the_checkout_shares() {
+    // A checkout that is the top of a repository keeps its lock in the common git directory,
+    // which its worktrees, its owner and root all reach; one that is not keeps it in itself. Never
+    // in a per-user runtime directory, which a `sudo` run does not share.
+    let plain = checkout("ono-sendai");
+    let log = plain.root.with_file_name("plain.log");
+    assert!(plain.run(&["000-runs"], &log).status.success());
+    assert!(
+        plain.root.join(".ono-acceptance.lock").is_file(),
+        "a checkout outside any repository keeps its lock in itself"
+    );
+    assert!(
+        std::fs::read_dir(&plain.runtime_dir)
+            .unwrap()
+            .next()
+            .is_none(),
+        "the lock is in the per-user runtime directory"
+    );
+
+    let repository = checkout("ono-sendai");
+    let git = |arguments: &[&str]| {
+        let status = Command::new("git")
+            .args(arguments)
+            .current_dir(&repository.root)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .expect("git must be runnable in the gate");
+        assert!(
+            status.status.success(),
+            "git {arguments:?}: {}",
+            text(&status)
+        );
+    };
+    git(&["init", "--quiet"]);
+    let log = repository.root.with_file_name("repository.log");
+    let output = repository.run(&["000-runs"], &log);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        repository.root.join(".git/ono-acceptance.lock").is_file(),
+        "the top of a repository keeps its lock in the common git directory"
+    );
+    assert!(
+        !repository.root.join(".ono-acceptance.lock").exists(),
+        "and leaves nothing in the working tree"
     );
 }
