@@ -982,6 +982,13 @@ fn should_not_install_a_component_package_whose_component_cannot_be_compiled() {
             && said.contains("kuang-compile"),
         "the install is refused with the compile step's own reason, got {said:?}"
     );
+    // The tool ran and refused the bytes. A tool that is not there is refused with the same code
+    // and the same words, so without the tool's own reason this test would pass on a host that
+    // never compiled anything.
+    assert!(
+        said.contains("is not a component this engine can compile"),
+        "the refusal carries kuang-compile's own reason, got {said:?}"
+    );
     assert!(
         !root.exists("plugins/dev.example.echo"),
         "and nothing is placed"
