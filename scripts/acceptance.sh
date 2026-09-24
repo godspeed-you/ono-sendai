@@ -11,7 +11,19 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-IMAGE="${ONO_ACCEPTANCE_IMAGE:-ono-sendai:acceptance}"
+# The image a run builds and runs its cases in. By default it is named after the checkout — its
+# directory name for the reader and a digest of its absolute path to tell two clones of one name
+# apart — because a name shared by two worktrees let the first run to finish remove the image the
+# other was still running cases in, and let a run grade the other worktree's binary and pass
+# (issue #185). `ONO_ACCEPTANCE_IMAGE` still names one explicitly.
+if [[ -n "${ONO_ACCEPTANCE_IMAGE:-}" ]]; then
+  IMAGE="$ONO_ACCEPTANCE_IMAGE"
+else
+  checkout="$(pwd -P)"
+  checkout_label="$(basename "$checkout" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-48)"
+  checkout_digest="$(printf '%s' "$checkout" | sha256sum | cut -c1-12)"
+  IMAGE="ono-sendai:acceptance-${checkout_label%-}-${checkout_digest}"
+fi
 CASE_DIR="docker/acceptance/cases"
 GROUPS_FILE="docker/acceptance/groups"
 KEEP_IMAGE=0
@@ -119,6 +131,15 @@ if [[ -z "$runtime" ]]; then
   echo "acceptance: neither docker nor podman is available" >&2
   exit 127
 fi
+
+# Every run holds a shared lock on its image for as long as it lasts, and removes the image only
+# if it can then take the lock exclusively — that is, only if no other run is still using it. Two
+# runs of one checkout share an image by construction, so the tag alone does not protect them.
+# The lock lives beside the runtime's other per-user state, keyed by the image it guards.
+lock_dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+lock_file="$lock_dir/ono-acceptance-$(printf '%s' "$IMAGE" | tr -c 'A-Za-z0-9_.-' '_').lock"
+exec {image_lock}>>"$lock_file"
+flock --shared "$image_lock"
 
 cases=()
 if [[ ${#SELECTED[@]} -gt 0 ]]; then
@@ -514,9 +535,13 @@ $run"
 done
 
 if [[ $KEEP_IMAGE -eq 0 ]]; then
-  "$runtime" image rm --force "$IMAGE" >/dev/null 2>&1 || true
-  if [[ $fs_built -eq 1 ]]; then
-    "$runtime" image rm --force "$FS_IMAGE" >/dev/null 2>&1 || true
+  if flock --exclusive --nonblock "$image_lock"; then
+    "$runtime" image rm --force "$IMAGE" >/dev/null 2>&1 || true
+    if [[ $fs_built -eq 1 ]]; then
+      "$runtime" image rm --force "$FS_IMAGE" >/dev/null 2>&1 || true
+    fi
+  else
+    printf '\nacceptance: keeping %s — another run is still using it, and the last one to finish removes it\n' "$IMAGE"
   fi
 fi
 

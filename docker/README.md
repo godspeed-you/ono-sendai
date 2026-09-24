@@ -82,6 +82,12 @@ starts with, and the harness refuses to run while one does not — a case that o
 comes with a new line there. CI builds the images once and runs each group in a job of its own
 (ADR-0851).
 
+The image is named after the checkout — `ono-sendai:acceptance-<directory>-<digest of its path>`,
+and `…-filesystems` beside it — so runs in two worktrees build, use and remove two images rather
+than one. Two runs of one checkout do share it, and the run that finishes first leaves it for
+the other; the last one to finish removes it. `ONO_ACCEPTANCE_IMAGE` names the image explicitly
+(issue #185).
+
 Within a run, the cases with the shortest declared `timeout:` go first, so a quick case that
 fails shows early and `--fail-fast` stops there. Each result line carries the case's wall-clock
 time. The cases always run one after another, because many of them measure time or load.
