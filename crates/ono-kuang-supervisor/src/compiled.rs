@@ -241,18 +241,39 @@ fn only_its_owner_writes(what: &str, path: &Path) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt as _;
     let metadata = std::fs::metadata(path)
         .map_err(|error| format!("{what} `{}` cannot be examined: {error}", path.display()))?;
-    if metadata.uid() != 0 && metadata.uid() != nix::unistd::geteuid().as_raw() {
+    ownership(
+        what,
+        path,
+        Examined {
+            uid: metadata.uid(),
+            mode: metadata.mode(),
+        },
+        nix::unistd::geteuid().as_raw(),
+    )
+}
+
+/// What the ownership rule reads of a file: who owns it, and its mode.
+#[derive(Debug, Clone, Copy)]
+struct Examined {
+    uid: u32,
+    mode: u32,
+}
+
+/// The ownership rule itself, apart from the system it reads: `examined` belongs to `euid` or to
+/// root, and nobody else may write it.
+fn ownership(what: &str, path: &Path, examined: Examined, euid: u32) -> Result<(), String> {
+    if examined.uid != 0 && examined.uid != euid {
         return Err(format!(
             "{what} `{}` belongs to uid {}, neither this user nor root",
             path.display(),
-            metadata.uid()
+            examined.uid
         ));
     }
-    if metadata.mode() & 0o022 != 0 {
+    if examined.mode & 0o022 != 0 {
         return Err(format!(
             "{what} `{}` is writable by users other than its owner (mode {:o})",
             path.display(),
-            metadata.mode() & 0o7777
+            examined.mode & 0o7777
         ));
     }
     Ok(())
