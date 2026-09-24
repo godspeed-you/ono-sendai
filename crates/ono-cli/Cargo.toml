@@ -145,6 +145,9 @@ Unix tools you already know keep working unchanged. Installing this package regi
 maintainer-scripts = "packaging/deb"
 assets = [
     ["target/release/ono", "usr/bin/", "755"],
+    # What `install plugin` runs on a component, beside `ono` (ADR-0870). Built by the SDK in a
+    # cargo invocation of its own, so the shell does not link the compiler it carries (ADR-0905).
+    ["target/release/kuang-compile", "usr/bin/", "755"],
     ["../../README.md", "usr/share/doc/ono/README.md", "644"],
     # What the licences of the crates in the binary ask to travel with it (ADR-0608), generated
     # from `Cargo.lock` and held to it by `spec-check`.
@@ -160,6 +163,7 @@ license = "MIT"
 url = "https://github.com/godspeed-you/ono-sendai"
 assets = [
     { source = "target/release/ono", dest = "/usr/bin/ono", mode = "755" },
+    { source = "target/release/kuang-compile", dest = "/usr/bin/kuang-compile", mode = "755" },
     { source = "../../LICENSE", dest = "/usr/share/licenses/ono/LICENSE", mode = "644", doc = true },
     { source = "../../README.md", dest = "/usr/share/doc/ono/README.md", mode = "644", doc = true },
     { source = "../../THIRD-PARTY-LICENSES", dest = "/usr/share/licenses/ono/THIRD-PARTY-LICENSES", mode = "644", doc = true },

@@ -25,17 +25,24 @@ use ono_testkit::scratch;
 mod support;
 use support::{repo, workflow_job};
 
-/// A private target directory holding a stand-in `release/ono` — this test executable, which
-/// is a genuine ELF binary so dependency scanners see what they see on the real thing.
+/// The binaries the packages ship, by their name under `target/release/`: the shell, and the
+/// compiler `install plugin` runs on a component (ADR-0870, ADR-0905).
+const SHIPPED_BINARIES: [&str; 2] = ["ono", "kuang-compile"];
+
+/// A private target directory holding a stand-in for each shipped binary under `release/` — this
+/// test executable, which is a genuine ELF binary so dependency scanners see what they see on the
+/// real thing.
 fn staged_target_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("ono-packaging-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("release")).expect("a scratch target directory");
-    std::fs::copy(
-        std::env::current_exe().expect("the test executable has a path"),
-        dir.join("release/ono"),
-    )
-    .expect("the stand-in binary is staged");
+    for binary in SHIPPED_BINARIES {
+        std::fs::copy(
+            std::env::current_exe().expect("the test executable has a path"),
+            dir.join("release").join(binary),
+        )
+        .expect("the stand-in binary is staged");
+    }
     dir
 }
 
@@ -123,14 +130,27 @@ fn should_build_a_deb_that_installs_ono_as_a_registered_login_shell() {
             "the package ships {path}:\n{contents}"
         );
     }
-    let binary = contents
-        .lines()
-        .find(|line| line.ends_with("./usr/bin/ono"))
-        .expect("the binary is listed");
-    assert!(
-        binary.starts_with("-rwxr-xr-x"),
-        "/usr/bin/ono is installed executable for everyone: {binary}"
-    );
+    for shipped in SHIPPED_BINARIES {
+        let path = format!("./usr/bin/{shipped}");
+        let binary = contents
+            .lines()
+            .find(|line| line.ends_with(&path))
+            .unwrap_or_else(|| {
+                panic!(
+                    "the package ships no {path}, so a shell installed from it cannot {}:\n\
+                     {contents}",
+                    if shipped == "ono" {
+                        "exist"
+                    } else {
+                        "install a component package (ADR-0870)"
+                    }
+                )
+            });
+        assert!(
+            binary.starts_with("-rwxr-xr-x"),
+            "{path} is installed executable for everyone: {binary}"
+        );
+    }
 
     let control = target_dir.join("control");
     run(
@@ -188,6 +208,8 @@ fn should_build_an_rpm_that_installs_ono_as_a_registered_login_shell() {
     let files = header.files();
     for path in [
         "/usr/bin/ono",
+        // What `install plugin` runs on a component (ADR-0870, ADR-0905).
+        "/usr/bin/kuang-compile",
         "/usr/share/licenses/ono/LICENSE",
         "/usr/share/licenses/ono/THIRD-PARTY-LICENSES",
         "/usr/share/doc/ono/README.md",
@@ -706,15 +728,18 @@ fn should_normalize_file_ownership_and_mode_in_every_produced_package() {
         "an rpm member carries a setuid, setgid or sticky bit: {modes:?}"
     );
     let files = header.files();
-    let binary = files
-        .iter()
-        .position(|path| path == "/usr/bin/ono")
-        .expect("the binary is packaged");
-    assert_eq!(
-        modes[binary] & 0o7777,
-        0o755,
-        "/usr/bin/ono does not carry the declared 755"
-    );
+    for shipped in SHIPPED_BINARIES {
+        let path = format!("/usr/bin/{shipped}");
+        let binary = files
+            .iter()
+            .position(|file| *file == path)
+            .unwrap_or_else(|| panic!("{path} is not packaged: {files:?}"));
+        assert_eq!(
+            modes[binary] & 0o7777,
+            0o755,
+            "{path} does not carry the declared 755"
+        );
+    }
 
     let _ = std::fs::remove_dir_all(&target_dir);
 }
@@ -1342,4 +1367,78 @@ fn should_build_each_release_check_into_a_directory_it_owns() {
         checksummed.contains("ono_0.5.0_amd64.deb") && !checksummed.contains("0.4.1"),
         "the checksum manifest covers artifacts of another build (issue #145):\n{checksummed}"
     );
+}
+
+#[test]
+fn should_refuse_to_package_a_shell_without_the_compiler_it_installs_components_with() {
+    // ADR-0870: `install plugin` runs `kuang-compile` beside `ono`, else on PATH. Packages built
+    // from a target directory that holds `ono` alone install a shell that refuses every component
+    // package, which is a regression of released behaviour — so the packaging refuses instead.
+    let scratch = scratch();
+    let target_dir = scratch.path().join("target");
+    let release = target_dir
+        .join(format!("{}-unknown-linux-gnu", std::env::consts::ARCH))
+        .join("release");
+    std::fs::create_dir_all(&release).expect("a scratch target directory");
+    std::fs::copy(
+        std::env::current_exe().expect("the test executable has a path"),
+        release.join("ono"),
+    )
+    .expect("the stand-in shell is staged");
+    let dist = scratch.path().join("dist");
+
+    let (packaged, report) = package_into(&dist, &target_dir);
+    assert!(
+        !packaged && report.contains("kuang-compile"),
+        "a package without `kuang-compile` was built, or the refusal does not name it:\n{report}"
+    );
+    assert!(
+        !dist
+            .join(format!(
+                "ono_{}_{}.deb",
+                env!("CARGO_PKG_VERSION"),
+                debian_arch()
+            ))
+            .exists(),
+        "the refusal wrote a package anyway"
+    );
+}
+
+#[test]
+fn should_build_the_compiler_apart_from_the_shell_and_prove_the_shell_went_without_it() {
+    // Cargo unifies features across the packages of one invocation: built beside `kuang-compile`,
+    // `ono` would link the Cranelift ADR-0870 took out of it. So the release builds them in two
+    // invocations, and package validation looks for the compiler in the packaged `ono`.
+    let script = support::read("scripts/package.sh");
+    let builds: Vec<&str> = script
+        .lines()
+        .filter(|line| line.contains("build --release --locked"))
+        .collect();
+    assert!(
+        !builds.is_empty()
+            && builds.iter().all(|line| {
+                line.contains("--package ono-cli") != line.contains("--package ono-kuang-sdk")
+            }),
+        "a release build names the shell and the SDK together, so their features unify: \
+         {builds:#?}"
+    );
+    assert!(
+        builds
+            .iter()
+            .any(|line| line.contains("--bin kuang-compile")),
+        "no release build produces `kuang-compile`: {builds:#?}"
+    );
+
+    let check = support::read("scripts/package-check.sh");
+    for needed in [
+        "cranelift_codegen",
+        "kuang-compile --help",
+        "/usr/bin/kuang-compile",
+    ] {
+        assert!(
+            check.contains(needed),
+            "package validation does not check `{needed}`, so a package that ships a shell \
+             carrying the compiler, or no compiler at all, passes it"
+        );
+    }
 }

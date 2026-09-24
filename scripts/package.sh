@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds the installable packages of the `ono` binary into dist/ (ADR-0121, ADR-0123):
+# Builds the installable packages of the `ono` binary, and of the `kuang-compile` that
+# `install plugin` runs beside it (ADR-0870, ADR-0905), into dist/ (ADR-0121, ADR-0123):
 #
 #     dist/ono_<version>_<amd64|arm64>.deb
 #     dist/ono-<version>-1.<x86_64|aarch64>.rpm
@@ -13,7 +14,8 @@
 #
 # usage: scripts/package.sh [--target <triple>] [--no-build] [--dist <dir>] [--print-determinism]
 #   --target             x86_64-unknown-linux-gnu (default: the host) or aarch64-unknown-linux-gnu
-#   --no-build           package what $CARGO_TARGET_DIR/<triple>/release/ono already holds
+#   --no-build           package what $CARGO_TARGET_DIR/<triple>/release/{ono,kuang-compile}
+#                        already hold
 #   --dist <dir>         write the packages here instead of dist/ — one rebuild of §46.5 per dir
 #   --print-determinism  print the four inputs of spec §46.2-§46.4 and exit, building nothing
 set -euo pipefail
@@ -160,6 +162,13 @@ if [[ -d "$dist_dir" ]]; then
   fi
 fi
 
+# Two cargo invocations, never one: cargo unifies features across the packages of an invocation,
+# and `ono-kuang-sdk` turns on the supervisor's `compiler` feature for `kuang-compile`. Built
+# together, `ono` would link the Cranelift ADR-0870 took out of it; package-check.sh looks for it
+# in the packaged shell (ADR-0905).
+build_both="cargo build --release --locked --target $target --package ono-cli \
+&& cargo build --release --locked --target $target --package ono-kuang-sdk --bin kuang-compile"
+
 if [[ $no_build -eq 0 ]]; then
   if [[ "$target" == "$host_triple" ]]; then
     step "building ono for $target in $BUILD_IMAGE"
@@ -183,7 +192,7 @@ if [[ $no_build -eq 0 ]]; then
       --env "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" \
       --env LC_ALL=C.UTF-8 --env LANG=C.UTF-8 --env TZ=UTC \
       "$BUILD_IMAGE" \
-      cargo build --release --locked --target "$target" --package ono-cli
+      sh -c "$build_both"
   else
     require_tool cross@0.2.5
     step "building ono for $target in cross's toolchain image"
@@ -194,14 +203,20 @@ dependencies stay undeclared; the packages a release ships are built on a native
 (ADR-0123, .github/workflows/release.yml).
 NOTE
     cross build --release --locked --target "$target" --package ono-cli
+    cross build --release --locked --target "$target" --package ono-kuang-sdk --bin kuang-compile
   fi
 fi
 
 binary="$target_dir/$target/release/ono"
-if [[ ! -x "$binary" ]]; then
-  echo "package: $binary does not exist; build it or drop --no-build" >&2
-  exit 1
-fi
+compiler="$target_dir/$target/release/kuang-compile"
+for built in "$binary" "$compiler"; do
+  if [[ ! -x "$built" ]]; then
+    echo "package: $built does not exist; build it or drop --no-build" >&2
+    echo "package: the packages ship \`ono\` and the \`kuang-compile\` that \`install plugin\` runs" >&2
+    echo "package: beside it (ADR-0870); a shell without it cannot install a component package" >&2
+    exit 1
+  fi
+done
 
 mkdir -p "$dist_dir"
 deb="$dist_dir/ono_${version}_${deb_arch}.deb"
@@ -225,6 +240,7 @@ trap 'rm -rf "$rpm_stage"' EXIT
 mkdir -p "$rpm_stage/src" "$rpm_stage/target/$target/release"
 tar --exclude-vcs --exclude-vcs-ignores -cf - . | tar -xf - -C "$rpm_stage/src"
 cp "$binary" "$rpm_stage/target/$target/release/ono"
+cp "$compiler" "$rpm_stage/target/$target/release/kuang-compile"
 find "$rpm_stage" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
 rpm_output="$(cd "$(dirname "$rpm")" && pwd)/$(basename "$rpm")"
 (

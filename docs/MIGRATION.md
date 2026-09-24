@@ -290,8 +290,9 @@ compiled form of it, written by the SDK's `kuang-compile` into `~/.cache/ono/kua
 `/usr/lib/ono-sendai/kuang-compiled/` with `--store`.
 
 - `install plugin` runs `kuang-compile` for you, from beside `ono` or from `PATH`. A component
-  package installed that way loads straight away. If the tool is not there, the install is refused
-  and names it; the distribution packages do not ship it yet.
+  package installed that way loads straight away. The `.deb` and `.rpm` install it as
+  `/usr/bin/kuang-compile`, beside `/usr/bin/ono` (ADR-0905). If the tool is not there — a shell
+  built from source without it — the install is refused and names it.
 - A component copied into the plugin path by hand, and every component after a shell upgrade that
   changes the engine, is refused with `load.component_not_compiled` (`Ono-Sendai-K11105`). The
   message carries the exact command, for example

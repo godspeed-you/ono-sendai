@@ -15,7 +15,8 @@
 #        scripts/rebuild-check.sh --compare <first-dir> <second-dir>
 #
 #   --target   the package layout to build (default: the host)
-#   --binary   the `ono` to package (default: $CARGO_TARGET_DIR/<triple>/release/ono)
+#   --binary   the `ono` to package (default: $CARGO_TARGET_DIR/<triple>/release/ono); the
+#              `kuang-compile` packaged beside it is the one in the same directory (ADR-0905)
 #   --work     where the two builds happen (default: target/reproducibility)
 #   --compare  compare two directories that already exist and build nothing — how the release
 #              workflow compares two *runners*, which is the freshest clean environment there is
@@ -60,10 +61,13 @@ fi
 
 target="${target:-$(rustc -vV | sed -n 's/^host: //p')}"
 binary="${binary:-${CARGO_TARGET_DIR:-target}/$target/release/ono}"
-if [[ ! -f "$binary" ]]; then
-  echo "rebuild-check: $binary does not exist — build it, or name one with --binary" >&2
-  exit 1
-fi
+compiler="$(dirname "$binary")/kuang-compile"
+for built in "$binary" "$compiler"; do
+  if [[ ! -f "$built" ]]; then
+    echo "rebuild-check: $built does not exist — build it, or name another directory with --binary" >&2
+    exit 1
+  fi
+done
 
 # One commit, one date. §46.2 derives it once and both builds are handed the same value: two
 # builds of one commit that disagreed about the date would be comparing two commits.
@@ -75,6 +79,7 @@ mkdir -p "$work"
 # read against whatever directory each of them happens to be started in.
 work="$(cd "$work" && pwd)"
 binary="$(cd "$(dirname "$binary")" && pwd)/$(basename "$binary")"
+compiler="$(dirname "$binary")/kuang-compile"
 
 # Each build gets its own everything, and a deliberately different environment. The second one is
 # hostile on purpose: a German locale, a timezone at +08:45, a private umask. None of it may
@@ -103,6 +108,7 @@ build_once() {
   local root="$work/$slot"
   mkdir -p "$root/target/$target/release" "$root/dist" "$root/tmp"
   cp "$binary" "$root/target/$target/release/ono"
+  cp "$compiler" "$root/target/$target/release/kuang-compile"
   checkout_once "$root/src" "$dated"
 
   step "build $slot — LC_ALL=$locale TZ=$zone umask=$mask, sources ${dated:+dated @}${dated:-fresh}"

@@ -112,6 +112,33 @@ file_arch="${deb##*_}"; file_arch="${file_arch%.deb}"
 #
 # Both Debian images: the oldest supported baseline and one current representative (§48.3).
 
+# What both package formats hold their two binaries to, once each has been extracted to
+# /tmp/ono and /tmp/kuang-compile.
+binary_structure='
+for binary in ono kuang-compile; do
+  machine="$(od -An -tx1 -j18 -N2 "/tmp/$binary" | tr -s " " | sed "s/^ //;s/ $//")"
+  [ "$machine" = "$ELF_MACHINE" ] \
+    || { echo "$binary e_machine is [$machine], expected [$ELF_MACHINE]"; exit 1; }
+  # §48.2 check: no private build paths are embedded. The release compiles in a container at
+  # /project, so a /home/<somebody>/ inside the binary means it was built on a workstation and
+  # carries that workstation'"'"'s directory layout to every user who installs it.
+  if grep -aoE "/(home|Users)/[A-Za-z0-9._-]+/" "/tmp/$binary" | sort -u | head -5 | grep .; then
+    echo "$binary embeds a private build path"; exit 1
+  fi
+done
+# ADR-0870, ADR-0905: the shell links the WebAssembly runtime and no compiler; the compiler is
+# `kuang-compile`, built in a cargo invocation of its own because cargo unifies features across
+# one. A cranelift_codegen in the packaged `ono` means the two were built together. The same
+# probe must find it in `kuang-compile`, or it is blind and the absence in `ono` proves nothing.
+if grep -aqE "cranelift[_-]codegen" /tmp/ono; then
+  echo "the packaged ono links cranelift_codegen: it was built together with kuang-compile"
+  exit 1
+fi
+grep -aqE "cranelift[_-]codegen" /tmp/kuang-compile \
+  || { echo "cranelift_codegen is not visible in kuang-compile either, so the probe proves nothing"; exit 1; }
+echo "ono carries no cranelift_codegen; kuang-compile does"
+'
+
 deb_structure='
 set -e
 dpkg-deb --info "$PKG" | grep -q "^ Package: ono$"      || { echo "package name"; exit 1; }
@@ -127,23 +154,41 @@ dpkg-deb --info "$PKG" | grep -q "^ Version: $FILE_VERSION$" \
   || { echo "the filename says version $FILE_VERSION and the metadata does not"; exit 1; }
 dpkg-deb --info "$PKG" | grep -q "^ Architecture: $FILE_ARCH$" \
   || { echo "the filename says architecture $FILE_ARCH and the metadata does not"; exit 1; }
-dpkg-deb --fsys-tarfile "$PKG" | tar -xO ./usr/bin/ono > /tmp/ono
-machine="$(od -An -tx1 -j18 -N2 /tmp/ono | tr -s " " | sed "s/^ //;s/ $//")"
-[ "$machine" = "$ELF_MACHINE" ] || { echo "binary e_machine is [$machine], expected [$ELF_MACHINE]"; exit 1; }
-# §48.2 check: no private build paths are embedded. The release compiles in a container at
-# /project, so a /home/<somebody>/ inside the binary means it was built on a workstation and
-# carries that workstation'"'"'s directory layout to every user who installs it.
-if grep -aoE "/(home|Users)/[A-Za-z0-9._-]+/" /tmp/ono | sort -u | head -5 | grep .; then
-  echo "the binary embeds a private build path"; exit 1
-fi
+for binary in ono kuang-compile; do
+  dpkg-deb --fsys-tarfile "$PKG" | tar -xO "./usr/bin/$binary" > "/tmp/$binary" \
+    || { echo "the package ships no /usr/bin/$binary"; exit 1; }
+done
+'"$binary_structure"'
 # §48.3: the binary requires no glibc newer than the baseline supplies, which is what makes the
 # baseline a compatibility proof rather than a distribution somebody happened to test on.
-needed="$(grep -aoE "GLIBC_2\.[0-9]+" /tmp/ono | sort -uV | tail -1)"
-[ -n "$needed" ] || { echo "the binary declares no glibc requirement at all"; exit 1; }
-highest="$(printf "%s\nGLIBC_%s\n" "$needed" "$GLIBC_FLOOR" | sort -uV | tail -1)"
-[ "$highest" = "GLIBC_$GLIBC_FLOOR" ] \
-  || { echo "the binary needs $needed and the baseline supplies GLIBC_$GLIBC_FLOOR"; exit 1; }
-echo "requires at most $needed"
+for binary in ono kuang-compile; do
+  needed="$(grep -aoE "GLIBC_2\.[0-9]+" "/tmp/$binary" | sort -uV | tail -1)"
+  [ -n "$needed" ] || { echo "$binary declares no glibc requirement at all"; exit 1; }
+  highest="$(printf "%s\nGLIBC_%s\n" "$needed" "$GLIBC_FLOOR" | sort -uV | tail -1)"
+  [ "$highest" = "GLIBC_$GLIBC_FLOOR" ] \
+    || { echo "$binary needs $needed and the baseline supplies GLIBC_$GLIBC_FLOOR"; exit 1; }
+  echo "$binary requires at most $needed"
+done
+'
+
+# The compiler `install plugin` runs on a component, beside `ono` (ADR-0870, ADR-0905): there,
+# owned and moded like the shell, and a program that runs — it explains itself, and it refuses
+# what is not a component rather than writing an artifact for it.
+compiler_runtime='
+echo "--- the component compiler beside the shell"
+[ -x /usr/bin/kuang-compile ] || { echo "/usr/bin/kuang-compile is not there or not executable"; exit 1; }
+[ "$(stat -c "%U %G %a" /usr/bin/kuang-compile)" = "root root 755" ] \
+  || { echo "/usr/bin/kuang-compile is $(stat -c "%U %G %a" /usr/bin/kuang-compile), expected root root 755"; exit 1; }
+kuang-compile --help > /tmp/kuang-compile.help 2>&1 \
+  || { cat /tmp/kuang-compile.help; echo "kuang-compile --help failed"; exit 1; }
+grep -q "kuang-compile <component.wasm>" /tmp/kuang-compile.help \
+  || { cat /tmp/kuang-compile.help; echo "kuang-compile --help does not explain itself"; exit 1; }
+printf "not a component" > /tmp/not-a-component.wasm
+if kuang-compile --store /tmp/kuang-store /tmp/not-a-component.wasm > /tmp/kuang-compile.log 2>&1; then
+  echo "kuang-compile accepted bytes that are not a component"; exit 1
+fi
+grep -q "^kuang-compile: " /tmp/kuang-compile.log \
+  || { cat /tmp/kuang-compile.log; echo "kuang-compile did not say why it refused"; exit 1; }
 '
 
 deb_runtime='
@@ -162,6 +207,7 @@ installed="$(ono --version | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" | head -1)"
   || { echo "the installed binary reports $installed and the release is $VERSION"; exit 1; }
 ono --version
 grep -qx /usr/bin/ono /etc/shells || { echo "/etc/shells lacks /usr/bin/ono after install"; exit 1; }
+'"$compiler_runtime"'
 echo "--- as root"
 count="$(ono -c "get process | count | to json")"
 echo "get process | count | to json => $count"
@@ -181,6 +227,7 @@ echo "--- remove"
 apt-get remove --yes ono >/tmp/apt.log 2>&1 || { cat /tmp/apt.log; exit 1; }
 ! grep -q /usr/bin/ono /etc/shells || { echo "/etc/shells still lists /usr/bin/ono after removal"; exit 1; }
 ! [ -e /usr/bin/ono ] || { echo "/usr/bin/ono survived removal"; exit 1; }
+! [ -e /usr/bin/kuang-compile ] || { echo "/usr/bin/kuang-compile survived removal"; exit 1; }
 # §48.2 check: uninstall leaves user configuration. Removing a shell must not remove what the
 # person using it wrote.
 [ -f /home/probe/.config/ono/config.ono ] \
@@ -198,7 +245,7 @@ apt-get install --yes --reinstall --no-install-recommends "$PKG" >/tmp/apt.log 2
 for image in "${DEBIAN_IMAGES[@]}"; do
   step "$deb in $image (structure)"
   if in_container "$image" "$deb_structure" "$deb"; then
-    ok "declares Architecture: $deb_arch, packages an ELF for it, and needs no glibc past $GLIBC_FLOOR"
+    ok "declares Architecture: $deb_arch, packages ono and kuang-compile for it, keeps the compiler out of ono, and needs no glibc past $GLIBC_FLOOR"
   else
     fail "$deb structure in $image"
   fi
@@ -239,19 +286,18 @@ set -e
 [ "$(rpm -qp --qf "%{ARCH}" "$PKG")" = "$FILE_ARCH" ] \
   || { echo "the filename says architecture $FILE_ARCH and the metadata does not"; exit 1; }
 rpm -qpl "$PKG" | grep -qx /usr/bin/ono                    || { echo "file list"; exit 1; }
+rpm -qpl "$PKG" | grep -qx /usr/bin/kuang-compile          || { echo "file list: no /usr/bin/kuang-compile"; exit 1; }
 rpm -qp --scripts "$PKG" | grep -q /etc/shells             || { echo "scripts"; exit 1; }
 if [ "$NATIVE" = 1 ]; then
   rpm -qp --requires "$PKG" | grep -q "^libc.so.6("         || { echo "no computed libc.so.6 requirement"; exit 1; }
 fi
-rpm2archive - < "$PKG" > /tmp/ono.tgz && tar -xzOf /tmp/ono.tgz ./usr/bin/ono > /tmp/ono
-machine="$(od -An -tx1 -j18 -N2 /tmp/ono | tr -s " " | sed "s/^ //;s/ $//")"
-[ "$machine" = "$ELF_MACHINE" ] || { echo "binary e_machine is [$machine], expected [$ELF_MACHINE]"; exit 1; }
-# §48.2 check: no private build paths are embedded
-if grep -aoE "/(home|Users)/[A-Za-z0-9._-]+/" /tmp/ono | sort -u | head -5 | grep .; then
-  echo "the binary embeds a private build path"; exit 1
-fi
+rpm2archive - < "$PKG" > /tmp/ono.tgz
+for binary in ono kuang-compile; do
+  tar -xzOf /tmp/ono.tgz "./usr/bin/$binary" > "/tmp/$binary"
+done
+'"$binary_structure"'
 ' "$rpm"; then
-  ok "declares arch $rpm_arch and packages an ELF for it"
+  ok "declares arch $rpm_arch, packages an ELF of it for ono and kuang-compile, and keeps the compiler out of ono"
 else
   fail "$rpm structure"
 fi
@@ -272,6 +318,7 @@ installed="$(ono --version | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" | head -1)"
   || { echo "the installed binary reports $installed and the release is $VERSION"; exit 1; }
 ono --version
 grep -qx /usr/bin/ono /etc/shells || { echo "/etc/shells lacks /usr/bin/ono after install"; exit 1; }
+'"$compiler_runtime"'
 echo "--- as root"
 count="$(ono -c "get process | count | to json")"
 echo "get process | count | to json => $count"
@@ -293,6 +340,7 @@ echo "--- remove"
 dnf --disablerepo="*" --assumeyes remove ono >/tmp/dnf.log 2>&1 || { cat /tmp/dnf.log; exit 1; }
 ! grep -q /usr/bin/ono /etc/shells || { echo "/etc/shells still lists /usr/bin/ono after removal"; exit 1; }
 ! [ -e /usr/bin/ono ] || { echo "/usr/bin/ono survived removal"; exit 1; }
+! [ -e /usr/bin/kuang-compile ] || { echo "/usr/bin/kuang-compile survived removal"; exit 1; }
 # §48.2 check: uninstall leaves user configuration
 [ -f /home/probe/.config/ono/config.ono ] \
   || { echo "removing the package deleted the user configuration"; exit 1; }
