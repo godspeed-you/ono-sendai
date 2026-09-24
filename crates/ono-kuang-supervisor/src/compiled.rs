@@ -354,6 +354,49 @@ pub fn compile(component: &Path, store: &Path) -> Result<PathBuf, String> {
     Ok(artifact)
 }
 
+#[cfg(test)]
+mod ownership_rule {
+    use std::path::Path;
+
+    use super::{Examined, ownership};
+
+    const ME: u32 = 1000;
+
+    fn verdict(uid: u32, mode: u32) -> Result<(), String> {
+        ownership("the artifact", Path::new("/s/a.cwasm"), Examined { uid, mode }, ME)
+    }
+
+    #[test]
+    fn should_accept_what_this_user_or_root_owns_and_only_its_owner_writes() {
+        assert_eq!(verdict(ME, 0o100_644), Ok(()));
+        assert_eq!(verdict(0, 0o100_644), Ok(()));
+        assert_eq!(verdict(ME, 0o040_755), Ok(()));
+    }
+
+    #[test]
+    fn should_refuse_what_another_user_owns_whatever_its_mode() {
+        // A file another user owns is one that user can rewrite, and chmod back, at will: its
+        // mode says nothing about who wrote the bytes.
+        let refused = verdict(1001, 0o100_644).expect_err("another user's artifact");
+        assert!(
+            refused.contains("belongs to uid 1001, neither this user nor root")
+                && refused.contains("/s/a.cwasm"),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn should_refuse_what_others_may_write_though_this_user_owns_it() {
+        for mode in [0o100_664, 0o100_646, 0o100_666] {
+            let refused = verdict(ME, mode).expect_err("a writable artifact");
+            assert!(
+                refused.contains("writable by users other than its owner"),
+                "{mode:o}: {refused:?}"
+            );
+        }
+    }
+}
+
 #[cfg(all(test, feature = "compiler"))]
 mod portable {
     #![allow(
