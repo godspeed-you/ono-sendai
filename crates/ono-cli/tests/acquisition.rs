@@ -87,6 +87,8 @@ fn system_payload(home: &ono_testkit::Scratch, id: &str, manifest_text: &str) ->
 fn pack(directory: &Path) -> Vec<u8> {
     let mut builder = tar::Builder::new(Vec::new());
     builder.mode(tar::HeaderMode::Deterministic);
+    // As `kuang-sign pack` writes it: regular files, even where the copied program has holes.
+    builder.sparse(false);
     let mut names: Vec<String> = ono_kuang_protocol::artifact_files(directory)
         .into_iter()
         .map(|file| file.path)
