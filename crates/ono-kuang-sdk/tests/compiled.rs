@@ -529,10 +529,36 @@ async fn should_refuse_a_store_it_cannot_read_as_unreadable_not_as_another_engin
 
 #[test]
 fn should_write_an_artifact_only_its_owner_can_change_whatever_the_umask() {
+    // Run under `umask 000`, where nothing the tool leaves to the umask is taken away: what it
+    // makes — the directories on the way to the store, the store, the artifact — is owner-only
+    // writable because the tool says so, not because the caller's umask did.
     use std::os::unix::fs::PermissionsExt as _;
     let scene = Scene::with(EMPTY_COMPONENT);
-    let artifact = scene.compile();
-    for path in [artifact.as_path(), scene.store().as_path()] {
+    let store = scene.root.path().join("made/by/the/tool/store");
+    let run = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("umask 000 && exec \"$0\" \"$@\"")
+        .arg(COMPILE)
+        .arg("--store")
+        .arg(&store)
+        .arg(scene.component())
+        .output()
+        .expect("kuang-compile runs under umask 000");
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let artifact = PathBuf::from(String::from_utf8(run.stdout).expect("a path").trim());
+    let mut written = vec![artifact.clone()];
+    written.extend(
+        store
+            .ancestors()
+            .take_while(|directory| *directory != scene.root.path())
+            .map(Path::to_path_buf),
+    );
+    assert_eq!(written.len(), 6, "{written:?}");
+    for path in &written {
         let mode = std::fs::metadata(path)
             .expect("written")
             .permissions()
