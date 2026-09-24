@@ -2366,6 +2366,7 @@ dependencies = [
  "jiff",
  "nix",
  "ono-core",
+ "rustix",
  "serde_yaml_ng",
 ]
 

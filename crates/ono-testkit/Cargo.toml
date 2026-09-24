@@ -14,6 +14,8 @@ jiff.workspace = true
 # `signal`: a run that overruns is ended with its whole process tree (ADR-0892).
 nix = { workspace = true, features = ["resource", "signal"] }
 ono-core.workspace = true
+# `process`: pidfds, so a process tree is signalled by identity rather than by pid (ADR-0893).
+rustix = { workspace = true, features = ["process"] }
 serde_yaml_ng.workspace = true
 
 [dev-dependencies]
