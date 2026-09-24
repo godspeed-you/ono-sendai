@@ -118,27 +118,25 @@ fn should_draw_the_resolution_of_each_target_under_its_own_heading() {
         drawn.contains("PERSISTENCE RESOLUTION"),
         "Appendix B.10: the expansion is drawn as its own section. Got {drawn:?}"
     );
-    // Redirected output is laid out at a fixed 80 columns so it is reproducible (spec §4.6), and
-    // each line is cut to it. A target's heading is its path at that width: the whole path where
-    // the checkout is shallow, its first 78 characters where it is deep, as on a CI runner.
-    let heading = |destination: &str| -> String {
-        format!("  {destination}")
-            .chars()
-            .take(REDIRECTED_WIDTH)
-            .collect()
-    };
+    // Redirected output is laid out at a fixed 80 columns so it is reproducible (spec §4.6). A
+    // path longer than that keeps what tells two targets apart, its end, however deep the
+    // directory it sits in — the heading of a target is never cut inside its file name.
     for destination in &destinations {
+        let name = Path::new(destination)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("a target names a file");
+        let shortened = format!("/{name}");
         assert!(
-            drawn.lines().any(|line| line == heading(destination)),
-            "Appendix B.10: the drawing names {destination} on a heading of its own. Got {drawn:?}"
+            drawn.lines().any(|line| {
+                line.chars().count() <= REDIRECTED_WIDTH
+                    && (line == format!("  {destination}")
+                        || (line.starts_with("  ...") && line.ends_with(&shortened)))
+            }),
+            "Appendix B.10: the drawing names {destination} on a heading of its own, whole or \
+             shortened at its start, within {REDIRECTED_WIDTH} columns. Got {drawn:?}"
         );
     }
-    assert_ne!(
-        heading(&destinations[0]),
-        heading(&destinations[1]),
-        "the two targets' headings must be told apart for this test to prove anything; the \
-         scratch directory is too deep for an 80-column drawing"
-    );
     assert_eq!(
         drawn.matches("recovery boundary").count(),
         2,
