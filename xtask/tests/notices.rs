@@ -76,3 +76,93 @@ fn should_name_a_crate_that_ships_no_licence_document_rather_than_leave_it_out()
         "the section is there while such crates are in the graph"
     );
 }
+
+// --- each shipped binary's graph, resolved on its own ------------------------------------------
+
+/// A workspace of two shipped members over one engine whose compiler is a feature: `shell` uses
+/// the engine without it, `tool` turns it on. Cargo unifies features across a workspace's
+/// resolution, so a graph read from the workspace gives `shell` the compiler it never links.
+fn two_binaries_one_feature() -> ono_testkit::Scratch {
+    let workspace = ono_testkit::scratch();
+    let package = |dir: &str, extra: &str| {
+        workspace.write(
+            format!("{dir}/Cargo.toml"),
+            format!(
+                "[package]\nname = \"{dir}\"\nversion = \"1.0.0\"\nedition = \"2021\"\n\
+                 license = \"MIT\"\n{extra}"
+            ),
+        );
+        workspace.write(format!("{dir}/src/lib.rs"), "");
+        workspace.write(format!("{dir}/LICENSE"), format!("the {dir} licence\n"));
+    };
+    workspace.write(
+        "Cargo.toml",
+        "[workspace]\nresolver = \"2\"\nmembers = [\"shell\", \"tool\"]\n\
+         exclude = [\"engine\", \"heavy\", \"built\", \"tested\"]\n",
+    );
+    package(
+        "shell",
+        "[dependencies]\nengine = { path = \"../engine\" }\n\
+         [build-dependencies]\nbuilt = { path = \"../built\" }\n\
+         [dev-dependencies]\ntested = { path = \"../tested\" }\n",
+    );
+    package(
+        "tool",
+        "[dependencies]\nengine = { path = \"../engine\", features = [\"compiler\"] }\n",
+    );
+    package(
+        "engine",
+        "[dependencies]\nheavy = { path = \"../heavy\", optional = true }\n\
+         [features]\ncompiler = [\"dep:heavy\"]\n",
+    );
+    for leaf in ["heavy", "built", "tested"] {
+        package(leaf, "");
+    }
+    let locked = std::process::Command::new("cargo")
+        .args(["generate-lockfile", "--offline"])
+        .current_dir(workspace.path())
+        .output()
+        .expect("cargo must be runnable in the gate");
+    assert!(
+        locked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&locked.stderr)
+    );
+    workspace
+}
+
+fn names(dependencies: &[xtask::notices::Dependency]) -> Vec<&str> {
+    dependencies.iter().map(|d| d.name.as_str()).collect()
+}
+
+#[test]
+fn should_owe_exactly_the_crates_each_shipped_binary_links_resolved_on_its_own() {
+    // ADR-0870 moved Cranelift out of `ono` and into `kuang-compile`; the notices went on listing
+    // it for `ono`, because they were read from the workspace's feature-unified graph. The file
+    // owes the union of what the shipped binaries link, each built on its own, and nothing else.
+    let workspace = two_binaries_one_feature();
+
+    let shell =
+        xtask::notices::dependencies_of(workspace.path(), &["shell"]).expect("the graph reads");
+    assert_eq!(
+        names(&shell),
+        vec!["built", "engine"],
+        "`shell` links the engine without its compiler, a build dependency's output and no test \
+         harness; a crate only another member's feature brings in is not shipped with it"
+    );
+
+    let both = xtask::notices::dependencies_of(workspace.path(), &["shell", "tool"])
+        .expect("the graph reads");
+    assert_eq!(
+        names(&both),
+        vec!["built", "engine", "heavy"],
+        "shipping `tool` too ships the compiler it links, once"
+    );
+    assert!(
+        both.iter().find(|d| d.name == "heavy").is_some_and(|d| d
+            .texts
+            .iter()
+            .any(|(_, text)| text.contains("the heavy licence"))),
+        "the licence text of a crate reached only through `tool` is read: {both:?}"
+    );
+}

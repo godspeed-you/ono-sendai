@@ -5,7 +5,8 @@
 //! the software, Apache-2.0 §4 that its text and any `NOTICE` travel with a derivative work, and
 //! `CDLA-Permissive-2.0` §2.1 that its own text travel with the data — `webpki-roots` embeds the
 //! Mozilla root store in the binary (ADR-0607). One file answers all of them: every crate the
-//! `ono` binary links, and every licence text those crates ship, reproduced once.
+//! shipped binaries — `ono` and `kuang-compile` — link, and every licence text those crates ship,
+//! reproduced once.
 //!
 //! It is generated rather than maintained, because a file somebody edits by hand falls behind
 //! the first dependency bump and then says something untrue about what is being distributed.
@@ -20,8 +21,10 @@ use crate::scan::Problem;
 /// Where the generated notices live, relative to the repository root.
 pub const NOTICES_FILE: &str = "THIRD-PARTY-LICENSES";
 
-/// The package whose dependency graph is shipped: the `ono` binary.
-const SHIPPED: &str = "ono-cli";
+/// The packages whose binaries the distribution packages ship: `ono-cli` for `ono`, and
+/// `ono-kuang-sdk` for `kuang-compile` (ADR-0870, ADR-0906). A package's binaries share its
+/// normal dependencies, so the graph of the package is the graph of the binary.
+pub const SHIPPED: &[&str] = &["ono-cli", "ono-kuang-sdk"];
 
 /// One crate the binary links, and what it says about its licence.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -60,35 +63,87 @@ impl std::fmt::Display for NoticesError {
 
 impl std::error::Error for NoticesError {}
 
-/// Every crate the shipped binary links, sorted by name and version.
+/// Every crate the shipped binaries link, sorted by name and version.
 ///
-/// The graph is walked from `ono-cli` through normal and build dependencies and never through
-/// dev-dependencies: a test harness is not distributed. It is *not* filtered by platform, so the
-/// answer is the union over every target the lockfile resolves — a superset of what any one build
-/// links, which is the safe direction for a notice and the only one that gives the same file on
-/// every architecture we release for.
+/// See [`dependencies_of`]; the shipped binaries are [`SHIPPED`].
 ///
 /// # Errors
 ///
-/// When `cargo metadata` cannot be run, or answers something this cannot read.
+/// When `cargo metadata` or `cargo tree` cannot be run, or answers something this cannot read.
 pub fn dependencies(root: &Path) -> Result<Vec<Dependency>, NoticesError> {
-    let output = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned()))
-        .args(["metadata", "--format-version", "1", "--locked"])
-        .current_dir(root)
-        .output()
-        .map_err(|error| NoticesError::Metadata(error.to_string()))?;
-    if !output.status.success() {
-        return Err(NoticesError::Metadata(
-            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        ));
-    }
-    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| NoticesError::Shape(error.to_string()))?;
-    collect(&metadata)
+    dependencies_of(root, SHIPPED)
 }
 
-/// The crates of `metadata`'s graph, read without touching the network or a registry index.
-fn collect(metadata: &serde_json::Value) -> Result<Vec<Dependency>, NoticesError> {
+/// Every crate the given workspace members link, each member's graph resolved on its own.
+///
+/// Cargo unifies features across the packages of one invocation, and `cargo metadata`'s
+/// resolution is the whole workspace's: there, a crate one member's feature brings in is a
+/// dependency of every member that shares the crate it hangs off. The packages ship from builds
+/// of their own (`scripts/package.sh`, ADR-0870), so each graph here is `cargo tree -p <member>`'s,
+/// which resolves as that build does, and the answer is their union (ADR-0906).
+///
+/// Each graph follows normal and build dependencies and never dev-dependencies: a test harness
+/// is not distributed, and a build dependency's generated code is. It is *not* filtered by
+/// platform (`--target all`), so the answer is the union over every target the lockfile resolves
+/// — a superset of what any one build links, which is the safe direction for a notice and the
+/// only one that gives the same file on every architecture we release for.
+///
+/// # Errors
+///
+/// When `cargo metadata` or `cargo tree` cannot be run, or answers something this cannot read.
+pub fn dependencies_of(root: &Path, shipped: &[&str]) -> Result<Vec<Dependency>, NoticesError> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let run = |arguments: &[&str]| -> Result<Vec<u8>, NoticesError> {
+        let output = Command::new(&cargo)
+            .args(arguments)
+            .current_dir(root)
+            .output()
+            .map_err(|error| NoticesError::Metadata(error.to_string()))?;
+        if output.status.success() {
+            Ok(output.stdout)
+        } else {
+            Err(NoticesError::Metadata(
+                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            ))
+        }
+    };
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&run(&["metadata", "--format-version", "1", "--locked"])?)
+            .map_err(|error| NoticesError::Shape(error.to_string()))?;
+
+    let mut reached = std::collections::BTreeSet::new();
+    for member in shipped {
+        let tree = run(&[
+            "tree",
+            "--locked",
+            "--package",
+            member,
+            "--edges",
+            "normal,build",
+            "--target",
+            "all",
+            "--prefix",
+            "none",
+            "--format",
+            "{p}",
+        ])?;
+        for line in String::from_utf8_lossy(&tree).lines() {
+            let mut words = line.split_whitespace();
+            let (Some(name), Some(version)) = (words.next(), words.next()) else {
+                continue;
+            };
+            let version = version.strip_prefix('v').unwrap_or(version);
+            reached.insert((name.to_owned(), version.to_owned()));
+        }
+    }
+    describe(&metadata, &reached)
+}
+
+/// The crates of `reached` that are not workspace members, with what each says of its licence.
+fn describe(
+    metadata: &serde_json::Value,
+    reached: &std::collections::BTreeSet<(String, String)>,
+) -> Result<Vec<Dependency>, NoticesError> {
     let shape = |detail: &str| NoticesError::Shape(detail.to_owned());
     let packages = metadata
         .get("packages")
@@ -101,84 +156,42 @@ fn collect(metadata: &serde_json::Value) -> Result<Vec<Dependency>, NoticesError
         .iter()
         .filter_map(serde_json::Value::as_str)
         .collect();
-    let nodes = metadata
-        .get("resolve")
-        .and_then(|resolve| resolve.get("nodes"))
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| shape("no `resolve.nodes`"))?;
 
-    let by_id: BTreeMap<&str, &serde_json::Value> = packages
-        .iter()
-        .filter_map(|package| Some((package.get("id")?.as_str()?, package)))
-        .collect();
-    let edges: BTreeMap<&str, &serde_json::Value> = nodes
-        .iter()
-        .filter_map(|node| Some((node.get("id")?.as_str()?, node)))
-        .collect();
-
-    let root = members
-        .iter()
-        .find(|id| {
-            by_id
-                .get(*id)
-                .and_then(|package| package.get("name"))
-                .and_then(serde_json::Value::as_str)
-                == Some(SHIPPED)
-        })
-        .ok_or_else(|| shape(&format!("`{SHIPPED}` is not a workspace member")))?;
-
-    // Reachable through what is linked: a normal dependency, or a build dependency whose code
-    // reaches the binary through what it generates. A dev-dependency is not distributed.
-    let mut reached: Vec<&str> = Vec::new();
-    let mut stack = vec![*root];
-    while let Some(id) = stack.pop() {
-        if reached.contains(&id) {
-            continue;
-        }
-        reached.push(id);
-        let Some(node) = edges.get(id) else {
-            continue;
-        };
-        let Some(deps) = node.get("deps").and_then(serde_json::Value::as_array) else {
-            continue;
-        };
-        for dep in deps {
-            let linked = dep
-                .get("dep_kinds")
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|kinds| {
-                    kinds.iter().any(|kind| {
-                        !matches!(
-                            kind.get("kind").and_then(serde_json::Value::as_str),
-                            Some("dev")
-                        )
-                    })
-                });
-            if let Some(next) = dep.get("pkg").and_then(serde_json::Value::as_str)
-                && linked
-            {
-                stack.push(next);
-            }
-        }
-    }
-
-    let mut dependencies: Vec<Dependency> = reached
-        .into_iter()
-        .filter(|id| !members.contains(id))
-        .filter_map(|id| {
-            let package = by_id.get(id)?;
-            let manifest = package.get("manifest_path")?.as_str()?;
-            Some(Dependency {
-                name: package.get("name")?.as_str()?.to_owned(),
-                version: package.get("version")?.as_str()?.to_owned(),
-                license: package
-                    .get("license")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_owned),
-                texts: licence_texts(Path::new(manifest).parent().unwrap_or(Path::new("."))),
+    let mut dependencies = Vec::new();
+    for (name, version) in reached {
+        let package = packages
+            .iter()
+            .find(|package| {
+                package.get("name").and_then(serde_json::Value::as_str) == Some(name.as_str())
+                    && package.get("version").and_then(serde_json::Value::as_str)
+                        == Some(version.as_str())
             })
-        })
-        .collect();
+            .ok_or_else(|| {
+                shape(&format!(
+                    "`cargo tree` names {name} {version}, and `cargo metadata` does not"
+                ))
+            })?;
+        let id = package
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if members.contains(&id) {
+            continue;
+        }
+        let manifest = package
+            .get("manifest_path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| shape(&format!("{name} {version} has no manifest path")))?;
+        dependencies.push(Dependency {
+            name: name.clone(),
+            version: version.clone(),
+            license: package
+                .get("license")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+            texts: licence_texts(Path::new(manifest).parent().unwrap_or(Path::new("."))),
+        });
+    }
     dependencies.sort();
     Ok(dependencies)
 }
@@ -259,19 +272,20 @@ pub fn render(dependencies: &[Dependency]) -> String {
     out.push_str("Ono-Sendai — third-party licences\n");
     out.push_str("=================================\n\n");
     out.push_str(
-        "The `ono` binary links the crates listed below. This file reproduces what each of them\n\
-         ships about its own licence, because MIT asks that its permission notice travel with the\n\
-         software, Apache-2.0 §4 that its text travel with a derivative work, and\n\
-         CDLA-Permissive-2.0 §2.1 that its text travel with the data. Ono-Sendai's own crates are\n\
-         not here: they are under `LICENSE` beside this file.\n\n",
+        "The `ono` and `kuang-compile` binaries link the crates listed below. This file\n\
+         reproduces what each of them ships about its own licence, because MIT asks that its\n\
+         permission notice travel with the software, Apache-2.0 §4 that its text travel with a\n\
+         derivative work, and CDLA-Permissive-2.0 §2.1 that its text travel with the data.\n\
+         Ono-Sendai's own crates are not here: they are under `LICENSE` beside this file.\n\n",
     );
     out.push_str(
         "It is generated from `Cargo.lock` — `cargo run -p xtask -- licenses --write` — and\n\
          `spec-check` regenerates it and compares, so it cannot fall behind a dependency change\n\
-         (ADR-0608). What it covers is every crate reachable from `ono-cli` as a normal or a\n\
-         build dependency, over every platform the lockfile resolves: a superset of what any one\n\
-         build links, which is the safe direction for a notice. Test-only dependencies are absent,\n\
-         because they are not distributed.\n\n",
+         (ADR-0608). What it covers is every crate reachable from `ono-cli` (`ono`) or from\n\
+         `ono-kuang-sdk` (`kuang-compile`) as a normal or a build dependency, each resolved as its\n\
+         own release build resolves it (ADR-0906), over every platform the lockfile resolves: a\n\
+         superset of what any one build links, which is the safe direction for a notice.\n\
+         Test-only dependencies are absent, because they are not distributed.\n\n",
     );
     out.push_str(&format!(
         "{} crates, carrying {} distinct licence documents.\n",
@@ -484,36 +498,5 @@ mod tests {
             dependency("alpha", Some("MIT"), &[("LICENSE-MIT", "a")]),
         ];
         assert_eq!(render(&graph), render(&graph));
-    }
-
-    #[test]
-    fn should_walk_past_a_dev_dependency_and_through_a_build_one() {
-        // What is distributed is what the binary links: a test harness is not, and a build
-        // dependency's generated code is.
-        let metadata = serde_json::json!({
-            "packages": [
-                {"id": "ono-cli 0.0.0", "name": "ono-cli", "version": "0.0.0", "manifest_path": "/nowhere/Cargo.toml"},
-                {"id": "linked 1.0.0", "name": "linked", "version": "1.0.0", "license": "MIT", "manifest_path": "/nowhere/linked/Cargo.toml"},
-                {"id": "built 1.0.0", "name": "built", "version": "1.0.0", "license": "MIT", "manifest_path": "/nowhere/built/Cargo.toml"},
-                {"id": "tested 1.0.0", "name": "tested", "version": "1.0.0", "license": "MIT", "manifest_path": "/nowhere/tested/Cargo.toml"}
-            ],
-            "workspace_members": ["ono-cli 0.0.0"],
-            "resolve": {"nodes": [
-                {"id": "ono-cli 0.0.0", "deps": [
-                    {"pkg": "linked 1.0.0", "dep_kinds": [{"kind": null}]},
-                    {"pkg": "built 1.0.0", "dep_kinds": [{"kind": "build"}]},
-                    {"pkg": "tested 1.0.0", "dep_kinds": [{"kind": "dev"}]}
-                ]},
-                {"id": "linked 1.0.0", "deps": []},
-                {"id": "built 1.0.0", "deps": []},
-                {"id": "tested 1.0.0", "deps": []}
-            ]}
-        });
-        let names: Vec<String> = collect(&metadata)
-            .expect("the graph reads")
-            .into_iter()
-            .map(|dependency| dependency.name)
-            .collect();
-        assert_eq!(names, vec!["built".to_owned(), "linked".to_owned()]);
     }
 }
