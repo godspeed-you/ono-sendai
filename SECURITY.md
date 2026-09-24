@@ -81,6 +81,7 @@ forbidden thing is refused (v0.4.1 §6.2, §20). The words below mean exactly wh
 | Provider query and act | an authorized request | the capability contract, and risk and elevation checks for mutations |
 | KUANG/11 native spawn | a package process | manifest validation and confinement that fails closed |
 | KUANG/11 protocol | plugin bytes | frame, credit and schema limits |
+| KUANG/11 compiled components | native code loaded into the shell from an artifact store | the artifact, its store and every directory above them belong to you or root and are writable by nobody else, no link is followed, and the bytes loaded are the bytes examined; the engine refuses another release's or architecture's artifact (ADR-0870, ADR-0915, ADR-0916) |
 | External adapters | another program's output | the adapter's decoder and schema validation; never a guess |
 | Pipeline materialization | a value stream | a count budget and a byte budget, both enforced |
 | Release build | CI inputs | immutable action and image references, locked dependencies |
@@ -104,6 +105,18 @@ launch. That is confinement, and confinement is not kernel isolation: native exe
 complete filesystem or network sandbox, so a plugin can reach whatever your account can reach
 without asking Ono for it. **Install native plugins only from sources you are willing to run as
 your user account.**
+
+**A compiled KUANG/11 component runs as native code inside the shell.** `ono` has no compiler: it
+loads what `kuang-compile` wrote into `~/.cache/ono/kuang/compiled/` (or
+`$XDG_CACHE_HOME/ono/kuang/compiled/`) and into `/usr/lib/ono-sendai/kuang-compiled/`, and the
+WebAssembly sandbox is only as good as that code. The shell therefore treats both stores as
+trusted as your home directory and the system are, and checks that they are: an artifact is
+loaded only if it, its store and every directory above them belong to you or to root and nobody
+else may write them — a root-owned sticky directory such as `/tmp`, and a directory of yours
+whose group is yours alone, count as that — and never through a symbolic link. What is not checked: the machine code
+itself is not checksummed, so anyone who can already write your cache as you — or the system store
+as root — can run code as you, as they could by editing your shell's startup files. Artifacts
+never come from a package.
 
 Two further things are deliberately out of scope, and are not vulnerabilities:
 
