@@ -31,6 +31,7 @@ fn scratch_root() -> PathBuf {
     workspace.pop();
     scratch_root_in(&Surroundings {
         target_tmpdir: std::env::var_os("CARGO_TARGET_TMPDIR").map(PathBuf::from),
+        target_dir: std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from),
         executable: std::env::current_exe().ok(),
         workspace,
     })
@@ -41,6 +42,8 @@ fn scratch_root() -> PathBuf {
 struct Surroundings {
     /// `CARGO_TARGET_TMPDIR` from the environment, if a runner set it.
     target_tmpdir: Option<PathBuf>,
+    /// `CARGO_TARGET_DIR` from the environment, if set.
+    target_dir: Option<PathBuf>,
     /// The running test binary.
     executable: Option<PathBuf>,
     /// The workspace root the testkit was built in.
@@ -48,29 +51,58 @@ struct Surroundings {
 }
 
 /// The scratch root for `surroundings`.
+///
+/// # Panics
+///
+/// Panics when no target directory can be told apart: a scratch root guessed wrong puts every
+/// suite's files somewhere nobody looks for them, or on the wrong filesystem (ADR-0895).
 fn scratch_root_in(surroundings: &Surroundings) -> PathBuf {
     if let Some(directory) = &surroundings.target_tmpdir {
         return directory.clone();
     }
-    surroundings
-        .executable
-        .as_deref()
-        .and_then(cargo_target_of)
-        .unwrap_or_else(|| {
-            // Not a binary cargo built in place — a doc test, which rustdoc links in a temporary
-            // directory of its own. The workspace's own target directory is still the right
-            // filesystem, and it is where `ono_binary` looks too.
-            surroundings.workspace.join("target")
-        })
-        .join("tmp")
+    // The binary's own place first: cargo put it there, so that is the target directory it was
+    // built for, whatever the environment says now.
+    if let Some(target) = surroundings.executable.as_deref().and_then(cargo_target_of) {
+        return target.join("tmp");
+    }
+    // Not a binary cargo built in place — a doc test, which rustdoc links in a temporary
+    // directory of its own. The target directory the environment names, relative to the
+    // workspace when it is relative, and otherwise the workspace's own, if it is there.
+    if let Some(target) = &surroundings.target_dir {
+        return surroundings.workspace.join(target).join("tmp");
+    }
+    let workspace_target = surroundings.workspace.join("target");
+    if workspace_target.is_dir() {
+        return workspace_target.join("tmp");
+    }
+    panic!(
+        "cannot tell which cargo target directory to scratch in: {} is not in a cargo build \
+         layout, CARGO_TARGET_DIR is not set, and {} does not exist. Set CARGO_TARGET_TMPDIR to \
+         the directory to use",
+        surroundings.executable.as_deref().map_or_else(
+            || "the test binary".to_owned(),
+            |path| path.display().to_string()
+        ),
+        workspace_target.display()
+    );
 }
 
-/// The cargo target directory `executable` was built into, if it was built into one.
+/// The directory `executable` was built into — the one cargo names `CARGO_TARGET_TMPDIR`'s parent
+/// for it — if it sits in cargo's build layout.
+///
+/// Cargo puts a test binary in `<dir>/<profile>/deps/` (or `<dir>/<profile>/`), where `<dir>` is
+/// the target directory, or `<target>/<triple>` for a `--target` build, and the profile directory
+/// holds cargo's `.fingerprint` and `deps`. That layout is what is looked for, not a
+/// `CACHEDIR.TAG`: cargo writes the tag only when it creates the directory, so a restored or
+/// mounted target directory has none, and an unrelated directory above the binary may have one.
 fn cargo_target_of(executable: &Path) -> Option<PathBuf> {
     executable
         .ancestors()
         .skip(1)
-        .find(|directory| directory.join("CACHEDIR.TAG").is_file())
+        .find(|directory| {
+            directory.join(".fingerprint").is_dir() && directory.join("deps").is_dir()
+        })
+        .and_then(Path::parent)
         .map(Path::to_path_buf)
 }
 
@@ -314,3 +346,140 @@ pub fn while_text_file_busy<T>(busy: impl Fn(&T) -> bool, mut attempt: impl FnMu
 /// microseconds. A second is four orders of magnitude of headroom and still fails fast enough to
 /// read.
 const BUSY_PATIENCE: std::time::Duration = std::time::Duration::from_secs(1);
+
+#[cfg(test)]
+mod tests {
+    use super::{Surroundings, scratch_root_in};
+    use std::path::{Path, PathBuf};
+
+    /// Makes `relative` under `base` as a directory, or as an empty file when it ends in a name
+    /// with no children, the way cargo's layout has them.
+    fn make(base: &Path, directories: &[&str], files: &[&str]) {
+        for directory in directories {
+            std::fs::create_dir_all(base.join(directory)).expect("a fixture directory");
+        }
+        for file in files {
+            let path = base.join(file);
+            std::fs::create_dir_all(path.parent().expect("a parent")).expect("its directory");
+            std::fs::write(path, b"").expect("a fixture file");
+        }
+    }
+
+    fn surroundings(base: &Path, executable: &str, target_dir: Option<PathBuf>) -> Surroundings {
+        Surroundings {
+            target_tmpdir: None,
+            target_dir,
+            executable: Some(base.join(executable)),
+            workspace: base.join("workspace"),
+        }
+    }
+
+    #[test]
+    fn should_scratch_in_the_target_directory_a_test_binary_was_built_into() {
+        let fixture = crate::scratch();
+        let base = fixture.path();
+        make(
+            base,
+            &["t/debug/.fingerprint"],
+            &["t/CACHEDIR.TAG", "t/debug/deps/suite-1"],
+        );
+        assert_eq!(
+            scratch_root_in(&surroundings(base, "t/debug/deps/suite-1", None)),
+            base.join("t/tmp")
+        );
+    }
+
+    #[test]
+    fn should_scratch_where_cargo_names_the_tmpdir_when_the_build_names_a_target_triple() {
+        // `cargo test --target <triple>` builds into `<target>/<triple>/<profile>` and names
+        // `<target>/<triple>/tmp` as `CARGO_TARGET_TMPDIR` — checked against cargo 1.94, whose
+        // compiled-in value for a `--target` build is exactly that.
+        let fixture = crate::scratch();
+        let base = fixture.path();
+        make(
+            base,
+            &["t/x86_64-unknown-linux-gnu/debug/.fingerprint"],
+            &[
+                "t/CACHEDIR.TAG",
+                "t/x86_64-unknown-linux-gnu/CACHEDIR.TAG",
+                "t/x86_64-unknown-linux-gnu/debug/deps/suite-1",
+            ],
+        );
+        assert_eq!(
+            scratch_root_in(&surroundings(
+                base,
+                "t/x86_64-unknown-linux-gnu/debug/deps/suite-1",
+                None
+            )),
+            base.join("t/x86_64-unknown-linux-gnu/tmp")
+        );
+    }
+
+    #[test]
+    fn should_find_a_target_directory_that_carries_no_cache_tag() {
+        // A target directory made before cargo ran — restored from a cache, mounted as a volume —
+        // has no `CACHEDIR.TAG`, because cargo writes one only when it creates the directory. Its
+        // layout is still cargo's.
+        let fixture = crate::scratch();
+        let base = fixture.path();
+        make(base, &["t/debug/.fingerprint"], &["t/debug/deps/suite-1"]);
+        assert_eq!(
+            scratch_root_in(&surroundings(base, "t/debug/deps/suite-1", None)),
+            base.join("t/tmp")
+        );
+    }
+
+    #[test]
+    fn should_not_take_a_stray_cache_tag_above_the_binary_for_a_target_directory() {
+        // `~/.cache` carries a `CACHEDIR.TAG` of its own; a binary somewhere below it that is not
+        // in a cargo layout says nothing about where the target directory is, and
+        // `CARGO_TARGET_DIR` does.
+        let fixture = crate::scratch();
+        let base = fixture.path();
+        make(
+            base,
+            &[],
+            &["cache/CACHEDIR.TAG", "cache/rustdoctest/rust_out"],
+        );
+        assert_eq!(
+            scratch_root_in(&surroundings(
+                base,
+                "cache/rustdoctest/rust_out",
+                Some(base.join("elsewhere"))
+            )),
+            base.join("elsewhere/tmp")
+        );
+    }
+
+    #[test]
+    fn should_honour_the_target_directory_the_environment_names_for_a_doc_test() {
+        let fixture = crate::scratch();
+        let base = fixture.path();
+        make(
+            base,
+            &["workspace/target"],
+            &["workspace/target/CACHEDIR.TAG"],
+        );
+        assert_eq!(
+            scratch_root_in(&surroundings(
+                base,
+                "rustdoctest/rust_out",
+                Some(base.join("configured"))
+            )),
+            base.join("configured/tmp"),
+            "CARGO_TARGET_DIR wins over the workspace's own `target/`"
+        );
+        assert_eq!(
+            scratch_root_in(&surroundings(base, "rustdoctest/rust_out", None)),
+            base.join("workspace/target/tmp"),
+            "without it, the workspace's own target directory, which exists"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot tell which cargo target directory")]
+    fn should_refuse_to_guess_when_no_target_directory_can_be_found() {
+        let fixture = crate::scratch();
+        let _ = scratch_root_in(&surroundings(fixture.path(), "rustdoctest/rust_out", None));
+    }
+}
