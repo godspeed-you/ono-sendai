@@ -123,6 +123,8 @@ tokio.workspace = true
 [dev-dependencies]
 ono-testkit.workspace = true
 ono-process.workspace = true
+# The fixture service manager of `tests/spatial_orientation_bound.rs` (ADR-0880).
+zbus = { version = "5.19", default-features = false, features = ["tokio"] }
 
 [lints]
 workspace = true

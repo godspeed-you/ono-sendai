@@ -53,10 +53,10 @@ declared:
     prerequisite: "a util-linux `lsns` that enumerates on this kernel, so the adapter has namespaces to compose; a build whose namespace ioctls the running kernel does not answer exits non-zero before Ono is involved"
   - id: "crates/ono-cli/tests/spatial_orientation_bound.rs::should_count_a_bounded_target_by_what_the_provider_says_is_there"
     category: external_tool_unavailable
-    prerequisite: "a service manager holding more units than the bound, so a bounded read leaves something out to be counted (ADR-0576)"
+    prerequisite: "`dbus-daemon`, so the fixture can serve a service manager holding more units than the bound and a bounded read leaves something out to be counted (ADR-0576, ADR-0880)"
   - id: "crates/ono-cli/tests/spatial_orientation_bound.rs::should_leave_what_a_user_asks_for_directly_unbounded"
     category: external_tool_unavailable
-    prerequisite: "a service manager holding more units than the bound, so `get service` has more to answer with than an orientation reads (ADR-0576)"
+    prerequisite: "`dbus-daemon`, so the fixture can serve a service manager holding more units than the bound and `get service` has more to answer with than an orientation reads (ADR-0576, ADR-0880)"
   - id: "crates/ono-cli/tests/spatial_orientation_bound.rs::should_report_no_count_for_a_bounded_target_whose_count_it_cannot_keep_true"
     category: missing_privilege
     prerequisite: "a socket table this user may read holding more sockets than the bound (ADR-0576)"

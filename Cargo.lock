@@ -1791,6 +1791,7 @@ dependencies = [
  "tokio",
  "ureq",
  "x509-parser",
+ "zbus",
 ]
 
 [[package]]
