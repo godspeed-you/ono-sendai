@@ -1,6 +1,6 @@
 # ADR-0882: A pathological budget is read against the same machine in the same run
 
-- Status: accepted
+- Status: superseded by ADR-0884
 - Date: 2026-09-24
 - Spec refs: v0.2 §34 (budgets, and "Performance tests SHOULD include pathological environments");
   v0.4.1 §2.7 (tests report execution truth), §32.4, §37.4

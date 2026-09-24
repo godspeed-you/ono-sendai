@@ -4,39 +4,58 @@
 # Unix domain sockets, because the acceptance container runs with networking disabled; they reach
 # the provider through `sock_diag` exactly as any other listener does.
 #
-# What the case does when the machine cannot meet the budget (ADR-0882). Every figure is a whole
-# `ono` process, so part of it is the machine's own speed, and in this container the ordinary
-# host's first socket row alone costs 35-48ms of the 50ms budget: one full run at load 6.8 read
-# 48ms there and then 51ms and 56ms on the pathological host, and reported both as OVER BUDGET,
-# two milliseconds from the edge (issue #189). So every row is judged in two steps, and says which
-# one it passed:
+# What the case does when the machine cannot meet the budget (ADR-0882, ADR-0884). Every figure is
+# a whole `ono` process, so part of it is the machine's own speed, and in this container the
+# ordinary host's first socket row alone costs 35-48ms of the 50ms budget: one full run at load
+# 6.8 read 48ms there and then 51ms and 56ms on the pathological host, and reported both as OVER
+# BUDGET, two milliseconds from the edge (issue #189). So every row is judged in up to three
+# steps, and its verdict line says which one decided it:
 #
-# - its median against the budget, exactly as before; and, only where that misses,
-# - what the row costs at the fastest of its runs against what the same machine costs in the same
-#   run without it. For a pathological row the reference is the same statement on the ordinary
-#   host, measured before the fixture opens its sockets and again after it has closed them, and
-#   the pathology may add at most half the budget to it. For the ordinary host's own row the
-#   fastest of its runs must itself be within the budget.
+# 1. its median within the budget: `within budget`;
+# 2. otherwise, on a machine that was not demonstrably loaded, its fastest run within the budget:
+#    `within budget at its fastest run` — the median is scheduling noise, and the fastest run is
+#    the product's own cost; a row whose every run is over the budget is OVER BUDGET;
+# 3. otherwise, only on a machine demonstrably loaded in this run — its one-minute load average
+#    at or above its online processors both before the ordinary host is measured and before the
+#    pathological one is — the pathology may add at most half the budget to the fastest run of
+#    the same statement on the ordinary host, measured before the fixture opens its sockets and
+#    again after it has closed them: `not adjudicated on this machine`. That is not a pass of
+#    the budget and does not say so; it says the machine could not answer the question, and how
+#    much the pathology added on it. More than half the budget added is OVER BUDGET on any
+#    machine.
 #
-# The fastest run is the figure a busy machine disturbs least, so this step reads the product's
-# own cost rather than the machine's load; a pathology that genuinely costs more than half the
-# budget still fails, however quiet or busy the machine is.
+# Every timed run must exit 0: a run that crashed is not a fast run, and any that did not is
+# reported as RUN FAILED.
 case: the budgets of section 34 hold on a host with thousands of sockets
 timeout: 600
 env: NO_COLOR=1
 run: |
-  # The median and the fastest of `runs` whole `ono` runs of `statement`, in milliseconds.
+  failures=/tmp/case-152-failed-runs
+  : > "$failures"
+
+  # The median and the fastest of `runs` whole `ono` runs of `statement`, in milliseconds. A run
+  # that does not exit 0 is written to $failures, and the case fails on it.
   figure_of() {
     local runs="$1" statement="$2"
-    ono --no-config -c "$statement" >/dev/null 2>&1
+    ono --no-config -c "$statement" >/dev/null 2>&1 || echo "$statement (warm-up) exited $?" >> "$failures"
     for _ in $(seq "$runs"); do
-      local start end
+      local start end status
       start=$(date +%s%N)
       ono --no-config -c "$statement" >/dev/null 2>&1
+      status=$?
       end=$(date +%s%N)
+      [ "$status" -eq 0 ] || echo "$statement exited $status" >> "$failures"
       echo $(( (end - start) / 1000000 ))
     done | sort -n | awk '{ v[NR] = $1 } END { if (NR == 0) { print -1, -1 } else { print v[int((NR + 1) / 2)], v[1] } }'
   }
+
+  # Whether the machine is demonstrably loaded now: its one-minute load average at or above the
+  # processors the kernel has online (host-wide, like the load average itself).
+  online=$(grep -c '^cpu[0-9]' /proc/stat)
+  loaded_now() {
+    awk -v online="$online" '{ exit !($1 >= online) }' /proc/loadavg
+  }
+  load_now() { cut -d' ' -f1 /proc/loadavg; }
 
   # The ordinary host: each statement measured before the fixture and again after it. MEDIAN keeps
   # the quieter median, FASTEST the fastest single run of either pass.
@@ -55,37 +74,33 @@ run: |
     reference ordinary-socket-table 5 'get socket | count'
   }
 
-  # The ordinary host's row: its median against the budget, or else its fastest run.
-  judge() {
-    local label="$1" limit_ms="$2" ref_label="$3" runs="$4" statement="$5" median fastest
-    median=${MEDIAN[$ref_label]}
-    fastest=${FASTEST[$ref_label]}
-    echo "$label: ${median}ms (§34 budget ${limit_ms}ms, median of $runs runs, $statement)"
-    if [ "$median" -le "$limit_ms" ]; then
-      echo "$label: within budget"
-    elif [ "$fastest" -le "$limit_ms" ]; then
-      echo "$label: within budget on this machine: the median is the machine's, and the fastest run answered in ${fastest}ms (ADR-0882)"
-    else
-      echo "$label: OVER BUDGET: not one run of the ordinary host answered within ${limit_ms}ms (fastest ${fastest}ms)"
-    fi
-  }
-
-  # A pathological row: its median against the budget, or else what it adds at its fastest run to
-  # the same statement's fastest run on the ordinary host, against half the budget.
-  judge_against() {
+  # One row's verdict. `ref_label` is empty for the ordinary host's own row, which has nothing to
+  # be compared with and is never adjudicated relative to anything.
+  verdict() {
     local label="$1" limit_ms="$2" median="$3" fastest="$4" runs="$5" statement="$6" ref_label="$7" added
-    added=$(( fastest - FASTEST[$ref_label] ))
-    echo "$label: ${median}ms (§34 budget ${limit_ms}ms, median of $runs runs, $statement)"
+    echo "$label: ${median}ms, fastest ${fastest}ms (§34 budget ${limit_ms}ms, median of $runs runs, $statement)"
     if [ "$median" -le "$limit_ms" ]; then
-      echo "$label: within budget"
-    elif [ "$added" -le $(( limit_ms / 2 )) ]; then
-      echo "$label: within budget on this machine: the median is the machine's, and at its fastest run the pathology adds ${added}ms to ${ref_label}'s ${FASTEST[$ref_label]}ms, within half the ${limit_ms}ms budget (ADR-0882)"
+      echo "VERDICT $label: within budget"
+    elif [ "$loaded" != yes ] && [ "$fastest" -le "$limit_ms" ]; then
+      echo "VERDICT $label: within budget at its fastest run (${fastest}ms; the median of ${median}ms is the machine's scheduling)"
+    elif [ "$loaded" = yes ] && [ -n "$ref_label" ]; then
+      added=$(( fastest - FASTEST[$ref_label] ))
+      if [ "$added" -le $(( limit_ms / 2 )) ]; then
+        echo "VERDICT $label: not adjudicated on this machine: load $load_seen on $online online processors; at its fastest run the pathology adds ${added}ms to ${ref_label}'s ${FASTEST[$ref_label]}ms, within half the ${limit_ms}ms budget (ADR-0884)"
+      else
+        echo "VERDICT $label: OVER BUDGET: at its fastest run the pathology adds ${added}ms to ${ref_label}'s ${FASTEST[$ref_label]}ms, more than half the ${limit_ms}ms budget"
+      fi
+    elif [ "$loaded" = yes ]; then
+      echo "VERDICT $label: not adjudicated on this machine: load $load_seen on $online online processors, and the ordinary host's fastest run took ${fastest}ms of the ${limit_ms}ms (ADR-0884)"
     else
-      echo "$label: OVER BUDGET: at its fastest run the pathology adds ${added}ms to ${ref_label}'s ${FASTEST[$ref_label]}ms, more than half the ${limit_ms}ms budget"
+      echo "VERDICT $label: OVER BUDGET: not one of $runs runs answered within ${limit_ms}ms on a machine that was not loaded (fastest ${fastest}ms)"
     fi
   }
 
   echo "== the ordinary host =="
+  loaded=yes
+  load_seen=$(load_now)
+  loaded_now || loaded=no
   echo "sockets before: $(ono --no-config -c 'get socket | count')"
   references
 
@@ -96,6 +111,11 @@ run: |
   echo "fixture: asked for 5000, opened $FIXTURE_SOCKETS listening unix sockets"
   if [ "$FIXTURE_SOCKETS" -lt 2000 ]; then echo "TOO-FEW-SOCKETS"; else echo "the host is pathological"; fi
   echo "counted: $(ono --no-config -c 'get socket | count')"
+
+  # Loaded only if it was loaded at both readings; the lower of the two is what is reported.
+  second_load=$(load_now)
+  loaded_now || loaded=no
+  load_seen=$(awk -v a="$load_seen" -v b="$second_load" 'BEGIN { print (a < b ? a : b) }')
 
   read -r socket_row socket_row_fastest < <(figure_of 20 'get socket | take 1')
   read -r connection_row connection_row_fastest < <(figure_of 20 'get connection | take 1')
@@ -110,20 +130,24 @@ run: |
   echo "sockets after: $(ono --no-config -c 'get socket | count')"
   references
 
-  echo "== the verdicts =="
-  judge baseline-first-socket-row 50 ordinary-first-socket-row 20 'get socket | take 1'
-  judge_against first-socket-row 50 "$socket_row" "$socket_row_fastest" 20 'get socket | take 1' ordinary-first-socket-row
-  judge_against first-connection-row 50 "$connection_row" "$connection_row_fastest" 20 'get connection | take 1' ordinary-first-connection-row
-  judge_against cold-start-under-load 100 "$start_row" "$start_row_fastest" 20 'true' ordinary-start
-  judge_against whole-socket-table 5000 "$socket_table" "$socket_table_fastest" 5 'get socket | count' ordinary-socket-table
+  echo "== the verdicts (machine loaded: $loaded, load $load_seen on $online online processors) =="
+  verdict baseline-first-socket-row 50 "${MEDIAN[ordinary-first-socket-row]}" "${FASTEST[ordinary-first-socket-row]}" 20 'get socket | take 1' ''
+  verdict first-socket-row 50 "$socket_row" "$socket_row_fastest" 20 'get socket | take 1' ordinary-first-socket-row
+  verdict first-connection-row 50 "$connection_row" "$connection_row_fastest" 20 'get connection | take 1' ordinary-first-connection-row
+  verdict cold-start-under-load 100 "$start_row" "$start_row_fastest" 20 'true' ordinary-start
+  verdict whole-socket-table 5000 "$socket_table" "$socket_table_fastest" 5 'get socket | count' ordinary-socket-table
+  if [ -s "$failures" ]; then
+    sed 's/^/RUN FAILED: /' "$failures"
+  fi
 exit: 0
 stdout-contains: the host is pathological
-stdout-contains: baseline-first-socket-row: within budget
-stdout-contains: first-socket-row: within budget
-stdout-contains: first-connection-row: within budget
-stdout-contains: cold-start-under-load: within budget
-stdout-contains: whole-socket-table: within budget
+stdout-matches: ^VERDICT baseline-first-socket-row: (within budget|within budget at its fastest run|not adjudicated on this machine)
+stdout-matches: ^VERDICT first-socket-row: (within budget|within budget at its fastest run|not adjudicated on this machine)
+stdout-matches: ^VERDICT first-connection-row: (within budget|within budget at its fastest run|not adjudicated on this machine)
+stdout-matches: ^VERDICT cold-start-under-load: (within budget|within budget at its fastest run|not adjudicated on this machine)
+stdout-matches: ^VERDICT whole-socket-table: (within budget|within budget at its fastest run|not adjudicated on this machine)
 stdout-not-contains: OVER BUDGET
+stdout-not-contains: RUN FAILED
 stdout-not-contains: TOO-FEW-SOCKETS
 stdout-not-contains: panicked
 stdout-not-contains: Ono-Sendai-E
