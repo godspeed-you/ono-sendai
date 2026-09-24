@@ -14,5 +14,5 @@ stripped_bytes:
     x86_64-unknown-linux-gnu: 7314384
   ono:
     aarch64-unknown-linux-gnu: 19418112
-    x86_64-unknown-linux-gnu: 22134752
+    x86_64-unknown-linux-gnu: 22175488
     x86_64-unknown-linux-musl: 7063744
