@@ -274,7 +274,7 @@ jobs:
       - name: build the static core binary, hold it to its budget, and run the image as it ships
         # --check-record: this job builds the core `ono` that ships on every push, so it is where
         # its recorded figure is held to it (ADR-0867).
-        run: scripts/build-core.sh --stage target/core-image --run-image --check-record
+        run: scripts/build-core.sh --check-record --stage target/core-image --run-image
       - name: run the core acceptance profile in the scratch image
         run: scripts/acceptance.sh --profile core
 
