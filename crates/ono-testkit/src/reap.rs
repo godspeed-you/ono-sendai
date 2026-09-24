@@ -37,16 +37,19 @@ const STOP_PATIENCE: Duration = Duration::from_millis(200);
 /// through a pidfd opened when it was found, never by its number, so no signal can reach a process
 /// that took over a reaped pid (ADR-0893).
 pub fn kill_tree(root: u32) {
-    match Kernel.open(as_pid(root), None) {
-        Some(handle) => walk_and_kill(handle, &mut Kernel),
+    let pid = as_pid(root);
+    match rustix::process::Pid::from_raw(pid).map(|pid| pidfd_open(pid, PidfdFlags::empty())) {
+        Some(Ok(pidfd)) => walk_and_kill((pid, pidfd), &mut Kernel),
         // A kernel without `pidfd_open` (before Linux 5.3): the root alone, by its number, which
         // the caller's unreaped handle keeps from being reused.
-        None => {
+        Some(Err(rustix::io::Errno::NOSYS)) => {
             let _ = nix::sys::signal::kill(
                 nix::unistd::Pid::from_raw(as_pid(root)),
                 nix::sys::signal::Signal::SIGKILL,
             );
         }
+        // Gone already, or not a pid at all: nothing is left to kill.
+        _ => {}
     }
 }
 
@@ -235,28 +238,40 @@ impl Drop for OwnedChild {
     }
 }
 
-/// Kills the process tree under a pid someone else owns when the value is dropped.
+/// Kills the process tree under a process someone else owns when the value is dropped.
 ///
 /// For a process whose handle is not a `std::process::Child` — a pseudo-terminal session, whose own
 /// `Drop` signals only its process group and so misses the jobs the shell under it started in
-/// groups of their own. Declare it *after* the handle it guards, so it is dropped first: the tree
-/// dies here, and the handle's own `Drop` then reaps the leader.
+/// groups of their own. Make it right after the process is started, and drop it before the handle,
+/// so the tree dies here and the handle's own `Drop` then reaps the leader.
+///
+/// The process is taken hold of when the value is made, through a pidfd, not by its number when it
+/// is dropped: the handle may have reaped the leader by then (a session that was waited for), and
+/// the number may belong to someone else. A tree whose leader is already gone is left alone
+/// (ADR-0894).
 #[derive(Debug)]
 pub struct OwnedTree {
-    root: u32,
+    root: Option<(i32, OwnedFd)>,
 }
 
 impl OwnedTree {
     /// Takes ownership of the death of every process under `root`, `root` included.
+    ///
+    /// `root` must be a process that has not been reaped yet — call this straight after starting
+    /// it. On a kernel without pidfds (before Linux 5.3) the value does nothing.
     #[must_use]
     pub fn of(root: u32) -> Self {
-        Self { root }
+        Self {
+            root: Kernel.open(as_pid(root), None),
+        }
     }
 }
 
 impl Drop for OwnedTree {
     fn drop(&mut self) {
-        kill_tree(self.root);
+        if let Some(root) = self.root.take() {
+            walk_and_kill(root, &mut Kernel);
+        }
     }
 }
 

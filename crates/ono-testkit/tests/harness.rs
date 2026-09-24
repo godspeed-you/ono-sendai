@@ -580,3 +580,41 @@ fn should_leave_no_process_under_a_session_behind_when_a_test_holding_it_panics(
     );
     assert_all_gone(&recorded_pids(&marker, 1));
 }
+
+#[test]
+fn should_kill_the_tree_of_the_process_it_was_made_for_even_when_that_process_changed_its_name() {
+    // An `OwnedTree` holds on to its process from the moment it is made (ADR-0894): the tree it
+    // kills is the one under that process, found through the process, whatever happens to its
+    // number later. Here the leader execs a new program in place, which keeps the process, and
+    // the tree under it still dies.
+    let scratch = ono_testkit::scratch();
+    let marker = scratch.path().join("pids");
+    let mut leader = std::process::Command::new("/bin/sh")
+        .args([
+            "-c",
+            &format!(
+                "sleep 300 & echo $! >> {0}; exec sh -c 'setsid sleep 300 & echo $! >> {0}; wait'",
+                marker.display()
+            ),
+        ])
+        .spawn()
+        .expect("/bin/sh starts");
+    let tree = ono_testkit::OwnedTree::of(leader.id());
+    let pids = recorded_pids(&marker, 2);
+    drop(tree);
+    let _ = leader.wait();
+    assert_all_gone(&pids);
+}
+
+#[test]
+fn should_do_nothing_when_the_process_it_was_made_for_has_already_been_reaped() {
+    // The handle an `OwnedTree` guards may have waited for its leader before the guard is dropped
+    // — a session that ran to its end. The number is free for anyone then, and the guard must not
+    // reach whatever took it (ADR-0894).
+    let mut leader = std::process::Command::new("/bin/true")
+        .spawn()
+        .expect("/bin/true starts");
+    let tree = ono_testkit::OwnedTree::of(leader.id());
+    leader.wait().expect("the leader is reaped");
+    drop(tree);
+}
