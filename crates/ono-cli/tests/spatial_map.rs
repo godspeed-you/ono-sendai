@@ -729,13 +729,36 @@ fn should_only_remove_nodes_and_leave_no_dangling_edge_when_a_type_filter_narrow
             node_type,
             "spec §6.9: `--type` keeps only the requested types, got {node:?}"
         );
+        // The same hazard from the other side: this binary's sibling tests start shells as
+        // children of this process, and one that exits between the two maps is in the filtered
+        // map and gone from the complete one. A process that no longer exists is evidence about
+        // the machine, not about the filter (issue #215); one that is still running was running
+        // when the complete map was drawn, and must be in it.
+        if process_has_ended(node) {
+            continue;
+        }
         assert!(
             known.contains(&text(node, "id", "§22")),
             "spec §43.2: filtering removes objects, it never creates them; {node:?} is absent \
-             from the unfiltered map"
+             from the unfiltered map and is still running"
         );
     }
     assert_edges_resolve(&filtered, "the type-filtered map");
+}
+
+/// Whether `node` is a process that has ended since the map drew it.
+///
+/// Read from the node's `object_ref` and the process table, never from another map: the question
+/// is whether the process existed across the second observation, and a second observation cannot
+/// answer that about itself.
+fn process_has_ended(node: &Value) -> bool {
+    let reference = &node["object_ref"];
+    if reference["schema"].as_str() != Some("ono.process/1") {
+        return false;
+    }
+    reference["pid"]
+        .as_u64()
+        .is_some_and(|pid| !std::path::Path::new(&format!("/proc/{pid}")).exists())
 }
 
 // ---------------------------------------------------------------------------------------------
