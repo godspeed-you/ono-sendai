@@ -61,8 +61,11 @@ against the core build of #127 — the object shell without its enhancements, st
 
 - the `core` stage is the deliverable, `FROM scratch`: `/usr/local/bin/ono`, the account files
   of the `case` user whose login shell it is, a home and `/tmp`. No loader, no libc, no shell;
-- the `core-acceptance` stage adds the harness's own static busybox under `/opt/harness/bin` and
-  nowhere else, and a case runs as `/opt/harness/bin/sh -c` rather than `bash -lc`.
+- the `core-acceptance` stage adds a static busybox under `/opt/harness/bin`, and a case runs as
+  `/opt/harness/bin/sh -c` rather than `bash -lc`. `/opt/harness/bin` is on `PATH` after
+  `/usr/local/bin`, so the programs a case — or `ono` itself — runs as externals (`ls`, `sort`,
+  `sh`) are busybox applets, not the Debian tools of the full image. `scripts/build-core.sh
+  --run-image` runs the `core` stage itself, which has no busybox (ADR-0924).
 
 So a core case is a POSIX shell script that uses busybox's tools, and it cannot use `pty:` or
 `image:` (ADR-0913). `scripts/build-core.sh` builds and checks the static binary — static, runs,

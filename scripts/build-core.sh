@@ -20,8 +20,10 @@
 # is needed; rustup's `x86_64-unknown-linux-musl` target carries the C runtime it links. The
 # script adds that target when it is missing.
 #
-# usage: scripts/build-core.sh [--stage <dir>] [--no-build]
+# usage: scripts/build-core.sh [--stage <dir> [--run-image]] [--no-build]
 #   --stage <dir>  also lay out the build context of docker/core/Dockerfile in <dir>
+#   --run-image    build the deliverable `core` stage from <dir>, run it as it ships — its own
+#                  ENTRYPOINT and USER, no harness in it — and remove it again (ADR-0925)
 #   --no-build     check and stage what target/x86_64-unknown-linux-musl/release/ono already holds
 set -euo pipefail
 
@@ -43,6 +45,7 @@ if [[ ! "$BUDGET" =~ ^[0-9]+$ ]]; then
 fi
 STAGE=""
 NO_BUILD=0
+RUN_IMAGE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -54,10 +57,16 @@ while [[ $# -gt 0 ]]; do
       STAGE="$2"
       shift ;;
     --no-build) NO_BUILD=1 ;;
+    --run-image) RUN_IMAGE=1 ;;
     *) echo "build-core: unknown argument $1" >&2; exit 1 ;;
   esac
   shift
 done
+
+if [[ $RUN_IMAGE -eq 1 && -z "$STAGE" ]]; then
+  echo "build-core: --run-image builds the image from the staged context, so it needs --stage" >&2
+  exit 1
+fi
 
 BINARY="${CARGO_TARGET_DIR:-target}/$TARGET/release/ono"
 
@@ -121,4 +130,36 @@ if [[ -n "$STAGE" ]]; then
   install -m 0755 "$BINARY" "$STAGE/rootfs/usr/local/bin/ono"
   install -m 0644 docker/core/passwd docker/core/group "$STAGE/rootfs/etc/"
   echo "build-core: staged the build context of docker/core/Dockerfile in $STAGE"
+fi
+
+if [[ $RUN_IMAGE -eq 1 ]]; then
+  runtime=""
+  for candidate in docker podman; do
+    if command -v "$candidate" >/dev/null 2>&1; then runtime="$candidate"; break; fi
+  done
+  if [[ -z "$runtime" ]]; then
+    echo "build-core: --run-image needs docker or podman" >&2
+    exit 127
+  fi
+  # Unique per run, so two checkouts never share or remove each other's image; always removed.
+  DELIVERABLE_IMAGE="ono-sendai:core-deliverable-$$"
+  trap '"$runtime" image rm --force "$DELIVERABLE_IMAGE" >/dev/null 2>&1 || true' EXIT
+  "$runtime" build --quiet --file docker/core/Dockerfile --target core \
+    --tag "$DELIVERABLE_IMAGE" "$STAGE" >/dev/null
+  # The image as it ships: its ENTRYPOINT is `ono`, its USER is `case`, and nothing else is in it.
+  shipped="$("$runtime" run --rm --network=none "$DELIVERABLE_IMAGE" --version)"
+  if ! grep -qx 'build: core (without .*)' <<<"$shipped"; then
+    echo "build-core: the core image does not start \`ono\` as its entrypoint:" >&2
+    echo "$shipped" >&2
+    exit 1
+  fi
+  # PID 1 is `ono` itself, so what it reports about PID 1 is what the image runs as and where.
+  answered="$("$runtime" run --rm --network=none "$DELIVERABLE_IMAGE" \
+    -c 'get process | where pid == 1 | select name executable user cwd | to json')"
+  if ! grep -q '"name":"ono","executable":"/usr/local/bin/ono","user":{"uid":1000,"name":"case"' <<<"$answered" \
+      || ! grep -q '"cwd":"/home/case"' <<<"$answered"; then
+    echo "build-core: the core image does not run \`ono\` as \`case\` in /home/case: $answered" >&2
+    exit 1
+  fi
+  echo "build-core: the core image runs as shipped: ono as its entrypoint, as \`case\`"
 fi

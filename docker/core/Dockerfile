@@ -19,11 +19,14 @@ WORKDIR /home/case
 ENV HOME=/home/case ONO_IN_CONTAINER=1
 ENTRYPOINT ["/usr/local/bin/ono"]
 
-# What `scripts/acceptance.sh --profile core` runs its cases in: the image above, plus the
-# harness's own interpreter under /opt/harness and nowhere else. A case script is a POSIX shell
-# script (`docker/README.md`), so the harness needs a shell and the handful of tools a case uses
-# to observe `ono` from outside; a static busybox is that, and it never stands in for `ono`
-# itself — the binary under test is still the only program on the image's own paths.
+# What `scripts/acceptance.sh --profile core` runs its cases in: the image above, plus a static
+# busybox installed under /opt/harness/bin. A case script is a POSIX shell script
+# (`docker/README.md`), so the harness needs a shell and the tools a case uses to observe `ono`
+# from outside. /opt/harness/bin is on PATH after /usr/local/bin, so it is also what `ono` itself
+# finds when a case runs an external program — `ls`, `sort`, `sh` in cases 021, 023 and 356 are
+# busybox applets. Busybox never stands in for a native command: those are `ono`'s, and case 355
+# proves the image has no loader, no libc and no /bin. The deliverable is the `core` stage above,
+# which has no busybox at all; `scripts/build-core.sh --run-image` runs it (ADR-0924).
 FROM busybox:1.37.0-musl@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092 AS harness
 
 FROM core AS core-acceptance

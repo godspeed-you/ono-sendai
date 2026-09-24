@@ -1,7 +1,8 @@
 # #127, ADR-0912, ADR-0913: the core build is one statically linked binary in an image built
 # `FROM scratch`. Nothing in the image can load a shared library — there is no loader and no libc
-# — so a binary that needed either would not have started at all; the harness's own busybox lives
-# under /opt/harness and is not on any path `ono` was put on. The account's login shell is `ono`.
+# — so a binary that needed either would not have started at all. The harness's busybox lives in
+# /opt/harness/bin, which is on PATH so the case script and the programs `ono` runs can use it;
+# nothing is under /lib, /usr/lib or /bin. The account's login shell is `ono`.
 case: the core build is one static binary that runs where there is no libc and no loader
 profile: core
 run: |
