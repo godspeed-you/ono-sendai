@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # The referee for packaging (ADR-0121, ADR-0122, ADR-0531): the packages `scripts/package.sh`
-# wrote to dist/ are installed in fresh containers — `debian:bookworm` and `debian:trixie` for the
-# .deb, `fedora:latest` for the .rpm — with networking disabled, and must work there as root and
-# as an unprivileged user whose login shell is /usr/bin/ono; removing them must unregister the
-# shell again and leave the user's own configuration alone.
+# wrote to dist/ (or to --dist) are installed in fresh containers — `debian:bookworm` and
+# `debian:trixie` for the .deb, `fedora:latest` for the .rpm — with networking disabled, and must
+# work there as root and as an unprivileged user whose login shell is /usr/bin/ono; removing them
+# must unregister the shell again and leave the user's own configuration alone.
 #
 # §48.3 asks for the oldest supported glibc/distribution baseline *as well as* one current
 # representative. `debian:bookworm` is the baseline and it is not a choice of convenience: it is
@@ -15,7 +15,8 @@
 # only: the declared architecture and the ELF machine of the packaged binary. Its runtime proof
 # is the same script on a native runner, which is what .github/workflows/release.yml does.
 #
-# usage: scripts/package-check.sh [--target <triple>] [--keep-image]
+# usage: scripts/package-check.sh [--target <triple>] [--dist <dir>] [--keep-image]
+#   --dist <dir>  validate the packages scripts/package.sh wrote there instead of dist/
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -38,12 +39,15 @@ TESTED_RECORD="target/package-check.sha256"
 host_triple="$(rustc -vV | sed -n 's/^host: //p')"
 target="$host_triple"
 keep_image=0
+dist_dir="dist"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --target) target="$2"; shift 2 ;;
     --target=*) target="${1#--target=}"; shift ;;
+    --dist) dist_dir="$2"; shift 2 ;;
+    --dist=*) dist_dir="${1#--dist=}"; shift ;;
     --keep-image) keep_image=1; shift ;;
-    *) echo "usage: scripts/package-check.sh [--target <triple>] [--keep-image]" >&2; exit 2 ;;
+    *) echo "usage: scripts/package-check.sh [--target <triple>] [--dist <dir>] [--keep-image]" >&2; exit 2 ;;
   esac
 done
 
@@ -57,11 +61,13 @@ version="$(cargo pkgid --package ono-cli | sed 's/.*[#@]//')"
 deb="ono_${version}_${deb_arch}.deb"
 rpm="ono-${version}-1.${rpm_arch}.rpm"
 for package in "$deb" "$rpm"; do
-  if [[ ! -f "dist/$package" ]]; then
-    echo "package-check: dist/$package is missing — run scripts/package.sh --target $target" >&2
+  if [[ ! -f "$dist_dir/$package" ]]; then
+    echo "package-check: $dist_dir/$package is missing — run scripts/package.sh --target $target --dist $dist_dir" >&2
     exit 1
   fi
 done
+# Absolute from here on: the directory is mounted into containers, and read from a subshell.
+dist_dir="$(cd "$dist_dir" && pwd)"
 
 runtime=""
 for candidate in docker podman; do
@@ -86,7 +92,7 @@ in_container() {
   local image="$1" script="$2"
   "$runtime" image inspect "$image" >/dev/null 2>&1 || "$runtime" pull --quiet "$image" >/dev/null
   "$runtime" run --rm --network none \
-    --volume "$PWD/dist:/dist:ro" \
+    --volume "$dist_dir:/dist:ro" \
     --env "PKG=/dist/$3" --env "ELF_MACHINE=$elf_machine" \
     --env "DEB_ARCH=$deb_arch" --env "RPM_ARCH=$rpm_arch" --env "VERSION=$version" \
     --env "NATIVE=$native" --env "GLIBC_FLOOR=$GLIBC_FLOOR" \
@@ -306,14 +312,14 @@ fi
 
 step "recording what was validated"
 mkdir -p "$(dirname "$TESTED_RECORD")"
-( cd dist && sha256sum "$deb" "$rpm" ) > "$TESTED_RECORD"
+( cd "$dist_dir" && sha256sum "$deb" "$rpm" ) > "$TESTED_RECORD"
 cat "$TESTED_RECORD"
-if [[ -f dist/SHA256SUMS ]]; then
-  if ( cd dist && grep -F -f <(cut -d" " -f1 "$OLDPWD/$TESTED_RECORD") SHA256SUMS >/dev/null ) \
-     && ( cd dist && sha256sum --check --strict --ignore-missing SHA256SUMS >/dev/null ); then
-    ok "dist/SHA256SUMS records the digests of the packages that were just validated"
+if [[ -f "$dist_dir/SHA256SUMS" ]]; then
+  if ( cd "$dist_dir" && grep -F -f <(cut -d" " -f1 "$OLDPWD/$TESTED_RECORD") SHA256SUMS >/dev/null ) \
+     && ( cd "$dist_dir" && sha256sum --check --strict --ignore-missing SHA256SUMS >/dev/null ); then
+    ok "$dist_dir/SHA256SUMS records the digests of the packages that were just validated"
   else
-    fail "dist/SHA256SUMS does not match the packages that were validated (spec §48.2)"
+    fail "$dist_dir/SHA256SUMS does not match the packages that were validated (spec §48.2)"
   fi
 else
   ok "recorded in $TESTED_RECORD; the checksum manifest is written by the publishing step and \

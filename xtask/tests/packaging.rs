@@ -1163,3 +1163,183 @@ fn should_publish_the_same_bytes_package_validation_installed() {
          (spec §62.6):\n{publish}"
     );
 }
+
+// --- one build per release directory (issue #145) -----------------------------------------------
+
+/// Runs `scripts/package.sh --no-build --dist <dist>` with nothing to package, so whatever it says
+/// first is about the directory it was handed rather than about a binary.
+fn package_into(dist: &Path, target_dir: &Path) -> (bool, String) {
+    let output = Command::new("bash")
+        .arg(repo().join("scripts/package.sh"))
+        .args(["--no-build", "--dist"])
+        .arg(dist)
+        .current_dir(repo())
+        .env("CARGO_TARGET_DIR", target_dir)
+        .output()
+        .unwrap_or_else(|error| panic!("bash must be runnable in the gate: {error}"));
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    (output.status.success(), text)
+}
+
+#[test]
+fn should_refuse_to_package_beside_the_artifacts_of_another_build() {
+    // Issue #145: `scripts/package.sh` wrote into a `dist/` it never cleared, so the v0.4.1
+    // packages and their SHA256SUMS were still there when v0.5.0 was packaged beside them, and
+    // package validation compared the new bytes with the old manifest. The directory has to hold
+    // one build.
+    let scratch = scratch();
+    let empty_target = scratch.path().join("target");
+    std::fs::create_dir_all(&empty_target).expect("a scratch target directory");
+
+    for (stale, bytes) in [
+        ("ono_0.0.1_amd64.deb", "a package of an earlier release"),
+        ("ono-0.0.1-1.x86_64.rpm", "a package of an earlier release"),
+        ("SHA256SUMS", "0000  ono_0.0.1_amd64.deb\n"),
+    ] {
+        let dist = scratch.path().join(format!("dist-{stale}"));
+        std::fs::create_dir_all(&dist).expect("a release directory");
+        std::fs::write(dist.join(stale), bytes).expect("an earlier build's artifact");
+
+        let (packaged, report) = package_into(&dist, &empty_target);
+        assert!(
+            !packaged && report.contains(stale),
+            "packaging into a directory that holds `{stale}` from another build did not refuse \
+             and name it, so a manifest and packages of two builds end up side by side (issue \
+             #145):\n{report}"
+        );
+        assert_eq!(
+            std::fs::read_dir(&dist).expect("the directory").count(),
+            1,
+            "the refusal wrote into the directory anyway"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dist.join(stale)).expect("the artifact"),
+            bytes,
+            "the refusal changed what it refused to write beside"
+        );
+    }
+
+    // A directory holding only what this build writes is not refused: the complaint is the missing
+    // binary, which is the next thing a real run would need.
+    let dist = scratch.path().join("dist-this-build");
+    std::fs::create_dir_all(&dist).expect("a release directory");
+    let arch = std::env::consts::ARCH;
+    std::fs::write(
+        dist.join(format!(
+            "ono_{}_{}.deb",
+            env!("CARGO_PKG_VERSION"),
+            debian_arch()
+        )),
+        "this version, built before",
+    )
+    .expect("a package of this version");
+    let (_, report) = package_into(&dist, &empty_target);
+    assert!(
+        report.contains("does not exist; build it or drop --no-build"),
+        "a directory holding only this version's package was refused ({arch}):\n{report}"
+    );
+}
+
+/// A repository holding `scripts/release-check.sh` and stand-ins for everything it calls.
+///
+/// The stand-in `package.sh` writes one package of `$STUB_VERSION` into the directory it is
+/// given; the stand-in `package-check.sh` refuses a directory holding a package of any other
+/// version, which is the real check's complaint in #145; the stand-in `cargo` writes down what the
+/// checksum step was asked to cover.
+fn release_check_fixture() -> ono_testkit::Scratch {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo_copy = scratch();
+    std::fs::create_dir_all(repo_copy.path().join("scripts")).expect("a scripts directory");
+    std::fs::copy(
+        repo().join("scripts/release-check.sh"),
+        repo_copy.path().join("scripts/release-check.sh"),
+    )
+    .expect("the release gate is copied");
+    repo_copy.write("docs/ACCEPTANCE.md", "- [x] everything\n");
+    let dist_of = r#"dist=dist
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dist) dist="$2"; shift 2 ;;
+    --dist=*) dist="${1#--dist=}"; shift ;;
+    *) shift ;;
+  esac
+done
+"#;
+    for (name, body) in [
+        ("scripts/gate.sh", "exit 0\n".to_owned()),
+        ("scripts/acceptance.sh", "exit 0\n".to_owned()),
+        ("scripts/rebuild-check.sh", "exit 0\n".to_owned()),
+        (
+            "scripts/package.sh",
+            format!(
+                "{dist_of}mkdir -p \"$dist\"\necho package > \"$dist/ono_${{STUB_VERSION}}_amd64.deb\"\n"
+            ),
+        ),
+        (
+            "scripts/package-check.sh",
+            format!(
+                "{dist_of}for found in \"$dist\"/ono_*; do\n  case \"$found\" in\n    \
+                 */ono_${{STUB_VERSION}}_amd64.deb) ;;\n    \
+                 *) echo \"package-check: $found is not a package of this build\" >&2; exit 1 ;;\n  \
+                 esac\ndone\n"
+            ),
+        ),
+        (
+            "bin/cargo",
+            "for argument in \"$@\"; do\n  if [ \"$previous\" = --dir ]; then \
+             ls \"$argument\" >> \"$STUB_LOG\"; echo -- >> \"$STUB_LOG\"; fi\n  \
+             previous=\"$argument\"\ndone\nexit 0\n"
+                .to_owned(),
+        ),
+    ] {
+        let path = repo_copy.write(name, format!("#!/usr/bin/env bash\n{body}"));
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .expect("the stand-in is executable");
+    }
+    repo_copy
+}
+
+#[test]
+fn should_build_each_release_check_into_a_directory_it_owns() {
+    // Issue #145's exit test: two release-check runs at two versions, one after the other on one
+    // machine, and the second compares nothing against the first.
+    let fixture = release_check_fixture();
+    let log = fixture.path().join("checksummed.log");
+    let release_check = |version: &str| {
+        let output = Command::new("bash")
+            .arg(fixture.path().join("scripts/release-check.sh"))
+            .current_dir(fixture.path())
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    fixture.path().join("bin").display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            )
+            .env("STUB_VERSION", version)
+            .env("STUB_LOG", &log)
+            .output()
+            .unwrap_or_else(|error| panic!("bash must be runnable in the gate: {error}"));
+        let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+        text.push_str(&String::from_utf8_lossy(&output.stderr));
+        (output.status.success(), text)
+    };
+
+    let (first, report) = release_check("0.4.1");
+    assert!(first, "the first release-check failed:\n{report}");
+    let _ = std::fs::remove_file(&log);
+    let (second, report) = release_check("0.5.0");
+    assert!(
+        second,
+        "a release-check at 0.5.0 saw the 0.4.1 packages of the run before it, so it validated \
+         and hashed a directory holding two releases (issue #145):\n{report}"
+    );
+    let checksummed = std::fs::read_to_string(&log).expect("the checksum step ran");
+    assert!(
+        checksummed.contains("ono_0.5.0_amd64.deb") && !checksummed.contains("0.4.1"),
+        "the checksum manifest covers artifacts of another build (issue #145):\n{checksummed}"
+    );
+}

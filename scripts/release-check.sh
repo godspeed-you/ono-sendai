@@ -13,9 +13,17 @@ scripts/acceptance.sh
 # The packages of the host architecture, built and installed in fresh containers
 # (docs/ACCEPTANCE.md section 4.5, ADR-0121). The other architecture is proven the same way on a
 # native runner in .github/workflows/release.yml (ADR-0123).
+#
+# Into a directory this run owns and empties first, not into dist/: a second run at another
+# version found the first run's packages and manifest still in dist/, validated the new packages
+# against the old manifest and refused (issue #145). What it builds here is the release it
+# qualified, and nothing else.
+dist="target/release-check/dist"
+rm -rf "$dist"
+mkdir -p "$dist"
 printf '\n\033[1m== installable packages\033[0m\n'
-scripts/package.sh
-scripts/package-check.sh
+scripts/package.sh --dist "$dist"
+scripts/package-check.sh --dist "$dist"
 
 # §46.5: every publishable artifact, built twice in two clean environments that disagree about
 # locale, timezone, umask and directories, and compared byte for byte (ADR-0527). The release
@@ -27,8 +35,9 @@ scripts/rebuild-check.sh
 # order — and the check that runs in both directions, so an artifact nobody hashed fails the
 # release rather than shipping unattested (ADR-0528).
 printf '\n\033[1m== checksum manifest\033[0m\n'
-cargo run --quiet --package xtask -- checksums --dir dist
-cargo run --quiet --package xtask -- checksums --dir dist --verify
+cargo run --quiet --package xtask -- checksums --dir "$dist"
+cargo run --quiet --package xtask -- checksums --dir "$dist" --verify
+printf 'release-check: the packages and their manifest are in %s\n' "$dist"
 
 printf '\n\033[1m== release checklist\033[0m\n'
 if grep -n '^- \[ \]' docs/ACCEPTANCE.md; then
