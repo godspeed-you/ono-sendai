@@ -243,6 +243,27 @@ panic = "warn"
 [profile.dev]
 debug = "line-tables-only"
 
+# `kuang-compile` in a debug build runs an unoptimised Cranelift: 38 CPU-seconds for the example
+# component, which a four-core CI runner shared with the rest of the suite turns into a missed
+# watchdog. The compiler's own crates are optimised in debug builds too; nothing of ours is, so
+# debugging the workspace is unchanged (ADR-0927).
+[profile.dev.package.cranelift-codegen]
+opt-level = 2
+[profile.dev.package.cranelift-assembler-x64]
+opt-level = 2
+[profile.dev.package.cranelift-frontend]
+opt-level = 2
+[profile.dev.package.cranelift-entity]
+opt-level = 2
+[profile.dev.package.cranelift-bforest]
+opt-level = 2
+[profile.dev.package.regalloc2]
+opt-level = 2
+[profile.dev.package.wasmtime-internal-cranelift]
+opt-level = 2
+[profile.dev.package.wasmparser]
+opt-level = 2
+
 # Optimised for size (issue #124, ADR-0863): `opt-level = "s"` with fat LTO. `panic = "abort"` is
 # refused — a panic in one task of a login shell must not end the session — and so is
 # `opt-level = "z"`, whose last fifth is paid in the throughput spec §34 budgets. The stripped
