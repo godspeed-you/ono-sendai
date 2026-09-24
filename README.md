@@ -526,15 +526,17 @@ built.
 ```text
 crates=48
 workspace_members=50
-tests=7087
-tests_that_can_skip=130
-expected_ci_skips=15
+tests=7158
+tests_that_can_skip=132
+expected_ci_skips=16
 acceptance_cases=262
-adrs=619
+adrs=635
 command_contract_files=15
 commands=222
-stripped_bytes.kuang-compile.x86_64-unknown-linux-gnu=7305360
-stripped_bytes.ono.x86_64-unknown-linux-gnu=22136640
+stripped_bytes.kuang-compile.aarch64-unknown-linux-gnu=5591976
+stripped_bytes.kuang-compile.x86_64-unknown-linux-gnu=7314384
+stripped_bytes.ono.aarch64-unknown-linux-gnu=19418112
+stripped_bytes.ono.x86_64-unknown-linux-gnu=22175488
 stripped_bytes.ono.x86_64-unknown-linux-musl=7063744
 ```
 
