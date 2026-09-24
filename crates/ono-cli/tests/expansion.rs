@@ -234,11 +234,12 @@ fn should_find_a_relative_path_entry_from_where_the_shell_is_standing() {
     // and `foo` ran another. ADR-0015 T11 makes that report the only defence against a shadowing
     // binary, so a report that does not describe the resolution is worse than none.
     let dir = scratch();
-    dir.write("here/bin/only-here", "#!/bin/sh\necho found-in-here\n");
-    let program = dir.path().join("here/bin/only-here");
-    let mut permissions = std::fs::metadata(&program).expect("metadata").permissions();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
-    std::fs::set_permissions(&program, permissions).expect("chmod");
+    std::fs::create_dir_all(dir.path().join("here/bin")).expect("the PATH entry's directory");
+    ono_testkit::executable_script(
+        &dir.path().join("here/bin"),
+        "only-here",
+        "#!/bin/sh\necho found-in-here\n",
+    );
 
     // Start somewhere else entirely, then `cd` into the directory the relative entry is relative
     // to. Only a lookup that follows the session finds it.

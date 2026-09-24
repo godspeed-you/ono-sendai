@@ -351,10 +351,17 @@ pub fn assert_failed_row(row: &Value, operation: &str, code: &str) {
     );
 }
 
+/// Writes an executable stand-in at `path`, through [`ono_testkit::executable_script`] so the
+/// shell can never find it busy (issue #188, ADR-0891).
 pub fn executable(path: &Path, contents: &str) {
-    std::fs::write(path, contents).expect("write the fake manager");
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-        .expect("mark the fake manager executable");
+    ono_testkit::executable_script(
+        path.parent().expect("a stand-in lives in a directory"),
+        &path
+            .file_name()
+            .expect("a stand-in has a name")
+            .to_string_lossy(),
+        contents,
+    );
 }
 
 /// Runs a one-liner with exactly `bin` as the `PATH`.
@@ -563,8 +570,7 @@ pub fn lay_out_echo_package_with(root: &Path, id: &str, targets: &str, shapes: &
         .parent()
         .expect("the target directory")
         .join("kuang-example-plugin");
-    std::fs::copy(&binary, package.join("runtime/echo"))
-        .expect("the example plugin binary is built");
+    ono_testkit::executable_copy(&binary, &package.join("runtime/echo"));
 }
 
 /// A scratch plugin home holding the example package, declaring `targets`.
@@ -777,8 +783,7 @@ pub fn lay_out(root: &Path, id: &str, manifest: &str) -> PathBuf {
         .parent()
         .expect("the target directory")
         .join("kuang-example-plugin");
-    std::fs::copy(&binary, package.join("runtime/echo"))
-        .expect("the example plugin binary is built");
+    ono_testkit::executable_copy(&binary, &package.join("runtime/echo"));
     package
 }
 

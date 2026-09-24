@@ -1075,7 +1075,8 @@ fn should_offer_the_listeners_of_a_service_as_an_exit_even_where_no_provider_joi
     // service has no listeners, which is the count-from-nowhere §2.17 and §35.2 forbid. The
     // `cgroup` exit of the same place has answered this way since S5.
     let dir = scratch();
-    dir.write(
+    ono_testkit::executable_script(
+        dir.path(),
         "systemctl",
         "#!/bin/sh\n\
          if [ \"$1\" = --version ]; then echo 'systemd 259 (259.5)'; exit 0; fi\n\
@@ -1085,11 +1086,6 @@ fn should_offer_the_listeners_of_a_service_as_an_exit_even_where_no_provider_joi
          fi\n\
          exit 2\n",
     );
-    std::fs::set_permissions(
-        dir.path().join("systemctl"),
-        std::os::unix::fs::PermissionsExt::from_mode(0o755),
-    )
-    .expect("the shim is executable");
     let path = format!(
         "{}:{}",
         dir.path().display(),

@@ -46,7 +46,7 @@ network:
         .join("kuang-example-plugin");
     let entry = scratch.path().join("dev.example.echo/runtime/echo");
     std::fs::create_dir_all(entry.parent().expect("a parent")).expect("the runtime directory");
-    std::fs::copy(&binary, &entry).expect("the example plugin binary is built");
+    ono_testkit::executable_copy(&binary, &entry);
     scratch
 }
 
@@ -322,7 +322,7 @@ commands:
         .join("kuang-example-plugin");
     let entry = scratch.path().join("dev.example.echo/runtime/echo");
     std::fs::create_dir_all(entry.parent().expect("a parent")).expect("the runtime directory");
-    std::fs::copy(&binary, &entry).expect("the example plugin binary is built");
+    ono_testkit::executable_copy(&binary, &entry);
     scratch
 }
 

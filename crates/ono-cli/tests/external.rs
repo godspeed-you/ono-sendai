@@ -150,11 +150,7 @@ fn should_run_a_path_directly_without_searching_the_command_path() {
 fn should_report_a_file_that_is_not_a_program_as_not_executable() {
     // ADR-0017: status 126, reachable only because the format is checked in the parent.
     let dir = scratch();
-    dir.write("notaprogram", [0x00u8, 0x01, 0x02, 0x03]);
-    let path = dir.path().join("notaprogram");
-    let mut permissions = std::fs::metadata(&path).expect("metadata").permissions();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
-    std::fs::set_permissions(&path, permissions).expect("chmod");
+    let path = ono_testkit::executable_script(dir.path(), "notaprogram", "\u{0}\u{1}\u{2}\u{3}");
 
     assert_eq!(ono(&path.display().to_string()).status().code(), 126);
 }
@@ -162,11 +158,8 @@ fn should_report_a_file_that_is_not_a_program_as_not_executable() {
 #[test]
 fn should_run_a_script_with_a_shebang_when_it_is_executable() {
     let dir = scratch();
-    dir.write("hello.sh", "#!/bin/sh\necho from-shebang\n");
-    let path = dir.path().join("hello.sh");
-    let mut permissions = std::fs::metadata(&path).expect("metadata").permissions();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
-    std::fs::set_permissions(&path, permissions).expect("chmod");
+    let path =
+        ono_testkit::executable_script(dir.path(), "hello.sh", "#!/bin/sh\necho from-shebang\n");
 
     let run = ono(&path.display().to_string());
     run.assert_success();

@@ -17,14 +17,13 @@ use ono_testkit::{Scratch, Shell, scratch};
 /// otherwise runs `body`.
 fn shadow(body: &str) -> Scratch {
     let dir = scratch();
-    dir.write(
+    ono_testkit::executable_script(
+        dir.path(),
         "lsblk",
-        format!(
+        &format!(
             "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'lsblk from util-linux 2.41.3'; exit 0; fi\n{body}\n"
         ),
     );
-    let mode = std::os::unix::fs::PermissionsExt::from_mode(0o755);
-    std::fs::set_permissions(dir.path().join("lsblk"), mode).unwrap();
     dir
 }
 
@@ -307,32 +306,23 @@ fn journal_shim(body: &str) -> Scratch {
     dir
 }
 
-/// Runs `script` with the shim directory first on `PATH`, waiting out a thread that is still
-/// holding the shim open.
+/// Runs `script` with the shim directory first on `PATH`.
 ///
-/// A thread that forks between this thread's `open` and `close` of the shim inherits the write
-/// descriptor, and until that child execs, the shell's `execve` on it answers ETXTBSY. The shell
-/// reports that as exit 126 with "Text file busy" in the diagnostic — about a file that is
-/// executable — and the assertion the test wanted to make never gets a chance. Issue #7 is one
-/// sighting of that; issue #27 is the same race one crate down (ADR-0520). Every other failure is
-/// answered on the first attempt.
+/// The shim is written by [`ono_testkit::executable_script`], so no thread of this process can be
+/// holding it open for writing when the shell executes it, and a "Text file busy" here would be a
+/// finding rather than the machine's weather (issue #188, ADR-0891).
 fn shimmed(dir: &Scratch, script: &str) -> ono_testkit::Run {
-    ono_testkit::while_text_file_busy(
-        |run: &ono_testkit::Run| run.stderr().contains("Text file busy"),
-        || {
-            Shell::new()
-                .args(["-c", script])
-                .env(
-                    "PATH",
-                    format!(
-                        "{}:{}",
-                        dir.path().display(),
-                        std::env::var("PATH").unwrap_or_default()
-                    ),
-                )
-                .run()
-        },
-    )
+    Shell::new()
+        .args(["-c", script])
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                dir.path().display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .run()
 }
 
 const ENTRY_ONE: &str = r#"{"MESSAGE":"first","PRIORITY":"6","__REALTIME_TIMESTAMP":"1787820400000000","_BOOT_ID":"b","_HOSTNAME":"h","__CURSOR":"c1"}"#;

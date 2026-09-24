@@ -73,8 +73,7 @@ fn lay_out_package(root: &Path, id: &str, name: &str, version: &str, kuang_api: 
         .parent()
         .expect("the target directory")
         .join("kuang-example-plugin");
-    std::fs::copy(&binary, package.join("runtime/echo"))
-        .expect("the example plugin binary is built");
+    ono_testkit::executable_copy(&binary, &package.join("runtime/echo"));
 }
 
 /// A scratch root: `plugins/` is the plugin home (`ONO_PLUGIN_PATH`) holding the example

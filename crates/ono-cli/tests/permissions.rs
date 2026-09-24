@@ -454,8 +454,11 @@ fn should_answer_permission_required_with_a_remedy_when_a_script_meets_a_helper(
     ono(&home, "install plugin echo --confirm").assert_success();
     let helper = home.path().join("home/helper");
     std::fs::create_dir_all(helper.parent().expect("a parent")).expect("home");
-    std::fs::write(&helper, "#!/bin/sh\necho hello\n").expect("the helper");
-    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).expect("executable");
+    ono_testkit::executable_script(
+        &home.path().join("home"),
+        "helper",
+        "#!/bin/sh\necho hello\n",
+    );
     let run = ono(
         &home,
         &format!("echo:exec --program {} | to json", helper.display()),
@@ -504,8 +507,11 @@ fn should_answer_permission_required_with_a_remedy_when_a_script_meets_a_helper(
     );
     // Another program is not covered.
     let other = home.path().join("home/other");
-    std::fs::write(&other, "#!/bin/sh\necho other\n").expect("the other helper");
-    std::fs::set_permissions(&other, std::fs::Permissions::from_mode(0o755)).expect("executable");
+    ono_testkit::executable_script(
+        &home.path().join("home"),
+        "other",
+        "#!/bin/sh\necho other\n",
+    );
     let refused = ono(&home, &format!("echo:exec --program {}", other.display()));
     assert_refused_with(
         &refused,
@@ -521,8 +527,11 @@ fn should_ask_at_first_use_and_keep_an_always_answer_for_that_program_at_a_termi
     ono(&home, "install plugin echo --confirm").assert_success();
     let helper = home.path().join("home/helper");
     std::fs::create_dir_all(helper.parent().expect("a parent")).expect("home");
-    std::fs::write(&helper, "#!/bin/sh\necho hello\n").expect("the helper");
-    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).expect("executable");
+    ono_testkit::executable_script(
+        &home.path().join("home"),
+        "helper",
+        "#!/bin/sh\necho hello\n",
+    );
 
     let mut executor = ono_process::Executor::detached();
     let root = home.path();

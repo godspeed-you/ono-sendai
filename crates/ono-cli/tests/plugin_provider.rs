@@ -60,8 +60,7 @@ fn lay_out_package(root: &Path, id: &str) {
     std::fs::write(package.join("manifest.yaml"), echo_package_manifest(id)).expect("the manifest");
     std::fs::create_dir_all(package.join("contributions")).expect("the contributions directory");
     std::fs::write(package.join("contributions/targets.yaml"), TARGETS).expect("the document");
-    std::fs::copy(example_binary(), package.join("runtime/echo"))
-        .expect("the example plugin binary is built");
+    ono_testkit::executable_copy(example_binary(), &package.join("runtime/echo"));
 }
 
 fn plugin_home() -> ono_testkit::Scratch {

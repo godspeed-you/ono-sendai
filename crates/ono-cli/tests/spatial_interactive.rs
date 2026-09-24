@@ -392,29 +392,19 @@ impl Drop for Children {
 fn twins(scratch: &Scratch, name: &str) -> (Children, String, String) {
     let binary = scratch.path().join("bin").join(name);
     std::fs::create_dir_all(binary.parent().expect("a parent")).expect("a bin directory");
-    std::fs::copy(program_path("sleep"), &binary).expect("a renamed copy of `sleep`");
-    // `ETXTBSY` is a race between the copy above and any *other* test thread that forks in the
-    // window before the copy's write descriptor is closed: the forked child inherits it, and the
-    // kernel refuses to execute a file some process holds open for writing. It is a property of
-    // running a dozen process-spawning tests in one binary, not of the shell, so it is waited
-    // out rather than asserted on.
+    // Copied by the testkit rather than `std::fs::copy`, which held the copy open for writing in
+    // this process: a sibling test thread forking in that window inherited the descriptor, and
+    // the kernel refused to execute the copy with ETXTBSY until that child exec'd. The helper
+    // leaves no such descriptor anywhere, so the copy runs at once (issue #188, ADR-0891).
+    ono_testkit::executable_copy(program_path("sleep"), &binary);
     let spawn = || {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            match std::process::Command::new(&binary)
-                .arg("300")
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-            {
-                Ok(child) => return child,
-                Err(error)
-                    if error.kind() == std::io::ErrorKind::ExecutableFileBusy
-                        && Instant::now() < deadline => {}
-                Err(error) => panic!("the fixture process must start: {error:?}"),
-            }
-        }
+        std::process::Command::new(&binary)
+            .arg("300")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("the fixture process must start")
     };
     let children = Children(vec![spawn(), spawn()]);
     let first = children.0[0].id().to_string();
