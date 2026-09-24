@@ -19,7 +19,7 @@ mod change_support;
 
 use std::path::Path;
 
-use change_support::{home, one, ono_at, ono_with, plan, text};
+use change_support::{home, one, ono_at, plan, text};
 use serde_yaml_ng::Value;
 
 /// A plan over two copies in `home`: its short reference and the two paths it overwrites.
@@ -99,17 +99,16 @@ fn should_resolve_every_target_to_where_its_state_lives_when_the_resolution_is_a
     }
 }
 
+/// The width `ono` lays redirected output out at (`sink.rs`, spec §4.6).
+const REDIRECTED_WIDTH: usize = 80;
+
 #[test]
 fn should_draw_the_resolution_of_each_target_under_its_own_heading() {
     let home = home();
     let (reference, destinations) = two_copy_plan(home.path());
 
-    // Wide enough for the whole path of a target: a drawing fits its terminal, and the paths of
-    // a scratch directory are as long as the checkout it sits in.
-    let run = ono_with(
+    let run = ono_at(
         home.path(),
-        "COLUMNS",
-        "240",
         &format!("inspect plan {reference} --resolution"),
     );
 
@@ -119,12 +118,27 @@ fn should_draw_the_resolution_of_each_target_under_its_own_heading() {
         drawn.contains("PERSISTENCE RESOLUTION"),
         "Appendix B.10: the expansion is drawn as its own section. Got {drawn:?}"
     );
+    // Redirected output is laid out at a fixed 80 columns so it is reproducible (spec §4.6), and
+    // each line is cut to it. A target's heading is its path at that width: the whole path where
+    // the checkout is shallow, its first 78 characters where it is deep, as on a CI runner.
+    let heading = |destination: &str| -> String {
+        format!("  {destination}")
+            .chars()
+            .take(REDIRECTED_WIDTH)
+            .collect()
+    };
     for destination in &destinations {
         assert!(
-            drawn.contains(destination.as_str()),
-            "Appendix B.10: the drawing names {destination}. Got {drawn:?}"
+            drawn.lines().any(|line| line == heading(destination)),
+            "Appendix B.10: the drawing names {destination} on a heading of its own. Got {drawn:?}"
         );
     }
+    assert_ne!(
+        heading(&destinations[0]),
+        heading(&destinations[1]),
+        "the two targets' headings must be told apart for this test to prove anything; the \
+         scratch directory is too deep for an 80-column drawing"
+    );
     assert_eq!(
         drawn.matches("recovery boundary").count(),
         2,
