@@ -33,7 +33,14 @@ fn should_share_one_number_space_between_native_and_external_jobs() {
 
 #[test]
 fn should_finish_a_bounded_background_pipeline_and_say_so() {
-    let run = ono("get process | count &; sleep 0.4; jobs");
+    // The script waits for the job rather than for a fixed time: a bounded pipeline finishes when
+    // it has read its input, and how long that takes is the machine's business. A fixed 0.4 s
+    // `sleep` read `running` on a loaded host (issue #164). `get job` is the structured form of
+    // the table `jobs` prints (spec §18.4), so the loop polls the same state the assertion reads,
+    // and the shell's watchdog bounds it.
+    let run = ono(
+        r#"get process | count &; while (get job | where state == "running" | count) > 0 { sleep 0.05 }; jobs"#,
+    );
     run.assert_success();
     let text = run.output();
     assert!(
