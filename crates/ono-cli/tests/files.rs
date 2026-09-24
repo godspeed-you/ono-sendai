@@ -711,22 +711,30 @@ fn should_report_a_created_file_as_an_event_when_watching() {
 #[test]
 fn should_report_a_created_file_before_the_next_poll_would_have_come() {
     // ADR-0034 and ADR-0078: `watch file` polled every two seconds, so nothing it reported could
-    // arrive sooner than the next tick of that grid. The file here is created two and a half
-    // seconds in, between the tick that would have missed it and the tick that would have found
-    // it, and the event must arrive before that later tick (ADR-0235). The event also says where
-    // it came from: §18.2 requires the cost of a watch to be explicit, and `source` is where a
-    // consumer reads whether the shell is being told or is asking.
+    // arrive sooner than the next tick of that grid. A watch the kernel tells is not on that grid
+    // at all (ADR-0235), and the event says which kind of watch produced it: §18.2 requires the
+    // cost of a watch to be explicit, and `source` is where a consumer reads whether the shell is
+    // being told or is asking. The runtime writes `subscription` only on the path the provider's
+    // subscription drives, and `poll` on every event the poll loop produces, so `source` is the
+    // answer to "before the next poll" rather than a proxy for it.
+    //
+    // No clock is read. This test once bounded the whole run at 3.5 s around a file created
+    // 2.5 s in, which asked the machine for one free second: a release build beside it on the
+    // same cores took that second away (issue #160). And the file is not created on a timer
+    // either — one created before the watch is armed is in the snapshot rather than an event,
+    // and the watch then waits for a change that never comes. The fixture creates a new file
+    // every tenth of a second until the watch has answered, so the first one after the watch
+    // is armed is the event, however long arming took; the shell's watchdog bounds the run.
     let directory = scratch();
     let watched = directory.path().join("src");
     std::fs::create_dir(&watched).expect("the watched directory");
 
-    let script = format!(
-        r#"sh -c "sleep 2.5; touch {dir}/new.txt" &; watch file src | where kind != "snapshot" | take 1 | select kind source | to json"#,
-        dir = watched.display()
+    let creator = FileCreator::start(&watched);
+    let run = ono_in(
+        &directory,
+        r#"watch file src | where kind != "snapshot" | take 1 | select kind source | to json"#,
     );
-    let started = std::time::Instant::now();
-    let run = ono_in(&directory, &script);
-    let elapsed = started.elapsed();
+    drop(creator);
     run.assert_success();
 
     assert_eq!(
@@ -736,11 +744,45 @@ fn should_report_a_created_file_before_the_next_poll_would_have_come() {
          came from a subscription rather than from a poll; got {:?}",
         run.output()
     );
-    assert!(
-        elapsed < Duration::from_millis(3_500),
-        "the poll grid would not have looked again until four seconds in; an answer in \
-         {elapsed:?} is the kernel's, not a poll's"
-    );
+}
+
+/// Creates a new file in a directory every tenth of a second until it is dropped, and has
+/// stopped by the time the drop returns — including when the test around it panics.
+struct FileCreator {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl FileCreator {
+    fn start(directory: &Path) -> Self {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let thread = {
+            let stop = std::sync::Arc::clone(&stop);
+            let directory = directory.to_path_buf();
+            std::thread::spawn(move || {
+                let mut index = 0u64;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    std::fs::write(directory.join(format!("new-{index}.txt")), b"")
+                        .expect("the fixture creates a file");
+                    index += 1;
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            })
+        };
+        Self {
+            stop,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for FileCreator {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 // --- trace file (spec §22.3) --------------------------------------------------------------------
