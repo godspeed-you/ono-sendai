@@ -35,3 +35,5 @@ stdout-contains: no-forged-rows
 stdout-contains: rendered-safely
 stdout-not-contains: RAW ESCAPE IN OUTPUT
 stdout-not-contains: CLEAR-SCREEN REACHED THE RENDERER
+profile: full
+profile: core

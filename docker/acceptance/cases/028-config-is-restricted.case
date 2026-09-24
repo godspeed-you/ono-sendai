@@ -16,3 +16,5 @@ stdout-contains: config ran nothing
 stdout-contains: still-starts
 stdout-contains: no-config-at-all
 stdout-not-contains: CONFIG RAN A COMMAND
+profile: full
+profile: core

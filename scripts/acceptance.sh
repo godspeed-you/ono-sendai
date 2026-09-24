@@ -4,9 +4,14 @@
 # tests pass" (docs/ACCEPTANCE.md).
 #
 # usage: scripts/acceptance.sh [--keep-image] [--no-build] [--group NAME]... [--fail-fast]
-#                              [name-fragment ...]
-#        scripts/acceptance.sh --build-only
+#                              [--profile full|core] [name-fragment ...]
+#        scripts/acceptance.sh --build-only [--profile full|core]
 #        scripts/acceptance.sh --list-groups
+#
+# `--profile core` runs the cases that declare `profile: core` against the core build of #127 —
+# the static binary of scripts/build-core.sh in the `FROM scratch` image of docker/core/Dockerfile
+# (ADR-0913). The default profile is `full`, and every case runs there unless it declares only
+# `core`.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -24,6 +29,9 @@ else
   checkout_digest="$(printf '%s' "$checkout" | sha256sum | cut -c1-12)"
   IMAGE="ono-sendai:acceptance-${checkout_label%-}-${checkout_digest}"
 fi
+# The core profile's image, named after the full one the way the filesystem image is (ADR-0913).
+CORE_IMAGE="${ONO_ACCEPTANCE_CORE_IMAGE:-${IMAGE}-core}"
+PROFILE="full"
 CASE_DIR="docker/acceptance/cases"
 GROUPS_FILE="docker/acceptance/groups"
 KEEP_IMAGE=0
@@ -42,6 +50,13 @@ while [[ $# -gt 0 ]]; do
     --build-only)  BUILD_ONLY=1; KEEP_IMAGE=1 ;;
     --list-groups) LIST_GROUPS=1 ;;
     --fail-fast)   FAIL_FAST=1 ;;
+    --profile)
+      if [[ $# -lt 2 || ( "$2" != "full" && "$2" != "core" ) ]]; then
+        echo "acceptance: --profile needs \`full\` or \`core\`" >&2
+        exit 1
+      fi
+      PROFILE="$2"
+      shift ;;
     --group)
       if [[ $# -lt 2 ]]; then
         echo "acceptance: --group needs the name of a group in $GROUPS_FILE" >&2
@@ -167,6 +182,43 @@ if [[ ${#cases[@]} -eq 0 ]]; then
   exit 1
 fi
 
+# --- profiles (ADR-0913) ---------------------------------------------------------------------
+#
+# A case runs in the profiles its `profile:` lines name, and in `full` alone when it names none.
+# A selection with nothing left in this profile is not a failure: `--group` asks for a range of
+# numbers, and a range may hold only cases of the other profile. It says so rather than passing
+# silently.
+
+case_profiles() {
+  local named
+  named="$(awk '/^profile:/ { sub(/^profile:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); print }' "$1")"
+  if [[ -z "$named" ]]; then echo "full"; else echo $named; fi
+}
+
+profile_problem=""
+in_profile=()
+for file in "${cases[@]}"; do
+  profiles="$(case_profiles "$file")"
+  for named in $profiles; do
+    if [[ "$named" != "full" && "$named" != "core" ]]; then
+      profile_problem+="  $file names profile \`$named\`; the profiles are \`full\` and \`core\`"$'\n'
+    fi
+  done
+  if [[ " $profiles " == *" $PROFILE "* ]]; then in_profile+=("$file"); fi
+done
+if [[ -n "$profile_problem" ]]; then
+  printf 'acceptance: a case names a profile that does not exist (ADR-0913):\n%s' "$profile_problem" >&2
+  exit 1
+fi
+if [[ ${#in_profile[@]} -eq 0 && $BUILD_ONLY -eq 0 ]]; then
+  echo "acceptance: none of the ${#cases[@]} selected cases runs in the $PROFILE profile"
+  exit 0
+fi
+if [[ ${#in_profile[@]} -lt ${#cases[@]} ]]; then
+  echo "acceptance: $(( ${#cases[@]} - ${#in_profile[@]} )) selected case(s) belong to another profile than $PROFILE"
+fi
+cases=("${in_profile[@]}")
+
 # The real-filesystem cases run in the stage whose userland the recovery providers validate
 # (ADR-0846). It is built only when a selected case asks for it.
 FS_IMAGE="${IMAGE}-filesystems"
@@ -201,7 +253,26 @@ case "${ONO_ACCEPTANCE_LAYER_CACHE:-}" in
     exit 1 ;;
 esac
 
-if [[ $NO_BUILD -eq 0 ]]; then
+core_built=0
+if [[ $PROFILE == "core" ]]; then
+  if grep -qx 'image: filesystems' "${cases[@]}" || grep -Eqx 'pty: (true|1)' "${cases[@]}"; then
+    echo "acceptance: a core case can use neither \`image: filesystems\` nor \`pty:\`; the core image has no terminal harness (ADR-0913)" >&2
+    exit 1
+  fi
+  fs_wanted=0
+  if [[ $NO_BUILD -eq 0 ]]; then
+    printf '\n\033[1m== building %s with %s\033[0m\n' "$CORE_IMAGE" "$runtime"
+    stage="${CARGO_TARGET_DIR:-target}/core-image"
+    scripts/build-core.sh --stage "$stage"
+    if ! build_log="$("$runtime" build --file docker/core/Dockerfile --target core-acceptance \
+        --tag "$CORE_IMAGE" "$stage" 2>&1)"; then
+      echo "$build_log" >&2
+      echo "acceptance: the core image did not build" >&2
+      exit 1
+    fi
+    core_built=1
+  fi
+elif [[ $NO_BUILD -eq 0 ]]; then
   # The filesystem stage's packages need nothing from the builder, and on a CI runner they are a
   # download of three minutes or more from the Ubuntu archive. So `filesystems-base` is built in
   # the background while the main image compiles, and the filesystem image below finds it ready.
@@ -245,6 +316,10 @@ if [[ $fs_wanted -eq 1 ]]; then
   fs_built=1
 fi
 
+if [[ $BUILD_ONLY -eq 1 && $PROFILE == "core" ]]; then
+  printf '\nacceptance: built %s\n' "$CORE_IMAGE"
+  exit 0
+fi
 if [[ $BUILD_ONLY -eq 1 ]]; then
   printf '\nacceptance: built %s' "$IMAGE"
   if [[ $fs_built -eq 1 ]]; then printf ' and %s' "$FS_IMAGE"; fi
@@ -335,6 +410,9 @@ parse_case() {
       # runs in; `filesystems` is the only one (ADR-0846).
       image)                want_image="$value" ;;
       security)             want_security+=("$value") ;;
+      # The build profiles a case runs in, `full` and `core`; read before any case runs, by
+      # `case_profiles` above (ADR-0913).
+      profile)              ;;
       stdout-matches)       assert_kind+=(matches);      assert_arg+=("$value") ;;
       stdout-not-matches)   assert_kind+=(not-matches);  assert_arg+=("$value") ;;
       stdout-contains)      assert_kind+=(contains);     assert_arg+=("$value") ;;
@@ -493,7 +571,7 @@ for index in "${!cases[@]}"; do
   parse_case "$file"
 
   case "$want_image" in
-    "")          image="$IMAGE" ;;
+    "")          if [[ $PROFILE == "core" ]]; then image="$CORE_IMAGE"; else image="$IMAGE"; fi ;;
     filesystems) image="$FS_IMAGE" ;;
     *)
       echo "acceptance: $file names image \`$want_image\`; the only one is \`filesystems\` (ADR-0846)" >&2
@@ -516,6 +594,10 @@ for index in "${!cases[@]}"; do
 $run"
     runtime_args+=(--env "ONO_CASE_SCRIPT=$script_body")
     inner=(bash -lc 'script --quiet --return --command "eval \"\$ONO_CASE_SCRIPT\"" /dev/null')
+  elif [[ $PROFILE == "core" ]]; then
+    # The core image has no bash: the harness's own static shell runs the case (ADR-0913).
+    runtime_args+=(--env "ONO_CASE_SCRIPT=$run")
+    inner=(/opt/harness/bin/sh -c 'eval "$ONO_CASE_SCRIPT"')
   else
     runtime_args+=(--env "ONO_CASE_SCRIPT=$run")
     inner=(bash -lc 'eval "$ONO_CASE_SCRIPT"')
@@ -562,9 +644,15 @@ done
 
 if [[ $KEEP_IMAGE -eq 0 ]]; then
   if flock --exclusive --nonblock "$image_lock"; then
-    "$runtime" image rm --force "$IMAGE" >/dev/null 2>&1 || true
-    if [[ $fs_built -eq 1 ]]; then
-      "$runtime" image rm --force "$FS_IMAGE" >/dev/null 2>&1 || true
+    # A core run built the core image and nothing else (ADR-0913).
+    if [[ $core_built -eq 1 ]]; then
+      "$runtime" image rm --force "$CORE_IMAGE" >/dev/null 2>&1 || true
+    fi
+    if [[ $PROFILE == "full" ]]; then
+      "$runtime" image rm --force "$IMAGE" >/dev/null 2>&1 || true
+      if [[ $fs_built -eq 1 ]]; then
+        "$runtime" image rm --force "$FS_IMAGE" >/dev/null 2>&1 || true
+      fi
     fi
   else
     printf '\nacceptance: keeping %s — another run is still using it, and the last one to finish removes it\n' "$IMAGE"

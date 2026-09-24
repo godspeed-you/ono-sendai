@@ -36,6 +36,7 @@ stdout-contains: one
 | `security:` | a `--security-opt` value the case needs, such as `apparmor=unconfined` for a case that mounts. Repeatable, and only for a privileged case: the host's AppArmor profile denies `mount(2)` even to `CAP_SYS_ADMIN`. |
 | `privileged:` | `true` runs the case in a privileged container with the host's `/dev`, for a case that builds its own disposable loop filesystem (v0.6 Appendix G.3). Only for such a case; the network stays `none` and every other case runs unprivileged (ADR-0843). |
 | `image:` | `filesystems` runs the case in the `runtime-filesystems` stage of `docker/Dockerfile`, whose btrfs-progs and OpenZFS userland the recovery providers validate (v0.6 Appendix G.4). Only for a case that builds a real Btrfs filesystem or ZFS pool; the harness builds that image only when a selected case names it (ADR-0846). |
+| `profile:` | `full` or `core`: a build profile the case runs in. Repeatable; a case that names none runs in `full` alone. `core` runs it against the core build of #127 in the `FROM scratch` image of `core/Dockerfile` (ADR-0913). |
 | `timeout:` | seconds before the case is killed and failed. Defaults to `30`. |
 | `stdout-contains:` | literal text that must appear. Repeatable. |
 | `stdout-not-contains:` | literal text that must not appear. Repeatable. |
@@ -50,6 +51,22 @@ that is what a user sees.
 `script(1)`, so the program under test has a genuine controlling terminal rather than a pipe —
 the only way to prove that full-screen programs, job control and TTY-conditional rendering
 actually work instead of assuming they do.
+
+## Profiles
+
+`scripts/acceptance.sh` runs the `full` profile unless it is told otherwise: the whole product,
+built by `docker/Dockerfile`. `--profile core` runs the cases that declare `profile: core`
+against the core build of #127 — the object shell without its enhancements, statically linked
+(ADR-0910, ADR-0912) — in the image of `core/Dockerfile`:
+
+- the `core` stage is the deliverable, `FROM scratch`: `/usr/local/bin/ono`, the account files
+  of the `case` user whose login shell it is, a home and `/tmp`. No loader, no libc, no shell;
+- the `core-acceptance` stage adds the harness's own static busybox under `/opt/harness/bin` and
+  nowhere else, and a case runs as `/opt/harness/bin/sh -c` rather than `bash -lc`.
+
+So a core case is a POSIX shell script that uses busybox's tools, and it cannot use `pty:` or
+`image:` (ADR-0913). `scripts/build-core.sh` builds and checks the static binary — static, runs,
+under 8 MB — and stages the image's build context; the harness calls it.
 
 ## Rules
 
@@ -75,6 +92,7 @@ scripts/acceptance.sh --no-build --group temporal # reuse the image, run one gro
 scripts/acceptance.sh --fail-fast                 # stop at the first failing case
 scripts/acceptance.sh --list-groups               # the groups of acceptance/groups
 scripts/acceptance.sh --build-only                # build the images the suite needs, run nothing
+scripts/acceptance.sh --profile core              # the core build's cases, in its scratch image
 ```
 
 Every case belongs to exactly one group of `acceptance/groups`, by the number its file name

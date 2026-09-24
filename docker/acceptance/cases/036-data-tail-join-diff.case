@@ -36,3 +36,5 @@ stdout-contains: [{"lpid":1,"rpid":1}]
 stdout-contains: [{"change":"changed","key":1},{"change":"removed","key":2},{"change":"added","key":3}]
 stdout-contains: []
 stdout-contains: [{"change":"added"}]
+profile: full
+profile: core

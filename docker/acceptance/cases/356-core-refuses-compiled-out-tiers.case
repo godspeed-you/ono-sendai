@@ -1,0 +1,46 @@
+# #127, ADR-0911: a command of a tier the core build leaves out is refused by name, with the
+# stable code `resolve.not_in_build` and the status of a command that is found and cannot be
+# executed (126) — never a parse error, never a panic, never a search of PATH that ends in
+# "command not found". One command per tier, the flags of the remote tier, and a stage of a
+# compiled-out tier in the middle of a pipeline.
+case: a command of a compiled-out tier refuses by name, naming its tier
+profile: core
+run: |
+  refuse() {
+    ono -c "$1" 2>&1 | head -1
+    ono -c "$1" >/dev/null 2>&1; echo "status=$?"
+  }
+  refuse 'map'
+  refuse 'find place nginx'
+  refuse 'trace process 1'
+  refuse 'get process | where pid == 1 | trace process'
+  refuse 'load plugin dev.example.tool'
+  refuse 'echo:emit'
+  refuse 'link host example'
+  refuse 'at -1h'
+  refuse 'get process --at -1h'
+  refuse 'plan remove file /tmp/nothing-here'
+  refuse 'adapt ls'
+  ono --agent 2>&1 | head -1
+  ono --print-peer-key 2>&1 | head -1
+  echo "== what ran instead: nothing =="
+  ono -c 'exec:ls /usr/local/bin'
+exit: 0
+stdout-contains: `map` belongs to the spatial systems interface (spec v0.4), which this core build of ono does not include
+stdout-contains: `trace process` belongs to the relationship graph and `trace` (spec §22)
+stdout-contains: belongs to the KUANG/11 plugin runtime (spec §31)
+stdout-contains: `link host` belongs to remote links and the agent (spec §21)
+stdout-contains: belongs to the temporal and causal systems interface (spec v0.5)
+stdout-contains: `--at` belongs to the temporal and causal systems interface
+stdout-contains: belongs to prospective change, protection and recovery (spec v0.6)
+stdout-contains: `adapt` belongs to the external command adapters (spec v0.3)
+stdout-contains: `--agent` belongs to remote links and the agent
+stdout-contains: `--print-peer-key` belongs to remote links and the agent
+stdout-contains: Ono-Sendai-E0104 resolve.not_in_build
+stdout-not-contains: Ono-Sendai-E0101
+stdout-not-contains: Ono-Sendai-E0001
+stdout-not-contains: panicked
+stdout-not-contains: status=0
+stdout-not-contains: status=127
+stdout-matches: ^status=126$
+stdout-matches: ^ono$

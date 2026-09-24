@@ -20,3 +20,5 @@ stdout-contains: marker
 stdout-contains: probe=carried
 stdout-contains: removed=[]
 stdout-contains: Ono-Sendai-E0301
+profile: full
+profile: core

@@ -27,3 +27,5 @@ stdout-contains: PROVENANCE
 stdout-contains: linux.procfs
 stdout-contains: explain-never-ran
 stdout-not-contains: RAN
+profile: full
+profile: core

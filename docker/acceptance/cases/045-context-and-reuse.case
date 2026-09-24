@@ -30,3 +30,5 @@ stdout-contains: cd /etc
 stdout-contains: Ono-Sendai-E
 stdout-contains: [1]
 stdout-not-contains: panicked
+profile: full
+profile: core

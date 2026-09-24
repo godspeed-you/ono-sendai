@@ -49,3 +49,5 @@ stdout-contains: ["two","three"]
 stdout-contains: nonempty=1
 stdout-contains: tree-removed=ok
 stdout-contains: files=ok
+profile: full
+profile: core

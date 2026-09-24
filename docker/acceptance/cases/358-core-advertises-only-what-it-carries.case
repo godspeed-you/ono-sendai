@@ -1,0 +1,23 @@
+# #127, ADR-0911: the core build does not advertise what it cannot run. `help`, the command
+# registry `get command` reads and the settings `get config` lists carry only the tiers this
+# binary has; a help topic or a setting of a compiled-out tier answers with the same refusal the
+# command gets. The targets whose provider is compiled out keep their commands, because those
+# are answered — as unavailable — rather than absent.
+case: help, the registry and the settings list only what the core build carries
+profile: core
+run: |
+  ono -c 'help' | head -1
+  ono -c 'help' | grep -E '^  (look|map|trace|link|timeline|plan|load) ' && echo "ADVERTISED"
+  ono -c 'get command | where verb == "map" or verb == "trace" or target == "plugin" or target == "link" | count | to json' 2>/dev/null
+  ono -c 'get command | where target == "service" | count | to json' 2>/dev/null
+  ono -c 'help map' 2>&1 | head -1
+  ono -c 'get config | select key | to json' | grep -E '"(spatial|temporal|change|recovery)\.' && echo "OFFERED"
+  ono -c 'set config temporal.recording.enabled = true' 2>&1 | head -1
+exit: 0
+stdout-contains: the shell's whole public surface
+stdout-contains: [0]
+stdout-matches: ^\[([1-9][0-9]*)\]$
+stdout-contains: `map` belongs to the spatial systems interface
+stdout-contains: `temporal.recording.enabled` belongs to the temporal and causal systems interface
+stdout-not-contains: ADVERTISED
+stdout-not-contains: OFFERED

@@ -26,3 +26,5 @@ stdout-contains: Ono-Sendai-E0001
 stdout-contains: Ono-Sendai-E0201
 stdout-contains: checked
 stdout-not-contains: UNCODED
+profile: full
+profile: core

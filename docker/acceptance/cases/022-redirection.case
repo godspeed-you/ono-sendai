@@ -20,3 +20,5 @@ stdout-contains: to-err
 stdout-contains: Ono-Sendai-E0301
 stdout-contains: command did not run
 stdout-not-contains: COMMAND RAN ANYWAY
+profile: full
+profile: core

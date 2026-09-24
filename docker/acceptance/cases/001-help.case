@@ -4,3 +4,5 @@ case: the shell explains its own usage
 run: ono --help
 exit: 0
 stdout-contains: usage: ono
+profile: full
+profile: core

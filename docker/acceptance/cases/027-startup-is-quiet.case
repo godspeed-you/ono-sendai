@@ -16,3 +16,5 @@ stdout-contains: clean=yes
 stdout-contains: quiet=yes
 stdout-contains: from-a-pipe
 stdout-contains: status=4
+profile: full
+profile: core

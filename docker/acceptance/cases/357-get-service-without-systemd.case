@@ -1,0 +1,18 @@
+# #127's exit test: `get service` in the core build refuses with the same error a full build gives
+# on a host without systemd. Both profiles run this case, and neither image has a service
+# manager, so the full build meets an absent system bus and the core build an absent provider —
+# and both answer through the provider registry's one refusal: `provider.unavailable`, naming the
+# provider that could not answer, with the help that says an absent system is not an empty one.
+# The reason after the provider's id is each build's own truth, and is not asserted.
+case: get service refuses as provider.unavailable, whether systemd is absent from the host or the build
+profile: full
+profile: core
+run: |
+  ono -c 'get service' 2>&1
+  ono -c 'get service' >/dev/null 2>&1; echo "status=$?"
+  ono -c 'try { get service } catch e { $e.name }'
+exit: 0
+stdout-contains: Ono-Sendai-E0401 provider.unavailable `service` cannot be answered here — systemd:
+stdout-contains: the provider exists but the system it reads is not present. This is not the same as there being none of the thing you asked for.
+stdout-contains: status=1
+stdout-contains: provider.unavailable

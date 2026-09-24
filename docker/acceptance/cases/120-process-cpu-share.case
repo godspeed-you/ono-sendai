@@ -50,3 +50,5 @@ stdout-contains: sampled-window-finds-the-busy-one
 stdout-contains: sampled-window-is-the-one-asked-for
 stdout-contains: bad-sample-refused
 stdout-not-contains: WRONG
+profile: full
+profile: core

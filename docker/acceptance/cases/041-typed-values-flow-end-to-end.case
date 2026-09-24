@@ -54,3 +54,5 @@ stdout-contains: ada,3
 stdout-contains: NAME
 stdout-not-contains: MEASURE-WRONG
 stdout-not-contains: $record
+profile: full
+profile: core

@@ -1,0 +1,20 @@
+# #127, ADR-0910: a mutation in the core build runs the way spec v0.2 describes it — through its
+# provider, answering one ActionResult row per target — with no change plan, protection or
+# recovery around it, because the build has none; and a mutation of a target whose provider is
+# compiled out meets the provider's absence rather than a missing command.
+case: a mutation in the core build acts through its provider and reports its rows
+profile: core
+run: |
+  cd /tmp
+  ono -c 'let s = "written by the core build"; $s | write file core-note.txt | select operation status | to json'
+  cat core-note.txt; echo
+  ono -c 'remove file core-note.txt | select operation status | to json'
+  test -e core-note.txt && echo "STILL THERE" || echo "removed"
+  ono -c 'start service nothing-by-this-name' 2>&1 | head -1
+exit: 0
+stdout-contains: written by the core build
+stdout-contains: "status":"success"
+stdout-contains: removed
+stdout-contains: Ono-Sendai-E0401 provider.unavailable
+stdout-not-contains: STILL THERE
+stdout-not-contains: Ono-Sendai-E0104

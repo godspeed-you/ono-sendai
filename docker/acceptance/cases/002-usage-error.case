@@ -3,3 +3,5 @@ case: an unknown flag fails with the usage status
 run: ono --definitely-not-a-flag
 exit: 2
 stdout-contains: unrecognised arguments
+profile: full
+profile: core

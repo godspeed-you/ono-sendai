@@ -67,3 +67,5 @@ stdout-contains: find-across-the-spread: within budget
 stdout-not-contains: OVER BUDGET
 stdout-not-contains: panicked
 stdout-not-contains: Ono-Sendai-E
+profile: full
+profile: core

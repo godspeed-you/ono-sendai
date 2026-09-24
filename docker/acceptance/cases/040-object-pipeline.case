@@ -39,3 +39,5 @@ stdout-contains: abc
 stdout-contains: {"pid":1}
 stdout-not-contains: WRONG
 stdout-not-contains: $record
+profile: full
+profile: core

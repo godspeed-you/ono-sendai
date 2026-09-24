@@ -20,3 +20,5 @@ stdout-contains: or-ran
 stdout-contains: chained
 stdout-contains: one
 stdout-contains: two
+profile: full
+profile: core

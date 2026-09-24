@@ -45,3 +45,5 @@ stdout-contains: ["first","second"]
 stdout-contains: [1,2,3,4,5]
 stdout-not-contains: unbounded_operation
 stdout-not-contains: panicked
+profile: full
+profile: core

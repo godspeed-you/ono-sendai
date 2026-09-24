@@ -1,0 +1,21 @@
+# #127, ADR-0912, ADR-0913: the core build is one statically linked binary in an image built
+# `FROM scratch`. Nothing in the image can load a shared library — there is no loader and no libc
+# — so a binary that needed either would not have started at all; the harness's own busybox lives
+# under /opt/harness and is not on any path `ono` was put on. The account's login shell is `ono`.
+case: the core build is one static binary that runs where there is no libc and no loader
+profile: core
+run: |
+  for path in /lib/ld-musl-x86_64.so.1 /lib64/ld-linux-x86-64.so.2 /lib /lib64 /usr/lib /bin/sh /bin; do
+    test -e "$path" && echo "PRESENT: $path"
+  done
+  ls /usr/local/bin
+  ono --version
+  ono -c 'get user | where name == "case" | select shell | to json'
+  ono -c 'get process | where pid == 1 | count | to json'
+exit: 0
+stdout-not-contains: PRESENT
+stdout-matches: ^ono$
+stdout-matches: ^ono [0-9]+\.[0-9]+\.[0-9]+$
+stdout-contains: build: core (without adapter, change, container, graph, kuang, remote, spatial, systemd, temporal)
+stdout-contains: [{"shell":"/usr/local/bin/ono"}]
+stdout-contains: [1]

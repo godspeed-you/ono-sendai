@@ -25,3 +25,5 @@ stdout-contains: [{"name":"lo"}]
 stdout-contains: sockets-enumerable
 stdout-contains: services-
 stdout-contains: perhaps: cpu
+profile: full
+profile: core

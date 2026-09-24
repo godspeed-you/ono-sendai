@@ -47,3 +47,5 @@ stdout-contains: FOO=bar
 stdout-contains: [0]
 stdout-contains: [2,4,6]
 stdout-not-contains: Ono-Sendai-E
+profile: full
+profile: core

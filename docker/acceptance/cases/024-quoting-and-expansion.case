@@ -17,3 +17,5 @@ stdout-contains: [one argument]
 stdout-contains: [two words]
 stdout-contains: readable
 stdout-contains: Ono-Sendai-E0301
+profile: full
+profile: core
