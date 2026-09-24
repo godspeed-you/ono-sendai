@@ -23,6 +23,13 @@ full = ["adapter", "change", "container", "graph", "kuang", "remote", "spatial",
 # of the tiers below. A compiled-out command refuses with `resolve.not_in_build`, a compiled-out
 # provider with `provider.unavailable` (ADR-0910, ADR-0911). `core` enables nothing: it names the
 # profile, so the exit test's `--no-default-features --features core` says what it builds.
+#
+# Cargo features only add, so `--features core` WITHOUT `--no-default-features` still builds the
+# full shell, and so does `--all-features`, which the quality gate uses. That is deliberate: the
+# gate lints and tests every tier, and a `compile_error!` on `core` plus a tier would break it.
+# The core build is `--no-default-features --features core` and nothing else; `scripts/build-core.sh`
+# is the one recipe, and it refuses a binary whose `--version` does not say `build: core`
+# (ADR-0924).
 core = []
 # The tiers. They are named one by one so a reader can find what each `cfg` belongs to, but they
 # are one decision: the build is `full` or `core`, and `lib.rs` refuses any mixture, because a
