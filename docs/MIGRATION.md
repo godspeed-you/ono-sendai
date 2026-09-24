@@ -280,9 +280,9 @@ or §35 and matching on what the shell emits:
 
 ## 10. KUANG/11 components are compiled once, by `kuang-compile`
 
-*(spec §31.10, §31.36; issue #126; ADR-0870)*
+*(spec §31.10, §31.36; issue #126; ADR-0870, ADR-0915, ADR-0916, ADR-0917)*
 
-**One command per component you placed by hand, and one per component after a shell upgrade.**
+**One command per component you placed by hand, and one per component after an upgrade that changes the engine.**
 `ono` now carries the WebAssembly runtime and no compiler, which takes about a quarter off the
 binary. A `wasm-component` package still ships `runtime/component.wasm`; what runs is the engine's
 compiled form of it, written by the SDK's `kuang-compile` into `~/.cache/ono/kuang/compiled/`
@@ -299,9 +299,28 @@ compiled form of it, written by the SDK's `kuang-compile` into `~/.cache/ono/kua
   `kuang-compile ~/.config/ono/plugins/dev.example.echo/runtime/echo.wasm`, and the error's
   `reason` says `missing` or `incompatible`. Running the command fixes both; running it twice
   is harmless.
-- An artifact, or the directory holding it, that another user could write is refused as
-  `untrusted` and never loaded: what the shell maps is native code. `kuang-compile` creates
-  both owner-writable only, whatever your umask.
+- An artifact, its store, or any directory above them that another user could write is refused
+  as `untrusted` and never loaded: what the shell loads is native code (ADR-0915). A root-owned
+  sticky directory such as `/tmp` is fine, and so is a directory of yours whose group is your own
+  private group (the `775` directories a umask of `002` makes). A symbolic link anywhere from the
+  store down is refused too; links above it (`/home -> /var/home`) are followed. If your cache
+  sits below a directory a shared group can write, the refusal names that directory — make it
+  `g-w`, or point `XDG_CACHE_HOME` elsewhere. `kuang-compile` refuses to write where the shell
+  would refuse to read, and creates what it makes owner-writable only, whatever your umask.
+- An artifact the shell may not read (permission denied) is refused as `unreadable`, not as
+  `incompatible`; `kuang-compile` does not fix that, and the message says what does.
+- An artifact is keyed on the exact wasmtime release (ADR-0916): every wasmtime upgrade, patch
+  releases included, refuses existing artifacts as `incompatible` once, naming the command. An
+  Ono upgrade that keeps wasmtime keeps them. Artifacts written before this change carry only
+  the major version and are refused once.
+- The store follows the shell session's environment (ADR-0917): after
+  `set env XDG_CACHE_HOME = …`, `load plugin`, `inspect plugin` and `install plugin` use the
+  store it names, and `install plugin` runs `kuang-compile` with the session's environment and
+  `PATH` (absolute entries only; an executable file only). When the store searched first is not
+  the one `kuang-compile` chooses by itself, the command in the refusal carries
+  `--store <store>`, and a `missing` refusal names the stores it looked in. The refusal an
+  install raises when compiling fails carries `reason` `tool_unavailable` or `compile_failed`,
+  and the component, command and engine.
 
 Native-process packages are unaffected.
 
