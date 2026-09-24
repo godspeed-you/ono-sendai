@@ -10,7 +10,9 @@
 schema: ono.binary-size.v1
 stripped_bytes:
   kuang-compile:
-    x86_64-unknown-linux-gnu: 7305360
+    aarch64-unknown-linux-gnu: 5591976
+    x86_64-unknown-linux-gnu: 7314384
   ono:
-    x86_64-unknown-linux-gnu: 22136640
+    aarch64-unknown-linux-gnu: 19418112
+    x86_64-unknown-linux-gnu: 22134752
     x86_64-unknown-linux-musl: 7063744

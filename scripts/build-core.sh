@@ -30,19 +30,6 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 TARGET="x86_64-unknown-linux-musl"
-# The budget of #127's exit test, "a static binary under 8 MB", lives with the other size budgets
-# in the hardening limits registry (ADR-0864): the row `build.ono_core_stripped_bytes`, an
-# inclusive ceiling in bytes. Read with awk because the job that runs this has no `xtask`; the
-# row's shape is fixed, and a registry this cannot read is a failure, never a default.
-LIMITS="docs/contracts/hardening/limits.yaml"
-BUDGET="$(awk '
-  /^  - key: / { row = ($3 == "build.ono_core_stripped_bytes") }
-  row && /^    budget: [0-9]+$/ { print $2; exit }
-' "$LIMITS")"
-if [[ ! "$BUDGET" =~ ^[0-9]+$ ]]; then
-  echo "build-core: $LIMITS declares no build.ono_core_stripped_bytes budget" >&2
-  exit 1
-fi
 STAGE=""
 NO_BUILD=0
 RUN_IMAGE=0
@@ -112,12 +99,11 @@ if ! grep -qx 'build: core (without .*)' <<<"$version"; then
   exit 1
 fi
 
-size="$(stat --format=%s "$BINARY")"
-if (( size > BUDGET )); then
-  echo "build-core: $BINARY is $size bytes, over the core budget of $BUDGET (#127, $LIMITS)" >&2
-  exit 1
-fi
-echo "build-core: $BINARY is static, $size bytes (budget $BUDGET)"
+# Under its budget: `build.ono_core_stripped_bytes`, #127's "a static binary under 8 MB", which
+# lives with every other size budget in the hardening limits registry and is read by the script
+# the package builds use too (ADR-0864, ADR-0866).
+scripts/binary-size.sh --triple "$TARGET" "$BINARY"
+echo "build-core: $BINARY is static"
 
 if [[ -n "$STAGE" ]]; then
   # The image's whole filesystem, with the modes it will have: `COPY` keeps them, and a mode

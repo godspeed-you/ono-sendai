@@ -60,6 +60,7 @@ if [[ ${#compare_only[@]} -eq 2 ]]; then
 fi
 
 target="${target:-$(rustc -vV | sed -n 's/^host: //p')}"
+handed_in="$binary"
 binary="${binary:-${CARGO_TARGET_DIR:-target}/$target/release/ono}"
 compiler="$(dirname "$binary")/kuang-compile"
 for built in "$binary" "$compiler"; do
@@ -120,9 +121,18 @@ build_once() {
       TMPDIR="$root/tmp" \
       CARGO_TARGET_DIR="$root/target" \
       SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
-      bash "$root/src/scripts/package.sh" --target "$target" --no-build --dist "$root/dist"
+      bash "$root/src/scripts/package.sh" --target "$target" --no-build --dist "$root/dist" \
+        "${unmeasured[@]}"
   )
 }
+
+# A binary handed in with --binary was not built from this tree — the gate hands in a stand-in —
+# so its size says nothing about what ships, and the packaging says so instead of checking it
+# (ADR-0866). A binary this script finds where the build leaves it is held to its budget.
+unmeasured=()
+if [[ -n "$handed_in" ]]; then
+  unmeasured=(--size-unmeasured "rebuild-check.sh --binary packages $handed_in, which it was handed rather than built from this tree")
+fi
 
 build_once a C.UTF-8 UTC 022 ""
 build_once b de_DE.UTF-8 Australia/Eucla 077 "$((SOURCE_DATE_EPOCH - 86400))"

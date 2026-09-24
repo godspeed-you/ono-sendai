@@ -12,11 +12,16 @@
 # not go through `cross`: cross installs an `x86_64` toolchain inside whatever image it runs,
 # which fails on an arm64 runner where the image and the target are aarch64 (ADR-0123).
 #
-# usage: scripts/package.sh [--target <triple>] [--no-build] [--dist <dir>] [--print-determinism]
+# usage: scripts/package.sh [--target <triple>] [--no-build] [--dist <dir>] [--size-unmeasured <why>]
+#                           [--print-determinism]
 #   --target             x86_64-unknown-linux-gnu (default: the host) or aarch64-unknown-linux-gnu
 #   --no-build           package what $CARGO_TARGET_DIR/<triple>/release/{ono,kuang-compile}
 #                        already hold
 #   --dist <dir>         write the packages here instead of dist/ — one rebuild of §46.5 per dir
+#   --size-unmeasured <why>
+#                        package without the size check, saying why on the check's own line:
+#                        for scripts/rebuild-check.sh --binary, which packages a binary it was
+#                        handed rather than one built from this tree (ADR-0866)
 #   --print-determinism  print the four inputs of spec §46.2-§46.4 and exit, building nothing
 set -euo pipefail
 
@@ -71,6 +76,7 @@ require_determinism() {
 
 target=""
 no_build=0
+size_unmeasured=""
 print_determinism=0
 # Where the binary is looked for and where the packages are written. Two rebuilds of one commit
 # need two of each, and §46.5 needs them not to share a directory (ADR-0527).
@@ -81,10 +87,11 @@ while [[ $# -gt 0 ]]; do
     --target) target="$2"; shift 2 ;;
     --target=*) target="${1#--target=}"; shift ;;
     --no-build) no_build=1; shift ;;
+    --size-unmeasured) size_unmeasured="${2:-}"; shift 2 ;;
     --dist) dist_dir="$2"; shift 2 ;;
     --dist=*) dist_dir="${1#--dist=}"; shift ;;
     --print-determinism) print_determinism=1; shift ;;
-    *) echo "usage: scripts/package.sh [--target <triple>] [--no-build] [--dist <dir>] [--print-determinism]" >&2; exit 2 ;;
+    *) echo "usage: scripts/package.sh [--target <triple>] [--no-build] [--dist <dir>] [--size-unmeasured <why>] [--print-determinism]" >&2; exit 2 ;;
   esac
 done
 
@@ -224,6 +231,17 @@ for built in "$binary" "$compiler"; do
     exit 1
   fi
 done
+
+# Issue #125, ADR-0866: every binary the packages ship is held to the size budget of the triple it
+# was built for, here, where the bytes that ship are built — on every release runner and in CI's
+# packaging job. Over the budget, or a triple no budget covers, and nothing is packaged. The lines
+# it prints are the release job's record of how large what it ships is.
+step "sizes of the shipped binaries"
+if [[ -n "$size_unmeasured" ]]; then
+  echo "binary-size: not measured — $size_unmeasured (ADR-0866)"
+else
+  scripts/binary-size.sh --triple "$target" "$binary" "$compiler"
+fi
 
 mkdir -p "$dist_dir"
 deb="$dist_dir/ono_${version}_${deb_arch}.deb"

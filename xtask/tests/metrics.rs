@@ -208,6 +208,7 @@ fn should_not_count_a_test_written_inside_a_string_literal() {
 // the fix: the figure is recorded per target triple, it has a budget beside the other limits, and
 // a binary over the budget — or a binary nobody measured, where a measurement is required — fails.
 
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use xtask::binary_size::{self, Found};
@@ -672,5 +673,132 @@ fn should_refuse_an_oversized_binary_through_the_command_the_image_build_runs() 
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+}
+
+// --- the budget where packages are built, without xtask (ADR-0866) ------------------------------
+
+/// A scratch checkout holding `scripts/binary-size.sh` and a registry with the given budget rows.
+fn checkout_with_budgets(rows: &str) -> ono_testkit::Scratch {
+    let repo = scratch();
+    repo.write(
+        "scripts/binary-size.sh",
+        std::fs::read_to_string(repo_path("scripts/binary-size.sh"))
+            .expect("scripts/binary-size.sh is in the repository"),
+    );
+    repo.write(
+        "docs/contracts/hardening/limits.yaml",
+        format!("version: 1\nlimits: []\nbuild_budgets:\n{rows}"),
+    );
+    repo
+}
+
+fn repo_path(relative: &str) -> std::path::PathBuf {
+    repo().join(relative)
+}
+
+/// A stand-in binary named `name` of `bytes` bytes, in a directory of its own under `repo`.
+fn stand_in(repo: &ono_testkit::Scratch, directory: &str, name: &str, bytes: u64) -> PathBuf {
+    let path = repo.path().join(directory).join(name);
+    std::fs::create_dir_all(path.parent().expect("a directory")).expect("the directory");
+    std::fs::File::create(&path)
+        .and_then(|file| file.set_len(bytes))
+        .expect("the stand-in");
+    path
+}
+
+/// `scripts/binary-size.sh` in `root`, over `binaries` built for `triple`.
+fn script_verdict(
+    root: &std::path::Path,
+    triple: &str,
+    extra: &[&str],
+    binaries: &[&PathBuf],
+) -> std::process::Output {
+    std::process::Command::new("bash")
+        .arg(root.join("scripts/binary-size.sh"))
+        .args(["--triple", triple])
+        .args(extra)
+        .args(binaries)
+        .output()
+        .expect("bash runs")
+}
+
+#[test]
+fn should_hold_a_shipped_binary_to_the_budget_of_its_triple_without_xtask() {
+    let repo = checkout_with_budgets(
+        "  - key: build.a\n    binary: ono\n    triple: x86_64-unknown-linux-gnu\n    budget: 100\n  \
+         - key: build.b\n    binary: ono\n    triple: aarch64-unknown-linux-gnu\n    budget: 80\n  \
+         - key: build.c\n    binary: kuang-compile\n    budget: 50\n",
+    );
+    let at_budget = stand_in(&repo, "a", "ono", 100);
+    let over = stand_in(&repo, "b", "ono", 101);
+    let aarch64_over = stand_in(&repo, "c", "ono", 81);
+    let compiler = stand_in(&repo, "d", "kuang-compile", 50);
+    for (triple, binary, passes, why) in [
+        (HOST, &at_budget, true, "a binary at its budget passes"),
+        (HOST, &over, false, "one byte over fails"),
+        (
+            "aarch64-unknown-linux-gnu",
+            &aarch64_over,
+            false,
+            "the aarch64 row holds the aarch64 build, not the x86_64 one",
+        ),
+        (
+            "aarch64-unknown-linux-gnu",
+            &compiler,
+            true,
+            "a row without a triple holds every triple without a row of its own",
+        ),
+        (
+            "riscv64gc-unknown-linux-gnu",
+            &at_budget,
+            false,
+            "a triple no row covers is not a pass",
+        ),
+    ] {
+        let output = script_verdict(repo.path(), triple, &[], &[binary]);
+        let said = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.status.success(), passes, "{why}: {said}");
+        assert!(
+            said.contains("binary-size:") && said.contains(triple),
+            "every verdict is printed with its triple: {said}"
+        );
+    }
+}
+
+#[test]
+fn should_read_every_budget_of_this_repository_as_xtask_reads_it() {
+    // Two readers of one registry — this script where packages are built, `cargo xtask
+    // binary-size` everywhere else — must give one answer, row by row.
+    let root = repo();
+    let text = std::fs::read_to_string(root.join(binary_size::LIMITS)).expect("the registry");
+    let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(&text).expect("YAML");
+    let rows = document["build_budgets"]
+        .as_sequence()
+        .expect("the budgets")
+        .clone();
+    assert!(!rows.is_empty());
+    let directory = scratch();
+    for row in rows {
+        let binary = row["binary"].as_str().expect("a binary").to_owned();
+        let triple = row["triple"]
+            .as_str()
+            .expect("every row of this repository names its triple (ADR-0866)")
+            .to_owned();
+        let budget = binary_size::budget(&root, &binary, &triple).expect("xtask reads the row");
+        for (bytes, passes) in [(budget, true), (budget + 1, false)] {
+            let path = stand_in(&directory, &format!("{triple}-{bytes}"), &binary, bytes);
+            let output = script_verdict(&root, &triple, &[], &[&path]);
+            assert_eq!(
+                output.status.success(),
+                passes,
+                "{binary} on {triple}, {bytes} bytes against xtask's {budget}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
 }

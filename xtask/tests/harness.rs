@@ -1053,3 +1053,163 @@ fn should_name_the_ci_acceptance_image_explicitly_in_the_job_that_builds_it_and_
         "`{built}` is not packed by the `ono-sendai:acceptance*` filter"
     );
 }
+
+// --- the budget where the packages are built (issue #125, ADR-0866) ----------------------------
+
+/// A packaging tool that answers its version and writes the file it is told to, nothing else.
+fn stand_in_packager(bin: &Path, name: &str, version: &str) {
+    let path = bin.join(name);
+    std::fs::write(
+        &path,
+        format!(
+            "#!/usr/bin/env bash\nshift\nif [ \"$1\" = --version ]; then echo '{name} {version}'; \
+             exit 0; fi\nwhile [ $# -gt 0 ]; do if [ \"$1\" = --output ]; then : > \"$2\"; fi; \
+             shift; done\n"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// A checkout that can run `scripts/package.sh --no-build`: the script, the budget script, a
+/// registry budgeting `ono` at 1000 and `kuang-compile` at 500 bytes on x86_64 only, stand-in
+/// packagers, and stand-in binaries of the given sizes where the build leaves them.
+fn packaging_checkout(ono: u64, compiler: u64) -> Checkout {
+    let checkout = checkout("ono-sendai");
+    for script in ["package.sh", "binary-size.sh"] {
+        std::fs::copy(
+            repo().join("scripts").join(script),
+            checkout.root.join("scripts").join(script),
+        )
+        .expect("the script is copied");
+    }
+    let limits = checkout.root.join("docs/contracts/hardening/limits.yaml");
+    std::fs::write(
+        &limits,
+        "version: 1\nlimits: []\nbuild_budgets:\n  - key: build.ono\n    binary: ono\n    \
+         triple: x86_64-unknown-linux-gnu\n    budget: 1000\n  - key: build.compiler\n    \
+         binary: kuang-compile\n    triple: x86_64-unknown-linux-gnu\n    budget: 500\n",
+    )
+    .unwrap();
+    stand_in_packager(&checkout.bin, "cargo-deb", "3.7.0");
+    stand_in_packager(&checkout.bin, "cargo-generate-rpm", "0.21.0");
+    for triple in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"] {
+        let release = checkout.root.join("target").join(triple).join("release");
+        std::fs::create_dir_all(&release).unwrap();
+        for (name, bytes) in [("ono", ono), ("kuang-compile", compiler)] {
+            let path = release.join(name);
+            std::fs::File::create(&path)
+                .and_then(|file| file.set_len(bytes))
+                .unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+    checkout
+}
+
+fn package(checkout: &Checkout, triple: &str) -> Output {
+    let dist = checkout.root.join("scratch-dist");
+    checkout
+        .script(
+            "package.sh",
+            &[
+                "--no-build",
+                "--target",
+                triple,
+                "--dist",
+                dist.to_str().unwrap(),
+            ],
+            &checkout.root.with_file_name("package.log"),
+        )
+        .env("SOURCE_DATE_EPOCH", "1700000000")
+        .env_remove("CARGO_TARGET_DIR")
+        .output()
+        .expect("bash must be runnable in the gate")
+}
+
+fn packaged(checkout: &Checkout) -> bool {
+    std::fs::read_dir(checkout.root.join("scratch-dist"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| entry.path().extension().is_some_and(|ext| ext == "deb"))
+}
+
+#[test]
+fn should_package_every_shipped_binary_within_its_budget_and_say_how_large_it_is() {
+    let checkout = packaging_checkout(1000, 500);
+    let output = package(&checkout, "x86_64-unknown-linux-gnu");
+    assert!(output.status.success(), "{}", text(&output));
+    let said = text(&output);
+    for (binary, bytes) in [("/ono ", "1000 bytes"), ("/kuang-compile ", "500 bytes")] {
+        assert!(
+            said.lines().any(|line| line.starts_with("binary-size:")
+                && line.contains(binary)
+                && line.contains(bytes)),
+            "the release job's log states the size of every shipped binary: {said}"
+        );
+    }
+    assert!(packaged(&checkout));
+}
+
+#[test]
+fn should_refuse_to_package_a_binary_over_the_budget_of_its_triple() {
+    // The release workflow runs scripts/package.sh on the runner that builds the bytes that
+    // ship; a budget checked anywhere else checks some other build.
+    for (ono, compiler) in [(1001, 500), (1000, 501)] {
+        let checkout = packaging_checkout(ono, compiler);
+        let output = package(&checkout, "x86_64-unknown-linux-gnu");
+        assert!(
+            !output.status.success() && text(&output).contains("over its budget"),
+            "ono {ono}, kuang-compile {compiler}: {}",
+            text(&output)
+        );
+        assert!(!packaged(&checkout), "nothing over budget is packaged");
+    }
+}
+
+#[test]
+fn should_refuse_to_package_for_a_triple_no_budget_covers() {
+    // The registry budgets x86_64 only; an aarch64 package would ship unmeasured.
+    let checkout = packaging_checkout(10, 10);
+    let output = package(&checkout, "aarch64-unknown-linux-gnu");
+    assert!(
+        !output.status.success() && text(&output).contains("aarch64-unknown-linux-gnu"),
+        "{}",
+        text(&output)
+    );
+    assert!(!packaged(&checkout));
+}
+
+#[test]
+fn should_say_so_when_it_packages_a_binary_it_does_not_measure() {
+    // scripts/rebuild-check.sh --binary packages a binary it was handed — the gate hands in a
+    // stand-in — to compare two packaging runs; its size is not a size of anything that ships.
+    // Skipping the check is allowed there only out loud (ADR-0866).
+    let checkout = packaging_checkout(5000, 5000);
+    let dist = checkout.root.join("scratch-dist");
+    let output = checkout
+        .script(
+            "package.sh",
+            &[
+                "--no-build",
+                "--target",
+                "x86_64-unknown-linux-gnu",
+                "--dist",
+                dist.to_str().unwrap(),
+                "--size-unmeasured",
+                "a stand-in handed to the test",
+            ],
+            &checkout.root.with_file_name("package.log"),
+        )
+        .env("SOURCE_DATE_EPOCH", "1700000000")
+        .env_remove("CARGO_TARGET_DIR")
+        .output()
+        .expect("bash must be runnable in the gate");
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains("binary-size: not measured — a stand-in handed to the test"),
+        "{}",
+        text(&output)
+    );
+}

@@ -1,6 +1,6 @@
 # ADR-0865: The release build time is a serial tail, and CI keeps building what ships
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0866
 - Date: 2026-09-24
 - Spec refs: v0.4.1 §44.2, §46.5, §46.6; ADR-0121, ADR-0123, ADR-0251, ADR-0851, ADR-0852,
   ADR-0863, ADR-0864, ADR-0870

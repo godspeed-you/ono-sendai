@@ -243,7 +243,8 @@ limits:
 #   key          the budget's name.
 #   binary       the release binary it holds, by file name.
 #   triple       the target triple it holds, when the row is for one; a row without one holds
-#                every triple of its binary that has no row of its own.
+#                every triple of its binary that has no row of its own. Every row here names its
+#                triple, so a triple nobody budgeted fails where it is packaged (ADR-0866).
 #   budget       the ceiling, inclusive, in `unit`.
 #   measured     what is measured, and how.
 #   enforced_by  who fails when the ceiling is exceeded.
@@ -252,6 +253,7 @@ limits:
 build_budgets:
   - key: build.ono_stripped_bytes
     binary: ono
+    triple: x86_64-unknown-linux-gnu
     type: bytesize
     budget: 24350304
     unit: bytes
@@ -259,10 +261,11 @@ build_budgets:
       The size of the release `ono` (`strip = "symbols"`, so the size a package installs), per
       target triple; recorded in docs/baselines/binary-size.yaml by `cargo xtask metrics --write`.
     enforced_by: >-
-      `cargo xtask binary-size`: `scripts/gate.sh` when a current release binary is built, and
-      `docker/Dockerfile` with `--require` on every acceptance image build; `spec-check` holds the
-      recorded figure to it (ADR-0864).
-    spec: "v0.4.1 §44.2, §50.1, Appendix H; ADR-0863, ADR-0864"
+      `scripts/binary-size.sh` from `scripts/package.sh`, on the release runner and in CI's
+      packaging job (ADR-0866); `cargo xtask binary-size`: `scripts/gate.sh` when a current release
+      binary is built, and `docker/Dockerfile` with `--require` on every acceptance image build;
+      `spec-check` holds the recorded figure to it (ADR-0864).
+    spec: "v0.4.1 §44.2, §50.1, Appendix H; ADR-0863, ADR-0864, ADR-0866"
     doc: >-
       The first budget is the stripped x86_64 size the release profile of issue #124 lands at on
       the integrated tree (with #126, the compiler out of the shell, and #127), plus ten percent:
@@ -278,10 +281,59 @@ build_budgets:
       The core build (#127, ADR-0910, ADR-0912): `ono` without the enhancements, statically linked
       against musl, at the release profile; `target/x86_64-unknown-linux-musl/release/ono`.
     enforced_by: >-
-      `scripts/build-core.sh`, which reads this row, in the `core-build` job on every push; and
+      `scripts/binary-size.sh` from `scripts/build-core.sh`, in the `core-build` job on every push;
       `cargo xtask binary-size` in `scripts/gate.sh` when a current core binary is built;
       `spec-check` holds the recorded figure to it (ADR-0864).
     spec: "#127; ADR-0912, ADR-0864"
     doc: >-
       #127's exit test: "a static binary under 8 MB", read as decimal megabytes (ADR-0912), so
       the inclusive ceiling is one byte under 8000000.
+  - key: build.ono_aarch64_stripped_bytes
+    binary: ono
+    triple: aarch64-unknown-linux-gnu
+    type: bytesize
+    budget: 21359924
+    unit: bytes
+    measured: >-
+      The release `ono` for aarch64, as `scripts/package.sh --target aarch64-unknown-linux-gnu`
+      builds and packages it.
+    enforced_by: >-
+      `scripts/binary-size.sh` from `scripts/package.sh` on the release workflow's native arm64
+      runner; `spec-check` holds the recorded figure to it (ADR-0866).
+    spec: "v0.4.1 §44.2, §50.1; ADR-0866"
+    doc: >-
+      19418112 bytes, built by `scripts/package.sh --target aarch64-unknown-linux-gnu` through
+      `cross` on x86_64 at cc2d9a5d plus the fixes of ADR-0866, times 1.1, rounded up. The release
+      builds it natively on arm64 in the pinned build image; ADR-0866 says why the two agree.
+  - key: build.kuang_compile_stripped_bytes
+    binary: kuang-compile
+    triple: x86_64-unknown-linux-gnu
+    type: bytesize
+    budget: 8045823
+    unit: bytes
+    measured: >-
+      The KUANG/11 compiler the packages ship beside the shell (ADR-0870), as `scripts/package.sh`
+      builds it.
+    enforced_by: >-
+      `scripts/binary-size.sh` from `scripts/package.sh`, on the release runner and in CI's
+      packaging job; `spec-check` holds the recorded figure to it (ADR-0866).
+    spec: "v0.4.1 §44.2, §50.1; ADR-0866, ADR-0870"
+    doc: >-
+      7314384 bytes from `scripts/package.sh` at cc2d9a5d plus the fixes of ADR-0866, times 1.1,
+      rounded up.
+  - key: build.kuang_compile_aarch64_stripped_bytes
+    binary: kuang-compile
+    triple: aarch64-unknown-linux-gnu
+    type: bytesize
+    budget: 6151174
+    unit: bytes
+    measured: >-
+      The KUANG/11 compiler for aarch64, as `scripts/package.sh --target
+      aarch64-unknown-linux-gnu` builds it.
+    enforced_by: >-
+      `scripts/binary-size.sh` from `scripts/package.sh` on the release workflow's native arm64
+      runner; `spec-check` holds the recorded figure to it (ADR-0866).
+    spec: "v0.4.1 §44.2, §50.1; ADR-0866, ADR-0870"
+    doc: >-
+      5591976 bytes, built through `cross` on x86_64 like the aarch64 shell's figure, times 1.1,
+      rounded up.
