@@ -122,7 +122,7 @@ fn usage() {
     eprintln!("  state-check    the claims docs/ACCEPTANCE.md makes about docs/STATE.md");
     eprintln!(
         "  skip-check     a test log's SKIPPED markers against the declared expectation \
-(spec section 38.3) <log>"
+(spec section 38.3) <log> [--partial: the log is some of the canonical suites]"
     );
     eprintln!(
         "  affected       the packages the tests of a change have to cover, as cargo arguments \
@@ -1056,7 +1056,16 @@ fn skip_check(arguments: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let problems = scan::verify_observed_skips(&expected, &log);
+    // `--partial`: the log is some of the canonical suites, not all of them (the core-build job).
+    let problems = if arguments
+        .iter()
+        .skip(1)
+        .any(|argument| argument == "--partial")
+    {
+        scan::verify_partial_run_skips(&expected, &log)
+    } else {
+        scan::verify_observed_skips(&expected, &log)
+    };
     // A permitted skip neither fails nor passes the run, so it is said out loud: one line each,
     // on the log and, in GitHub Actions, on the run's summary page (ADR-0885).
     let taken = scan::permitted_skips_taken(&expected, &log);

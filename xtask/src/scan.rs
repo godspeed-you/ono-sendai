@@ -1925,6 +1925,20 @@ pub fn permitted_skips_taken(expected: &ExpectedSkips, log: &str) -> Vec<Permitt
     taken
 }
 
+/// Holds a run of *some* of the canonical CI suites to the register — the `core-build` job's —
+/// in one direction of §38.3: every skip it took must be one the register expects. An expected
+/// skip it did not take is not reported, because the suite that takes it was not part of the run;
+/// the canonical run's own verification holds that direction.
+#[must_use]
+pub fn verify_partial_run_skips(expected: &ExpectedSkips, log: &str) -> Vec<Problem> {
+    let mut problems: Vec<Problem> = verify_observed_skips(expected, log)
+        .into_iter()
+        .filter(|problem| !expected.canonical_ci.contains(&problem.location))
+        .collect();
+    problems.sort_by(|left, right| left.location.cmp(&right.location));
+    problems
+}
+
 /// The `SKIPPED <test>: <category>: <detail>` markers a run left in `log`.
 fn observed_skips(log: &str) -> Vec<(String, String, String)> {
     let mut observed = Vec::new();

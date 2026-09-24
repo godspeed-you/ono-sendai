@@ -13,7 +13,7 @@ use xtask::scan::{
     ExpectedSkips, check_acceptance_case_references, check_authentication_flags,
     check_duplicate_helpers, check_expected_skips, check_pty_resize_assertions,
     check_release_board, check_release_notes, check_silent_skips, check_unannounced_skips,
-    check_unfinished_work, permitted_skips_taken, verify_observed_skips,
+    check_unfinished_work, permitted_skips_taken, verify_observed_skips, verify_partial_run_skips,
 };
 
 /// Builds a throwaway repository shaped like this one.
@@ -1112,6 +1112,28 @@ fn should_fail_when_a_declared_skip_no_longer_happens() {
         "got {:?}",
         problems[0].detail
     );
+}
+
+#[test]
+fn should_hold_a_partial_run_to_the_register_without_asking_it_for_every_expected_skip() {
+    // The core-build job runs two suites of the canonical run, not all of it. A skip there that
+    // the register does not expect is as undeclared as anywhere else; an expected skip of a suite
+    // it never ran is not one it failed to take.
+    let expected = expectation(
+        "  - id: \"crates/a/tests/thing.rs::should_cross_a_mount\"\n    category: fixture_not_applicable\n",
+        "    - \"crates/a/tests/thing.rs::should_cross_a_mount\"\n",
+    );
+    assert_eq!(
+        verify_partial_run_skips(&expected, "running 3 tests\ntest core ... ok\n"),
+        Vec::new(),
+        "a partial run without the expected skip's suite is not short of it"
+    );
+    let problems = verify_partial_run_skips(
+        &expected,
+        "SKIPPED should_see_the_static_binary: fixture_not_applicable: no musl target\n",
+    );
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert_eq!(problems[0].location, "should_see_the_static_binary");
 }
 
 #[test]
