@@ -27,7 +27,7 @@ use wasmtime::component::Component;
 /// The tool that writes an artifact, as the refusal names it.
 pub const COMPILE_TOOL: &str = "kuang-compile";
 
-/// The store whoever administers the machine writes: an image build, or a distribution package.
+/// The store whoever administers the system writes: an image build, or a distribution package.
 pub const SYSTEM_STORE: &str = "/usr/lib/ono-sendai/kuang-compiled";
 
 /// The operator's own store: `$XDG_CACHE_HOME/ono/kuang/compiled`, or `~/.cache/ono/...`.
@@ -166,8 +166,9 @@ impl NotCompiled {
             ),
         )
         .with_help(format!(
-            "`{COMPILE_TOOL}` compiles a component once, for this engine and this machine; \
-             `install plugin` runs it, and a shell upgrade or a changed component needs it again"
+            "`{COMPILE_TOOL}` compiles a component once, for this engine release and this \
+             architecture (ADR-0914, ADR-0916); `install plugin` runs it, and an engine upgrade \
+             or a changed component needs it again"
         ))
         .with_metadata("reason", json!(self.reason.word()))
         .with_metadata("component", json!(component.display().to_string()))

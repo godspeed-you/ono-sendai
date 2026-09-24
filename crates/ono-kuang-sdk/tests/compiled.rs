@@ -2,7 +2,7 @@
 //!
 //! The shell links the WebAssembly runtime without a compiler. These are the outcomes that makes
 //! observable at the host boundary: a component nobody compiled, one compiled by another engine
-//! or for another machine, one whose artifact is damaged, and one whose artifact someone else
+//! or for another architecture, one whose artifact is damaged, and one whose artifact someone else
 //! could have written are each refused with `load.component_not_compiled`, naming the command
 //! that fixes it — and never crash the host.
 //!
@@ -215,6 +215,13 @@ async fn should_refuse_a_component_nobody_compiled_and_name_the_compile_step() {
     let refused = scene.refusal().await;
     assert_eq!(reason_of(&refused), "missing");
     assert_names_the_compile_step(&refused, &scene.component());
+    // An artifact is compiled for the engine and the architecture, and travels to every machine
+    // of that architecture (ADR-0914): the help must not say it belongs to this one.
+    let help = refused.help().unwrap_or_default();
+    assert!(
+        help.contains("architecture") && !help.contains("machine"),
+        "{help:?}"
+    );
 }
 
 #[tokio::test]
