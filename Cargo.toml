@@ -240,7 +240,12 @@ panic = "warn"
 [profile.dev]
 debug = "line-tables-only"
 
+# Optimised for size (issue #124, ADR-0863): `opt-level = "s"` with fat LTO. `panic = "abort"` is
+# refused — a panic in one task of a login shell must not end the session — and so is
+# `opt-level = "z"`, whose last fifth is paid in the throughput spec §34 budgets. The stripped
+# binary is held to a budget (`build.ono_stripped_bytes`, docs/contracts/hardening/limits.yaml).
 [profile.release]
-lto = "thin"
+opt-level = "s"
+lto = "fat"
 codegen-units = 1
 strip = "symbols"
