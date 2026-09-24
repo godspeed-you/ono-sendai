@@ -16,6 +16,9 @@
 //! Everything here asserts outcomes at the command line, nothing about how they are produced
 //! (AGENTS.md §11).
 
+// The service, log and journal providers are the `systemd` tier; the core build leaves them out
+// and refuses them as `provider.unavailable`, which `core_build.rs` and case 357 prove (ADR-0911).
+#![cfg(feature = "systemd")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
