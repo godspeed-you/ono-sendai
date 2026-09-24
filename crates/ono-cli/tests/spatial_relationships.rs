@@ -866,23 +866,51 @@ fn should_show_the_connection_edge_appear_and_vanish_when_the_connection_opens_a
     // has already produced its first value, and closes again while it is still watching. The
     // stream is bounded with `take 3` (§29.4) so the run ends on its own: the snapshot, the
     // appearance and the disappearance.
+    //
+    // The fixture moves when the stream has, not on a clock. It used to connect 1.5 s in and
+    // close 2 s later, which on a loaded machine connected before the first value was taken —
+    // or opened and closed the connection between two readings — and `take 3` then waited for a
+    // change that never came (found at the v0.6.2 baseline, red at load 37). The script has no
+    // way to show a value before the stream ends (§29.1), so each value appends a line to a file
+    // on its way through the pipeline, and the fixture connects after the first line and closes
+    // after the second.
     let (listening, port) = listener();
+    let marks = scratch();
+    let values = marks.path().join("values");
     let (sender, receiver) = mpsc::channel();
-    let worker = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(1500));
-        let client = TcpStream::connect(("127.0.0.1", port)).expect("connect to the listener");
-        let (accepted, peer) = listening
-            .accept()
-            .expect("accept the test's own connection");
-        sender.send(peer.port()).expect("the test is still waiting");
-        std::thread::sleep(Duration::from_millis(2000));
-        drop(accepted);
-        drop(client);
-        std::thread::sleep(Duration::from_millis(2000));
-        drop(listening);
-    });
+    let worker = {
+        let values = values.clone();
+        std::thread::spawn(move || {
+            // A watchdog, not an assertion: a stream that never reaches a line is reported by the
+            // run's own watchdog below, with what it printed.
+            let passed = |count: usize| {
+                let deadline =
+                    std::time::Instant::now() + ono_testkit::under_load(Duration::from_secs(40));
+                while std::fs::read_to_string(&values).map_or(0, |text| text.lines().count())
+                    < count
+                    && std::time::Instant::now() < deadline
+                {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            };
+            passed(1);
+            let client = TcpStream::connect(("127.0.0.1", port)).expect("connect to the listener");
+            let (accepted, peer) = listening
+                .accept()
+                .expect("accept the test's own connection");
+            sender.send(peer.port()).expect("the test is still waiting");
+            passed(2);
+            drop(accepted);
+            drop(client);
+            passed(3);
+            drop(listening);
+        })
+    };
 
-    let script = format!("enter socket {port}; map --live --json | take 3 | to json");
+    let script = format!(
+        "enter socket {port}; map --live --json | each {{ let noted = (raw sh -c \"echo value >> {}\"); @ }} | take 3 | to json",
+        values.display()
+    );
     let run = Shell::new()
         .args(["-c", &script])
         .timeout(Duration::from_secs(40))
