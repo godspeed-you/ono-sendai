@@ -19,7 +19,7 @@ mod change_support;
 
 use std::path::Path;
 
-use change_support::{home, one, ono_at, plan, text};
+use change_support::{home, one, ono_at, ono_with, plan, text};
 use serde_yaml_ng::Value;
 
 /// A plan over two copies in `home`: its short reference and the two paths it overwrites.
@@ -104,8 +104,12 @@ fn should_draw_the_resolution_of_each_target_under_its_own_heading() {
     let home = home();
     let (reference, destinations) = two_copy_plan(home.path());
 
-    let run = ono_at(
+    // Wide enough for the whole path of a target: a drawing fits its terminal, and the paths of
+    // a scratch directory are as long as the checkout it sits in.
+    let run = ono_with(
         home.path(),
+        "COLUMNS",
+        "240",
         &format!("inspect plan {reference} --resolution"),
     );
 
