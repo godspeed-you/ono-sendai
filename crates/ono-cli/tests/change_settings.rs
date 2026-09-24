@@ -64,15 +64,13 @@ fn should_report_an_unreadable_change_setting_and_keep_the_others() {
 /// It is started detached (`sh` exits and the `sleep` is reparented), so once `kill process`
 /// ends it the system reaps it. A child of this test would stay a zombie in `/proc` until the test
 /// waited for it, and a plan's `exists == false` check would rightly still see it.
-struct Sleeper(u32);
-
-impl Drop for Sleeper {
-    fn drop(&mut self) {
-        let _ = std::process::Command::new("kill")
-            .args(["-9", &self.0.to_string()])
-            .status();
-    }
-}
+/// The detached `sleep`'s pid, and the process itself held by pidfd, so it is killed when the
+/// value is dropped and never by a number someone else may have taken over (issue #162, ADR-0894).
+struct Sleeper(
+    u32,
+    #[allow(dead_code, reason = "held for its Drop, which kills the process")]
+    ono_testkit::OwnedTree,
+);
 
 fn sleeper() -> Sleeper {
     let output = std::process::Command::new("sh")
@@ -83,7 +81,7 @@ fn sleeper() -> Sleeper {
         .trim()
         .parse()
         .expect("`sh` printed the pid of the detached sleep");
-    Sleeper(pid)
+    Sleeper(pid, ono_testkit::OwnedTree::of(pid))
 }
 
 fn with_config(home: &std::path::Path, lines: &str) {

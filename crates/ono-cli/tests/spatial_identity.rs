@@ -247,6 +247,9 @@ fn kill_statement(pid: u32) -> String {
 /// `/proc` for good instead of leaving a zombie this process would have to reap.
 struct Orphan {
     pid: u32,
+    /// Holds the process by pidfd from the moment its pid is known, so the kill at drop cannot
+    /// reach a process that took the number over (issue #162, ADR-0894).
+    _owned: ono_testkit::OwnedTree,
 }
 
 impl Orphan {
@@ -260,7 +263,10 @@ impl Orphan {
             .trim()
             .parse()
             .expect("`echo $!` prints the background pid");
-        let orphan = Self { pid };
+        let orphan = Self {
+            pid,
+            _owned: ono_testkit::OwnedTree::of(pid),
+        };
         orphan.wait_until_visible();
         orphan
     }
@@ -283,15 +289,6 @@ impl Orphan {
             "the fixture process {} should be visible in /proc within 5s",
             self.pid
         );
-    }
-}
-
-impl Drop for Orphan {
-    fn drop(&mut self) {
-        let _ = Command::new("sh")
-            .arg("-c")
-            .arg(format!("kill -9 {} 2>/dev/null", self.pid))
-            .status();
     }
 }
 

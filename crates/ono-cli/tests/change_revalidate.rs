@@ -25,7 +25,13 @@ use change_support::{home, one, ono_at, text};
 
 /// A `sleep 600` detached from the test, so the kernel's reaper collects it once it is killed and
 /// "the process is gone" means gone rather than a zombie waiting for this test to `wait` on it.
-struct Sleeper(u32);
+/// The detached `sleep`'s pid, and the process itself held by pidfd, so it is killed when the
+/// value is dropped and never by a number someone else may have taken over (issue #162, ADR-0894).
+struct Sleeper(
+    u32,
+    #[allow(dead_code, reason = "held for its Drop, which kills the process")]
+    ono_testkit::OwnedTree,
+);
 
 impl Sleeper {
     fn start() -> Self {
@@ -37,7 +43,7 @@ impl Sleeper {
             .trim()
             .parse()
             .expect("sh prints the pid of the sleep it started");
-        Self(pid)
+        Self(pid, ono_testkit::OwnedTree::of(pid))
     }
 
     fn alive(&self) -> bool {
@@ -60,16 +66,6 @@ impl Sleeper {
             std::thread::sleep(Duration::from_millis(50));
         }
         !self.alive()
-    }
-}
-
-impl Drop for Sleeper {
-    fn drop(&mut self) {
-        // Usually already gone — the test killed it, or the plan did — so the answer is not read.
-        let _ = std::process::Command::new("kill")
-            .args(["-KILL", &self.0.to_string()])
-            .stderr(std::process::Stdio::null())
-            .status();
     }
 }
 

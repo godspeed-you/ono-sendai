@@ -37,7 +37,7 @@
 
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -199,21 +199,24 @@ struct FileHolder {
     /// Kept so the scratch tree outlives the child that holds a file inside it.
     _directory: Scratch,
     path: PathBuf,
-    child: Child,
+    /// Owned with everything it runs: the `sleep` after the descriptors are open is a child of
+    /// its own under a shell that does not exec its last command (issue #162, ADR-0892).
+    child: ono_testkit::OwnedChild,
 }
 
 impl FileHolder {
     fn spawn() -> Self {
         let directory = scratch();
         let path = directory.write("held.conf", b"listen 8080;\n");
-        let child = Command::new("sh")
+        let child: ono_testkit::OwnedChild = Command::new("sh")
             .arg("-c")
             .arg(format!("exec 3< {}; sleep 30", path.display()))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .expect("`sh` is available on every test host");
+            .expect("`sh` is available on every test host")
+            .into();
         // The descriptor is open once the shell has run its first word; the poll keeps the test
         // from racing the child rather than sleeping blindly.
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -238,13 +241,6 @@ impl FileHolder {
     }
 }
 
-impl Drop for FileHolder {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
 /// A `sh` child holding two scratch files open, one of them named with an escape byte in it.
 ///
 /// The pair makes `follow files` ambiguous, which is the refusal §29.3 requires and the one that
@@ -252,7 +248,7 @@ impl Drop for FileHolder {
 /// from the bytes a filename brought with it (ADR-0015 T1, ADR-0211).
 struct TwoFileHolder {
     _directory: Scratch,
-    child: Child,
+    child: ono_testkit::OwnedChild,
 }
 
 impl TwoFileHolder {
@@ -262,7 +258,7 @@ impl TwoFileHolder {
         let directory = scratch();
         let first = directory.write("held-first.conf", b"listen 8080;\n");
         let second = directory.write(Self::HOSTILE, b"listen 8081;\n");
-        let child = Command::new("sh")
+        let child: ono_testkit::OwnedChild = Command::new("sh")
             .arg("-c")
             .arg(format!(
                 "exec 3< '{}'; exec 4< '{}'; sleep 30",
@@ -273,7 +269,8 @@ impl TwoFileHolder {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .expect("`sh` is available on every test host");
+            .expect("`sh` is available on every test host")
+            .into();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while std::time::Instant::now() < deadline
             && std::fs::read_link(format!("/proc/{}/fd/4", child.id())).is_err()
@@ -288,13 +285,6 @@ impl TwoFileHolder {
 
     fn pid(&self) -> u32 {
         self.child.id()
-    }
-}
-
-impl Drop for TwoFileHolder {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 

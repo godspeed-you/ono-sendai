@@ -45,16 +45,18 @@ fn remote_kill_plan(home: &std::path::Path, pid: u32) -> serde_yaml_ng::Value {
 }
 
 /// A `sleep` nobody in this process waits for: its shell exits at once, so once it is killed the
-/// system reaps it and `/proc/<pid>` goes, as a daemon's process would.
-fn detached_sleep() -> u32 {
+/// system reaps it and `/proc/<pid>` goes, as a daemon's process would. The guard holds it by
+/// pidfd and kills it when dropped, if the test did not (issue #162, ADR-0894).
+fn detached_sleep() -> (u32, ono_testkit::OwnedTree) {
     let output = std::process::Command::new("sh")
         .args(["-c", "sleep 300 >/dev/null 2>&1 & echo $!"])
         .output()
         .expect("sh starts");
-    String::from_utf8_lossy(&output.stdout)
+    let pid = String::from_utf8_lossy(&output.stdout)
         .trim()
         .parse()
-        .expect("sh prints the pid it started")
+        .expect("sh prints the pid it started");
+    (pid, ono_testkit::OwnedTree::of(pid))
 }
 
 /// Whether `pid` is still a process, waiting up to two seconds for it to be reaped.
@@ -66,15 +68,6 @@ fn still_running(pid: u32) -> bool {
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     true
-}
-
-/// Kills `pid` where a test that expected it gone found it still running.
-fn clean_up(pid: u32) {
-    if still_running(pid) {
-        let _ = std::process::Command::new("kill")
-            .arg(pid.to_string())
-            .status();
-    }
 }
 
 /// `ono -c script`, run with `home` as its working directory, so the agent a local link starts
@@ -170,7 +163,7 @@ fn should_name_the_host_in_the_protection_of_a_plan_inside_a_link() {
 #[test]
 fn should_apply_a_plan_inside_the_link_its_host_is_reached_over() {
     let home = home();
-    let pid = detached_sleep();
+    let (pid, sleeper) = detached_sleep();
 
     // SIGKILL is irreversible and the plan is HIGH risk, so a script states both (§19.4, §40.3);
     // the host check comes before either gate.
@@ -183,7 +176,7 @@ fn should_apply_a_plan_inside_the_link_its_host_is_reached_over() {
     );
 
     let running = still_running(pid);
-    clean_up(pid);
+    drop(sleeper);
     run.assert_success();
     assert!(
         !running,
@@ -226,7 +219,7 @@ fn should_leave_an_action_unknown_when_the_link_drops_under_it() {
 #[test]
 fn should_plan_recovery_per_host_and_say_the_linked_host_cannot_proceed() {
     let home = home();
-    let pid = detached_sleep();
+    let (pid, sleeper) = detached_sleep();
     let applied = ono_at(
         home.path(),
         &format!(
@@ -235,7 +228,7 @@ fn should_plan_recovery_per_host_and_say_the_linked_host_cannot_proceed() {
              get plan | select id | to json"
         ),
     );
-    clean_up(pid);
+    drop(sleeper);
     applied.assert_success();
     let plan = text(&last_json(applied.stdout())[0], "id");
 

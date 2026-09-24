@@ -98,6 +98,8 @@ fn should_act_on_the_piped_process_by_its_pid_when_a_pipeline_supplies_it() {
         .trim()
         .parse()
         .expect("sh prints the pid it started");
+    // Held by pidfd and killed when dropped, if the plan did not (issue #162, ADR-0894).
+    let sleeper = ono_testkit::OwnedTree::of(pid);
 
     let run = ono_at(
         home.path(),
@@ -111,11 +113,7 @@ fn should_act_on_the_piped_process_by_its_pid_when_a_pipeline_supplies_it() {
         std::thread::sleep(std::time::Duration::from_millis(50));
         !Path::new(&format!("/proc/{pid}")).exists()
     });
-    if !gone {
-        let _ = std::process::Command::new("kill")
-            .arg(pid.to_string())
-            .status();
-    }
+    drop(sleeper);
     run.assert_success();
     assert!(
         gone,
