@@ -1004,3 +1004,59 @@ fn should_agree_with_the_kuang_test_host_on_the_instant_a_fixture_starts_at() {
         "the temporal harness and the KUANG/11 test host must read the same clock"
     );
 }
+
+// --- issue #151: a figure is labelled with the build that produced it -------------------------
+
+#[test]
+fn should_refuse_a_temporal_row_sampled_by_a_build_other_than_the_one_the_run_claims() {
+    // Issue #151: a run takes its build label from `target/{release,debug}/ono`, and a temporal
+    // row is sampled by re-running *this* executable, whose build can differ. A `cargo run`
+    // without `--release` beside a release `ono` reported "release build" over figures a debug
+    // xtask measured — 419 ms against 220 ms for `temporal.why`, a missed budget against a held
+    // one. The run here claims the build this test executable is *not*, which is that situation.
+    let this_build = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let claimed = if this_build == "debug" {
+        "release"
+    } else {
+        "debug"
+    };
+    let root = scratch("sampler-build");
+    let fixture = small_fixture(7, &root);
+    // Neither row starts the shell, so no `ono` has to be built for it.
+    let runner = Runner::new(
+        "ono-is-not-started-by-these-rows",
+        environment(),
+        "0".repeat(40),
+    )
+    .iterations(1)
+    .build(claimed);
+
+    let why = xtask::perf::TEMPORAL_BENCHMARKS
+        .iter()
+        .find(|benchmark| benchmark.id == "temporal.why")
+        .expect("§49 declares temporal.why");
+    let refusal = runner.run_temporal(why, &fixture).expect_err(
+        "a temporal row sampled by a build other than the one the run claims was recorded under \
+         the claimed label (issue #151)",
+    );
+    assert!(
+        refusal.contains(this_build) && refusal.contains(claimed),
+        "the refusal must name both builds, so the reader knows which one to run; it said: \
+         {refusal}"
+    );
+
+    // §36.2's completion row is sampled the same way and is held to the same rule.
+    let refusal = runner.run_completion().expect_err(
+        "the completion row sampled by a build other than the one the run claims was recorded \
+         under the claimed label (issue #151)",
+    );
+    assert!(
+        refusal.contains(this_build) && refusal.contains(claimed),
+        "the refusal must name both builds; it said: {refusal}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

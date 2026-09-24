@@ -1069,6 +1069,14 @@ struct Sample {
     bytes: u64,
 }
 
+/// The build this executable was compiled as, which is the build of every figure it samples in
+/// its own process — the temporal rows and the completion row re-run it rather than `ono`.
+pub const SAMPLER_BUILD: &str = if cfg!(debug_assertions) {
+    "debug"
+} else {
+    "release"
+};
+
 /// Runs the declared benchmarks against a built binary (§37.1).
 #[derive(Debug, Clone)]
 pub struct Runner {
@@ -1109,6 +1117,31 @@ impl Runner {
     pub fn build(mut self, build: impl Into<String>) -> Self {
         self.build = build.into();
         self
+    }
+
+    /// Why a row sampled in-process by this executable may not be recorded under this run's
+    /// build label, if it may not (issue #151).
+    ///
+    /// The label comes from the `ono` binary the run measures; an in-process row is measured by
+    /// whatever build this executable is. A `cargo run -p xtask -- perf` beside a release `ono`
+    /// is a debug sampler under a release label, and a debug figure read as a release one is a
+    /// missed budget read as a held one — `temporal.why` measured 419 ms against 220 ms.
+    fn sampler_refusal(&self, row: &str) -> Option<String> {
+        (self.build != SAMPLER_BUILD).then(|| {
+            format!(
+                "`{row}` is sampled inside this {SAMPLER_BUILD} xtask, and this run is labelled \
+                 {} after the `ono` it measures, so the figure would be a {SAMPLER_BUILD} \
+                 figure under a {} label. Run `cargo run {}-p xtask -- perf` so the two \
+                 agree (issue #151)",
+                self.build,
+                self.build,
+                if self.build == "release" {
+                    "--release "
+                } else {
+                    ""
+                }
+            )
+        })
     }
 
     /// Measures one benchmark and returns its §32.3 record.
@@ -1455,6 +1488,11 @@ pub fn sample_completion() -> (f64, usize) {
 impl Runner {
     /// Measures §36.2's first completion, one cold sample per process.
     ///
+    /// # Errors
+    ///
+    /// Returns the reason the row may not be recorded: this executable is not the build the run
+    /// is labelled with (issue #151).
+    ///
     /// # Panics
     ///
     /// Panics if this executable cannot be located, which means nothing can be re-run.
@@ -1462,8 +1500,10 @@ impl Runner {
         clippy::expect_used,
         reason = "a benchmark that cannot find the executable it re-runs has nothing to measure"
     )]
-    #[must_use]
-    pub fn run_completion(&self) -> Measurement {
+    pub fn run_completion(&self) -> Result<Measurement, String> {
+        if let Some(refusal) = self.sampler_refusal(COMPLETION_BENCHMARK) {
+            return Err(refusal);
+        }
         let me = std::env::current_exe().expect("the running xtask must have a path");
         let mut latencies = Vec::new();
         let mut candidates = Vec::new();
@@ -1487,7 +1527,7 @@ impl Runner {
 
         let complete_ms = median(&latencies);
         let values = median(&candidates);
-        Measurement {
+        Ok(Measurement {
             benchmark: COMPLETION_BENCHMARK.to_owned(),
             profile: "S".to_owned(),
             commit: self.commit.clone(),
@@ -1517,7 +1557,7 @@ impl Runner {
                 // §36.2 asks of it instead (§2.6 keeps the unknown unknown).
                 ("cancel_ms", None),
             ],
-        }
+        })
     }
 }
 
@@ -1814,6 +1854,16 @@ impl TemporalOperation {
         }
     }
 
+    /// Whether the figure is the `ono` binary's, rather than the library code compiled into the
+    /// executable that takes the sample.
+    ///
+    /// Startup is timed around the shell the run measures, so its build is that binary's; every
+    /// other row calls the library inside the sampler (issue #151).
+    #[must_use]
+    pub const fn measures_the_shell(self) -> bool {
+        matches!(self, Self::StartupWithLedgerPresent)
+    }
+
     /// The operation that word names.
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
@@ -1846,8 +1896,9 @@ impl Runner {
     ///
     /// # Errors
     ///
-    /// Returns the reason the row could not be measured — a package that is not in the tree, or a
-    /// fixture that could not be opened. The caller records nothing for it, which leaves the
+    /// Returns the reason the row could not be measured — a package that is not in the tree, a
+    /// fixture that could not be opened, or a row this executable would sample under another
+    /// build's label (issue #151). The caller records nothing for it, which leaves the
     /// target `Unmeasured`.
     ///
     /// # Panics
@@ -1864,6 +1915,11 @@ impl Runner {
     ) -> Result<Measurement, String> {
         if let Some(reason) = benchmark.blocked_on {
             return Err(reason.to_owned());
+        }
+        if !benchmark.operation.measures_the_shell()
+            && let Some(refusal) = self.sampler_refusal(benchmark.id)
+        {
+            return Err(refusal);
         }
         let me = std::env::current_exe().expect("the running xtask must have a path");
         let mut latencies = Vec::new();

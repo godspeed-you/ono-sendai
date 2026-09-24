@@ -578,17 +578,25 @@ fn perf(args: &[String]) -> ExitCode {
     // thousand registry lookups beside it (issue #21, ADR-0498). One cold sample per process, so
     // the samples are re-runs of this executable rather than iterations in it.
     if !temporal_only {
-        let measured = runner.run_completion();
-        println!(
-            "  {:<28} {:<3} {:<9} first {:>9.3} ms  p95 {:>9.3} ms  candidates {}",
-            measured.benchmark,
-            measured.profile,
-            measured.temperature.as_str(),
-            measured.metric("time_to_first_ms").unwrap_or_default(),
-            measured.p95_ms,
-            measured.values,
-        );
-        measurements.push(measured);
+        match runner.run_completion() {
+            Ok(measured) => {
+                println!(
+                    "  {:<28} {:<3} {:<9} first {:>9.3} ms  p95 {:>9.3} ms  candidates {}",
+                    measured.benchmark,
+                    measured.profile,
+                    measured.temperature.as_str(),
+                    measured.metric("time_to_first_ms").unwrap_or_default(),
+                    measured.p95_ms,
+                    measured.values,
+                );
+                measurements.push(measured);
+            }
+            Err(reason) => println!(
+                "  {:<28} {:<3} unmeasured — {reason}",
+                perf::COMPLETION_BENCHMARK,
+                "S"
+            ),
+        }
     }
 
     let mut failed = false;
