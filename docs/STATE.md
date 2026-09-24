@@ -97,6 +97,26 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+**v0.6.2 — Verification Foundation** (milestone `v0.6.2`, 24 issues; ADR-0862: the milestone is
+the release inventory and each issue is its requirement). Claimed 2026-09-24 by one coordinator and
+six Opus sub-agents, each in a worktree `../ono-sendai-<slug>` on branch `implementation-<slug>`,
+integrated here:
+
+- [coordinator | 2026-09-24] integration, ADR-0862, release note, run record — files:
+  `docs/STATE.md`, `docs/releases/v0.6.2.md`, `docs/runs/`, `Cargo.toml` version
+- [release-tooling | 2026-09-24] #145 #146 #151 #169 #185 #139 #196 — files: `scripts/`,
+  `xtask/src/perf*`, `xtask/src/reproducibility.rs`, `.github/workflows/`, `AGENTS.md` §12.1
+- [size-profile | 2026-09-24] #124 #125 #218 — files: `Cargo.toml` `[profile.release]`,
+  `xtask/src/metrics.rs`, `xtask/src/provenance.rs`, hardening limits, `scripts/gate.sh`
+- [kuang-precompile | 2026-09-24] #126 — files: `crates/ono-kuang-*`, KUANG/11 wiring in
+  `crates/ono-cli`, `docker/Dockerfile`, cases 350–354
+- [core-build | 2026-09-24] #127 — files: `[features]` of `crates/ono-cli` and the provider
+  crates, `scripts/acceptance.sh` (additive), cases 355–359
+- [determinism | 2026-09-24] #141 #155 #160 #164 #165 #166 #189 #215 — files: the named test
+  files, `crates/ono-change-core/src/verification.rs`, case 152
+- [hygiene | 2026-09-24] #143 #162 #188 #204 — files: `crates/ono-testkit/`, `adapters.rs`,
+  `spatial_relationships.rs`, the four suites of #188
+
 ## What is left, and why
 
 **v0.7 is the next tranche** (above), and nothing of it is started. The known problems are in the
