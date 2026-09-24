@@ -95,9 +95,10 @@ compiler="$(dirname "$binary")/kuang-compile"
 checkout_once() {
   local into="$1" dated="$2"
   mkdir -p "$into"
-  # What git would track, without needing git: the copy is not a repository, and neither is the
-  # tree a release is sometimes built from.
-  tar --exclude-vcs --exclude-vcs-ignores -cf - . | tar -xmf - -C "$into"
+  # Exactly the files git tracks: `tar --exclude-vcs-ignores` honours no anchored pattern such
+  # as `/dist/` and copies every untracked file, which is not what a clone would hold.
+  git ls-files -z --cached | tar --null --files-from=- --ignore-failed-read -cf - 2>/dev/null \
+    | tar -xmf - -C "$into"
   if [[ -n "$dated" ]]; then
     find "$into" -exec touch -h -d "@$dated" {} +
   fi

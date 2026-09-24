@@ -15,7 +15,7 @@
 )]
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use ono_testkit::SkipReason;
@@ -1461,4 +1461,140 @@ fn should_build_the_compiler_apart_from_the_shell_and_prove_the_shell_went_witho
              carrying the compiler, or no compiler at all, passes it"
         );
     }
+}
+
+// --- what the packages are built from (issues #146, #145) ------------------------------------
+
+/// A copy of this checkout's tracked files, committed into a repository of its own, so a test can
+/// add an untracked file or run the build step without touching the real tree.
+fn tracked_copy() -> ono_testkit::Scratch {
+    let copy = scratch();
+    let listed = Command::new("git")
+        .args(["ls-files", "-z", "--cached"])
+        .current_dir(repo())
+        .output()
+        .expect("git must be runnable in the gate");
+    for name in listed
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+    {
+        let name = String::from_utf8_lossy(name).into_owned();
+        let from = repo().join(&name);
+        if !from.is_file() {
+            continue;
+        }
+        let to = copy.path().join(&name);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::copy(&from, &to).unwrap();
+    }
+    for arguments in [
+        &["init", "--quiet"][..],
+        &["add", "--all"],
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "--quiet",
+            "--message",
+            "copy",
+        ],
+    ] {
+        let output = Command::new("git")
+            .args(arguments)
+            .current_dir(copy.path())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    copy
+}
+
+/// A small real ELF to stand in for a binary: dependency scanners read it as they read `ono`.
+fn small_elf(which: &str) -> PathBuf {
+    ["/usr/bin", "/bin"]
+        .iter()
+        .map(|directory| Path::new(directory).join(which))
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| panic!("coreutils' `{which}` is on every host the gate runs on"))
+}
+
+fn host_triple() -> String {
+    format!("{}-unknown-linux-gnu", std::env::consts::ARCH)
+}
+
+/// The members of a .deb and of an .rpm in `dist`, as `(deb listing, rpm paths)`.
+fn package_members(dist: &Path) -> (String, Vec<String>) {
+    let mut deb = String::new();
+    let mut rpm = Vec::new();
+    for entry in std::fs::read_dir(dist).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|e| e == "deb") {
+            let output = Command::new("dpkg-deb")
+                .arg("--contents")
+                .arg(&path)
+                .output()
+                .unwrap();
+            deb.push_str(&String::from_utf8_lossy(&output.stdout));
+        } else if path.extension().is_some_and(|e| e == "rpm") {
+            rpm = rpm::Header::parse(&std::fs::read(&path).unwrap()).files();
+        }
+    }
+    (deb, rpm)
+}
+
+#[test]
+fn should_package_the_tracked_files_and_nothing_the_working_tree_merely_holds() {
+    // `tar --exclude-vcs-ignores` does not honour anchored patterns such as `/dist/`, and it
+    // copies every untracked file: a stray page under docs/reference/ went into the packages.
+    let copy = tracked_copy();
+    std::fs::write(
+        copy.path().join("docs/reference/untracked-draft.md"),
+        "a page nobody committed",
+    )
+    .unwrap();
+    std::fs::create_dir_all(copy.path().join("dist")).unwrap();
+    let target = copy.path().join("stand-ins");
+    let release = target.join(host_triple()).join("release");
+    std::fs::create_dir_all(&release).unwrap();
+    for binary in SHIPPED_BINARIES {
+        std::fs::copy(small_elf("true"), release.join(binary)).unwrap();
+    }
+    let dist = copy.path().join("dist");
+    let output = Command::new("bash")
+        .arg(copy.path().join("scripts/package.sh"))
+        .args(["--no-build", "--dist"])
+        .arg(&dist)
+        .current_dir(copy.path())
+        .env("CARGO_TARGET_DIR", &target)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "packaging the copy failed:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let (deb, rpm) = package_members(&dist);
+    assert!(
+        deb.contains("reference/commands.md")
+            && rpm.iter().any(|f| f.ends_with("reference/commands.md")),
+        "the tracked reference pages are packaged: {deb}\n{rpm:?}"
+    );
+    assert!(
+        !deb.contains("untracked-draft.md"),
+        "the .deb ships a file nobody committed:\n{deb}"
+    );
+    assert!(
+        !rpm.iter().any(|f| f.contains("untracked-draft.md")),
+        "the .rpm ships a file nobody committed: {rpm:?}"
+    );
 }

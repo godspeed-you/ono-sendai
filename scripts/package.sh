@@ -226,31 +226,44 @@ mkdir -p "$dist_dir"
 deb="$dist_dir/ono_${version}_${deb_arch}.deb"
 rpm="$dist_dir/ono-${version}-1.${rpm_arch}.rpm"
 
+# Both packages are built from one staged copy: the files git tracks — not what the working tree
+# merely holds, untracked pages and dist/ included — and the two binaries, every mtime the epoch
+# (§46.4; issues #145, #146; ADR-0902). A tree that is not the top of a repository — the copy
+# rebuild-check.sh packages — is taken as it is: it was made from the tracked files.
+stage="$(mktemp -d "${TMPDIR:-/tmp}/ono-package.XXXXXX")"
+trap 'rm -rf "$stage"' EXIT
+mkdir -p "$stage/src" "$stage/target/$target/release"
+top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -n "$top" && "$(cd "$top" && pwd -P)" == "$(pwd -P)" ]]; then
+  git ls-files -z --cached | tar --null --files-from=- --ignore-failed-read -cf - 2>/dev/null \
+    | tar -xf - -C "$stage/src"
+else
+  tar -cf - . | tar -xf - -C "$stage/src"
+fi
+cp "$binary" "$stage/target/$target/release/ono"
+cp "$compiler" "$stage/target/$target/release/kuang-compile"
+find "$stage" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
+deb="$(cd "$(dirname "$deb")" && pwd)/$(basename "$deb")"
+rpm="$(cd "$(dirname "$rpm")" && pwd)/$(basename "$rpm")"
+
 # The release profile already strips symbols; cargo-deb's own strip would need the target's
 # binutils on the host and add nothing.
 step "packaging $deb"
-cargo deb --package ono-cli --no-build --no-strip --target "$target" --output "$deb"
+(
+  cd "$stage/src"
+  CARGO_TARGET_DIR="$stage/target" \
+    cargo deb --package ono-cli --no-build --no-strip --target "$target" --output "$deb"
+)
 
 # §46.4 for the RPM: cargo-generate-rpm *clamps* an asset's mtime to SOURCE_DATE_EPOCH rather than
-# setting it, so a source file older than the commit — any file a workstation checked out before
-# the commit it is releasing was made — carries its own mtime into RPMTAG_FILEMTIMES and the
-# payload, and two checkouts of one commit package two RPMs (issue #146, ADR-0902). cargo-deb sets
-# every member to the epoch and needs none of this. The RPM is therefore built from a copy of the
-# tree — what git would track, read through the ignore files so no repository is needed — and of
-# the binary, whose every mtime *is* the epoch.
+# setting it, so a source file older than the commit would carry its own mtime into
+# RPMTAG_FILEMTIMES and the payload (issue #146, ADR-0902). The staged copy's every mtime is the
+# epoch; cargo-deb sets every member to it anyway.
 step "packaging $rpm"
-rpm_stage="$(mktemp -d "${TMPDIR:-/tmp}/ono-rpm.XXXXXX")"
-trap 'rm -rf "$rpm_stage"' EXIT
-mkdir -p "$rpm_stage/src" "$rpm_stage/target/$target/release"
-tar --exclude-vcs --exclude-vcs-ignores -cf - . | tar -xf - -C "$rpm_stage/src"
-cp "$binary" "$rpm_stage/target/$target/release/ono"
-cp "$compiler" "$rpm_stage/target/$target/release/kuang-compile"
-find "$rpm_stage" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
-rpm_output="$(cd "$(dirname "$rpm")" && pwd)/$(basename "$rpm")"
 (
-  cd "$rpm_stage/src"
-  cargo generate-rpm --package crates/ono-cli --target-dir "$rpm_stage/target" --target "$target" \
-    --arch "$rpm_arch" --output "$rpm_output"
+  cd "$stage/src"
+  cargo generate-rpm --package crates/ono-cli --target-dir "$stage/target" --target "$target" \
+    --arch "$rpm_arch" --output "$rpm"
 )
 
 step "packages"
