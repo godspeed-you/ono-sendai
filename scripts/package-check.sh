@@ -68,6 +68,11 @@ for package in "$deb" "$rpm"; do
 done
 # Absolute from here on: the directory is mounted into containers, and read from a subshell.
 dist_dir="$(cd "$dist_dir" && pwd)"
+# One record per release directory: two validations of two directories must not overwrite each
+# other's. The default directory keeps the name the release workflow collects.
+if [[ "$dist_dir" != "$PWD/dist" ]]; then
+  TESTED_RECORD="target/package-check-$(printf '%s' "$dist_dir" | sha256sum | cut -c1-12).sha256"
+fi
 
 runtime=""
 for candidate in docker podman; do
@@ -377,7 +382,13 @@ mkdir -p "$(dirname "$TESTED_RECORD")"
 ( cd "$dist_dir" && sha256sum "$deb" "$rpm" ) > "$TESTED_RECORD"
 cat "$TESTED_RECORD"
 if [[ -f "$dist_dir/SHA256SUMS" ]]; then
-  if ( cd "$dist_dir" && grep -F -f <(cut -d" " -f1 "$OLDPWD/$TESTED_RECORD") SHA256SUMS >/dev/null ) \
+  # Every validated package, by digest and name, and every file the manifest names intact: a
+  # manifest that described one package and not the other passed when any digest matched.
+  recorded=1
+  while read -r digest name; do
+    grep -qxF "$digest  $name" "$dist_dir/SHA256SUMS" || recorded=0
+  done < "$TESTED_RECORD"
+  if [[ $recorded -eq 1 ]] \
      && ( cd "$dist_dir" && sha256sum --check --strict --ignore-missing SHA256SUMS >/dev/null ); then
     ok "$dist_dir/SHA256SUMS records the digests of the packages that were just validated"
   else

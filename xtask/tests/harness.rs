@@ -861,3 +861,104 @@ fn should_keep_the_image_lock_in_the_repository_every_run_of_the_checkout_shares
         "and leaves nothing in the working tree"
     );
 }
+
+// --- package validation's record and manifest check ---------------------------------------------
+
+/// The deb and rpm file names of the stand-in packages in a checkout's `dist/`.
+fn stand_in_packages() -> (String, String) {
+    let (deb_arch, rpm_arch) = match std::env::consts::ARCH {
+        "aarch64" => ("arm64", "aarch64"),
+        _ => ("amd64", "x86_64"),
+    };
+    (
+        format!("ono_1.2.3_{deb_arch}.deb"),
+        format!("ono-1.2.3-1.{rpm_arch}.rpm"),
+    )
+}
+
+#[test]
+fn should_record_what_each_release_directory_validated_on_its_own() {
+    // The record of what was installed was one file per checkout, so two validations of two
+    // directories — a release-check and a plain package-check — overwrote each other's.
+    let checkout = checkout("ono-sendai");
+    let (deb, rpm) = stand_in_packages();
+    let other = checkout.root.join("other-dist");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(other.join(&deb), "another build's package").unwrap();
+    std::fs::write(other.join(&rpm), "another build's package").unwrap();
+
+    let first = checkout
+        .script(
+            "package-check.sh",
+            &[],
+            &checkout.root.with_file_name("a.log"),
+        )
+        .output()
+        .unwrap();
+    assert!(first.status.success(), "{}", text(&first));
+    let second = checkout
+        .script(
+            "package-check.sh",
+            &["--dist", other.to_str().unwrap()],
+            &checkout.root.with_file_name("b.log"),
+        )
+        .output()
+        .unwrap();
+    assert!(second.status.success(), "{}", text(&second));
+
+    let records: Vec<String> = std::fs::read_dir(checkout.root.join("target"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.to_string_lossy().ends_with(".sha256"))
+        .map(|path| std::fs::read_to_string(path).unwrap())
+        .collect();
+    assert_eq!(
+        records.len(),
+        2,
+        "two release directories validated, and not two records of what was installed: \
+         {records:?}"
+    );
+    assert!(
+        std::fs::read_to_string(checkout.root.join("target/package-check.sha256"))
+            .is_ok_and(|record| record.contains(&deb)),
+        "the default directory's record stays where the release workflow collects it"
+    );
+}
+
+#[test]
+fn should_require_the_manifest_to_record_every_package_that_was_validated() {
+    // The comparison passed when any one validated digest appeared in SHA256SUMS, so a manifest
+    // that described the .deb and not the .rpm was accepted.
+    let checkout = checkout("ono-sendai");
+    let (deb, _) = stand_in_packages();
+    let dist = checkout.root.join("dist");
+    let digest = |name: &str| {
+        let output = Command::new("sha256sum")
+            .arg(dist.join(name))
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout)
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .to_owned()
+    };
+    std::fs::write(
+        dist.join("SHA256SUMS"),
+        format!("{}  {deb}\n", digest(&deb)),
+    )
+    .unwrap();
+    let output = checkout
+        .script(
+            "package-check.sh",
+            &[],
+            &checkout.root.with_file_name("m.log"),
+        )
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success() && text(&output).contains("SHA256SUMS"),
+        "a manifest that leaves a validated package out was accepted:\n{}",
+        text(&output)
+    );
+}
