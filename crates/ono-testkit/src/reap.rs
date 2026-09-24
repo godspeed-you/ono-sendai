@@ -78,13 +78,18 @@ impl ProcessTable for Kernel {
 
 /// Freezes the tree under `root` in `table`, then kills every process it froze.
 fn walk_and_kill(root: i32, table: &mut impl ProcessTable) {
+    // Every pid the walk has tried, whether or not it could be stopped: a descendant that refuses
+    // `SIGSTOP` (it changed its uid) stays listed under its stopped parent, and trying it again on
+    // every pass would never end.
+    let mut tried: Vec<i32> = Vec::new();
     let mut frozen: Vec<i32> = Vec::new();
     let mut pending = vec![root];
     while !pending.is_empty() {
         for pid in pending.drain(..) {
-            if frozen.contains(&pid) {
+            if tried.contains(&pid) {
                 continue;
             }
+            tried.push(pid);
             if table.stop(pid) {
                 frozen.push(pid);
             }
@@ -94,7 +99,7 @@ fn walk_and_kill(root: i32, table: &mut impl ProcessTable) {
         pending = frozen
             .iter()
             .flat_map(|pid| table.children(*pid))
-            .filter(|child| !frozen.contains(child))
+            .filter(|child| !tried.contains(child))
             .collect();
     }
     for pid in frozen {
@@ -238,4 +243,62 @@ fn children_of(pid: i32) -> Vec<i32> {
                 .collect::<Vec<i32>>()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ProcessTable, walk_and_kill};
+
+    /// A process table the test writes: who is whose child, and who refuses to be signalled.
+    #[derive(Default)]
+    struct Table {
+        children: Vec<(i32, i32)>,
+        unsignalable: Vec<i32>,
+        stops: Vec<i32>,
+        kills: Vec<i32>,
+    }
+
+    impl ProcessTable for Table {
+        fn stop(&mut self, pid: i32) -> bool {
+            self.stops.push(pid);
+            assert!(
+                self.stops.len() < 1_000,
+                "the walk keeps trying to stop the same processes: {:?}",
+                &self.stops[..20]
+            );
+            !self.unsignalable.contains(&pid)
+        }
+
+        fn children(&self, pid: i32) -> Vec<i32> {
+            self.children
+                .iter()
+                .filter(|(parent, _)| *parent == pid)
+                .map(|(_, child)| *child)
+                .collect()
+        }
+
+        fn kill(&mut self, pid: i32) {
+            self.kills.push(pid);
+        }
+    }
+
+    #[test]
+    fn should_end_and_try_each_process_once_when_a_descendant_cannot_be_signalled() {
+        // A child that changed its uid answers EPERM to SIGSTOP. It stays listed under its
+        // stopped parent, and a walk that only remembered the processes it froze would try it
+        // again on every pass, for ever.
+        let mut table = Table {
+            children: vec![(1, 2), (1, 3), (3, 4)],
+            unsignalable: vec![3],
+            ..Table::default()
+        };
+        walk_and_kill(1, &mut table);
+        let mut stops = table.stops.clone();
+        stops.sort_unstable();
+        assert_eq!(stops, vec![1, 2, 3], "each process is tried exactly once");
+        assert!(
+            !table.kills.contains(&3),
+            "a process that could not be stopped is not part of the frozen tree"
+        );
+    }
 }
