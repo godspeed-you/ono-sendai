@@ -89,6 +89,10 @@ pub enum Reason {
     Incompatible,
     /// An artifact is there and someone other than its owner or root could have written it.
     Untrusted,
+    /// The artifact, its store or a directory above them could not be examined or read:
+    /// permission denied, or another error of the system's own. Nothing is mapped, and the
+    /// compile step alone does not fix it.
+    Unreadable,
 }
 
 impl Reason {
@@ -99,6 +103,7 @@ impl Reason {
             Self::Missing => "missing",
             Self::Incompatible => "incompatible",
             Self::Untrusted => "untrusted",
+            Self::Unreadable => "unreadable",
         }
     }
 }
@@ -133,12 +138,21 @@ impl NotCompiled {
                 "has a compiled artifact the shell will not map: {}",
                 self.detail
             ),
+            Reason::Unreadable => format!(
+                "may have a compiled artifact the shell cannot read: {}",
+                self.detail
+            ),
         };
         let remedy = match self.reason {
             Reason::Untrusted => format!(
                 "the artifact `{}`, its store and every directory above them must be real \
                  directories and files that only this user or root can change; correct what this \
                  names or remove the artifact, then run `{command}`",
+                self.artifact.display()
+            ),
+            Reason::Unreadable => format!(
+                "make the artifact `{}`, its store and the directories above them readable by \
+                 this user, or remove the artifact, then run `{command}`",
                 self.artifact.display()
             ),
             Reason::Missing | Reason::Incompatible => format!("run `{command}`"),
@@ -358,7 +372,7 @@ fn make_directory(parent: &OwnedFd, name: &OsStr, path: &Path) -> Result<(), Ref
     match rustix::fs::mkdirat(parent, name, Mode::from_raw_mode(0o755)) {
         Ok(()) | Err(Errno::EXIST) => Ok(()),
         Err(error) => Err(Refusal::Refused(
-            Reason::Incompatible,
+            Reason::Unreadable,
             format!(
                 "the store `{}` could not be made: {}",
                 path.display(),
@@ -379,10 +393,11 @@ fn symbolic_link(path: &Path) -> Refusal {
     )
 }
 
-/// An error on the way to an artifact that is neither absence nor a refusal of its own.
+/// An error on the way to an artifact that is neither absence nor a refusal of its own: the
+/// system would not let this user examine or read it.
 fn unexpected(path: &Path, error: &std::io::Error) -> Refusal {
     Refusal::Refused(
-        Reason::Incompatible,
+        Reason::Unreadable,
         format!("`{}` cannot be examined: {error}", path.display()),
     )
 }

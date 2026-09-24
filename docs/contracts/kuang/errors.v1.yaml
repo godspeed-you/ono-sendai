@@ -99,13 +99,15 @@ errors:
     kind: resolution
     summary: The package's component has no compiled artifact this shell's engine can load.
     help: >-
-      The shell carries the WebAssembly runtime and no compiler (ADR-0870): a component is
-      compiled once, by `kuang-compile <component>`, which `install plugin` runs for you. This
-      error means the artifact is missing — the package was placed by hand, or the component
-      changed — or was written by another engine version or for another architecture, as after
-      a shell upgrade, or cannot be trusted because someone else could write it. The metadata
-      names the component, the reason and the exact command; running it fixes every reason but
-      the last.
+      The shell carries the WebAssembly runtime and no compiler (ADR-0870): a component is compiled
+      once, by `kuang-compile <component>`, which `install plugin` runs for you. The metadata's
+      `reason` says why this one cannot be loaded: `missing` — the package was placed by hand, or
+      the component changed; `incompatible` — the artifact was written by another engine version or
+      for another architecture, as after a shell upgrade; `untrusted` — someone other than this
+      user or root could have written the artifact, its store or a directory above them, or one of
+      them is a symbolic link (ADR-0915); `unreadable` — one of them could not be read. The
+      metadata names the component, the reason and the exact command; running it fixes `missing`
+      and `incompatible`.
 
   # --- runtime: the instance misbehaved, spec §31.15, §31.34 ----------------------------------
   - code: Ono-Sendai-K11201

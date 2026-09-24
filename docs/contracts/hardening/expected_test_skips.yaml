@@ -66,6 +66,9 @@ declared:
   - id: "crates/ono-cli/tests/network.rs::should_include_the_listening_socket_when_tracing_its_interface"
     category: fixture_not_applicable
     prerequisite: "`lo` holds fewer objects than one trace graph draws (256), so a missing listener cannot be one the node limit left out; the graph itself says when it was truncated (ADR-0880)"
+  - id: "crates/ono-kuang-sdk/tests/compiled.rs::should_refuse_a_store_it_cannot_read_as_unreadable_not_as_another_engine"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so a store without read or search permission is refused to it (ADR-0915)"
   - id: "crates/ono-cli/tests/network.rs::should_act_on_the_piped_interface_when_a_record_arrives_instead_of_a_selector"
     category: missing_privilege
     prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"

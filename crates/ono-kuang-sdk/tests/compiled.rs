@@ -150,6 +150,13 @@ fn group_is_private(directory: &Path) -> bool {
             .all(|member| member.is_empty() || member == user)
 }
 
+fn running_as_root() -> bool {
+    std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .is_ok_and(|run| String::from_utf8_lossy(&run.stdout).trim() == "0")
+}
+
 fn reason_of(error: &KuangError) -> &str {
     error
         .metadata()
@@ -469,6 +476,33 @@ fn should_refuse_to_write_through_a_symbolic_link() {
         std::fs::read_dir(&target).expect("the target").count(),
         0,
         "and nothing lands where it points"
+    );
+}
+
+#[tokio::test]
+async fn should_refuse_a_store_it_cannot_read_as_unreadable_not_as_another_engine() {
+    // Permission denied is not the engine refusing an artifact, and `kuang-compile` would not
+    // fix it: the refusal says what happened.
+    use std::os::unix::fs::PermissionsExt as _;
+    if running_as_root() {
+        ono_testkit::skipped(
+            ono_testkit::SkipReason::MissingPrivilege,
+            "root reads a store whatever its mode, so permission is never denied",
+        );
+        return;
+    }
+    let scene = Scene::with(EMPTY_COMPONENT);
+    scene.compile();
+    std::fs::set_permissions(scene.store(), std::fs::Permissions::from_mode(0o000))
+        .expect("a store nobody may search");
+    let refused = scene.refusal().await;
+    std::fs::set_permissions(scene.store(), std::fs::Permissions::from_mode(0o755))
+        .expect("the store back");
+    assert_eq!(reason_of(&refused), "unreadable", "{:?}", refused.message());
+    assert!(
+        refused.message().contains("ermission denied") && !refused.message().contains("engine"),
+        "the refusal says the store could not be read, not that the engine refused it: {:?}",
+        refused.message()
     );
 }
 
