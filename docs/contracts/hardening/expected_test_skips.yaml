@@ -442,7 +442,7 @@ canonical_ci:
   # preferred count of zero is the honest expectation — with the two exceptions below, which are
   # not lost coverage.
   #
-  # Three entries, and none of them is coverage anybody lost. Each is a test that skips on every
+  # None of the entries is coverage anybody lost. Each is a test that skips on every
   # host by construction rather than because a prerequisite is missing, so listing them is what
   # makes §38.3's reverse check a guard rather than a nuisance: if one stops emitting its marker,
   # `skip-check` says so.
