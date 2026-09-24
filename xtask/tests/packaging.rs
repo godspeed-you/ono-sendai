@@ -1343,7 +1343,97 @@ done
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
             .expect("the stand-in is executable");
     }
+    // A committed repository, as a release is cut from: the gate refuses a tree with changes.
+    repo_copy.write(".gitignore", "target/\n*.log\n");
+    for arguments in [
+        &["init", "--quiet"][..],
+        &["add", "--all"],
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "--quiet",
+            "--message",
+            "fixture",
+        ],
+    ] {
+        let output = Command::new("git")
+            .args(arguments)
+            .current_dir(repo_copy.path())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .expect("git must be runnable in the gate");
+        assert!(output.status.success(), "git {arguments:?}");
+    }
     repo_copy
+}
+
+/// Runs the fixture's `scripts/release-check.sh` with `environment` and answers
+/// `(succeeded, output)`.
+fn run_release_check(fixture: &Path, environment: &[(&str, &str)]) -> (bool, String) {
+    let mut command = Command::new("bash");
+    command
+        .arg(fixture.join("scripts/release-check.sh"))
+        .current_dir(fixture)
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                fixture.join("bin").display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .env("STUB_VERSION", "0.6.2")
+        .env("STUB_LOG", fixture.join("checksummed.log"))
+        .env_remove("ONO_RELEASE_ALLOW_DIRTY");
+    for (name, value) in environment {
+        command.env(name, value);
+    }
+    let output = command
+        .output()
+        .unwrap_or_else(|error| panic!("bash must be runnable in the gate: {error}"));
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    (output.status.success(), text)
+}
+
+#[test]
+fn should_refuse_to_qualify_a_release_from_a_tree_with_uncommitted_changes() {
+    // The packages are built from the working tree, so a release-check over uncommitted edits or
+    // untracked files qualifies bytes no commit describes.
+    let fixture = release_check_fixture();
+    let (clean, report) = run_release_check(fixture.path(), &[]);
+    assert!(clean, "a committed tree was refused:\n{report}");
+
+    std::fs::write(fixture.path().join("docs/ACCEPTANCE.md"), "- [x] edited\n").unwrap();
+    std::fs::write(
+        fixture.path().join("docs/untracked.md"),
+        "nobody committed this",
+    )
+    .unwrap();
+    let (qualified, report) = run_release_check(fixture.path(), &[]);
+    assert!(
+        !qualified,
+        "a release-check over uncommitted changes passed:\n{report}"
+    );
+    assert!(
+        report.contains("docs/ACCEPTANCE.md") && report.contains("docs/untracked.md"),
+        "the refusal names what is not committed:\n{report}"
+    );
+    assert!(
+        !report.contains("== quality gate"),
+        "the refusal comes before anything is built or run:\n{report}"
+    );
+
+    let (overridden, report) =
+        run_release_check(fixture.path(), &[("ONO_RELEASE_ALLOW_DIRTY", "1")]);
+    assert!(
+        overridden && report.contains("ONO_RELEASE_ALLOW_DIRTY"),
+        "a developer's explicit override is honoured and said out loud:\n{report}"
+    );
 }
 
 #[test]

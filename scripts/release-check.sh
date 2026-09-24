@@ -4,6 +4,25 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+# A release is a commit. The packages are built from the working tree, so a release-check over
+# uncommitted edits or untracked files qualifies bytes no commit describes — a README nobody
+# committed, a reference page nobody generated from the registries. Refused before anything runs.
+# `ONO_RELEASE_ALLOW_DIRTY=1` lets a developer rehearse the gate over work in progress, and says
+# so; a release is never cut that way.
+if ! changes="$(git status --porcelain --untracked-files=all 2>&1)"; then
+  printf 'release-check: git cannot describe this tree, so no commit is being released:\n%s\n' "$changes" >&2
+  exit 1
+fi
+if [[ -n "$changes" ]]; then
+  if [[ "${ONO_RELEASE_ALLOW_DIRTY:-0}" == "1" ]]; then
+    printf '\033[33mrelease-check: ONO_RELEASE_ALLOW_DIRTY=1 — qualifying a tree with uncommitted changes; this is a rehearsal, not a release:\033[0m\n%s\n' "$changes"
+  else
+    printf 'release-check: the tree has uncommitted changes, and a release is a commit:\n%s\n' "$changes" >&2
+    printf 'release-check: commit or remove them; ONO_RELEASE_ALLOW_DIRTY=1 rehearses the gate anyway\n' >&2
+    exit 1
+  fi
+fi
+
 printf '\033[1m== quality gate\033[0m\n'
 scripts/gate.sh
 
