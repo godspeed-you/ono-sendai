@@ -3,8 +3,9 @@
 #
 # Two builds of one commit must produce identical packages. What differs between the two runs is
 # chosen to be everything a build is allowed to see and not allowed to embed: locale, language,
-# timezone, umask, temporary directory, build directory and output directory. `scripts/package.sh`
-# fixes the first four before its own first tool runs (§46.2-§46.4), so a difference here is a
+# timezone, umask, temporary directory, build directory, output directory and the age of the
+# checkout's files. `scripts/package.sh` fixes the first four before its own first tool runs
+# (§46.2-§46.4) and pins the last one for the tool that would read it, so a difference here is a
 # difference in the artifacts and not in the shell that launched them.
 #
 # The comparison itself is `cargo xtask compare-builds`, which names the differing archive member
@@ -78,13 +79,33 @@ binary="$(cd "$(dirname "$binary")" && pwd)/$(basename "$binary")"
 # Each build gets its own everything, and a deliberately different environment. The second one is
 # hostile on purpose: a German locale, a timezone at +08:45, a private umask. None of it may
 # reach an artifact.
+#
+# Each also gets its own checkout, and the two disagree about when their files were written: the
+# first is fresh, every file younger than the commit, the way a runner's clone is; the second
+# was checked out a day before the commit was made, the way a workstation's tree is when the
+# files a release ships were not the ones it last changed. The mtime of a source file is
+# something a build sees and may not embed, and cargo-generate-rpm clamps an asset's mtime to
+# SOURCE_DATE_EPOCH rather than setting it, so a file older than the commit took its own mtime
+# into the RPM (issue #146, ADR-0902). A comparison over one shared tree cannot see that.
+checkout_once() {
+  local into="$1" dated="$2"
+  mkdir -p "$into"
+  # What git would track, without needing git: the copy is not a repository, and neither is the
+  # tree a release is sometimes built from.
+  tar --exclude-vcs --exclude-vcs-ignores -cf - . | tar -xmf - -C "$into"
+  if [[ -n "$dated" ]]; then
+    find "$into" -exec touch -h -d "@$dated" {} +
+  fi
+}
+
 build_once() {
-  local slot="$1" locale="$2" zone="$3" mask="$4"
+  local slot="$1" locale="$2" zone="$3" mask="$4" dated="$5"
   local root="$work/$slot"
   mkdir -p "$root/target/$target/release" "$root/dist" "$root/tmp"
   cp "$binary" "$root/target/$target/release/ono"
+  checkout_once "$root/src" "$dated"
 
-  step "build $slot — LC_ALL=$locale TZ=$zone umask=$mask"
+  step "build $slot — LC_ALL=$locale TZ=$zone umask=$mask, sources ${dated:+dated @}${dated:-fresh}"
   (
     umask "$mask"
     env \
@@ -92,11 +113,11 @@ build_once() {
       TMPDIR="$root/tmp" \
       CARGO_TARGET_DIR="$root/target" \
       SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
-      bash scripts/package.sh --target "$target" --no-build --dist "$root/dist"
+      bash "$root/src/scripts/package.sh" --target "$target" --no-build --dist "$root/dist"
   )
 }
 
-build_once a C.UTF-8 UTC 022
-build_once b de_DE.UTF-8 Australia/Eucla 077
+build_once a C.UTF-8 UTC 022 ""
+build_once b de_DE.UTF-8 Australia/Eucla 077 "$((SOURCE_DATE_EPOCH - 86400))"
 
 compare "$work/a/dist" "$work/b/dist"

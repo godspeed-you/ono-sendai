@@ -189,8 +189,26 @@ rpm="$dist_dir/ono-${version}-1.${rpm_arch}.rpm"
 step "packaging $deb"
 cargo deb --package ono-cli --no-build --no-strip --target "$target" --output "$deb"
 
+# §46.4 for the RPM: cargo-generate-rpm *clamps* an asset's mtime to SOURCE_DATE_EPOCH rather than
+# setting it, so a source file older than the commit — any file a workstation checked out before
+# the commit it is releasing was made — carries its own mtime into RPMTAG_FILEMTIMES and the
+# payload, and two checkouts of one commit package two RPMs (issue #146, ADR-0902). cargo-deb sets
+# every member to the epoch and needs none of this. The RPM is therefore built from a copy of the
+# tree — what git would track, read through the ignore files so no repository is needed — and of
+# the binary, whose every mtime *is* the epoch.
 step "packaging $rpm"
-cargo generate-rpm --package crates/ono-cli --target-dir "$target_dir" --target "$target" --arch "$rpm_arch" --output "$rpm"
+rpm_stage="$(mktemp -d "${TMPDIR:-/tmp}/ono-rpm.XXXXXX")"
+trap 'rm -rf "$rpm_stage"' EXIT
+mkdir -p "$rpm_stage/src" "$rpm_stage/target/$target/release"
+tar --exclude-vcs --exclude-vcs-ignores -cf - . | tar -xf - -C "$rpm_stage/src"
+cp "$binary" "$rpm_stage/target/$target/release/ono"
+find "$rpm_stage" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
+rpm_output="$(cd "$(dirname "$rpm")" && pwd)/$(basename "$rpm")"
+(
+  cd "$rpm_stage/src"
+  cargo generate-rpm --package crates/ono-cli --target-dir "$rpm_stage/target" --target "$target" \
+    --arch "$rpm_arch" --output "$rpm_output"
+)
 
 step "packages"
 ls -l "$deb" "$rpm"
