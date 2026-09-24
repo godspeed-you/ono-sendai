@@ -96,6 +96,21 @@ fn should_open_the_tree_view_over_a_graph_and_leave_the_pick_behind() {
     // over it — `view tree` appeared in no test and in no case. This drives the real thing: the
     // view opens on a real trace, answers a key inside it, and leaves the selection addressable
     // (spec §6.4, ADR-0033).
+    //
+    // The trace is of a process the test owns, one hop deep. It was `trace process 1`, the
+    // host's whole process tree cut at its node limit: 256 objects and several hundred edges,
+    // drawn as a tree and then drawn again in the inspect pane, which on a loaded machine took
+    // longer than the key's ten seconds (found at the v0.6.2 baseline). What this test is about is
+    // the navigation, and a graph of six objects is a graph (AGENTS.md §11).
+    let traced = ono_testkit::OwnedChild::new(
+        std::process::Command::new("sleep")
+            .arg("300")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("`sleep` is available to trace"),
+    );
     let mut shell = interactive_shell();
     let mut seen = String::new();
     let mut buffer = [0u8; 8192];
@@ -117,7 +132,7 @@ fn should_open_the_tree_view_over_a_graph_and_leave_the_pick_behind() {
         "a prompt"
     );
     shell
-        .write_all(b"trace process 1 | view tree\n")
+        .write_all(format!("trace process {} --depth 1 | view tree\n", traced.id()).as_bytes())
         .expect("the terminal accepts the view");
     assert!(
         wait_for(
