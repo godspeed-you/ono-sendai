@@ -262,12 +262,14 @@ fn should_hold_every_time_to_first_result_target_of_the_reference_targets_table(
 // left is the observation itself, which §34.4 is about and which this branch reports as owed.
 //
 // That margin is a statement about a machine, so the test names the machine (issue #166,
-// ADR-0881). The budget is measured on one whose one-minute load stays within
-// `REFERENCE_LOAD_PER_PROCESSOR` times its processors while the map runs — 0 of 12 workspace
-// runs failed at load 9–13 on eight processors, 4 of 6 at 22–26. An answer inside the budget
-// passes on any machine. Silence on a machine inside that envelope fails. Silence on a busier
-// one is not a verdict about the shell, and the test says so with SKIP(fixture_not_applicable),
-// naming the load it saw — the budget itself is never stretched.
+// ADR-0881, ADR-0883). The budget is measured on one whose one-minute load, read before the map
+// runs, is within `REFERENCE_LOAD_PER_PROCESSOR` times its online processors. An answer inside
+// the budget passes on any machine. Silence on a machine inside that envelope fails. Silence on
+// a busier one is asked again, once, with three times the watchdog: a map that then answers was
+// slow on a machine the budget is not measured on, and the test says so with
+// SKIP(fixture_not_applicable) naming the load; a map that is still silent is a hang, and fails
+// wherever it happens. The budget itself is never stretched — the second run only tells a hang
+// from a busy machine.
 #[test]
 fn should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture() {
     // Profile L's ten thousand processes belong to the container; its hundred thousand listening
@@ -288,39 +290,30 @@ fn should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixtur
         }
     };
     let home = scratch();
+    let script = "enter network; map --live --json | take 1 | to json";
 
-    let before = Machine::now();
-    let run = run_bounded(
-        &home,
-        "enter network; map --live --json | take 1 | to json",
-        WATCHDOG,
-    );
-    let machine = before.busiest(Machine::now());
+    // Read before the map runs: the silent map and the fixture it reads are load of their own,
+    // and a reading taken after them would count the subject's own work as the machine's.
+    let machine = Machine::now();
+    let run = run_bounded(&home, script, WATCHDOG);
+    let first = Outcome::of(&run);
+    let rerun = needs_rerun(first, machine)
+        .then(|| run_bounded(&home, script, RERUN_WATCHDOG_FACTOR * WATCHDOG));
+    let second = rerun.as_ref().map(Outcome::of);
 
-    if run.silent() && !machine.within_reference() {
-        skipped(
-            SkipReason::FixtureNotApplicable,
-            &format!(
-                "Profile L's live map produced nothing within {WATCHDOG:?} on {machine}, above \
-                 the {REFERENCE_LOAD_PER_PROCESSOR}x its processors that the budget is measured \
-                 on (ADR-0881)"
-            ),
-        );
-        return;
-    }
-    assert!(
-        !run.silent(),
-        "{}",
-        format!(
-            "v0.4.1 §33.3 at Profile L: {} listening sockets placed, and the live map produced \
-             neither output nor progress inside {:?} on {machine}, a machine inside the \
-             envelope the budget is measured on. §33.2 allows the answer to be progress metadata \
-             or a deterministic cost message rather than the picture itself. {}",
+    match verdict(first, machine, second) {
+        Verdict::Pass => {}
+        Verdict::Skip(reason) => {
+            skipped(SkipReason::FixtureNotApplicable, &reason);
+        }
+        Verdict::Fail(reason) => panic!(
+            "v0.4.1 §33.3 at Profile L: {} listening sockets placed. {reason}. §33.2 allows the \
+             answer to be progress metadata or a deterministic cost message rather than the \
+             picture itself. {}",
             sockets.len(),
-            WATCHDOG,
-            run.report()
-        )
-    );
+            rerun.as_ref().unwrap_or(&run).report()
+        ),
+    }
 }
 
 /// The load per processor the Profile L budget is measured at (ADR-0881).
@@ -330,33 +323,107 @@ fn should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixtur
 /// more). A machine above it can still answer, and then the test passes.
 const REFERENCE_LOAD_PER_PROCESSOR: f64 = 1.5;
 
+/// How much longer the second run of a silent map on a busy machine may take (ADR-0883).
+///
+/// Three, because Profile L's map answered in 6.5–36 s on this machine at load 17–37: a map that
+/// is slow because the machine is busy answers inside ninety seconds, and one that does not is
+/// not slow.
+const RERUN_WATCHDOG_FACTOR: u32 = 3;
+
+/// What a bounded run of the map produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    /// Output or progress on either stream before the watchdog.
+    Answered,
+    /// Neither, for the whole watchdog.
+    Silent,
+}
+
+impl Outcome {
+    fn of(run: &Bounded) -> Self {
+        if run.silent() {
+            Outcome::Silent
+        } else {
+            Outcome::Answered
+        }
+    }
+}
+
+/// What the Profile L watchdog concludes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Verdict {
+    Pass,
+    Skip(String),
+    Fail(String),
+}
+
+/// Whether a first run must be asked again before a verdict: only a silent map on a machine
+/// outside the envelope, because that is the one case the first run cannot decide.
+fn needs_rerun(first: Outcome, machine: Machine) -> bool {
+    first == Outcome::Silent && !machine.within_reference()
+}
+
+/// The verdict from the first run, the machine it ran on (read before it), and the second run
+/// where [`needs_rerun`] asked for one.
+fn verdict(first: Outcome, machine: Machine, second: Option<Outcome>) -> Verdict {
+    if first == Outcome::Answered {
+        return Verdict::Pass;
+    }
+    if machine.within_reference() {
+        return Verdict::Fail(format!(
+            "The live map produced neither output nor progress inside {WATCHDOG:?} on {machine}, \
+             a machine inside the envelope the budget is measured on"
+        ));
+    }
+    match second {
+        Some(Outcome::Answered) => Verdict::Skip(format!(
+            "Profile L's live map produced nothing within {WATCHDOG:?} on {machine}, above the \
+             {REFERENCE_LOAD_PER_PROCESSOR}x its online processors that the budget is measured \
+             on, and answered when asked again with {RERUN_WATCHDOG_FACTOR}x the watchdog: slow \
+             on a busy machine, not hung (ADR-0881, ADR-0883)"
+        )),
+        Some(Outcome::Silent) => Verdict::Fail(format!(
+            "The live map produced neither output nor progress inside {WATCHDOG:?} on {machine}, \
+             nor inside {RERUN_WATCHDOG_FACTOR}x that when asked again: a map that silent is hung, \
+             however busy the machine (ADR-0883)"
+        )),
+        None => Verdict::Fail(format!(
+            "The live map was silent on {machine}, outside the envelope, and was not asked again, \
+             so nothing tells a hang from a busy machine (ADR-0883)"
+        )),
+    }
+}
+
 /// How loaded the machine a run was measured on was.
 #[derive(Debug, Clone, Copy)]
 struct Machine {
     /// The one-minute load average.
     load: f64,
-    /// How many processors it is spread across.
+    /// How many processors the kernel has online, host-wide.
     processors: usize,
 }
 
 impl Machine {
-    /// The machine as `/proc/loadavg` describes it now; a kernel that reports no load reads as
-    /// an idle machine.
+    /// The machine as `/proc/loadavg` and `/proc/stat` describe it now.
+    ///
+    /// The processors are counted as `/proc/stat` lists them — every online processor of the
+    /// host — because that is what `/proc/loadavg` averages over. `available_parallelism` follows
+    /// this process's affinity and cgroup quota instead, so in a container limited to two
+    /// processors on a busy host it would put every run outside the envelope (ADR-0883). A
+    /// kernel that reports no load reads as an idle machine.
     fn now() -> Self {
         let load = std::fs::read_to_string("/proc/loadavg")
             .ok()
             .and_then(|text| text.split_whitespace().next()?.parse().ok())
             .unwrap_or(0.0);
-        let processors =
-            std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+        let processors = std::fs::read_to_string("/proc/stat")
+            .ok()
+            .map(|text| online_processors(&text))
+            .filter(|count| *count > 0)
+            .unwrap_or_else(|| {
+                std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+            });
         Self { load, processors }
-    }
-
-    /// The busier of two readings, so a run is judged by the worst the machine was while it ran:
-    /// the one-minute average lags, and either end alone can miss a load that arrived or left
-    /// during the run.
-    fn busiest(self, other: Self) -> Self {
-        if other.load > self.load { other } else { self }
     }
 
     /// Whether the machine was inside the envelope the budget is measured on.
@@ -370,14 +437,75 @@ impl Machine {
     }
 }
 
+/// The online processors `/proc/stat` lists: one `cpuN` line each, beside the aggregate `cpu`.
+fn online_processors(stat: &str) -> usize {
+    stat.lines()
+        .filter(|line| {
+            line.strip_prefix("cpu")
+                .and_then(|rest| rest.split(char::is_whitespace).next())
+                .is_some_and(|index| !index.is_empty() && index.chars().all(|c| c.is_ascii_digit()))
+        })
+        .count()
+}
+
 impl std::fmt::Display for Machine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "a machine at a load average of {:.2} on {} processors",
+            "a machine at a load average of {:.2} on {} online processors",
             self.load, self.processors
         )
     }
+}
+
+// --- the watchdog's decision, against readings the test chooses (ADR-0883) ---------------------
+
+const IDLE: Machine = Machine {
+    load: 2.0,
+    processors: 8,
+};
+const BUSY: Machine = Machine {
+    load: 40.0,
+    processors: 8,
+};
+
+#[test]
+fn should_pass_a_map_that_answers_whatever_the_machine() {
+    assert_eq!(verdict(Outcome::Answered, IDLE, None), Verdict::Pass);
+    assert_eq!(verdict(Outcome::Answered, BUSY, None), Verdict::Pass);
+    assert!(!needs_rerun(Outcome::Answered, BUSY));
+}
+
+#[test]
+fn should_fail_a_silent_map_on_a_machine_inside_the_envelope_without_asking_again() {
+    assert!(!needs_rerun(Outcome::Silent, IDLE));
+    assert!(matches!(
+        verdict(Outcome::Silent, IDLE, None),
+        Verdict::Fail(_)
+    ));
+}
+
+#[test]
+fn should_skip_a_silent_map_on_a_busy_machine_only_when_it_answers_when_asked_again() {
+    assert!(needs_rerun(Outcome::Silent, BUSY));
+    assert!(matches!(
+        verdict(Outcome::Silent, BUSY, Some(Outcome::Answered)),
+        Verdict::Skip(_)
+    ));
+}
+
+#[test]
+fn should_fail_a_map_that_stays_silent_when_asked_again_on_a_busy_machine() {
+    assert!(matches!(
+        verdict(Outcome::Silent, BUSY, Some(Outcome::Silent)),
+        Verdict::Fail(_)
+    ));
+}
+
+#[test]
+fn should_count_the_hosts_online_processors_rather_than_this_process_share() {
+    let stat = "cpu  1 2 3\ncpu0 1 2 3\ncpu1 1 2 3\ncpu7 1 2 3\nintr 5\nctxt 6\ncpufreq x\n";
+    assert_eq!(online_processors(stat), 3);
 }
 
 /// The measurements `cargo xtask perf` recorded on the reference environment (§32.4, §37.2).

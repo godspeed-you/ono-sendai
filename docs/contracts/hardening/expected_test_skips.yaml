@@ -161,7 +161,7 @@ declared:
     prerequisite: "the host allows the 101 024 open descriptors `performance_profiles.yaml` declares for Profile L's socket axis"
   - id: "crates/ono-cli/tests/spatial_first_output.rs::should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture"
     category: fixture_not_applicable
-    prerequisite: "a machine whose one-minute load average stays within 1.5 times its processor count while the live map runs, the envelope §33.3's Profile L budget is measured on — skipped only when the map was also silent for the whole budget (ADR-0881)"
+    prerequisite: "a machine whose one-minute load average, read before the live map runs, is within 1.5 times its online processors — the envelope §33.3's Profile L budget is measured on; skipped only when the map was silent for the whole budget on a busier machine and then answered within three times it (ADR-0883)"
   - id: "crates/ono-cli/tests/spatial_identity.rs::should_keep_the_working_directory_usable_when_a_denied_directory_is_named"
     category: missing_privilege
     prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
@@ -480,15 +480,16 @@ canonical_ci:
   # a capability the runner either has or has not, and a reader can check it in one command.
   permitted_skips:
     - id: "crates/ono-cli/tests/spatial_first_output.rs::should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture"
-      condition: "`ulimit -Hn` is at least 101024, and the one-minute load average stays within 1.5 times the processor count while the live map runs or the map answers anyway"
+      condition: "`ulimit -Hn` is at least 101024, and the live map answers within 30 s, or the machine is loaded above 1.5 times its online processors before it runs and the map answers within 90 s when asked again"
       doc: >-
         Profile L's socket axis needs 101 024 open descriptors. `SocketPopulation::try_of` raises
         the soft limit toward the hard one first, so this skips only where the *hard* limit is
         short — which the development machine's 524 288 is not and the GitHub runner's may be.
         Reported as `missing_privilege` because only a privileged process can raise a hard limit.
-        The second condition is ADR-0881's: §33.3's 30 s is measured on a machine at most 1.5
-        times loaded per processor, and a map that stays silent on a busier one is reported as
-        `fixture_not_applicable` with the load it saw, not as a defect in the shell.
+        The second condition is ADR-0883's: §33.3's 30 s is measured on a machine at most 1.5
+        times loaded per online processor, read before the map runs. A map that stays silent on
+        a busier one is asked again with three times the watchdog, and skips as
+        `fixture_not_applicable` only if it then answers; one that stays silent fails.
     - id: "crates/ono-cli/tests/network.rs::should_include_the_listening_socket_when_tracing_its_interface"
       condition: "`trace interface lo` on the host draws its graph without reaching the node limit of 256 objects"
       doc: >-

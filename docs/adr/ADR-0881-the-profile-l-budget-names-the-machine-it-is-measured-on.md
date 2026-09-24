@@ -1,6 +1,6 @@
 # ADR-0881: The Profile L budget names the machine it is measured on
 
-- Status: accepted
+- Status: superseded by ADR-0883
 - Date: 2026-09-24
 - Spec refs: v0.4.1 §2.7 (tests report execution truth), §32.4 ("release qualification MUST run
   on a named reference environment"), §33.2, §33.3, §38.1, §38.2, §38.4; AGENTS.md §11
