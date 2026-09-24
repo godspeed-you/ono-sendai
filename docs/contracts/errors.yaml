@@ -87,6 +87,18 @@ errors:
     help: >-
       Qualify the name with the namespace of the candidate you meant, for example `ono:get` or
       `dev.example.tool:scan`. The error lists every candidate's qualified name.
+  # A build that leaves a tier out (#127, ADR-0911) knows the name and cannot run it. That is
+  # neither `command_not_found`, which would send the user looking for a typo or a missing
+  # program, nor `provider.unavailable`, which is about the system the shell runs on rather than
+  # the shell itself: the same command on the same host runs in the full build.
+  - code: Ono-Sendai-E0104
+    name: resolve.not_in_build
+    kind: resolution
+    summary: The name belongs to a tier this build of ono was compiled without.
+    help: >-
+      The command exists in Ono and this binary does not carry it: `ono --version` names the
+      build profile and the tiers it leaves out. Use the full build for this command; a program
+      of the same name on `PATH` is still reached with `exec:<name>`.
   # --- type -------------------------------------------------------------------------------
   - code: Ono-Sendai-E0201
     name: type.mismatch

@@ -152,6 +152,8 @@ error_codes! {
         "The verb is known but has no such target.";
     ResolveAmbiguous => "Ono-Sendai-E0103", "resolve.ambiguous", Resolution,
         "The name matches more than one candidate and no namespace was given.";
+    ResolveNotInBuild => "Ono-Sendai-E0104", "resolve.not_in_build", Resolution,
+        "The name belongs to a tier this build of ono was compiled without.";
     TypeMismatch => "Ono-Sendai-E0201", "type.mismatch", Type,
         "A value did not have the type the operation requires.";
     TypeUnknownField => "Ono-Sendai-E0202", "type.unknown_field", Type,

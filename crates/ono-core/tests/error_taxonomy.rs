@@ -328,3 +328,14 @@ fn should_keep_a_spatial_refusal_distinguishable_from_the_general_condition_it_r
         "ADR-0125: both are `permission`, so a script that branches on kind keeps working"
     );
 }
+
+#[test]
+fn should_keep_a_compiled_out_command_distinguishable_from_a_missing_one() {
+    // #127, ADR-0911: a core build knows the names of the tiers it leaves out. Saying so is a
+    // resolution error of its own, because `command_not_found` would send the user looking for a
+    // typo and `provider.unavailable` would blame the host for what the binary lacks.
+    let code = ErrorCode::from_name("resolve.not_in_build").expect("the selector is registered");
+    assert_eq!(code.code(), "Ono-Sendai-E0104");
+    assert_eq!(code.kind(), ErrorKind::Resolution);
+    assert_ne!(code, ErrorCode::ResolveCommandNotFound);
+}
