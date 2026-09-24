@@ -791,7 +791,13 @@ fn should_stream_neighbors_as_pipeline_objects_when_near_runs_at_the_root() {
     // §29.4: `near` and `find place` return normal structured streams that participate in object
     // pipelines. §6.2 shows the shape: a relation, the object, its state. §2.20: spatial state is
     // inspectable and scriptable, which means the v0.2 stages compose with it unchanged.
-    let run = ono("home; near | to json");
+    //
+    // `near` runs once, and both readings are taken from that one stream: the root's neighbors
+    // include live objects, so two runs of `near` can see two hosts, and a count taken from one
+    // compared with the rows of another measures the host rather than the pipeline (issue #165).
+    let run = ono(
+        "home; let neighbors = (near); $neighbors | select relation | count; $neighbors | to json",
+    );
     run.assert_success();
     let neighbors = rows(&run);
     assert!(
@@ -809,13 +815,21 @@ fn should_stream_neighbors_as_pipeline_objects_when_near_runs_at_the_root() {
         );
     }
 
-    let selected = ono("home; near | select relation | count");
-    selected.assert_success();
+    // The count is the last line printed before the JSON document begins.
+    let stdout = run.stdout();
+    let before_document = &stdout[..stdout.find("\n[").map_or(0, |index| index + 1)];
+    let counted: i64 = before_document
+        .lines()
+        .rfind(|line| !line.trim().is_empty())
+        .and_then(|line| line.trim().parse().ok())
+        .unwrap_or_else(|| {
+            panic!("`$neighbors | select relation | count` printed a number, got {stdout:?}")
+        });
     assert_eq!(
-        count("home; near | select relation | count"),
+        counted,
         i64::try_from(neighbors.len()).unwrap_or(i64::MAX),
         "§29.4/§2.20: `near` composes with the v0.2 pipeline unchanged, got {}",
-        selected.output()
+        run.output()
     );
 }
 
