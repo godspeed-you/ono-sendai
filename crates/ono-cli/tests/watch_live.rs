@@ -225,15 +225,17 @@ fn should_release_the_query_task_promptly_when_a_live_map_is_cancelled() {
     // Proven by what stops rather than by a stopwatch (ADR-0459): the interrupt is sent, the
     // process is required to have gone by a budget wide enough that only a shell waiting for a
     // recomputation could miss it, and — the part that matters — nothing is left behind.
-    let mut child = std::process::Command::new(ono_testkit::ono_binary())
-        .args(["-c", "map --live --json | take 3 | to json"])
-        .env("NO_COLOR", "1")
-        .env("HOME", std::env::temp_dir().display().to_string())
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("the ono binary must be built before an integration test runs it");
+    let mut child = ono_testkit::OwnedChild::new(
+        std::process::Command::new(ono_testkit::ono_binary())
+            .args(["-c", "map --live --json | take 3 | to json"])
+            .env("NO_COLOR", "1")
+            .env("HOME", std::env::temp_dir().display().to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("the ono binary must be built before an integration test runs it"),
+    );
 
     // Give the opening projection time to land, so the interrupt arrives while the live loop is
     // watching rather than while the process is still starting.

@@ -293,13 +293,15 @@ fn should_not_wait_on_stdin_when_a_seeded_pipeline_starts_with_a_serializer() {
     use std::process::{Command, Stdio};
     // The pipe is held open for the whole test: a shell that read stdin here would never see
     // its end, and a seeded pipeline already has its input.
-    let mut child = Command::new(ono_testkit::ono_binary())
-        .args(["-c", "let s = \"x\"; $s | to json"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("the shell starts");
+    let mut child = ono_testkit::OwnedChild::new(
+        Command::new(ono_testkit::ono_binary())
+            .args(["-c", "let s = \"x\"; $s | to json"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("the shell starts"),
+    );
     let held_open = child.stdin.take();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let status = loop {

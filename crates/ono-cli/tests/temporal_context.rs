@@ -203,10 +203,12 @@ fn should_refuse_with_what_was_never_observed_when_the_store_is_younger_than_its
     let home = ono_testkit::scratch();
     // A real mutation, so the store holds something: §17.2's lifecycle is what a session records
     // about itself, and it is recorded because the shell made the change rather than watched it.
-    let mut victim = std::process::Command::new("sleep")
-        .arg("60")
-        .spawn()
-        .expect("a fixture process");
+    let mut victim = ono_testkit::OwnedChild::new(
+        std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("a fixture process"),
+    );
     let script = format!("stop process {}\nchanges --since 3d", victim.id());
     let run = support::recording_shell(&home, &script);
     let _ = victim.kill();

@@ -80,19 +80,21 @@ fn clean_up(pid: u32) {
 fn session_in(home: &std::path::Path, script: &str) -> (bool, String, String) {
     use std::io::Read;
     let root = home.to_string_lossy().into_owned();
-    let mut session = std::process::Command::new(env!("CARGO_BIN_EXE_ono"))
-        .current_dir(home)
-        .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("XDG_CONFIG_HOME", format!("{root}/config"))
-        .env("XDG_DATA_HOME", format!("{root}/data"))
-        .env("XDG_STATE_HOME", format!("{root}/state"))
-        .args(["-c", script])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .expect("ono starts");
+    let mut session = ono_testkit::OwnedChild::new(
+        std::process::Command::new(env!("CARGO_BIN_EXE_ono"))
+            .current_dir(home)
+            .env("NO_COLOR", "1")
+            .env("HOME", &root)
+            .env("XDG_CONFIG_HOME", format!("{root}/config"))
+            .env("XDG_DATA_HOME", format!("{root}/data"))
+            .env("XDG_STATE_HOME", format!("{root}/state"))
+            .args(["-c", script])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("ono starts"),
+    );
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     let status = loop {
         if let Some(status) = session.try_wait().expect("the session can be polled") {

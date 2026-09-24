@@ -297,7 +297,8 @@ fn should_carry_help_and_completion_for_every_client_key_command() {
 
 /// A listening agent for the one command whose effect reaches past the store (v0.4.1 §12.5).
 struct Agent {
-    process: std::process::Child,
+    /// Owned, so an agent that fails to start properly is not left listening (issue #162).
+    process: ono_testkit::OwnedChild,
     address: String,
     fingerprint: String,
 }
@@ -314,7 +315,7 @@ impl Drop for Agent {
 fn agent(home: &Scratch) -> Agent {
     use std::io::{BufRead as _, BufReader};
 
-    let mut process = std::process::Command::new(binary())
+    let mut process: ono_testkit::OwnedChild = std::process::Command::new(binary())
         .args(["--agent", "--listen", "127.0.0.1:0"])
         .env("HOME", home.path())
         .env("XDG_CONFIG_HOME", home.path())
@@ -322,7 +323,8 @@ fn agent(home: &Scratch) -> Agent {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .expect("the agent starts");
+        .expect("the agent starts")
+        .into();
     let stderr = process.stderr.take().expect("stderr was piped");
     let (sender, lines) = std::sync::mpsc::channel::<String>();
     std::thread::spawn(move || {

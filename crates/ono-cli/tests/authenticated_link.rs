@@ -17,7 +17,7 @@
 )]
 
 use std::io::{BufRead as _, BufReader};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 
 use ono_testkit::{Scratch, scratch};
 
@@ -26,7 +26,8 @@ use support::{binary, client_fingerprint, last_line, ono_at_home};
 
 /// A listening agent, and how to reach and pin it.
 struct Agent {
-    process: Child,
+    /// Owned, so an agent that fails to start properly is not left listening (issue #162).
+    process: ono_testkit::OwnedChild,
     address: String,
     fingerprint: String,
     /// Everything the agent has written to stderr, which is where its audit trail goes
@@ -62,7 +63,7 @@ impl Drop for Agent {
 /// Starts `ono --agent --listen 127.0.0.1:0` with `key` as its identity, and reads back the port
 /// the system chose and the fingerprint a peer has to pin.
 fn agent(home: &Scratch, key: &str) -> Agent {
-    let mut process = Command::new(binary())
+    let mut process: ono_testkit::OwnedChild = Command::new(binary())
         .args([
             "--agent",
             "--listen",
@@ -76,7 +77,8 @@ fn agent(home: &Scratch, key: &str) -> Agent {
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("the agent starts");
+        .expect("the agent starts")
+        .into();
 
     let stderr = process.stderr.take().expect("stderr was piped");
     let log = std::sync::Arc::new(std::sync::Mutex::new(String::new()));

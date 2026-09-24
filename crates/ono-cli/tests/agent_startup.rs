@@ -32,7 +32,7 @@
 )]
 
 use std::io::{BufRead as _, BufReader};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use ono_cli::invocation::Invocation;
@@ -43,7 +43,8 @@ use support::{binary, client_fingerprint, ono_at_home};
 
 /// A listening agent and everything it said on the way up.
 struct Agent {
-    process: Child,
+    /// Owned, so an agent that fails to start properly is not left listening (issue #162).
+    process: ono_testkit::OwnedChild,
     summary: Vec<String>,
     address: String,
 }
@@ -68,7 +69,7 @@ impl Agent {
 
 /// Starts `ono --agent --listen 127.0.0.1:0` and collects everything it says before it waits.
 fn agent(home: &Scratch) -> Agent {
-    let mut process = Command::new(binary())
+    let mut process: ono_testkit::OwnedChild = Command::new(binary())
         .args(["--agent", "--listen", "127.0.0.1:0"])
         .env("HOME", home.path())
         .env("XDG_CONFIG_HOME", home.path())
@@ -76,7 +77,8 @@ fn agent(home: &Scratch) -> Agent {
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("the agent starts");
+        .expect("the agent starts")
+        .into();
 
     let stderr = process.stderr.take().expect("stderr was piped");
     let (sender, lines) = std::sync::mpsc::channel::<String>();
@@ -282,7 +284,8 @@ fn should_keep_listening_when_its_diagnostics_cannot_be_written() {
             .stdout(Stdio::null())
             .stderr(Stdio::from(unwritable))
             .spawn()
-            .expect("the agent starts"),
+            .expect("the agent starts")
+            .into(),
         summary: Vec::new(),
         address: address.clone(),
     };

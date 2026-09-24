@@ -161,15 +161,18 @@ pub fn recording_shell(home: &Scratch, script: &str) -> ono_testkit::Run {
 /// A background `sleep` this process owns, for a test that needs a real process to act on.
 ///
 /// Started here rather than through the shell, so stopping it is a mutation Ono makes against a
-/// process it did not create — which is what §17.1's action lifecycle is about.
-pub fn fixture_process() -> std::process::Child {
-    std::process::Command::new("sleep")
-        .arg("120")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("a fixture process starts")
+/// process it did not create — which is what §17.1's action lifecycle is about. Owned, so a test
+/// that fails before it kills the fixture does not leave it running (issue #162, ADR-0892).
+pub fn fixture_process() -> ono_testkit::OwnedChild {
+    ono_testkit::OwnedChild::new(
+        std::process::Command::new("sleep")
+            .arg("120")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("a fixture process starts"),
+    )
 }
 
 /// A recording home whose ledger already holds one Ono action's four lifecycle events (§17.2).

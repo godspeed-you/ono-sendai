@@ -92,7 +92,7 @@ const SEEDED_MUTATIONS: usize = 12;
 /// Real mutations against real processes this test owns, so what the ledger holds afterwards is
 /// what §17.1 says a session records about itself — not a fixture written behind the shell's back.
 fn seed(home: &Scratch) {
-    let mut victims: Vec<std::process::Child> = (0..SEEDED_MUTATIONS)
+    let mut victims: Vec<ono_testkit::OwnedChild> = (0..SEEDED_MUTATIONS)
         .map(|_| support::fixture_process())
         .collect();
     let script = victims
@@ -116,9 +116,11 @@ fn seed(home: &Scratch) {
 ///
 /// [`support::recording_shell`] runs to completion, and a query that has to be interrupted needs
 /// a handle instead. The environment is the same one, so the store it opens is the same store.
-fn long_historical_query(home: &Scratch) -> Child {
+/// Owned, so a test that fails before the query ends leaves neither the shell nor its `sleep`
+/// behind (issue #162, ADR-0892).
+fn long_historical_query(home: &Scratch) -> ono_testkit::OwnedChild {
     let root = home.path().display().to_string();
-    std::process::Command::new(ono_testkit::ono_binary())
+    let child = std::process::Command::new(ono_testkit::ono_binary())
         .args([
             "-c",
             &format!(
@@ -136,7 +138,8 @@ fn long_historical_query(home: &Scratch) -> Child {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("the ono binary must be built before an integration test runs it")
+        .expect("the ono binary must be built before an integration test runs it");
+    ono_testkit::OwnedChild::new(child)
 }
 
 /// Sends SIGINT to `pid`, the way a terminal does when a person presses Ctrl-C.

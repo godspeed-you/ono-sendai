@@ -355,7 +355,8 @@ fn should_refuse_an_ambiguous_selector_in_a_script_rather_than_open_a_picker() {
     std::os::unix::fs::symlink("/bin/sh", &twin).expect("a shell to reach under the twin name");
     // Each twin blocks reading the pipe this test holds open, so both stay alive for the whole
     // `enter` and neither execs anything else that would take the name away again.
-    let mut children: Vec<std::process::Child> = (0..2)
+    // Owned, so a failing assertion below does not leave the twins behind (issue #162).
+    let mut children: Vec<ono_testkit::OwnedChild> = (0..2)
         .map(|_| {
             std::process::Command::new(&twin)
                 .args(["-c", "read line"])
@@ -364,6 +365,7 @@ fn should_refuse_an_ambiguous_selector_in_a_script_rather_than_open_a_picker() {
                 .stderr(std::process::Stdio::null())
                 .spawn()
                 .expect("the twin starts")
+                .into()
         })
         .collect();
     for child in &children {

@@ -164,16 +164,18 @@ fn should_end_the_agent_it_started_before_it_exits() {
     // its own child, and a child that outlives its shell is reparented to whatever init the
     // machine runs — which is exactly what a shell must never leave behind (spec §18.1).
     // The trailing `sleep` only holds the shell open long enough to read `/proc`.
-    let mut shell = std::process::Command::new(ono_testkit::ono_binary())
-        .arg("-c")
-        .arg("link host testbox --transport local; sleep 3")
-        .env("NO_COLOR", "1")
-        .env("HOME", std::env::temp_dir())
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("the shell starts");
+    let mut shell = ono_testkit::OwnedChild::new(
+        std::process::Command::new(ono_testkit::ono_binary())
+            .arg("-c")
+            .arg("link host testbox --transport local; sleep 3")
+            .env("NO_COLOR", "1")
+            .env("HOME", std::env::temp_dir())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("the shell starts"),
+    );
     let shell_pid = shell.id();
 
     let deadline = Instant::now() + Duration::from_secs(3);
