@@ -12,6 +12,7 @@
 //! (ADR-0892).
 
 use std::path::Path;
+use std::process::Child;
 use std::time::{Duration, Instant};
 
 use nix::sys::signal::{Signal, kill};
@@ -58,6 +59,101 @@ pub fn kill_tree(root: u32) {
     }
     for pid in frozen {
         let _ = kill(Pid::from_raw(pid), Signal::SIGKILL);
+    }
+}
+
+/// A child process that is killed — with everything it started — and reaped when the value is
+/// dropped, including when the test holding it panics.
+///
+/// `std::process::Child` does neither on drop, so a test that spawns a process, asserts, and only
+/// then kills it leaves the process running whenever the assertion fails. This is the type that
+/// makes the kill unconditional (ADR-0516, ADR-0892). It dereferences to the `Child`, so a test
+/// can still read its pipes, signal it, or wait for it; a child the test has already waited for
+/// is left alone.
+#[derive(Debug)]
+pub struct OwnedChild {
+    child: Option<Child>,
+}
+
+impl OwnedChild {
+    /// Takes ownership of `child`'s death.
+    #[must_use]
+    pub fn new(child: Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    /// Waits for the child and collects what is left in its piped streams, as
+    /// [`Child::wait_with_output`] does; the child is reaped by then, so nothing is left to own.
+    ///
+    /// # Errors
+    ///
+    /// As [`Child::wait_with_output`].
+    pub fn wait_with_output(mut self) -> std::io::Result<std::process::Output> {
+        self.child
+            .take()
+            .expect("an owned child is present until it is given up")
+            .wait_with_output()
+    }
+}
+
+impl From<Child> for OwnedChild {
+    fn from(child: Child) -> Self {
+        Self::new(child)
+    }
+}
+
+impl std::ops::Deref for OwnedChild {
+    type Target = Child;
+
+    fn deref(&self) -> &Child {
+        self.child
+            .as_ref()
+            .expect("an owned child is present until it is given up")
+    }
+}
+
+impl std::ops::DerefMut for OwnedChild {
+    fn deref_mut(&mut self) -> &mut Child {
+        self.child
+            .as_mut()
+            .expect("an owned child is present until it is given up")
+    }
+}
+
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        let Some(child) = self.child.as_mut() else {
+            return;
+        };
+        if matches!(child.try_wait(), Ok(None)) {
+            kill_tree(child.id());
+        }
+        let _ = child.wait();
+    }
+}
+
+/// Kills the process tree under a pid someone else owns when the value is dropped.
+///
+/// For a process whose handle is not a `std::process::Child` — a pseudo-terminal session, whose own
+/// `Drop` signals only its process group and so misses the jobs the shell under it started in
+/// groups of their own. Declare it *after* the handle it guards, so it is dropped first: the tree
+/// dies here, and the handle's own `Drop` then reaps the leader.
+#[derive(Debug)]
+pub struct OwnedTree {
+    root: u32,
+}
+
+impl OwnedTree {
+    /// Takes ownership of the death of every process under `root`, `root` included.
+    #[must_use]
+    pub fn of(root: u32) -> Self {
+        Self { root }
+    }
+}
+
+impl Drop for OwnedTree {
+    fn drop(&mut self) {
+        kill_tree(self.root);
     }
 }
 

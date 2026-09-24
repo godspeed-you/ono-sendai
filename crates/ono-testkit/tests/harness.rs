@@ -528,3 +528,55 @@ fn assert_all_gone(pids: &[u32]) {
          {survivors:?} of {pids:?}"
     );
 }
+
+#[test]
+fn should_leave_no_process_behind_when_a_test_holding_one_panics() {
+    // Issue #162: a test that spawns a process, asserts, and only then kills it leaves the process
+    // running whenever the assertion fails — `std::process::Child` neither kills nor reaps on
+    // drop. The guarded child dies with everything it started, however the test ends (ADR-0892).
+    let scratch = ono_testkit::scratch();
+    let marker = scratch.path().join("pids");
+    let script = format!(
+        "echo $$ >> {0}; sleep 300 & echo $! >> {0}; setsid sleep 300 & echo $! >> {0}; wait",
+        marker.display()
+    );
+    let failed = std::panic::catch_unwind(|| {
+        let _child = ono_testkit::OwnedChild::new(
+            std::process::Command::new("/bin/sh")
+                .args(["-c", &script])
+                .spawn()
+                .expect("/bin/sh starts"),
+        );
+        recorded_pids(&marker, 3);
+        panic!("an assertion of the test fails while it holds the child");
+    });
+    assert!(failed.is_err(), "the guarded scope panicked");
+    assert_all_gone(&recorded_pids(&marker, 3));
+}
+
+#[test]
+fn should_leave_no_process_under_a_session_behind_when_a_test_holding_it_panics() {
+    // The same for a process whose handle is not a `Child`, such as a pseudo-terminal session: the
+    // guard kills the tree under it and leaves reaping the leader to the handle.
+    let scratch = ono_testkit::scratch();
+    let marker = scratch.path().join("pids");
+    let mut leader = std::process::Command::new("/bin/sh")
+        .args([
+            "-c",
+            &format!("setsid sleep 300 & echo $! >> {0}; wait", marker.display()),
+        ])
+        .spawn()
+        .expect("/bin/sh starts");
+    let failed = std::panic::catch_unwind(|| {
+        let _tree = ono_testkit::OwnedTree::of(leader.id());
+        recorded_pids(&marker, 1);
+        panic!("an assertion of the test fails while it holds the session");
+    });
+    assert!(failed.is_err(), "the guarded scope panicked");
+    let status = leader.wait().expect("the leader can be reaped");
+    assert!(
+        !status.success(),
+        "the leader was killed, not left to finish: {status}"
+    );
+    assert_all_gone(&recorded_pids(&marker, 1));
+}
