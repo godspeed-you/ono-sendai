@@ -99,7 +99,7 @@ PACKAGING_INPUTS=(
   xtask/tests/packaging.rs
   xtask/tests/support
 )
-PACKAGING_ASSETS=(LICENSE README.md docs/reference)
+PACKAGING_ASSETS=(LICENSE README.md THIRD-PARTY-LICENSES docs/reference)
 
 # The baseline is the working tree against `HEAD`, because section 10 puts the gate *before* the
 # commit: what it is asked about is the increment on its way in. A `git` that cannot answer —

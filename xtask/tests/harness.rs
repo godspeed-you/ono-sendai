@@ -650,3 +650,66 @@ fn should_give_package_validation_an_image_of_its_own_and_keep_one_another_run_u
         "the last run to finish removes the image"
     );
 }
+
+/// The paths one of `scripts/gate.sh`'s packaging lists (`NAME=( … )`) names.
+fn gate_list(gate: &str, name: &str) -> Vec<String> {
+    let start = gate
+        .find(&format!("{name}=("))
+        .unwrap_or_else(|| panic!("scripts/gate.sh declares {name}"));
+    let body = &gate[start + name.len() + 2..];
+    let end = body.find(')').expect("the list closes");
+    body[..end].split_whitespace().map(str::to_owned).collect()
+}
+
+#[test]
+fn should_select_the_packaging_suite_when_a_file_the_packages_ship_is_added_or_removed() {
+    // The gate runs `xtask/tests/packaging.rs` only when one of its inputs moved (ADR-0563), so a
+    // file the packages carry that neither list names can vanish without the suite that asserts
+    // its path inside the package ever running.
+    let root = repo();
+    let gate = std::fs::read_to_string(root.join("scripts/gate.sh")).expect("the gate");
+    let mut selected = gate_list(&gate, "PACKAGING_INPUTS");
+    selected.extend(gate_list(&gate, "PACKAGING_ASSETS"));
+
+    let manifest: toml::Table = toml::from_str(
+        &std::fs::read_to_string(root.join("crates/ono-cli/Cargo.toml"))
+            .expect("the shell's manifest"),
+    )
+    .expect("the manifest parses");
+    let metadata = &manifest["package"]["metadata"];
+    let mut sources: Vec<String> = Vec::new();
+    for asset in metadata["deb"]["assets"].as_array().expect("deb assets") {
+        sources.push(asset[0].as_str().expect("a deb source").to_owned());
+    }
+    for asset in metadata["generate-rpm"]["assets"]
+        .as_array()
+        .expect("rpm assets")
+    {
+        sources.push(asset["source"].as_str().expect("an rpm source").to_owned());
+    }
+
+    let mut unselected = Vec::new();
+    for source in sources {
+        // The binaries are built, not checked in; a change to what they are made of is a change
+        // to the workspace, which every other rule of the gate already covers.
+        if source.starts_with("target/") {
+            continue;
+        }
+        let path = source.trim_start_matches("../../");
+        let path = match path.find('*') {
+            Some(glob) => path[..glob].trim_end_matches('/'),
+            None => path,
+        };
+        let covered = selected.iter().any(|entry| {
+            path == entry || path.starts_with(&format!("{}/", entry.trim_end_matches('/')))
+        });
+        if !covered {
+            unselected.push(path.to_owned());
+        }
+    }
+    unselected.dedup();
+    assert!(
+        unselected.is_empty(),
+        "shipped by the packages but selecting no packaging run in scripts/gate.sh: {unselected:?}"
+    );
+}
