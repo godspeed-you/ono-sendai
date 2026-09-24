@@ -48,7 +48,9 @@ run: |
   grep -q 'Ono-Sendai-K11105 load.component_not_compiled' "$home/refusal" && echo "refused-not-compiled"
   grep -qF "run \`kuang-compile $component\`" "$home/refusal" && echo "names-the-compile-step"
   ono -c 'try { load plugin dev.example.echo } catch e { $e | to json }' | grep -q '"reason":"missing"' && echo "reason-missing"
-  ono -c 'load plugin dev.example.echo; echo:emit --count 3' 2>&1 | grep -q '^\[1,2,3\]$' || echo "nothing-ran"
+  # Rendered as JSON, the three values would be exactly `[1,2,3]`: their absence is the proof
+  # that nothing ran, not an artefact of the table the shell draws by default.
+  ono -c 'load plugin dev.example.echo; echo:emit --count 3 | to json' 2>&1 | grep -q '^\[1,2,3\]$' || echo "nothing-ran"
 
   echo "== the step fixes it =="
   kuang-compile "$component" | tee "$home/compiled"
