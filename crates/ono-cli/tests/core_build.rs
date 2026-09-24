@@ -377,3 +377,152 @@ fn should_neither_show_nor_complete_an_option_of_a_compiled_out_tier() {
         );
     }
 }
+
+#[test]
+fn should_not_complete_a_command_of_a_compiled_out_tier() {
+    // ADR-0911 §5: completion reads the registry this build advertises.
+    let registry = ono_cli::eval::native::registry().expect("the core registry");
+    let offered = |line: &str| -> Vec<String> {
+        ono_command::complete(
+            registry,
+            &ono_command::StageContext::from_line(line, line.len()),
+            None,
+        )
+        .iter()
+        .map(|candidate| candidate.text().to_owned())
+        .collect()
+    };
+    let verbs = offered("ma");
+    assert!(!verbs.iter().any(|text| text == "map"), "{verbs:?}");
+    let verbs = offered("tr");
+    assert!(!verbs.iter().any(|text| text == "trace"), "{verbs:?}");
+    let targets = offered("get ");
+    assert!(targets.iter().any(|text| text == "process"), "{targets:?}");
+    for absent in ["plugin", "link", "place", "recovery"] {
+        assert!(
+            !targets.iter().any(|text| text == absent),
+            "`get {absent}` is not offered: {targets:?}"
+        );
+    }
+    assert!(
+        targets.iter().any(|text| text == "service"),
+        "a target answered as unavailable is still a target: {targets:?}"
+    );
+}
+
+#[test]
+fn should_refuse_to_explain_a_compiled_out_command() {
+    let home = ono_testkit::scratch();
+    let run = script(&home, "explain map");
+    assert_eq!(run.status().code(), 126, "{}", run.output());
+    assert!(
+        run.stderr().contains("Ono-Sendai-E0104"),
+        "{}",
+        run.stderr()
+    );
+    let kept = script(&home, "explain get process");
+    kept.assert_success();
+}
+
+#[test]
+fn should_inspect_only_the_limits_this_build_enforces() {
+    let home = ono_testkit::scratch();
+    let run = script(&home, "inspect limits | select key | to json");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("limits.materialize_items"),
+        "{}",
+        run.stdout()
+    );
+    for absent in ["limits.remote_", "limits.orientation_"] {
+        assert!(
+            !run.stdout().contains(absent),
+            "{absent}…: {}",
+            run.stdout()
+        );
+    }
+}
+
+#[test]
+fn should_ignore_the_environment_variable_of_a_compiled_out_setting() {
+    // A malformed value for a setting this build does not carry is not read; one for a setting it
+    // does carry is still reported (ADR-0911 §5).
+    let home = ono_testkit::scratch();
+    let run = Shell::new()
+        .args(["-c", "echo ok"])
+        .env("HOME", home.path().display().to_string())
+        .env(
+            "ONO_CONFIG_DIR",
+            home.path().join("ono").display().to_string(),
+        )
+        .env("ONO_TEMPORAL_RECORDING_ENABLED", "not-a-bool")
+        .env("ONO_SPATIAL_ENABLED", "not-a-bool")
+        .timeout(Duration::from_secs(60))
+        .run();
+    run.assert_success();
+    assert_eq!(run.stdout().trim(), "ok");
+    assert!(
+        run.stderr().is_empty(),
+        "nothing is reported: {}",
+        run.stderr()
+    );
+    let carried = Shell::new()
+        .args(["-c", "echo ok"])
+        .env("HOME", home.path().display().to_string())
+        .env(
+            "ONO_CONFIG_DIR",
+            home.path().join("ono").display().to_string(),
+        )
+        .env("ONO_RENDER_TABLE_MAX_ROWS", "not-a-number")
+        .timeout(Duration::from_secs(60))
+        .run();
+    assert!(
+        carried.stderr().contains("ONO_RENDER_TABLE_MAX_ROWS"),
+        "a carried setting's variable is still read: {}",
+        carried.stderr()
+    );
+}
+
+#[test]
+fn should_answer_a_missing_object_in_enter_as_the_base_specification_does() {
+    // ADR-0911 rule 7: without the spatial tier there is no tombstone and no `spatial.not_found`.
+    let home = ono_testkit::scratch();
+    let run = script(&home, "enter process 99999999");
+    assert_eq!(run.status().code(), 1, "{}", run.output());
+    assert!(
+        run.stderr()
+            .contains("Ono-Sendai-E0102 resolve.target_not_found"),
+        "{}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_carry_the_tier_and_the_profile_on_the_refusal() {
+    let home = ono_testkit::scratch();
+    let run = script(&home, "try { map } catch e { $e.metadata | to json }");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("\"tier\":\"spatial\"")
+            && run.stdout().contains("\"profile\":\"core\""),
+        "{}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_let_a_function_or_an_alias_answer_before_a_compiled_out_name_is_refused() {
+    // ADR-0011: a user function and an alias win over every name, and a compiled-out one is no
+    // exception (ADR-0911 §3).
+    let home = ono_testkit::scratch();
+    let function = script(&home, "fn map() { echo my-own-map }; map");
+    function.assert_success();
+    assert!(
+        function.stdout().contains("my-own-map"),
+        "{}",
+        function.output()
+    );
+    let alias = script(&home, "alias look = echo my-own-look; look");
+    alias.assert_success();
+    assert!(alias.stdout().contains("my-own-look"), "{}", alias.output());
+}
