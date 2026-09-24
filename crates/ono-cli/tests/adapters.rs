@@ -409,8 +409,15 @@ fn should_decode_a_streamed_stage_into_typed_journal_events() {
 fn should_follow_the_journal_live_at_the_terminal_until_interrupted() {
     // Spec v0.3 §1.37: `journalctl -f` is a live stream — unbounded, rendered in place at a
     // terminal (spec §18.3), ended by Ctrl-C, which reaches the shell and stops the child.
+    //
+    // The follower records its pid, because "the follower is gone" is the claim this test
+    // closes on, and the prompt coming back does not show it: 331 of these followers were once
+    // found on the development machine, days old, from runs that had all passed (issue #162).
+    let scratch = scratch();
+    let follower_pid = scratch.path().join("follower.pid");
     let dir = journal_shim(&format!(
-        "trap 'exit 0' TERM; echo '{ENTRY_ONE}'; sleep 0.3; echo '{ENTRY_TWO}'; while true; do sleep 0.2; done"
+        "trap 'exit 0' TERM; echo $$ > {}; echo '{ENTRY_ONE}'; sleep 0.3; echo '{ENTRY_TWO}'; while true; do sleep 0.2; done",
+        follower_pid.display()
     ));
     let mut executor = ono_process::Executor::detached();
     let command = ono_process::Command::new(ono_testkit::ono_binary())
@@ -428,6 +435,10 @@ fn should_follow_the_journal_live_at_the_terminal_until_interrupted() {
     let mut session = executor
         .run_pty(&command, ono_process::WindowSize::new(30, 120))
         .expect("a pseudo-terminal must be available");
+    // Declared after the session, so it is dropped first: a failing assertion below must not
+    // leave the follower behind, and the session's own `Drop` reaches only the shell's process
+    // group — the follower runs in a group of its own (ADR-0892).
+    let _tree = ono_testkit::OwnedTree::of(session.pid());
     let _ = read_until(&mut session, "> ", Duration::from_secs(10));
     session.write_all(b"journalctl -f\n").expect("typed");
     let seen = read_until(&mut session, "second", Duration::from_secs(10));
@@ -440,8 +451,31 @@ fn should_follow_the_journal_live_at_the_terminal_until_interrupted() {
     let after = read_until(&mut session, "alive-", Duration::from_secs(10));
     assert!(
         after.contains("alive-"),
-        "the prompt is back after Ctrl-C and the follower is gone, got {after:?}"
+        "the prompt is back after Ctrl-C, got {after:?}"
     );
+    let follower: u32 = std::fs::read_to_string(&follower_pid)
+        .expect("the follower recorded its pid when it started")
+        .trim()
+        .parse()
+        .expect("a pid is a number");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline && running(follower) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !running(follower),
+        "spec v0.3 §1.37: Ctrl-C stops the child a live stream reads from, and the follower \
+         (pid {follower}) is still running"
+    );
+}
+
+/// Whether `pid` names a process that is neither gone nor a zombie.
+fn running(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+        stat.rsplit_once(')')
+            .and_then(|(_, rest)| rest.split_whitespace().next())
+            .is_some_and(|state| state != "Z")
+    })
 }
 
 #[test]
