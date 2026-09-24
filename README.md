@@ -512,11 +512,11 @@ canonical CI environment expects to.
 ```text
 crates=48
 workspace_members=50
-tests=7027
+tests=7035
 tests_that_can_skip=127
 expected_ci_skips=15
 acceptance_cases=257
-adrs=595
+adrs=598
 command_contract_files=15
 commands=222
 ```
