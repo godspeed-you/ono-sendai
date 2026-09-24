@@ -13,7 +13,7 @@ use xtask::scan::{
     ExpectedSkips, check_acceptance_case_references, check_authentication_flags,
     check_duplicate_helpers, check_expected_skips, check_pty_resize_assertions,
     check_release_board, check_release_notes, check_silent_skips, check_unannounced_skips,
-    check_unfinished_work, verify_observed_skips,
+    check_unfinished_work, permitted_skips_taken, verify_observed_skips,
 };
 
 /// Builds a throwaway repository shaped like this one.
@@ -1299,6 +1299,57 @@ fn should_neither_require_nor_forbid_a_skip_the_host_capability_decides() {
         Vec::new(),
         "and a host that can must not be told it should have skipped"
     );
+}
+
+#[test]
+fn should_fail_a_skip_whose_category_is_not_the_one_declared_for_its_test() {
+    // A permitted or expected skip is permitted *for a reason*. The same test skipping for a
+    // different §38.4 category is a different situation nobody decided to allow (ADR-0885).
+    let expected = ExpectedSkips::parse(
+        "version: 1\ndeclared:\n  - id: \"crates/a/tests/thing.rs::should_place_a_hundred_thousand_sockets\"\n    category: missing_privilege\ncanonical_ci:\n  expected_skips: []\n  permitted_skips:\n    - id: \"crates/a/tests/thing.rs::should_place_a_hundred_thousand_sockets\"\n      condition: \"`ulimit -Hn` is at least 101024\"\n",
+    )
+    .expect("the fixture registry parses");
+
+    let problems = verify_observed_skips(
+        &expected,
+        "SKIPPED should_place_a_hundred_thousand_sockets: fixture_not_applicable: the host moved\n",
+    );
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0].detail.contains("fixture_not_applicable")
+            && problems[0].detail.contains("missing_privilege"),
+        "the complaint names the category taken and the one declared, got {:?}",
+        problems[0].detail
+    );
+}
+
+#[test]
+fn should_report_every_permitted_skip_a_run_took_with_the_condition_that_allowed_it() {
+    // A permitted skip neither fails nor passes a run, and so it was invisible: a test could skip
+    // in CI on every run and nothing would say so. Each one a run took is reported, with its
+    // category, its detail and the registry's condition (ADR-0885).
+    let expected = ExpectedSkips::parse(
+        "version: 1\ndeclared:\n  - id: \"crates/a/tests/thing.rs::should_place_a_hundred_thousand_sockets\"\n    category: missing_privilege\n  - id: \"crates/a/tests/other.rs::should_hold_still\"\n    category: fixture_not_applicable\ncanonical_ci:\n  expected_skips: []\n  permitted_skips:\n    - id: \"crates/a/tests/thing.rs::should_place_a_hundred_thousand_sockets\"\n      condition: \"`ulimit -Hn` is at least 101024\"\n    - id: \"crates/a/tests/other.rs::should_hold_still\"\n      condition: \"the host holds still\"\n",
+    )
+    .expect("the fixture registry parses");
+
+    let taken = permitted_skips_taken(
+        &expected,
+        "SKIPPED should_place_a_hundred_thousand_sockets: missing_privilege: the host allows 65536\n\
+         test should_hold_still ... ok\n",
+    );
+    assert_eq!(
+        taken.len(),
+        1,
+        "only the skip that happened is reported, got {taken:?}"
+    );
+    assert_eq!(
+        taken[0].id,
+        "crates/a/tests/thing.rs::should_place_a_hundred_thousand_sockets"
+    );
+    assert_eq!(taken[0].category, "missing_privilege");
+    assert_eq!(taken[0].detail, "the host allows 65536");
+    assert_eq!(taken[0].condition, "`ulimit -Hn` is at least 101024");
 }
 
 // --- v0.4.1 §65.10 at a terminal ---------------------------------------------------------------

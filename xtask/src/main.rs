@@ -1027,10 +1027,36 @@ fn skip_check(arguments: &[String]) -> ExitCode {
         }
     };
     let problems = scan::verify_observed_skips(&expected, &log);
+    // A permitted skip neither fails nor passes the run, so it is said out loud: one line each,
+    // on the log and, in GitHub Actions, on the run's summary page (ADR-0885).
+    let taken = scan::permitted_skips_taken(&expected, &log);
+    let mut summary = String::new();
+    for skip in &taken {
+        let line = format!(
+            "skip-check: permitted skip taken — {}: {}: {} (it runs where: {})",
+            skip.id, skip.category, skip.detail, skip.condition
+        );
+        println!("{line}");
+        summary.push_str(&format!("- {line}\n"));
+    }
+    if !summary.is_empty()
+        && let Some(path) = std::env::var_os("GITHUB_STEP_SUMMARY")
+    {
+        use std::io::Write as _;
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(path)
+        {
+            let _ = write!(file, "### Permitted skips this run took\n\n{summary}\n");
+        }
+    }
     if problems.is_empty() {
         println!(
-            "skip-check: ok — {} declared skip(s) observed, none undeclared",
-            expected.canonical_ci.len()
+            "skip-check: ok — {} declared skip(s) observed, none undeclared, {} permitted skip(s) \
+             taken",
+            expected.canonical_ci.len(),
+            taken.len()
         );
         return ExitCode::SUCCESS;
     }

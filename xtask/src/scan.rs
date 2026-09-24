@@ -1507,6 +1507,9 @@ pub struct ExpectedSkips {
     /// with the condition that decides it. Neither required nor forbidden — but listed with its
     /// reason, which is what §38.2 asks of an intentional skip.
     pub permitted: Vec<String>,
+    /// The condition each permitted skip is listed with, by test id, so a run that took one can
+    /// say what allowed it (ADR-0885).
+    pub permitted_conditions: Vec<(String, String)>,
 }
 
 impl ExpectedSkips {
@@ -1573,11 +1576,29 @@ impl ExpectedSkips {
                     .collect()
             })
             .unwrap_or_default();
+        let permitted_conditions = document
+            .get("canonical_ci")
+            .and_then(|section| section.get("permitted_skips"))
+            .and_then(serde_yaml_ng::Value::as_sequence)
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|row| {
+                        let id = row.get("id").and_then(serde_yaml_ng::Value::as_str)?;
+                        let condition = row
+                            .get("condition")
+                            .and_then(serde_yaml_ng::Value::as_str)
+                            .unwrap_or_default();
+                        Some((id.to_owned(), condition.to_owned()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         declared.sort();
         Ok(Self {
             declared,
             canonical_ci,
             permitted,
+            permitted_conditions,
         })
     }
 }
@@ -1808,13 +1829,38 @@ pub fn check_expected_skips(root: &Path) -> Vec<Problem> {
 pub fn verify_observed_skips(expected: &ExpectedSkips, log: &str) -> Vec<Problem> {
     let observed = observed_skips(log);
     let mut problems = Vec::new();
-    for (test, category) in &observed {
+    for (test, category, _) in &observed {
         let suffix = format!("::{test}");
         let known = expected
             .canonical_ci
             .iter()
             .chain(expected.permitted.iter())
             .any(|id| id.ends_with(&suffix));
+        let declared: Vec<&str> = expected
+            .declared
+            .iter()
+            .filter(|site| site.id.ends_with(&suffix))
+            .map(|site| site.category.as_str())
+            .collect();
+        if known && !declared.contains(&category.as_str()) {
+            problems.push(Problem::new(
+                test.clone(),
+                format!(
+                    "skipped with `{category}`, and `{EXPECTED_TEST_SKIPS}` declares it only as \
+                     {}. A skip is permitted for its reason, and this is a different one (v0.4.1 \
+                     §38.2, §38.4, ADR-0885)",
+                    if declared.is_empty() {
+                        "nothing".to_owned()
+                    } else {
+                        declared
+                            .iter()
+                            .map(|category| format!("`{category}`"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }
+                ),
+            ));
+        }
         if !known {
             problems.push(Problem::new(
                 test.clone(),
@@ -1829,7 +1875,7 @@ pub fn verify_observed_skips(expected: &ExpectedSkips, log: &str) -> Vec<Problem
     }
     for id in &expected.canonical_ci {
         let test = id.rsplit("::").next().unwrap_or(id);
-        if !observed.iter().any(|(name, _)| name == test) {
+        if !observed.iter().any(|(name, _, _)| name == test) {
             problems.push(Problem::new(
                 id.clone(),
                 "is expected to skip in this environment and did not. A test that starts \
@@ -1842,8 +1888,45 @@ pub fn verify_observed_skips(expected: &ExpectedSkips, log: &str) -> Vec<Problem
     problems
 }
 
+/// A permitted skip a run took, with what the registry says allowed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermittedSkip {
+    /// The test's registry id, `<path>::<test>`.
+    pub id: String,
+    /// The §38.4 category the marker announced.
+    pub category: String,
+    /// The marker's detail: what the host lacked, in the test's words.
+    pub detail: String,
+    /// The registry's condition for the skip.
+    pub condition: String,
+}
+
+/// Every `canonical_ci.permitted_skips` skip the run in `log` took.
+///
+/// A permitted skip neither fails nor passes a run (ADR-0517), which left it invisible: a test
+/// could skip on every CI run without anything saying so. `skip-check` reports each one this
+/// returns (ADR-0885).
+#[must_use]
+pub fn permitted_skips_taken(expected: &ExpectedSkips, log: &str) -> Vec<PermittedSkip> {
+    let mut taken = Vec::new();
+    for (test, category, detail) in observed_skips(log) {
+        let suffix = format!("::{test}");
+        for (id, condition) in &expected.permitted_conditions {
+            if id.ends_with(&suffix) {
+                taken.push(PermittedSkip {
+                    id: id.clone(),
+                    category: category.clone(),
+                    detail: detail.clone(),
+                    condition: condition.clone(),
+                });
+            }
+        }
+    }
+    taken
+}
+
 /// The `SKIPPED <test>: <category>: <detail>` markers a run left in `log`.
-fn observed_skips(log: &str) -> Vec<(String, String)> {
+fn observed_skips(log: &str) -> Vec<(String, String, String)> {
     let mut observed = Vec::new();
     for line in log.lines() {
         // The marker is looked for anywhere in the line, not only at its start: `cargo test`
@@ -1858,12 +1941,16 @@ fn observed_skips(log: &str) -> Vec<(String, String)> {
             let Some((test, rest)) = rest.split_once(": ") else {
                 continue;
             };
-            let Some((category, _)) = rest.split_once(':') else {
+            let Some((category, detail)) = rest.split_once(':') else {
                 continue;
             };
             let category = category.trim();
             if ono_testkit::SkipReason::from_category(category).is_some() {
-                observed.push((test.trim().to_owned(), category.to_owned()));
+                observed.push((
+                    test.trim().to_owned(),
+                    category.to_owned(),
+                    detail.trim().to_owned(),
+                ));
             }
         }
     }
