@@ -9,6 +9,7 @@
 pub mod affected;
 pub mod architecture;
 pub mod baseline;
+pub mod binary_size;
 pub mod bindings;
 pub mod change;
 pub mod conformance;

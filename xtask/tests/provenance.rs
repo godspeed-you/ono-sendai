@@ -164,6 +164,37 @@ fn should_emit_a_build_input_manifest_carrying_every_field_appendix_h_requires()
 }
 
 #[test]
+fn should_carry_the_recorded_stripped_binary_size_and_its_budget_into_the_manifest() {
+    // Issue #125: the release manifest named every tool version and no artifact size. It carries
+    // the figure `cargo xtask metrics` recorded, per target triple, and the budget it is held to —
+    // the same numbers, read from the same files, so the manifest and the gate cannot disagree.
+    let (_scratch, _path, manifest) = emit(&[]);
+    let recorded = xtask::binary_size::recorded(this_repository(), "ono");
+    assert!(
+        !recorded.is_empty(),
+        "the repository records a stripped size"
+    );
+    for (triple, bytes) in &recorded {
+        assert_eq!(
+            manifest
+                .pointer(&format!("/binaries/ono/stripped_bytes/{triple}"))
+                .and_then(serde_json::Value::as_u64),
+            Some(*bytes),
+            "the manifest carries the recorded size for {triple}:\n{manifest:#}"
+        );
+    }
+    for triple in recorded.keys() {
+        assert_eq!(
+            manifest
+                .pointer(&format!("/binaries/ono/budget_bytes/{triple}"))
+                .and_then(serde_json::Value::as_u64),
+            xtask::binary_size::budget(this_repository(), "ono", triple).ok(),
+            "the manifest carries the budget the {triple} figure is held to:\n{manifest:#}"
+        );
+    }
+}
+
+#[test]
 fn should_bind_the_build_input_manifest_to_the_release_it_describes() {
     let (_scratch, _path, manifest) = emit(&[
         ("GITHUB_REF", "refs/tags/v9.9.9"),

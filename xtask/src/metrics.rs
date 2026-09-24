@@ -17,6 +17,7 @@
 //! environment expects to. A reader who wants "how many passed" has `cargo test`'s own summary,
 //! and this block never offers a substitute for it.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -49,6 +50,10 @@ pub struct Metrics {
     pub command_contract_files: usize,
     /// Commands those files declare.
     pub commands: usize,
+    /// The stripped size of each shipped binary, in bytes, per target triple, as recorded in
+    /// `docs/baselines/binary-size.yaml` from a release build (issue #125). Read from the record
+    /// rather than measured here, so the block can be checked without a release build.
+    pub stripped_bytes: BTreeMap<String, BTreeMap<String, u64>>,
 }
 
 impl Metrics {
@@ -58,6 +63,11 @@ impl Metrics {
         let mut text = String::new();
         for (key, value) in self.pairs() {
             let _ = writeln!(text, "{key}={value}");
+        }
+        for (binary, triples) in &self.stripped_bytes {
+            for (triple, bytes) in triples {
+                let _ = writeln!(text, "stripped_bytes.{binary}.{triple}={bytes}");
+            }
         }
         text
     }
@@ -103,6 +113,7 @@ pub fn measure(root: &Path) -> Metrics {
             "yaml",
         ),
         commands: declared_commands(root),
+        stripped_bytes: crate::binary_size::all_recorded(root),
     }
 }
 

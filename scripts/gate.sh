@@ -239,6 +239,15 @@ if runs static; then
   step "contracts"
   cargo run --quiet --package xtask -- spec-check
 
+  # Issue #125: the stripped release binary against its budget in
+  # docs/contracts/hardening/limits.yaml. The gate builds no release binary — a fat-LTO build is
+  # minutes, and most increments cannot move the size — so it measures `target/release/ono` (or
+  # a `target/<triple>/release/ono` from scripts/package.sh) when one is built and newer than its
+  # sources, and says "not measured" otherwise. The acceptance image, which builds the release
+  # binary on every CI run, requires the measurement (ADR-0864).
+  step "binary size"
+  cargo run --quiet --package xtask -- binary-size
+
   step "docs"
   RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --quiet
 fi

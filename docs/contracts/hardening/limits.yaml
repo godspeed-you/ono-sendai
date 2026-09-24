@@ -232,3 +232,56 @@ limits:
       How long TLS and protocol negotiation may take before the connection is dropped. The floor
       is 100 ms rather than 1: a timeout too short to complete a handshake is a listener that
       accepts nobody, which is a denial of service spelled as a configuration value.
+
+# --- build budgets, issue #125 ------------------------------------------------------------------
+#
+# Not runtime limits: nothing here is a `limits.*` configuration key, the shell reads none of them,
+# and `crates/ono-cli/tests/resource_limits.rs` compares only the `limits` list above against the
+# shell's catalogue. They live in this file because §52.2 gives every hardening number one
+# written-down home, and a budget on the shipped artifact is one.
+#
+#   key          the budget's name.
+#   binary       the release binary it holds, by file name.
+#   triple       the target triple it holds, when the row is for one; a row without one holds
+#                every triple of its binary that has no row of its own.
+#   budget       the ceiling, inclusive, in `unit`.
+#   measured     what is measured, and how.
+#   enforced_by  who fails when the ceiling is exceeded.
+#
+# Raising a budget is a decision and takes an ADR saying what the bytes buy (ADR-0863).
+build_budgets:
+  - key: build.ono_stripped_bytes
+    binary: ono
+    type: bytesize
+    budget: 24350304
+    unit: bytes
+    measured: >-
+      The size of the release `ono` (`strip = "symbols"`, so the size a package installs), per
+      target triple; recorded in docs/baselines/binary-size.yaml by `cargo xtask metrics --write`.
+    enforced_by: >-
+      `cargo xtask binary-size`: `scripts/gate.sh` when a current release binary is built, and
+      `docker/Dockerfile` with `--require` on every acceptance image build; `spec-check` holds the
+      recorded figure to it (ADR-0864).
+    spec: "v0.4.1 §44.2, §50.1, Appendix H; ADR-0863, ADR-0864"
+    doc: >-
+      The first budget is the stripped x86_64 size the release profile of issue #124 lands at on
+      the integrated tree (with #126, the compiler out of the shell, and #127), plus ten percent:
+      22136640 bytes from `scripts/package.sh`, times 1.1. Before #126 the same profile gave
+      28708064 bytes (ADR-0864).
+  - key: build.ono_core_stripped_bytes
+    binary: ono
+    triple: x86_64-unknown-linux-musl
+    type: bytesize
+    budget: 7999999
+    unit: bytes
+    measured: >-
+      The core build (#127, ADR-0910, ADR-0912): `ono` without the enhancements, statically linked
+      against musl, at the release profile; `target/x86_64-unknown-linux-musl/release/ono`.
+    enforced_by: >-
+      `scripts/build-core.sh`, which reads this row, in the `core-build` job on every push; and
+      `cargo xtask binary-size` in `scripts/gate.sh` when a current core binary is built;
+      `spec-check` holds the recorded figure to it (ADR-0864).
+    spec: "#127; ADR-0912, ADR-0864"
+    doc: >-
+      #127's exit test: "a static binary under 8 MB", read as decimal megabytes (ADR-0912), so
+      the inclusive ceiling is one byte under 8000000.

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use xtask::{
-    affected, architecture, baseline, bindings, change, conformance, contracts,
+    affected, architecture, baseline, binary_size, bindings, change, conformance, contracts,
     metrics as repo_metrics, narrative, notices, perf, provenance, reference, reproducibility,
     scan, supply_chain, temporal, terminology, verification,
 };
@@ -25,6 +25,7 @@ fn main() -> ExitCode {
         Some("affected") => affected_packages(&rest),
         Some("terminology") => terminology(&rest),
         Some("metrics") => metrics(&rest),
+        Some("binary-size") => binary_size_task(&rest),
         Some("build-manifest") => build_manifest(&rest),
         Some("compare-builds") => compare_builds(&rest),
         Some("checksums") => checksums(&rest),
@@ -152,6 +153,10 @@ repository, and over a Wiki checkout when one is named [--wiki <path>]"
     eprintln!(
         "  metrics        the generated repository metrics of section 50 [--write] to update the \
 README block"
+    );
+    eprintln!(
+        "  binary-size    the stripped release binary against its budget in \
+docs/contracts/hardening/limits.yaml (issue #125, ADR-0864) [--binary <path>] [--require]"
     );
     eprintln!("  baseline       the frozen v0.4.1 baseline of spec section 57 phase H0 [--write]");
     eprintln!("  docs           regenerate docs/reference/ from the contracts (spec section 36.2)");
@@ -932,6 +937,7 @@ fn spec_check() -> ExitCode {
             .chain(reference::check_migration_guide(&root))
             .chain(baseline::check(&root))
             .chain(repo_metrics::check_readme(&root))
+            .chain(binary_size::check_record(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 
@@ -1102,6 +1108,28 @@ fn metrics(arguments: &[String]) -> ExitCode {
         Some("--write") => true,
         Some(other) => return usage_error(&format!("metrics: unknown argument `{other}`")),
     };
+    if write {
+        // The binary's size is recorded first, so the README block below carries the new figure.
+        let host = match binary_size::host_triple() {
+            Ok(host) => host,
+            Err(error) => {
+                eprintln!("metrics: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let found = binary_size::find(&root, &target_directory(&root), &host);
+        match binary_size::record(&root, &found) {
+            Ok(said) => {
+                for line in said {
+                    println!("metrics: {line}");
+                }
+            }
+            Err(error) => {
+                eprintln!("metrics: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
     print!("{}", repo_metrics::measure(&root).render());
     if !write {
         return ExitCode::SUCCESS;
@@ -1115,6 +1143,60 @@ fn metrics(arguments: &[String]) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+/// Holds the stripped release binary against its budget (issue #125, ADR-0864).
+///
+/// Without `--binary` it looks under the target directory and measures only a binary that is
+/// newer than everything it was built from. A binary that is missing or stale is announced as not
+/// measured; `--require` makes that a failure, for a caller that has just built the release
+/// binary and so has no excuse for not measuring it.
+fn binary_size_task(args: &[String]) -> ExitCode {
+    let mut binary: Option<PathBuf> = None;
+    let mut require = false;
+    let mut rest = args.iter();
+    while let Some(argument) = rest.next() {
+        match argument.as_str() {
+            "--binary" => match rest.next() {
+                Some(path) => binary = Some(PathBuf::from(path)),
+                None => return usage_error("binary-size: --binary needs a path"),
+            },
+            "--require" => require = true,
+            other => return usage_error(&format!("binary-size: unknown argument `{other}`")),
+        }
+    }
+    let root = repo_root();
+    let host = match binary_size::host_triple() {
+        Ok(host) => host,
+        Err(error) => {
+            eprintln!("binary-size: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let found = match binary {
+        Some(path) => match binary_size::named(&path, &host) {
+            Ok(found) => vec![found],
+            Err(error) => {
+                eprintln!("binary-size: {error}");
+                Vec::new()
+            }
+        },
+        None => binary_size::find(&root, &target_directory(&root), &host),
+    };
+    let verdict = binary_size::check(&root, &found, require);
+    for line in &verdict.lines {
+        println!("binary-size: {line}");
+    }
+    if verdict.passed {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// Where cargo puts its builds: `CARGO_TARGET_DIR` when set, `target/` otherwise.
+fn target_directory(root: &Path) -> PathBuf {
+    std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from)
 }
 
 /// The documents that carry v0.4.1 §47.5's verification sequence, held against the registry.

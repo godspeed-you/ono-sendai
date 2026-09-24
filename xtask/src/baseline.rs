@@ -295,6 +295,46 @@ fn check_every_measurement_is_frozen(root: &Path, held: &[(String, Json)]) -> Ve
     problems
 }
 
+/// Figures the generators produce that did not exist before a tranche, with that tranche.
+///
+/// A snapshot is history (ADR-0785) and cannot record what was first computed after it was taken,
+/// so it is not asked for these; it is still asked for everything that existed when it was
+/// captured. A key ending in `.` names a family of figures by prefix — one per target triple.
+const ADDED_IN: &[(&str, &str)] = &[
+    // The stripped release binary, in the metrics and in the release input manifest (issue #125,
+    // ADR-0864).
+    ("stripped_bytes.", "0.6.2"),
+    ("binaries", "0.6.2"),
+];
+
+/// Whether `snapshot` was captured before `figure` existed.
+fn predates(snapshot: &Json, figure: &str) -> bool {
+    let Some(taken) = snapshot["tranche"].as_str().and_then(version) else {
+        return false;
+    };
+    ADDED_IN.iter().any(|(name, added)| {
+        let named = if name.ends_with('.') {
+            figure.starts_with(name)
+        } else {
+            figure == *name
+        };
+        named && version(added).is_some_and(|added| taken < added)
+    })
+}
+
+/// `v1.2.3` or `1.2.3` as a comparable triple.
+fn version(text: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = text
+        .trim_start_matches('v')
+        .split('.')
+        .map(str::parse::<u64>);
+    Some((
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+    ))
+}
+
 /// One frozen snapshot, held against the sources it froze.
 fn check_snapshot(root: &Path, path: &str, snapshot: &Json) -> Vec<Problem> {
     let problem = |detail: String| Problem::new(path, detail);
@@ -372,7 +412,7 @@ fn check_counts(root: &Path, path: &str, snapshot: &Json) -> Vec<Problem> {
         .filter_map(|line| line.split_once('=').map(|(key, _)| key.to_owned()))
         .collect();
     for metric in &computed {
-        if !recorded.contains_key(metric) {
+        if !recorded.contains_key(metric) && !predates(snapshot, metric) {
             problems.push(Problem::new(
                 path,
                 format!("records no `{metric}`, which `cargo xtask metrics` computes"),
@@ -484,7 +524,7 @@ fn check_release_inputs(root: &Path, path: &str, snapshot: &Json) -> Vec<Problem
     };
     let mut problems = Vec::new();
     for field in expected.keys() {
-        if !recorded.contains_key(field) {
+        if !recorded.contains_key(field) && !predates(snapshot, field) {
             problems.push(Problem::new(
                 path,
                 format!(

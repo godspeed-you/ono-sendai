@@ -1,0 +1,16 @@
+# The stripped size of the shipped binaries, in bytes, per target triple (issue #125).
+#
+# Written by `cargo xtask metrics --write` from release builds of the tree it sits in:
+# `target/<triple>/release/<binary>` from scripts/package.sh, or `target/release/<binary>` for
+# the host. A binary or triple nobody built on the recording machine keeps its earlier figure.
+# The README block and the release input manifest read this file; the budgets are
+# `build_budgets` in docs/contracts/hardening/limits.yaml (ADR-0863, ADR-0864). Never
+# hand-edited.
+
+schema: ono.binary-size.v1
+stripped_bytes:
+  kuang-compile:
+    x86_64-unknown-linux-gnu: 7305360
+  ono:
+    x86_64-unknown-linux-gnu: 22136640
+    x86_64-unknown-linux-musl: 7063744

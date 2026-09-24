@@ -82,6 +82,7 @@ pub fn build_inputs(root: &Path) -> Value {
             .collect::<Map<_, _>>(),
         "source_date_epoch": source_date_epoch(root),
         "run": run_identity(),
+        "binaries": crate::binary_size::manifest_entry(root),
     })
 }
 

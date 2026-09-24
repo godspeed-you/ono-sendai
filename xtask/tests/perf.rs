@@ -591,6 +591,50 @@ fn should_report_a_frozen_baseline_that_leaves_an_absent_artifact_hash_unexplain
 }
 
 #[test]
+fn should_not_ask_a_frozen_snapshot_for_a_figure_added_after_its_tranche() {
+    // A snapshot is history (ADR-0785): `v0.4.1.json` cannot record the stripped binary size that
+    // `cargo xtask metrics` and `build-manifest` first produce in v0.6.2 (issue #125). What it
+    // could have recorded, it still must — dropping a count that existed at capture is reported.
+    let scratch = ono_testkit::scratch();
+    let root = repository_root();
+    for file in [
+        "docs/contracts/hardening/performance_baseline.json",
+        "docs/contracts/hardening/performance_environment.yaml",
+    ] {
+        scratch.write(
+            file,
+            std::fs::read_to_string(root.join(file)).expect("a performance registry"),
+        );
+    }
+    scratch.write(
+        "docs/baselines/binary-size.yaml",
+        "schema: ono.binary-size.v1\nstripped_bytes:\n  ono:\n    x86_64-unknown-linux-gnu: 1000\n",
+    );
+    let mut snapshot = frozen_baseline();
+    snapshot["tests"]["at_capture"]
+        .as_object_mut()
+        .expect("the counts")
+        .remove("adrs");
+    scratch.write(
+        "docs/baselines/v0.4.1.json",
+        serde_json::to_string_pretty(&snapshot).expect("the snapshot serialises"),
+    );
+    let problems = xtask::baseline::check(scratch.path());
+    assert!(
+        !problems.iter().any(|problem| {
+            problem.detail.contains("stripped_bytes") || problem.detail.contains("`binaries`")
+        }),
+        "a figure added after the snapshot's tranche is not asked of it: {problems:?}"
+    );
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("records no `adrs`")),
+        "a count that existed at capture and is missing is still reported: {problems:?}"
+    );
+}
+
+#[test]
 fn should_capture_the_frozen_baseline_from_the_sources_rather_than_from_a_second_list() {
     // #30's exit test is a file "that H7 and H11 both consume rather than re-derive", and
     // ADR-0451 asked for the same thing from the other side: "its baseline should be a captured

@@ -200,3 +200,385 @@ fn should_not_count_a_test_written_inside_a_string_literal() {
         "only the real test is counted"
     );
 }
+
+// --- the stripped size of the shipped binary (issue #125, ADR-0863, ADR-0864) -----------------
+//
+// A 15 MB increase in the shipped binary passed the gate, the acceptance suite and the package
+// build without a word, because none of them measured it. These tests hold the three halves of
+// the fix: the figure is recorded per target triple, it has a budget beside the other limits, and
+// a binary over the budget — or a binary nobody measured, where a measurement is required — fails.
+
+use std::time::{Duration, SystemTime};
+
+use xtask::binary_size::{self, Found};
+
+const HOST: &str = "x86_64-unknown-linux-gnu";
+
+/// A scratch repository whose limits registry budgets the binary at `budget` bytes.
+fn repository_with_budget(budget: u64) -> ono_testkit::Scratch {
+    let repo = scratch();
+    repo.write(
+        "docs/contracts/hardening/limits.yaml",
+        format!(
+            "version: 1\nlimits: []\nbuild_budgets:\n  - key: build.ono_stripped_bytes\n    \
+             binary: ono\n    type: bytesize\n    budget: {budget}\n    unit: bytes\n    \
+             enforced_by: xtask\n"
+        ),
+    );
+    repo
+}
+
+/// Writes a release binary of `bytes` bytes at `relative`, with the dep-info file cargo writes
+/// beside it naming one source, and dates the source ten minutes before or after the binary.
+fn built_binary(repo: &ono_testkit::Scratch, relative: &str, bytes: u64, source_is_newer: bool) {
+    let source = repo.write("crates/ono-cli/src/main.rs", "fn main() {}\n");
+    let binary = repo.path().join(relative);
+    std::fs::create_dir_all(binary.parent().expect("a directory")).expect("the directory");
+    let file = std::fs::File::create(&binary).expect("the binary");
+    file.set_len(bytes).expect("the binary's size");
+    repo.write(
+        format!("{relative}.d"),
+        format!("{}: {}\n", binary.display(), source.display()),
+    );
+    let now = SystemTime::now();
+    let (binary_time, source_time) = if source_is_newer {
+        (now - Duration::from_secs(600), now)
+    } else {
+        (now, now - Duration::from_secs(600))
+    };
+    file.set_modified(binary_time).expect("the binary's mtime");
+    std::fs::File::options()
+        .write(true)
+        .open(&source)
+        .expect("the source")
+        .set_modified(source_time)
+        .expect("the source's mtime");
+}
+
+#[test]
+fn should_record_the_stripped_size_per_target_triple_when_the_release_binary_is_current() {
+    let repo = repository_with_budget(30_000_000);
+    built_binary(&repo, "target/release/ono", 22_000_000, false);
+
+    let found = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
+    binary_size::record(repo.path(), &found).expect("the record is written");
+
+    assert_eq!(
+        binary_size::recorded(repo.path(), "ono").get(HOST),
+        Some(&22_000_000),
+        "the figure is recorded under the triple it was built for: {}",
+        repo.read(binary_size::RECORD)
+    );
+    let rendered = measure(repo.path()).render();
+    assert!(
+        rendered.contains(&format!("stripped_bytes.ono.{HOST}=22000000")),
+        "the README block carries the recorded figure beside the other counts: {rendered}"
+    );
+}
+
+#[test]
+fn should_record_a_cross_built_binary_under_its_own_triple() {
+    // `scripts/package.sh` builds into `target/<triple>/release/ono`, which is the binary that
+    // ships, and a foreign triple only ever appears there.
+    let repo = repository_with_budget(30_000_000);
+    built_binary(
+        &repo,
+        "target/aarch64-unknown-linux-gnu/release/ono",
+        21_000_000,
+        false,
+    );
+    let found = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
+    binary_size::record(repo.path(), &found).expect("the record is written");
+    let recorded = binary_size::recorded(repo.path(), "ono");
+    assert_eq!(recorded.get("aarch64-unknown-linux-gnu"), Some(&21_000_000));
+    assert_eq!(recorded.get(HOST), None, "nothing was built for the host");
+}
+
+#[test]
+fn should_not_record_a_binary_older_than_the_sources_it_was_built_from() {
+    // A stale binary is yesterday's figure. Recording it would make the record lie about the tree
+    // it sits in, so it is left alone and the reason is said.
+    let repo = repository_with_budget(30_000_000);
+    built_binary(&repo, "target/release/ono", 22_000_000, true);
+
+    let found = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
+    assert!(
+        matches!(found.as_slice(), [Found::Unmeasured { .. }]),
+        "a binary older than a source it names is stale: {found:?}"
+    );
+    binary_size::record(repo.path(), &found).expect("nothing to write is not an error");
+    assert!(binary_size::recorded(repo.path(), "ono").is_empty());
+}
+
+#[test]
+fn should_date_a_binary_built_in_a_container_against_the_sources_under_this_checkout() {
+    // `scripts/package.sh` builds with the checkout mounted at `/project`, so cargo's dep-info
+    // names `/project/crates/…`. Those are this checkout's files under another root, and the
+    // binary is dated against them rather than declared stale because `/project` is not here.
+    let repo = repository_with_budget(30_000_000);
+    let relative = "target/x86_64-unknown-linux-gnu/release/ono";
+    for source_is_newer in [false, true] {
+        built_binary(&repo, relative, 22_000_000, source_is_newer);
+        repo.write(
+            format!("{relative}.d"),
+            "/project/target/x86_64-unknown-linux-gnu/release/ono: \
+             /project/crates/ono-cli/src/main.rs\n",
+        );
+        let found = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
+        assert_eq!(
+            matches!(
+                found.as_slice(),
+                [Found::Current {
+                    bytes: 22_000_000,
+                    ..
+                }]
+            ),
+            !source_is_newer,
+            "a source edited after the container build makes the binary stale, and one edited \
+             before does not: {found:?}"
+        );
+    }
+}
+
+#[test]
+fn should_record_kuang_compile_beside_ono_and_hold_only_ono_to_the_shells_budget() {
+    // #126 moved wasmtime's compiler out of the shell into `kuang-compile`, a second shipped
+    // binary (ADR-0870). Its size is recorded so it is seen; the budget is the shell's.
+    let repo = repository_with_budget(30_000_000);
+    built_binary(&repo, "target/release/ono", 22_000_000, false);
+    built_binary(&repo, "target/release/kuang-compile", 40_000_000, false);
+
+    let found = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
+    binary_size::record(repo.path(), &found).expect("the record is written");
+    assert_eq!(
+        binary_size::recorded(repo.path(), "kuang-compile").get(HOST),
+        Some(&40_000_000)
+    );
+    assert!(
+        measure(repo.path())
+            .render()
+            .contains(&format!("stripped_bytes.kuang-compile.{HOST}=40000000")),
+        "the README block carries the compiler's figure too"
+    );
+    let verdict = binary_size::check(repo.path(), &found, true);
+    assert!(
+        verdict.passed,
+        "a binary with no budget of its own is not held to the shell's: {verdict:?}"
+    );
+}
+
+#[test]
+fn should_not_measure_an_ono_that_links_the_compiler() {
+    // `cargo build --release` over the whole workspace unifies features with `kuang-compile`, and
+    // the `ono` it links carries Cranelift, which the shipped one never does (ADR-0870). Its size
+    // is not the shipped size: neither recorded nor held to the budget, and the reason is said.
+    let repo = repository_with_budget(30_000_000);
+    built_binary(&repo, "target/release/ono", 29_000_000, false);
+    let compiler = repo.write(
+        "target/registry/cranelift-codegen-0.134.4/src/lib.rs",
+        "// the compiler\n",
+    );
+    std::fs::File::options()
+        .write(true)
+        .open(&compiler)
+        .and_then(|file| file.set_modified(SystemTime::now() - Duration::from_secs(3600)))
+        .expect("the compiler source's mtime");
+    let dependency = repo.path().join("target/release/ono.d");
+    let listing = std::fs::read_to_string(&dependency).expect("the dep-info");
+    std::fs::write(
+        &dependency,
+        format!("{} {}\n", listing.trim_end(), compiler.display()),
+    )
+    .expect("the dep-info");
+
+    let found = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
+    assert!(
+        matches!(found.as_slice(), [Found::Unmeasured { reason, .. }] if reason.contains("compiler")),
+        "an `ono` that links the compiler is not the shipped one: {found:?}"
+    );
+    binary_size::record(repo.path(), &found).expect("nothing to record");
+    assert!(binary_size::recorded(repo.path(), "ono").is_empty());
+}
+
+#[test]
+fn should_hold_the_core_build_to_its_own_budget_beside_the_full_one() {
+    // #127's core build is the same `ono` for `x86_64-unknown-linux-musl` without the
+    // enhancements (ADR-0912), with a budget of its own. One registry holds both: a row that names
+    // a triple is that triple's budget, and the row without one covers the rest.
+    let repo = scratch();
+    repo.write(
+        "docs/contracts/hardening/limits.yaml",
+        "version: 1\nlimits: []\nbuild_budgets:\n  - key: build.ono_stripped_bytes\n    \
+         binary: ono\n    budget: 30000000\n  - key: build.ono_core_stripped_bytes\n    \
+         binary: ono\n    triple: x86_64-unknown-linux-musl\n    budget: 7999999\n",
+    );
+    built_binary(&repo, "target/release/ono", 22_000_000, false);
+    built_binary(
+        &repo,
+        "target/x86_64-unknown-linux-musl/release/ono",
+        8_000_000,
+        false,
+    );
+    let found = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
+    let verdict = binary_size::check(repo.path(), &found, true);
+    assert!(
+        !verdict.passed
+            && verdict
+                .lines
+                .iter()
+                .any(|line| line.contains("x86_64-unknown-linux-musl")
+                    && line.contains("8000000")
+                    && line.contains("7999999")),
+        "the core binary is held to the core budget, not the full one: {verdict:?}"
+    );
+
+    built_binary(
+        &repo,
+        "target/x86_64-unknown-linux-musl/release/ono",
+        7_063_744,
+        false,
+    );
+    let found = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
+    assert!(binary_size::check(repo.path(), &found, true).passed);
+    binary_size::record(repo.path(), &found).expect("the record is written");
+    assert_eq!(
+        binary_size::recorded(repo.path(), "ono").get("x86_64-unknown-linux-musl"),
+        Some(&7_063_744),
+        "the core figure is recorded under its triple"
+    );
+}
+
+#[test]
+fn should_fail_the_budget_when_the_release_binary_exceeds_it() {
+    let repo = repository_with_budget(20_000_000);
+    built_binary(&repo, "target/release/ono", 20_000_001, false);
+    let found = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
+    let verdict = binary_size::check(repo.path(), &found, false);
+    assert!(
+        !verdict.passed,
+        "one byte over the budget is over the budget: {verdict:?}"
+    );
+    assert!(
+        verdict
+            .lines
+            .iter()
+            .any(|line| line.contains("20000001") && line.contains("20000000")),
+        "the failure names the figure and the budget: {verdict:?}"
+    );
+}
+
+#[test]
+fn should_pass_the_budget_when_the_release_binary_is_within_it() {
+    let repo = repository_with_budget(20_000_000);
+    built_binary(&repo, "target/release/ono", 20_000_000, false);
+    let found = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
+    let verdict = binary_size::check(repo.path(), &found, true);
+    assert!(verdict.passed, "{verdict:?}");
+}
+
+#[test]
+fn should_announce_an_unmeasured_binary_and_fail_only_where_a_measurement_is_required() {
+    // ADR-0864: a developer gate without a release build says it measured nothing rather than
+    // building for seven minutes; the acceptance image, which has just built the release binary,
+    // requires the measurement. A missing measurement never passes silently.
+    let repo = repository_with_budget(20_000_000);
+    let missing = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
+    built_binary(&repo, "target/release/ono", 1_000, true);
+    let stale = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
+    for found in [missing, stale] {
+        let optional = binary_size::check(repo.path(), &found, false);
+        assert!(optional.passed, "{optional:?}");
+        assert!(
+            optional
+                .lines
+                .iter()
+                .any(|line| line.contains("not measured")),
+            "an unmeasured binary is announced, not passed over: {optional:?}"
+        );
+        let required = binary_size::check(repo.path(), &found, true);
+        assert!(
+            !required.passed,
+            "where a measurement is required its absence fails: {required:?}"
+        );
+    }
+}
+
+#[test]
+fn should_fail_when_the_limits_registry_declares_no_budget() {
+    let repo = scratch();
+    repo.write(
+        "docs/contracts/hardening/limits.yaml",
+        "version: 1\nlimits: []\n",
+    );
+    built_binary(&repo, "target/release/ono", 1_000, false);
+    let found = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
+    let verdict = binary_size::check(repo.path(), &found, false);
+    assert!(
+        !verdict.passed,
+        "a budget nobody declared is not a budget the binary met: {verdict:?}"
+    );
+}
+
+#[test]
+fn should_report_a_recorded_figure_above_the_budget_and_a_missing_record() {
+    let repo = repository_with_budget(20_000_000);
+    let problems = binary_size::check_record(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("records no stripped size")),
+        "a budget with no recorded figure is a measurement nobody made: {problems:?}"
+    );
+
+    built_binary(&repo, "target/release/ono", 25_000_000, false);
+    let found = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
+    binary_size::record(repo.path(), &found).expect("the record is written");
+    let problems = binary_size::check_record(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("25000000")),
+        "a recorded figure over the budget is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_hold_this_repositorys_recorded_binary_size_within_its_budget() {
+    let root = repo();
+    assert!(
+        binary_size::budget(&root, "ono", HOST).is_ok(),
+        "docs/contracts/hardening/limits.yaml budgets the stripped binary (issue #125)"
+    );
+    assert!(
+        binary_size::recorded(&root, "ono").contains_key(HOST),
+        "{} records the stripped size of the x86_64 release binary",
+        binary_size::RECORD
+    );
+    assert_eq!(binary_size::check_record(&root), Vec::new());
+}
+
+#[test]
+fn should_refuse_an_oversized_binary_through_the_command_the_image_build_runs() {
+    // The exit test of #125, through the command `docker/Dockerfile` and `scripts/gate.sh` run:
+    // a binary one byte over this repository's budget fails, one at the budget passes.
+    let budget = binary_size::budget(&repo(), "ono", HOST).expect("the budget");
+    let directory = scratch();
+    for (bytes, passes) in [(budget + 1, false), (budget, true)] {
+        let binary = directory.path().join("ono");
+        std::fs::File::create(&binary)
+            .and_then(|file| file.set_len(bytes))
+            .expect("a binary of that size");
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_xtask"))
+            .args(["binary-size", "--require", "--binary"])
+            .arg(&binary)
+            .output()
+            .expect("xtask runs");
+        assert_eq!(
+            output.status.success(),
+            passes,
+            "{bytes} bytes against a budget of {budget}:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}

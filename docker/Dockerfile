@@ -34,12 +34,18 @@ COPY docs/contracts ./docs/contracts
 # across the packages of one invocation, and `ono-kuang-sdk`'s `kuang-compile` enables wasmtime's
 # compiler: built together, the shell would link the Cranelift it deliberately goes without
 # (ADR-0870), and the image would prove nothing about the binary a release ships.
+#
+# The installed `ono` is held to its size budget as soon as the release tool that measures it is
+# built (issue #125). Every CI run builds the shipping profile here, so the measurement is
+# required: a binary over `build.ono_stripped_bytes` in docs/contracts/hardening/limits.yaml
+# fails the image build, and so does a missing measurement (ADR-0864).
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/build/target,sharing=locked \
     find crates xtask fuzz docs/contracts Cargo.toml Cargo.lock -type f -exec touch {} + && \
     cargo build --release --package ono-cli --locked \
     && install -m 0755 target/release/ono /usr/local/bin/ono \
     && cargo build --release --package ono-kuang-sdk --package xtask --locked \
+    && target/release/xtask binary-size --require --binary /usr/local/bin/ono \
     && rustup target add wasm32-wasip2 \
     && cargo build --release --target wasm32-wasip2 --package ono-kuang-sdk --bin kuang-example-plugin --locked \
     && install -m 0644 target/wasm32-wasip2/release/kuang-example-plugin.wasm /usr/local/lib/kuang-example-plugin.wasm \
