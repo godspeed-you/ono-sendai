@@ -366,7 +366,7 @@ fn should_run_a_script_it_has_just_written_while_other_threads_are_starting_proc
     // the script answers ETXTBSY — for a file that is executable and that nobody is writing any
     // more. The shared helper must leave no such descriptor anywhere, so the script runs at once,
     // however busy the neighbours are (ADR-0891).
-    let busy = busy_among_fresh_executables(|directory, attempt| {
+    let (busy, made) = busy_among_fresh_executables(|directory, attempt| {
         ono_testkit::executable_script(
             directory,
             &format!("script-{attempt}"),
@@ -376,7 +376,7 @@ fn should_run_a_script_it_has_just_written_while_other_threads_are_starting_proc
     assert_eq!(
         busy, 0,
         "a script the helper wrote is never busy when it is run, but {busy} of \
-         {FRESH_EXECUTABLES} runs answered ETXTBSY"
+         {made} runs answered ETXTBSY"
     );
 }
 
@@ -385,45 +385,63 @@ fn should_run_a_program_it_has_just_copied_while_other_threads_are_starting_proc
     // The same race with a copied program — a plugin binary put where the shell will load it, or a
     // renamed `sleep` whose name a test selects on — because `std::fs::copy` holds the copy open
     // for writing in this process exactly as `std::fs::write` does (issue #188, ADR-0891).
-    let busy = busy_among_fresh_executables(|directory, attempt| {
+    let (busy, made) = busy_among_fresh_executables(|directory, attempt| {
         ono_testkit::executable_copy("/bin/true", &directory.join(format!("true-{attempt}")))
     });
     assert_eq!(
         busy, 0,
         "a program the helper copied is never busy when it is run, but {busy} of \
-         {FRESH_EXECUTABLES} runs answered ETXTBSY"
+         {made} runs answered ETXTBSY"
     );
 }
 
-/// How many executables each race test makes and runs. Before the fix, three hundred runs
-/// answered ETXTBSY between five and sixteen times on the development host and a hundred about
-/// once, so two hundred reproduce the race reliably, and a fixed helper passes whatever the count.
-const FRESH_EXECUTABLES: u32 = 200;
+/// How long each race test keeps making and running executables, and the fewest it makes.
+///
+/// The race is decided by time, not by a count: the old helpers were fast, and a fixed count run on
+/// a quiet machine could finish before a spawner happened to fork inside a write. For the whole
+/// window the spawners below keep a child between `fork` and `exec` almost all the time, so an
+/// unfixed helper is refused dozens of times; a fixed one is refused never.
+const RACE_FOR: std::time::Duration = std::time::Duration::from_secs(3);
+const FEWEST_EXECUTABLES: u32 = 100;
 
-/// Makes [`FRESH_EXECUTABLES`] executables with `make` and runs each at once, while six threads
-/// start processes as fast as they can, and answers how many runs the kernel refused as busy.
+/// Makes executables with `make` and runs each at once, for [`RACE_FOR`] and at least
+/// [`FEWEST_EXECUTABLES`] times, while eight threads start processes as fast as they can, and
+/// answers how many runs the kernel refused as busy and how many were made.
+///
+/// Each spawner hands its child 200 KiB of arguments. `execve` copies them before it closes the
+/// descriptors marked close-on-exec, so every child spends that copy holding the parent's
+/// descriptor table — which widens the window this test is about from microseconds to a large
+/// share of the time, on a quiet machine as much as on a busy one.
 #[allow(
     clippy::panic,
     clippy::expect_used,
     reason = "a helper of two tests states their preconditions the way a #[test] body does"
 )]
-fn busy_among_fresh_executables(make: impl Fn(&std::path::Path, u32) -> std::path::PathBuf) -> u32 {
+fn busy_among_fresh_executables(
+    make: impl Fn(&std::path::Path, u32) -> std::path::PathBuf,
+) -> (u32, u32) {
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let spawners: Vec<_> = (0..6)
+    let bulk = "x".repeat(100 * 1024);
+    let spawners: Vec<_> = (0..8)
         .map(|_| {
             let stop = std::sync::Arc::clone(&stop);
+            let bulk = bulk.clone();
             std::thread::spawn(move || {
                 while !stop.load(std::sync::atomic::Ordering::Relaxed) {
-                    let _ = std::process::Command::new("/bin/true").status();
+                    let _ = std::process::Command::new("/bin/true")
+                        .args([&bulk, &bulk])
+                        .status();
                 }
             })
         })
         .collect();
 
     let directory = ono_testkit::scratch();
-    let mut busy = 0;
-    for attempt in 0..FRESH_EXECUTABLES {
-        let program = make(directory.path(), attempt);
+    let started = std::time::Instant::now();
+    let (mut busy, mut made) = (0, 0);
+    while made < FEWEST_EXECUTABLES || started.elapsed() < RACE_FOR {
+        let program = make(directory.path(), made);
+        made += 1;
         match std::process::Command::new(&program).status() {
             Err(error) if error.raw_os_error() == Some(26) => busy += 1,
             Err(error) => panic!("{} could not be run: {error}", program.display()),
@@ -438,7 +456,7 @@ fn busy_among_fresh_executables(make: impl Fn(&std::path::Path, u32) -> std::pat
     for spawner in spawners {
         spawner.join().expect("a spawner thread finishes");
     }
-    busy
+    (busy, made)
 }
 
 #[test]
