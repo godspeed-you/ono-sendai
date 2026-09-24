@@ -19,65 +19,19 @@ use ono_change_core::{
 };
 use ono_recovery_files::{FileRecoveryProvider, FileRecoveryStore};
 
-/// A throwaway directory on the filesystem `cargo` builds into, removed when it is dropped.
-///
-/// [`ono_testkit::scratch`] is the usual answer and it is the wrong one here. It falls back to the
-/// system temporary directory when cargo does not export `CARGO_TARGET_TMPDIR` at run time, and on
-/// a machine where `/tmp` is a tmpfs that would put every fixture on a volatile filesystem — which
-/// is exactly what §15's provider refuses to protect (Appendix B.7). `CARGO_TARGET_TMPDIR` read at
-/// *compile* time always names a directory inside `target/`, which is where the build already is.
-pub struct Scratch {
-    path: PathBuf,
-}
-
-impl Scratch {
-    fn new() -> Self {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
-            "ono-recovery-files-{}-{unique}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&path).expect("the scratch directory can be created");
-        Self { path }
-    }
-
-    /// The directory's path.
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// Writes `contents` to `relative`, creating parent directories as needed.
-    pub fn write(&self, relative: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> PathBuf {
-        let target = self.path.join(relative);
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).expect("the parent directory can be created");
-        }
-        std::fs::write(&target, contents).expect("the file can be written");
-        target
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
-}
-
 /// The instant every fixture works from: 2026-01-01T00:00:00Z, and never the wall clock.
 pub const NOW: i64 = 1_767_225_600;
 
 /// A scratch directory, a private store inside it, and a provider bound to both.
 pub struct Fixture {
-    pub scratch: Scratch,
+    pub scratch: ono_testkit::Scratch,
     pub provider: FileRecoveryProvider,
 }
 
 impl Fixture {
     /// A provider whose store is inside the scratch directory, so nothing touches a real home.
     pub fn new() -> Self {
-        let scratch = Scratch::new();
+        let scratch = ono_testkit::scratch();
         let store = FileRecoveryStore::open(scratch.path().join("store"))
             .expect("a store can be created inside the scratch directory");
         let provider = FileRecoveryProvider::new(store, at(NOW));
