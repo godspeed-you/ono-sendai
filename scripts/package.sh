@@ -166,8 +166,8 @@ fi
 # and `ono-kuang-sdk` turns on the supervisor's `compiler` feature for `kuang-compile`. Built
 # together, `ono` would link the Cranelift ADR-0870 took out of it; package-check.sh looks for it
 # in the packaged shell (ADR-0905).
-build_both="cargo build --release --locked --target $target --package ono-cli \
-&& cargo build --release --locked --target $target --package ono-kuang-sdk --bin kuang-compile"
+build_both="cargo build --release --locked --timings --target $target --package ono-cli \
+&& cargo build --release --locked --timings --target $target --package ono-kuang-sdk --bin kuang-compile"
 
 if [[ $no_build -eq 0 ]]; then
   if [[ "$target" == "$host_triple" ]]; then
@@ -182,7 +182,9 @@ if [[ $no_build -eq 0 ]]; then
     fi
     # The image is multi-architecture, so this is the same command on an x86_64 and on an
     # arm64 runner. Cargo writes as the invoking user into a cache under target/, so nothing
-    # the container leaves behind is root's.
+    # the container leaves behind is root's. `--timings` writes target/cargo-timings/, the answer
+    # to where the release build's minutes go; CI publishes it (issue #218, ADR-0865). It changes
+    # what is reported, not what is built.
     "$runtime" run --rm \
       --user "$(id -u):$(id -g)" \
       --volume "$PWD:/project" \
@@ -202,8 +204,8 @@ architecture and binary, but dpkg-shlibdeps and ldd cannot read a foreign ELF, s
 dependencies stay undeclared; the packages a release ships are built on a native runner
 (ADR-0123, .github/workflows/release.yml).
 NOTE
-    cross build --release --locked --target "$target" --package ono-cli
-    cross build --release --locked --target "$target" --package ono-kuang-sdk --bin kuang-compile
+    cross build --release --locked --timings --target "$target" --package ono-cli
+    cross build --release --locked --timings --target "$target" --package ono-kuang-sdk --bin kuang-compile
   fi
 fi
 

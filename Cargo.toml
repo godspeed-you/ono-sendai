@@ -249,3 +249,12 @@ opt-level = "s"
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
+
+# The release tool (`xtask`, installed as `ono-release-tool`) that the acceptance image builds
+# beside the shell. It ships in no package and is graded by nothing, so it is not built at the
+# shipping profile: its fat-LTO link was the longest step of the image build (issue #218,
+# ADR-0865).
+[profile.release-tool]
+inherits = "release"
+lto = false
+codegen-units = 16

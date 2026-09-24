@@ -262,5 +262,17 @@ jobs:
           tool: cargo-deb@3.7.0,cargo-generate-rpm@0.21.0,cross@0.2.5
       - name: build the packages
         run: scripts/package.sh
+      # Where the minutes of the release build go, crate by crate (issue #218, ADR-0865). This is
+      # the one cold, single-package build of the shipping profile in CI, so its report is the
+      # answer to "why does the release build take this long" for the commit that was pushed.
+      # `ono` and `kuang-compile` are two cargo invocations (ADR-0905), and each writes its own
+      # timestamped report beside the `cargo-timing.html` the second one overwrites.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: release-build-timings
+          path: target/cargo-timings/cargo-timing-*.html
+          if-no-files-found: warn
+          retention-days: 14
       - name: install and run them in fresh containers
         run: scripts/package-check.sh

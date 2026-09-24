@@ -35,6 +35,11 @@ COPY docs/contracts ./docs/contracts
 # compiler: built together, the shell would link the Cranelift it deliberately goes without
 # (ADR-0870), and the image would prove nothing about the binary a release ships.
 #
+# The release tool (`xtask`) ships in no package and is graded by nothing, so it is built at the
+# `release-tool` profile rather than the shipping one, in an invocation of its own: its fat-LTO
+# link had become the longest step of this stage (issue #218, ADR-0865). What ships — `ono`,
+# `kuang-compile` — keeps the shipping profile.
+#
 # The installed `ono` is held to its size budget as soon as the release tool that measures it is
 # built (issue #125). Every CI run builds the shipping profile here, so the measurement is
 # required: a binary over `build.ono_stripped_bytes` in docs/contracts/hardening/limits.yaml
@@ -44,15 +49,16 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     find crates xtask fuzz docs/contracts Cargo.toml Cargo.lock -type f -exec touch {} + && \
     cargo build --release --package ono-cli --locked \
     && install -m 0755 target/release/ono /usr/local/bin/ono \
-    && cargo build --release --package ono-kuang-sdk --package xtask --locked \
-    && target/release/xtask binary-size --require --binary /usr/local/bin/ono \
+    && cargo build --release --package ono-kuang-sdk --locked \
+    && cargo build --profile release-tool --package xtask --locked \
+    && target/release-tool/xtask binary-size --require --binary /usr/local/bin/ono \
     && rustup target add wasm32-wasip2 \
     && cargo build --release --target wasm32-wasip2 --package ono-kuang-sdk --bin kuang-example-plugin --locked \
     && install -m 0644 target/wasm32-wasip2/release/kuang-example-plugin.wasm /usr/local/lib/kuang-example-plugin.wasm \
     && install -m 0755 target/release/kuang-example-plugin /usr/local/bin/kuang-example-plugin \
     && install -m 0755 target/release/kuang-sign /usr/local/bin/kuang-sign \
     && install -m 0755 target/release/kuang-compile /usr/local/bin/kuang-compile \
-    && install -m 0755 target/release/xtask /usr/local/bin/ono-release-tool
+    && install -m 0755 target/release-tool/xtask /usr/local/bin/ono-release-tool
 
 # v0.6 §63.8 and §63.9 (ADR-0846): the cases that build a disposable Btrfs filesystem or ZFS pool
 # on a loop file (Appendix G.3) run in this stage. Each recovery provider validates the userland it
