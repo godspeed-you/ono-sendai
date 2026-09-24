@@ -68,13 +68,14 @@ pub fn artifact_name(component: &[u8]) -> String {
     name
 }
 
-/// The engine the artifact has to come from, as the refusal names it: the version wasmtime
-/// stamps into every artifact it writes, and the architecture it compiles for.
+/// The engine the artifact has to come from, as the refusal names it: the exact wasmtime release
+/// whose version is stamped into every artifact and checked on every load (ADR-0916), and the
+/// architecture it compiles for.
 #[must_use]
 pub fn engine_identity() -> String {
     format!(
         "wasmtime {} on {}",
-        wasmtime::ModuleVersionStrategy::default().as_str(),
+        crate::wasm::WASMTIME_VERSION,
         std::env::consts::ARCH
     )
 }
@@ -789,6 +790,90 @@ mod descriptor {
     }
 }
 
+#[cfg(test)]
+mod engine_version {
+    #![allow(
+        clippy::expect_used,
+        reason = "AGENTS.md §16: a test states its preconditions directly"
+    )]
+
+    /// The version of wasmtime `Cargo.lock` resolves.
+    fn locked_wasmtime() -> String {
+        let lock = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.lock"),
+        )
+        .expect("the workspace's lock file");
+        let at = lock
+            .find("\nname = \"wasmtime\"\nversion = \"")
+            .expect("wasmtime is locked");
+        let rest = &lock[at + "\nname = \"wasmtime\"\nversion = \"".len()..];
+        rest[..rest.find('"').expect("a quoted version")].to_owned()
+    }
+
+    #[test]
+    fn should_name_the_exact_wasmtime_release_the_lock_file_resolves() {
+        // An artifact is keyed on the exact release (ADR-0916); a bump of wasmtime that forgot
+        // the key would let the new engine map what the old one's compiler wrote.
+        let locked = locked_wasmtime();
+        assert_eq!(crate::wasm::WASMTIME_VERSION, locked);
+        assert_eq!(
+            super::engine_identity(),
+            format!("wasmtime {locked} on {}", std::env::consts::ARCH)
+        );
+    }
+}
+
+#[cfg(all(test, feature = "compiler"))]
+mod patch_release {
+    #![allow(
+        clippy::expect_used,
+        reason = "AGENTS.md §16: a test states its preconditions directly"
+    )]
+
+    const EMPTY_COMPONENT: &[u8] = b"\0asm\x0d\x00\x01\x00";
+
+    #[test]
+    fn should_refuse_an_artifact_stamped_with_the_major_version_alone() {
+        // wasmtime's default stamps an artifact with its major version only, so what another
+        // 47.x release compiled — before or after a Cranelift fix — would pass for this one's.
+        // Such an artifact is what this engine is configured to refuse.
+        let mut config = wasmtime::Config::new();
+        config.wasm_component_model(true).epoch_interruption(true);
+        config
+            .target(&target_lexicon::Triple::host().to_string())
+            .expect("the host triple");
+        config
+            .module_version(wasmtime::ModuleVersionStrategy::WasmtimeVersion)
+            .expect("the default strategy");
+        let other_patch = wasmtime::Engine::new(&config).expect("an engine of the same major");
+        let bytes = other_patch
+            .precompile_component(EMPTY_COMPONENT)
+            .expect("compiled");
+
+        let home = ono_testkit::scratch();
+        let component = home.path().join("empty.wasm");
+        std::fs::write(&component, EMPTY_COMPONENT).expect("the component");
+        let store = home.path().join("store");
+        std::fs::create_dir(&store).expect("the store");
+        let artifact = store.join(super::artifact_name(EMPTY_COMPONENT));
+        std::fs::write(&artifact, &bytes).expect("the artifact");
+        // Owned and moded as `kuang-compile` leaves them, whatever this run's umask.
+        for (path, mode) in [(&store, 0o755), (&artifact, 0o644)] {
+            std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(mode))
+                .expect("owner-only");
+        }
+
+        let engine = crate::wasm::engine().expect("the engine");
+        match super::load(engine, &component, std::slice::from_ref(&store)) {
+            Ok(_) => panic!("an artifact carrying only the major version was mapped"),
+            Err(super::LoadFailure::NotCompiled(refusal)) => {
+                assert_eq!(refusal.reason(), super::Reason::Incompatible);
+            }
+            Err(super::LoadFailure::Unreadable(why)) => panic!("{why}"),
+        }
+    }
+}
+
 #[cfg(all(test, feature = "compiler"))]
 mod portable {
     #![allow(
@@ -812,13 +897,10 @@ mod portable {
         let store = home.path().join("store");
         let artifact = super::compile(&component, &store).expect("the tool compiles it");
 
-        let mut config = wasmtime::Config::new();
-        config.wasm_component_model(true).epoch_interruption(true);
-        // This engine's own compiler must not infer the machine it runs on either, or it would
-        // refuse itself on the simulated host before it is asked about the artifact.
-        config
-            .target(&target_lexicon::Triple::host().to_string())
-            .expect("the host triple");
+        // The shell's own configuration, whose compiler does not infer the machine it runs on
+        // either, or it would refuse itself on the simulated host before it is asked about the
+        // artifact.
+        let mut config = crate::wasm::config().expect("the engine's configuration");
         #[allow(
             unsafe_code,
             reason = "the host a portable artifact has to load on is simulated"

@@ -183,28 +183,27 @@ fn assert_names_the_compile_step(error: &KuangError, component: &Path) {
     );
 }
 
-/// Where in the artifact the engine stamped its version and target: the offset of the version
-/// digits and of the architecture, found by the shape wasmtime writes (a zero, the version's
-/// length and digits, the target triple's length and text).
+/// Where in the artifact the engine stamped its version and target: the offset of the release
+/// in the version (`wasmtime-47.0.4`, ADR-0916) and of the architecture, found by the shape
+/// wasmtime writes (a zero, the version's length and text, the target triple's length and text).
 fn engine_stamp(artifact: &[u8]) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
+    const PREFIX: &[u8] = b"wasmtime-";
     let arch = std::env::consts::ARCH.as_bytes();
-    for at in 0..artifact.len().saturating_sub(arch.len()) {
-        if &artifact[at..at + arch.len()] != arch || at < 4 {
+    for at in 2..artifact.len().saturating_sub(PREFIX.len()) {
+        if &artifact[at..at + PREFIX.len()] != PREFIX || artifact[at - 2] != 0 {
             continue;
         }
-        // `at - 1` is the triple's length; before it, the version's digits and their length.
-        let digits_end = at - 1;
-        let mut digits_start = digits_end;
-        while digits_start > 0 && artifact[digits_start - 1].is_ascii_digit() {
-            digits_start -= 1;
-        }
-        let length = digits_end - digits_start;
-        if length > 0
-            && digits_start >= 2
-            && usize::from(artifact[digits_start - 1]) == length
-            && artifact[digits_start - 2] == 0
+        let length = usize::from(artifact[at - 1]);
+        let version_end = at + length;
+        let release = at + PREFIX.len()..version_end;
+        let triple = version_end + 1;
+        if version_end < artifact.len()
+            && artifact[release.clone()]
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || *byte == b'.')
+            && artifact.get(triple..triple + arch.len()) == Some(arch)
         {
-            return (digits_start..digits_end, at..at + arch.len());
+            return (release, triple..triple + arch.len());
         }
     }
     panic!("the artifact carries the engine's version and target")
@@ -259,7 +258,9 @@ async fn should_refuse_an_artifact_another_engine_version_wrote_and_name_the_com
     let mut bytes = std::fs::read(&artifact).expect("the artifact");
     let (version, _) = engine_stamp(&bytes);
     for digit in &mut bytes[version] {
-        *digit = if *digit == b'0' { b'1' } else { *digit - 1 };
+        if digit.is_ascii_digit() {
+            *digit = if *digit == b'0' { b'1' } else { *digit - 1 };
+        }
     }
     std::fs::write(&artifact, &bytes).expect("the stale artifact");
     let refused = scene.refusal().await;

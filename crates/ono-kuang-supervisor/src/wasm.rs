@@ -102,19 +102,34 @@ impl ResourceLimiter for State {
 pub(crate) fn engine() -> Result<&'static Engine, String> {
     static ENGINE: OnceLock<Result<Engine, String>> = OnceLock::new();
     ENGINE
-        .get_or_init(|| {
-            let mut config = Config::new();
-            config.wasm_component_model(true).epoch_interruption(true);
-            // Named explicitly, the host's triple makes the compiler infer none of this machine's
-            // CPU features: an artifact is compiled for the architecture, so an image or a
-            // system store built on one machine loads on every other of its kind (ADR-0914).
-            config
-                .target(&target_lexicon::Triple::host().to_string())
-                .map_err(|error| error.to_string())?;
-            Engine::new(&config).map_err(|error| error.to_string())
-        })
+        .get_or_init(|| Engine::new(&config()?).map_err(|error| error.to_string()))
         .as_ref()
         .map_err(Clone::clone)
+}
+
+/// The exact wasmtime release this build links, as `Cargo.lock` resolves it; a test holds the
+/// two together, so a bump cannot leave the key behind (ADR-0916).
+pub(crate) const WASMTIME_VERSION: &str = "47.0.4";
+
+/// The configuration of [`engine`], for the one engine and for a test that has to vary it.
+pub(crate) fn config() -> Result<Config, String> {
+    let mut config = Config::new();
+    config.wasm_component_model(true).epoch_interruption(true);
+    // Named explicitly, the host's triple makes the compiler infer none of this machine's
+    // CPU features: an artifact is compiled for the architecture, so an image or a
+    // system store built on one machine loads on every other of its kind (ADR-0914).
+    config
+        .target(&target_lexicon::Triple::host().to_string())
+        .map_err(|error| error.to_string())?;
+    // wasmtime's default stamps an artifact with its major version alone, and would map what
+    // another patch release's compiler wrote — before or after a fix to it. The key is the
+    // exact release (ADR-0916).
+    config
+        .module_version(wasmtime::ModuleVersionStrategy::Custom(format!(
+            "wasmtime-{WASMTIME_VERSION}"
+        )))
+        .map_err(|error| error.to_string())?;
+    Ok(config)
 }
 
 /// How a component ended.

@@ -45,11 +45,12 @@ run: |
   ono -c 'load plugin dev.example.echo; echo:emit --count 2 | to json' | grep -q '^\[1,2\]$' && echo "compiled-component-streams"
 
   echo "== another engine version's artifact =="
-  # The engine section opens with a zero, the version's length and digits, then the target
-  # triple; the first digit of the version is overwritten.
-  stamp=$(LC_ALL=C grep -obUaP '\x00[\x01-\x03][0-9]+[\x10-\x40](x86_64|aarch64)-' "$artifact" | head -1 | cut -d: -f1)
+  # The engine section opens with a zero, the version's length and text — the exact release,
+  # `wasmtime-47.0.4` (ADR-0916) — then the target triple; the release's first digit is
+  # overwritten.
+  stamp=$(LC_ALL=C grep -obUaP '\x00[\x01-\x40]wasmtime-[0-9.]+[\x10-\x40](x86_64|aarch64)-' "$artifact" | head -1 | cut -d: -f1)
   test -n "$stamp" && echo "engine-stamp-found"
-  printf 'X' | dd of="$artifact" bs=1 seek=$((stamp + 2)) conv=notrunc status=none
+  printf 'X' | dd of="$artifact" bs=1 seek=$((stamp + 2 + 9)) conv=notrunc status=none
   ono -c 'load plugin dev.example.echo' 2>&1 | tee "$home/refusal"
   grep -q 'Ono-Sendai-K11105 load.component_not_compiled' "$home/refusal" && echo "stale-refused"
   grep -q 'incompatible version' "$home/refusal" && echo "engine-reason-shown"
