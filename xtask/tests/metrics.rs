@@ -855,3 +855,64 @@ fn should_keep_the_record_current_in_the_ci_jobs_that_build_what_ships() {
         );
     }
 }
+
+// --- the gate's own step (issue #125) -------------------------------------------------------
+
+#[test]
+fn should_fail_the_gate_step_on_an_oversized_current_release_binary() {
+    // scripts/gate.sh runs `xtask binary-size` without `--require`: it finds the release binary
+    // under the target directory, dates it, and holds it to its budget. The step's arguments are
+    // read out of the gate, and run against a target directory holding a stand-in shell that is
+    // current — newer than every source its dep-info names — at the budget and one byte over.
+    let gate = support::read("scripts/gate.sh");
+    let step = gate
+        .lines()
+        .skip_while(|line| !line.contains("step \"binary size\""))
+        .nth(1)
+        .expect("scripts/gate.sh has a `binary size` step");
+    let arguments: Vec<&str> = step
+        .split_once("--package xtask --")
+        .expect("the step runs xtask")
+        .1
+        .split_whitespace()
+        .collect();
+    assert_eq!(
+        arguments,
+        ["binary-size"],
+        "the gate measures without --require, so a developer without a release build is told \
+         rather than failed (ADR-0864)"
+    );
+
+    let budget = binary_size::budget(&repo(), "ono", HOST).expect("the budget");
+    let target = scratch();
+    let binary = target.path().join("release/ono");
+    let full_only = repo().join("crates/ono-kuang-supervisor/src/lib.rs");
+    for (bytes, passes) in [(budget + 1, false), (budget, true)] {
+        std::fs::create_dir_all(binary.parent().expect("a directory")).expect("the directory");
+        std::fs::File::create(&binary)
+            .and_then(|file| file.set_len(bytes))
+            .expect("the stand-in");
+        target.write(
+            "release/ono.d",
+            format!("{}: {}\n", binary.display(), full_only.display()),
+        );
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_xtask"))
+            .args(&arguments)
+            .env("CARGO_TARGET_DIR", target.path())
+            .output()
+            .expect("xtask runs");
+        let said = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            output.status.success(),
+            passes,
+            "{bytes} bytes against a budget of {budget}: {said}"
+        );
+        if !passes {
+            assert!(said.contains("over its budget"), "{said}");
+        }
+    }
+}
