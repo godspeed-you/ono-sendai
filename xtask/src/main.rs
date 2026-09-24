@@ -501,10 +501,12 @@ fn perf(args: &[String]) -> ExitCode {
         .build(&build);
 
     println!(
-        "perf: {} build on `{}`, {iterations} iterations (v0.4.1 section 37.4 wants at least {})",
+        "perf: {} build on `{}`, {iterations} iterations (v0.4.1 section 37.4 wants at least {}), \
+         load average {}",
         build,
         environment.id,
-        perf::MIN_ITERATIONS
+        perf::MIN_ITERATIONS,
+        perf::read_load_average().map_or_else(|| "unknown".to_owned(), |load| load.to_string())
     );
 
     // Profile `T` is v0.5 §49's fixture ledger rather than one of Appendix F's host topologies,
@@ -616,6 +618,19 @@ fn perf(args: &[String]) -> ExitCode {
                 for measured in &measurements {
                     match baseline.compare(measured, perf::Tolerance::Absolute) {
                         perf::Comparison::Held => {}
+                        // Not a verdict either way, like a foreign environment (issue #169).
+                        perf::Comparison::LoadedEnvironment {
+                            load_average,
+                            allowed,
+                            regressions,
+                        } => println!(
+                            "perf: {} — not adjudicated: measured at load average {load_average}, \
+                             and the baseline's conditions allow {allowed}; {} metric(s) read \
+                             worse than the baseline, which on a loaded machine says nothing \
+                             about the shell. Measure again on a quiet one",
+                            measured.benchmark,
+                            regressions.len()
+                        ),
                         other => {
                             println!("perf: {} — {other:?}", measured.benchmark);
                             if matches!(other, perf::Comparison::Regressed(_)) {

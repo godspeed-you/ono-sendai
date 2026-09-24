@@ -124,6 +124,10 @@ pub struct Measurement {
     pub values: f64,
     /// The p95 of the run's own distribution (§37.4).
     pub p95_ms: f64,
+    /// The machine's one-minute load average while it was measured — the higher of the readings
+    /// taken before and after — or `None` where it could not be read. What else the machine was
+    /// doing is part of what a figure means on a shared reference environment (issue #169).
+    pub load_average: Option<f64>,
     /// §32.3's six, by field name, `None` where the host could not measure one.
     metrics: Vec<(&'static str, Option<f64>)>,
 }
@@ -173,6 +177,10 @@ impl Measurement {
         row.insert("build".to_owned(), Json::from(self.build.clone()));
         row.insert("values".to_owned(), rounded(self.values));
         row.insert("p95_ms".to_owned(), rounded(self.p95_ms));
+        row.insert(
+            "load_average".to_owned(),
+            self.load_average.map_or(Json::Null, rounded),
+        );
         for (field, value) in &self.metrics {
             row.insert((*field).to_owned(), value.map_or(Json::Null, rounded));
         }
@@ -200,6 +208,9 @@ fn round3(value: f64) -> f64 {
 pub struct Baseline {
     /// The reference environment every record in it was measured on (§32.4, §37.2).
     pub environment: String,
+    /// The load average the baseline was written at: the reference *conditions*, beside the
+    /// reference machine (issue #169). `None` in a document that does not say.
+    pub load_average: Option<f64>,
     /// The records, in file order.
     pub measurements: Vec<Measurement>,
 }
@@ -273,7 +284,27 @@ pub enum Comparison {
         /// The environment the result names.
         measured: String,
     },
+    /// The result moved the wrong way, and it was measured on the reference machine under a
+    /// load its baseline was not: the right machine under the wrong conditions, which no more
+    /// decides a regression than the wrong machine does (issue #169).
+    LoadedEnvironment {
+        /// The load average the result was measured at.
+        load_average: f64,
+        /// The highest load average the baseline's conditions allow.
+        allowed: f64,
+        /// What would have been reported as regressions on a machine at the baseline's load.
+        regressions: Vec<Regression>,
+    },
 }
+
+/// How far a run's load average may rise above its baseline's before the run is no longer
+/// measured under the baseline's conditions (issue #169).
+///
+/// Two runnable tasks beyond the baseline's: a quarter of the reference environment's eight
+/// cores. The benchmarks are single processes, so they are slowed by contention for a core rather
+/// than by load as such, and a build tree holding the machine — the case that produced three to
+/// five times every baseline figure — reads eight and more.
+pub const LOAD_MARGIN: f64 = 2.0;
 
 impl Baseline {
     /// Parses a baseline document, refusing any record that is not a §32.3 benchmark result.
@@ -324,6 +355,7 @@ impl Baseline {
         if problems.is_empty() {
             Ok(Self {
                 environment,
+                load_average: document.get("load_average").and_then(Json::as_f64),
                 measurements,
             })
         } else {
@@ -406,9 +438,18 @@ impl Baseline {
         }
 
         if regressions.is_empty() {
-            Comparison::Held
-        } else {
-            Comparison::Regressed(regressions)
+            return Comparison::Held;
+        }
+        // A regression is a verdict only under the baseline's conditions. A result that held
+        // under load held a harder test, so only a failing one is withheld.
+        let allowed = self.load_average.unwrap_or(0.0) + LOAD_MARGIN;
+        match measured.load_average {
+            Some(load_average) if load_average > allowed => Comparison::LoadedEnvironment {
+                load_average,
+                allowed,
+                regressions,
+            },
+            _ => Comparison::Regressed(regressions),
         }
     }
 }
@@ -527,6 +568,8 @@ fn measurement(row: &Json) -> Result<Measurement, Vec<Problem>> {
             build,
             values,
             p95_ms,
+            // Optional: records written before issue #169 do not say, and say nothing wrong.
+            load_average: row.get("load_average").and_then(Json::as_f64),
             metrics,
         })
     } else {
@@ -1085,6 +1128,7 @@ pub struct Runner {
     commit: String,
     iterations: u32,
     build: String,
+    load: fn() -> Option<f64>,
 }
 
 impl Runner {
@@ -1101,6 +1145,7 @@ impl Runner {
             commit: commit.into(),
             iterations: MIN_ITERATIONS,
             build: "release".to_owned(),
+            load: read_load_average,
         }
     }
 
@@ -1117,6 +1162,25 @@ impl Runner {
     pub fn build(mut self, build: impl Into<String>) -> Self {
         self.build = build.into();
         self
+    }
+
+    /// Where the machine's load average is read from: `/proc/loadavg` unless a caller supplies
+    /// the reading, which is how a test puts a run under a load it can name (issue #169).
+    #[must_use]
+    pub fn load_reading(mut self, reading: fn() -> Option<f64>) -> Self {
+        self.load = reading;
+        self
+    }
+
+    /// The load average over a measurement, given the reading taken before it: read once more
+    /// now, and the higher of the two. Two reads of one file per row, whatever the row costs.
+    fn load_since(&self, before: Option<f64>) -> Option<f64> {
+        let after = (self.load)();
+        match (before, after) {
+            (Some(before), Some(after)) => Some(before.max(after)),
+            (one, other) => one.or(other),
+        }
+        .map(round3)
     }
 
     /// Why a row sampled in-process by this executable may not be recorded under this run's
@@ -1153,9 +1217,11 @@ impl Runner {
     pub fn run(&self, benchmark: &Benchmark) -> Measurement {
         let script = benchmark.full_script();
         let measured = benchmark.warmup.is_some();
+        let before = (self.load)();
         let samples: Vec<Sample> = (0..self.iterations)
             .map(|_| self.sample(&script, measured))
             .collect();
+        let load_average = self.load_since(before);
 
         let firsts: Vec<f64> = samples.iter().map(|sample| sample.to_first_ms).collect();
         let completes: Vec<f64> = samples.iter().map(|sample| sample.to_complete_ms).collect();
@@ -1182,6 +1248,7 @@ impl Runner {
             build: self.build.clone(),
             values: round3(values),
             p95_ms: round3(percentile(&firsts, 95.0)),
+            load_average,
             metrics: vec![
                 ("time_to_first_ms", Some(round3(median(&firsts)))),
                 ("time_to_complete_ms", Some(round3(complete_ms))),
@@ -1415,7 +1482,7 @@ pub fn write_baseline(
         // The reference environment is a virtualised slice of a shared machine (§37.2's `notes`),
         // so what else it was doing is part of what a figure means. Recorded rather than assumed
         // away, because §32.4's absolute targets are read off this file by a later run.
-        "load_average": load_average(),
+        "load_average": read_load_average().map_or(Json::Null, rounded),
         "measurements": measurements.iter().map(Measurement::to_json).collect::<Vec<_>>(),
     });
     let text = serde_json::to_string_pretty(&document)
@@ -1424,12 +1491,12 @@ pub fn write_baseline(
         .map_err(|error| format!("cannot write {}: {error}", path.display()))
 }
 
-/// The machine's one-minute load average, or `null` where it cannot be read.
-fn load_average() -> Json {
+/// The machine's one-minute load average, or `None` where it cannot be read.
+#[must_use]
+pub fn read_load_average() -> Option<f64> {
     std::fs::read_to_string("/proc/loadavg")
         .ok()
         .and_then(|text| text.split_whitespace().next()?.parse::<f64>().ok())
-        .map_or(Json::Null, rounded)
 }
 
 /// What the baseline file says about itself.
@@ -1505,6 +1572,7 @@ impl Runner {
             return Err(refusal);
         }
         let me = std::env::current_exe().expect("the running xtask must have a path");
+        let before = (self.load)();
         let mut latencies = Vec::new();
         let mut candidates = Vec::new();
         for _ in 0..self.iterations {
@@ -1525,6 +1593,7 @@ impl Runner {
             }
         }
 
+        let load_average = self.load_since(before);
         let complete_ms = median(&latencies);
         let values = median(&candidates);
         Ok(Measurement {
@@ -1537,6 +1606,7 @@ impl Runner {
             build: self.build.clone(),
             values: round3(values),
             p95_ms: round3(percentile(&latencies, 95.0)),
+            load_average,
             metrics: vec![
                 ("time_to_first_ms", Some(round3(complete_ms))),
                 ("time_to_complete_ms", Some(round3(complete_ms))),
@@ -1922,6 +1992,7 @@ impl Runner {
             return Err(refusal);
         }
         let me = std::env::current_exe().expect("the running xtask must have a path");
+        let before = (self.load)();
         let mut latencies = Vec::new();
         let mut values = Vec::new();
         let mut peaks = Vec::new();
@@ -1966,6 +2037,7 @@ impl Runner {
                 .unwrap_or_else(|| format!("no sample of `{}` produced a figure", benchmark.id)));
         }
 
+        let load_average = self.load_since(before);
         let complete_ms = median(&latencies);
         let count = median(&values);
         Ok(Measurement {
@@ -1978,6 +2050,7 @@ impl Runner {
             build: self.build.clone(),
             values: round3(count),
             p95_ms: round3(percentile(&latencies, 95.0)),
+            load_average,
             metrics: vec![
                 // The answer is one value produced whole, so the first value and the last one
                 // arrive together. Stating both rather than one is what Appendix F.4 asks for,

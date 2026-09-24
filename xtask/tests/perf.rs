@@ -1060,3 +1060,146 @@ fn should_refuse_a_temporal_row_sampled_by_a_build_other_than_the_one_the_run_cl
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// --- issue #169: the right machine under the wrong conditions ---------------------------------
+
+/// A baseline measured at `load` holding one `harness.probe` record, and a result for the same
+/// benchmark seven times slower, measured at `measured_load`.
+fn loaded_pair(load: &str, measured_load: &str) -> (Baseline, xtask::perf::Measurement) {
+    let record = |first_ms: &str, record_load: &str| {
+        complete_record("harness.probe")
+            .replace("\"profile\": \"M\"", "\"profile\": \"S\"")
+            .replace(
+                "\"time_to_first_ms\": 120.0",
+                &format!("\"time_to_first_ms\": {first_ms}"),
+            )
+            .replace(
+                "\"iterations\": 20,",
+                &format!("\"iterations\": 20, \"load_average\": {record_load},"),
+            )
+    };
+    let baseline = Baseline::parse(&baseline_of(&[record("120.0", load)]).replace(
+        "\"version\": 1,",
+        &format!("\"version\": 1, \"load_average\": {load},"),
+    ))
+    .expect("the baseline parses");
+    let measured = Baseline::parse(&baseline_of(&[record("840.0", measured_load)]))
+        .expect("the result parses")
+        .measurements
+        .remove(0);
+    (baseline, measured)
+}
+
+#[test]
+fn should_report_a_loaded_machine_rather_than_a_regression_when_the_run_was_under_load() {
+    // Issue #169: with a second build tree holding the machine, all eight Profile S benchmarks
+    // read three to five times their baseline — `shell.cold_start` at 132 ms against 26 ms — and
+    // the comparison called that a regression. `ForeignEnvironment` already says "not a verdict"
+    // for the wrong machine (ADR-0489); this is the right machine under the wrong conditions.
+    let (baseline, measured) = loaded_pair("1.84", "9.5");
+    let verdict = baseline.compare(&measured, Tolerance::Absolute);
+    assert!(
+        !matches!(verdict, Comparison::Regressed(_)),
+        "a result measured at load 9.5 against a baseline measured at 1.84 was reported as a \
+         regression, so a busy machine reads as a slower shell (issue #169): {verdict:?}"
+    );
+    let Comparison::LoadedEnvironment {
+        load_average,
+        allowed,
+        regressions,
+    } = verdict
+    else {
+        panic!("the comparison must say the machine was loaded, not stay silent: {verdict:?}");
+    };
+    assert!(
+        (load_average - 9.5).abs() < 1e-9 && allowed < load_average,
+        "the verdict names the load it was measured at and the load the baseline allows: \
+         {load_average} against {allowed}"
+    );
+    assert!(
+        regressions
+            .iter()
+            .any(|regression| regression.metric == "time_to_first_ms"),
+        "what would have been a regression is still shown, so it can be measured again: \
+         {regressions:?}"
+    );
+
+    // The same figures on a quiet machine are the regression they look like.
+    let (baseline, measured) = loaded_pair("1.84", "1.9");
+    assert!(
+        matches!(
+            baseline.compare(&measured, Tolerance::Absolute),
+            Comparison::Regressed(_)
+        ),
+        "a slower result at the baseline's own load is a regression"
+    );
+}
+
+#[test]
+fn should_record_the_load_a_benchmark_ran_under_and_withhold_a_verdict_it_cannot_give() {
+    // Issue #169's exit test from the runner's side: a benchmark run under load reports that
+    // rather than a regression. The load is injected, so the test does not depend on what else
+    // this machine is doing; the benchmark itself is real.
+    fn busy() -> Option<f64> {
+        Some(9.5)
+    }
+    fn quiet() -> Option<f64> {
+        Some(0.5)
+    }
+    // A baseline for the probe that no real run can hold: one microsecond to the first value.
+    let baseline = Baseline::parse(
+        &baseline_of(&[complete_record("harness.probe")
+            .replace("\"profile\": \"M\"", "\"profile\": \"S\"")
+            .replace("\"time_to_first_ms\": 120.0", "\"time_to_first_ms\": 0.001")])
+        .replace("\"version\": 1,", "\"version\": 1, \"load_average\": 1.0,"),
+    )
+    .expect("the baseline parses");
+    let runner = |reading: fn() -> Option<f64>| {
+        Runner::new(
+            ono_testkit::ono_binary(),
+            "reference-2026-09",
+            "0".repeat(40),
+        )
+        .iterations(3)
+        .build("debug")
+        .load_reading(reading)
+    };
+
+    let under_load = runner(busy).run(&Benchmark::probe());
+    assert_eq!(
+        under_load.load_average,
+        Some(9.5),
+        "the record states the load it was measured under"
+    );
+    assert!(
+        matches!(
+            baseline.compare(&under_load, Tolerance::percent(10.0)),
+            Comparison::LoadedEnvironment { .. }
+        ),
+        "a run under load was adjudicated as though the machine had been quiet: {:?}",
+        baseline.compare(&under_load, Tolerance::percent(10.0))
+    );
+
+    let quiet_run = runner(quiet).run(&Benchmark::probe());
+    assert!(
+        matches!(
+            baseline.compare(&quiet_run, Tolerance::percent(10.0)),
+            Comparison::Regressed(_)
+        ),
+        "the same miss on a quiet machine is a regression"
+    );
+
+    // And the load travels with the record into the baseline file and back.
+    let home = ono_testkit::scratch();
+    let path = home.path().join("baseline.json");
+    xtask::perf::write_baseline(
+        &path,
+        "reference-2026-09",
+        std::slice::from_ref(&under_load),
+    )
+    .expect("the runner writes its records");
+    let written =
+        Baseline::parse(&std::fs::read_to_string(&path).expect("the baseline was written"))
+            .expect("what the runner writes is a valid baseline");
+    assert_eq!(written.measurements, vec![under_load]);
+}
