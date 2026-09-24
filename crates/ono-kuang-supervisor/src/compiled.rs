@@ -13,10 +13,14 @@
 //! the shell maps into itself, and one that could arrive inside a package would be a way around
 //! every confinement the runtime gives.
 
-use std::io::ErrorKind;
+use std::ffi::OsStr;
+use std::io::{ErrorKind, Read as _};
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 
 use ono_kuang_protocol::{KuangError, KuangErrorCode};
+use rustix::fs::{AtFlags, FileType, Mode, OFlags};
+use rustix::io::Errno;
 use serde_json::json;
 use wasmtime::component::Component;
 
@@ -132,7 +136,9 @@ impl NotCompiled {
         };
         let remedy = match self.reason {
             Reason::Untrusted => format!(
-                "remove `{}` or make it writable by its owner only, then run `{command}`",
+                "the artifact `{}`, its store and every directory above them must be real \
+                 directories and files that only this user or root can change; correct what this \
+                 names or remove the artifact, then run `{command}`",
                 self.artifact.display()
             ),
             Reason::Missing | Reason::Incompatible => format!("run `{command}`"),
@@ -186,30 +192,22 @@ pub(crate) fn load(
     let mut first_refusal = None;
     for store in stores {
         let artifact = store.join(&name);
-        let refusal = match std::fs::metadata(&artifact) {
-            Err(error)
-                if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) =>
-            {
-                continue;
-            }
-            Err(error) => NotCompiled {
-                reason: Reason::Incompatible,
+        let opened = open_store(store, false)
+            .and_then(|directory| open_artifact(&directory, &name, &artifact));
+        let refusal = match opened {
+            Err(Refusal::Absent) => continue,
+            Err(Refusal::Refused(reason, detail)) => NotCompiled {
+                reason,
                 artifact: artifact.clone(),
-                detail: error.to_string(),
+                detail,
             },
-            Ok(_) => match trusted(&artifact) {
-                Err(detail) => NotCompiled {
-                    reason: Reason::Untrusted,
+            Ok(file) => match read_and_map(engine, file, &artifact) {
+                Ok(component) => return Ok(component),
+                Err(Refusal::Absent) => continue,
+                Err(Refusal::Refused(reason, detail)) => NotCompiled {
+                    reason,
                     artifact: artifact.clone(),
                     detail,
-                },
-                Ok(()) => match map(engine, &artifact) {
-                    Ok(component) => return Ok(component),
-                    Err(error) => NotCompiled {
-                        reason: Reason::Incompatible,
-                        artifact: artifact.clone(),
-                        detail: format!("{error:#}"),
-                    },
                 },
             },
         };
@@ -228,28 +226,243 @@ pub(crate) fn load(
     )))
 }
 
-/// Whether the artifact and the store holding it could only have been written by the user this
-/// shell runs as, or by root — the condition ADR-0870's safety argument rests on, checked rather
-/// than assumed.
-fn trusted(artifact: &Path) -> Result<(), String> {
-    only_its_owner_writes("the artifact", artifact)?;
-    only_its_owner_writes("its store", artifact.parent().unwrap_or(Path::new("/")))
+/// Why the way to an artifact ended before a file was open.
+#[derive(Debug)]
+enum Refusal {
+    /// Nothing is there: the store, or the artifact in it, does not exist.
+    Absent,
+    /// Something is there and is refused, for the reason given and in the words given.
+    Refused(Reason, String),
 }
 
-/// Whether `path` belongs to this user or root and nobody else may write it.
-fn only_its_owner_writes(what: &str, path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::MetadataExt as _;
-    let metadata = std::fs::metadata(path)
-        .map_err(|error| format!("{what} `{}` cannot be examined: {error}", path.display()))?;
-    ownership(
-        what,
-        path,
-        Examined {
-            uid: metadata.uid(),
-            mode: metadata.mode(),
+/// The store at `store`, opened by a walk from `/` that follows no symbolic link and examines
+/// every directory it passes (ADR-0915); with `create`, the directories that do not exist yet are
+/// made on the way, `0755`.
+///
+/// Whoever may write a directory above the store may rename the store away and put their own in
+/// its place, owner, mode and all, so the rule of ADR-0870 §4 holds for every one of them: it
+/// belongs to this user or to root, and nobody else may write it — except a root-owned sticky
+/// directory like `/tmp`, where nobody may rename or remove what is not theirs, and a directory
+/// whose group is the private group of this user, which is this user. The directories above the
+/// store are the operator's layout and may be reached through links (`/home` → `/var/home`):
+/// they are resolved first, and the walk then examines the directories they resolve to. The
+/// store itself is the tool's own directory and is never a link.
+///
+/// Each step opens the next directory relative to the descriptor of the one before, which is the
+/// one that was examined: a directory swapped for another after its parent was examined is
+/// either the one examined next, or a link the walk refuses.
+fn open_store(store: &Path, create: bool) -> Result<OwnedFd, Refusal> {
+    let euid = nix::unistd::geteuid().as_raw();
+    let store = std::path::absolute(store).map_err(|error| unexpected(store, &error))?;
+    let (Some(parent), Some(leaf)) = (store.parent(), store.file_name()) else {
+        return Err(Refusal::Refused(
+            Reason::Untrusted,
+            format!("`{}` names no directory a store can be", store.display()),
+        ));
+    };
+    let (existing, missing) = resolve_existing(parent)?;
+    if !missing.is_empty() && !create {
+        return Err(Refusal::Absent);
+    }
+    let mut directory = rustix::fs::openat(
+        rustix::fs::CWD,
+        "/",
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|error| unexpected(Path::new("/"), &error.into()))?;
+    let mut path = PathBuf::from("/");
+    examine_ancestor(&directory, &path, euid)?;
+    for name in existing.components().filter_map(|part| match part {
+        std::path::Component::Normal(name) => Some(name),
+        _ => None,
+    }) {
+        path.push(name);
+        directory = open_directory(&directory, name, &path)?;
+        examine_ancestor(&directory, &path, euid)?;
+    }
+    for name in &missing {
+        path.push(name);
+        make_directory(&directory, name, &path)?;
+        directory = open_directory(&directory, name, &path)?;
+        examine_ancestor(&directory, &path, euid)?;
+    }
+    if create {
+        make_directory(&directory, leaf, &store)?;
+    }
+    let opened = open_directory(&directory, leaf, &store)?;
+    let stat = rustix::fs::fstat(&opened).map_err(|error| unexpected(&store, &error.into()))?;
+    ownership("its store", &store, Examined::of(&stat), euid)
+        .map_err(|detail| Refusal::Refused(Reason::Untrusted, detail))?;
+    Ok(opened)
+}
+
+/// The deepest existing directory at or above `parent`, with its links resolved, and the names
+/// below it that do not exist yet.
+fn resolve_existing(parent: &Path) -> Result<(PathBuf, Vec<std::ffi::OsString>), Refusal> {
+    for candidate in parent.ancestors() {
+        match std::fs::canonicalize(candidate) {
+            Ok(resolved) => {
+                let mut missing = Vec::new();
+                for part in parent
+                    .strip_prefix(candidate)
+                    .unwrap_or(Path::new(""))
+                    .components()
+                {
+                    match part {
+                        std::path::Component::Normal(name) => missing.push(name.to_owned()),
+                        _ => {
+                            return Err(Refusal::Refused(
+                                Reason::Untrusted,
+                                format!(
+                                    "`{}` climbs out of a directory that does not exist",
+                                    parent.display()
+                                ),
+                            ));
+                        }
+                    }
+                }
+                return Ok((resolved, missing));
+            }
+            Err(error)
+                if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {}
+            Err(error) => return Err(unexpected(candidate, &error)),
+        }
+    }
+    Err(Refusal::Absent)
+}
+
+/// `name` below `parent`, a directory, opened without following a link. A directory this user
+/// may search but not read is opened as a path, which is all the walk needs of it.
+fn open_directory(parent: &OwnedFd, name: &OsStr, path: &Path) -> Result<OwnedFd, Refusal> {
+    let flags = OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let opened = match rustix::fs::openat(parent, name, flags | OFlags::RDONLY, Mode::empty()) {
+        Err(Errno::ACCESS) => rustix::fs::openat(parent, name, flags | OFlags::PATH, Mode::empty()),
+        other => other,
+    };
+    opened.map_err(|error| match error {
+        Errno::LOOP => symbolic_link(path),
+        Errno::NOENT => Refusal::Absent,
+        Errno::NOTDIR => match rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(stat) if FileType::from_raw_mode(stat.st_mode) == FileType::Symlink => {
+                symbolic_link(path)
+            }
+            _ => Refusal::Absent,
         },
+        other => unexpected(path, &other.into()),
+    })
+}
+
+/// Makes `name` below `parent`, unless it is there already.
+fn make_directory(parent: &OwnedFd, name: &OsStr, path: &Path) -> Result<(), Refusal> {
+    match rustix::fs::mkdirat(parent, name, Mode::from_raw_mode(0o755)) {
+        Ok(()) | Err(Errno::EXIST) => Ok(()),
+        Err(error) => Err(Refusal::Refused(
+            Reason::Incompatible,
+            format!(
+                "the store `{}` could not be made: {}",
+                path.display(),
+                std::io::Error::from(error)
+            ),
+        )),
+    }
+}
+
+/// The refusal of a link on the way to an artifact.
+fn symbolic_link(path: &Path) -> Refusal {
+    Refusal::Refused(
+        Reason::Untrusted,
+        format!(
+            "`{}` is a symbolic link, and the way to an artifact follows none",
+            path.display()
+        ),
+    )
+}
+
+/// An error on the way to an artifact that is neither absence nor a refusal of its own.
+fn unexpected(path: &Path, error: &std::io::Error) -> Refusal {
+    Refusal::Refused(
+        Reason::Incompatible,
+        format!("`{}` cannot be examined: {error}", path.display()),
+    )
+}
+
+/// The ownership rule for a directory above the store, on the directory `directory` is open on.
+fn examine_ancestor(directory: &OwnedFd, path: &Path, euid: u32) -> Result<(), Refusal> {
+    let stat = rustix::fs::fstat(directory).map_err(|error| unexpected(path, &error.into()))?;
+    ancestor_ownership(path, Examined::of(&stat), euid, || {
+        private_group(directory, stat.st_uid, stat.st_gid)
+    })
+    .map_err(|detail| Refusal::Refused(Reason::Untrusted, detail))
+}
+
+/// Whether `gid` is the private group of the user `uid`: named like that user, that user's
+/// primary group, and listing no other member — the group a `USERGROUPS` system (umask `002`)
+/// gives every user, and so that user. An access ACL on the directory could grant others write
+/// behind the group bits, so a directory carrying one is not treated this way.
+fn private_group(directory: &OwnedFd, uid: u32, gid: u32) -> bool {
+    use nix::unistd::{Gid, Group, Uid, User};
+    let (Ok(Some(user)), Ok(Some(group))) = (
+        User::from_uid(Uid::from_raw(uid)),
+        Group::from_gid(Gid::from_raw(gid)),
+    ) else {
+        return false;
+    };
+    if group.name != user.name
+        || user.gid.as_raw() != gid
+        || group.mem.iter().any(|member| *member != user.name)
+    {
+        return false;
+    }
+    let mut nothing: [u8; 0] = [];
+    matches!(
+        rustix::fs::fgetxattr(directory, "system.posix_acl_access", &mut nothing[..]),
+        Err(Errno::NODATA | Errno::NOTSUP)
+    )
+}
+
+/// The artifact `name` in the store `store` is open on, opened without following a link and
+/// examined through the descriptor that will be read.
+fn open_artifact(store: &OwnedFd, name: &str, artifact: &Path) -> Result<std::fs::File, Refusal> {
+    let opened = rustix::fs::openat(
+        store,
+        name,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+        Mode::empty(),
+    )
+    .map_err(|error| match error {
+        Errno::LOOP => symbolic_link(artifact),
+        Errno::NOENT => Refusal::Absent,
+        other => unexpected(artifact, &other.into()),
+    })?;
+    let stat = rustix::fs::fstat(&opened).map_err(|error| unexpected(artifact, &error.into()))?;
+    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
+        return Err(Refusal::Refused(
+            Reason::Incompatible,
+            format!("`{}` is not a regular file", artifact.display()),
+        ));
+    }
+    ownership(
+        "the artifact",
+        artifact,
+        Examined::of(&stat),
         nix::unistd::geteuid().as_raw(),
     )
+    .map_err(|detail| Refusal::Refused(Reason::Untrusted, detail))?;
+    Ok(std::fs::File::from(opened))
+}
+
+/// Reads the artifact from the descriptor that was examined, and hands the bytes to the engine.
+fn read_and_map(
+    engine: &wasmtime::Engine,
+    mut file: std::fs::File,
+    artifact: &Path,
+) -> Result<Component, Refusal> {
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| unexpected(artifact, &error))?;
+    map(engine, &bytes)
+        .map_err(|error| Refusal::Refused(Reason::Incompatible, format!("{error:#}")))
 }
 
 /// What the ownership rule reads of a file: who owns it, and its mode.
@@ -259,8 +472,17 @@ struct Examined {
     mode: u32,
 }
 
-/// The ownership rule itself, apart from the system it reads: `examined` belongs to `euid` or to
-/// root, and nobody else may write it.
+impl Examined {
+    fn of(stat: &rustix::fs::Stat) -> Self {
+        Self {
+            uid: stat.st_uid,
+            mode: stat.st_mode,
+        }
+    }
+}
+
+/// The ownership rule for the artifact and its store, apart from the system it reads: `examined`
+/// belongs to `euid` or to root, and nobody else may write it (ADR-0870 §4).
 fn ownership(what: &str, path: &Path, examined: Examined, euid: u32) -> Result<(), String> {
     if examined.uid != 0 && examined.uid != euid {
         return Err(format!(
@@ -279,31 +501,59 @@ fn ownership(what: &str, path: &Path, examined: Examined, euid: u32) -> Result<(
     Ok(())
 }
 
-/// Maps a compiled artifact into the engine.
+/// The ownership rule for a directory above the store (ADR-0915): what [`ownership`] asks, except
+/// that a root-owned sticky directory may be writable by all, and a directory of this user's may
+/// be writable by its group when `private_group` says the group is this user's own.
+fn ancestor_ownership(
+    path: &Path,
+    examined: Examined,
+    euid: u32,
+    private_group: impl FnOnce() -> bool,
+) -> Result<(), String> {
+    let refused = ownership("the directory", path, examined, euid);
+    if refused.is_ok() || (examined.uid != 0 && examined.uid != euid) {
+        return refused;
+    }
+    // Everybody may add to `/tmp`, and nobody may rename or remove what is not theirs.
+    let sticky_of_root = examined.uid == 0 && examined.mode & 0o1000 != 0;
+    let group_is_the_owner = examined.mode & 0o002 == 0 && examined.uid == euid && private_group();
+    if sticky_of_root || group_is_the_owner {
+        Ok(())
+    } else {
+        refused
+    }
+}
+
+/// Loads compiled artifact bytes into the engine.
 #[allow(
     unsafe_code,
     reason = "wasmtime's only way to load a precompiled component is `unsafe` (ADR-0870)"
 )]
-fn map(engine: &wasmtime::Engine, artifact: &Path) -> wasmtime::Result<Component> {
-    // SAFETY: `deserialize_file` trusts the file to be an artifact wasmtime itself wrote, because
-    // what it maps is executed as native code. That holds here by construction and by check:
-    // the only writer of a store is `kuang-compile`, which runs this crate's own engine
-    // configuration; `trusted` has just refused any artifact or store that anyone but this user
-    // or root could have written, and artifacts never come from a package (ADR-0870). Before it
-    // maps a byte, wasmtime itself refuses a file that is not an ELF artifact of its own, or was
-    // written by another engine version, for another architecture or operating system, or under
-    // other compilation settings — which is how a stale, foreign or damaged artifact ends as a
-    // refusal rather than as a crash. The file is not modified while mapped: the tool replaces an
-    // artifact by renaming a new file over it, which leaves an existing mapping intact.
-    unsafe { Component::deserialize_file(engine, artifact) }
+fn map(engine: &wasmtime::Engine, artifact: &[u8]) -> wasmtime::Result<Component> {
+    // SAFETY: `deserialize` trusts the bytes to be an artifact wasmtime itself wrote, because
+    // what it loads is executed as native code. That holds here by construction and by check
+    // (ADR-0870, ADR-0915): the only writer of a store is `kuang-compile`, which runs this
+    // crate's own engine configuration, and artifacts never come from a package. The bytes were
+    // read from the one descriptor `open_artifact` opened without following a link and examined
+    // with `fstat` — a regular file owned by this user or root that nobody else may write — in a
+    // store and below directories `open_store` reached the same way and held to the same rule,
+    // so no path is looked up again between the check and the read. They are a private copy:
+    // what is on disk may change afterwards without changing what runs. Before it loads a byte,
+    // wasmtime itself refuses bytes that are not an ELF artifact of its own, or were written by
+    // another engine version, for another architecture or operating system, or under other
+    // compilation settings — which is how a stale, foreign or damaged artifact ends as a refusal
+    // rather than as a crash.
+    unsafe { Component::deserialize(engine, artifact) }
 }
 
 /// Compiles the component at `component` into `store`, and returns the artifact's path.
 ///
-/// The store is created owner-writable only, and the artifact is written beside its final name
-/// and renamed into place, so a reader sees the previous artifact or the new one and never a
-/// partial file. Compiling the same bytes again replaces the artifact, which is what makes the
-/// step idempotent after a shell upgrade.
+/// The store is reached the way the shell reaches it, made `0755` where it is missing, and
+/// refused where the shell would refuse it (ADR-0915): a link on the way, or a directory someone
+/// other than this user or root could write. The artifact is written beside its final name in
+/// that directory and renamed into place, so a reader sees the previous artifact or the new one
+/// and never a partial file. Compiling the same bytes again replaces the artifact, which is what
+/// makes the step idempotent after a shell upgrade.
 ///
 /// # Errors
 ///
@@ -311,7 +561,6 @@ fn map(engine: &wasmtime::Engine, artifact: &Path) -> wasmtime::Result<Component
 #[cfg(feature = "compiler")]
 pub fn compile(component: &Path, store: &Path) -> Result<PathBuf, String> {
     use std::io::Write as _;
-    use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 
     let bytes = std::fs::read(component)
         .map_err(|error| format!("`{}` could not be read: {error}", component.display()))?;
@@ -322,30 +571,30 @@ pub fn compile(component: &Path, store: &Path) -> Result<PathBuf, String> {
             component.display()
         )
     })?;
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o755)
-        .create(store)
-        .map_err(|error| format!("the store `{}` could not be made: {error}", store.display()))?;
-    // An artifact in a store others can write is one the shell refuses to map, so writing it
-    // would only move the refusal from here to the first load.
-    only_its_owner_writes("the store", store)
-        .map_err(|why| format!("{why}; the shell does not map artifacts from it"))?;
+    // An artifact in a store the shell refuses is one it will not map, so writing it would only
+    // move the refusal from here to the first load.
+    let directory = open_store(store, true).map_err(|refusal| match refusal {
+        Refusal::Absent => format!("the store `{}` could not be made", store.display()),
+        Refusal::Refused(_, why) => format!("{why}; the shell does not map artifacts from it"),
+    })?;
     let name = artifact_name(&bytes);
     let artifact = store.join(&name);
-    let partial = store.join(format!(".{name}.{}.partial", std::process::id()));
-    let written = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o644)
-        .open(&partial)
-        .and_then(|mut file| {
-            file.write_all(&compiled)?;
-            file.sync_all()
-        })
-        .and_then(|()| std::fs::rename(&partial, &artifact));
+    let partial = format!(".{name}.{}.partial", std::process::id());
+    let written = (|| -> std::io::Result<()> {
+        let opened = rustix::fs::openat(
+            &directory,
+            partial.as_str(),
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o644),
+        )?;
+        let mut file = std::fs::File::from(opened);
+        file.write_all(&compiled)?;
+        file.sync_all()?;
+        rustix::fs::renameat(&directory, partial.as_str(), &directory, name.as_str())?;
+        Ok(())
+    })();
     if let Err(error) = written {
-        let _ = std::fs::remove_file(&partial);
+        let _ = rustix::fs::unlinkat(&directory, partial.as_str(), AtFlags::empty());
         return Err(format!(
             "the artifact `{}` could not be written: {error}",
             artifact.display()
@@ -358,12 +607,17 @@ pub fn compile(component: &Path, store: &Path) -> Result<PathBuf, String> {
 mod ownership_rule {
     use std::path::Path;
 
-    use super::{Examined, ownership};
+    use super::{Examined, ancestor_ownership, ownership};
 
     const ME: u32 = 1000;
 
     fn verdict(uid: u32, mode: u32) -> Result<(), String> {
-        ownership("the artifact", Path::new("/s/a.cwasm"), Examined { uid, mode }, ME)
+        ownership(
+            "the artifact",
+            Path::new("/s/a.cwasm"),
+            Examined { uid, mode },
+            ME,
+        )
     }
 
     #[test]
@@ -394,6 +648,129 @@ mod ownership_rule {
                 "{mode:o}: {refused:?}"
             );
         }
+    }
+
+    fn above(uid: u32, mode: u32, private: bool) -> Result<(), String> {
+        ancestor_ownership(Path::new("/s"), Examined { uid, mode }, ME, || private)
+    }
+
+    #[test]
+    fn should_accept_a_directory_above_the_store_only_this_user_or_root_can_change() {
+        assert_eq!(above(0, 0o040_755, false), Ok(()));
+        assert_eq!(above(ME, 0o040_700, false), Ok(()));
+        // `/tmp`: everybody may add, nobody may rename or remove what is not theirs.
+        assert_eq!(above(0, 0o041_777, false), Ok(()));
+        // A group only its owner belongs to is the owner: a USERGROUPS system's umask 002.
+        assert_eq!(above(ME, 0o040_775, true), Ok(()));
+    }
+
+    #[test]
+    fn should_refuse_a_directory_above_the_store_others_can_change() {
+        for (uid, mode, private, why) in [
+            (
+                ME,
+                0o040_775,
+                false,
+                "writable by users other than its owner",
+            ),
+            (
+                ME,
+                0o040_777,
+                true,
+                "writable by users other than its owner",
+            ),
+            // Sticky protects entries from other users only when its owner is trusted anyway,
+            // and it is not this user's own `/tmp` the rule exempts.
+            (
+                ME,
+                0o041_777,
+                false,
+                "writable by users other than its owner",
+            ),
+            (
+                0,
+                0o040_777,
+                false,
+                "writable by users other than its owner",
+            ),
+            (0, 0o040_775, true, "writable by users other than its owner"),
+            (
+                1001,
+                0o040_755,
+                false,
+                "belongs to uid 1001, neither this user nor root",
+            ),
+            (
+                1001,
+                0o041_777,
+                false,
+                "belongs to uid 1001, neither this user nor root",
+            ),
+        ] {
+            let refused = above(uid, mode, private).expect_err(why);
+            assert!(
+                refused.contains(why) && refused.contains("`/s`"),
+                "uid {uid}, mode {mode:o}: {refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn should_refuse_a_users_tree_to_root() {
+        // `sudo -E ono`: root with a user's HOME. The user's directories are not root's, and
+        // root must not map, or write, what that user could have put there.
+        let refused = ancestor_ownership(
+            Path::new("/home/someone"),
+            Examined {
+                uid: ME,
+                mode: 0o040_755,
+            },
+            0,
+            || true,
+        )
+        .expect_err("the user's home, to root");
+        assert!(refused.contains("belongs to uid 1000"), "{refused:?}");
+    }
+}
+
+#[cfg(all(test, feature = "compiler"))]
+mod descriptor {
+    #![allow(
+        clippy::expect_used,
+        reason = "AGENTS.md §16: a test states its preconditions directly"
+    )]
+
+    /// The smallest component the engine accepts: a preamble and nothing else.
+    const EMPTY_COMPONENT: &[u8] = b"\0asm\x0d\x00\x01\x00";
+
+    #[test]
+    fn should_load_the_file_it_examined_though_its_name_is_replaced_before_the_read() {
+        // The window a check by path leaves open: the file examined and the file loaded are
+        // looked up separately. The loader examines and reads one descriptor, so replacing the
+        // name between the two changes nothing that runs; that a lookup by name now finds the
+        // replacement shows what would have been loaded otherwise.
+        let home = ono_testkit::scratch();
+        let component = home.path().join("empty.wasm");
+        std::fs::write(&component, EMPTY_COMPONENT).expect("the component");
+        let store = home.path().join("store");
+        let artifact = super::compile(&component, &store).expect("the tool compiles it");
+        let name = super::artifact_name(EMPTY_COMPONENT);
+
+        let directory = super::open_store(&store, false).expect("the store is trusted");
+        let file = super::open_artifact(&directory, &name, &artifact).expect("the artifact is");
+        let impostor = store.join("impostor");
+        std::fs::write(&impostor, b"not an artifact").expect("another file");
+        std::fs::rename(&impostor, &artifact).expect("swapped in under the name");
+
+        let engine = crate::wasm::engine().expect("the engine");
+        assert!(
+            super::read_and_map(engine, file, &artifact).is_ok(),
+            "what was examined is what is loaded"
+        );
+        assert!(
+            super::load(engine, &component, std::slice::from_ref(&store)).is_err(),
+            "and a lookup by name meets the impostor"
+        );
     }
 }
 

@@ -79,9 +79,14 @@ impl Scene {
 
     /// Runs the SDK's tool on the component, as `install plugin` does.
     fn compile(&self) -> PathBuf {
+        self.compile_into(&self.store())
+    }
+
+    /// Runs the SDK's tool on the component, into `store`.
+    fn compile_into(&self, store: &Path) -> PathBuf {
         let run = std::process::Command::new(COMPILE)
             .arg("--store")
-            .arg(self.store())
+            .arg(store)
             .arg(self.component())
             .output()
             .expect("kuang-compile runs");
@@ -93,7 +98,7 @@ impl Scene {
         let printed = String::from_utf8(run.stdout).expect("a path");
         let artifact = PathBuf::from(printed.trim());
         assert!(
-            artifact.starts_with(self.store()) && artifact.is_file(),
+            artifact.starts_with(store) && artifact.is_file(),
             "kuang-compile prints the artifact it wrote into the store, got {artifact:?}"
         );
         artifact
@@ -120,6 +125,29 @@ impl Scene {
             }
         }
     }
+}
+
+/// Whether `directory`'s group is one only its owner belongs to: the private group a
+/// `USERGROUPS` system gives every user, which the ownership rule treats as the owner.
+fn group_is_private(directory: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    let metadata = std::fs::metadata(directory).expect("the directory");
+    let group = std::process::Command::new("getent")
+        .args(["group", &metadata.gid().to_string()])
+        .output()
+        .map(|run| String::from_utf8_lossy(&run.stdout).trim().to_owned())
+        .unwrap_or_default();
+    let user = std::process::Command::new("id")
+        .arg("-un")
+        .output()
+        .map(|run| String::from_utf8_lossy(&run.stdout).trim().to_owned())
+        .unwrap_or_default();
+    let fields: Vec<&str> = group.split(':').collect();
+    fields.len() == 4
+        && fields[0] == user
+        && fields[3]
+            .split(',')
+            .all(|member| member.is_empty() || member == user)
 }
 
 fn reason_of(error: &KuangError) -> &str {
@@ -311,6 +339,137 @@ async fn should_refuse_an_artifact_other_users_could_have_written() {
     std::fs::set_permissions(scene.store(), std::fs::Permissions::from_mode(0o777))
         .expect("a world-writable store");
     assert_eq!(reason_of(&scene.refusal().await), "untrusted");
+}
+
+#[tokio::test]
+async fn should_refuse_an_artifact_that_is_a_symbolic_link() {
+    // The artifact is opened without following a link: a link in the store would make the
+    // file whose owner and mode were examined a different one from the file that is mapped.
+    let scene = Scene::with(EMPTY_COMPONENT);
+    let artifact = scene.compile();
+    let elsewhere = scene.root.path().join("elsewhere.cwasm");
+    std::fs::rename(&artifact, &elsewhere).expect("the artifact moved");
+    std::os::unix::fs::symlink(&elsewhere, &artifact).expect("a link in its place");
+    let refused = scene.refusal().await;
+    assert_eq!(reason_of(&refused), "untrusted");
+    assert!(
+        refused.message().contains("symbolic link")
+            && refused.message().contains(&artifact.display().to_string()),
+        "the refusal names the link it will not follow: {:?}",
+        refused.message()
+    );
+}
+
+#[tokio::test]
+async fn should_refuse_a_store_that_is_a_symbolic_link() {
+    let scene = Scene::with(EMPTY_COMPONENT);
+    scene.compile();
+    let real = scene.root.path().join("real-store");
+    std::fs::rename(scene.store(), &real).expect("the store moved");
+    std::os::unix::fs::symlink(&real, scene.store()).expect("a link in its place");
+    let refused = scene.refusal().await;
+    assert_eq!(reason_of(&refused), "untrusted");
+    assert!(
+        refused.message().contains("symbolic link")
+            && refused
+                .message()
+                .contains(&scene.store().display().to_string()),
+        "the refusal names the store it will not follow: {:?}",
+        refused.message()
+    );
+}
+
+#[tokio::test]
+async fn should_refuse_an_artifact_below_a_directory_others_can_write() {
+    // Whoever may write a directory above the store may rename the store away and put their
+    // own in its place, owner, mode and all. Every directory up to the root is examined, and
+    // only a root-owned sticky one (`/tmp`, above every scene of this suite) is exempt.
+    use std::os::unix::fs::PermissionsExt as _;
+    let scene = Scene::with(EMPTY_COMPONENT);
+    let open = scene.root.path().join("open");
+    let store = open.join("store");
+    let artifact = scene.compile_into(&store);
+    for mode in [0o777, 0o1777, 0o775] {
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(mode))
+            .expect("a directory above the store others can write");
+        let refused = match TestHost::new(scene.component(), &manifest())
+            .compiled(&store)
+            .load()
+            .await
+        {
+            Ok(_) => panic!("mode {mode:o}: an artifact below a writable directory was mapped"),
+            Err(error) => error,
+        };
+        if mode == 0o775 && group_is_private(&open) {
+            // A group only its owner belongs to is the owner (ADR-0915); the unit tests of the
+            // rule cover a shared group, which this machine may not offer the test.
+            assert_ne!(refused.code(), KuangErrorCode::LoadComponentNotCompiled);
+            continue;
+        }
+        assert_eq!(
+            refused.code(),
+            KuangErrorCode::LoadComponentNotCompiled,
+            "mode {mode:o}: {refused:?}"
+        );
+        assert_eq!(reason_of(&refused), "untrusted", "mode {mode:o}");
+        assert!(
+            refused.message().contains(&format!("`{}`", open.display()))
+                && refused
+                    .message()
+                    .contains("writable by users other than its owner"),
+            "mode {mode:o}: the refusal names the directory: {:?}",
+            refused.message()
+        );
+    }
+    assert!(artifact.is_file());
+}
+
+#[test]
+fn should_refuse_to_write_below_a_directory_others_can_write() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let scene = Scene::with(EMPTY_COMPONENT);
+    let open = scene.root.path().join("open");
+    std::fs::create_dir(&open).expect("a directory");
+    std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777))
+        .expect("writable by everybody");
+    let run = std::process::Command::new(COMPILE)
+        .arg("--store")
+        .arg(open.join("store"))
+        .arg(scene.component())
+        .output()
+        .expect("kuang-compile runs");
+    assert!(!run.status.success(), "nothing is written below it");
+    let said = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        said.contains(&format!("`{}`", open.display()))
+            && said.contains("writable by users other than its owner"),
+        "{said:?}"
+    );
+    assert!(!open.join("store").exists(), "not even the store");
+}
+
+#[test]
+fn should_refuse_to_write_through_a_symbolic_link() {
+    // A store planted as a link would send a root-run install's artifact wherever the link
+    // points; the tool follows none on its way to the store.
+    let scene = Scene::with(EMPTY_COMPONENT);
+    let target = scene.root.path().join("target");
+    std::fs::create_dir(&target).expect("a directory");
+    std::os::unix::fs::symlink(&target, scene.store()).expect("a store that is a link");
+    let run = std::process::Command::new(COMPILE)
+        .arg("--store")
+        .arg(scene.store())
+        .arg(scene.component())
+        .output()
+        .expect("kuang-compile runs");
+    assert!(!run.status.success(), "nothing is written through the link");
+    let said = String::from_utf8_lossy(&run.stderr);
+    assert!(said.contains("symbolic link"), "{said:?}");
+    assert_eq!(
+        std::fs::read_dir(&target).expect("the target").count(),
+        0,
+        "and nothing lands where it points"
+    );
 }
 
 #[test]

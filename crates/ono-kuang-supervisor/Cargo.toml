@@ -28,6 +28,8 @@ globset.workspace = true
 jiff.workspace = true
 libc.workspace = true
 nix = { workspace = true, features = ["user"] }
+# The walk to an artifact: `openat` without following links, `fstat` on what was opened (ADR-0915).
+rustix = { workspace = true, features = ["fs"] }
 serde.workspace = true
 serde_json.workspace = true
 # A compiled artifact is named by the digest of the component it came from (ADR-0870).
