@@ -144,7 +144,8 @@ fn usage() {
     eprintln!(
         "  perf           run the performance benchmarks of spec section 37.1 \
 [--profile S|M|L] [--iterations N] [--compare <path>] [--write-baseline] \
-[--skip-temporal]"
+[--skip-temporal] [--skip-completion]; --compare exits 0 when every row held, 3 when one \
+regressed, 4 when none regressed and one could not be adjudicated (ADR-0909)"
     );
     eprintln!(
         "  terminology    the documentation terminology contract of section 19.1 over this \
@@ -419,6 +420,7 @@ fn perf(args: &[String]) -> ExitCode {
     let mut sample_temporal: Option<String> = None;
     let mut sample_index = 0u32;
     let mut skip_temporal = false;
+    let mut skip_completion = false;
 
     let mut rest = args.iter();
     while let Some(argument) = rest.next() {
@@ -454,6 +456,9 @@ fn perf(args: &[String]) -> ExitCode {
             // v0.5 §49's fixture ledger takes minutes to write and hundreds of megabytes to hold.
             // A run that only wants the v0.4.1 rows says so rather than paying for it.
             "--skip-temporal" => skip_temporal = true,
+            // The completion row is sampled inside this executable too (issue #151); a run of a
+            // debug xtask against a release `ono` compares cleanly only without it.
+            "--skip-completion" => skip_completion = true,
             other => return usage_error(&format!("perf: unknown argument `{other}`")),
         }
     }
@@ -483,6 +488,10 @@ fn perf(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if write && let Some(refusal) = perf::write_refusal(&build, skip_temporal, skip_completion) {
+        eprintln!("{refusal}");
+        return ExitCode::FAILURE;
+    }
     if write && build != "release" {
         eprintln!(
             "perf: --write-baseline needs a release build. v0.4.1 §37.2 names the release build \
@@ -571,9 +580,15 @@ fn perf(args: &[String]) -> ExitCode {
     // v0.5 §49's eight release measurements, over §49's deterministic fixture ledger. They are
     // skipped when a profile was named, because §49's ledger is not a topology profile and a
     // `--profile M` run is asking about the host rather than about the history.
+    // Rows that were declared, asked for and not measured: a comparison counts them as not
+    // adjudicated, so a run that refused them does not read as one that held them (issue #151).
+    let mut unmeasured = 0usize;
     if !skip_temporal && (profile.is_none() || temporal_only) {
         match temporal_measurements(&root, &runner) {
-            Ok(mut found) => measurements.append(&mut found),
+            Ok((mut found, refused)) => {
+                measurements.append(&mut found);
+                unmeasured += refused;
+            }
             Err(error) => {
                 eprintln!("perf: {error}");
                 return ExitCode::FAILURE;
@@ -584,7 +599,7 @@ fn perf(args: &[String]) -> ExitCode {
     // §36.2's completion budget, measured by calling the completer rather than by timing a
     // thousand registry lookups beside it (issue #21, ADR-0498). One cold sample per process, so
     // the samples are re-runs of this executable rather than iterations in it.
-    if !temporal_only {
+    if !temporal_only && !skip_completion {
         match runner.run_completion() {
             Ok(measured) => {
                 println!(
@@ -598,15 +613,18 @@ fn perf(args: &[String]) -> ExitCode {
                 );
                 measurements.push(measured);
             }
-            Err(reason) => println!(
-                "  {:<28} {:<3} unmeasured — {reason}",
-                perf::COMPLETION_BENCHMARK,
-                "S"
-            ),
+            Err(reason) => {
+                unmeasured += 1;
+                println!(
+                    "  {:<28} {:<3} unmeasured — {reason}",
+                    perf::COMPLETION_BENCHMARK,
+                    "S"
+                );
+            }
         }
     }
 
-    let mut failed = false;
+    let mut outcome: Option<perf::Outcome> = None;
     if let Some(path) = compare {
         match std::fs::read_to_string(&path)
             .map_err(|error| error.to_string())
@@ -620,8 +638,14 @@ fn perf(args: &[String]) -> ExitCode {
                 })
             }) {
             Ok(baseline) => {
+                let mut counted = perf::Outcome::default();
+                for _ in 0..unmeasured {
+                    counted.count_unmeasured();
+                }
                 for measured in &measurements {
-                    match baseline.compare(measured, perf::Tolerance::Absolute) {
+                    let comparison = baseline.compare(measured, perf::Tolerance::Absolute);
+                    counted.count(&comparison);
+                    match comparison {
                         perf::Comparison::Held => {}
                         // Not a verdict either way, like a foreign environment (issue #169).
                         perf::Comparison::LoadedEnvironment {
@@ -636,14 +660,10 @@ fn perf(args: &[String]) -> ExitCode {
                             measured.benchmark,
                             regressions.len()
                         ),
-                        other => {
-                            println!("perf: {} — {other:?}", measured.benchmark);
-                            if matches!(other, perf::Comparison::Regressed(_)) {
-                                failed = true;
-                            }
-                        }
+                        other => println!("perf: {} — {other:?}", measured.benchmark),
                     }
                 }
+                outcome = Some(counted);
             }
             Err(error) => {
                 eprintln!("perf: cannot compare against {}: {error}", path.display());
@@ -669,10 +689,16 @@ fn perf(args: &[String]) -> ExitCode {
         println!("perf: wrote {}", path.display());
     }
 
-    if failed {
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
+    // Four statuses (ADR-0909): 0 every compared row held, 1 the run could not be made,
+    // `EXIT_REGRESSED` (3) something regressed, `EXIT_NOT_ADJUDICATED` (4) nothing regressed and
+    // something could not be adjudicated — measured under load, from another build or machine,
+    // or not measured at all. A run without --compare judges nothing and exits 0.
+    match outcome {
+        Some(outcome) => {
+            println!("{}", outcome.summary());
+            ExitCode::from(outcome.exit_status())
+        }
+        None => ExitCode::SUCCESS,
     }
 }
 
@@ -686,7 +712,7 @@ fn perf(args: &[String]) -> ExitCode {
 fn temporal_measurements(
     root: &Path,
     runner: &perf::Runner,
-) -> Result<Vec<perf::Measurement>, String> {
+) -> Result<(Vec<perf::Measurement>, usize), String> {
     let declaration = ono_testkit::temporal::declared_temporal_profiles()
         .into_iter()
         .next()
@@ -716,6 +742,7 @@ fn temporal_measurements(
         fixture.digest(),
     );
 
+    let mut refused = 0usize;
     let mut measurements = Vec::new();
     for benchmark in perf::TEMPORAL_BENCHMARKS {
         match runner.run_temporal(benchmark, &fixture) {
@@ -731,10 +758,13 @@ fn temporal_measurements(
                 );
                 measurements.push(measured);
             }
-            Err(reason) => println!("  {:<28} {:<3} unmeasured — {reason}", benchmark.id, "T"),
+            Err(reason) => {
+                refused += 1;
+                println!("  {:<28} {:<3} unmeasured — {reason}", benchmark.id, "T");
+            }
         }
     }
-    Ok(measurements)
+    Ok((measurements, refused))
 }
 
 /// Takes one sample of one v0.5 §49 row and prints `<milliseconds> <values> <peak_rss_bytes>`.

@@ -1279,3 +1279,199 @@ fn should_report_a_figure_from_another_build_as_uncomparable_rather_than_as_a_re
         "the answer names both builds"
     );
 }
+
+// --- #169, #151: what a comparison run says by its exit status, and a complete baseline -------
+
+#[test]
+fn should_exit_with_distinct_statuses_for_held_regressed_and_not_adjudicated() {
+    // A comparison that could not be adjudicated is not a pass: a genuine regression measured
+    // under load or from another build must not read as success to whatever reads the status.
+    use xtask::perf::{EXIT_NOT_ADJUDICATED, EXIT_REGRESSED, Outcome};
+    let regression = xtask::perf::Regression {
+        benchmark: "b".to_owned(),
+        metric: "time_to_first_ms",
+        baseline: 1.0,
+        measured: 2.0,
+        allowed: 1.0,
+    };
+    let held = Outcome::of(&[Comparison::Held, Comparison::Held]);
+    assert_eq!((held.held, held.regressed, held.not_adjudicated), (2, 0, 0));
+    assert_eq!(held.exit_status(), 0, "everything held is success");
+
+    let loaded = Outcome::of(&[
+        Comparison::Held,
+        Comparison::LoadedEnvironment {
+            load_average: 9.0,
+            allowed: 3.0,
+            regressions: vec![regression.clone()],
+        },
+        Comparison::ForeignBuild {
+            baseline: "release".to_owned(),
+            measured: "debug".to_owned(),
+        },
+        Comparison::Unmeasured,
+    ]);
+    assert_eq!(
+        (loaded.held, loaded.regressed, loaded.not_adjudicated),
+        (1, 0, 3)
+    );
+    assert_eq!(
+        loaded.exit_status(),
+        EXIT_NOT_ADJUDICATED,
+        "a run that could not be adjudicated must not exit 0"
+    );
+
+    let regressed = Outcome::of(&[
+        Comparison::Regressed(vec![regression]),
+        Comparison::ForeignEnvironment {
+            baseline: "a".to_owned(),
+            measured: "b".to_owned(),
+        },
+    ]);
+    assert_eq!(
+        regressed.exit_status(),
+        EXIT_REGRESSED,
+        "a regression is reported as one, whatever else was not adjudicated"
+    );
+    assert!(
+        ![0, 1, EXIT_REGRESSED].contains(&EXIT_NOT_ADJUDICATED)
+            && ![0, 1].contains(&EXIT_REGRESSED),
+        "success, a run that could not be made, a regression and a non-verdict are four statuses"
+    );
+    assert_eq!(
+        loaded.summary(),
+        "perf: 1 held, 0 regressed, 3 not adjudicated"
+    );
+}
+
+#[test]
+fn should_report_a_baseline_that_leaves_a_declared_row_out() {
+    // #151: a baseline written by a run that refused its in-process rows lost nine of them and
+    // nobody was told. The committed baseline must hold every row the harness declares.
+    let text = std::fs::read_to_string(baseline_path()).expect("the baseline exists");
+    let complete = Baseline::parse(&text).expect("the baseline parses");
+    assert_eq!(
+        complete.missing_declared_rows(),
+        Vec::<String>::new(),
+        "the committed baseline leaves declared rows out"
+    );
+
+    let mut document: serde_json::Value = serde_json::from_str(&text).unwrap();
+    document["measurements"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|row| {
+            row["benchmark"] != "temporal.why" && row["benchmark"] != "completion.first_candidate"
+        });
+    let short = Baseline::parse(&document.to_string()).expect("the shortened baseline parses");
+    let missing = short.missing_declared_rows();
+    assert!(
+        missing.iter().any(|row| row.contains("temporal.why"))
+            && missing
+                .iter()
+                .any(|row| row.contains("completion.first_candidate"))
+            && missing.len() == 2,
+        "the rows a baseline leaves out are named: {missing:?}"
+    );
+}
+
+#[test]
+fn should_refuse_to_write_a_baseline_that_would_leave_rows_out() {
+    // #151: a debug xtask beside a release `ono` refuses its in-process rows, and a baseline
+    // written from that run silently lost nine of them. So does a run told to skip them.
+    use xtask::perf::{SAMPLER_BUILD, write_refusal};
+    let other = if SAMPLER_BUILD == "debug" {
+        "release"
+    } else {
+        "debug"
+    };
+    let refusal = write_refusal(other, false, false)
+        .expect("a run labelled with a build other than the sampler's cannot write the baseline");
+    assert!(
+        refusal.contains(SAMPLER_BUILD) && refusal.contains(other),
+        "the refusal names both builds: {refusal}"
+    );
+    assert!(
+        write_refusal(SAMPLER_BUILD, true, false).is_some(),
+        "a run that skips the temporal rows cannot write the whole baseline"
+    );
+    assert!(
+        write_refusal(SAMPLER_BUILD, false, true).is_some(),
+        "a run that skips the completion row cannot write the whole baseline"
+    );
+    assert_eq!(
+        write_refusal(SAMPLER_BUILD, false, false),
+        None,
+        "a run whose sampler is the build it claims, measuring every row, may write"
+    );
+}
+
+#[test]
+fn should_read_the_load_before_a_row_so_a_row_cannot_excuse_its_own_load() {
+    // A regression that burns cores raises the machine's load while it runs; a reading taken
+    // during or after the row would let the row excuse itself as "measured under load".
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static READS: AtomicU32 = AtomicU32::new(0);
+    fn rising() -> Option<f64> {
+        // The first reading is the machine before the row; every later one is the row's own.
+        if READS.fetch_add(1, Ordering::SeqCst) == 0 {
+            Some(0.5)
+        } else {
+            Some(40.0)
+        }
+    }
+    let measured = Runner::new(
+        ono_testkit::ono_binary(),
+        "reference-2026-09",
+        "0".repeat(40),
+    )
+    .iterations(2)
+    .build("debug")
+    .load_reading(rising)
+    .run(&Benchmark::probe());
+    assert_eq!(
+        measured.load_average,
+        Some(0.5),
+        "the load a record states is the machine's before the row, not the row's own"
+    );
+}
+
+#[test]
+fn should_scale_the_load_allowance_with_the_cores_the_run_had() {
+    // Nine runnable tasks is contention on eight cores and none on thirty-two.
+    let at = |cores: u32| {
+        let record = complete_record("harness.probe")
+            .replace("\"profile\": \"M\"", "\"profile\": \"S\"")
+            .replace(
+                "\"iterations\": 20,",
+                "\"iterations\": 20, \"load_average\": 1.84,",
+            );
+        let baseline = Baseline::parse(
+            &baseline_of(&[record])
+                .replace("\"version\": 1,", "\"version\": 1, \"load_average\": 1.84,"),
+        )
+        .unwrap();
+        let measured = Baseline::parse(&baseline_of(&[complete_record("harness.probe")
+            .replace("\"profile\": \"M\"", "\"profile\": \"S\"")
+            .replace("\"time_to_first_ms\": 120.0", "\"time_to_first_ms\": 840.0")
+            .replace(
+                "\"iterations\": 20,",
+                &format!("\"iterations\": 20, \"load_average\": 9.5, \"cores\": {cores},"),
+            )]))
+        .unwrap()
+        .measurements
+        .remove(0);
+        baseline.compare(&measured, Tolerance::Absolute)
+    };
+    assert!(
+        matches!(at(8), Comparison::LoadedEnvironment { .. }),
+        "load 9.5 on eight cores is contention: {:?}",
+        at(8)
+    );
+    assert!(
+        matches!(at(64), Comparison::Regressed(_)),
+        "load 9.5 on sixty-four cores leaves every benchmark a core, so the slowdown is the \
+         shell's: {:?}",
+        at(64)
+    );
+}

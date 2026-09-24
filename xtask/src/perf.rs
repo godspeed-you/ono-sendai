@@ -124,10 +124,12 @@ pub struct Measurement {
     pub values: f64,
     /// The p95 of the run's own distribution (§37.4).
     pub p95_ms: f64,
-    /// The machine's one-minute load average while it was measured — the higher of the readings
-    /// taken before and after — or `None` where it could not be read. What else the machine was
-    /// doing is part of what a figure means on a shared reference environment (issue #169).
+    /// The machine's one-minute load average when the row started, or `None` where it could not
+    /// be read. Read before the row only: a row that burns cores raises the load itself, and a
+    /// reading taken during or after it would let it excuse itself (issue #169, ADR-0909).
     pub load_average: Option<f64>,
+    /// How many CPUs the run had, which is what the load is contention against (ADR-0909).
+    pub cores: Option<u32>,
     /// §32.3's six, by field name, `None` where the host could not measure one.
     metrics: Vec<(&'static str, Option<f64>)>,
 }
@@ -181,6 +183,9 @@ impl Measurement {
             "load_average".to_owned(),
             self.load_average.map_or(Json::Null, rounded),
         );
+        if let Some(cores) = self.cores {
+            row.insert("cores".to_owned(), Json::from(cores));
+        }
         for (field, value) in &self.metrics {
             row.insert((*field).to_owned(), value.map_or(Json::Null, rounded));
         }
@@ -306,14 +311,85 @@ pub enum Comparison {
     },
 }
 
-/// How far a run's load average may rise above its baseline's before the run is no longer
-/// measured under the baseline's conditions (issue #169).
+/// How far a run's load average may rise above its baseline's, per core the run had, before the
+/// run is no longer measured under the baseline's conditions (issue #169, ADR-0909).
 ///
-/// Two runnable tasks beyond the baseline's: a quarter of the reference environment's eight
-/// cores. The benchmarks are single processes, so they are slowed by contention for a core rather
-/// than by load as such, and a build tree holding the machine — the case that produced three to
-/// five times every baseline figure — reads eight and more.
-pub const LOAD_MARGIN: f64 = 2.0;
+/// A quarter of a runnable task per core: two on the reference environment's eight. The
+/// benchmarks are single processes, so they are slowed by contention for a core rather than by
+/// load as such, and the same load is contention on eight cores and none on sixty-four. A build
+/// tree holding the machine — the case that produced three to five times every baseline figure —
+/// reads eight and more.
+pub const LOAD_MARGIN_PER_CORE: f64 = 0.25;
+
+/// The cores a record that does not state them is taken to have had: the reference environment's.
+const REFERENCE_CORES: u32 = 8;
+
+/// The exit status of a comparison with at least one regression (ADR-0909).
+pub const EXIT_REGRESSED: u8 = 3;
+
+/// The exit status of a comparison with no regression and at least one row nobody could
+/// adjudicate — measured under load, from another build or machine, below the iteration floor, or
+/// not measured at all (ADR-0909). Not success: such a run proves nothing either way.
+pub const EXIT_NOT_ADJUDICATED: u8 = 4;
+
+/// What a comparison run concluded, row by row counted into three.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Outcome {
+    /// Rows inside their tolerance.
+    pub held: usize,
+    /// Rows that regressed under the baseline's conditions.
+    pub regressed: usize,
+    /// Rows no verdict can be drawn from.
+    pub not_adjudicated: usize,
+}
+
+impl Outcome {
+    /// The outcome of these comparisons.
+    #[must_use]
+    pub fn of(comparisons: &[Comparison]) -> Self {
+        let mut outcome = Self::default();
+        for comparison in comparisons {
+            outcome.count(comparison);
+        }
+        outcome
+    }
+
+    /// Counts one comparison.
+    pub fn count(&mut self, comparison: &Comparison) {
+        match comparison {
+            Comparison::Held => self.held += 1,
+            Comparison::Regressed(_) => self.regressed += 1,
+            _ => self.not_adjudicated += 1,
+        }
+    }
+
+    /// Counts a row that could not be measured at all.
+    pub fn count_unmeasured(&mut self) {
+        self.not_adjudicated += 1;
+    }
+
+    /// `0` when everything held, [`EXIT_REGRESSED`] when anything regressed, and
+    /// [`EXIT_NOT_ADJUDICATED`] when nothing regressed and something could not be adjudicated.
+    #[must_use]
+    pub fn exit_status(&self) -> u8 {
+        if self.regressed > 0 {
+            EXIT_REGRESSED
+        } else if self.not_adjudicated > 0 {
+            EXIT_NOT_ADJUDICATED
+        } else {
+            0
+        }
+    }
+
+    /// The closing line of a comparison run.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        format!(
+            "perf: {} held, {} regressed, {} not adjudicated",
+            self.held, self.regressed, self.not_adjudicated
+        )
+    }
+}
 
 impl Baseline {
     /// Parses a baseline document, refusing any record that is not a §32.3 benchmark result.
@@ -399,6 +475,49 @@ impl Baseline {
         })
     }
 
+    /// Every row the harness declares — [`BENCHMARKS`], [`TEMPORAL_BENCHMARKS`] and the
+    /// completion row — that this baseline holds no record for, as `benchmark (profile,
+    /// temperature)` (issue #151, ADR-0909).
+    ///
+    /// A baseline written by a run that refused or skipped rows loses them without anybody
+    /// being told, and a comparison against it then reads those rows as `Unmeasured` forever.
+    #[must_use]
+    pub fn missing_declared_rows(&self) -> Vec<String> {
+        let mut missing = Vec::new();
+        for benchmark in BENCHMARKS {
+            if self
+                .record_at(benchmark.id, benchmark.profile, benchmark.temperature)
+                .is_none()
+            {
+                missing.push(format!(
+                    "{} ({}, {})",
+                    benchmark.id,
+                    benchmark.profile,
+                    benchmark.temperature.as_str()
+                ));
+            }
+        }
+        for benchmark in TEMPORAL_BENCHMARKS {
+            let held = self.measurements.iter().any(|record| {
+                record.benchmark == benchmark.id && record.temperature == benchmark.temperature
+            });
+            if !held {
+                missing.push(format!(
+                    "{} (T, {})",
+                    benchmark.id,
+                    benchmark.temperature.as_str()
+                ));
+            }
+        }
+        if self
+            .record_at(COMPLETION_BENCHMARK, "S", Temperature::Cold)
+            .is_none()
+        {
+            missing.push(format!("{COMPLETION_BENCHMARK} (S, cold)"));
+        }
+        missing
+    }
+
     /// What `measured` says about this baseline, at `tolerance`.
     #[must_use]
     pub fn compare(&self, measured: &Measurement, tolerance: Tolerance) -> Comparison {
@@ -459,7 +578,9 @@ impl Baseline {
         }
         // A regression is a verdict only under the baseline's conditions. A result that held
         // under load held a harder test, so only a failing one is withheld.
-        let allowed = self.load_average.unwrap_or(0.0) + LOAD_MARGIN;
+        let cores = measured.cores.unwrap_or(REFERENCE_CORES);
+        let allowed =
+            round3(self.load_average.unwrap_or(0.0) + LOAD_MARGIN_PER_CORE * f64::from(cores));
         match measured.load_average {
             Some(load_average) if load_average > allowed => Comparison::LoadedEnvironment {
                 load_average,
@@ -587,6 +708,10 @@ fn measurement(row: &Json) -> Result<Measurement, Vec<Problem>> {
             p95_ms,
             // Optional: records written before issue #169 do not say, and say nothing wrong.
             load_average: row.get("load_average").and_then(Json::as_f64),
+            cores: row
+                .get("cores")
+                .and_then(Json::as_u64)
+                .and_then(|cores| u32::try_from(cores).ok()),
             metrics,
         })
     } else {
@@ -1137,6 +1262,35 @@ pub const SAMPLER_BUILD: &str = if cfg!(debug_assertions) {
     "release"
 };
 
+/// Why a run may not write the baseline, if it may not (issue #151, ADR-0909).
+///
+/// `--write-baseline` replaces every record, so a run that would leave any declared row out may
+/// not write: one whose in-process rows would be sampled by a build other than the one it claims
+/// (`claimed` against [`SAMPLER_BUILD`]), and one told to skip the temporal or completion rows.
+#[must_use]
+pub fn write_refusal(claimed: &str, skip_temporal: bool, skip_completion: bool) -> Option<String> {
+    if claimed != SAMPLER_BUILD {
+        return Some(format!(
+            "perf: --write-baseline needs every row, and this {SAMPLER_BUILD} xtask would refuse \
+             the temporal and completion rows of a run labelled {claimed} after its `ono`. Run \
+             `cargo run {}-p xtask -- perf --write-baseline` (issue #151)",
+            if claimed == "release" {
+                "--release "
+            } else {
+                ""
+            }
+        ));
+    }
+    if skip_temporal || skip_completion {
+        return Some(
+            "perf: --write-baseline writes the whole baseline, so it cannot be combined with \
+             --skip-temporal or --skip-completion: the rows skipped would vanish from it"
+                .to_owned(),
+        );
+    }
+    None
+}
+
 /// Runs the declared benchmarks against a built binary (§37.1).
 #[derive(Debug, Clone)]
 pub struct Runner {
@@ -1189,15 +1343,13 @@ impl Runner {
         self
     }
 
-    /// The load average over a measurement, given the reading taken before it: read once more
-    /// now, and the higher of the two. Two reads of one file per row, whatever the row costs.
-    fn load_since(&self, before: Option<f64>) -> Option<f64> {
-        let after = (self.load)();
-        match (before, after) {
-            (Some(before), Some(after)) => Some(before.max(after)),
-            (one, other) => one.or(other),
-        }
-        .map(round3)
+    /// The load average before a row, and the cores the run has: one read of one file per row,
+    /// whatever the row costs (ADR-0909).
+    fn conditions(&self) -> (Option<f64>, Option<u32>) {
+        let cores = std::thread::available_parallelism()
+            .ok()
+            .and_then(|cores| u32::try_from(cores.get()).ok());
+        ((self.load)().map(round3), cores)
     }
 
     /// Why a row sampled in-process by this executable may not be recorded under this run's
@@ -1234,11 +1386,10 @@ impl Runner {
     pub fn run(&self, benchmark: &Benchmark) -> Measurement {
         let script = benchmark.full_script();
         let measured = benchmark.warmup.is_some();
-        let before = (self.load)();
+        let (load_average, cores) = self.conditions();
         let samples: Vec<Sample> = (0..self.iterations)
             .map(|_| self.sample(&script, measured))
             .collect();
-        let load_average = self.load_since(before);
 
         let firsts: Vec<f64> = samples.iter().map(|sample| sample.to_first_ms).collect();
         let completes: Vec<f64> = samples.iter().map(|sample| sample.to_complete_ms).collect();
@@ -1266,6 +1417,7 @@ impl Runner {
             values: round3(values),
             p95_ms: round3(percentile(&firsts, 95.0)),
             load_average,
+            cores,
             metrics: vec![
                 ("time_to_first_ms", Some(round3(median(&firsts)))),
                 ("time_to_complete_ms", Some(round3(complete_ms))),
@@ -1589,7 +1741,7 @@ impl Runner {
             return Err(refusal);
         }
         let me = std::env::current_exe().expect("the running xtask must have a path");
-        let before = (self.load)();
+        let (load_average, cores) = self.conditions();
         let mut latencies = Vec::new();
         let mut candidates = Vec::new();
         for _ in 0..self.iterations {
@@ -1610,7 +1762,6 @@ impl Runner {
             }
         }
 
-        let load_average = self.load_since(before);
         let complete_ms = median(&latencies);
         let values = median(&candidates);
         Ok(Measurement {
@@ -1624,6 +1775,7 @@ impl Runner {
             values: round3(values),
             p95_ms: round3(percentile(&latencies, 95.0)),
             load_average,
+            cores,
             metrics: vec![
                 ("time_to_first_ms", Some(round3(complete_ms))),
                 ("time_to_complete_ms", Some(round3(complete_ms))),
@@ -1718,6 +1870,16 @@ pub fn check_registries(root: &std::path::Path) -> Vec<Problem> {
     };
 
     if let Some(baseline) = &baseline {
+        for row in baseline.missing_declared_rows() {
+            problems.push(Problem::new(
+                BASELINE,
+                format!(
+                    "holds no record for the declared row `{row}`; a baseline written by a run \
+                     that refused or skipped rows lost them (issue #151). Write it again with \
+                     `cargo run --release -p xtask -- perf --write-baseline`"
+                ),
+            ));
+        }
         if let Some(environment) = &declared
             && baseline.environment != environment.id
         {
@@ -2009,7 +2171,7 @@ impl Runner {
             return Err(refusal);
         }
         let me = std::env::current_exe().expect("the running xtask must have a path");
-        let before = (self.load)();
+        let (load_average, cores) = self.conditions();
         let mut latencies = Vec::new();
         let mut values = Vec::new();
         let mut peaks = Vec::new();
@@ -2054,7 +2216,6 @@ impl Runner {
                 .unwrap_or_else(|| format!("no sample of `{}` produced a figure", benchmark.id)));
         }
 
-        let load_average = self.load_since(before);
         let complete_ms = median(&latencies);
         let count = median(&values);
         Ok(Measurement {
@@ -2068,6 +2229,7 @@ impl Runner {
             values: round3(count),
             p95_ms: round3(percentile(&latencies, 95.0)),
             load_average,
+            cores,
             metrics: vec![
                 // The answer is one value produced whole, so the first value and the last one
                 // arrive together. Stating both rather than one is what Appendix F.4 asks for,
