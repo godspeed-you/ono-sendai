@@ -143,6 +143,10 @@ jobs:
   acceptance-image:
     name: acceptance image
     runs-on: ubuntu-latest
+    env:
+      # Named, not derived from the checkout path (ADR-0901): the group jobs below load this image
+      # on other runners and must find it by the same name.
+      ONO_ACCEPTANCE_IMAGE: ono-sendai:acceptance-ci
     outputs:
       groups: ${{ steps.groups.outputs.groups }}
     steps:
@@ -209,6 +213,9 @@ jobs:
     name: containerised acceptance (${{ matrix.group }})
     needs: acceptance-image
     runs-on: ubuntu-latest
+    env:
+      # The image the `acceptance-image` job built and packed.
+      ONO_ACCEPTANCE_IMAGE: ono-sendai:acceptance-ci
     strategy:
       # Every group reports, so one push shows every area that broke.
       fail-fast: false

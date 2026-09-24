@@ -1025,3 +1025,31 @@ fn should_rebuild_the_filesystem_stage_weekly_and_say_whether_it_came_from_the_c
          does not reach the cache key:\n{stage}"
     );
 }
+
+#[test]
+fn should_name_the_ci_acceptance_image_explicitly_in_the_job_that_builds_it_and_the_jobs_that_run_it()
+ {
+    // The image job builds and packs the images, and each group job loads them and runs
+    // `--no-build`. With the tag derived from the checkout path, the two only agree because
+    // GitHub's runners happen to check out at the same path.
+    let workflow = support::read(".github/workflows/ci.yml");
+    let tag_of = |job: &str| {
+        let text = support::workflow_job(&workflow, job);
+        text.lines()
+            .find_map(|line| line.trim().strip_prefix("ONO_ACCEPTANCE_IMAGE:"))
+            .map(|value| value.trim().trim_matches('"').to_owned())
+            .unwrap_or_else(|| {
+                panic!("the `{job}` job does not name its acceptance image:\n{text}")
+            })
+    };
+    let built = tag_of("acceptance-image");
+    assert_eq!(
+        built,
+        tag_of("acceptance"),
+        "the group jobs run an image other than the one the image job built"
+    );
+    assert!(
+        built.starts_with("ono-sendai:acceptance"),
+        "`{built}` is not packed by the `ono-sendai:acceptance*` filter"
+    );
+}
