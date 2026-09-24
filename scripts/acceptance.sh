@@ -176,6 +176,31 @@ if [[ $NO_BUILD -eq 0 ]] && grep -qx 'image: filesystems' "${cases[@]}"; then
 fi
 fs_built=0
 
+# CI keeps the filesystem stage's layer in buildx's GitHub Actions cache (issue #139, ADR-0903):
+# its packages are a download of three minutes or more from the Ubuntu archive on every run
+# otherwise. `ONO_ACCEPTANCE_LAYER_CACHE=gha` reads and writes that cache, `gha-read` only reads
+# it, and unset — every workstation — builds exactly as before. A cache hit is a layer built from
+# the same instruction on the same digest-pinned base; a miss builds it; a failed export is
+# ignored rather than failing a build that succeeded.
+build=("$runtime" build)
+load=()
+base_cache=()
+case "${ONO_ACCEPTANCE_LAYER_CACHE:-}" in
+  "") ;;
+  gha | gha-read)
+    # buildx's container driver keeps what it builds in its own store unless told to load it.
+    build=("$runtime" buildx build)
+    load=(--load)
+    base_cache=(--cache-from "type=gha,scope=ono-acceptance-filesystems-base")
+    if [[ "$ONO_ACCEPTANCE_LAYER_CACHE" == gha ]]; then
+      base_cache+=(--cache-to "type=gha,mode=max,scope=ono-acceptance-filesystems-base,ignore-error=true")
+    fi
+    ;;
+  *)
+    echo "acceptance: ONO_ACCEPTANCE_LAYER_CACHE is \`$ONO_ACCEPTANCE_LAYER_CACHE\`; it is \`gha\`, \`gha-read\` or unset" >&2
+    exit 1 ;;
+esac
+
 if [[ $NO_BUILD -eq 0 ]]; then
   # The filesystem stage's packages need nothing from the builder, and on a CI runner they are a
   # download of three minutes or more from the Ubuntu archive. So `filesystems-base` is built in
@@ -184,11 +209,12 @@ if [[ $NO_BUILD -eq 0 ]]; then
   base_log=""
   if [[ $fs_wanted -eq 1 ]]; then
     base_log="$(mktemp)"
-    "$runtime" build --file docker/Dockerfile --target filesystems-base . >"$base_log" 2>&1 &
+    "${build[@]}" --file docker/Dockerfile --target filesystems-base "${base_cache[@]}" . \
+      >"$base_log" 2>&1 &
     base_pid=$!
   fi
   printf '\n\033[1m== building %s with %s\033[0m\n' "$IMAGE" "$runtime"
-  if ! build_log="$("$runtime" build --file docker/Dockerfile --tag "$IMAGE" . 2>&1)"; then
+  if ! build_log="$("${build[@]}" --file docker/Dockerfile --tag "$IMAGE" "${load[@]}" . 2>&1)"; then
     echo "$build_log" >&2
     echo "acceptance: the image did not build" >&2
     if [[ -n "$base_pid" ]]; then
@@ -210,8 +236,8 @@ fi
 
 if [[ $fs_wanted -eq 1 ]]; then
   printf '\n\033[1m== building %s with %s\033[0m\n' "$FS_IMAGE" "$runtime"
-  if ! build_log="$("$runtime" build --file docker/Dockerfile --target runtime-filesystems \
-      --tag "$FS_IMAGE" . 2>&1)"; then
+  if ! build_log="$("${build[@]}" --file docker/Dockerfile --target runtime-filesystems \
+      --tag "$FS_IMAGE" "${load[@]}" . 2>&1)"; then
     echo "$build_log" >&2
     echo "acceptance: the filesystem image did not build" >&2
     exit 1

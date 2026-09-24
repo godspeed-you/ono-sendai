@@ -139,6 +139,17 @@ jobs:
       groups: ${{ steps.groups.outputs.groups }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # The filesystem stage's packages come from the Ubuntu archive, three minutes or more of
+      # this job on every run (issue #139). buildx's GitHub Actions cache backend keeps that layer
+      # between runs, and it needs a builder of the container driver and the Actions cache
+      # service's token in the environment of the step that builds (ADR-0903). The builder comes
+      # first so the cache mounts below are handed to it.
+      - name: set up a builder that can export its layer cache
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+      - name: hand the Actions cache service to the build
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
       # The image keeps cargo's registry and target directory in BuildKit cache mounts, and a
       # fresh runner has none, so every run compiled every dependency again — eight of the
       # suite's twenty-two minutes. These two steps carry the mounts from one run to the next.
@@ -164,6 +175,10 @@ jobs:
           utility-image: ghcr.io/containerd/busybox:1.36@sha256:7b3ccabffc97de872a30dfd234fd972a66d247c8cfc69b0550f276481852627c
           skip-extraction: ${{ steps.cargo-cache.outputs.cache-hit }}
       - name: build the images
+        env:
+          # Every branch reads the layer cache; only `main` and `implementation` write it, as with
+          # the gate's caches, so a side branch spends none of the 10 GB budget.
+          ONO_ACCEPTANCE_LAYER_CACHE: ${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/implementation') && 'gha' || 'gha-read' }}
         run: scripts/acceptance.sh --build-only
       - name: pack them
         run: |

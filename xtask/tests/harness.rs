@@ -413,3 +413,118 @@ fn should_document_a_sub_branch_form_git_can_create_and_ci_runs_on() {
          {branches:?}"
     );
 }
+
+// --- #139: the filesystem stage's packages come from a layer cache in CI -----------------------
+
+#[test]
+fn should_read_and_write_the_filesystem_stage_through_the_layer_cache_only_when_asked() {
+    // Issue #139: on every CI run the acceptance image job downloaded the filesystem stage's
+    // packages from the Ubuntu archive again, three minutes or more of the job. buildx's GitHub
+    // Actions cache backend keeps that layer between runs. What this pins is the contract the
+    // workflow relies on: the cache is used only when asked for, a run that may not write only
+    // reads, a failed export never fails the build, and an image built by buildx's container
+    // driver is loaded where `docker save` and the cases can find it.
+    let checkout = checkout("ono-sendai");
+    let build_lines = |layer_cache: Option<&str>| -> Vec<String> {
+        let log = checkout
+            .root
+            .with_file_name(format!("{}.log", layer_cache.unwrap_or("none")));
+        let mut command = checkout.command(&["--build-only"], &log);
+        if let Some(mode) = layer_cache {
+            command.env("ONO_ACCEPTANCE_LAYER_CACHE", mode);
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "--build-only with ONO_ACCEPTANCE_LAYER_CACHE={layer_cache:?} failed:\n{}",
+            text(&output)
+        );
+        logged(&log)
+            .into_iter()
+            .filter(|line| line.contains("build "))
+            .collect()
+    };
+    let base = |lines: &[String]| -> String {
+        lines
+            .iter()
+            .find(|line| line.contains("--target filesystems-base"))
+            .cloned()
+            .unwrap_or_else(|| panic!("no build of the filesystem stage's packages: {lines:?}"))
+    };
+
+    // Unasked, nothing changes: a workstation's runtime may not have buildx at all.
+    let plain = build_lines(None);
+    assert!(
+        plain.iter().all(|line| !line.contains("--cache")
+            && !line.contains("--load")
+            && line.starts_with("build ")),
+        "a run nobody asked to use a layer cache used one: {plain:#?}"
+    );
+
+    // Asked to read and write.
+    let written = build_lines(Some("gha"));
+    let stage = base(&written);
+    assert!(
+        stage.contains("--cache-from type=gha,scope=ono-acceptance-filesystems-base")
+            && stage.contains("--cache-to type=gha,")
+            && stage.contains("scope=ono-acceptance-filesystems-base")
+            && stage.contains("ignore-error=true"),
+        "the filesystem stage is not read from and written to its own cache scope, or a failed \
+         export would fail the build: {stage}"
+    );
+    for line in written.iter().filter(|line| line.contains("--tag ")) {
+        assert!(
+            line.starts_with("buildx build") && line.contains("--load"),
+            "an image built through buildx is not loaded into the image store, so neither \
+             `docker save` nor a case can find it: {line}"
+        );
+    }
+
+    // Asked only to read, as a branch that does not own the cache budget is.
+    let read = build_lines(Some("gha-read"));
+    let stage = base(&read);
+    assert!(
+        stage.contains("--cache-from type=gha,scope=ono-acceptance-filesystems-base")
+            && !stage.contains("--cache-to"),
+        "a read-only layer cache wrote to the cache: {stage}"
+    );
+
+    // And CI asks for it: every branch reads, `main` and `implementation` write, the builder is
+    // one that can export a cache, and it is set up before the cargo cache mounts are handed to
+    // it, so the mounts land in the builder that builds.
+    let workflow = support::read(".github/workflows/ci.yml");
+    let job = support::workflow_job(&workflow, "acceptance-image");
+    assert!(
+        job.contains("ONO_ACCEPTANCE_LAYER_CACHE:")
+            && job.contains("'gha'")
+            && job.contains("'gha-read'"),
+        "the acceptance image job does not use the layer cache (issue #139):\n{job}"
+    );
+    let builder = job
+        .find("docker/setup-buildx-action@")
+        .expect("the job sets up a builder that can export a layer cache");
+    let mounts = job
+        .find("buildkit-cache-dance@")
+        .expect("the job still hands its cargo caches to the build");
+    assert!(
+        builder < mounts,
+        "the cargo cache mounts are handed to a builder the build does not use:\n{job}"
+    );
+    assert!(
+        job.contains("crazy-max/ghaction-github-runtime@"),
+        "the build step has no Actions cache token, so the gha backend cannot reach the cache"
+    );
+
+    // And a mode it does not know is refused rather than ignored.
+    let log = checkout.root.with_file_name("unknown.log");
+    let output = checkout
+        .command(&["--build-only"], &log)
+        .env("ONO_ACCEPTANCE_LAYER_CACHE", "registry")
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success() && text(&output).contains("ONO_ACCEPTANCE_LAYER_CACHE"),
+        "an unknown layer-cache mode was accepted:\n{}",
+        text(&output)
+    );
+}
