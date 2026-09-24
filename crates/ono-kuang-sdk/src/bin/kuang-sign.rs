@@ -197,6 +197,10 @@ fn pack(words: &[&str]) -> Result<(), KuangError> {
         .map_err(|error| failed(format!("cannot write {}: {error}", out.display())))?;
     let mut archive = tar::Builder::new(file);
     archive.mode(tar::HeaderMode::Deterministic);
+    // `tar` writes a file with holes as a GNU sparse entry by default, and the host unpacks
+    // regular files only (K11A §7): a program `cp` had copied packed into an archive nothing
+    // could install.
+    archive.sparse(false);
     // The artifact plus whichever signatures the package carries: a signature is not one of the
     // files it covers, and a fetched package without it would install under local-development
     // semantics rather than as the signed release it is. Which names those are is decided beside

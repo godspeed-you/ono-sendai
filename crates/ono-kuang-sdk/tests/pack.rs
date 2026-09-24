@@ -113,3 +113,42 @@ fn should_carry_no_signature_for_a_package_that_was_never_signed() {
         "an unsigned package packs as exactly its artifact"
     );
 }
+
+#[test]
+fn should_pack_a_sparse_file_as_the_regular_file_a_host_unpacks() {
+    // A program copied with `cp` or produced by a linker can have holes. The host unpacks regular
+    // files only (K11A §7), so the archive must carry the bytes rather than a sparse map.
+    use std::io::{Seek, SeekFrom, Write};
+    let home = tempfile::tempdir().expect("a working directory");
+    let directory = home.path().join("sparse");
+    package(&directory, &[]);
+    let mut runtime = std::fs::File::create(directory.join("runtime/plugin")).expect("the runtime");
+    runtime.write_all(b"head").expect("the head");
+    runtime
+        .seek(SeekFrom::Start(1 << 20))
+        .expect("a hole of a mebibyte");
+    runtime.write_all(b"tail").expect("the tail");
+    drop(runtime);
+    let expected = std::fs::read(directory.join("runtime/plugin")).expect("the runtime reads");
+
+    let out = home.path().join("out.kuang");
+    packed(&directory, &out);
+    let mut archive = tar::Archive::new(std::fs::File::open(&out).expect("the archive"));
+    for entry in archive.entries().expect("the archive reads") {
+        let mut entry = entry.expect("an entry");
+        let name = entry.path().expect("its path").display().to_string();
+        assert_eq!(
+            entry.header().entry_type(),
+            tar::EntryType::Regular,
+            "{name} is packed as a regular file, the only kind a host unpacks"
+        );
+        if name == "runtime/plugin" {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut bytes).expect("the payload");
+            assert_eq!(
+                bytes, expected,
+                "the payload travels byte for byte, holes included"
+            );
+        }
+    }
+}
