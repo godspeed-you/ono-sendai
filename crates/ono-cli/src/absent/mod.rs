@@ -25,7 +25,7 @@ use std::sync::{Arc, OnceLock};
 
 use ono_command::{CommandContract, CommandRegistry, Elevation};
 use ono_core::ErrorCode;
-use ono_parser::{Stage, StageHead};
+use ono_parser::{Argument, Stage, StageHead};
 use ono_pipeline::ValueStream;
 use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Selector};
 use ono_value::{ErrorValue, Schema, Value};
@@ -226,6 +226,20 @@ pub fn carries_setting(key: &str) -> bool {
     tier_of_setting(key).is_none_or(Tier::is_built)
 }
 
+/// The tier an option of a command belongs to, when a build can leave it out while the command
+/// stays (ADR-0923).
+///
+/// `--at` evaluates any command at a past instant, which is the temporal tier's (v0.5 §4.5);
+/// `get config --profile` expands the change tier's protection profile (v0.6 Appendix H).
+#[must_use]
+pub fn tier_of_option(contract: &CommandContract, option: &str) -> Option<Tier> {
+    match (contract.id(), option) {
+        (_, "at") => Some(Tier::Temporal),
+        ("ono.config.get", "profile") => Some(Tier::Change),
+        _ => None,
+    }
+}
+
 /// The command registry this build advertises and runs: the embedded contracts, without the
 /// commands of any tier this build leaves out.
 ///
@@ -239,7 +253,11 @@ pub fn registry() -> Result<&'static CommandRegistry, ErrorValue> {
         return Ok(embedded);
     }
     Ok(NARROWED.get_or_init(|| {
-        embedded.retaining(|contract| tier_of(contract).is_none_or(Tier::is_built))
+        embedded
+            .retaining(|contract| tier_of(contract).is_none_or(Tier::is_built))
+            .retaining_options(|contract, option| {
+                tier_of_option(contract, option.name()).is_none_or(Tier::is_built)
+            })
     }))
 }
 
@@ -273,8 +291,18 @@ pub fn claims(stage: &Stage) -> Option<ErrorValue> {
     }
     let embedded = CommandRegistry::embedded().ok()?;
     let resolved = embedded.resolve(&name.name, &stage.arguments).ok()?;
-    let tier = absent(tier_of(resolved.contract)?)?;
-    Some(not_in_build(&resolved.contract.spelling(), tier))
+    if let Some(tier) = tier_of(resolved.contract).and_then(absent) {
+        return Some(not_in_build(&resolved.contract.spelling(), tier));
+    }
+    // An option of a compiled-out tier on a command that stays: refused by its own name rather
+    // than as an option the command does not have (ADR-0923).
+    resolved.arguments.iter().find_map(|argument| {
+        let Argument::Option(option) = argument else {
+            return None;
+        };
+        let tier = absent(tier_of_option(resolved.contract, &option.name)?)?;
+        Some(not_in_build(&format!("--{}", option.name), tier))
+    })
 }
 
 /// The refusal for a `help` or `explain` topic that names a command this build leaves out.

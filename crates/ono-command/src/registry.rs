@@ -15,8 +15,8 @@ use ono_parser::Argument;
 use ono_value::ErrorValue;
 
 use crate::contract::{
-    CapabilitySpec, CommandContract, RawCapabilityFile, RawFamily, RawTargetFile, RawVerbFile,
-    Stability, TargetSpec, VerbSpec,
+    CapabilitySpec, CommandContract, ParameterSpec, RawCapabilityFile, RawFamily, RawTargetFile,
+    RawVerbFile, Stability, TargetSpec, VerbSpec,
 };
 use crate::suggest::closest;
 
@@ -291,6 +291,29 @@ impl CommandRegistry {
             targets,
             capabilities: self.capabilities.clone(),
         }
+    }
+
+    /// This registry with only the options `keep` accepts, on every command.
+    ///
+    /// A tier a build leaves out can own an option of a command that stays — the temporal tier's
+    /// `--at` on `get process` — and a registry that still declared it would have `help` and
+    /// completion offer what the build refuses (#127, ADR-0923). No command is removed.
+    #[must_use]
+    pub fn retaining_options(
+        &self,
+        keep: impl Fn(&CommandContract, &ParameterSpec) -> bool,
+    ) -> Self {
+        let mut narrowed = self.clone();
+        for command in &mut narrowed.commands {
+            let kept: Vec<ParameterSpec> = command
+                .options()
+                .iter()
+                .filter(|option| keep(command, option))
+                .cloned()
+                .collect();
+            command.set_options(kept);
+        }
+        narrowed
     }
 
     /// Every command, in the order the contract files declare them.

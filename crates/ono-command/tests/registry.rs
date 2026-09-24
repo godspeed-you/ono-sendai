@@ -344,3 +344,27 @@ fn should_answer_for_retained_commands_only_when_narrowed() {
             .count()
     );
 }
+
+/// A tier left out of a build may own an option of a command that stays — `--at` is the temporal
+/// tier's on `get process` — and the narrowed registry must not declare it either, or `help` and
+/// completion would offer what the build refuses (#127, ADR-0923).
+#[test]
+fn should_drop_the_options_a_build_does_not_carry_when_narrowed() {
+    let full = CommandRegistry::embedded().expect("the embedded registry");
+    let declares = |registry: &CommandRegistry, option: &str| {
+        registry
+            .find("get", Some("process"))
+            .expect("`get process`")
+            .options()
+            .iter()
+            .any(|spec| spec.name() == option)
+    };
+    assert!(declares(full, "at"), "the full registry declares `--at`");
+    let narrowed = full.retaining_options(|_, option| option.name() != "at");
+    assert!(!declares(&narrowed, "at"), "the narrowed one does not");
+    assert!(
+        declares(&narrowed, "tree"),
+        "the options the build carries stay"
+    );
+    assert_eq!(narrowed.len(), full.len(), "no command is removed");
+}

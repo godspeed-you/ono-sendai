@@ -329,3 +329,51 @@ fn should_resolve_the_function_namespace_as_the_full_build_does() {
         background.output()
     );
 }
+
+#[test]
+fn should_neither_show_nor_complete_an_option_of_a_compiled_out_tier() {
+    // `--at` is the temporal tier's and `--profile` on `get config` the change tier's; the
+    // commands stay in the core build, their options do not (#127, ADR-0911 §5, ADR-0923).
+    let home = ono_testkit::scratch();
+    let help = script(&home, "help get process");
+    help.assert_success();
+    assert!(help.stdout().contains("--tree"), "{}", help.stdout());
+    assert!(
+        !help.stdout().contains("--at"),
+        "`help get process` does not offer `--at`: {}",
+        help.stdout()
+    );
+    let config = script(&home, "help get config");
+    config.assert_success();
+    assert!(
+        !config.stdout().contains("--profile"),
+        "{}",
+        config.stdout()
+    );
+
+    let registry = ono_cli::eval::native::registry().expect("the core registry");
+    let line = "get process --";
+    let offered: Vec<String> = ono_command::complete(
+        registry,
+        &ono_command::StageContext::from_line(line, line.len()),
+        None,
+    )
+    .iter()
+    .map(|candidate| candidate.text().to_owned())
+    .collect();
+    assert!(offered.iter().any(|text| text == "--tree"), "{offered:?}");
+    assert!(
+        !offered.iter().any(|text| text == "--at"),
+        "completion does not offer `--at`: {offered:?}"
+    );
+
+    for source in ["get process --at -1h", "get config --profile"] {
+        let run = script(&home, source);
+        assert_eq!(run.status().code(), 126, "`{source}`: {}", run.output());
+        assert!(
+            run.stderr().contains("Ono-Sendai-E0104"),
+            "`{source}` refuses as not in this build: {}",
+            run.stderr()
+        );
+    }
+}

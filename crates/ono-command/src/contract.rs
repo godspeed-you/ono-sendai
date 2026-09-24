@@ -881,6 +881,11 @@ impl CommandContract {
         &self.options
     }
 
+    /// Replaces the options, for a registry narrowed to what a build carries.
+    pub(crate) fn set_options(&mut self, options: Vec<ParameterSpec>) {
+        self.options = options;
+    }
+
     /// A selector by name.
     #[must_use]
     pub fn selector(&self, name: &str) -> Option<&ParameterSpec> {
