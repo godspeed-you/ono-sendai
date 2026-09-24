@@ -230,15 +230,28 @@ fn repository_with_budget(budget: u64) -> ono_testkit::Scratch {
 
 /// Writes a release binary of `bytes` bytes at `relative`, with the dep-info file cargo writes
 /// beside it naming one source, and dates the source ten minutes before or after the binary.
+///
+/// An `ono` is the build its triple ships (ADR-0868): the full shell names a crate only the full
+/// build links — the KUANG/11 supervisor — and the core build on the musl triple names none.
 fn built_binary(repo: &ono_testkit::Scratch, relative: &str, bytes: u64, source_is_newer: bool) {
     let source = repo.write("crates/ono-cli/src/main.rs", "fn main() {}\n");
     let binary = repo.path().join(relative);
     std::fs::create_dir_all(binary.parent().expect("a directory")).expect("the directory");
     let file = std::fs::File::create(&binary).expect("the binary");
     file.set_len(bytes).expect("the binary's size");
+    let mut inputs = source.display().to_string();
+    if relative.ends_with("/ono") && !relative.contains("musl") {
+        let full_only = repo.write("crates/ono-kuang-supervisor/src/lib.rs", "//! full\n");
+        std::fs::File::options()
+            .write(true)
+            .open(&full_only)
+            .and_then(|file| file.set_modified(SystemTime::now() - Duration::from_secs(3600)))
+            .expect("the full-only source's mtime");
+        inputs = format!("{inputs} {}", full_only.display());
+    }
     repo.write(
         format!("{relative}.d"),
-        format!("{}: {}\n", binary.display(), source.display()),
+        format!("{}: {inputs}\n", binary.display()),
     );
     let now = SystemTime::now();
     let (binary_time, source_time) = if source_is_newer {
@@ -322,7 +335,8 @@ fn should_date_a_binary_built_in_a_container_against_the_sources_under_this_chec
         repo.write(
             format!("{relative}.d"),
             "/project/target/x86_64-unknown-linux-gnu/release/ono: \
-             /project/crates/ono-cli/src/main.rs\n",
+             /project/crates/ono-cli/src/main.rs \
+             /project/crates/ono-kuang-supervisor/src/lib.rs\n",
         );
         let found = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
         assert_eq!(
@@ -445,6 +459,84 @@ fn should_hold_the_core_build_to_its_own_budget_beside_the_full_one() {
         binary_size::recorded(repo.path(), "ono").get("x86_64-unknown-linux-musl"),
         Some(&7_063_744),
         "the core figure is recorded under its triple"
+    );
+}
+
+#[test]
+fn should_not_measure_a_core_build_left_where_the_full_shell_goes() {
+    // `cargo build --release -p ono-cli --no-default-features --features core` without
+    // `--target` writes `target/release/ono`, where the full shell of the host lands. Its size is
+    // the core build's; recorded as the full shell's it would halve the figure the budget holds.
+    let repo = repository_with_budget(30_000_000);
+    built_binary(&repo, "target/release/ono", 7_000_000, false);
+    let dependency = repo.path().join("target/release/ono.d");
+    let listing = std::fs::read_to_string(&dependency).expect("the dep-info");
+    let core_only: String = listing
+        .split_whitespace()
+        .filter(|input| !input.contains("ono-kuang-supervisor"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    std::fs::write(&dependency, format!("{core_only}\n")).expect("the dep-info");
+
+    let found = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
+    assert!(
+        matches!(found.as_slice(), [Found::Unmeasured { reason, .. }] if reason.contains("core")),
+        "a core build on a full triple is not the shipped shell: {found:?}"
+    );
+    binary_size::record(repo.path(), &found).expect("nothing to record");
+    assert!(binary_size::recorded(repo.path(), "ono").is_empty());
+}
+
+#[test]
+fn should_not_measure_a_full_build_on_the_core_triple() {
+    let repo = repository_with_budget(30_000_000);
+    let relative = "target/x86_64-unknown-linux-musl/release/ono";
+    built_binary(&repo, relative, 7_000_000, false);
+    let full_only = repo.path().join("crates/ono-kuang-supervisor/src/lib.rs");
+    std::fs::create_dir_all(full_only.parent().expect("a directory")).expect("the directory");
+    std::fs::write(&full_only, "//! full\n").expect("the source");
+    std::fs::File::options()
+        .write(true)
+        .open(&full_only)
+        .and_then(|file| file.set_modified(SystemTime::now() - Duration::from_secs(3600)))
+        .expect("the mtime");
+    let dependency = repo.path().join(format!("{relative}.d"));
+    let listing = std::fs::read_to_string(&dependency).expect("the dep-info");
+    std::fs::write(
+        &dependency,
+        format!("{} {}\n", listing.trim_end(), full_only.display()),
+    )
+    .expect("the dep-info");
+
+    let found = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
+    assert!(
+        matches!(found.as_slice(), [Found::Unmeasured { reason, .. }] if reason.contains("core")),
+        "the musl triple is the core build's, and a full build there is not it: {found:?}"
+    );
+}
+
+#[test]
+fn should_not_measure_a_binary_older_than_a_member_manifest() {
+    // A feature list lives in a member's Cargo.toml, and editing it rebuilds the binary without
+    // touching a source the dep-info names.
+    let repo = repository_with_budget(30_000_000);
+    built_binary(&repo, "target/release/ono", 22_000_000, false);
+    let manifest = repo.write(
+        "crates/ono-cli/Cargo.toml",
+        "[package]\nname = \"ono-cli\"\n",
+    );
+    // Dated explicitly: the filesystem's clock is coarser than `SystemTime::now`, so a file
+    // written a moment after the binary can carry an earlier mtime.
+    std::fs::File::options()
+        .write(true)
+        .open(&manifest)
+        .and_then(|file| file.set_modified(SystemTime::now() + Duration::from_secs(60)))
+        .expect("the manifest's mtime");
+
+    let found = binary_size::find(repo.path(), &repo.path().join("target"), HOST);
+    assert!(
+        matches!(found.as_slice(), [Found::Unmeasured { reason, .. }] if reason.contains("Cargo.toml")),
+        "a manifest edited after the build makes the binary stale: {found:?}"
     );
 }
 

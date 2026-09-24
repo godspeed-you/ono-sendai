@@ -1,6 +1,6 @@
 # ADR-0864: The binary size is recorded from a release build and required where one is built
 
-- Status: accepted
+- Status: accepted — corrected by ADR-0868
 - Date: 2026-09-24
 - Spec refs: v0.4.1 §35.3, §44.2, §50.1–§50.3, §52.1, §52.2, Appendix H; ADR-0451, ADR-0563,
   ADR-0853, ADR-0863, ADR-0870, ADR-0910, ADR-0912

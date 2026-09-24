@@ -54,6 +54,16 @@ const RELEASE_TRIPLES: &[&str] = &[
 /// its size is not the size of anything a release ships.
 const COMPILER_CRATE: &str = "cranelift-codegen-";
 
+/// The source directory, in an `ono`'s dep-info, of a crate only the full build links.
+///
+/// The core build (#127, ADR-0910) leaves out the KUANG/11 tier and with it this workspace crate,
+/// so its presence tells the two builds of one binary apart (ADR-0868). The core build is the
+/// musl triple's (ADR-0912), the full shell every other triple's.
+const FULL_ONLY_CRATE: &str = "/crates/ono-kuang-supervisor/";
+
+/// The triple the core build ships on.
+const CORE_TRIPLE: &str = "x86_64-unknown-linux-musl";
+
 /// What a release binary found under the target directory turned out to be.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Found {
@@ -308,11 +318,47 @@ fn date(root: &Path, binary: &str, triple: &str, path: PathBuf) -> Found {
                 .to_owned(),
         );
     }
+    if binary == "ono" {
+        let full = inputs
+            .iter()
+            .any(|input| input.to_string_lossy().contains(FULL_ONLY_CRATE));
+        if triple == CORE_TRIPLE && full {
+            return unmeasured(format!(
+                "it is the full shell, and {CORE_TRIPLE} is the core build's triple (ADR-0912). \
+                 `scripts/build-core.sh` builds the core binary that ships there"
+            ));
+        }
+        if triple != CORE_TRIPLE && !full {
+            return unmeasured(
+                "it is the core build (it links no KUANG/11 supervisor), and this triple ships \
+                 the full shell (ADR-0868): a core build without `--target` lands where the \
+                 full one does. `cargo build --release --locked -p ono-cli` builds the full shell"
+                    .to_owned(),
+            );
+        }
+    }
+    // The manifests are inputs as well: the release profile and the dependency graph live in the
+    // root ones, and a member's feature list in its own, and editing either rebuilds the binary
+    // without touching a source the dep-info names.
     for file in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"] {
         let input = root.join(file);
         if input.is_file() {
             inputs.push(input);
         }
+    }
+    for members in ["crates", "xtask", "fuzz"] {
+        let directory = root.join(members);
+        let manifests: Vec<PathBuf> = if members == "crates" {
+            std::fs::read_dir(&directory)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|entry| entry.path().join("Cargo.toml"))
+                .collect()
+        } else {
+            vec![directory.join("Cargo.toml")]
+        };
+        inputs.extend(manifests.into_iter().filter(|manifest| manifest.is_file()));
     }
     for input in inputs {
         let input = under_checkout(root, input);
