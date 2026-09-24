@@ -15,7 +15,7 @@
 )]
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use ono_testkit::SkipReason;
@@ -32,14 +32,15 @@ const SHIPPED_BINARIES: [&str; 2] = ["ono", "kuang-compile"];
 /// A private target directory holding a stand-in for each shipped binary under `release/` — this
 /// test executable, which is a genuine ELF binary so dependency scanners see what they see on the
 /// real thing.
-fn staged_target_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ono-packaging-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("release")).expect("a scratch target directory");
+fn staged_target_dir() -> ono_testkit::Scratch {
+    // A testkit scratch rather than the system temporary directory: it lives under cargo's target
+    // directory and is removed when dropped, a failing test's included (CONTRIBUTING.md).
+    let dir = scratch();
+    std::fs::create_dir_all(dir.path().join("release")).expect("a scratch target directory");
     for binary in SHIPPED_BINARIES {
         std::fs::copy(
             std::env::current_exe().expect("the test executable has a path"),
-            dir.join("release").join(binary),
+            dir.path().join("release").join(binary),
         )
         .expect("the stand-in binary is staged");
     }
@@ -73,7 +74,8 @@ fn debian_arch() -> &'static str {
 
 #[test]
 fn should_build_a_deb_that_installs_ono_as_a_registered_login_shell() {
-    let target_dir = staged_target_dir("deb");
+    let staged = staged_target_dir();
+    let target_dir = staged.path().to_path_buf();
     let deb = target_dir.join("ono.deb");
     let deb_path = deb.to_str().expect("a UTF-8 scratch path");
     run(
@@ -172,12 +174,12 @@ fn should_build_a_deb_that_installs_ono_as_a_registered_login_shell() {
         !control.join("conffiles").exists(),
         "the package owns no configuration files"
     );
-    let _ = std::fs::remove_dir_all(&target_dir);
 }
 
 #[test]
 fn should_build_an_rpm_that_installs_ono_as_a_registered_login_shell() {
-    let target_dir = staged_target_dir("rpm");
+    let staged = staged_target_dir();
+    let target_dir = staged.path().to_path_buf();
     let rpm_path = target_dir.join("ono.rpm");
     run(
         "cargo",
@@ -237,7 +239,6 @@ fn should_build_an_rpm_that_installs_ono_as_a_registered_login_shell() {
         post_uninstall.contains("/etc/shells") && post_uninstall.contains("/usr/bin/ono"),
         "removing unregisters /usr/bin/ono from /etc/shells:\n{post_uninstall}"
     );
-    let _ = std::fs::remove_dir_all(&target_dir);
 }
 
 /// Just enough of the RPM file format (lead, signature header, header) to read the tags a
@@ -623,7 +624,8 @@ fn should_normalize_file_ownership_and_mode_in_every_produced_package() {
     // machine that packaged it (spec §46.4).
     const EPOCH: &str = "1700000000";
 
-    let target_dir = staged_target_dir("determinism");
+    let staged = staged_target_dir();
+    let target_dir = staged.path().to_path_buf();
     let deb = target_dir.join("ono.deb");
     let deb_path = deb.to_str().expect("a UTF-8 scratch path");
     let mut command = Command::new("cargo");
@@ -740,8 +742,6 @@ fn should_normalize_file_ownership_and_mode_in_every_produced_package() {
             "{path} does not carry the declared 755"
         );
     }
-
-    let _ = std::fs::remove_dir_all(&target_dir);
 }
 
 // --- two clean builds of one commit (spec §46.1, §46.5, §46.6, ADR-0527) ------------------------
@@ -770,10 +770,11 @@ fn should_produce_identical_hashes_for_two_clean_builds_of_one_commit() {
     // environments that disagree about locale, timezone, umask, temporary directory and build
     // directory — and the same bytes out of both.
     let work = scratch();
-    let staged = staged_target_dir("rebuild");
+    let staged = staged_target_dir();
     let (identical, report) = rebuild_check(&[
         "--binary",
         staged
+            .path()
             .join("release/ono")
             .to_str()
             .expect("a UTF-8 scratch path"),
@@ -819,7 +820,6 @@ fn should_produce_identical_hashes_for_two_clean_builds_of_one_commit() {
         digests(&right),
         "the two builds disagree about at least one artifact"
     );
-    let _ = std::fs::remove_dir_all(&staged);
 }
 
 #[test]
@@ -829,10 +829,11 @@ fn should_name_the_differing_archive_member_when_a_seeded_difference_is_introduc
     // two files differ" leaves the maintainer where they started, so the difference is seeded
     // deliberately and the diagnostic has to name the member it landed in.
     let work = scratch();
-    let staged = staged_target_dir("seeded");
+    let staged = staged_target_dir();
     let (identical, report) = rebuild_check(&[
         "--binary",
         staged
+            .path()
             .join("release/ono")
             .to_str()
             .expect("a UTF-8 scratch path"),
@@ -880,7 +881,6 @@ fn should_name_the_differing_archive_member_when_a_seeded_difference_is_introduc
         ),
         "the diagnostic does not name the artifact that differs:\n{report}"
     );
-    let _ = std::fs::remove_dir_all(&staged);
 }
 
 /// The offset of the first byte of a `.deb`'s `data.tar.*` member.
