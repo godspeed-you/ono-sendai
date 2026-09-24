@@ -41,7 +41,9 @@ fn should_name_the_branch_in_the_prompt_when_the_working_directory_is_a_checkout
 fn should_leave_the_branch_out_of_the_prompt_when_there_is_no_checkout() {
     // "Information that is not actionable SHOULD not be shown permanently" (spec §4.2): outside
     // a checkout there is no branch, and a segment saying so would be noise on every line.
-    let directory = scratch();
+    // `scratch()` lives in cargo's target directory inside this checkout, so the test owns a
+    // directory outside every checkout instead.
+    let directory = ono_testkit::scratch_outside_any_checkout();
 
     let mut shell = interactive_shell_in(&directory);
     let seen = read_until(&mut shell, "> ", Duration::from_secs(10))

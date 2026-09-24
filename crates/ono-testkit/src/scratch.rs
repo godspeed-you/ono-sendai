@@ -70,6 +70,41 @@ pub fn scratch() -> Scratch {
     Scratch { path }
 }
 
+/// Creates a scratch directory that belongs to no source-control checkout.
+///
+/// [`scratch`] lives in cargo's target directory, which is usually inside the checkout under
+/// test, so a test whose premise is "no checkout here" has to own a directory outside it. This
+/// one is made in the system temporary directory, which the test only needs to be empty of
+/// `.git`, and it refuses to hand out a directory that has a checkout above it anyway.
+///
+/// # Panics
+///
+/// Panics if the directory cannot be created, or if a `.git` sits in one of its ancestors — the
+/// premise the caller relies on would then be false.
+#[must_use]
+pub fn scratch_outside_any_checkout() -> Scratch {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "ono-test-unversioned-{}-{unique}",
+        std::process::id()
+    ));
+    if let Some(checkout) = path
+        .ancestors()
+        .find(|directory| directory.join(".git").exists())
+    {
+        panic!(
+            "{} is inside the checkout at {}; a test that needs a directory outside every \
+             checkout cannot have one here",
+            path.display(),
+            checkout.display()
+        );
+    }
+    std::fs::create_dir_all(&path)
+        .unwrap_or_else(|error| panic!("cannot create {}: {error}", path.display()));
+    Scratch { path }
+}
+
 impl Scratch {
     /// The directory's path.
     #[must_use]

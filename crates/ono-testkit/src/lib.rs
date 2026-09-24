@@ -36,7 +36,10 @@ pub use profile::{
 pub use reap::{OwnedChild, OwnedTree, kill_tree};
 pub use rng::Rng;
 pub use run::{Run, RunError, Shell, under_load};
-pub use scratch::{Scratch, executable_copy, executable_script, scratch, while_text_file_busy};
+pub use scratch::{
+    Scratch, executable_copy, executable_script, scratch, scratch_outside_any_checkout,
+    while_text_file_busy,
+};
 pub use skip::{
     DescriptorShortfall, SkipReason, TestPrerequisite, require, require_descriptors, skipped,
 };
