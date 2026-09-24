@@ -515,13 +515,16 @@ built.
 ```text
 crates=48
 workspace_members=50
-tests=7053
+tests=7070
 tests_that_can_skip=130
 expected_ci_skips=15
 acceptance_cases=262
-adrs=609
+adrs=613
 command_contract_files=15
 commands=222
+stripped_bytes.kuang-compile.x86_64-unknown-linux-gnu=7305360
+stripped_bytes.ono.x86_64-unknown-linux-gnu=22136640
+stripped_bytes.ono.x86_64-unknown-linux-musl=7063744
 ```
 
 <!-- end generated -->
