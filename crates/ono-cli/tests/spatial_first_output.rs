@@ -260,6 +260,14 @@ fn should_hold_every_time_to_first_result_target_of_the_reference_targets_table(
 // The margin is 1.5x rather than the twenty ADR-0431 had at Profile M: the refusal arrives after
 // the observation, and observing a hundred thousand sockets is 20 s in a debug build. What is
 // left is the observation itself, which §34.4 is about and which this branch reports as owed.
+//
+// That margin is a statement about a machine, so the test names the machine (issue #166,
+// ADR-0881). The budget is measured on one whose one-minute load stays within
+// `REFERENCE_LOAD_PER_PROCESSOR` times its processors while the map runs — 0 of 12 workspace
+// runs failed at load 9–13 on eight processors, 4 of 6 at 22–26. An answer inside the budget
+// passes on any machine. Silence on a machine inside that envelope fails. Silence on a busier
+// one is not a verdict about the shell, and the test says so with SKIP(fixture_not_applicable),
+// naming the load it saw — the budget itself is never stretched.
 #[test]
 fn should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture() {
     // Profile L's ten thousand processes belong to the container; its hundred thousand listening
@@ -281,24 +289,95 @@ fn should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixtur
     };
     let home = scratch();
 
+    let before = Machine::now();
     let run = run_bounded(
         &home,
         "enter network; map --live --json | take 1 | to json",
         WATCHDOG,
     );
+    let machine = before.busiest(Machine::now());
 
+    if run.silent() && !machine.within_reference() {
+        skipped(
+            SkipReason::FixtureNotApplicable,
+            &format!(
+                "Profile L's live map produced nothing within {WATCHDOG:?} on {machine}, above \
+                 the {REFERENCE_LOAD_PER_PROCESSOR}x its processors that the budget is measured \
+                 on (ADR-0881)"
+            ),
+        );
+        return;
+    }
     assert!(
         !run.silent(),
         "{}",
         format!(
             "v0.4.1 §33.3 at Profile L: {} listening sockets placed, and the live map produced \
-             neither output nor progress inside {:?}. §33.2 allows the answer to be progress \
-             metadata or a deterministic cost message rather than the picture itself. {}",
+             neither output nor progress inside {:?} on {machine}, a machine inside the \
+             envelope the budget is measured on. §33.2 allows the answer to be progress metadata \
+             or a deterministic cost message rather than the picture itself. {}",
             sockets.len(),
             WATCHDOG,
             run.report()
         )
     );
+}
+
+/// The load per processor the Profile L budget is measured at (ADR-0881).
+///
+/// 1.5, because that is where the evidence stops: 12 of 12 workspace runs answered at a load of
+/// 9–13 on eight processors (up to 1.6 per processor), and 4 of 6 did not at 22–26 (2.75 and
+/// more). A machine above it can still answer, and then the test passes.
+const REFERENCE_LOAD_PER_PROCESSOR: f64 = 1.5;
+
+/// How loaded the machine a run was measured on was.
+#[derive(Debug, Clone, Copy)]
+struct Machine {
+    /// The one-minute load average.
+    load: f64,
+    /// How many processors it is spread across.
+    processors: usize,
+}
+
+impl Machine {
+    /// The machine as `/proc/loadavg` describes it now; a kernel that reports no load reads as
+    /// an idle machine.
+    fn now() -> Self {
+        let load = std::fs::read_to_string("/proc/loadavg")
+            .ok()
+            .and_then(|text| text.split_whitespace().next()?.parse().ok())
+            .unwrap_or(0.0);
+        let processors =
+            std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+        Self { load, processors }
+    }
+
+    /// The busier of two readings, so a run is judged by the worst the machine was while it ran:
+    /// the one-minute average lags, and either end alone can miss a load that arrived or left
+    /// during the run.
+    fn busiest(self, other: Self) -> Self {
+        if other.load > self.load { other } else { self }
+    }
+
+    /// Whether the machine was inside the envelope the budget is measured on.
+    fn within_reference(self) -> bool {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a processor count is far below the precision an f64 carries"
+        )]
+        let processors = self.processors as f64;
+        self.load <= REFERENCE_LOAD_PER_PROCESSOR * processors
+    }
+}
+
+impl std::fmt::Display for Machine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "a machine at a load average of {:.2} on {} processors",
+            self.load, self.processors
+        )
+    }
 }
 
 /// The measurements `cargo xtask perf` recorded on the reference environment (§32.4, §37.2).
