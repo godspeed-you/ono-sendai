@@ -12,15 +12,46 @@ pub struct Scratch {
     path: PathBuf,
 }
 
-/// Where scratch directories are made.
+/// Where scratch directories are made: `<cargo target directory>/tmp`, which is the directory
+/// cargo names `CARGO_TARGET_TMPDIR` for an integration test.
 ///
-/// `CARGO_TARGET_TMPDIR` when cargo provides it, which puts test scratch inside `target/` on the
-/// same filesystem as the build. The system temporary directory is often a small shared tmpfs,
-/// and a suite that writes there competes with everything else on the machine for it — this
-/// project has already had one runaway file fill it and take every tool on the box down, which is
-/// a failure that has nothing to do with the code under test.
+/// The system temporary directory is often a small shared tmpfs, and a suite that writes there
+/// competes with everything else on the machine for it — this project has already had one runaway
+/// file fill it and take every tool on the box down, which is a failure that has nothing to do with
+/// the code under test. A tmpfs is also the volatile filesystem v0.6 §15's file recovery provider
+/// refuses to protect, so a suite scratching there tests the refusal rather than the feature.
+///
+/// `CARGO_TARGET_TMPDIR` is a *compile-time* variable of the test being built, and this helper is
+/// compiled into `ono-testkit`, where cargo never sets it. So the directory is found at run time
+/// instead, from the running test binary: cargo puts every test executable under its target
+/// directory, and marks that directory with a `CACHEDIR.TAG` (issue #143, ADR-0890).
 fn scratch_root() -> PathBuf {
-    std::env::var_os("CARGO_TARGET_TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from)
+    if let Some(directory) = std::env::var_os("CARGO_TARGET_TMPDIR") {
+        return PathBuf::from(directory);
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|executable| cargo_target_of(&executable))
+        .unwrap_or_else(|| {
+            // Not a binary cargo built in place — a doc test, which rustdoc links in a temporary
+            // directory of its own. The workspace's own target directory is still the right
+            // filesystem, and it is where `ono_binary` looks too.
+            let mut workspace_target = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            workspace_target.pop();
+            workspace_target.pop();
+            workspace_target.push("target");
+            workspace_target
+        })
+        .join("tmp")
+}
+
+/// The cargo target directory `executable` was built into, if it was built into one.
+fn cargo_target_of(executable: &Path) -> Option<PathBuf> {
+    executable
+        .ancestors()
+        .skip(1)
+        .find(|directory| directory.join("CACHEDIR.TAG").is_file())
+        .map(Path::to_path_buf)
 }
 
 /// Creates a scratch directory unique to this process and call.

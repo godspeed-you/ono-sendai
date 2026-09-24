@@ -237,3 +237,22 @@ fn walk(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     }
     found
 }
+
+#[test]
+fn should_give_a_suite_scratch_space_on_the_filesystem_cargo_builds_into() {
+    // Issue #143: the shared scratch helper is compiled into `ono-testkit`, where cargo's
+    // `CARGO_TARGET_TMPDIR` is never set, so it used to fall back to the system temporary
+    // directory. On a host whose `/tmp` is a tmpfs that is exactly the volatile filesystem §15's
+    // provider refuses to protect (Appendix B.7), and a suite scratching there would test the
+    // refusal instead of the feature. The directory cargo names for *this* suite is the answer.
+    let scratch = ono_testkit::scratch();
+    let expected = std::fs::canonicalize(env!("CARGO_TARGET_TMPDIR"))
+        .expect("cargo's scratch directory for this suite exists");
+    let actual = std::fs::canonicalize(scratch.path()).expect("the scratch directory exists");
+    assert!(
+        actual.starts_with(&expected),
+        "a testkit scratch directory lives in cargo's target tmp directory {}, not in {}",
+        expected.display(),
+        actual.display()
+    );
+}
