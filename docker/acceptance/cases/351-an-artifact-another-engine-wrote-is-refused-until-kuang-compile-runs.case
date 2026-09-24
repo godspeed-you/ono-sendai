@@ -1,0 +1,76 @@
+# Issue #126, ADR-0870: an artifact is per engine version, and a shell upgrade that changes the
+# engine leaves every artifact on the machine stale. The upgrade is simulated the only way one
+# engine can: by rewriting the version the engine stamped into the artifact's engine section.
+# The shell refuses the stale artifact — structured, naming the step, never mapping it — and
+# `kuang-compile` run again replaces it.
+case: a stale compiled artifact is refused, naming kuang-compile, and compiling again fixes it
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  export XDG_CACHE_HOME="$home/cache"
+  component="$home/plugins/dev.example.echo/runtime/echo.wasm"
+  mkdir -p "$home/plugins/dev.example.echo/runtime"
+  cp /usr/local/lib/kuang-example-plugin.wasm "$component"
+  printf '\000\005\004note' >> "$component"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: wasm-component
+    entry: runtime/echo.wasm
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - clock.read
+  network:
+    outbound: none
+  MANIFEST
+  artifact=$(kuang-compile "$component")
+  ono -c 'load plugin dev.example.echo; echo:emit --count 2 | to json' | grep -q '^\[1,2\]$' && echo "compiled-component-streams"
+
+  echo "== another engine version's artifact =="
+  # The engine section opens with a zero, the version's length and digits, then the target
+  # triple; the first digit of the version is overwritten.
+  stamp=$(LC_ALL=C grep -obUaP '\x00[\x01-\x03][0-9]+[\x10-\x40](x86_64|aarch64)-' "$artifact" | head -1 | cut -d: -f1)
+  test -n "$stamp" && echo "engine-stamp-found"
+  printf 'X' | dd of="$artifact" bs=1 seek=$((stamp + 2)) conv=notrunc status=none
+  ono -c 'load plugin dev.example.echo' 2>&1 | tee "$home/refusal"
+  grep -q 'Ono-Sendai-K11105 load.component_not_compiled' "$home/refusal" && echo "stale-refused"
+  grep -q 'incompatible version' "$home/refusal" && echo "engine-reason-shown"
+  grep -qF "run \`kuang-compile $component\`" "$home/refusal" && echo "names-the-compile-step"
+  ono -c 'try { load plugin dev.example.echo } catch e { $e | to json }' | grep -q '"reason":"incompatible"' && echo "reason-incompatible"
+
+  echo "== compiling again =="
+  kuang-compile "$component" >/dev/null
+  ono -c 'load plugin dev.example.echo; echo:emit --count 2 | to json' | grep -q '^\[1,2\]$' && echo "recompiled-component-streams"
+
+  echo "== a damaged artifact is refused, not mapped =="
+  head -c 4096 "$artifact" > "$home/truncated" && cat "$home/truncated" > "$artifact"
+  ono -c 'try { load plugin dev.example.echo } catch e { $e | to json }' | grep -q '"reason":"incompatible"' && echo "truncated-refused"
+  ono -c 'echo still-here' | grep -q '^still-here$' && echo "shell-unharmed"
+exit: 0
+stdout-contains: compiled-component-streams
+stdout-contains: engine-stamp-found
+stdout-contains: stale-refused
+stdout-contains: engine-reason-shown
+stdout-contains: names-the-compile-step
+stdout-contains: reason-incompatible
+stdout-contains: recompiled-component-streams
+stdout-contains: truncated-refused
+stdout-contains: shell-unharmed

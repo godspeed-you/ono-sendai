@@ -15,6 +15,11 @@ ono-value.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
+# `kuang-compile` compiles a component with the engine configuration the shell loads it under,
+# which is the supervisor's; a plugin built for WebAssembly has no use for either (ADR-0870).
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+ono-kuang-supervisor = { workspace = true, features = ["compiler"] }
+
 [dev-dependencies]
 bytes.workspace = true
 # The change vocabulary the conformance suite composes risk with: §19.2's maximum is

@@ -469,6 +469,8 @@ error_codes! {
         "The package's dependencies form a cycle.";
     KuangLoadRuntimeUnavailable => "Ono-Sendai-K11104", "load.runtime_unavailable", Provider,
         "The isolation tier the package declares is not available on this host.";
+    KuangLoadComponentNotCompiled => "Ono-Sendai-K11105", "load.component_not_compiled", Resolution,
+        "The package's component has no compiled artifact this shell's engine can load.";
     KuangRuntimeTrap => "Ono-Sendai-K11201", "runtime.trap", External,
         "The plugin instance trapped or crashed.";
     KuangRuntimeTimeout => "Ono-Sendai-K11202", "runtime.timeout", Timeout,

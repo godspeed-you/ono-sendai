@@ -938,6 +938,14 @@ fn transact(
     crate::kuang_host::copy_tree(&package.directory, &staging).inspect_err(|_| {
         let _ = std::fs::remove_dir_all(&staging);
     })?;
+    // A component runs from the artifact the SDK's tool compiles, and the shell has no compiler
+    // of its own (ADR-0870): the bytes about to be placed are compiled before they are, so the
+    // package is loadable the moment it is installed. The artifact goes to the operator's
+    // store, named by the component's digest; one left there by a transaction that later fails
+    // is inert, because it is only ever found by the bytes it was compiled from.
+    compile_component(&staging, &package.manifest).inspect_err(|_| {
+        let _ = std::fs::remove_dir_all(&staging);
+    })?;
 
     let mut undo = Undo::default();
     let outcome = (|| -> Result<(), ErrorValue> {
@@ -1047,6 +1055,64 @@ fn transact(
             Err(error)
         }
     }
+}
+
+/// Runs `kuang-compile` on the component of a `wasm-component` package laid out at `directory`;
+/// a package of any other tier needs nothing compiled.
+///
+/// The tool is the one beside the running `ono`, as a distribution or an image installs the two,
+/// and otherwise the first on `PATH`.
+fn compile_component(
+    directory: &Path,
+    manifest: &ono_kuang_protocol::Manifest,
+) -> Result<(), ErrorValue> {
+    use ono_kuang_supervisor::compiled::COMPILE_TOOL;
+    let Some(runtime) = manifest
+        .runtime
+        .as_ref()
+        .filter(|runtime| runtime.kind == RuntimeKind::WasmComponent)
+    else {
+        return Ok(());
+    };
+    let Some(entry) = runtime.entry.as_ref() else {
+        return Ok(());
+    };
+    let id = &manifest.package.id;
+    let refuse = |why: String| {
+        ErrorValue::new(ErrorCode::KuangLoadComponentNotCompiled, why).with_help(format!(
+            "a component is compiled once, by the SDK's `{COMPILE_TOOL}`, when it is installed \
+             (ADR-0870); install `{COMPILE_TOOL}` beside `ono` or on `PATH`, then install again"
+        ))
+    };
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|directory| directory.join(COMPILE_TOOL)));
+    let tool = beside.filter(|path| path.is_file()).or_else(|| {
+        std::env::var_os("PATH").and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|directory| directory.join(COMPILE_TOOL))
+                .find(|path| path.is_file())
+        })
+    });
+    let Some(tool) = tool else {
+        return Err(refuse(format!(
+            "`{id}` is a component and `{COMPILE_TOOL}`, which compiles it, is neither beside \
+             `ono` nor on `PATH`"
+        )));
+    };
+    let output = std::process::Command::new(&tool)
+        .arg(directory.join(entry))
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|error| refuse(format!("`{}` could not be run: {error}", tool.display())))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(refuse(format!(
+        "`{id}` is a component and `{}` could not compile it: {}",
+        tool.display(),
+        String::from_utf8_lossy(&output.stderr).trim()
+    )))
 }
 
 fn capitalise(text: &str) -> String {

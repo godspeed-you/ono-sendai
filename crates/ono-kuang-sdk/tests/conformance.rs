@@ -2281,48 +2281,6 @@ async fn should_say_a_domain_is_unavailable_when_the_host_serves_none() {
 
 // --- the wasm-component tier (spec §31.10; ADR-0569) ------------------------------------------
 
-/// The example package built as a component, or the reason it could not be.
-///
-/// The build goes to its own target directory, so it never contends for the lock of the one
-/// this test runs from, and it is cached there between runs.
-fn component_fixture() -> Result<std::path::PathBuf, String> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(std::path::Path::parent)
-        .expect("the workspace root")
-        .to_path_buf();
-    let installed = std::process::Command::new("rustup")
-        .args(["target", "list", "--installed"])
-        .output()
-        .map_err(|error| format!("rustup could not be run: {error}"))?;
-    if !String::from_utf8_lossy(&installed.stdout).contains("wasm32-wasip2") {
-        return Err("the wasm32-wasip2 target is not installed".to_owned());
-    }
-    let target_dir = root.join("target").join("wasm-fixture");
-    let status = std::process::Command::new("cargo")
-        .args([
-            "build",
-            "--quiet",
-            "--target",
-            "wasm32-wasip2",
-            "-p",
-            "ono-kuang-sdk",
-            "--bin",
-            "kuang-example-plugin",
-        ])
-        .env("CARGO_TARGET_DIR", &target_dir)
-        .current_dir(&root)
-        .status()
-        .map_err(|error| format!("cargo could not be run: {error}"))?;
-    if !status.success() {
-        return Err(format!("the component build ended with {status}"));
-    }
-    Ok(target_dir
-        .join("wasm32-wasip2")
-        .join("debug")
-        .join("kuang-example-plugin.wasm"))
-}
-
 fn component_manifest() -> String {
     manifest()
         .replace("kind: native-process", "kind: wasm-component")
@@ -2331,14 +2289,17 @@ fn component_manifest() -> String {
 
 /// Loads the component under the test host, or announces the skip and returns `None`.
 async fn component_host(grants: &[Capability]) -> Option<ono_kuang_supervisor::LoadedPlugin> {
-    let component = match component_fixture() {
+    let component = match support::component_fixture() {
         Ok(path) => path,
         Err(why) => {
             ono_testkit::skipped(ono_testkit::SkipReason::ExternalToolUnavailable, &why);
             return None;
         }
     };
-    let mut host = TestHost::new(component, &component_manifest());
+    // Compiled the way an installed package is: by the SDK's tool, into a store the host reads
+    // (ADR-0870). The store may go once the load has mapped the artifact.
+    let (_scratch, store) = support::compile_into_scratch(&component);
+    let mut host = TestHost::new(component, &component_manifest()).compiled(store);
     for capability in grants {
         host = host.grant(*capability);
     }

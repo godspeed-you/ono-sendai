@@ -90,8 +90,9 @@ transitions:
       - "An `ExecutionPlan`-like install plan was produced and confirmed (spec §31.9). Non-interactive confirmation is an explicit flag; its absence is not consent."
     effects:
       - "Artifacts are placed under the package's version directory. No install script runs, because the format has none (spec §31.6)."
+      - "A `wasm-component` package's component is compiled by the SDK's `kuang-compile` into the operator's artifact store before the package is placed, so it loads without a compiler in the shell; a component the tool refuses refuses the install (ADR-0870). The compiler reads the component and runs none of it."
       - "No capability is granted. The plan shows what was requested; installing grants nothing (spec §31.9)."
-    errors: [package.invalid, package.incompatible, package.integrity_failed, package.signature_invalid, publisher.untrusted]
+    errors: [package.invalid, package.incompatible, package.integrity_failed, package.signature_invalid, publisher.untrusted, load.component_not_compiled]
 
   - id: enable
     from: installed
@@ -125,13 +126,14 @@ transitions:
       - "Every `required` capability is granted, in the scope declared or narrower (spec §31.17)."
       - "Every dependency resolves and the dependency graph is acyclic (spec §31.30)."
       - "The runtime tier of `runtime.kind` is available on this host."
+      - "A `wasm-component` package's component has a compiled artifact this engine loads, written by `kuang-compile` into a store only its owner or root can write (ADR-0870)."
       - "Integrity is re-verified against the recorded hash, so a file changed since install does not load."
     effects:
       - "A runtime instance is created in the tier `runtime.kind` names (spec §31.10)."
       - "The negotiated contract of spec §31.63 is computed and delivered by `lifecycle.init`: host API version, granted and denied capabilities, and effective limits."
       - "Contributions are registered in the real registries, each recording its origin (spec §31.64)."
       - "A denied *optional* capability puts the package in `degraded`, not in a failure (spec §31.8, §31.17)."
-    errors: [load.capability_denied, load.dependency_missing, load.dependency_cycle, load.runtime_unavailable]
+    errors: [load.capability_denied, load.dependency_missing, load.dependency_cycle, load.runtime_unavailable, load.component_not_compiled]
 
   - id: unload
     from: loaded

@@ -1,0 +1,52 @@
+# Issue #126, ADR-0870: the documented flow never meets the refusal. `install plugin` runs the
+# SDK's `kuang-compile` from beside `ono` on the component it is about to place, so a component
+# package loads the moment it is installed — and the artifact is in the installing user's store,
+# not in the package.
+case: installing a component package compiles it, so it loads straight away
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  export XDG_CACHE_HOME="$home/cache"
+  source="$home/source/dev.example.echo"
+  mkdir -p "$source/runtime"
+  cp /usr/local/lib/kuang-example-plugin.wasm "$source/runtime/echo.wasm"
+  printf '\000\005\004note' >> "$source/runtime/echo.wasm"
+  cat > "$source/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: wasm-component
+    entry: runtime/echo.wasm
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - clock.read
+  network:
+    outbound: none
+  MANIFEST
+
+  ono -c "install plugin path:$source --confirm | select status | to json" | grep -q '"status":"success"' && echo "installed"
+  ls "$home/cache/ono/kuang/compiled" | grep -q '^[0-9a-f]\{64\}\.cwasm$' && echo "artifact-in-the-users-store"
+  find "$home/plugins" -name '*.cwasm' | grep -q . || echo "nothing-compiled-in-the-package"
+  ono -c 'load plugin dev.example.echo; echo:emit --count 3 | to json' | grep -q '^\[1,2,3\]$' && echo "installed-component-streams"
+exit: 0
+stdout-contains: installed
+stdout-contains: artifact-in-the-users-store
+stdout-contains: nothing-compiled-in-the-package
+stdout-contains: installed-component-streams

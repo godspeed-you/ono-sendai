@@ -666,11 +666,28 @@ fn should_load_a_component_package_under_the_wasm_tier_and_run_its_command() {
         home.path().join("dev.example.echo/runtime/echo.wasm"),
     )
     .expect("the component");
-
-    let run = ono(
-        &home,
-        "load plugin dev.example.echo; echo:emit --count 2 | to json; get plugin | select execution_tier | to json",
+    // Placed by hand, so compiled by hand: the shell maps what the SDK's tool wrote into the
+    // operator's store and compiles nothing itself (ADR-0870).
+    let cache = ono_testkit::scratch();
+    let compiled = std::process::Command::new(sibling("kuang-compile"))
+        .arg(home.path().join("dev.example.echo/runtime/echo.wasm"))
+        .env("XDG_CACHE_HOME", cache.path())
+        .output()
+        .expect("kuang-compile runs");
+    assert!(
+        compiled.status.success(),
+        "kuang-compile compiles the component: {}",
+        String::from_utf8_lossy(&compiled.stderr)
     );
+
+    let run = Shell::new()
+        .args([
+            "-c",
+            "load plugin dev.example.echo; echo:emit --count 2 | to json; get plugin | select execution_tier | to json",
+        ])
+        .env("ONO_PLUGIN_PATH", home.path().display().to_string())
+        .env("XDG_CACHE_HOME", cache.path().display().to_string())
+        .run();
     run.assert_success();
     let shown = run.stdout();
     assert!(
@@ -681,6 +698,174 @@ fn should_load_a_component_package_under_the_wasm_tier_and_run_its_command() {
     assert!(
         shown.contains("\"execution_tier\":\"wasm\""),
         "the tier a component runs in is named (v0.4.1 §17.2); stdout {shown:?}"
+    );
+}
+
+// --- a component is compiled once, outside the shell (ADR-0870) -------------------------------
+
+/// A binary the workspace builds beside `ono`.
+fn sibling(name: &str) -> std::path::PathBuf {
+    ono_testkit::ono_binary()
+        .parent()
+        .expect("the target directory")
+        .join(name)
+}
+
+/// The smallest component there is: the magic, the component-model version and layer.
+const EMPTY_COMPONENT: &[u8] = b"\0asm\x0d\x00\x01\x00";
+
+/// The example package's manifest, declaring a component at `runtime/echo.wasm`.
+fn component_manifest() -> String {
+    r#"
+format: kuang-package/1
+package:
+  id: dev.example.echo
+  name: echo
+  version: 0.1.0
+  description: Emits what it is asked to emit.
+  publisher: dev.example
+  license: MIT
+compatibility:
+  kuang_api: ">=11.1 <12"
+  ono_language: ">=0.2"
+  platforms: [linux-amd64, linux-arm64]
+runtime:
+  kind: wasm-component
+  entry: runtime/echo.wasm
+  memory_max: 64MiB
+  cpu_budget: interactive
+  startup: lazy
+roles: [provider]
+capabilities:
+  optional:
+    - clock.read
+network:
+  outbound: none
+"#
+    .to_owned()
+}
+
+#[test]
+fn should_refuse_to_load_a_component_nobody_compiled_and_name_the_compile_step() {
+    // The shell links no compiler: a component placed by hand, with no artifact in any store, is
+    // refused before anything runs, and the refusal is the command that fixes it.
+    let root = ono_testkit::scratch();
+    root.write(
+        "plugins/dev.example.echo/manifest.yaml",
+        component_manifest(),
+    );
+    let component = root.write(
+        "plugins/dev.example.echo/runtime/echo.wasm",
+        EMPTY_COMPONENT,
+    );
+    let run = support::ono_with_plugins(
+        &root,
+        "try { load plugin dev.example.echo } catch e { $e | to json }",
+    );
+    run.assert_success();
+    let shown = run.stdout();
+    assert!(
+        shown.contains("Ono-Sendai-K11105") && shown.contains("load.component_not_compiled"),
+        "ADR-0870: the refusal is `load.component_not_compiled`, got {shown:?}"
+    );
+    assert!(
+        shown.contains(&format!("kuang-compile {}", component.display())),
+        "the refusal names the exact compile step, got {shown:?}"
+    );
+    assert!(
+        shown.contains(r#""reason":"missing""#),
+        "and says why in its metadata, got {shown:?}"
+    );
+}
+
+#[test]
+fn should_compile_a_component_package_when_it_is_installed_so_that_it_loads() {
+    // The documented flow never meets the refusal: `install plugin` runs the compile step, into
+    // the operator's store, before the package is placed (ADR-0870).
+    let component = match component_fixture() {
+        Ok(path) => path,
+        Err(why) => {
+            ono_testkit::skipped(ono_testkit::SkipReason::ExternalToolUnavailable, &why);
+            return;
+        }
+    };
+    let root = ono_testkit::scratch();
+    root.write(
+        "source/dev.example.echo/manifest.yaml",
+        component_manifest(),
+    );
+    let entry = root
+        .path()
+        .join("source/dev.example.echo/runtime/echo.wasm");
+    std::fs::create_dir_all(entry.parent().expect("a parent")).expect("the runtime directory");
+    std::fs::copy(&component, &entry).expect("the component");
+
+    let run = support::ono_with_plugins(
+        &root,
+        &format!(
+            "install plugin path:{} --confirm | select status | to json; \
+             load plugin dev.example.echo; echo:emit --count 2 | to json",
+            root.path().join("source/dev.example.echo").display()
+        ),
+    );
+    run.assert_success();
+    assert!(
+        run.stdout().contains("[1,2]"),
+        "the installed component loads and streams, got {:?}",
+        run.output()
+    );
+    let store = root.path().join("cache/ono/kuang/compiled");
+    let artifacts = std::fs::read_dir(&store)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "cwasm"))
+                .count()
+        })
+        .unwrap_or(0);
+    assert_eq!(
+        artifacts,
+        1,
+        "install wrote the artifact into the operator's store, {}",
+        store.display()
+    );
+}
+
+#[test]
+fn should_not_install_a_component_package_whose_component_cannot_be_compiled() {
+    // The compile step is part of the install transaction: a component the tool refuses leaves
+    // nothing installed, rather than a package that can never load (ADR-0870, ADR-0602).
+    let root = ono_testkit::scratch();
+    root.write(
+        "source/dev.example.echo/manifest.yaml",
+        component_manifest(),
+    );
+    root.write(
+        "source/dev.example.echo/runtime/echo.wasm",
+        b"this is not webassembly",
+    );
+    let run = support::ono_with_plugins(
+        &root,
+        &format!(
+            "install plugin path:{} --confirm",
+            root.path().join("source/dev.example.echo").display()
+        ),
+    );
+    assert!(
+        !run.status().is_success(),
+        "the install fails: {:?}",
+        run.output()
+    );
+    let said = run.stderr();
+    assert!(
+        said.contains("Ono-Sendai-K11105")
+            && said.contains("load.component_not_compiled")
+            && said.contains("kuang-compile"),
+        "the install is refused with the compile step's own reason, got {said:?}"
+    );
+    assert!(
+        !root.exists("plugins/dev.example.echo"),
+        "and nothing is placed"
     );
 }
 

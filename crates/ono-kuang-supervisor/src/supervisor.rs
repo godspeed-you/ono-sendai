@@ -118,6 +118,10 @@ pub struct LoadConfig {
     /// a package's causal claim is capped at `asserted` until an operator names that package and
     /// that domain.
     pub authoritative: crate::temporal::AuthoritativeDomains,
+    /// Where a component's compiled artifact is looked for, in order (ADR-0870). The default is
+    /// the operator's store and then the system's, [`crate::compiled::stores`]; a native package
+    /// never reads it.
+    pub compiled: Vec<PathBuf>,
 }
 
 impl std::fmt::Debug for LoadConfig {
@@ -157,6 +161,7 @@ impl LoadConfig {
             views: Arc::new(crate::view::NoViews),
             consent: Arc::new(crate::consent::NoConsent),
             authoritative: crate::temporal::AuthoritativeDomains::none(),
+            compiled: crate::compiled::stores(),
         }
     }
 }
@@ -225,6 +230,7 @@ impl Supervisor {
             views,
             consent,
             authoritative,
+            compiled,
         } = config;
         manifest.check_host(HOST_API, &platform)?;
         // The human layer over the capabilities, read once here: which families are decided just
@@ -271,17 +277,19 @@ impl Supervisor {
                     return Err(refusal);
                 }
                 let (instance, host_in, host_out) =
-                    crate::wasm::WasmInstance::spawn(&program, sandbox.memory_max).map_err(
-                        |why| {
-                            KuangError::new(
+                    crate::wasm::WasmInstance::spawn(&program, &compiled, sandbox.memory_max)
+                        .map_err(|failure| match failure {
+                            crate::compiled::LoadFailure::NotCompiled(refusal) => {
+                                refusal.into_error(&manifest.package.id, &program)
+                            }
+                            crate::compiled::LoadFailure::Unreadable(why) => KuangError::new(
                                 KuangErrorCode::PluginConfinementFailed,
                                 format!(
                                     "`{}` could not be started as a component: {why}",
                                     manifest.package.id
                                 ),
-                            )
-                        },
-                    )?;
+                            ),
+                        })?;
                 tokio::spawn(read_frames(host_out, frame_limits, frame_tx));
                 (
                     Runtime::Wasm(instance),

@@ -66,7 +66,9 @@ ono-recovery-btrfs = { path = "crates/ono-recovery-btrfs", version = "0.6.1" }
 
 # Third-party. Choices and rationale: ADR-0005.
 async-trait = "0.1"
-wasmtime = { version = "47", default-features = false, features = ["runtime", "cranelift", "component-model", "async", "std", "parallel-compilation"] }
+# The runtime only: the shell maps components `kuang-compile` compiled and links no code generator.
+# `ono-kuang-supervisor`'s `compiler` feature adds Cranelift for the tool alone (ADR-0870).
+wasmtime = { version = "47", default-features = false, features = ["runtime", "component-model", "async", "std"] }
 wasmtime-wasi = { version = "47", default-features = false, features = ["p2"] }
 bytes = "1"
 crossterm = "0.29"

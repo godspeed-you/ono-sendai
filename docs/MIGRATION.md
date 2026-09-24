@@ -8,7 +8,7 @@ refusal you may now meet.
 Sections 1–5 are v0.4.1's, and they are v0.4.1 §63's five in its order: a hardening release that
 adds no language and changes no schema you can see, and changes what the shell refuses. Sections
 6–8 are the KUANG/11 installation, permission and acquisition layers. Section 9 is v0.5, the
-Temporal & Causal Systems Interface.
+Temporal & Causal Systems Interface. Section 10 is the KUANG/11 compiler leaving the shell.
 
 ## 1. Ordinary local use — nothing to do
 
@@ -277,6 +277,32 @@ or §35 and matching on what the shell emits:
   (ADR-0610). Match on names.
 - §35's `ono.evidence/1` is registered as **`ono.temporal-evidence/1`**, because v0.2 §31.24
   already holds `ono.evidence/1` for an unrelated record (ADR-0611).
+
+## 10. KUANG/11 components are compiled once, by `kuang-compile`
+
+*(spec §31.10, §31.36; issue #126; ADR-0870)*
+
+**One command per component you placed by hand, and one per component after a shell upgrade.**
+`ono` now carries the WebAssembly runtime and no compiler, which takes about a quarter off the
+binary. A `wasm-component` package still ships `runtime/component.wasm`; what runs is the engine's
+compiled form of it, written by the SDK's `kuang-compile` into `~/.cache/ono/kuang/compiled/`
+(or `$XDG_CACHE_HOME/ono/kuang/compiled/`), or by an administrator into
+`/usr/lib/ono-sendai/kuang-compiled/` with `--store`.
+
+- `install plugin` runs `kuang-compile` for you, from beside `ono` or from `PATH`. A component
+  package installed that way loads straight away. If the tool is not there, the install is refused
+  and names it; the distribution packages do not ship it yet.
+- A component copied into the plugin path by hand, and every component after a shell upgrade that
+  changes the engine, is refused with `load.component_not_compiled` (`Ono-Sendai-K11105`). The
+  message carries the exact command, for example
+  `kuang-compile ~/.config/ono/plugins/dev.example.echo/runtime/echo.wasm`, and the error's
+  `reason` says `missing` or `incompatible`. Running the command fixes both; running it twice
+  is harmless.
+- An artifact, or the directory holding it, that another user could write is refused as
+  `untrusted` and never loaded: what the shell maps is native code. `kuang-compile` creates
+  both owner-writable only, whatever your umask.
+
+Native-process packages are unaffected.
 
 ## What to read next
 

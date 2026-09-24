@@ -8,17 +8,19 @@
 //! a component that spins is preempted at every epoch so the host stays responsive, and is not
 //! stopped; the confinement table says so as `not_provided`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use tokio::io::DuplexStream;
-use wasmtime::component::{Component, Linker, ResourceTable};
+use wasmtime::component::{Linker, ResourceTable};
 use wasmtime::{Config, Engine, ResourceLimiter, Store};
 use wasmtime_wasi::cli::{AsyncStdinStream, AsyncStdoutStream};
 use wasmtime_wasi::p2::bindings::Command;
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+
+use crate::compiled::LoadFailure;
 
 /// How often the runtime is asked to yield, so one busy component cannot hold the thread.
 const EPOCH: Duration = Duration::from_millis(10);
@@ -94,9 +96,10 @@ impl ResourceLimiter for State {
     }
 }
 
-/// The one engine every component shares: compiled code is cached per engine, and its
-/// configuration is the tier's.
-fn engine() -> Result<&'static Engine, String> {
+/// The one engine every component shares, and the one `kuang-compile` compiles with: an artifact
+/// loads only into an engine configured as the one that wrote it, so there is one configuration
+/// (ADR-0870).
+pub(crate) fn engine() -> Result<&'static Engine, String> {
     static ENGINE: OnceLock<Result<Engine, String>> = OnceLock::new();
     ENGINE
         .get_or_init(|| {
@@ -133,27 +136,28 @@ pub struct WasmInstance {
 }
 
 impl WasmInstance {
-    /// Loads the component at `entry` and starts it, with its standard input and output as the
-    /// protocol streams: the host writes into the returned writer and reads from the returned
-    /// reader. Nothing else is given to it.
+    /// Loads the component at `entry` from its compiled artifact in the first of `stores` that
+    /// holds one this engine maps (ADR-0870), and starts it, with its standard input and output
+    /// as the protocol streams: the host writes into the returned writer and reads from the
+    /// returned reader. Nothing else is given to it.
     ///
     /// # Errors
     ///
-    /// The engine's, the file's or the linker's own reason when the component cannot be loaded.
+    /// [`LoadFailure::NotCompiled`] when no store holds an artifact this engine may map, and the
+    /// engine's, the file's or the linker's own reason otherwise.
     pub fn spawn(
         entry: &Path,
+        stores: &[PathBuf],
         memory_max: u64,
-    ) -> Result<(Self, DuplexStream, DuplexStream), String> {
-        let engine = engine()?;
-        let component = Component::from_file(engine, entry).map_err(|error| {
-            format!(
-                "`{}` is not a component this runtime can load: {error}",
-                entry.display()
-            )
-        })?;
+    ) -> Result<(Self, DuplexStream, DuplexStream), LoadFailure> {
+        let engine = engine().map_err(LoadFailure::Unreadable)?;
+        let component = crate::compiled::load(engine, entry, stores)?;
         let mut linker: Linker<State> = Linker::new(engine);
-        wasmtime_wasi::p2::add_to_linker_async(&mut linker)
-            .map_err(|error| format!("the WASI host functions could not be linked: {error}"))?;
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker).map_err(|error| {
+            LoadFailure::Unreadable(format!(
+                "the WASI host functions could not be linked: {error}"
+            ))
+        })?;
 
         // Host → guest: the host writes `host_in`, the guest reads its stdin from `guest_in`.
         let (host_in, guest_in) = tokio::io::duplex(PIPE);

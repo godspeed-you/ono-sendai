@@ -27,12 +27,20 @@ async-trait.workspace = true
 globset.workspace = true
 jiff.workspace = true
 libc.workspace = true
+nix = { workspace = true, features = ["user"] }
 serde.workspace = true
 serde_json.workspace = true
+# A compiled artifact is named by the digest of the component it came from (ADR-0870).
+sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 wasmtime.workspace = true
 wasmtime-wasi.workspace = true
+
+[features]
+# Cranelift, for `kuang-compile` and nothing else: the shell loads what the tool compiled, and a
+# build of `ono` alone never enables this (ADR-0870).
+compiler = ["wasmtime/cranelift", "wasmtime/parallel-compilation"]
 
 [dev-dependencies]
 ono-temporal-core.workspace = true

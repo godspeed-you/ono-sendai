@@ -1,0 +1,65 @@
+# Issue #126, ADR-0870: the shell carries the WebAssembly runtime and no compiler. A component
+# placed by hand that no store holds an artifact for — here the example component with one custom
+# section appended, the smallest change a package upgrade can make — is refused before anything
+# runs, with `load.component_not_compiled` and the exact command that compiles it. Running that
+# command, as the unprivileged user, writes the artifact into the user's own store, and the same
+# package then loads and streams.
+case: a component nobody compiled is refused, naming kuang-compile, and loads once it has run
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  export XDG_CACHE_HOME="$home/cache"
+  component="$home/plugins/dev.example.echo/runtime/echo.wasm"
+  mkdir -p "$home/plugins/dev.example.echo/runtime"
+  cp /usr/local/lib/kuang-example-plugin.wasm "$component"
+  printf '\000\005\004note' >> "$component"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: wasm-component
+    entry: runtime/echo.wasm
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - clock.read
+  network:
+    outbound: none
+  MANIFEST
+
+  echo "== the shell compiles nothing: it refuses, and names the step =="
+  ono -c 'load plugin dev.example.echo' 2>&1 | tee "$home/refusal"
+  grep -q 'Ono-Sendai-K11105 load.component_not_compiled' "$home/refusal" && echo "refused-not-compiled"
+  grep -qF "run \`kuang-compile $component\`" "$home/refusal" && echo "names-the-compile-step"
+  ono -c 'try { load plugin dev.example.echo } catch e { $e | to json }' | grep -q '"reason":"missing"' && echo "reason-missing"
+  ono -c 'load plugin dev.example.echo; echo:emit --count 3' 2>&1 | grep -q '^\[1,2,3\]$' || echo "nothing-ran"
+
+  echo "== the step fixes it =="
+  kuang-compile "$component" | tee "$home/compiled"
+  grep -q "^$home/cache/ono/kuang/compiled/[0-9a-f]\{64\}\.cwasm$" "$home/compiled" && echo "compiled-into-the-users-store"
+  ono -c 'load plugin dev.example.echo; echo:emit --count 3 | to json' | grep -q '^\[1,2,3\]$' && echo "component-streams-after-compile"
+  kuang-compile "$component" >/dev/null && ono -c 'load plugin dev.example.echo; echo:emit --count 1 | to json' | grep -q '^\[1\]$' && echo "compiling-again-is-harmless"
+exit: 0
+stdout-contains: refused-not-compiled
+stdout-contains: names-the-compile-step
+stdout-contains: reason-missing
+stdout-contains: nothing-ran
+stdout-contains: compiled-into-the-users-store
+stdout-contains: component-streams-after-compile
+stdout-contains: compiling-again-is-harmless

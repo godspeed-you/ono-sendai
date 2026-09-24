@@ -278,6 +278,7 @@ pub fn ono_with_plugins(home: &ono_testkit::Scratch, script: &str) -> ono_testki
         .env("HOME", root.join("home").display().to_string())
         .env("XDG_STATE_HOME", root.join("state").display().to_string())
         .env("XDG_CONFIG_HOME", root.join("config").display().to_string())
+        .env("XDG_CACHE_HOME", root.join("cache").display().to_string())
         .env(
             "ONO_CONFIG_DIR",
             root.join("config/ono").display().to_string(),

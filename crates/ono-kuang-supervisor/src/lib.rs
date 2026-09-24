@@ -25,6 +25,7 @@
 
 mod adapters;
 mod change;
+pub mod compiled;
 mod consent;
 mod context;
 mod host;

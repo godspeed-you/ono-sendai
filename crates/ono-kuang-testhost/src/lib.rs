@@ -41,6 +41,7 @@ pub struct TestHost {
     host: Option<std::sync::Arc<dyn ono_kuang_supervisor::HostServices>>,
     views: Option<std::sync::Arc<dyn ono_kuang_supervisor::ViewHost>>,
     consent: Option<std::sync::Arc<dyn ono_kuang_supervisor::ConsentSource>>,
+    compiled: Vec<PathBuf>,
 }
 
 impl std::fmt::Debug for TestHost {
@@ -74,7 +75,17 @@ impl TestHost {
             host: None,
             views: None,
             consent: None,
+            compiled: Vec::new(),
         }
+    }
+
+    /// The artifact store a component's compiled form is read from (ADR-0870). Without one, a
+    /// component finds no artifact and is refused: the test host never reads the operator's
+    /// cache or the system's store, so what loads is what the test compiled.
+    #[must_use]
+    pub fn compiled(mut self, store: impl Into<PathBuf>) -> Self {
+        self.compiled = vec![store.into()];
+        self
     }
 
     /// Who answers a just-in-time permission request (K11P §14, ADR-0603). Without one, nobody
@@ -205,6 +216,7 @@ impl TestHost {
         config.limits = self.limits;
         config.clock = HostClock::Fixed(VIRTUAL_NOW.to_owned());
         config.confinement = self.confinement;
+        config.compiled = self.compiled;
         if let Some(models) = self.models {
             config.models = models;
         }

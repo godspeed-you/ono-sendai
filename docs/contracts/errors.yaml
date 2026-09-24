@@ -1228,6 +1228,12 @@ errors:
     summary: The isolation tier the package declares is not available on this host.
     help: >-
       The package's `runtime.kind` names a tier this build or this policy does not offer. A native out-of-process package on a host that permits only isolated components is the common case, and it is a policy answer rather than a missing file.
+  - code: Ono-Sendai-K11105
+    name: load.component_not_compiled
+    kind: resolution
+    summary: The package's component has no compiled artifact this shell's engine can load.
+    help: >-
+      The shell carries the WebAssembly runtime and no compiler (ADR-0870): a component is compiled once, by `kuang-compile <component>`, which `install plugin` runs for you. This error means the artifact is missing — the package was placed by hand, or the component changed — or was written by another engine version or for another architecture, as after a shell upgrade, or cannot be trusted because someone else could write it. The metadata names the component, the reason and the exact command; running it fixes every reason but the last.
   - code: Ono-Sendai-K11201
     name: runtime.trap
     kind: external

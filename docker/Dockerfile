@@ -29,16 +29,23 @@ COPY docs/contracts ./docs/contracts
 # code. Stamping the workspace sources with the build's own clock is what makes the referee
 # grade what was copied. Only the workspace is stamped; the registry's sources keep their
 # mtimes, so dependencies stay cached and only `crates/` and `xtask/` are recompiled.
+#
+# `ono` is built on its own, and installed before anything else is built. Cargo unifies features
+# across the packages of one invocation, and `ono-kuang-sdk`'s `kuang-compile` enables wasmtime's
+# compiler: built together, the shell would link the Cranelift it deliberately goes without
+# (ADR-0870), and the image would prove nothing about the binary a release ships.
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/build/target,sharing=locked \
     find crates xtask fuzz docs/contracts Cargo.toml Cargo.lock -type f -exec touch {} + && \
-    cargo build --release --package ono-cli --package ono-kuang-sdk --package xtask --locked \
+    cargo build --release --package ono-cli --locked \
+    && install -m 0755 target/release/ono /usr/local/bin/ono \
+    && cargo build --release --package ono-kuang-sdk --package xtask --locked \
     && rustup target add wasm32-wasip2 \
     && cargo build --release --target wasm32-wasip2 --package ono-kuang-sdk --bin kuang-example-plugin --locked \
     && install -m 0644 target/wasm32-wasip2/release/kuang-example-plugin.wasm /usr/local/lib/kuang-example-plugin.wasm \
-    && install -m 0755 target/release/ono /usr/local/bin/ono \
     && install -m 0755 target/release/kuang-example-plugin /usr/local/bin/kuang-example-plugin \
     && install -m 0755 target/release/kuang-sign /usr/local/bin/kuang-sign \
+    && install -m 0755 target/release/kuang-compile /usr/local/bin/kuang-compile \
     && install -m 0755 target/release/xtask /usr/local/bin/ono-release-tool
 
 # v0.6 §63.8 and §63.9 (ADR-0846): the cases that build a disposable Btrfs filesystem or ZFS pool
@@ -84,6 +91,12 @@ COPY --from=builder /usr/local/bin/kuang-example-plugin /usr/local/bin/kuang-exa
 COPY --from=builder /usr/local/lib/kuang-example-plugin.wasm /usr/local/lib/kuang-example-plugin.wasm
 # The signing tool the SDK ships, so a case can be a package author (spec §31.36, ADR-0311).
 COPY --from=builder /usr/local/bin/kuang-sign /usr/local/bin/kuang-sign
+# The compiler the shell does without (ADR-0870): `install plugin` runs it beside `ono`, and the
+# example component is compiled once, here, into the system's artifact store — as a distribution
+# would — so a case that places the component by hand finds it compiled, and a user's own store
+# stays empty until a case writes to it.
+COPY --from=builder /usr/local/bin/kuang-compile /usr/local/bin/kuang-compile
+RUN kuang-compile --store /usr/lib/ono-sendai/kuang-compiled /usr/local/lib/kuang-example-plugin.wasm
 # The release tooling of §47, and the verification script a reader runs. Case 199 makes a release
 # out of the binary this image built and checks it the way a reader would — with no network, as
 # an unprivileged user, against real bytes (ADR-0530).

@@ -77,6 +77,8 @@ kuang_error_codes! {
         "The package's dependencies form a cycle.";
     LoadRuntimeUnavailable => "Ono-Sendai-K11104", "load.runtime_unavailable", Provider,
         "The isolation tier the package declares is not available on this host.";
+    LoadComponentNotCompiled => "Ono-Sendai-K11105", "load.component_not_compiled", Resolution,
+        "The package's component has no compiled artifact this shell's engine can load.";
     RuntimeTrap => "Ono-Sendai-K11201", "runtime.trap", External,
         "The plugin instance trapped or crashed.";
     RuntimeTimeout => "Ono-Sendai-K11202", "runtime.timeout", Timeout,
@@ -349,7 +351,11 @@ mod tests {
         // §31.79's families are closed: nothing here is renumbered, removed or re-pointed.
         // Codes this build adds beyond that proposal are counted apart from it, so the
         // specified list stays checkable as the closed thing it is.
-        let added = ["runtime.concurrency_limit", "contribution.refused"];
+        let added = [
+            "runtime.concurrency_limit",
+            "contribution.refused",
+            "load.component_not_compiled",
+        ];
         let inherited = KuangErrorCode::ALL
             .iter()
             .filter(|code| !code.name().starts_with("plugin."))
@@ -362,7 +368,9 @@ mod tests {
         // condition §31.79's proposal has no name for. ADR-0587 adds the second: a contribution
         // that declines on a rule of its own, which is neither host policy nor an unavailable
         // system nor an unimplemented operation, and had to borrow a code that claims one of the
-        // three.
+        // three. ADR-0870 adds the third: the shell no longer compiles a component, so a
+        // component without an artifact this engine loads is a condition of its own, and one
+        // whose remedy is a command rather than a policy or a missing package.
         for name in added {
             assert!(
                 KuangErrorCode::from_name(name).is_some(),
