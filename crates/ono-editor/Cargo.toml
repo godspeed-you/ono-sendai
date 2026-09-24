@@ -14,5 +14,13 @@ ono-render.workspace = true
 crossterm.workspace = true
 unicode-width.workspace = true
 
+[dev-dependencies]
+# `tests/terminal_events.rs` re-runs itself under a pty of its own (the precedent is
+# `ono-process/tests/terminal_control.rs`): `ono-process` allocates it, `nix` raises the resize
+# signal and asks the terminal, without reading it, whether a key is waiting.
+nix = { workspace = true, features = ["poll", "signal"] }
+ono-process.workspace = true
+ono-testkit.workspace = true
+
 [lints]
 workspace = true

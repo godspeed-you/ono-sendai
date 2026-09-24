@@ -99,10 +99,20 @@ pub enum TerminalEvent {
     Resize(usize, usize),
 }
 
+/// The shortest time the terminal is actually asked for.
+///
+/// The reader behind [`read_event_timeout`] waits on the terminal and the resize signal with
+/// `poll(2)` (ADR-0920), and it treats a zero timeout as "do not look" rather than "look, but do
+/// not wait": it returns before asking the terminal anything. A view that asks for a key without
+/// patience — the map while a provider is slow (ADR-0424) — means the second, so the least it
+/// asks for is one millisecond, the finest wait `poll(2)` knows.
+const SHORTEST_LOOK: std::time::Duration = std::time::Duration::from_millis(1);
+
 /// Waits up to `patience` for the terminal to report something usable.
 ///
 /// `Ok(None)` means the time ran out with nothing to report, which is how a live view gets to do
-/// its own work between key presses without a thread of its own.
+/// its own work between key presses without a thread of its own. A zero `patience` still looks:
+/// a key that is already waiting is handed over.
 ///
 /// # Errors
 ///
@@ -113,7 +123,9 @@ pub fn read_event_timeout(patience: std::time::Duration) -> io::Result<Option<Te
     }
     let deadline = std::time::Instant::now() + patience;
     loop {
-        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        let left = deadline
+            .saturating_duration_since(std::time::Instant::now())
+            .max(SHORTEST_LOOK);
         if !event::poll(left)? {
             return Ok(None);
         }

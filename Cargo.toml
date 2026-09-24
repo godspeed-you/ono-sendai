@@ -77,7 +77,10 @@ wasmtime-wasi = { version = "47", default-features = false, features = ["p2"] }
 # graph through wasmtime.
 target-lexicon = "0.13"
 bytes = "1"
-crossterm = "0.29"
+# `use-dev-tty`: the terminal is read with `poll(2)`, which is level-triggered. The default `mio`
+# reader drops the terminal's readiness when a resize is reported in the same wait, and the key
+# typed with it is never read (ADR-0920).
+crossterm = { version = "0.29", features = ["use-dev-tty"] }
 # The versioned binary payload of a persisted temporal event (spec v0.5 §31.4). CBOR keeps a
 # typed value compact beside the relational scalars the ledger indexes, and reads back a document
 # whose unknown fields survive a schema evolution instead of failing the row.

@@ -252,6 +252,9 @@ declared:
   - id: "crates/ono-graph/tests/relationships.rs::should_report_an_error_when_a_process_hides_its_file_descriptors"
     category: missing_privilege
     prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-editor/tests/terminal_events.rs::acts_as_the_terminal_reader_when_a_role_is_requested"
+    category: fixture_not_applicable
+    prerequisite: "the re-exec entry point is given its role in the environment by the test that drives it"
   - id: "crates/ono-process/tests/redirection.rs::should_report_permission_denied_when_the_target_cannot_be_opened"
     category: missing_privilege
     prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
@@ -456,6 +459,7 @@ canonical_ci:
     - "crates/ono-testkit/tests/harness.rs::should_offer_a_require_helper_that_records_an_unmet_prerequisite"
     # The re-exec entry point the PTY tests drive. `cargo test` runs it once with no role in the
     # environment, and that run has nothing to act as.
+    - "crates/ono-editor/tests/terminal_events.rs::acts_as_the_terminal_reader_when_a_role_is_requested"
     - "crates/ono-process/tests/terminal_control.rs::acts_as_the_shell_when_a_role_is_requested"
     # The v0.6 real-filesystem suites. The runner is unprivileged and `ONO_ZFS_TESTS` is unset, so
     # each announces its skip rather than passing silently; the deterministic suite that replays
