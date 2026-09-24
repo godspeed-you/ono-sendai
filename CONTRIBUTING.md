@@ -22,8 +22,15 @@ whole test suite, `cargo xtask spec-check` (contract-to-implementation drift, in
 checksums over the immutable specifications and the `ono` examples in `README.md`), and
 `cargo doc` with warnings denied. When a current release build is there, it also holds the
 stripped binaries to their size budgets in `docs/contracts/hardening/limits.yaml`
-(`cargo xtask binary-size`, ADR-0864); CI's image build requires the measurement, so a binary that
-outgrows its budget fails the push that grew it.
+(`cargo xtask binary-size`, ADR-0864). The budgets are enforced where the bytes that ship are
+made: `scripts/package.sh` checks every packaged binary against the budget of its target triple on
+both architectures, `scripts/build-core.sh` the core binary, and CI's image build the image's `ono`
+(ADR-0866), so a binary that outgrows its budget fails the push or the release that grew it.
+
+`scripts/release-check.sh` qualifies a committed tree only: it refuses uncommitted or untracked
+changes and names them, because a package would otherwise carry them.
+`ONO_RELEASE_ALLOW_DIRTY=1` rehearses it on a dirty tree, with a warning. A release tag must name
+the workspace version (`scripts/release-version.sh`).
 
 Tests scratch in cargo's own `target/tmp`, never in `/tmp`, and a test owns every process it
 starts: when it fails or overruns, the testkit ends the whole process tree it started and reaps it

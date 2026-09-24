@@ -504,7 +504,7 @@ in this shell is a side effect of telling the truth about the system.
 External Command Adaptation Layer (v0.3), the Spatial Systems Interface (v0.4), the hardening
 layer (v0.4.1), the Temporal & Causal Systems Interface (v0.5) and Prospective Change, Protection
 & Recovery (v0.6) on top of them. v0.6.1 polished v0.6.0; v0.6.2 is the verification foundation
-under both: a 22 MB binary instead of 46 MB with a size budget the gate enforces, KUANG/11
+under both: a 22 MB binary instead of 46 MB, held to a size budget wherever it is packaged, KUANG/11
 components compiled once at install, a static core build, and a test suite and release tooling
 that give the same answer on a busy machine as on a quiet one (`docs/releases/v0.6.2.md`). Every ticked box of `docs/ACCEPTANCE.md` names an
 automated proof, and the v0.6 boxes still open are listed as recorded exclusions in
