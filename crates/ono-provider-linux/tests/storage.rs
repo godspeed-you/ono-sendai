@@ -541,6 +541,7 @@ async fn should_not_report_a_device_whose_filesystem_type_udev_did_not_record() 
 // --- persistent definitions and mount units (ADR-0099) ---------------------------------------
 
 use ono_provider_api::{Action, ObjectId};
+#[cfg(feature = "systemd")]
 use ono_provider_systemd::{BusError, JobKind, JobRef, SystemdBus, UnitListing, UnitProperties};
 use ono_value::{ActionStatus, SchemaId};
 
@@ -682,12 +683,14 @@ async fn should_resolve_a_defined_but_unmounted_mount_by_its_target() {
 }
 
 /// A service manager that answers every job the same way.
+#[cfg(feature = "systemd")]
 #[derive(Debug)]
 struct RecordedManager {
     answer: Result<JobRef, BusError>,
     jobs: std::sync::Mutex<Vec<(String, JobKind)>>,
 }
 
+#[cfg(feature = "systemd")]
 #[async_trait::async_trait]
 impl SystemdBus for RecordedManager {
     async fn manager_version(&self) -> Result<String, BusError> {
@@ -711,6 +714,7 @@ impl SystemdBus for RecordedManager {
     }
 }
 
+#[cfg(feature = "systemd")]
 #[tokio::test]
 async fn should_start_and_stop_a_mount_through_its_systemd_mount_unit() {
     let manager = Arc::new(RecordedManager {
@@ -740,6 +744,7 @@ async fn should_start_and_stop_a_mount_through_its_systemd_mount_unit() {
     );
 }
 
+#[cfg(feature = "systemd")]
 #[tokio::test]
 async fn should_report_the_service_manager_s_refusal_as_the_row_s_error() {
     let manager = Arc::new(RecordedManager {
@@ -756,6 +761,29 @@ async fn should_report_the_service_manager_s_refusal_as_the_row_s_error() {
         .expect("attempted");
     assert_eq!(outcome.status(), ActionStatus::Failed);
     assert_eq!(error_code(&outcome), "Ono-Sendai-E0302", "{outcome:?}");
+}
+
+/// A build without the systemd tier has no service manager to ask, and says so the way a build
+/// with it says so on a host whose bus is absent: the row fails with `provider.unavailable`, and
+/// nothing is claimed about the unit itself (#127, ADR-0910).
+#[cfg(not(feature = "systemd"))]
+#[tokio::test]
+async fn should_refuse_a_mount_unit_job_as_unavailable_when_built_without_systemd() {
+    let fixture = StorageFixture::new("");
+    let outcome = provider(&fixture)
+        .act(&mount_action("start", "/mnt/data"))
+        .await
+        .expect("attempted");
+    assert_eq!(outcome.status(), ActionStatus::Failed, "{outcome:?}");
+    assert_eq!(error_code(&outcome), "Ono-Sendai-E0401", "{outcome:?}");
+    let message = outcome
+        .error()
+        .map(|error| error.message().to_owned())
+        .unwrap_or_default();
+    assert!(
+        message.contains("mnt-data.mount") && message.contains("systemd"),
+        "the refusal names the unit and the missing service manager: {message}"
+    );
 }
 
 #[tokio::test]

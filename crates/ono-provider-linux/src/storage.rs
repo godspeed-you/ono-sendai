@@ -28,6 +28,7 @@ use ono_provider_api::{
     Action, ActionOutcome, Availability, Capability, ObjectRef, Provider, Query, Risk, Selector,
     TemporalCapabilities,
 };
+#[cfg(feature = "systemd")]
 use ono_provider_systemd::{JobKind, SystemBus, SystemdBus};
 use ono_value::{ByteSize, ErrorValue, RecordValue, Schema, Uuid, Value};
 
@@ -193,6 +194,7 @@ pub struct StorageProvider {
     fstab: PathBuf,
     /// The service manager `start`/`stop mount` go through; `None` connects to the system bus
     /// when asked.
+    #[cfg(feature = "systemd")]
     units: Option<Arc<dyn SystemdBus>>,
 }
 
@@ -224,11 +226,13 @@ impl StorageProvider {
             sys_class_block: root.join("sys/class/block"),
             udev_data: root.join("run/udev/data"),
             fstab: root.join("etc/fstab"),
+            #[cfg(feature = "systemd")]
             units: None,
         }
     }
 
     /// Activates and deactivates mount units through `units` instead of the system bus.
+    #[cfg(feature = "systemd")]
     #[must_use]
     pub fn with_units(mut self, units: Arc<dyn SystemdBus>) -> Self {
         self.units = Some(units);
@@ -1212,6 +1216,12 @@ impl StorageProvider {
         if action.is_dry_run() {
             return ActionOutcome::skipped(action, format!("would {job} `{unit}`"));
         }
+        self.queue_unit_job(action, &unit, job).await
+    }
+
+    /// Queues `job` for `unit` with the service manager, and reports what it answered.
+    #[cfg(feature = "systemd")]
+    async fn queue_unit_job(&self, action: &Action, unit: &str, job: JobKind) -> ActionOutcome {
         let bus: Arc<dyn SystemdBus> = match &self.units {
             Some(units) => Arc::clone(units),
             None => match SystemBus::connect().await {
@@ -1219,7 +1229,7 @@ impl StorageProvider {
                 Err(error) => return ActionOutcome::failed(action, error.into_error()),
             },
         };
-        match bus.queue_job(&unit, job).await {
+        match bus.queue_job(unit, job).await {
             // The mount unit's job is the service manager's transaction identity for this
             // mutation, and it travels on the outcome for the same reason a service job does
             // (v0.5 §17.3).
@@ -1227,6 +1237,49 @@ impl StorageProvider {
                 .with_metadata("systemd.job", Value::string(&queued.path)),
             Err(error) => ActionOutcome::failed(action, error.into_error()),
         }
+    }
+
+    /// A build without the systemd tier has no service manager to ask (#127, ADR-0910).
+    ///
+    /// The refusal is the one a build with the tier gives on a host whose system bus is absent —
+    /// `provider.unavailable`, with the same help — because to the user the two are the same
+    /// fact: nothing here can start a mount unit. Nothing is claimed about the unit itself.
+    #[cfg(not(feature = "systemd"))]
+    #[allow(clippy::unused_async)]
+    async fn queue_unit_job(&self, action: &Action, unit: &str, job: JobKind) -> ActionOutcome {
+        ActionOutcome::failed(
+            action,
+            ErrorValue::new(
+                ErrorCode::ProviderUnavailable,
+                format!(
+                    "no service manager can be asked to {job} `{unit}`: this build of ono does \
+                     not include the systemd tier"
+                ),
+            )
+            .with_help(
+                "the provider exists but no service manager answers here. This is not the same \
+                 as there being no services.",
+            ),
+        )
+    }
+}
+
+/// The two jobs `start`/`stop mount` ask of the service manager, in a build without the systemd
+/// tier that would otherwise name them (ADR-0910).
+#[cfg(not(feature = "systemd"))]
+#[derive(Debug, Clone, Copy)]
+enum JobKind {
+    Start,
+    Stop,
+}
+
+#[cfg(not(feature = "systemd"))]
+impl std::fmt::Display for JobKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Start => "start",
+            Self::Stop => "stop",
+        })
     }
 }
 

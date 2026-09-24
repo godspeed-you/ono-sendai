@@ -12,8 +12,9 @@ authors.workspace = true
 ono-core.workspace = true
 ono-pipeline.workspace = true
 ono-provider-api.workspace = true
-# Mount units are started and stopped through the service manager (ADR-0099).
-ono-provider-systemd.workspace = true
+# Mount units are started and stopped through the service manager (ADR-0099). Optional, so the
+# core build of #127 carries no D-Bus client at all (ADR-0910).
+ono-provider-systemd = { workspace = true, optional = true }
 ono-value.workspace = true
 async-trait.workspace = true
 jiff.workspace = true
@@ -22,6 +23,12 @@ nix = { workspace = true, features = ["dir", "feature", "fs", "inotify", "mount"
 quick-xml.workspace = true
 rustix.workspace = true
 tokio.workspace = true
+
+[features]
+default = ["systemd"]
+# `start`/`stop mount` through systemd's mount units. Without it, those two operations refuse with
+# `provider.unavailable`, the answer a host without a service manager already gives (ADR-0910).
+systemd = ["dep:ono-provider-systemd"]
 
 [dev-dependencies]
 ono-testkit.workspace = true
