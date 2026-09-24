@@ -284,6 +284,15 @@ pub enum Comparison {
         /// The environment the result names.
         measured: String,
     },
+    /// The result was measured from another build of the shell than the baseline record was —
+    /// a debug `ono` against a release baseline — which §37.2 makes a different environment:
+    /// its release build flags are part of it (Refs #151).
+    ForeignBuild {
+        /// The build the baseline record names.
+        baseline: String,
+        /// The build the result names.
+        measured: String,
+    },
     /// The result moved the wrong way, and it was measured on the reference machine under a
     /// load its baseline was not: the right machine under the wrong conditions, which no more
     /// decides a regression than the wrong machine does (issue #169).
@@ -412,6 +421,14 @@ impl Baseline {
         else {
             return Comparison::Unmeasured;
         };
+        if baseline.build != measured.build {
+            // §37.2: the release build flags are part of the environment a figure is tied to, so
+            // a figure from another build is uncomparable, the way one from another machine is.
+            return Comparison::ForeignBuild {
+                baseline: baseline.build.clone(),
+                measured: measured.build.clone(),
+            };
+        }
 
         let mut regressions = Vec::new();
         for metric in REQUIRED_METRICS {

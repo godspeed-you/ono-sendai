@@ -1150,7 +1150,9 @@ fn should_record_the_load_a_benchmark_ran_under_and_withhold_a_verdict_it_cannot
     let baseline = Baseline::parse(
         &baseline_of(&[complete_record("harness.probe")
             .replace("\"profile\": \"M\"", "\"profile\": \"S\"")
-            .replace("\"time_to_first_ms\": 120.0", "\"time_to_first_ms\": 0.001")])
+            .replace("\"time_to_first_ms\": 120.0", "\"time_to_first_ms\": 0.001")
+            // The run below is a debug one, and a record of another build is not comparable.
+            .replace("\"build\": \"release\"", "\"build\": \"debug\"")])
         .replace("\"version\": 1,", "\"version\": 1, \"load_average\": 1.0,"),
     )
     .expect("the baseline parses");
@@ -1202,4 +1204,34 @@ fn should_record_the_load_a_benchmark_ran_under_and_withhold_a_verdict_it_cannot
         Baseline::parse(&std::fs::read_to_string(&path).expect("the baseline was written"))
             .expect("what the runner writes is a valid baseline");
     assert_eq!(written.measurements, vec![under_load]);
+}
+
+// --- a debug figure against a release baseline (Refs #151) -------------------------------------
+
+#[test]
+fn should_report_a_figure_from_another_build_as_uncomparable_rather_than_as_a_regression() {
+    // The baseline is a release build's (§37.2 names the release build flags as part of the
+    // reference environment). A debug `ono` measured on the same machine reads several times
+    // slower for reasons that are not the shell's, and the comparison called that a regression.
+    let baseline = Baseline::parse(&baseline_of(&[complete_record("spatial.map_live")]))
+        .expect("the baseline parses");
+    let debug = Baseline::parse(&baseline_of(&[complete_record("spatial.map_live")
+        .replace("\"build\": \"release\"", "\"build\": \"debug\"")
+        .replace("\"time_to_first_ms\": 120.0", "\"time_to_first_ms\": 900.0")]))
+    .expect("the result parses")
+    .measurements
+    .remove(0);
+
+    let verdict = baseline.compare(&debug, Tolerance::percent(10.0));
+    let Comparison::ForeignBuild { baseline, measured } = &verdict else {
+        panic!(
+            "a debug figure compared with a release baseline must be reported as uncomparable, \
+             not judged: {verdict:?}"
+        );
+    };
+    assert_eq!(
+        (baseline.as_str(), measured.as_str()),
+        ("release", "debug"),
+        "the answer names both builds"
+    );
 }
