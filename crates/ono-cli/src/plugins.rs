@@ -322,6 +322,9 @@ pub fn load_plugin_with(
     ));
     let mut config = LoadConfig::new(entry, package.manifest);
     config.policy = policy;
+    // The stores the session's environment names, where `kuang-compile` typed in it writes
+    // (ADR-0917).
+    config.compiled = session.with_kuang(|host| host.compiled_stores());
     // The instance runs in its own directory under the state root, not in the user's (spec
     // §31.10, §31.31, ADR-0283).
     config.private_dir = session.with_kuang(|host| host.private_dir(id));

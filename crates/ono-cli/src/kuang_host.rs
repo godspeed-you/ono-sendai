@@ -221,6 +221,9 @@ pub struct Host {
     pub(crate) cache_dir: Option<PathBuf>,
     /// The system source roots an operating-system package places payloads under (K11A §8.2).
     pub(crate) system_roots: Vec<PathBuf>,
+    /// The artifact stores a component is loaded from, as the session's environment names them
+    /// (ADR-0870, ADR-0917); `None` until the session has published them.
+    compiled_stores: Option<Vec<PathBuf>>,
 }
 
 /// What the operator's trust stores say, as a verification needs it.
@@ -283,6 +286,20 @@ impl Host {
         self.read_models();
         self.read_trust(system_trust);
         self.read_audit();
+    }
+
+    /// Tells the host which artifact stores the session's environment names (ADR-0917).
+    pub fn configure_compiled(&mut self, stores: Vec<PathBuf>) {
+        self.compiled_stores = Some(stores);
+    }
+
+    /// The artifact stores a component is loaded from: the session's, once published, and the
+    /// process's until then.
+    #[must_use]
+    pub fn compiled_stores(&self) -> Vec<PathBuf> {
+        self.compiled_stores
+            .clone()
+            .unwrap_or_else(ono_kuang_supervisor::compiled::stores)
     }
 
     /// Tells the host where names resolve from and where a catalog release is looked for:
@@ -2236,7 +2253,10 @@ impl Contributions {
 /// # Errors
 ///
 /// The supervisor's refusal, when the package cannot be started.
-pub async fn discover(package: &Installed) -> Result<Contributions, ErrorValue> {
+pub async fn discover(
+    package: &Installed,
+    compiled: Vec<PathBuf>,
+) -> Result<Contributions, ErrorValue> {
     let entry = package
         .manifest
         .runtime
@@ -2252,7 +2272,9 @@ pub async fn discover(package: &Installed) -> Result<Contributions, ErrorValue> 
                 ),
             )
         })?;
-    let loaded = Supervisor::load(LoadConfig::new(entry, package.manifest.clone()))
+    let mut config = LoadConfig::new(entry, package.manifest.clone());
+    config.compiled = compiled;
+    let loaded = Supervisor::load(config)
         .await
         .map_err(|error| crate::plugins::error_value(&error))?;
     let contributions = Contributions::of(&loaded);

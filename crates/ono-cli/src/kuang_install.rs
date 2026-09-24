@@ -343,6 +343,8 @@ pub fn install(session: &mut Session, reference: &str, options: &InstallOptions)
 
     // 6. The transaction (K11P §12.4, Gate U).
     let interactive = session.is_interactive();
+    // The compile step runs as a command of this session, with its environment (ADR-0917).
+    let environment = session.env().clone();
     let outcome = session.with_kuang(|host| {
         let action = action("install", &id, &version);
         match transact(
@@ -353,6 +355,7 @@ pub fn install(session: &mut Session, reference: &str, options: &InstallOptions)
             previous.as_ref(),
             &plan,
             &profile_name,
+            &environment,
         ) {
             Ok(()) => ono_provider_api::ActionOutcome::succeeded(&action, true),
             Err(error) => {
@@ -920,6 +923,7 @@ fn transact(
     previous: Option<&Installed>,
     plan: &PermissionPlan,
     profile_name: &str,
+    environment: &std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString>,
 ) -> Result<(), ErrorValue> {
     let id = package.manifest.package.id.clone();
     let root = destination
@@ -943,7 +947,7 @@ fn transact(
     // package is loadable the moment it is installed. The artifact goes to the operator's
     // store, named by the component's digest; one left there by a transaction that later fails
     // is inert, because it is only ever found by the bytes it was compiled from.
-    compile_component(&staging, &package.manifest).inspect_err(|_| {
+    compile_component(&staging, &package.manifest, environment).inspect_err(|_| {
         let _ = std::fs::remove_dir_all(&staging);
     })?;
 
@@ -1061,10 +1065,13 @@ fn transact(
 /// a package of any other tier needs nothing compiled.
 ///
 /// The tool is the one beside the running `ono`, as a distribution or an image installs the two,
-/// and otherwise the first on `PATH`.
+/// and otherwise the first on the session's `PATH`. It runs with the session's environment, as
+/// any command typed in the session would, and is told the store explicitly: the operator's
+/// store as that environment names it, which is the one the loader reads (ADR-0917).
 fn compile_component(
     directory: &Path,
     manifest: &ono_kuang_protocol::Manifest,
+    environment: &std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString>,
 ) -> Result<(), ErrorValue> {
     use ono_kuang_supervisor::compiled::COMPILE_TOOL;
     let Some(runtime) = manifest
@@ -1087,14 +1094,25 @@ fn compile_component(
     let beside = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(Path::to_path_buf));
-    let path = std::env::var_os("PATH");
-    let Some(tool) = locate_compile_tool(beside.as_deref(), path.as_deref()) else {
+    let variable = |name: &str| {
+        environment
+            .get(std::ffi::OsStr::new(name))
+            .map(std::ffi::OsString::as_os_str)
+    };
+    let Some(tool) = locate_compile_tool(beside.as_deref(), variable("PATH")) else {
         return Err(refuse(format!(
             "`{id}` is a component and `{COMPILE_TOOL}`, which compiles it, is neither beside \
              `ono` nor on `PATH`"
         )));
     };
-    let output = std::process::Command::new(&tool)
+    let mut command = std::process::Command::new(&tool);
+    command.env_clear().envs(environment);
+    if let Some(store) =
+        ono_kuang_supervisor::compiled::user_store_in(variable("XDG_CACHE_HOME"), variable("HOME"))
+    {
+        command.arg("--store").arg(store);
+    }
+    let output = command
         .arg(directory.join(entry))
         .stdin(std::process::Stdio::null())
         .output()

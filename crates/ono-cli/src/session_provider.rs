@@ -276,7 +276,7 @@ impl SessionProvider {
                 _ => None,
             })
             .map(str::to_owned);
-        let (package, management, instance, trust, human) = {
+        let (package, management, instance, trust, human, compiled) = {
             let tables = self.lock();
             let Some(package) = id
                 .as_deref()
@@ -294,10 +294,11 @@ impl SessionProvider {
                     loaded_at: instance.loaded_at.clone(),
                 });
             let trust = tables.kuang.trust().clone();
+            let compiled = tables.kuang.compiled_stores();
             let human = tables
                 .kuang
                 .inspection_human(&package, &management, instance.as_ref())?;
-            (package, management, instance, trust, human)
+            (package, management, instance, trust, human, compiled)
         };
         Ok(ValueStream::spawn(
             ono_pipeline::PipelineConfig::new(),
@@ -308,7 +309,7 @@ impl SessionProvider {
                 let (contributions, failure) = match &instance {
                     Some(instance) => (Contributions::of(&instance.plugin), None),
                     None if declares_files => (Contributions::default(), None),
-                    None => match discover(&package).await {
+                    None => match discover(&package, compiled).await {
                         Ok(contributions) => (contributions, None),
                         Err(error) => (Contributions::default(), Some(error)),
                     },

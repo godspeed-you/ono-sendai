@@ -853,8 +853,17 @@ impl Session {
             || std::path::PathBuf::from("/etc/ono"),
             std::path::PathBuf::from,
         );
+        // The artifact stores, as `kuang-compile` typed in this session would find them: it
+        // receives the session's environment, not the one the process started with (ADR-0917).
+        let compiled = ono_kuang_supervisor::compiled::stores_in(
+            ono_kuang_supervisor::compiled::user_store_in(
+                self.env_var("XDG_CACHE_HOME"),
+                self.env_var("HOME"),
+            ),
+        );
         self.with_kuang(|host| {
             host.configure(plugin_path, state_dir, config_dir, system_trust);
+            host.configure_compiled(compiled);
             host.configure_sources(system_config_dir, sources, cache, system_roots);
             // Spec §31.37: the trail outlives the process. Appending at the start of every
             // pipeline keeps a session that is killed from losing everything before it.

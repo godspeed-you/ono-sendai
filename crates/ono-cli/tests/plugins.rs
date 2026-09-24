@@ -834,6 +834,84 @@ fn should_compile_a_component_package_when_it_is_installed_so_that_it_loads() {
 }
 
 #[test]
+fn should_load_a_component_from_the_store_the_sessions_environment_names() {
+    // The shell keeps its own environment, which every command it runs receives: after
+    // `set env XDG_CACHE_HOME`, the remedy `kuang-compile <component>` typed in the session
+    // writes to the store that variable names, so that is the store the loader has to read.
+    let root = ono_testkit::scratch();
+    root.write(
+        "plugins/dev.example.echo/manifest.yaml",
+        component_manifest(),
+    );
+    let component = root.write(
+        "plugins/dev.example.echo/runtime/echo.wasm",
+        EMPTY_COMPONENT,
+    );
+    let elsewhere = root.path().join("elsewhere");
+    let compiled = std::process::Command::new(sibling("kuang-compile"))
+        .arg("--store")
+        .arg(elsewhere.join("ono/kuang/compiled"))
+        .arg(&component)
+        .output()
+        .expect("kuang-compile runs");
+    assert!(compiled.status.success(), "{compiled:?}");
+    let run = support::ono_with_plugins(
+        &root,
+        &format!(
+            "set env XDG_CACHE_HOME = {}; try {{ load plugin dev.example.echo }} catch e {{ $e | to json }}",
+            elsewhere.display()
+        ),
+    );
+    let shown = run.stdout();
+    // The empty component exports nothing to run, so it cannot start; what matters is that its
+    // artifact was found and mapped, and the refusal of ADR-0870 is not what stops it.
+    assert!(
+        !shown.contains("Ono-Sendai-K11105"),
+        "the artifact in the session's store is the one loaded, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_compile_into_the_store_the_sessions_environment_names_when_installing() {
+    let root = ono_testkit::scratch();
+    root.write(
+        "source/dev.example.echo/manifest.yaml",
+        component_manifest(),
+    );
+    root.write("source/dev.example.echo/runtime/echo.wasm", EMPTY_COMPONENT);
+    let elsewhere = root.path().join("elsewhere");
+    let run = support::ono_with_plugins(
+        &root,
+        &format!(
+            "set env XDG_CACHE_HOME = {}; install plugin path:{} --confirm | select status | to json",
+            elsewhere.display(),
+            root.path().join("source/dev.example.echo").display()
+        ),
+    );
+    run.assert_success();
+    let count = |store: &std::path::Path| {
+        std::fs::read_dir(store).map_or(0, |entries| {
+            entries
+                .flatten()
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "cwasm"))
+                .count()
+        })
+    };
+    assert_eq!(
+        count(&elsewhere.join("ono/kuang/compiled")),
+        1,
+        "install compiled into the session's store, {:?}",
+        run.output()
+    );
+    assert_eq!(
+        count(&root.path().join("cache/ono/kuang/compiled")),
+        0,
+        "and not into the one the process started with"
+    );
+}
+
+#[test]
 fn should_not_install_a_component_package_whose_component_cannot_be_compiled() {
     // The compile step is part of the install transaction: a component the tool refuses leaves
     // nothing installed, rather than a package that can never load (ADR-0870, ADR-0602).
