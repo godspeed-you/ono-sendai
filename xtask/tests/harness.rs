@@ -1108,17 +1108,23 @@ fn packaging_checkout(ono: u64, compiler: u64) -> Checkout {
 }
 
 fn package(checkout: &Checkout, triple: &str) -> Output {
+    package_with(checkout, triple, &[])
+}
+
+fn package_with(checkout: &Checkout, triple: &str, extra: &[&str]) -> Output {
     let dist = checkout.root.join("scratch-dist");
+    let mut arguments = vec![
+        "--no-build",
+        "--target",
+        triple,
+        "--dist",
+        dist.to_str().unwrap(),
+    ];
+    arguments.extend_from_slice(extra);
     checkout
         .script(
             "package.sh",
-            &[
-                "--no-build",
-                "--target",
-                triple,
-                "--dist",
-                dist.to_str().unwrap(),
-            ],
+            &arguments,
             &checkout.root.with_file_name("package.log"),
         )
         .env("SOURCE_DATE_EPOCH", "1700000000")
@@ -1212,4 +1218,36 @@ fn should_say_so_when_it_packages_a_binary_it_does_not_measure() {
         "{}",
         text(&output)
     );
+}
+
+#[test]
+fn should_refuse_to_package_against_a_stale_record_when_asked_to_keep_it_current() {
+    // CI's packaging job passes --check-record (ADR-0867): a build more than one percent from the
+    // recorded figure means the record describes another tree.
+    let checkout = packaging_checkout(1000, 500);
+    let record = checkout.root.join("docs/baselines/binary-size.yaml");
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    for (ono, passes) in [(1005, true), (900, false)] {
+        std::fs::write(
+            &record,
+            format!(
+                "schema: ono.binary-size.v1\nstripped_bytes:\n  kuang-compile:\n    \
+                 x86_64-unknown-linux-gnu: 500\n  ono:\n    x86_64-unknown-linux-gnu: {ono}\n"
+            ),
+        )
+        .unwrap();
+        let output = package_with(&checkout, "x86_64-unknown-linux-gnu", &["--check-record"]);
+        assert_eq!(
+            output.status.success(),
+            passes,
+            "record {ono}: {}",
+            text(&output)
+        );
+        assert!(
+            package(&checkout, "x86_64-unknown-linux-gnu")
+                .status
+                .success(),
+            "without --check-record the record is not consulted"
+        );
+    }
 }

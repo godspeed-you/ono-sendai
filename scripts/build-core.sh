@@ -20,11 +20,13 @@
 # is needed; rustup's `x86_64-unknown-linux-musl` target carries the C runtime it links. The
 # script adds that target when it is missing.
 #
-# usage: scripts/build-core.sh [--stage <dir> [--run-image]] [--no-build]
+# usage: scripts/build-core.sh [--stage <dir> [--run-image]] [--no-build] [--check-record]
 #   --stage <dir>  also lay out the build context of docker/core/Dockerfile in <dir>
 #   --run-image    build the deliverable `core` stage from <dir>, run it as it ships — its own
 #                  ENTRYPOINT and USER, no harness in it — and remove it again (ADR-0925)
 #   --no-build     check and stage what target/x86_64-unknown-linux-musl/release/ono already holds
+#   --check-record also hold docs/baselines/binary-size.yaml to the binary, within one percent
+#                  (ADR-0867); CI's core job keeps the record current with it
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -33,6 +35,7 @@ TARGET="x86_64-unknown-linux-musl"
 STAGE=""
 NO_BUILD=0
 RUN_IMAGE=0
+CHECK_RECORD=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,6 +48,7 @@ while [[ $# -gt 0 ]]; do
       shift ;;
     --no-build) NO_BUILD=1 ;;
     --run-image) RUN_IMAGE=1 ;;
+    --check-record) CHECK_RECORD=(--check-record) ;;
     *) echo "build-core: unknown argument $1" >&2; exit 1 ;;
   esac
   shift
@@ -102,7 +106,7 @@ fi
 # Under its budget: `build.ono_core_stripped_bytes`, #127's "a static binary under 8 MB", which
 # lives with every other size budget in the hardening limits registry and is read by the script
 # the package builds use too (ADR-0864, ADR-0866).
-scripts/binary-size.sh --triple "$TARGET" "$BINARY"
+scripts/binary-size.sh --triple "$TARGET" "${CHECK_RECORD[@]}" "$BINARY"
 echo "build-core: $BINARY is static"
 
 if [[ -n "$STAGE" ]]; then

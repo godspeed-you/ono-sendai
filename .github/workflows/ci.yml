@@ -272,7 +272,9 @@ jobs:
           path: target/core-test.log
           retention-days: 1
       - name: build the static core binary, hold it to its budget, and run the image as it ships
-        run: scripts/build-core.sh --stage target/core-image --run-image
+        # --check-record: this job builds the core `ono` that ships on every push, so it is where
+        # its recorded figure is held to it (ADR-0867).
+        run: scripts/build-core.sh --stage target/core-image --run-image --check-record
       - name: run the core acceptance profile in the scratch image
         run: scripts/acceptance.sh --profile core
 
@@ -290,8 +292,10 @@ jobs:
         with:
           # The versions of Cargo.toml's [workspace.metadata.release-tools] (spec §44.2).
           tool: cargo-deb@3.7.0,cargo-generate-rpm@0.21.0,cross@0.2.5
+      # --check-record: this job builds the x86_64 `ono` and `kuang-compile` that ship on every
+      # push, so it is where docs/baselines/binary-size.yaml is held to them (ADR-0867).
       - name: build the packages
-        run: scripts/package.sh
+        run: scripts/package.sh --check-record
       # Where the minutes of the release build go, crate by crate (issue #218, ADR-0865). This is
       # the one cold, single-package build of the shipping profile in CI, so its report is the
       # answer to "why does the release build take this long" for the commit that was pushed.

@@ -164,34 +164,73 @@ fn should_emit_a_build_input_manifest_carrying_every_field_appendix_h_requires()
 }
 
 #[test]
-fn should_carry_the_recorded_stripped_binary_size_and_its_budget_into_the_manifest() {
-    // Issue #125: the release manifest named every tool version and no artifact size. It carries
-    // the figure `cargo xtask metrics` recorded, per target triple, and the budget it is held to —
-    // the same numbers, read from the same files, so the manifest and the gate cannot disagree.
+fn should_carry_the_budgets_and_a_recorded_size_that_names_its_own_tree_into_the_manifest() {
+    // Issue #125: the release manifest named every tool version and no artifact size. It is the
+    // manifest of what a release is *given* (Appendix H), written before anything is built, so
+    // what it carries is the input: the budget every shipped binary is held to, per triple. The
+    // recorded sizes ride along as what they are — figures a release build of another commit
+    // measured — and say which commit that was, so nobody reads them as this release's bytes
+    // (ADR-0867).
     let (_scratch, _path, manifest) = emit(&[]);
-    let recorded = xtask::binary_size::recorded(this_repository(), "ono");
-    assert!(
-        !recorded.is_empty(),
-        "the repository records a stripped size"
+    let root = this_repository();
+    for binary in xtask::binary_size::BINARIES {
+        let recorded = xtask::binary_size::recorded(root, binary);
+        assert!(!recorded.is_empty(), "the repository records `{binary}`");
+        for (triple, bytes) in &recorded {
+            assert_eq!(
+                manifest
+                    .pointer(&format!("/binaries/budget_bytes/{binary}/{triple}"))
+                    .and_then(serde_json::Value::as_u64),
+                xtask::binary_size::budget(root, binary, triple).ok(),
+                "the manifest carries the budget of `{binary}` on {triple}:\n{manifest:#}"
+            );
+            assert_eq!(
+                manifest
+                    .pointer(&format!(
+                        "/binaries/recorded/stripped_bytes/{binary}/{triple}"
+                    ))
+                    .and_then(serde_json::Value::as_u64),
+                Some(*bytes),
+                "the manifest carries the recorded size of `{binary}` on {triple}:\n{manifest:#}"
+            );
+        }
+    }
+    let last_written = git(&[
+        "log",
+        "-1",
+        "--format=%H",
+        "--",
+        "docs/baselines/binary-size.yaml",
+    ]);
+    let unchanged = Command::new("git")
+        .args([
+            "diff",
+            "--quiet",
+            "HEAD",
+            "--",
+            "docs/baselines/binary-size.yaml",
+        ])
+        .current_dir(root)
+        .status()
+        .expect("git runs")
+        .success();
+    assert_eq!(
+        manifest.pointer("/binaries/recorded/commit"),
+        Some(&if unchanged {
+            serde_json::Value::String(last_written)
+        } else {
+            serde_json::Value::Null
+        }),
+        "the recorded sizes name the commit that recorded them, or null when the record in the \
+         working tree is none of them:\n{manifest:#}"
     );
-    for (triple, bytes) in &recorded {
-        assert_eq!(
-            manifest
-                .pointer(&format!("/binaries/ono/stripped_bytes/{triple}"))
-                .and_then(serde_json::Value::as_u64),
-            Some(*bytes),
-            "the manifest carries the recorded size for {triple}:\n{manifest:#}"
-        );
-    }
-    for triple in recorded.keys() {
-        assert_eq!(
-            manifest
-                .pointer(&format!("/binaries/ono/budget_bytes/{triple}"))
-                .and_then(serde_json::Value::as_u64),
-            xtask::binary_size::budget(this_repository(), "ono", triple).ok(),
-            "the manifest carries the budget the {triple} figure is held to:\n{manifest:#}"
-        );
-    }
+    assert!(
+        manifest
+            .pointer("/binaries/recorded/measured")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|said| said.contains("not this release")),
+        "the manifest says the recorded sizes are not measured from this release:\n{manifest:#}"
+    );
 }
 
 #[test]

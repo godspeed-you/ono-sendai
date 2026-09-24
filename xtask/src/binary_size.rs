@@ -667,62 +667,71 @@ pub fn check_record(root: &Path) -> Vec<Problem> {
     problems
 }
 
-/// The part of the release input manifest this module answers (Appendix H, issue #125).
+/// The part of the release input manifest this module answers (Appendix H, issue #125, ADR-0867).
 ///
-/// Per binary, the recorded figures and the budget — the numbers the gate and the README read —
-/// or `null` for either that is not there (spec §35.3: unknown is null).
+/// The manifest is written before the release builds anything, so it carries what the release is
+/// *given*: the budget every shipped binary is held to, per binary and triple (a row naming no
+/// triple under `*`). The recorded sizes ride along as what they are — figures a release build of
+/// the commit that last wrote [`RECORD`] measured — under `recorded`, with that commit, or `null`
+/// when the record in the working tree differs from every commit (spec §35.3: unknown is null).
+/// This release's own sizes are measured where it packages them (ADR-0866).
 #[must_use]
 pub fn manifest_entry(root: &Path) -> serde_json::Value {
-    let figures = all_recorded(root);
-    let entries = BINARIES
-        .iter()
-        .map(|binary| {
-            let stripped = figures
-                .get(*binary)
-                .filter(|triples| !triples.is_empty())
-                .map_or(serde_json::Value::Null, |triples| {
-                    serde_json::Value::Object(
-                        triples
-                            .iter()
-                            .map(|(triple, bytes)| {
-                                (triple.clone(), serde_json::Value::from(*bytes))
-                            })
-                            .collect(),
-                    )
-                });
+    let mut held: BTreeMap<String, serde_json::Map<String, serde_json::Value>> = BTreeMap::new();
+    for row in budgets(root) {
+        if let Some(bytes) = row.bytes {
+            held.entry(row.binary).or_default().insert(
+                row.triple.unwrap_or_else(|| "*".to_owned()),
+                serde_json::Value::from(bytes),
+            );
+        }
+    }
+    let recorded: serde_json::Map<String, serde_json::Value> = all_recorded(root)
+        .into_iter()
+        .map(|(binary, triples)| {
             (
-                (*binary).to_owned(),
-                serde_json::json!({
-                    "record": RECORD,
-                    "stripped_bytes": stripped,
-                    "budget_bytes": budgets_of(root, binary, figures.get(*binary)),
-                }),
+                binary,
+                serde_json::Value::Object(
+                    triples
+                        .into_iter()
+                        .map(|(triple, bytes)| (triple, serde_json::Value::from(bytes)))
+                        .collect(),
+                ),
             )
         })
-        .collect::<serde_json::Map<_, _>>();
-    serde_json::Value::Object(entries)
+        .collect();
+    serde_json::json!({
+        "budget_bytes": held,
+        "recorded": {
+            "record": RECORD,
+            "commit": record_commit(root),
+            "measured": "by a release build of `commit`, not this release's; this release's own \
+                         sizes are held to `budget_bytes` and logged where it is packaged \
+                         (ADR-0866, ADR-0867)",
+            "stripped_bytes": recorded,
+        },
+    })
 }
 
-/// The budget of every recorded triple of `binary`, or `null` when none is recorded or budgeted.
-fn budgets_of(
-    root: &Path,
-    binary: &str,
-    triples: Option<&BTreeMap<String, u64>>,
-) -> serde_json::Value {
-    let held: serde_json::Map<String, serde_json::Value> = triples
-        .into_iter()
-        .flatten()
-        .filter_map(|(triple, _)| {
-            budget(root, binary, triple)
-                .ok()
-                .map(|bytes| (triple.clone(), serde_json::Value::from(bytes)))
-        })
-        .collect();
-    if held.is_empty() {
-        serde_json::Value::Null
-    } else {
-        serde_json::Value::Object(held)
+/// The commit that last wrote [`RECORD`], when the working tree's record is that commit's.
+fn record_commit(root: &Path) -> serde_json::Value {
+    let git = |arguments: &[&str]| {
+        std::process::Command::new("git")
+            .args(arguments)
+            .current_dir(root)
+            .output()
+            .ok()
+    };
+    let unchanged = git(&["diff", "--quiet", "HEAD", "--", RECORD])
+        .is_some_and(|output| output.status.success());
+    if !unchanged {
+        return serde_json::Value::Null;
     }
+    git(&["log", "-1", "--format=%H", "--", RECORD])
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|commit| !commit.is_empty())
+        .map_or(serde_json::Value::Null, serde_json::Value::String)
 }
 
 /// How much of `budget` `bytes` spends.

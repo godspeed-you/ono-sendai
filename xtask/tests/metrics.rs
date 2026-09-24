@@ -802,3 +802,56 @@ fn should_read_every_budget_of_this_repository_as_xtask_reads_it() {
         }
     }
 }
+
+// --- the record is kept current where CI builds what ships (ADR-0867) -------------------------
+
+#[test]
+fn should_fail_a_record_more_than_a_percent_from_the_build_that_ships() {
+    let repo = checkout_with_budgets(
+        "  - key: build.a\n    binary: ono\n    triple: x86_64-unknown-linux-gnu\n    budget: 100000\n",
+    );
+    let binary = stand_in(&repo, "a", "ono", 10_000);
+    for (recorded, passes, why) in [
+        (Some(10_100), true, "one percent away is the same build"),
+        (Some(9_900), true, "in either direction"),
+        (Some(10_102), false, "further is a stale record"),
+        (None, false, "no figure at all is not a current record"),
+    ] {
+        let record = recorded.map_or_else(String::new, |bytes| {
+            format!("  ono:\n    x86_64-unknown-linux-gnu: {bytes}\n")
+        });
+        repo.write(
+            "docs/baselines/binary-size.yaml",
+            format!("schema: ono.binary-size.v1\nstripped_bytes:\n{record}"),
+        );
+        let output = script_verdict(repo.path(), HOST, &["--check-record"], &[&binary]);
+        assert_eq!(
+            output.status.success(),
+            passes,
+            "{why}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let without = script_verdict(repo.path(), HOST, &[], &[&binary]);
+        assert!(
+            without.status.success(),
+            "without --check-record the record is not consulted"
+        );
+    }
+}
+
+#[test]
+fn should_keep_the_record_current_in_the_ci_jobs_that_build_what_ships() {
+    // The packaging job builds the x86_64 `ono` and `kuang-compile` on every push, the core job
+    // the musl `ono`; they are where the record is held to what was built (ADR-0867).
+    let workflow = support::read(".github/workflows/ci.yml");
+    for (job, command) in [
+        ("packaging", "scripts/package.sh --check-record"),
+        ("core-build", "scripts/build-core.sh --check-record"),
+    ] {
+        assert!(
+            support::workflow_job(&workflow, job).contains(command),
+            "the `{job}` job runs `{command}`"
+        );
+    }
+}

@@ -12,7 +12,7 @@
 # not go through `cross`: cross installs an `x86_64` toolchain inside whatever image it runs,
 # which fails on an arm64 runner where the image and the target are aarch64 (ADR-0123).
 #
-# usage: scripts/package.sh [--target <triple>] [--no-build] [--dist <dir>] [--size-unmeasured <why>]
+# usage: scripts/package.sh [--target <triple>] [--no-build] [--dist <dir>] [--check-record]
 #                           [--print-determinism]
 #   --target             x86_64-unknown-linux-gnu (default: the host) or aarch64-unknown-linux-gnu
 #   --no-build           package what $CARGO_TARGET_DIR/<triple>/release/{ono,kuang-compile}
@@ -22,6 +22,8 @@
 #                        package without the size check, saying why on the check's own line:
 #                        for scripts/rebuild-check.sh --binary, which packages a binary it was
 #                        handed rather than one built from this tree (ADR-0866)
+#   --check-record       also hold docs/baselines/binary-size.yaml to what was built, within one
+#                        percent (ADR-0867); CI's packaging job keeps the record current with it
 #   --print-determinism  print the four inputs of spec §46.2-§46.4 and exit, building nothing
 set -euo pipefail
 
@@ -76,6 +78,7 @@ require_determinism() {
 
 target=""
 no_build=0
+check_record=()
 size_unmeasured=""
 print_determinism=0
 # Where the binary is looked for and where the packages are written. Two rebuilds of one commit
@@ -87,11 +90,12 @@ while [[ $# -gt 0 ]]; do
     --target) target="$2"; shift 2 ;;
     --target=*) target="${1#--target=}"; shift ;;
     --no-build) no_build=1; shift ;;
+    --check-record) check_record=(--check-record); shift ;;
     --size-unmeasured) size_unmeasured="${2:-}"; shift 2 ;;
     --dist) dist_dir="$2"; shift 2 ;;
     --dist=*) dist_dir="${1#--dist=}"; shift ;;
     --print-determinism) print_determinism=1; shift ;;
-    *) echo "usage: scripts/package.sh [--target <triple>] [--no-build] [--dist <dir>] [--size-unmeasured <why>] [--print-determinism]" >&2; exit 2 ;;
+    *) echo "usage: scripts/package.sh [--target <triple>] [--no-build] [--dist <dir>] [--check-record] [--size-unmeasured <why>] [--print-determinism]" >&2; exit 2 ;;
   esac
 done
 
@@ -240,7 +244,7 @@ step "sizes of the shipped binaries"
 if [[ -n "$size_unmeasured" ]]; then
   echo "binary-size: not measured — $size_unmeasured (ADR-0866)"
 else
-  scripts/binary-size.sh --triple "$target" "$binary" "$compiler"
+  scripts/binary-size.sh --triple "$target" "${check_record[@]}" "$binary" "$compiler"
 fi
 
 mkdir -p "$dist_dir"
