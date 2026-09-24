@@ -873,6 +873,45 @@ fn should_load_a_component_from_the_store_the_sessions_environment_names() {
 }
 
 #[test]
+fn should_name_the_store_to_compile_into_when_it_is_not_the_tools_default() {
+    // A session whose store differs from the one `kuang-compile` would choose in the shell's
+    // starting environment gets a command that says where to write, and a message that says
+    // where it looked (ADR-0917).
+    let root = ono_testkit::scratch();
+    root.write(
+        "plugins/dev.example.echo/manifest.yaml",
+        component_manifest(),
+    );
+    let component = root.write(
+        "plugins/dev.example.echo/runtime/echo.wasm",
+        EMPTY_COMPONENT,
+    );
+    let elsewhere = root.path().join("elsewhere");
+    let run = support::ono_with_plugins(
+        &root,
+        &format!(
+            "set env XDG_CACHE_HOME = {}; try {{ load plugin dev.example.echo }} catch e {{ $e | to json }}",
+            elsewhere.display()
+        ),
+    );
+    let shown = run.stdout();
+    let store = elsewhere.join("ono/kuang/compiled");
+    let command = format!(
+        "kuang-compile --store {} {}",
+        store.display(),
+        component.display()
+    );
+    assert!(
+        shown.contains(&format!("\"command\":\"{command}\"")),
+        "the command names the store, {command:?}: {shown:?}"
+    );
+    assert!(
+        shown.contains(&format!("no artifact in `{}`", store.display())),
+        "and the message where it looked: {shown:?}"
+    );
+}
+
+#[test]
 fn should_compile_into_the_store_the_sessions_environment_names_when_installing() {
     let root = ono_testkit::scratch();
     root.write(

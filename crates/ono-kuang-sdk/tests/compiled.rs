@@ -165,9 +165,15 @@ fn reason_of(error: &KuangError) -> &str {
         .expect("the refusal says why in its metadata")
 }
 
-/// The refusal names the exact step that fixes it, with the component's own path.
-fn assert_names_the_compile_step(error: &KuangError, component: &Path) {
-    let command = format!("kuang-compile {}", component.display());
+/// The refusal names the exact step that fixes it, with the component's own path — and, since
+/// this suite's store is not the one `kuang-compile` chooses by default, the store to write into,
+/// so the command run as it stands puts the artifact where the loader looks (ADR-0917).
+fn assert_names_the_compile_step(error: &KuangError, component: &Path, store: &Path) {
+    let command = format!(
+        "kuang-compile --store {} {}",
+        store.display(),
+        component.display()
+    );
     assert!(
         error.message().contains(&command),
         "the refusal names the command to run, `{command}`: {:?}",
@@ -214,7 +220,14 @@ async fn should_refuse_a_component_nobody_compiled_and_name_the_compile_step() {
     let scene = Scene::with(EMPTY_COMPONENT);
     let refused = scene.refusal().await;
     assert_eq!(reason_of(&refused), "missing");
-    assert_names_the_compile_step(&refused, &scene.component());
+    assert_names_the_compile_step(&refused, &scene.component(), &scene.store());
+    assert!(
+        refused
+            .message()
+            .contains(&format!("no artifact in `{}`", scene.store().display())),
+        "a missing artifact names the stores it was looked for in: {:?}",
+        refused.message()
+    );
     // An artifact is compiled for the engine and the architecture, and travels to every machine
     // of that architecture (ADR-0914): the help must not say it belongs to this one.
     let help = refused.help().unwrap_or_default();
@@ -277,7 +290,7 @@ async fn should_refuse_an_artifact_another_engine_version_wrote_and_name_the_com
         "the engine's own reason is in the refusal: {:?}",
         refused.message()
     );
-    assert_names_the_compile_step(&refused, &scene.component());
+    assert_names_the_compile_step(&refused, &scene.component(), &scene.store());
 
     scene.compile();
     if let Err(error) = scene.load().await {
@@ -309,7 +322,7 @@ async fn should_refuse_an_artifact_compiled_for_another_architecture() {
         "the engine says what did not match: {:?}",
         refused.message()
     );
-    assert_names_the_compile_step(&refused, &scene.component());
+    assert_names_the_compile_step(&refused, &scene.component(), &scene.store());
 }
 
 #[tokio::test]
@@ -329,7 +342,7 @@ async fn should_refuse_a_truncated_or_garbled_artifact_rather_than_crash() {
         std::fs::write(&artifact, &damaged).expect("the damaged artifact");
         let refused = scene.refusal().await;
         assert_eq!(reason_of(&refused), "incompatible", "{what}");
-        assert_names_the_compile_step(&refused, &scene.component());
+        assert_names_the_compile_step(&refused, &scene.component(), &scene.store());
     }
 }
 

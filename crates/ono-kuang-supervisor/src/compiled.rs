@@ -129,6 +129,8 @@ pub struct NotCompiled {
     reason: Reason,
     artifact: PathBuf,
     detail: String,
+    /// The stores looked in, in order; the first is the one the command writes to.
+    searched: Vec<PathBuf>,
 }
 
 impl NotCompiled {
@@ -141,9 +143,26 @@ impl NotCompiled {
     /// The structured refusal for `package`, whose component is `component`.
     #[must_use]
     pub fn into_error(self, package: &str, component: &Path) -> KuangError {
-        let command = format!("{COMPILE_TOOL} {}", component.display());
+        // The short command when `kuang-compile` would choose the store searched first by
+        // itself — in the environment the shell started with — and the store spelled out
+        // otherwise, so the command run as it stands writes where the loader looks (ADR-0917).
+        let command = match self.searched.first() {
+            Some(store) if Some(store) != user_store().as_ref() => format!(
+                "{COMPILE_TOOL} --store {} {}",
+                store.display(),
+                component.display()
+            ),
+            _ => format!("{COMPILE_TOOL} {}", component.display()),
+        };
         let what = match self.reason {
-            Reason::Missing => "has not been compiled for this shell".to_owned(),
+            Reason::Missing => format!(
+                "has not been compiled for this shell (no artifact in {})",
+                self.searched
+                    .iter()
+                    .map(|store| format!("`{}`", store.display()))
+                    .collect::<Vec<_>>()
+                    .join(" or ")
+            ),
             Reason::Incompatible => format!(
                 "has a compiled artifact this shell's engine ({}) refuses: {}",
                 engine_identity(),
@@ -230,6 +249,7 @@ pub(crate) fn load(
                 reason,
                 artifact: artifact.clone(),
                 detail,
+                searched: stores.to_vec(),
             },
             Ok(file) => match read_and_map(engine, file, &artifact) {
                 Ok(component) => return Ok(component),
@@ -238,6 +258,7 @@ pub(crate) fn load(
                     reason,
                     artifact: artifact.clone(),
                     detail,
+                    searched: stores.to_vec(),
                 },
             },
         };
@@ -251,6 +272,7 @@ pub(crate) fn load(
                     .first()
                     .map_or_else(|| PathBuf::from(&name), |store| store.join(&name)),
                 detail: String::new(),
+                searched: stores.to_vec(),
             }
         },
     )))
