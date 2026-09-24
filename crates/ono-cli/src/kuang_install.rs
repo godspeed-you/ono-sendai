@@ -1086,15 +1086,9 @@ fn compile_component(
     };
     let beside = std::env::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(|directory| directory.join(COMPILE_TOOL)));
-    let tool = beside.filter(|path| path.is_file()).or_else(|| {
-        std::env::var_os("PATH").and_then(|paths| {
-            std::env::split_paths(&paths)
-                .map(|directory| directory.join(COMPILE_TOOL))
-                .find(|path| path.is_file())
-        })
-    });
-    let Some(tool) = tool else {
+        .and_then(|exe| exe.parent().map(Path::to_path_buf));
+    let path = std::env::var_os("PATH");
+    let Some(tool) = locate_compile_tool(beside.as_deref(), path.as_deref()) else {
         return Err(refuse(format!(
             "`{id}` is a component and `{COMPILE_TOOL}`, which compiles it, is neither beside \
              `ono` nor on `PATH`"
@@ -1115,10 +1109,114 @@ fn compile_component(
     )))
 }
 
+/// `kuang-compile` beside the running `ono`, else in the first absolute directory of `path`
+/// holding it as an executable regular file.
+///
+/// An empty or relative entry of `path` names the working directory, which under
+/// `install plugin path:.` is the package source about to be judged: a tool found there would
+/// run before any trust decision, so such entries are skipped. A file that is not executable
+/// does not shadow a working tool further down.
+fn locate_compile_tool(beside: Option<&Path>, path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    use ono_kuang_supervisor::compiled::COMPILE_TOOL;
+    use std::os::unix::fs::PermissionsExt as _;
+    let runnable = |tool: &PathBuf| {
+        std::fs::metadata(tool)
+            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+    };
+    beside
+        .map(|directory| directory.join(COMPILE_TOOL))
+        .filter(runnable)
+        .or_else(|| {
+            path.and_then(|paths| {
+                std::env::split_paths(paths)
+                    .filter(|directory| directory.is_absolute())
+                    .map(|directory| directory.join(COMPILE_TOOL))
+                    .find(runnable)
+            })
+        })
+}
+
 fn capitalise(text: &str) -> String {
     let mut chars = text.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod compile_tool {
+    #![allow(
+        clippy::expect_used,
+        reason = "AGENTS.md §16: a test states its preconditions directly"
+    )]
+
+    use std::path::{Component, Path, PathBuf};
+
+    use super::locate_compile_tool;
+
+    /// Writes a `kuang-compile` into `directory`, executable or not.
+    fn tool(directory: &Path, executable: bool) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::create_dir_all(directory).expect("a directory");
+        let tool = directory.join("kuang-compile");
+        std::fs::write(&tool, "#!/bin/sh\nexit 0\n").expect("a tool");
+        let mode = if executable { 0o755 } else { 0o644 };
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(mode)).expect("its mode");
+        tool
+    }
+
+    /// `to`, spelled relative to the process's working directory.
+    fn relative(to: &Path) -> PathBuf {
+        let cwd = std::env::current_dir().expect("a working directory");
+        let common = cwd
+            .components()
+            .zip(to.components())
+            .take_while(|(a, b)| a == b)
+            .count();
+        let mut path = PathBuf::new();
+        for _ in cwd.components().skip(common) {
+            path.push(Component::ParentDir);
+        }
+        for part in to.components().skip(common) {
+            path.push(part);
+        }
+        path
+    }
+
+    #[test]
+    fn should_not_run_a_tool_a_relative_path_entry_finds() {
+        // An empty or relative PATH entry resolves against the working directory — inside a
+        // package source under `install plugin path:.`, a directory the operator has not yet
+        // decided to trust. A tool found there would run before any trust decision.
+        let scratch = ono_testkit::scratch();
+        let planted = tool(&scratch.path().join("source"), true);
+        let trusted = tool(&scratch.path().join("bin"), true);
+        let relative_entry = relative(&scratch.path().join("source"));
+        assert!(relative_entry.is_relative());
+        let path =
+            std::env::join_paths([relative_entry, scratch.path().join("bin")]).expect("a PATH");
+        let found = locate_compile_tool(None, Some(&path));
+        assert_eq!(found.as_deref(), Some(trusted.as_path()), "not {planted:?}");
+    }
+
+    #[test]
+    fn should_pass_over_a_tool_it_could_not_execute() {
+        let scratch = ono_testkit::scratch();
+        tool(&scratch.path().join("first"), false);
+        let working = tool(&scratch.path().join("second"), true);
+        let path =
+            std::env::join_paths([scratch.path().join("first"), scratch.path().join("second")])
+                .expect("a PATH");
+        assert_eq!(
+            locate_compile_tool(None, Some(&path)).as_deref(),
+            Some(working.as_path())
+        );
+        let beside = scratch.path().join("first");
+        assert_eq!(
+            locate_compile_tool(Some(&beside), Some(&path)).as_deref(),
+            Some(working.as_path()),
+            "nor beside `ono`"
+        );
     }
 }
