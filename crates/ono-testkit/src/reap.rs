@@ -37,15 +37,55 @@ const STOP_PATIENCE: Duration = Duration::from_millis(200);
 /// reused; every other pid signalled here is read from the children list of a process that is
 /// already stopped, which cannot reap it either.
 pub fn kill_tree(root: u32) {
+    walk_and_kill(as_pid(root), &mut Kernel);
+}
+
+/// What the walk needs from the machine: stopping a process, reading its children, killing it.
+///
+/// The walk is the part with a contract of its own — it must end, and it must not signal a pid
+/// that can have been reused — so it runs over this rather than over the kernel directly, and
+/// its unit tests run it over a table they control.
+trait ProcessTable {
+    /// Stops `pid` and waits briefly until it shows as stopped; answers whether it was signalled.
+    fn stop(&mut self, pid: i32) -> bool;
+    /// Every child of every thread of `pid`.
+    fn children(&self, pid: i32) -> Vec<i32>;
+    /// Sends `pid` `SIGKILL`.
+    fn kill(&mut self, pid: i32);
+}
+
+/// The running machine.
+struct Kernel;
+
+impl ProcessTable for Kernel {
+    fn stop(&mut self, pid: i32) -> bool {
+        if kill(Pid::from_raw(pid), Signal::SIGSTOP).is_ok() {
+            wait_until_stopped(pid);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn children(&self, pid: i32) -> Vec<i32> {
+        children_of(pid)
+    }
+
+    fn kill(&mut self, pid: i32) {
+        let _ = kill(Pid::from_raw(pid), Signal::SIGKILL);
+    }
+}
+
+/// Freezes the tree under `root` in `table`, then kills every process it froze.
+fn walk_and_kill(root: i32, table: &mut impl ProcessTable) {
     let mut frozen: Vec<i32> = Vec::new();
-    let mut pending = vec![as_pid(root)];
+    let mut pending = vec![root];
     while !pending.is_empty() {
         for pid in pending.drain(..) {
             if frozen.contains(&pid) {
                 continue;
             }
-            if kill(Pid::from_raw(pid), Signal::SIGSTOP).is_ok() {
-                wait_until_stopped(pid);
+            if table.stop(pid) {
                 frozen.push(pid);
             }
         }
@@ -53,12 +93,12 @@ pub fn kill_tree(root: u32) {
         // parent's `SIGSTOP` and its stopping shows up on this pass rather than being missed.
         pending = frozen
             .iter()
-            .flat_map(|pid| children_of(*pid))
+            .flat_map(|pid| table.children(*pid))
             .filter(|child| !frozen.contains(child))
             .collect();
     }
     for pid in frozen {
-        let _ = kill(Pid::from_raw(pid), Signal::SIGKILL);
+        table.kill(pid);
     }
 }
 
