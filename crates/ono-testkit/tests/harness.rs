@@ -618,3 +618,30 @@ fn should_do_nothing_when_the_process_it_was_made_for_has_already_been_reaped() 
     leader.wait().expect("the leader is reaped");
     drop(tree);
 }
+
+#[test]
+fn should_leave_nothing_under_a_guarded_handle_behind_when_a_test_holding_it_panics() {
+    // A shared helper that hands a test a process handle of its own kind — a pseudo-terminal
+    // session — wraps it once, and every test that uses the helper is covered: when the test
+    // fails, the tree under the handle dies before the handle is dropped (issue #162, ADR-0894).
+    let scratch = ono_testkit::scratch();
+    let marker = scratch.path().join("pids");
+    let script = format!(
+        "sleep 300 & echo $! >> {0}; setsid sleep 300 & echo $! >> {0}; wait",
+        marker.display()
+    );
+    let failed = std::panic::catch_unwind(|| {
+        let handle = ono_testkit::Guarded::new(
+            std::process::Command::new("/bin/sh")
+                .args(["-c", &script])
+                .spawn()
+                .expect("/bin/sh starts"),
+            std::process::Child::id,
+        );
+        recorded_pids(&marker, 2);
+        assert!(handle.id() > 0, "the handle is used through the guard");
+        panic!("an assertion of the test fails while it holds the handle");
+    });
+    assert!(failed.is_err(), "the guarded scope panicked");
+    assert_all_gone(&recorded_pids(&marker, 2));
+}

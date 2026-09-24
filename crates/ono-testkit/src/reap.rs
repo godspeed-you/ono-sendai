@@ -275,6 +275,47 @@ impl Drop for OwnedTree {
     }
 }
 
+/// A process handle of any kind, with the tree under its process owned by an [`OwnedTree`].
+///
+/// For a shared helper that returns a handle this crate does not know — an
+/// `ono_process::PtySession` — so that every test using the helper is covered without an edit of
+/// its own: when the value is dropped, the tree under the process dies first, and then the handle
+/// is dropped and does whatever its own `Drop` does (reaping the leader, for a session). It
+/// dereferences to the handle, so the test uses it as before; waiting for the handle through it
+/// is safe, because the tree holds its process by pidfd (ADR-0894).
+#[derive(Debug)]
+pub struct Guarded<T> {
+    // Declared first, so it is dropped first.
+    _tree: OwnedTree,
+    handle: T,
+}
+
+impl<T> Guarded<T> {
+    /// Guards `handle`, whose process `pid_of` names; call it as soon as the process is started.
+    #[must_use]
+    pub fn new(handle: T, pid_of: impl FnOnce(&T) -> u32) -> Self {
+        let tree = OwnedTree::of(pid_of(&handle));
+        Self {
+            _tree: tree,
+            handle,
+        }
+    }
+}
+
+impl<T> std::ops::Deref for Guarded<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.handle
+    }
+}
+
+impl<T> std::ops::DerefMut for Guarded<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.handle
+    }
+}
+
 fn as_pid(pid: u32) -> i32 {
     i32::try_from(pid).unwrap_or(i32::MAX)
 }
