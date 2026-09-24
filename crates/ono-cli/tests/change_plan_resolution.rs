@@ -7,6 +7,8 @@
 //! the build disk, because protecting a file needs a persistence domain and the shared scratch
 //! home is on tmpfs on many hosts (§11.2, Appendix B.7).
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

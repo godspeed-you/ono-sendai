@@ -14,6 +14,8 @@
 //! Every shell runs with its XDG roots inside a scratch directory, so the store it opens is the
 //! test's own and the developer's history is neither read nor written.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "temporal")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

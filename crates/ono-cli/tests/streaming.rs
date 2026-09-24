@@ -13,6 +13,9 @@
 //! issue #21 and ADR-0252 are this repository's record of what a wall-clock threshold on shared
 //! hardware costs.
 
+// Some tests here exercise a tier the core build of #127 leaves out, and carry that tier's `cfg`;
+// the helpers only they use are then unused in the core build (ADR-0925).
+#![cfg_attr(not(feature = "full"), allow(dead_code, unused_imports))]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -612,6 +615,7 @@ fn should_refuse_an_unbounded_body_the_call_would_have_to_collect() {
 // --- backpressure and cancellation survive the rewrite (§28.3, §28.4, issue #81) ---------------
 
 #[test]
+#[cfg(feature = "adapter")]
 fn should_reap_the_child_process_of_a_cancelled_stage() {
     // v0.4.1 §28.4: "where a streaming pipeline stage owns an external process, cancellation MUST
     // close or signal it using the existing process/job-control policy rather than leaving an

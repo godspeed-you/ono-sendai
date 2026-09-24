@@ -114,6 +114,7 @@ fn assert_failed_for_lack_of_privilege(run: &ono_testkit::Run, operation: &str) 
 // --- get session ------------------------------------------------------------------------------
 
 #[test]
+#[cfg(feature = "systemd")]
 fn should_enumerate_sessions_as_a_list_when_asked() {
     // Spec §9.1: `get session` enumerates local/login/session objects as `Stream<Session>`. An
     // unprivileged container may have none — the shape is asserted only for what is there, but
@@ -143,6 +144,7 @@ fn should_enumerate_sessions_as_a_list_when_asked() {
 }
 
 #[test]
+#[cfg(feature = "systemd")]
 fn should_restrict_sessions_to_one_user_when_the_user_option_is_given() {
     // identity.yaml `ono.session.get` option `--user ref<ono.user/1>`: only that user's sessions.
     let run = ono("get session --user root | to json");
@@ -345,6 +347,7 @@ fn should_begin_a_group_watch_with_a_snapshot_when_bounded() {
 // --- trace user -----------------------------------------------------------------------------
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_trace_a_user_to_its_processes_and_groups() {
     // identity.yaml `ono.user.trace`: a user's processes, sessions, groups and owned files as
     // one `ono.graph/1`. Pid 1 is owned by root on every Linux system and root's primary group
@@ -396,6 +399,7 @@ fn should_trace_a_user_to_its_processes_and_groups() {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_refuse_to_trace_a_user_that_does_not_exist() {
     let run = ono("trace user nobody-such-user-ono | to json");
     assert_not_unimplemented(&run);
@@ -562,6 +566,7 @@ fn should_narrow_processes_to_the_entered_group() {
 }
 
 #[test]
+#[cfg(feature = "spatial")]
 fn should_refuse_to_enter_a_user_that_does_not_exist() {
     let run = ono("enter user nobody-such-user-ono");
     assert_not_unimplemented(&run);

@@ -37,6 +37,8 @@
 //! The same behaviours are proved against the container by `docker/acceptance/cases/`
 //! `253-rewind-pause`, `254-rewind-stepping`, `255-rewind-gap` and `256-return-to-now`.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "temporal")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

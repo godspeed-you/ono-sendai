@@ -18,6 +18,10 @@
 //! from `/etc/hosts`, and TCP listeners the test itself binds on `127.0.0.1:0`. Every test
 //! asserts what the user sees — stdout through `| to json`, the exit status, the structured error
 //! code, the system state afterwards — never how a stage is wired (AGENTS.md §11).
+
+// Some tests here exercise a tier the core build of #127 leaves out, and carry that tier's `cfg`;
+// the helpers only they use are then unused in the core build (ADR-0925).
+#![cfg_attr(not(feature = "full"), allow(dead_code, unused_imports))]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -468,6 +472,7 @@ fn should_carry_the_loopback_route_in_the_snapshot_when_watching_the_local_table
 // --- trace route / trace interface -----------------------------------------------------------
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_name_the_loopback_interface_when_tracing_the_loopback_route() {
     // network.yaml: `trace route <destination>` shows "which interface, gateway and neighbour a
     // route depends on". 127.0.0.0/8 is the loopback route the kernel installs in the local
@@ -497,6 +502,7 @@ fn should_name_the_loopback_interface_when_tracing_the_loopback_route() {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_trace_the_route_that_arrives_through_the_pipeline() {
     // network.yaml: `input: null | ono.route/1` — the route to trace may come from `get route`.
     let run = ono(
@@ -512,6 +518,7 @@ fn should_trace_the_route_that_arrives_through_the_pipeline() {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_show_the_interface_and_its_address_when_tracing_an_interface() {
     // network.yaml: `trace interface` shows "the routes, addresses, neighbours and sockets bound
     // to an interface". `lo` carries 127.0.0.1/8 and the kernel's loopback routes everywhere.
@@ -542,6 +549,7 @@ fn should_show_the_interface_and_its_address_when_tracing_an_interface() {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_include_the_listening_socket_when_tracing_its_interface() {
     let (_listener, port) = listener();
     // A socket bound to 127.0.0.1 is bound to the interface that owns that address.
@@ -693,6 +701,7 @@ fn should_pop_the_interface_frame_when_leaving() {
 }
 
 #[test]
+#[cfg(feature = "spatial")]
 fn should_refuse_to_enter_an_interface_that_does_not_exist() {
     // On its own, the refused `enter` is the script's last statement and its status is the
     // script's; followed by another statement, the script continues — `-c 'a; b'` exits with
@@ -754,6 +763,7 @@ fn should_push_a_socket_frame_when_entering_the_listening_socket() {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_trace_the_entered_socket_without_a_selector() {
     let (_listener, port) = listener();
     // Spec §14.3: inside the socket frame, `trace socket` needs no `--port` — the frame's

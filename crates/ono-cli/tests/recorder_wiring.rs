@@ -18,6 +18,8 @@
 //!
 //! Every test drives the real binary and reads what a pipeline can read (AGENTS.md §11).
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "temporal")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

@@ -9,6 +9,9 @@
 //! — and the way to keep them out is to make the store's *reader* refuse rather than to make
 //! every caller remember. So every case here writes a file by hand and asks the shell what it
 //! makes of it, which is exactly what an operator does.
+
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "remote")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

@@ -15,6 +15,8 @@
 //! outlive the invocation that made them and the invocation that searches has nothing but the
 //! retained ledger to answer from.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "temporal")]
 #![allow(
     clippy::panic,
     clippy::expect_used,

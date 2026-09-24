@@ -90,6 +90,7 @@ fn should_fall_back_to_plain_rendering_when_nobody_is_watching() {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_open_the_tree_view_over_a_graph_and_leave_the_pick_behind() {
     // Spec §13.6: a graph never renders as a table, so `view tree` is the shape it takes in the
     // browser. The rendering is proven in `ono-render`; what nothing exercised is the navigation

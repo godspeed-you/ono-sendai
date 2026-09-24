@@ -11,6 +11,9 @@
 //! ceiling would be a test nobody runs. That the *defaults* are Appendix A's is asserted
 //! separately, in `meta_config.rs` and against the contract registry below.
 
+// Some tests here exercise a tier the core build of #127 leaves out, and carry that tier's `cfg`;
+// the helpers only they use are then unused in the core build (ADR-0925).
+#![cfg_attr(not(feature = "full"), allow(dead_code, unused_imports))]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -361,6 +364,7 @@ fn one_capture_ceiling(dir: &Scratch) -> u64 {
 // --- §54.3: the effective limits are inspectable (issue #120) ----------------------------------
 
 #[test]
+#[cfg(feature = "full")]
 fn should_answer_the_effective_non_secret_limits_when_inspect_limits_runs() {
     let dir = scratch();
     let run = run(&dir, "inspect limits | to json");
@@ -403,6 +407,7 @@ fn should_answer_the_effective_non_secret_limits_when_inspect_limits_runs() {
 }
 
 #[test]
+#[cfg(feature = "full")]
 fn should_answer_the_same_figures_inspect_limits_shows_from_the_contract_registry() {
     // §52.2: "A number such as `max_connections = 32` MUST not be independently typed into five
     // files if one contract can generate the others." So the shell and the registry are compared

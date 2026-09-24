@@ -5,6 +5,8 @@
 //! unknown" or "nothing was recorded as irreversible" for an opaque command has promoted both, so
 //! these tests read the view and the record the way an operator and a script would.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

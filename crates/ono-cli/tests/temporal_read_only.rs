@@ -3,6 +3,8 @@
 //! §4.7 is a safety rule, so these tests assert the two halves that make it one: the refusal
 //! carries its structured code and names the way back, and nothing was changed.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "temporal")]
 #![allow(
     clippy::panic,
     clippy::expect_used,

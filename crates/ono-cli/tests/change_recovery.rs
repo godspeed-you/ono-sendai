@@ -6,6 +6,8 @@
 //! runs; `apply` carries it out and `verify` holds it to its contract. Each test drives the real
 //! binary against a change it applied first, so the recovery has a real asset to come from.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

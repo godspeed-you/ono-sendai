@@ -18,6 +18,8 @@
 //! prove the v0.2/v0.3 link family; nothing here repeats it — this file is about the *place*
 //! a link becomes.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "spatial")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

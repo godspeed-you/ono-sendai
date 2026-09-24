@@ -31,6 +31,8 @@
 //! (AGENTS.md §11). Waits are bounded, so a screen change that never arrives fails the run
 //! instead of hanging it.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "temporal")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

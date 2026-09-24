@@ -25,6 +25,9 @@
 //! edge and a neighborhood, not the JSON spelling of every field, so a test looks for the
 //! identity it navigated to and for the fields §3.5/§11.4/§22 name, and never for an internal
 //! structure (AGENTS.md §11).
+
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "spatial")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

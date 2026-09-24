@@ -10,6 +10,8 @@
 //! The example package `dev.example.echo` contributes the target `echo-item` and answers a
 //! provider query for it with three records.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "kuang")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

@@ -7,6 +7,8 @@
 //! a pipeline stage like any other, so its output is a typed value `where` can filter and
 //! `to json` can serialise.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

@@ -10,6 +10,8 @@
 //! `plugins.rs` already proves — discovery in the table render, `load plugin`, contributed
 //! commands, adapter packs — is not repeated here.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "kuang")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

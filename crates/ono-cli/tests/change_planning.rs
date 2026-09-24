@@ -6,6 +6,8 @@
 //! against a real object: a service this host actually serves is planned against, and its
 //! generation is read before and after.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

@@ -15,6 +15,8 @@
 //! afterwards (AGENTS.md §11). Nothing here reaches into the ledger's internals: a store that
 //! exists is a file that exists.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "temporal")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

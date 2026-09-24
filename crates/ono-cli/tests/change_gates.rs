@@ -5,6 +5,8 @@
 //! says when there is one — the rule's own reason — and §40.3 fixes who may be asked: a script
 //! never waits, so every gate is a flag and every refusal is structured.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

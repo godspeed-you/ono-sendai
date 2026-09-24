@@ -5,6 +5,8 @@
 //! The interactive test drives a real pseudo-terminal, because the effect is on the screen and
 //! nowhere else, and asserts on the bytes the terminal receives (AGENTS.md §11).
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "kuang")]
 #![allow(
     clippy::expect_used,
     clippy::panic,

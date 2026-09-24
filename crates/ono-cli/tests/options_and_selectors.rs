@@ -19,6 +19,10 @@
 //! Not covered here: `get route --table/--family` and `format table --max-rows`, which were
 //! already honoured when this suite was written, so a test for them would have proved nothing
 //! about the two failure classes above.
+
+// Some tests here exercise a tier the core build of #127 leaves out, and carry that tier's `cfg`;
+// the helpers only they use are then unused in the core build (ADR-0925).
+#![cfg_attr(not(feature = "full"), allow(dead_code, unused_imports))]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -385,6 +389,7 @@ fn traced_local_port(run: &ono_testkit::Run) -> Option<i64> {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_trace_the_socket_on_the_requested_port_when_port_is_given() {
     // Two listeners, two traces: a shell that ignores `--port` and traces whichever socket it
     // finds first can satisfy at most one of them.
@@ -404,6 +409,7 @@ fn should_trace_the_socket_on_the_requested_port_when_port_is_given() {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_trace_nothing_else_when_no_connection_has_the_requested_remote() {
     // network.yaml / spec §22.3: `--remote` names the peer the trace is about, and the subject
     // of a graph is its root — "the object the trace started from" (graph.v1). What the walk
@@ -604,6 +610,7 @@ fn should_leave_out_the_processes_the_named_user_does_not_own() {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_trace_a_connection_even_when_another_one_carries_no_identity() {
     // The kernel reports no socket inode for a `TIME_WAIT` connection, and `ono.socket/1`
     // identifies a socket by its inode — so such a row has no identity at all. Whichever
@@ -644,6 +651,7 @@ fn should_trace_a_connection_even_when_another_one_carries_no_identity() {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_trace_the_connection_that_does_have_the_requested_remote() {
     // The sibling test covers the peer nobody is talking to. This is the answer itself: with a
     // loopback connection open, `trace connection --remote 127.0.0.1` returns a graph, and every
@@ -753,6 +761,7 @@ fn should_restrict_a_table_to_columns_written_as_a_list() {
 }
 
 #[test]
+#[cfg(feature = "spatial")]
 fn should_honour_a_near_limit_written_as_an_expression() {
     let unlimited = counted("near | count | to json");
     assert!(

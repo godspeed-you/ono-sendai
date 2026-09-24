@@ -6,6 +6,8 @@
 //! a cleanup preview name the plans a removal would leave unrecoverable and remove nothing. Each
 //! test applies a real protected change so a real asset exists, then asks the real binary.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

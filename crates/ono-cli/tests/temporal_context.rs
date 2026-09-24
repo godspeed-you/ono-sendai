@@ -5,6 +5,8 @@
 //! it raised, where the session was afterwards — never a call into the implementation. The one
 //! that matters most is §55.9's: `at` must move the data, and not only the prompt.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "temporal")]
 #![allow(
     clippy::panic,
     clippy::expect_used,

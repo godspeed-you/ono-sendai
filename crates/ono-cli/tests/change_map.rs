@@ -6,6 +6,8 @@
 //! expecting a replacement worker rather than given a PID nobody has seen. These tests plan a
 //! change against a process this test started and read the overlay the real binary attaches.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

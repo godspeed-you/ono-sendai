@@ -16,6 +16,8 @@
 //! with carry the *same* name and different identities. A shell that bound a place to its name
 //! could not tell those two apart, so the fixture is the assertion.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "kuang")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

@@ -1,6 +1,8 @@
 //! The host API domains a package reaches through the shell (spec §31.12; ADR-0567): the
 //! context the session publishes, and the schemas the shell registers — pulled as a stream.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "kuang")]
 #![allow(
     clippy::expect_used,
     clippy::panic,

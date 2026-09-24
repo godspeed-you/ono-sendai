@@ -18,6 +18,9 @@
 //! mounts and filesystems come from the v0.2 providers (`get mount`, `get filesystem`) at
 //! runtime, never from a hard-coded device or mount name, which is also what invariant 16 asks
 //! of the spatial layer — it composes provider facts rather than inventing its own.
+
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "spatial")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

@@ -6,6 +6,8 @@
 //! topic missing: `help look` was complete, and `help spatial` — the page a user reaches for
 //! first, before they know any verb to ask about — answered `resolve.command_not_found`.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "spatial")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

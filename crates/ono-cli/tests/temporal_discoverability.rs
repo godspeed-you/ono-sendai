@@ -4,6 +4,8 @@
 //! `explain` cannot resolve and whose output schema is not inspectable is not delivered. These
 //! tests ask the shell those questions about the twelve commands of §36.1's inventory.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "temporal")]
 #![allow(
     clippy::panic,
     clippy::expect_used,

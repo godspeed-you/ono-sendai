@@ -15,6 +15,10 @@
 //! `ono.action-result/1` row with `status: failed` and `Ono-Sendai-E0302` (io.permission_denied),
 //! exit status 1 — never E0101/E0102 "not implemented". Nothing here knows how a stage is wired
 //! (AGENTS.md §11).
+
+// Some tests here exercise a tier the core build of #127 leaves out, and carry that tier's `cfg`;
+// the helpers only they use are then unused in the core build (ADR-0925).
+#![cfg_attr(not(feature = "full"), allow(dead_code, unused_imports))]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -532,6 +536,7 @@ fn is_root_mount_node(node: &Value) -> bool {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_trace_a_mount_to_what_it_sits_on_and_who_uses_it() {
     let run = ono("trace mount / | to json");
     run.assert_success();
@@ -577,6 +582,7 @@ fn should_trace_a_mount_to_what_it_sits_on_and_who_uses_it() {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_report_not_found_when_tracing_a_path_that_is_no_mount_point() {
     let run = ono("trace mount /definitely/not/a/mount | to json");
     assert!(

@@ -6,6 +6,8 @@
 //! that protection or refuses — so the default `prefer` mode cannot turn a failed preparation into
 //! an unprotected change. These tests take the recovery store away between seal and apply.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

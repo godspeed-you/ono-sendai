@@ -35,6 +35,8 @@
 //! - Domain names are compared case-insensitively: §4 spells them `COMPUTE`, §6.3 spells the
 //!   same move `enter compute`.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "spatial")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

@@ -2,6 +2,8 @@
 //! util-linux tools run through their bundled adapters, and the failure paths run through
 //! shadowing scripts that answer the version probe and then misbehave.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "adapter")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

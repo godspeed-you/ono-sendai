@@ -5,6 +5,9 @@
 //! contracts left for it. These tests drive a real pseudo-terminal, because completion only
 //! happens at one, and assert what appears on the screen.
 
+// Some tests here exercise a tier the core build of #127 leaves out, and carry that tier's `cfg`;
+// the helpers only they use are then unused in the core build (ADR-0925).
+#![cfg_attr(not(feature = "full"), allow(dead_code, unused_imports))]
 #![allow(
     clippy::expect_used,
     clippy::panic,
@@ -119,6 +122,7 @@ commands:
 }
 
 #[test]
+#[cfg(feature = "kuang")]
 fn should_complete_a_contributed_target_before_its_package_is_loaded() {
     // Spec §31.68: `installed manifest -> registry placeholders`. The package's runtime is not
     // even copied into the fixture — nothing about it may have to run for the shell to know the

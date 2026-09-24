@@ -2,6 +2,8 @@
 //! answers from the operator's catalogue, and a package granted `model.infer` reaches the
 //! configured provider through the broker — a shell script speaking `ono-model/1`.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "kuang")]
 #![allow(
     clippy::expect_used,
     clippy::panic,

@@ -10,6 +10,9 @@
 //! rather than the one that was asked for, and that an ordinary agent link is unchanged.
 //!
 //! Every test is offline: the far side is `--transport local`, which is this machine.
+
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "remote")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

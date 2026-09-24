@@ -15,6 +15,8 @@
 //! The proofs are outcomes at the contract boundary: what `get config` printed, which error a
 //! wrongly typed assignment raised, what the setting held afterwards (AGENTS.md §11).
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "temporal")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

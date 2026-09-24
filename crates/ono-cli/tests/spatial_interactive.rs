@@ -23,6 +23,9 @@
 //! goes back, Esc closes the map view preserving the current place — plus Ctrl-C to leave a live
 //! map, which §43.4 requires to leave the shell alive. An implementation that remaps them must
 //! remap these tests with the same commit.
+
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "spatial")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

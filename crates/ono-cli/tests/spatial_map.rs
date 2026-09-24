@@ -37,6 +37,9 @@
 //! `0.0.0.0:0` — so the assertions never depend on this machine's real services. Everything runs
 //! offline, unprivileged, and asserts what a user sees: the JSON document, the rendered text, the
 //! exit status (AGENTS.md §11).
+
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "spatial")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

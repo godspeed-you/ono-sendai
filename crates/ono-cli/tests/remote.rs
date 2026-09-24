@@ -5,6 +5,9 @@
 //! whole path — handshake, negotiation, mounted providers, provenance re-tagging — runs against
 //! a real second process without a network.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "remote")]
+
 use ono_testkit::ono;
 
 #[test]

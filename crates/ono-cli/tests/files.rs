@@ -788,6 +788,7 @@ impl Drop for FileCreator {
 // --- trace file (spec §22.3) --------------------------------------------------------------------
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_name_the_process_holding_a_file_when_tracing() {
     let directory = scratch();
     let held = directory.write("held.txt", "h");
@@ -808,6 +809,7 @@ fn should_name_the_process_holding_a_file_when_tracing() {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_include_the_users_behind_the_holders_when_asked() {
     let directory = scratch();
     let held = directory.write("held.txt", "h");

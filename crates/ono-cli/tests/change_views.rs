@@ -6,6 +6,8 @@
 //! the thing an operator reads; `| to json` is checked beside it so the structured value keeps
 //! carrying the same facts.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

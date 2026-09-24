@@ -564,6 +564,7 @@ fn should_refuse_set_service_without_a_property_when_nothing_is_asked_to_change(
 // --- trace service (spec §22.3, §41.6; `ono.service.trace`) -----------------------------------
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_trace_a_service_to_the_processes_it_owns() {
     // service.yaml `ono.service.trace`: "Show a service's processes, sockets, dependencies and
     // recent journal context" as one `ono.graph/1`. `systemd-journald.service` runs on every
@@ -614,6 +615,7 @@ fn should_trace_a_service_to_the_processes_it_owns() {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_relate_a_service_to_the_units_it_requires() {
     // v0.4 §13 lists dependencies among a service place's groups, and
     // `docs/contracts/spatial/relations.yaml` declares `service.depends_on`. Until ADR-0239 nothing

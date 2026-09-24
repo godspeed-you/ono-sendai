@@ -5,6 +5,8 @@
 //! `inspect` cannot open is not delivered. These tests ask the shell those questions about the
 //! thirteen commands of `docs/contracts/commands/change.yaml`.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

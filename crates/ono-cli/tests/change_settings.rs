@@ -1,5 +1,7 @@
 //! §53's change settings, read from the operator's configuration (v0.6 §53, §17.2).
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

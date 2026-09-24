@@ -354,6 +354,7 @@ fn should_narrow_get_process_to_the_entered_process() {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_trace_the_entered_process_without_a_selector() {
     // Spec §14.3 again, for a command whose selector is otherwise mandatory. The entered process
     // is one the test owns, so a trace rooted anywhere else (say, at init) is visibly wrong.
@@ -397,6 +398,7 @@ fn should_pop_the_process_frame_when_leaving() {
 }
 
 #[test]
+#[cfg(feature = "spatial")]
 fn should_refuse_to_enter_a_process_that_does_not_exist() {
     let run = ono("enter process 4000000");
     assert!(

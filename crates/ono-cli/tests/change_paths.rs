@@ -6,6 +6,8 @@
 //! `@var`, and a revalidation that read anything but the whole path would find drift where
 //! nothing changed, or miss it where something did.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

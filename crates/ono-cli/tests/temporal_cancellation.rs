@@ -12,6 +12,8 @@
 //! shell came back with the interrupt status, and the ledger the interrupted session held open is
 //! still readable, writable and destroyable by another shell.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "temporal")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

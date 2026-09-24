@@ -174,6 +174,7 @@ fn should_reattach_a_backgrounded_watch_and_end_it_with_ctrl_c() {
 // --- `map --live` stabilization (v0.4.1 §35.1–§35.5, §61.2, §61.5) -----------------------------
 
 #[test]
+#[cfg(feature = "spatial")]
 fn should_answer_a_bounded_first_projection_before_any_update_arrives() {
     // v0.4.1 §35.2: "`map --live` MUST construct an initial projection with a bounded work
     // budget… A first frame does not need every edge if the chosen semantic zoom level

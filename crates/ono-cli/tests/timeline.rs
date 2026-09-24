@@ -15,6 +15,8 @@
 //! Ono has no `$(…)` command substitution (ADR-0019), so a fixture pid is interpolated into the
 //! script from Rust rather than read inside it.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "temporal")]
 #![allow(
     clippy::panic,
     clippy::expect_used,

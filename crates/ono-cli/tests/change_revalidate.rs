@@ -6,6 +6,8 @@
 //! Every process in this suite is one the test starts itself, so no test depends on what else the
 //! host runs (AGENTS.md §11).
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

@@ -6,6 +6,7 @@
 use ono_testkit::Shell;
 
 #[test]
+#[cfg(feature = "full")]
 fn should_print_name_and_version_when_asked_for_the_version() {
     let run = Shell::new().args(["--version"]).run();
     run.assert_success();

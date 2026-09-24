@@ -3,6 +3,10 @@
 //! These assert what a user sees on stdout and in the exit status. Nothing here knows how a stage
 //! is scheduled or which crate implements it (AGENTS.md §11).
 
+// Some tests here exercise a tier the core build of #127 leaves out, and carry that tier's `cfg`;
+// the helpers only they use are then unused in the core build (ADR-0925).
+#![cfg_attr(not(feature = "full"), allow(dead_code, unused_imports))]
+
 use ono_testkit::Shell;
 use ono_testkit::ono;
 
@@ -222,6 +226,7 @@ fn should_say_there_is_nothing_to_reuse_when_no_result_was_retained() {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_draw_a_trace_as_a_tree_rather_than_a_table() {
     // Spec §13.6: a graph never renders as a table. PID 1 exists everywhere and always has
     // relationships — children at least.
@@ -239,6 +244,7 @@ fn should_draw_a_trace_as_a_tree_rather_than_a_table() {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_carry_a_trace_through_the_pipeline_as_a_graph_value() {
     let run = ono("trace process 1 | type");
     run.assert_success();
@@ -593,6 +599,7 @@ fn traced_relations(script: &str) -> Vec<String> {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_restrict_a_trace_to_the_relations_a_list_names() {
     // Spec §22.3 declares `--relations` as "the relation names to restrict the trace to", and
     // `docs/contracts/commands/process.yaml` types it `list<string>`. A list is how the language
@@ -618,6 +625,7 @@ fn should_restrict_a_trace_to_the_relations_a_list_names() {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_restrict_a_trace_to_the_relations_a_word_names() {
     // The same option written the way a words-mode command usually takes one. Both spellings
     // reach the same walk, so both restrict it.

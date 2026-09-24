@@ -10,6 +10,9 @@
 //! Every test asserts what a user sees — values through `to json`, exit status, structured
 //! error codes, rendered output — never how the shell produces them (AGENTS.md §11).
 
+// Some tests here exercise a tier the core build of #127 leaves out, and carry that tier's `cfg`;
+// the helpers only they use are then unused in the core build (ADR-0925).
+#![cfg_attr(not(feature = "full"), allow(dead_code, unused_imports))]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -235,6 +238,7 @@ fn should_report_command_not_found_with_suggestions_when_no_stage_answers() {
 }
 
 #[test]
+#[cfg(feature = "graph")]
 fn should_name_the_target_when_a_known_verb_was_given_one_it_does_not_have() {
     // `trace` is a verb the registry knows; `group` is not one of its targets. Falling through
     // to PATH and reporting the verb as missing hides what was actually wrong (spec §15.4).
@@ -813,6 +817,7 @@ const LIMIT_KEYS: [(&str, i64); 13] = [
 ];
 
 #[test]
+#[cfg(feature = "remote")]
 fn should_accept_every_documented_limits_key_and_reject_an_unknown_one() {
     let dir = scratch();
     let run = isolated(&dir)
@@ -853,6 +858,7 @@ fn should_accept_every_documented_limits_key_and_reject_an_unknown_one() {
 }
 
 #[test]
+#[cfg(feature = "remote")]
 fn should_refuse_a_limits_value_outside_its_permitted_range_and_name_the_range() {
     let dir = scratch();
     dir.write(
@@ -903,6 +909,7 @@ fn should_refuse_a_limits_value_outside_its_permitted_range_and_name_the_range()
 }
 
 #[test]
+#[cfg(feature = "remote")]
 fn should_apply_the_documented_environment_override_for_a_limits_key() {
     // §55.4: no new security-sensitive variable is invented. Every `limits.*` key is reachable
     // through the mechanical `ONO_*` mapping ADR-0010 already documents, and through nothing else.

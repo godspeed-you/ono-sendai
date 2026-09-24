@@ -52,6 +52,8 @@
 //! what §42.2 actually demands: a tombstoned place never resolves to a live object, and two
 //! process lifetimes never share a `SpatialId`.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "spatial")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

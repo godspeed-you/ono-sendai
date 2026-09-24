@@ -28,6 +28,8 @@
 //! `DBUS_SYSTEM_BUS_ADDRESS` — the same production provider, the same D-Bus calls, and a
 //! population that is a number the test chose.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "spatial")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

@@ -36,6 +36,9 @@
 //! - `up` from a socket lands somewhere under `NETWORK` (§6.6 says "normally `NETWORK/SOCKETS`",
 //!   §7.3 makes `listeners`/`connections` the required children), so the tests assert the domain
 //!   and the distinction from `back`, not a particular child name.
+
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "spatial")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

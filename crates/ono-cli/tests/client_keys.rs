@@ -8,6 +8,9 @@
 //! The user-facing concept stays "authorized client key" rather than a vague ACL blob (§9.7), so
 //! every answer here is an object with named fields, and the whole surface is declared in
 //! `docs/contracts/commands/remote.yaml` — which is what gives it help and completion for free.
+
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "remote")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

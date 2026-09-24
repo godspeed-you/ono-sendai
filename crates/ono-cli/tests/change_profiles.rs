@@ -5,6 +5,8 @@
 //! tests drive the real binary, because the place a loosening would show is the plan the shell
 //! seals and the gate `apply` raises.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

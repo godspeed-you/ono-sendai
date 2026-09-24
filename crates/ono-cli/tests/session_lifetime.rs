@@ -1,5 +1,8 @@
 //! An interactive shell must not outlive the terminal it was given (spec §18.1, §29.3, ADR-0160).
 
+// Some tests here exercise a tier the core build of #127 leaves out, and carry that tier's `cfg`;
+// the helpers only they use are then unused in the core build (ADR-0925).
+#![cfg_attr(not(feature = "full"), allow(dead_code, unused_imports))]
 #![allow(
     clippy::expect_used,
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
@@ -159,6 +162,7 @@ fn exists(pid: u32) -> bool {
 }
 
 #[test]
+#[cfg(feature = "remote")]
 fn should_end_the_agent_it_started_before_it_exits() {
     // A link's agent is a resource of the link (spec §21.4): the shell starts `ono --agent` as
     // its own child, and a child that outlives its shell is reparented to whatever init the

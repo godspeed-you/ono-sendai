@@ -16,6 +16,8 @@
 //! implementation serves is a promise nobody keeps, and a served thing no declaration names is
 //! undocumented surface. Both fail here rather than waiting for a user to notice.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "spatial")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

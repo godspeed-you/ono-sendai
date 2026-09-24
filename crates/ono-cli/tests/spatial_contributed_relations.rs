@@ -13,6 +13,8 @@
 //! traverses it, the edge names the package that asserted it — and a shape naming a kind of place
 //! nobody contributes is refused when the package is loaded, before any of its code has run.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "kuang")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

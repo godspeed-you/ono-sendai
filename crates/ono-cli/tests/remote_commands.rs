@@ -15,6 +15,9 @@
 //! `crates/ono-cli/tests/remote.rs` proves what already works: link, enter, query, leave, adapt.
 //! Nothing here repeats it. The only reachable "host" is the local transport, so every test is
 //! offline; hosts that must be unreachable point at a closed port on the loopback interface.
+
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "remote")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

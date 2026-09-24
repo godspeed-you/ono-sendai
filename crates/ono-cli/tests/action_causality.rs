@@ -24,6 +24,8 @@
 //! with no service manager can prove: where no authority returned a transaction, the ledger
 //! records none.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "temporal")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

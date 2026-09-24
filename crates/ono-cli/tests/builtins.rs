@@ -247,6 +247,7 @@ fn should_document_raw_in_help() {
 }
 
 #[test]
+#[cfg(feature = "adapter")]
 fn should_explain_which_adapter_answers_and_what_it_will_run() {
     // Spec v0.3 §1.23, §1.57: the hidden machinery is inspectable. lsblk is on every Linux
     // machine this suite runs on (util-linux), so the bundled adapter answers.
@@ -302,6 +303,7 @@ fn should_explain_which_adapter_answers_and_what_it_will_run() {
 }
 
 #[test]
+#[cfg(feature = "adapter")]
 fn should_answer_type_with_the_adapters_schema_and_check_fields_before_running() {
     // Spec v0.3 §1.61: `type` knows what an adapted stage produces; spec §11.3: a field typo is
     // caught before anything runs — for an adapted program as for a native one.

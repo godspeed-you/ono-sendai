@@ -205,6 +205,9 @@ const HEADER: &str = "\
 //! advertises is declared in the registry; this file is that declaration turned into questions
 //! the running providers have to answer.
 
+// The declarations are the full product's providers. The core build of #127 registers fewer and
+// answers the rest as unavailable, so this suite is the full build's (ADR-0910, ADR-0925).
+#![cfg(feature = \"full\")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

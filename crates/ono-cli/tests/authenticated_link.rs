@@ -9,6 +9,9 @@
 //!
 //! The far side is a real second `ono` process listening on the loopback interface with a key
 //! the test generated, so nothing here needs a network or a fixture host.
+
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "remote")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

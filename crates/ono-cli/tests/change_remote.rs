@@ -5,6 +5,8 @@
 //! their host; it runs only where its host is, and a file — which this build resolves against this
 //! machine's filesystem and mount table — is refused rather than frozen on the wrong machine.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

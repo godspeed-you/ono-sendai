@@ -5,6 +5,8 @@
 //! operator wrote, in a file or in the environment. These tests drive the real binary, because the
 //! place the difference shows is whether a recovery asset is created.
 
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "change")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
