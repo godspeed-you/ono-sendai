@@ -119,21 +119,63 @@ impl Drop for Scratch {
     }
 }
 
-/// Writes an executable script and answers where it is.
+/// Writes an executable script and answers where it is, in a state any thread may `exec` at once.
 ///
-/// Two suites had written this by hand and both were bitten by the same race (issue #27, issue
-/// #7): see [`while_text_file_busy`](crate::while_text_file_busy) for what it is.
+/// Writing the file from this process is what made scripts busy (issue #188). `cargo test` runs a
+/// crate's tests as threads of one process, and a thread that starts a process while this one has
+/// the file open for writing hands its child a copy of that descriptor; until the child reaches
+/// its own `exec`, the kernel refuses to execute the file with `ETXTBSY`. The refusal is per
+/// inode, so writing to a temporary name and renaming does not help — the renamed inode is the one
+/// the stray descriptor points at. What does help is never holding such a descriptor: the bytes
+/// are written by a `/bin/sh` of their own, a separate process no test thread forks from, and by
+/// the time it has been waited for, no descriptor open for writing to the file exists anywhere.
+///
+/// The file is written under a staging name and renamed into place, so a script being replaced
+/// is never seen half-written (ADR-0891).
 ///
 /// # Panics
 ///
 /// Panics if the script cannot be written or made executable.
 pub fn executable_script(directory: &std::path::Path, name: &str, body: &str) -> PathBuf {
+    use std::io::Write as _;
     use std::os::unix::fs::PermissionsExt;
 
+    static STAGED: AtomicU64 = AtomicU64::new(0);
     let path = directory.join(name);
-    std::fs::write(&path, body).expect("the script must be writable");
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+    let staged = directory.join(format!(
+        ".{name}.{}-{}.staged",
+        std::process::id(),
+        STAGED.fetch_add(1, Ordering::Relaxed)
+    ));
+
+    let mut writer = std::process::Command::new("/bin/sh")
+        .args(["-c", "cat > \"$1\"", "sh"])
+        .arg(&staged)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("/bin/sh must be available to write a script");
+    writer
+        .stdin
+        .take()
+        .expect("the writer's standard input was piped")
+        .write_all(body.as_bytes())
+        .expect("the script's body must reach its writer");
+    let written = writer
+        .wait_with_output()
+        .expect("the script's writer must be waited for");
+    assert!(
+        written.status.success(),
+        "cannot write {}: {}",
+        staged.display(),
+        String::from_utf8_lossy(&written.stderr)
+    );
+
+    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))
         .expect("the script must be made executable");
+    std::fs::rename(&staged, &path)
+        .unwrap_or_else(|error| panic!("cannot move the script to {}: {error}", path.display()));
     path
 }
 

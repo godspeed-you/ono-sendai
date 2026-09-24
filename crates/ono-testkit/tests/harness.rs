@@ -357,3 +357,51 @@ fn should_answer_a_failure_that_is_not_a_busy_file_on_the_first_attempt() {
     assert_eq!(outcome, 1, "an answer that is not `busy` is the answer");
     assert_eq!(attempts.get(), 1, "and it was asked for exactly once");
 }
+
+#[test]
+fn should_run_a_script_it_has_just_written_while_other_threads_are_starting_processes() {
+    // Issue #188: `cargo test` runs a crate's tests as threads of one process, and every thread
+    // that starts a process forks. A fork taken while this thread still has the script open for
+    // writing hands the child a copy of that descriptor, and until the child execs, `execve` of
+    // the script answers ETXTBSY — for a file that is executable and that nobody is writing any
+    // more. The shared helper must leave no such descriptor anywhere, so the script runs at once,
+    // however busy the neighbours are (ADR-0891). Before the fix, three hundred runs answered
+    // ETXTBSY between five and sixteen times on the development host and a hundred about once, so
+    // two hundred reproduce the race reliably while the fixed helper passes whatever the count.
+    const ATTEMPTS: u32 = 200;
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let spawners: Vec<_> = (0..6)
+        .map(|_| {
+            let stop = std::sync::Arc::clone(&stop);
+            std::thread::spawn(move || {
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = std::process::Command::new("/bin/true").status();
+                }
+            })
+        })
+        .collect();
+
+    let directory = ono_testkit::scratch();
+    let mut busy = 0;
+    for attempt in 0..ATTEMPTS {
+        let script = ono_testkit::executable_script(
+            directory.path(),
+            &format!("script-{attempt}"),
+            "#!/bin/sh\nexit 0\n",
+        );
+        match std::process::Command::new(&script).status() {
+            Err(error) if error.raw_os_error() == Some(26) => busy += 1,
+            Err(error) => panic!("the script this test wrote could not be run: {error}"),
+            Ok(status) => assert!(status.success(), "the script exits 0, got {status}"),
+        }
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    for spawner in spawners {
+        spawner.join().expect("a spawner thread finishes");
+    }
+    assert_eq!(
+        busy, 0,
+        "a script the helper wrote is never busy when it is run, but {busy} of {ATTEMPTS} runs answered \
+         ETXTBSY"
+    );
+}
