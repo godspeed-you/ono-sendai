@@ -17,13 +17,17 @@
 mod change_support;
 
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use change_support::{build_disk_home, one, ono_at, text};
+use ono_testkit::OwnedChild;
 
 /// `ono -c script` in `home`, started and left running.
-fn spawn_ono(home: &Path, script: &str) -> Child {
+///
+/// Owned, so the apply a test holds on a pipe ends with the test even when an assertion fails
+/// before the test would have released or killed it (ADR-0516).
+fn spawn_ono(home: &Path, script: &str) -> OwnedChild {
     let root = home.to_string_lossy().into_owned();
     Command::new(env!("CARGO_BIN_EXE_ono"))
         .env("NO_COLOR", "1")
@@ -37,6 +41,7 @@ fn spawn_ono(home: &Path, script: &str) -> Child {
         .stderr(Stdio::null())
         .spawn()
         .expect("ono starts")
+        .into()
 }
 
 /// A plan copying `source` over `target`, with `source` then replaced by a pipe nobody writes.
