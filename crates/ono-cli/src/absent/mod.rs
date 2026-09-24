@@ -259,7 +259,9 @@ pub fn claims(stage: &Stage) -> Option<ErrorValue> {
     };
     match name.namespace.as_deref() {
         None | Some("ono") => {}
-        Some("exec") => return None,
+        // `exec:` and `fn:` are the shell's own namespaces (ADR-0011): a program and a user
+        // function are never a compiled-out tier's (ADR-0911).
+        Some("exec" | "fn") => return None,
         // A package's namespace: only KUANG/11 puts commands there (spec §31.5).
         Some(namespace) => {
             return absent(Tier::Kuang)

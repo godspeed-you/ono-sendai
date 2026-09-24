@@ -302,3 +302,30 @@ fn should_open_an_interactive_session_without_reaching_for_a_compiled_out_tier()
         "nothing is refused before the user typed anything: {seen:?}"
     );
 }
+
+#[test]
+fn should_resolve_the_function_namespace_as_the_full_build_does() {
+    // `fn:` is the shell's own namespace (ADR-0011), not a package's: the core build answers it
+    // exactly as the full build, never as a compiled-out KUANG/11 command (#127, ADR-0911).
+    let home = ono_testkit::scratch();
+    let undefined = script(&home, "fn:nonesuch");
+    assert_eq!(undefined.status().code(), 127, "{}", undefined.output());
+    assert!(
+        undefined.stderr().contains("Ono-Sendai-E0101"),
+        "an undefined function is not found, not compiled out: {}",
+        undefined.stderr()
+    );
+    let defined = script(&home, "fn greet() { echo hello-from-fn }; fn:greet");
+    defined.assert_success();
+    assert!(
+        defined.stdout().contains("hello-from-fn"),
+        "{}",
+        defined.output()
+    );
+    let background = script(&home, "fn greet() { echo hello-from-fn }; fn:greet &; jobs");
+    assert!(
+        !background.output().contains("Ono-Sendai-E0104"),
+        "a defined function runs in the background too: {}",
+        background.output()
+    );
+}
