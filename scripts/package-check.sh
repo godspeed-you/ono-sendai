@@ -78,6 +78,18 @@ if [[ -z "$runtime" ]]; then
   exit 127
 fi
 
+# Named after the checkout, and removed only by the last run using it — ADR-0901's rule for the
+# acceptance images, which this one shares the defect of: one fixed tag let a validation in one
+# worktree remove the image a validation in another was still installing packages in (ADR-0907).
+# The lock is held from here to the end, so a run counts as using the image for all of it.
+checkout="$(pwd -P)"
+checkout_label="$(basename "$checkout" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-48)"
+checkout_digest="$(printf '%s' "$checkout" | sha256sum | cut -c1-12)"
+fedora_check_image="ono-package-check:fedora-${checkout_label%-}-${checkout_digest}"
+lock_dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+exec {image_lock}>>"$lock_dir/ono-package-check-$(printf '%s' "$fedora_check_image" | tr -c 'A-Za-z0-9_.-' '_').lock"
+flock --shared "$image_lock"
+
 native=0
 [[ "$target" == "$host_triple" ]] && native=1
 
@@ -269,7 +281,6 @@ done
 file_version="${rpm#ono-}"; file_version="${file_version%%-1.*}"
 file_arch="${rpm##*-1.}"; file_arch="${file_arch%.rpm}"
 
-fedora_check_image="ono-package-check:fedora"
 step "preparing $fedora_check_image from $FEDORA_IMAGE"
 printf 'FROM %s\nRUN dnf --assumeyes install util-linux && dnf clean all\n' "$FEDORA_IMAGE" \
   | "$runtime" build --quiet --tag "$fedora_check_image" - >/dev/null
@@ -377,7 +388,11 @@ fi
 # --- verdict -----------------------------------------------------------------------------
 
 if [[ $keep_image -eq 0 ]]; then
-  "$runtime" image rm --force "$fedora_check_image" >/dev/null 2>&1 || true
+  if flock --exclusive --nonblock "$image_lock"; then
+    "$runtime" image rm --force "$fedora_check_image" >/dev/null 2>&1 || true
+  else
+    printf 'package-check: keeping %s — another run is still using it\n' "$fedora_check_image"
+  fi
 fi
 
 echo

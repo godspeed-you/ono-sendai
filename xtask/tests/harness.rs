@@ -29,6 +29,11 @@ use support::repo;
 /// case while another one finishes.
 const STUB_RUNTIME: &str = r#"#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$STUB_LOG"
+# A build handed its Dockerfile on standard input (`-`) reads it, which keeps the writer's pipe
+# whole.
+if [ "$1" = build ] && [ "${!#}" = - ]; then
+  cat > /dev/null
+fi
 if [ "$1" = run ]; then
   cat > /dev/null
   if [ -n "${STUB_HOLD:-}" ]; then
@@ -79,6 +84,37 @@ fn checkout(name: &str) -> Checkout {
         "docs/contracts/hardening/expected_test_skips.yaml",
         "acceptance:\n",
     );
+    // What `scripts/package-check.sh` reads: the version of `ono-cli`, and the packages of it.
+    std::fs::copy(
+        repo().join("scripts/package-check.sh"),
+        root.join("scripts/package-check.sh"),
+    )
+    .expect("package validation is copied");
+    write(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"crates/ono-cli\"]\nresolver = \"2\"\n",
+    );
+    write(
+        "crates/ono-cli/Cargo.toml",
+        "[package]\nname = \"ono-cli\"\nversion = \"1.2.3\"\nedition = \"2021\"\n",
+    );
+    write("crates/ono-cli/src/main.rs", "fn main() {}\n");
+    write(
+        "Cargo.lock",
+        "version = 4\n\n[[package]]\nname = \"ono-cli\"\nversion = \"1.2.3\"\n",
+    );
+    let (deb_arch, rpm_arch) = match std::env::consts::ARCH {
+        "aarch64" => ("arm64", "aarch64"),
+        _ => ("amd64", "x86_64"),
+    };
+    write(
+        &format!("dist/ono_1.2.3_{deb_arch}.deb"),
+        "a stand-in package",
+    );
+    write(
+        &format!("dist/ono-1.2.3-1.{rpm_arch}.rpm"),
+        "a stand-in package",
+    );
     let bin = scratch.path().join("bin");
     let docker = bin.join("docker");
     std::fs::create_dir_all(&bin).unwrap();
@@ -97,9 +133,14 @@ fn checkout(name: &str) -> Checkout {
 impl Checkout {
     /// `scripts/acceptance.sh <arguments>` in this checkout, logging runtime commands to `log`.
     fn command(&self, arguments: &[&str], log: &Path) -> Command {
+        self.script("acceptance.sh", arguments, log)
+    }
+
+    /// `scripts/<script> <arguments>` in this checkout, logging runtime commands to `log`.
+    fn script(&self, script: &str, arguments: &[&str], log: &Path) -> Command {
         let mut command = Command::new("bash");
         command
-            .arg(self.root.join("scripts/acceptance.sh"))
+            .arg(self.root.join("scripts").join(script))
             .args(arguments)
             .current_dir(&self.root)
             .env(
@@ -112,6 +153,9 @@ impl Checkout {
             )
             .env("STUB_LOG", log)
             .env("XDG_RUNTIME_DIR", &self.runtime_dir)
+            // The stand-in runtime's `run` reads its standard input to the end, as a container
+            // given one does; inherited from the test, it may never end.
+            .stdin(Stdio::null())
             .env_remove("ONO_ACCEPTANCE_IMAGE")
             .env_remove("ONO_ACCEPTANCE_LAYER_CACHE")
             .env_remove("STUB_HOLD");
@@ -526,5 +570,83 @@ fn should_read_and_write_the_filesystem_stage_through_the_layer_cache_only_when_
         !output.status.success() && text(&output).contains("ONO_ACCEPTANCE_LAYER_CACHE"),
         "an unknown layer-cache mode was accepted:\n{}",
         text(&output)
+    );
+}
+
+// --- the package validation image, per checkout (ADR-0901 applied to package-check.sh) -------
+
+#[test]
+fn should_give_package_validation_an_image_of_its_own_and_keep_one_another_run_uses() {
+    // `scripts/package-check.sh` built and force-removed the one tag `ono-package-check:fedora`,
+    // which is #185's defect in a second script: a validation in another worktree lost its image
+    // in the middle of the rpm checks.
+    let first = checkout("ono-sendai");
+    let second = checkout("ono-sendai");
+    let validate = |checkout: &Checkout, log: &Path| {
+        let output = checkout
+            .script("package-check.sh", &[], log)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "package validation against the stand-in runtime failed:\n{}",
+            text(&output)
+        );
+    };
+    let first_log = first.root.with_file_name("first.log");
+    let second_log = second.root.with_file_name("second.log");
+    validate(&first, &first_log);
+    validate(&second, &second_log);
+    let first_built = built_images(&logged(&first_log));
+    let second_built = built_images(&logged(&second_log));
+    assert_eq!(
+        first_built.len(),
+        1,
+        "one image is prepared: {first_built:?}"
+    );
+    assert!(
+        first_built[0].starts_with("ono-package-check:"),
+        "{first_built:?}"
+    );
+    assert_ne!(
+        first_built, second_built,
+        "two worktrees prepare the same package-validation image, so one run removes it from \
+         under the other"
+    );
+    assert_eq!(
+        removed_images(&logged(&first_log)),
+        first_built,
+        "a run removes exactly the image it prepared"
+    );
+
+    // Two runs of one checkout share it; the one that finishes first leaves it.
+    let hold = first.root.with_file_name("hold");
+    let held_log = first.root.with_file_name("held.log");
+    let mut held = first
+        .script("package-check.sh", &[], &held_log)
+        .env("STUB_HOLD", &hold)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("bash must be runnable in the gate");
+    wait_for(&hold.with_extension("started"), &mut held);
+    let other_log = first.root.with_file_name("other.log");
+    let other = first
+        .script("package-check.sh", &[], &other_log)
+        .output()
+        .unwrap();
+    let _ = std::fs::write(hold.with_extension("release"), "");
+    let held = held.wait_with_output().expect("the held run finishes");
+    assert!(other.status.success(), "{}", text(&other));
+    assert!(
+        removed_images(&logged(&other_log)).is_empty(),
+        "package validation removed its image while another validation was using it:\n{}",
+        text(&other)
+    );
+    assert!(held.status.success(), "{}", text(&held));
+    assert_eq!(
+        removed_images(&logged(&held_log)),
+        built_images(&logged(&held_log)),
+        "the last run to finish removes the image"
     );
 }
