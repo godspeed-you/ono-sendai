@@ -440,3 +440,91 @@ fn busy_among_fresh_executables(make: impl Fn(&std::path::Path, u32) -> std::pat
     }
     busy
 }
+
+#[test]
+fn should_kill_what_the_program_started_when_a_run_exceeds_its_budget() {
+    // Issue #204: killing the overrunning program is not enough when the program is a shell.
+    // What it started survives it — reparented, still running, and invisible to the test that
+    // caused it. One grandchild here stays in the program's session; the other leads a session of
+    // its own, as the jobs `ono` starts lead process groups of their own, so neither the pid nor
+    // the process group of the program reaches it (ADR-0892).
+    let scratch = ono_testkit::scratch();
+    let marker = scratch.path().join("pids");
+    let outcome = Shell::program("/bin/sh")
+        .args([
+            "-c",
+            &format!(
+                "sleep 300 & echo $! >> {0}; setsid sleep 300 & echo $! >> {0}; wait",
+                marker.display()
+            ),
+        ])
+        .timeout(std::time::Duration::from_millis(500))
+        .try_run();
+    assert!(outcome.is_err(), "the run overran and must say so");
+    assert_all_gone(&recorded_pids(&marker, 2));
+}
+
+#[test]
+fn should_kill_the_jobs_the_shell_started_when_a_bounded_run_is_cut_off() {
+    // Issue #204, through the real shell: `ono` runs an external command in a process group of its
+    // own, so a bounded run that kills only `ono` at its deadline leaves the command running.
+    let scratch = ono_testkit::scratch();
+    let marker = scratch.path().join("pids");
+    let bounded = ono_testkit::run_bounded(
+        &scratch,
+        // The job lets go of the run's pipes, so a surviving job shows as a survivor here rather
+        // than as a run that cannot finish draining output it will never close.
+        &format!(
+            "sh -c 'echo $$ > {}; exec sleep 300 > /dev/null 2>&1'",
+            marker.display()
+        ),
+        std::time::Duration::from_secs(3),
+    );
+    assert!(
+        !bounded.finished,
+        "the job sleeps past the budget, so the run is cut off: {}",
+        bounded.report()
+    );
+    assert_all_gone(&recorded_pids(&marker, 1));
+}
+
+/// The pids a fixture recorded, one per line, once `count` of them are there.
+fn recorded_pids(marker: &std::path::Path, count: usize) -> Vec<u32> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let pids: Vec<u32> = std::fs::read_to_string(marker)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.trim().parse().ok())
+            .collect();
+        if pids.len() >= count || std::time::Instant::now() >= deadline {
+            assert_eq!(
+                pids.len(),
+                count,
+                "the fixture records {count} pids before its budget runs out, got {pids:?}"
+            );
+            return pids;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// Asserts that none of `pids` is still running, allowing the kernel a moment to deliver.
+fn assert_all_gone(pids: &[u32]) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline && pids.iter().any(|pid| alive(*pid)) {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let survivors: Vec<u32> = pids.iter().copied().filter(|pid| alive(*pid)).collect();
+    // A survivor must not outlive the proof that it survived.
+    for pid in &survivors {
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .status();
+    }
+    assert!(
+        survivors.is_empty(),
+        "a process the test started is still running after its owner was done with it: \
+         {survivors:?} of {pids:?}"
+    );
+}

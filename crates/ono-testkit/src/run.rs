@@ -196,7 +196,10 @@ impl Shell {
             }
         };
         let Some(status) = status else {
-            let _ = child.kill();
+            // The whole tree, not the child alone: a shell under test runs its jobs in process
+            // groups of their own, and they outlive a kill aimed at the shell (issue #204,
+            // ADR-0892).
+            crate::kill_tree(child.id());
             let _ = child.wait();
             return Err(RunError::Timeout {
                 program: self.program.clone(),

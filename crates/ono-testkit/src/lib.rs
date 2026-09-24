@@ -20,6 +20,7 @@
 
 mod bounded;
 mod profile;
+mod reap;
 mod rng;
 mod run;
 mod scratch;
@@ -32,6 +33,7 @@ pub use profile::{
     ProfileDeclaration, SocketPopulation, declared_payloads, declared_profiles, descriptors_for,
     payload,
 };
+pub use reap::kill_tree;
 pub use rng::Rng;
 pub use run::{Run, RunError, Shell, under_load};
 pub use scratch::{Scratch, executable_copy, executable_script, scratch, while_text_file_busy};

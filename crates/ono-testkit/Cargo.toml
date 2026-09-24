@@ -11,7 +11,8 @@ publish = false
 
 [dependencies]
 jiff.workspace = true
-nix = { workspace = true, features = ["resource"] }
+# `signal`: a run that overruns is ended with its whole process tree (ADR-0892).
+nix = { workspace = true, features = ["resource", "signal"] }
 ono-core.workspace = true
 serde_yaml_ng.workspace = true
 

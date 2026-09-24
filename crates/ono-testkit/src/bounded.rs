@@ -99,7 +99,9 @@ pub fn run_bounded(dir: &Scratch, script: &str, budget: Duration) -> Bounded {
         }
     }
     if !finished {
-        let _ = child.kill();
+        // With everything it started: `ono` runs each job in a process group of its own, so a
+        // kill aimed at the shell alone leaves the job running (issue #204, ADR-0892).
+        crate::kill_tree(child.id());
     }
     // Reaped on every path, including the one that killed it, so an overrunning proof leaves no
     // zombie behind the tests that run after it.
