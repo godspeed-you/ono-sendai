@@ -12,7 +12,6 @@
 
 mod common;
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use common::{drain, records};
@@ -21,9 +20,17 @@ use ono_provider_linux::RpmPackageProvider;
 use ono_testkit::{Scratch, scratch};
 use ono_value::{ActionStatus, SchemaId, Value};
 
+/// Writes a fake tool at `path` through the testkit, so the provider never finds it busy
+/// (issue #188, ADR-0891).
 fn executable(path: &Path, contents: &str) {
-    std::fs::write(path, contents).expect("write the fake tool");
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    ono_testkit::executable_script(
+        path.parent().expect("a fake tool lives in a directory"),
+        &path
+            .file_name()
+            .expect("a fake tool has a name")
+            .to_string_lossy(),
+        contents,
+    );
 }
 
 /// Fake rpm and dnf on `<scratch>/bin`, and a root with two repositories, one with a cache.

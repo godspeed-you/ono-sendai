@@ -442,18 +442,11 @@ impl Package {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("a private directory for the fixture package");
         let marker = root.join("the-plugin-ran");
-        let artifact = root.join("echo");
-        std::fs::write(
-            &artifact,
-            format!("#!/bin/sh\necho started > {}\nexit 0\n", marker.display()),
-        )
-        .expect("the fixture artifact");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            std::fs::set_permissions(&artifact, std::fs::Permissions::from_mode(0o755))
-                .expect("an executable fixture artifact");
-        }
+        let artifact = ono_testkit::executable_script(
+            &root,
+            "echo",
+            &format!("#!/bin/sh\necho started > {}\nexit 0\n", marker.display()),
+        );
         Self {
             root,
             artifact,

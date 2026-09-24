@@ -34,30 +34,21 @@ fn captured(command: Command) -> PipelineOutcome {
     run(command.stdout(Output::Capture).stderr(Output::Capture))
 }
 
+/// Writes a script with `mode`, through [`ono_testkit::executable_script`] so that no thread of
+/// this process holds it open for writing when it is executed.
+///
+/// A thread that forks while this one has the script open hands its child the write descriptor,
+/// and until that child execs, `execve` answers ETXTBSY — which ADR-0008 maps to 126, "found and
+/// not executable", about a file that is executable (issue #27, issue #188, ADR-0891).
 fn write_script(dir: &Path, name: &str, body: &str, mode: u32) -> std::path::PathBuf {
-    let path = dir.join(name);
-    fs::write(&path, body).expect("the script must be writable");
+    let path = ono_testkit::executable_script(dir, name, body);
     fs::set_permissions(&path, fs::Permissions::from_mode(mode)).expect("mode must be settable");
     path
 }
 
-/// Runs a script this suite has just written, waiting out a thread that is still holding it open.
-///
-/// A thread that forks between this thread's `open` and `close` of the script inherits the write
-/// descriptor, and until that child execs, `execve` answers ETXTBSY — which ADR-0008 maps to 126,
-/// "found and not executable", about a file that is executable. Issue #27 is one sighting of that
-/// under a `cargo test --workspace` with a container build beside it. Every other failure is
-/// answered on the first attempt (ADR-0520).
+/// Runs a script this suite has written, capturing both streams.
 fn captured_script(script: &Path) -> PipelineOutcome {
-    ono_testkit::while_text_file_busy(
-        |outcome: &PipelineOutcome| {
-            outcome.stages()[0]
-                .failure
-                .as_ref()
-                .is_some_and(|failure| failure.message().contains("Text file busy"))
-        },
-        || captured(Command::new(script)),
-    )
+    captured(Command::new(script))
 }
 
 #[test]

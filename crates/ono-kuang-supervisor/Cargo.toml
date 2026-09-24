@@ -46,6 +46,8 @@ compiler = ["wasmtime/cranelift", "wasmtime/parallel-compilation"]
 ono-temporal-core.workspace = true
 serde_yaml_ng.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+# `executable_script`: a fixture artifact the supervisor executes is never busy (ADR-0891).
+ono-testkit.workspace = true
 
 [lints]
 workspace = true

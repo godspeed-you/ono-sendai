@@ -117,14 +117,14 @@ struct Helpers {
 }
 
 fn helpers() -> Helpers {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().expect("a scratch directory");
     let mut made = Vec::new();
     for name in ["login-helper", "other-helper"] {
-        let path = dir.path().join(name);
-        std::fs::write(&path, "#!/bin/sh\necho through the broker\n").expect("written");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-            .expect("executable");
+        let path = ono_testkit::executable_script(
+            dir.path(),
+            name,
+            "#!/bin/sh\necho through the broker\n",
+        );
         made.push(
             std::fs::canonicalize(&path)
                 .expect("canonical")

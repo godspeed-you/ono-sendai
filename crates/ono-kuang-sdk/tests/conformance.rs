@@ -1220,14 +1220,11 @@ async fn should_audit_a_granted_call_with_the_virtual_clock() {
 
 /// A model that echoes the first context segment it was sent, speaking `ono-model/1`.
 fn echo_model(directory: &std::path::Path) -> String {
-    let script = directory.join("echo-model");
-    std::fs::write(
-        &script,
+    let script = ono_testkit::executable_script(
+        directory,
+        "echo-model",
         "#!/bin/sh\ndoc=$(cat)\ntext=$(printf '%s' \"$doc\" | grep -o '\"content\":\"[^\"]*\"' | head -1 | cut -d'\"' -f4)\nprintf '{\"protocol\":\"ono-model/1\",\"parts\":[{\"kind\":\"text\",\"text\":\"echo: %s\"},{\"kind\":\"citation\",\"object\":\"ono.process/1[1]\"}]}' \"$text\"\n",
-    )
-    .expect("write the model");
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    );
     script.to_string_lossy().into_owned()
 }
 
@@ -2451,13 +2448,9 @@ async fn should_run_a_program_within_the_granted_scope_and_stream_what_it_wrote(
     // merged-usr machine it canonicalises to `/usr/bin/systemctl`, which is inside the bundle
     // when `/bin/echo` resolves to `/usr/bin/echo`, so the refusal this asserts never happened
     // on the CI runner while it happened on a machine whose coreutils live elsewhere.
-    use std::os::unix::fs::PermissionsExt;
-
     let elsewhere = tempfile::tempdir().expect("a directory of its own");
-    let outsider = elsewhere.path().join("reboot");
-    std::fs::write(&outsider, "#!/bin/sh\nexit 0\n").expect("the program exists");
-    std::fs::set_permissions(&outsider, std::fs::Permissions::from_mode(0o755))
-        .expect("and is executable");
+    let outsider =
+        ono_testkit::executable_script(elsewhere.path(), "reboot", "#!/bin/sh\nexit 0\n");
     let invocation = plugin
         .invoke(
             "dev.example.echo.command.exec",

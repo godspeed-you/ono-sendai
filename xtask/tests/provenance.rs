@@ -15,7 +15,6 @@
 )]
 
 use std::collections::BTreeMap;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -418,9 +417,9 @@ fn should_fail_the_release_check_when_an_artifact_is_absent_from_the_manifest() 
 fn cosign_stub(scratch: &Scratch) -> PathBuf {
     let bin = scratch.path().join("bin");
     std::fs::create_dir_all(&bin).expect("a scratch bin directory");
-    let stub = bin.join("cosign");
-    std::fs::write(
-        &stub,
+    ono_testkit::executable_script(
+        &bin,
+        "cosign",
         "#!/usr/bin/env bash\n\
          printf '%s\\n' \"$*\" >> \"$ONO_COSIGN_LOG\"\n\
          [ \"$1\" = verify-blob ] || { echo \"unexpected cosign subcommand $1\" >&2; exit 64; }\n\
@@ -438,10 +437,7 @@ fn cosign_stub(scratch: &Scratch) -> PathBuf {
          if grep -qx \"$want\" \"$bundle\"; then echo 'Verified OK'; exit 0; fi\n\
          echo 'Error: signature verification failed' >&2\n\
          exit 1\n",
-    )
-    .expect("the cosign stand-in is written");
-    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755))
-        .expect("the stand-in is executable");
+    );
     bin
 }
 
@@ -839,9 +835,9 @@ fn should_verify_every_artifact_digest_against_the_checksum_manifest_and_the_pro
 fn gh_stub(scratch: &Scratch) -> PathBuf {
     let bin = scratch.path().join("bin");
     std::fs::create_dir_all(&bin).expect("a scratch bin directory");
-    let stub = bin.join("gh");
-    std::fs::write(
-        &stub,
+    ono_testkit::executable_script(
+        &bin,
+        "gh",
         "#!/usr/bin/env bash\n\
          printf '%s | GH_REPO=%s | cwd=%s\\n' \"$*\" \"${GH_REPO:-}\" \"$PWD\" >> \"$ONO_GH_LOG\"\n\
          # `gh` itself refuses without a repository, and so does the stand-in: a test that let it\n\
@@ -855,10 +851,7 @@ fn gh_stub(scratch: &Scratch) -> PathBuf {
          \x20 download) exit 0 ;;\n\
          esac\n\
          exit 0\n",
-    )
-    .expect("the gh stand-in is written");
-    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755))
-        .expect("the stand-in is executable");
+    );
     bin
 }
 

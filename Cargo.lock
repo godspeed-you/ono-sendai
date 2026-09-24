@@ -1942,6 +1942,7 @@ dependencies = [
  "ono-kuang-protocol",
  "ono-model-broker",
  "ono-temporal-core",
+ "ono-testkit",
  "ono-value",
  "serde",
  "serde_json",

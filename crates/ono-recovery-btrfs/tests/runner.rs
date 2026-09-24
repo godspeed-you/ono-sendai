@@ -13,21 +13,9 @@ use std::time::{Duration, Instant};
 
 use ono_change_core::ToolRunner;
 use ono_recovery_btrfs::{METADATA_COVERAGE, ProcessRunner};
-use ono_testkit::{executable_script, scratch, while_text_file_busy};
-
-/// Whether this answer is the machine reporting a busy file rather than the provider answering.
-///
-/// `cargo test` runs a crate's tests in threads of one process, so a sibling thread that forks
-/// between this one's `open` and `close` inherits the write descriptor and `execve` answers
-/// `ETXTBSY` until the child execs. It is not a finding about the runner, and issue #27 is the
-/// same race one crate over.
-fn text_file_busy<T>(outcome: &Result<T, ono_value::ErrorValue>) -> bool {
-    outcome.as_ref().err().is_some_and(|error| {
-        error
-            .help()
-            .is_some_and(|help| help.contains("Text file busy"))
-    })
-}
+// The programs are written by `executable_script`, which never holds one open for writing in this
+// process, so none of them can be found busy when the runner executes it (issue #188, ADR-0891).
+use ono_testkit::{executable_script, scratch};
 
 #[test]
 fn should_pass_a_hostile_argument_through_as_one_argument() {
@@ -35,8 +23,7 @@ fn should_pass_a_hostile_argument_through_as_one_argument() {
     executable_script(scratch.path(), "repeat", "#!/bin/sh\nprintf '%s' \"$1\"\n");
     let runner = ProcessRunner::searching(scratch.path().to_string_lossy().into_owned());
     let hostile = "@var; rm -rf /";
-    let output = while_text_file_busy(text_file_busy, || runner.run("repeat", &[hostile]))
-        .expect("the program runs");
+    let output = runner.run("repeat", &[hostile]).expect("the program runs");
     assert_eq!(
         output.stdout(),
         hostile,
@@ -55,10 +42,7 @@ fn should_report_a_program_that_ran_and_failed_as_output_rather_than_an_error() 
         "#!/bin/sh\necho 'ERROR: Not a Btrfs subvolume: Invalid argument' >&2\nexit 1\n",
     );
     let runner = ProcessRunner::searching(scratch.path().to_string_lossy().into_owned());
-    let output = while_text_file_busy(text_file_busy, || {
-        runner.run("refuse", &["subvolume", "show", "/tmp"])
-    })
-    .expect(
+    let output = runner.run("refuse", &["subvolume", "show", "/tmp"]).expect(
         "a program that ran and failed is an answer, not a runner failure: `Not a Btrfs \
          subvolume` is what Appendix B.9's question looks like when the answer is no",
     );
@@ -89,8 +73,7 @@ fn should_run_a_program_with_a_predictable_environment() {
         "#!/bin/sh\nprintf '%s' \"$LC_ALL\"\n",
     );
     let runner = ProcessRunner::searching(scratch.path().to_string_lossy().into_owned());
-    let output = while_text_file_busy(text_file_busy, || runner.run("environment", &[]))
-        .expect("the program runs");
+    let output = runner.run("environment", &[]).expect("the program runs");
     assert_eq!(
         output.stdout(),
         "C",
