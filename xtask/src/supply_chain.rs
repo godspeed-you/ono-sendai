@@ -178,9 +178,9 @@ const LOCAL_IMAGE_PREFIX: &str = "ono-sendai:";
 /// FROM rust:1.94-slim-bookworm@sha256:cf9dd0…
 /// ```
 ///
-/// Three references are not registry pulls and are skipped: a later Dockerfile stage naming an
-/// earlier one, an image this repository builds itself (`ono-sendai:…`), and a reference that is
-/// only a shell expansion, which is pinned wherever the variable is set.
+/// Four references are not registry pulls and are skipped: a later Dockerfile stage naming an
+/// earlier one, `FROM scratch`, an image this repository builds itself (`ono-sendai:…`), and a
+/// reference that is only a shell expansion, which is pinned wherever the variable is set.
 ///
 /// There is no allowlist. Spec §62.2 permits one for test-only convenience images, and this
 /// repository has none that it pulls — the demo images are its own build output — so an
@@ -271,7 +271,9 @@ fn dockerfile_images(text: &str) -> Vec<(usize, String)> {
         {
             stages.push(name.to_owned());
         }
-        if stages.iter().any(|stage| stage == image) {
+        // `scratch` is Docker's name for no image at all: nothing is pulled, so there is no
+        // publisher to repoint it and nothing a digest could pin (ADR-0913).
+        if stages.iter().any(|stage| stage == image) || image.eq_ignore_ascii_case("scratch") {
             continue;
         }
         images.push((index + 1, image.to_owned()));

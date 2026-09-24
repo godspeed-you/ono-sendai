@@ -165,6 +165,21 @@ fn should_accept_an_image_this_repository_builds_itself() {
 }
 
 #[test]
+fn should_accept_the_empty_image_a_static_binary_is_shipped_in() {
+    // `scratch` is Docker's name for no image at all: nothing is pulled, so there is nothing a
+    // digest could pin (#127, ADR-0913). A registry image beside it is still held to §44.1.
+    let repo = fixture(&[(
+        "docker/core/Dockerfile",
+        "FROM scratch AS core
+FROM busybox:1.37.0-musl AS harness
+",
+    )]);
+    let problems = check_image_digests(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].location.starts_with("docker/core/Dockerfile:2"));
+}
+
+#[test]
 fn should_reject_a_package_validation_image_named_by_a_shell_variable_without_a_digest() {
     let repo = fixture(&[(
         "scripts/package-check.sh",
