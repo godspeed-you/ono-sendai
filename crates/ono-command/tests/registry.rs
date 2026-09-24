@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
-use ono_command::{ArgumentMode, Origin, Privilege, Stability};
+use ono_command::{ArgumentMode, CommandRegistry, Origin, Privilege, Stability};
 use ono_parser::ArgMode;
 use ono_value::SchemaId;
 
@@ -297,4 +297,50 @@ fn should_write_a_package_origin_as_the_package_and_its_version() {
     assert_eq!(origin.package(), Some("dev.example.echo"));
     assert_eq!(origin.version(), Some("0.1.0"));
     assert_eq!(Origin::Core.package(), None);
+}
+
+// --- a registry narrowed to the tiers a build carries (#127, ADR-0910) --------------------------
+
+/// A core build leaves whole command families out, and what it leaves out must be absent from
+/// everything the registry answers — resolution, the verb list, the target list — or `help` and
+/// completion would advertise commands the binary cannot run.
+#[test]
+fn should_answer_for_retained_commands_only_when_narrowed() {
+    let full = CommandRegistry::embedded().expect("the embedded registry");
+    let narrowed = full.retaining(|command| command.family() != "spatial");
+
+    assert!(
+        narrowed.find("map", None).is_none(),
+        "`map` is a spatial command"
+    );
+    assert!(narrowed.get("ono.place.find").is_none());
+    assert!(
+        narrowed.verb("map").is_none(),
+        "a verb only a removed family used is not a verb of this registry"
+    );
+    assert!(
+        narrowed.target("place").is_none(),
+        "a target only a removed family used is not a target of this registry"
+    );
+    assert!(
+        !narrowed.targets_for_verb("find").contains(&"place"),
+        "`find` keeps its other targets and loses `place`"
+    );
+
+    let get_process = narrowed
+        .find("get", Some("process"))
+        .expect("`get process` is not spatial and stays");
+    assert_eq!(get_process.id(), "ono.process.get");
+    assert!(
+        narrowed.verb("find").is_some(),
+        "`find file` still uses `find`"
+    );
+    assert!(narrowed.target("process").is_some());
+    assert_eq!(
+        narrowed.len(),
+        full.commands()
+            .iter()
+            .filter(|command| command.family() != "spatial")
+            .count()
+    );
 }

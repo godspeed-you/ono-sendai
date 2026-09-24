@@ -7,7 +7,7 @@
 //! from JSON, which `build.rs` transcodes from the YAML at build time, because the YAML parse
 //! alone cost a quarter of a cold start (ADR-0571).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
 use ono_core::ErrorCode;
@@ -231,6 +231,66 @@ impl CommandRegistry {
             extended.commands.push(contribution);
         }
         (extended, refusals)
+    }
+
+    /// This registry with only the commands `keep` accepts.
+    ///
+    /// A build that leaves a tier out (#127, ADR-0910) answers for the commands it carries and for
+    /// no others, so `help`, completion and `get command` cannot advertise what it cannot run. A
+    /// verb or target goes with the last command that used it; one no command ever used — a verb
+    /// of spec §7.1 nothing implements yet — is kept, because nothing was removed from it.
+    #[must_use]
+    pub fn retaining(&self, keep: impl Fn(&CommandContract) -> bool) -> Self {
+        let mut commands = Vec::new();
+        let mut moved = BTreeMap::new();
+        for (index, command) in self.commands.iter().enumerate() {
+            if keep(command) {
+                moved.insert(index, commands.len());
+                commands.push(command.clone());
+            }
+        }
+        let by_id = self
+            .by_id
+            .iter()
+            .filter_map(|(id, index)| Some((id.clone(), *moved.get(index)?)))
+            .collect();
+        let by_spelling = self
+            .by_spelling
+            .iter()
+            .filter_map(|(spelling, index)| Some((spelling.clone(), *moved.get(index)?)))
+            .collect();
+        // A word survives if a kept command uses it, or if no command ever did.
+        let dropped = |word: fn(&CommandContract) -> Option<&str>| -> BTreeSet<String> {
+            let kept: BTreeSet<&str> = commands.iter().filter_map(word).collect();
+            self.commands
+                .iter()
+                .filter_map(word)
+                .filter(|name| !kept.contains(name))
+                .map(str::to_owned)
+                .collect()
+        };
+        let dropped_verbs = dropped(|command| Some(command.verb()));
+        let dropped_targets = dropped(CommandContract::target);
+        let verbs = self
+            .verbs
+            .iter()
+            .filter(|verb| !dropped_verbs.contains(verb.verb()))
+            .cloned()
+            .collect();
+        let targets = self
+            .targets
+            .iter()
+            .filter(|target| !dropped_targets.contains(target.name()))
+            .cloned()
+            .collect();
+        Self {
+            commands,
+            by_id,
+            by_spelling,
+            verbs,
+            targets,
+            capabilities: self.capabilities.clone(),
+        }
     }
 
     /// Every command, in the order the contract files declare them.
