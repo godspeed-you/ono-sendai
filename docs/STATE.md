@@ -34,12 +34,11 @@ request.
 git push origin implementation && git push origin --tags
 ```
 
-**The workspace declares `0.6.2`.** `v0.6.2`, the Verification Foundation over `v0.6.1`, is the
-GitHub milestone `v0.6.2` implemented on `implementation` (ADR-0862: the milestone is the release
-inventory and each issue its requirement). Its note, with the traceability of all 24 issues, is
-`docs/releases/v0.6.2.md`, and its run record `docs/runs/v0.6.2-2026-09-24.md`. `v0.6.1` (2026-09-12)
-and every earlier release are tagged, published and on `main`; `gh release list` shows what is
-published.
+**The workspace declares `0.6.2`.** `v0.6.2`, the Verification Foundation over `v0.6.1`, is
+tagged, published (2026-09-25) and on `main`; its milestone is closed. Its note, with the
+traceability of all 24 issues, is `docs/releases/v0.6.2.md`, and its run record
+`docs/runs/v0.6.2-2026-09-24.md`; every earlier release has its note beside it in
+`docs/releases/`, and `gh release list` shows what is published.
 
 ---
 
