@@ -161,6 +161,20 @@ fn should_not_loop_on_an_attribute_of_zero_length() {
 }
 
 #[test]
+fn should_report_an_error_message_whose_errno_has_no_negation() {
+    // `NLMSG_ERROR` carries the negated errno. `i32::MIN` has no positive counterpart, so the
+    // kernel never sends it — and a decoder that negates it unchecked panics on a forged reply.
+    let forged = message(2, &i32::MIN.to_ne_bytes());
+    for (name, decode) in decoders() {
+        let decoded = decode(&forged);
+        assert!(
+            !decoded.errors().is_empty(),
+            "{name} reports a kernel refusal it cannot name as an error, not as a panic"
+        );
+    }
+}
+
+#[test]
 fn should_not_loop_on_a_message_of_zero_length() {
     let zero_length = message_claiming(16, 0, &ifinfomsg(2, 1, 0x1));
     for (name, decode) in decoders() {

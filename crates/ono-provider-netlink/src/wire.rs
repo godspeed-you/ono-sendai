@@ -242,7 +242,8 @@ pub(crate) fn text(payload: &[u8]) -> Option<String> {
 /// The `NLMSG_ERROR` payload as the structured error it describes.
 pub(crate) fn error_message(payload: &[u8]) -> ErrorValue {
     let errno = i32_at(payload, 0).unwrap_or(0);
-    errno_error(-errno)
+    // `i32::MIN` has no negation; no kernel sends it, and saturating names it as an unknown errno.
+    errno_error(errno.saturating_neg())
 }
 
 /// Turns a positive errno into the structured error spec §43 requires.
