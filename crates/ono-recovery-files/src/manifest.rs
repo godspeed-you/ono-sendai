@@ -227,6 +227,10 @@ impl ArchiveEntry {
             text => Some(text.to_owned()),
         };
         let count: usize = fields.get(13)?.parse().ok()?;
+        // The count is read from the line, so it sizes nothing until the line carries its fields.
+        if fields.len() < count.checked_mul(2)?.checked_add(14)? {
+            return None;
+        }
         let mut xattrs = Vec::with_capacity(count);
         for index in 0..count {
             let name = String::from_utf8(unhex(fields.get(14 + index * 2)?)?).ok()?;
