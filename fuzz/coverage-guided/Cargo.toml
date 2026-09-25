@@ -81,6 +81,34 @@ doc = false
 bench = false
 
 [[bin]]
+name = "temporal-store"
+path = "fuzz_targets/temporal-store.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "temporal-events"
+path = "fuzz_targets/temporal-events.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "time-selectors"
+path = "fuzz_targets/time-selectors.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "causal-candidates"
+path = "fuzz_targets/causal-candidates.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "change-records"
 path = "fuzz_targets/change-records.rs"
 test = false

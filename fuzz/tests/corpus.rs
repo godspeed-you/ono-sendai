@@ -116,6 +116,50 @@ fn should_have_a_target_for_every_entry_point_the_coverage_guided_tier_must_cove
 }
 
 #[test]
+fn should_build_every_target_the_scheduled_tier_runs() {
+    // The workflow's matrix names a target and `cargo fuzz` builds it from a `[[bin]]` of the
+    // coverage-guided crate. A matrix entry without its binary fails the night's build, not the
+    // gate, and four v0.5 targets failed that way every night from the day they were added.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = std::fs::read_to_string(root.join("coverage-guided/Cargo.toml"))
+        .expect("fuzz/coverage-guided/Cargo.toml is readable");
+    let built: BTreeSet<&str> = manifest
+        .split("[[bin]]")
+        .skip(1)
+        .filter_map(|bin| {
+            bin.lines()
+                .find_map(|line| line.trim().strip_prefix("name = "))
+                .map(|name| name.trim_matches('"'))
+        })
+        .collect();
+    let workflow = std::fs::read_to_string(root.join("../.github/workflows/fuzz.yml"))
+        .expect(".github/workflows/fuzz.yml is readable");
+    let matrix: BTreeSet<&str> = workflow
+        .lines()
+        .skip_while(|line| line.trim() != "target:")
+        .skip(1)
+        .map_while(|line| line.trim().strip_prefix("- "))
+        .collect();
+    let all: BTreeSet<&str> = TARGETS.iter().map(|target| target.name).collect();
+    assert_eq!(
+        matrix, all,
+        "the scheduled matrix runs every target and nothing else"
+    );
+    assert_eq!(
+        built, all,
+        "every target has a `[[bin]]` in fuzz/coverage-guided/Cargo.toml, or `cargo fuzz` cannot \
+         build what the matrix asks it to run"
+    );
+    for name in &built {
+        assert!(
+            root.join(format!("coverage-guided/fuzz_targets/{name}.rs"))
+                .is_file(),
+            "the `{name}` binary has its source in fuzz/coverage-guided/fuzz_targets/"
+        );
+    }
+}
+
+#[test]
 fn should_carry_a_seed_corpus_for_every_target() {
     for target in TARGETS {
         let seeds = ono_fuzz::load(&ono_fuzz::corpus_dir(target.name));
