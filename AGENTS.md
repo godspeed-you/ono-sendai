@@ -178,6 +178,7 @@ Concretely:
 ## 5. Authority Order (what wins when sources disagree)
 
 ```
+0. docs/specs/ono_sendai_shell_spec_v0.10_native_ai_assistance.md
 0. docs/specs/ono_sendai_shell_spec_v0.9_live_view_integration.md
 0. docs/specs/ono_sendai_shell_spec_v0.8_deck_workspace_composition.md
 0. docs/specs/ono_sendai_shell_spec_v0.7_presentation_consolidation_rich_tty.md
@@ -232,6 +233,13 @@ things on every gate run (ADR-0026):
 
 The enhancements present, newest first:
 
+- `docs/specs/ono_sendai_shell_spec_v0.10_native_ai_assistance.md` — Native AI Assistance &
+  Governed Model Interaction: AI as part of the one language rather than a chatbot beside it —
+  provider-neutral in Ono and provider-specific in KUANG/11 packages; the model reasons while Ono
+  observes, validates and acts; data crosses a model boundary only after context and egress
+  policy; agency is capability, scope and plan. Built on the existing K11-G surface and
+  deliberately after v0.7–v0.9, whose presentation, long-running and Deck semantics it uses.
+  Added 2026-09-15, **not implemented**; `docs/STATE.md` records it behind v0.9.
 - `docs/specs/ono_sendai_shell_spec_v0.9_live_view_integration.md` — Live View Integration &
   Long-Running Workspace Ergonomics: small, bounded presentation-local bindings that keep the
   v0.8 Deck's live views — streams, `watch`, spatial `--live`, the v0.5 temporal cursor — usable,

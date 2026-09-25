@@ -508,9 +508,10 @@ under both: a 22 MB binary instead of 46 MB, held to a size budget wherever it i
 components compiled once at install, a static core build, and a test suite and release tooling
 that give the same answer on a busy machine as on a quiet one (`docs/releases/v0.6.2.md`). Every ticked box of `docs/ACCEPTANCE.md` names an
 automated proof, and the v0.6 boxes still open are listed as recorded exclusions in
-`docs/releases/v0.6.0.md`. Primary platform is Linux (x86_64 and aarch64). Three further enhancement
-specifications — Presentation Consolidation & Rich TTY (v0.7), Deck Workspace Composition (v0.8)
-and Live View Integration (v0.9) — are specified but not yet implemented.
+`docs/releases/v0.6.0.md`. Primary platform is Linux (x86_64 and aarch64). Four further enhancement
+specifications — Presentation Consolidation & Rich TTY (v0.7), Deck Workspace Composition (v0.8),
+Live View Integration (v0.9) and Native AI Assistance (v0.10) — are specified but not yet
+implemented.
 
 **By the numbers.** These are measured, not typed: `cargo xtask metrics` reads them out of the
 tree and the quality gate fails when this block and the repository disagree. `tests` counts test

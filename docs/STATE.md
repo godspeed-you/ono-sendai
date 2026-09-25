@@ -50,7 +50,7 @@ is an **enhancement layered on it** — the External Command Adaptation Layer �
 immutable (AGENTS.md §5.2, ADR-0026). `spec-check` fails if either is missing a checksum line in
 `docs/specs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
 
-**Build order for what remains: v0.7, then v0.8, then v0.9.** v0.4.1, v0.5, v0.6 and v0.6.1 are
+**Build order for what remains: v0.7, then v0.8, then v0.9, then v0.10.** v0.4.1, v0.5, v0.6 and v0.6.1 are
 implemented and released (`v0.4.1` … `v0.6.1`). Each remaining tranche's own §0.1 progression
 diagram names the one before it as its prerequisite, so for these three arrival order and build
 order coincide.
@@ -86,6 +86,15 @@ responsive inside the v0.8 Deck over minutes or hours, without a second live-dat
 checksummed and enumerated, **not implemented**, and **behind v0.8** — the last tranche in the
 current build order.
 
+
+**v0.10 arrived on `main` on 2026-09-15** as
+`docs/specs/ono_sendai_shell_spec_v0.10_native_ai_assistance.md` — Native AI Assistance &
+Governed Model Interaction, 4 028 lines. It makes AI part of the one language: provider-neutral in
+Ono and provider-specific in KUANG/11 packages, with the model reasoning and Ono observing,
+validating and acting, data crossing a model boundary only under context and egress policy, and
+agency expressed as capability, scope and plan. Its own §0.6 places it after v0.7–v0.9. Merged,
+checksummed and enumerated, **not implemented**, and **behind v0.9**; its tracker milestone is
+`v0.10.0`.
 ---
 
 ## Product direction from the user (2026-08-26)
