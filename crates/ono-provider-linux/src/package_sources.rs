@@ -560,11 +560,9 @@ pub(crate) fn parse_repo_ini(text: &str) -> Vec<Source> {
         let (key, value) = (key.trim(), value.trim());
         match key {
             "name" => source.name = Some(value.to_owned()),
-            "baseurl" | "metalink" | "mirrorlist" => {
-                // The first URL is the source; a `baseurl` can list several.
-                if source.url.is_none() {
-                    source.url = value.split_whitespace().next().map(str::to_owned);
-                }
+            // The first URL is the source; a `baseurl` can list several.
+            "baseurl" | "metalink" | "mirrorlist" if source.url.is_none() => {
+                source.url = value.split_whitespace().next().map(str::to_owned);
             }
             "enabled" => {
                 source.enabled = match value {

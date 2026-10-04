@@ -313,14 +313,12 @@ fn anchor(event: &TemporalEvent) -> Option<TemporalLandmark> {
         EventKind::ObjectAppeared | EventKind::ObjectDisappeared
     );
     match object_type {
-        Some(SpatialType::Container) => {
-            if lifecycle || state_moved_to(event, FAILED) {
-                return Some(build(
-                    event,
-                    TemporalLandmarkKind::ContainerLifecycle,
-                    "a container started, stopped or failed",
-                ));
-            }
+        Some(SpatialType::Container) if lifecycle || state_moved_to(event, FAILED) => {
+            return Some(build(
+                event,
+                TemporalLandmarkKind::ContainerLifecycle,
+                "a container started, stopped or failed",
+            ));
         }
         Some(SpatialType::Mount) if lifecycle => {
             return Some(build(

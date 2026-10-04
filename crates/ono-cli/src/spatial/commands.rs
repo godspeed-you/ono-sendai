@@ -1782,7 +1782,7 @@ fn best_matches(
         .iter()
         .filter_map(|id| match_rank(index, id, text).map(|rank| (rank, id.clone())))
         .collect();
-    ranked.sort_by(|a, b| a.0.cmp(&b.0));
+    ranked.sort_by_key(|a| a.0);
     let Some(best) = ranked.first().map(|(rank, _)| *rank) else {
         return Vec::new();
     };

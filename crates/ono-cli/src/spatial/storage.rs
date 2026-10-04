@@ -263,7 +263,7 @@ fn known_mounts(state: &crate::spatial::SpatialSessionState) -> Vec<(PathBuf, Sp
             Some((target, entry.object().spatial_id().clone()))
         })
         .collect();
-    mounts.sort_by(|a, b| b.0.components().count().cmp(&a.0.components().count()));
+    mounts.sort_by_key(|b| std::cmp::Reverse(b.0.components().count()));
     mounts
 }
 

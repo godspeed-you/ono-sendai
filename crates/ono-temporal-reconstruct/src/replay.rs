@@ -98,22 +98,19 @@ pub fn replay_order(events: Vec<TemporalEvent>) -> Vec<TemporalEvent> {
         .collect();
 
     let mut ordered = Vec::new();
-    loop {
-        let Some(next) = heads
-            .iter()
-            .enumerate()
-            .filter_map(|(index, head)| head.as_ref().map(|event| (index, event)))
-            .min_by(|(left_index, left), (right_index, right)| {
-                left.times
-                    .presentation_instant()
-                    .cmp(&right.times.presentation_instant())
-                    .then_with(|| left.event_id.as_str().cmp(right.event_id.as_str()))
-                    .then(left_index.cmp(right_index))
-            })
-            .map(|(index, _)| index)
-        else {
-            break;
-        };
+    while let Some(next) = heads
+        .iter()
+        .enumerate()
+        .filter_map(|(index, head)| head.as_ref().map(|event| (index, event)))
+        .min_by(|(left_index, left), (right_index, right)| {
+            left.times
+                .presentation_instant()
+                .cmp(&right.times.presentation_instant())
+                .then_with(|| left.event_id.as_str().cmp(right.event_id.as_str()))
+                .then(left_index.cmp(right_index))
+        })
+        .map(|(index, _)| index)
+    {
         if let Some(event) = heads.get_mut(next).and_then(Option::take) {
             ordered.push(event);
         }

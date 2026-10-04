@@ -116,10 +116,7 @@ pub(super) fn prefix_assignments(
     let mut assignments = Vec::new();
     let mut arguments = stage.arguments.iter().peekable();
     let mut pending: Option<(String, Span)> = Some((head.name.clone(), head.span));
-    loop {
-        let Some((word, span)) = pending.take() else {
-            break;
-        };
+    while let Some((word, span)) = pending.take() {
         let (name, value) = word.split_once('=').unwrap_or((&word, ""));
         let value = if value.is_empty()
             && let Some(Argument::Value(expression)) = arguments.peek()
