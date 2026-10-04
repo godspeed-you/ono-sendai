@@ -207,8 +207,10 @@ impl Executor {
     ///
     /// As [`Executor::run_foreground`].
     pub fn start_foreground(&mut self, pipeline: &Pipeline) -> Result<Foreground> {
-        let running = self.start(pipeline, true)?;
+        // Remembered before the spawn: the child claims the terminal before `exec` (spawn.rs),
+        // so after `start` returns it may already have changed the attributes being saved.
         self.terminal.remember_attributes();
+        let running = self.start(pipeline, true)?;
         if running.pgid != 0 {
             self.terminal.give_to(running.pgid)?;
             self.foreground.store(running.pgid, Ordering::SeqCst);
