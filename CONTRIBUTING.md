@@ -7,7 +7,7 @@ the implementation agents work under, and the authoritative rules for this repos
 
 ## Building and verifying
 
-You need Rust 1.94 or newer; `rust-toolchain.toml` pins it and Cargo picks it up automatically.
+You need Rust 1.95 or newer; `rust-toolchain.toml` pins it and Cargo picks it up automatically.
 
 ```bash
 cargo build --release -p ono-cli

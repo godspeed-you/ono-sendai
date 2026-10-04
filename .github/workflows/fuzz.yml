@@ -3,7 +3,7 @@
 # The gate keeps the fast deterministic tier (§41.1): `scripts/gate.sh` runs `ono-fuzz` for four
 # hundred bounded iterations per target on every increment, which is a regression suite rather
 # than a campaign. This is the campaign, and it is separate because it needs a nightly toolchain
-# for libFuzzer's instrumentation while the gate is pinned to 1.94 (spec §44.3).
+# for libFuzzer's instrumentation while the gate is pinned to 1.95 (spec §44.3).
 #
 # Both tiers execute the same target bodies, from `fuzz/src/targets.rs`. A finding here reproduces
 # on the pinned stable toolchain with `cargo run -p ono-fuzz -- repro <target> <file>`, which is
@@ -37,7 +37,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  # The jobs below install nightly, and `rust-toolchain.toml` pins 1.94: a toolchain file
+  # The jobs below install nightly, and `rust-toolchain.toml` pins 1.95: a toolchain file
   # outranks the installed default, so every cargo invocation in the checkout resolved to stable
   # and the nightly options were refused — the first scheduled run of each workflow died that way
   # (2026-09-04). `RUSTUP_TOOLCHAIN` outranks the file and reaches the child processes cargo

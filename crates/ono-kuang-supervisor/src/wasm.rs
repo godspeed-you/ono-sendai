@@ -109,7 +109,7 @@ pub(crate) fn engine() -> Result<&'static Engine, String> {
 
 /// The exact wasmtime release this build links, as `Cargo.lock` resolves it; a test holds the
 /// two together, so a bump cannot leave the key behind (ADR-0916).
-pub(crate) const WASMTIME_VERSION: &str = "47.0.4";
+pub(crate) const WASMTIME_VERSION: &str = "48.0.5";
 
 /// The configuration of [`engine`], for the one engine and for a test that has to vary it.
 pub(crate) fn config() -> Result<Config, String> {

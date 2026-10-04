@@ -104,7 +104,7 @@ sudo dnf install ./ono-0.6.2-1.x86_64.rpm       # or ono-0.6.2-1.aarch64.rpm
 chsh -s /usr/bin/ono                             # make it your login shell
 ```
 
-Or build it, with Rust 1.94+ (`rust-toolchain.toml` pins the toolchain, Cargo picks it up):
+Or build it, with Rust 1.95+ (`rust-toolchain.toml` pins the toolchain, Cargo picks it up):
 
 ```bash
 git clone https://github.com/godspeed-you/ono-sendai
@@ -531,7 +531,7 @@ tests=7162
 tests_that_can_skip=132
 expected_ci_skips=16
 acceptance_cases=262
-adrs=636
+adrs=637
 command_contract_files=15
 commands=222
 stripped_bytes.kuang-compile.aarch64-unknown-linux-gnu=5591976

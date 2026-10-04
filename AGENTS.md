@@ -668,7 +668,7 @@ edit so a later red gate is unambiguously yours.
 
 | Piece | What it is |
 |---|---|
-| `Cargo.toml`, `rust-toolchain.toml` | workspace, toolchain pinned to 1.94 (ADR-0001) |
+| `Cargo.toml`, `rust-toolchain.toml` | workspace, toolchain pinned to 1.95 (ADR-0001, ADR-0928) |
 | `crates/ono-cli` | the `ono` binary — scaffolding: `--version`, `--help`, usage error |
 | `crates/ono-core`, `crates/ono-testkit` | shared types; test helpers for outcome assertions |
 | `xtask` | `gate`, `spec-check`, `acceptance`, `release-check` |

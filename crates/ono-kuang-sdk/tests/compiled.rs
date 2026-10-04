@@ -190,7 +190,7 @@ fn assert_names_the_compile_step(error: &KuangError, component: &Path, store: &P
 }
 
 /// Where in the artifact the engine stamped its version and target: the offset of the release
-/// in the version (`wasmtime-47.0.4`, ADR-0916) and of the architecture, found by the shape
+/// in the version (`wasmtime-48.0.5`, ADR-0916) and of the architecture, found by the shape
 /// wasmtime writes (a zero, the version's length and text, the target triple's length and text).
 fn engine_stamp(artifact: &[u8]) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
     const PREFIX: &[u8] = b"wasmtime-";

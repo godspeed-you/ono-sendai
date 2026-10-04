@@ -46,7 +46,7 @@ run: |
 
   echo "== another engine version's artifact =="
   # The engine section opens with a zero, the version's length and text — the exact release,
-  # `wasmtime-47.0.4` (ADR-0916) — then the target triple; the release's first digit is
+  # `wasmtime-48.0.5` (ADR-0916) — then the target triple; the release's first digit is
   # overwritten.
   stamp=$(LC_ALL=C grep -obUaP '\x00[\x01-\x40]wasmtime-[0-9.]+[\x10-\x40](x86_64|aarch64)-' "$artifact" | head -1 | cut -d: -f1)
   test -n "$stamp" && echo "engine-stamp-found"
