@@ -66,6 +66,53 @@ before anyone types its name. Places got an identity that survives pid reuse, a 
 neighbourhood became a reported state rather than an absence, and a linked host became a place
 with its own root.
 
+## v0.4.1 — Hardening, trust and release integrity
+
+The third enhancement (`docs/specs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md`)
+added no new surface. It made the boundaries v0.4 described into boundaries the code enforces: a
+remote link authenticates both ends with mutual TLS before a single frame crosses, a plugin tier
+that calls itself confined fails closed when a control cannot be installed, and resource limits
+bound what an orientation may read and say how much they left out. It was also the first release
+signed keylessly by its own workflow, with provenance binding every artifact to the inputs that
+built it.
+
+## v0.4.2 to v0.4.4 — KUANG/11 grows up
+
+Three patch releases finished the extension runtime. v0.4.2 let a loaded package act as a
+provider — typed targets, relations, places and bounded actions, on the same contract the native
+providers answer. v0.4.3 implemented the plugin installation and permission specification
+(`docs/specs/kuang11/`): `install plugin <name>` as one transaction ending ready, and permissions a
+person grants as intentions the broker turns into capabilities. v0.4.4 let a plugin be signed
+keylessly, as the shell itself is, with publisher identities enrolled in `trust.yaml`.
+
+## v0.5 — The temporal and causal systems interface
+
+The fourth enhancement (`docs/specs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md`)
+gave the session an instant beside its place. `at -10m` moves the temporal coordinate, `now` comes
+back, and between them sit an evidence ledger, a reconstruction engine, a timeline, `changes` and
+`why`. The rule that governs all of it is that Ono reconstructs only what its evidence supports,
+and a nearby event is never promoted to a cause. The recorder that collects the evidence is off
+until a person starts it.
+
+## v0.6 — Prospective change, protection and recovery
+
+The fifth enhancement (`docs/specs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md`)
+made a mutation an object before it is an event. `plan` produces a `ChangePlan` that says what it
+would touch, what would protect it and what would stay irreversible; `apply` executes exactly the
+reviewed plan; `verify` checks the outcome; `recover` plans its way back from a recovery point —
+ZFS, Btrfs or a file copy — preferring the method that loses the least. Planning changes nothing,
+and a protection claim names what it does not cover.
+
+v0.6.1 (`docs/specs/ono_sendai_shell_spec_v0.6.1_stabilization_polish.md`) added no capability. It
+made things the shell already did in two ways behave as one design — completion inside a
+predicate first among them. v0.6.2 changed what the shell is built from and how it is proven: a
+binary half the size held to a budget, KUANG/11 components compiled once at install, a static core
+build, and a test suite and release tooling that give the same answer on a loaded machine as on a
+quiet one.
+
+Four further enhancements — v0.7 to v0.10, from rich terminal presentation to native AI
+assistance — are specified and not yet built.
+
 ## How it was built
 
 Strictly test-driven and largely agent-driven, under the contract in
