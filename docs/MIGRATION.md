@@ -8,7 +8,11 @@ refusal you may now meet.
 Sections 1–5 are v0.4.1's, and they are v0.4.1 §63's five in its order: a hardening release that
 adds no language and changes no schema you can see, and changes what the shell refuses. Sections
 6–8 are the KUANG/11 installation, permission and acquisition layers. Section 9 is v0.5, the
-Temporal & Causal Systems Interface. Section 10 is the KUANG/11 compiler leaving the shell.
+Temporal & Causal Systems Interface. v0.6 and v0.6.1 have no section because they need nothing: a
+shell that never types `plan` behaves as v0.5 did, the new `change.*` and `recovery.*` settings
+default to the specification's reference configuration, and nothing a v0.6.0 configuration,
+script or plugin relies on changed in v0.6.1 (`docs/releases/v0.6.0.md`, `v0.6.1.md`, under
+*Compatibility*). Section 10 is v0.6.2, the KUANG/11 compiler leaving the shell.
 
 ## 1. Ordinary local use — nothing to do
 
@@ -193,8 +197,8 @@ its lineage; a system package that appears later under `/usr/lib/ono-sendai/plug
 candidate for `find plugin` and never the upgrade path of a package acquired another way, until
 you say `install plugin <name> --source system`. `install plugin path:…` keeps working.
 
-**A distribution package is a source, not an install.** `apt install ono-plugin-kubernetes` (or
-`dnf`) places a versioned payload under the system root and nothing else: no `INSTALLED` state,
+**A distribution package is a source, not an install.** `apt install
+./ono-plugin-kubernetes_<version>_amd64.deb` (or `dnf install` of the `.rpm`) places a versioned payload under the system root and nothing else: no `INSTALLED` state,
 no enabled flag, no publisher trust, no permission, no grant. `install plugin kubernetes` then
 takes it through the same verification, prompt and transaction as any other source, copying the
 payload into `~/.config/ono/plugins/` — so `apt upgrade` under the root changes a candidate and
@@ -312,7 +316,8 @@ compiled form of it, written by the SDK's `kuang-compile` into `~/.cache/ono/kua
 - An artifact is keyed on the exact wasmtime release (ADR-0916): every wasmtime upgrade, patch
   releases included, refuses existing artifacts as `incompatible` once, naming the command. An
   Ono upgrade that keeps wasmtime keeps them. Artifacts written before this change carry only
-  the major version and are refused once.
+  the major version and are refused once. The release after v0.6.2 moves to wasmtime 48
+  (8327c34f), so upgrading to it asks for this once per component.
 - The store follows the shell session's environment (ADR-0917): after
   `set env XDG_CACHE_HOME = …`, `load plugin`, `inspect plugin` and `install plugin` use the
   store it names, and `install plugin` runs `kuang-compile` with the session's environment and

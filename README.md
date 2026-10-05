@@ -343,8 +343,8 @@ happened. `recover` compares the recovery point against the world, prefers the m
 the least — usually restoring the one file rather than rewinding the dataset — and names every
 newer snapshot it would have to destroy before it will destroy one.
 
-→ [**Changing things**](https://github.com/godspeed-you/ono-sendai/wiki/Changing-Things) ·
-[**Protection and Recovery**](https://github.com/godspeed-you/ono-sendai/wiki/Protection-and-Recovery)
+→ [`docs/guides/change.md`](docs/guides/change.md): plans, protection, apply, verify and recovery,
+step by step.
 
 ### KUANG/11
 
@@ -406,7 +406,7 @@ fetched over HTTPS, a local directory, or a payload your distribution's package 
 under `/usr/lib/ono-sendai/plugin-sources/`:
 
 ```text
-$ sudo apt install ono-plugin-kubernetes      # or: sudo dnf install ono-plugin-kubernetes
+$ sudo apt install ./ono-plugin-kubernetes_0.2.3_amd64.deb   # or: sudo dnf install ./ono-plugin-kubernetes-0.2.3-1.x86_64.rpm
 $ ono
 local://~ > install plugin kubernetes
 Source: system package (ono-plugin-kubernetes)
@@ -455,6 +455,7 @@ Inside the shell itself: `help`, `help <command>`, `type <pipeline>`, `inspect` 
 
 | | |
 |---|---|
+| [`docs/guides/change.md`](docs/guides/change.md) | prospective change: `plan`, `impact`, `protect`, `apply`, `verify`, `recover`, and what each protection word promises |
 | [`docs/guides/temporal.md`](docs/guides/temporal.md) | time as a coordinate: `at`, `now`, timeline, changes, `why`, the recorder, and what Ono refuses to claim |
 | [`docs/reference/`](docs/reference/README.md) | generated reference: every command, verb, target, schema, error, capability |
 | [`docs/specs/ono_sendai_shell_spec_v0.2.md`](docs/specs/ono_sendai_shell_spec_v0.2.md) | the immutable base specification, plus the `docs/specs/ono_sendai_*spec_v*.md` enhancements layered on it |
@@ -500,25 +501,24 @@ in this shell is a side effect of telling the truth about the system.
 
 ## Project status
 
-**Current release: v0.6.2.** All ten phases of the specification are implemented, with the
-External Command Adaptation Layer (v0.3), the Spatial Systems Interface (v0.4), the hardening
-layer (v0.4.1), the Temporal & Causal Systems Interface (v0.5) and Prospective Change, Protection
-& Recovery (v0.6) on top of them. v0.6.1 polished v0.6.0; v0.6.2 is the verification foundation
-under both: a 22 MB binary instead of 46 MB, held to a size budget wherever it is packaged, KUANG/11
-components compiled once at install, a static core build, and a test suite and release tooling
-that give the same answer on a busy machine as on a quiet one (`docs/releases/v0.6.2.md`). Every ticked box of `docs/ACCEPTANCE.md` names an
-automated proof, and the v0.6 boxes still open are listed as recorded exclusions in
-`docs/releases/v0.6.0.md`. Primary platform is Linux (x86_64 and aarch64). Four further enhancement
-specifications — Presentation Consolidation & Rich TTY (v0.7), Deck Workspace Composition (v0.8),
-Live View Integration (v0.9) and Native AI Assistance (v0.10) — are specified but not yet
-implemented.
+**Current release: v0.6.2.** All ten phases of the specification are implemented, with the External
+Command Adaptation Layer (v0.3), the Spatial Systems Interface (v0.4), the hardening layer (v0.4.1),
+the Temporal & Causal Systems Interface (v0.5) and Prospective Change, Protection & Recovery (v0.6)
+on top of them. v0.6.1 polished v0.6.0; v0.6.2 is the verification foundation under both: a 22 MB
+binary instead of 46 MB, held to a size budget wherever it is packaged, KUANG/11 components compiled
+once at install, a static core build, and a test suite and release tooling that give the same answer
+on a busy machine as on a quiet one (`docs/releases/v0.6.2.md`). Every ticked box of
+`docs/ACCEPTANCE.md` names an automated proof, and no box is open. Primary platform is Linux (x86_64
+and aarch64). Four further enhancement specifications — Presentation Consolidation & Rich TTY
+(v0.7), Deck Workspace Composition (v0.8), Live View Integration (v0.9) and Native AI Assistance
+(v0.10) — are specified but not yet implemented.
 
-**By the numbers.** These are measured, not typed: `cargo xtask metrics` reads them out of the
-tree and the quality gate fails when this block and the repository disagree. `tests` counts test
-functions *declared* — what a run actually executed is `cargo test`'s own summary to report, and
-the two figures beside it say how many of those tests can announce a skip and how many the
-canonical CI environment expects to. `stripped_bytes` is the size of each shipped binary per
-target triple, recorded from a release build; the shell's is held to the budget in
+**By the numbers.** These are measured, not typed: `cargo run -p xtask -- metrics` reads them out of
+the tree and the quality gate fails when this block and the repository disagree. `tests` counts test
+functions *declared* — what a run actually executed is `cargo test`'s own summary to report, and the
+two figures beside it say how many of those tests can announce a skip and how many the canonical CI
+environment expects to. `stripped_bytes` is the size of each shipped binary per target triple,
+recorded from a release build; the shell's is held to the budget in
 `docs/contracts/hardening/limits.yaml`, which every CI run checks against the binary it has just
 built.
 
