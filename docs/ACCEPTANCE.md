@@ -3698,14 +3698,13 @@ section 4 is unticked, the work is unfinished, and the next increment starts.
 
 **Every subsection of section 4 counts, including the tranches.** The checklist grew with the
 specification: sections 4.1–4.5 are the v0.2 shell, section 4.6 is the v0.3 External Command
-Adaptation Layer, section 4.7 is the v0.4 Spatial Systems Interface, and section 4.8 is the v0.4.1
-Hardening, Trust & Release Integrity tranche, section 4.9 is the KUANG/11 plugin
-installation, resolution and permission layer, and section 4.10 its acquisition and
-system-distribution addendum, and section 4.11 is the v0.5 Temporal & Causal Systems
-Interface. A tranche whose
-subsection still holds an unticked box
-is an unfinished product, however green the gate and the acceptance suite are on their own, and
-the run continues into it.
+Adaptation Layer, section 4.7 is the v0.4 Spatial Systems Interface, section 4.8 is the v0.4.1
+Hardening, Trust & Release Integrity tranche, section 4.9 is the KUANG/11 plugin installation,
+resolution and permission layer, section 4.10 its acquisition and system-distribution addendum,
+section 4.11 is the v0.5 Temporal & Causal Systems Interface, and section 4.12 is v0.6 Prospective
+Change, Protection & Recovery. Patch releases carry no subsection of their own. A tranche whose
+subsection still holds an unticked box is an unfinished product, however green the gate and the
+acceptance suite are on their own, and the run continues into it.
 
 `scripts/release-check.sh` reads the checklist generically — it greps this file for lines
 beginning `- [ ]` and fails on the first one — so a new subsection is seen the moment it is

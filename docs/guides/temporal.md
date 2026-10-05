@@ -362,7 +362,7 @@ local:// > start recorder
 recorder running   healthy
   recording            enabled
   store                ~/.local/share/ono/temporal/ledger.sqlite3
-  retention            24h / 512.00 MiB
+  retention            1d 00h / 512.00 MiB
 ```
 
 To keep recording across sessions, set it in your configuration:

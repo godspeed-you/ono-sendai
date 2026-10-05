@@ -1069,14 +1069,14 @@ Known current state around 2026-09-05:
 | Cloud-Native Vision | canonical | `docs/strategy/cloud-native-vision.md` |
 | Generic External System Provider spec | canonical | `docs/architecture/external-system-provider.md` |
 | Kubernetes Provider spec | canonical elsewhere | `docs/architecture/kubernetes-provider.md` in [ono-sendai-kubernetes](https://github.com/godspeed-you/ono-sendai-kubernetes); deliberately not copied into core |
-| Kubernetes provider implementation | built, in [ono-sendai-kubernetes](https://github.com/godspeed-you/ono-sendai-kubernetes) | a KUANG/11 package: reads any served kind, evidence-carrying relationships, spatial navigation, bounded mutation; passes its specification's fourteen acceptance gates against `kind` v1.35–v1.37; no release |
+| Kubernetes provider implementation | built, in [ono-sendai-kubernetes](https://github.com/godspeed-you/ono-sendai-kubernetes) | a KUANG/11 package: reads any served kind, evidence-carrying relationships, spatial navigation, bounded mutation; passes its specification's fourteen acceptance gates against `kind` v1.35–v1.37; released as `.deb`/`.rpm`, latest v0.2.3 (2026-09-08) |
 | `CONTRIBUTING.md` | present | review for community/CNCF maturity later |
 | `SECURITY.md` | present | review against current threat model and CNCF expectations |
 | `GOVERNANCE.md` | not yet baseline | add when community-readiness work begins |
 | `MAINTAINERS.md` | not yet baseline | required before Sandbox application |
 | `CODE_OF_CONDUCT.md` | not yet baseline | add before community/CNCF readiness |
 | ADR discipline | strong | existing ADR corpus should remain canonical |
-| Immutable release specs | strong | moved to `docs/specs/` during the restructuring; all nine hashes byte-identical and `docs/specs/spec.sha256` verifies |
+| Immutable release specs | strong | moved to `docs/specs/` during the restructuring with every hash byte-identical; `docs/specs/spec.sha256` covers all eleven and `spec-check` verifies it on every gate run |
 | Supply-chain/release integrity | substantial design already present | prove and continuously verify actual release path |
 | External maintainers | not assumed | must be demonstrated, never invented |
 | Adopters | not assumed | real use must be documented when it exists |
