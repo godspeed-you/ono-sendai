@@ -23,7 +23,7 @@ git switch --detach phase-a   # the tree exactly as that phase left it
 ```
 
 Tags so far: `phase-a` … `phase-j` (H, I and J share `63a23ece`); the releases after them are tagged
-by version, `v0.2.0` … `v0.6.1`.
+by version, `v0.2.0` … `v0.6.2`.
 
 **Push after every commit.** AGENTS.md §12.1 leaves `main` alone until the user asks for it, and
 §12.2 asks that `implementation` be pushed freely so work is not lost; the branch and its phase
@@ -148,6 +148,17 @@ gh issue list --label class-c    # the large ones, a tranche each
 - `trace interface` orders an interface's bound sockets by inode ascending (`crates/ono-graph/src/kernel/network.rs` ~269), so on a busy host the newest sockets — usually the ones a user just opened — are the ones the 256-node limit leaves out, and the truncation record names only counts. `network.rs::should_include_the_listening_socket_when_tracing_its_interface` therefore skips on such hosts (declared, reported by `skip-check` since ADR-0885). Ranking listeners or recency first, or listing the unexpanded objects, would close it. Found 2026-09-24.
 - The PTY completion tests with a 150 ms budget (`completion.rs::should_offer_this_machines_users_when_completing_a_user_selector`) fail when the whole core suite runs in parallel at load ~35 on 8 cores and pass alone — beyond the load the gate is trusted at (ADR-0881/0883), recorded so the next failure there is recognised. Found 2026-09-24.
 - Case 077 (`077-adapters-systemd-streams.case`) missed `streamed=early` once in CI (run 36048615701, first attempt, group `core`, 2026-09-24): `journalctl -n 2 | take 1` returned after the shim's 5 s sleep (`elapsed=5`) instead of at the first record, although the product in that image was identical to the run before, where it passed. The case had passed in the 20 CI runs before; the re-run passed; locally 15/15 quiet and 15/15 at load 16. `run_streamed_segment` (`crates/ono-cli/src/eval/native/external.rs`) tells the child's group to stop when the reader is still running after the consumer ended; which of "the first record arrived late" and "the stop did not end the child" happened is not known. What closes it: capture the case's timing of first record and child exit when it recurs (the case prints only the total). Found 2026-09-24.
+
+**Found during the documentation audit (2026-10-05).** Product behaviour the README, `docs/` and
+the Wiki were checked against with the release binary of `57de4ff6`:
+
+- `changes --since 3d` with the recorder off (store `none — session only`) prints nothing and exits 0, so an interval nobody recorded reads as "nothing changed". `docs/guides/temporal.md` ("The answer is bounded by retention") promises `temporal.not_recorded` there, and `at -3d` in the same session does refuse with E1302; with the recorder started, `changes --since 3d` refuses too. Case 244 covers only `at`. Found 2026-10-05.
+- `exec:sort < file` fails `E0001 a stage whose arguments are expressions cannot be redirected (line 1, column 11)`, while `exec:cat < file`, `cat < file` and `exec:sort file` work: the `exec:` prefix does not keep `sort` out of expression mode. The Wiki's Running-Unix-Programs page shows the form as working. Found 2026-10-05.
+- `link host loop --transport local; get link | to json` lists `job`, `link`, `host`, `host-key`, `client-key`, `package` and `package-source` twice in `targets`. Found 2026-10-05.
+- `explain leave` resolves `leave` as "not a native command" with `input bytes` and the note "`leave` has no target ``", although `leave` runs as the native `ono.context.leave`. Found 2026-10-05.
+- `ono --help` does not list `--agent`, which the README's quick start and `docs/reference/remote-trust.md` use. Found 2026-10-05.
+- `scripts/package.sh` builds packages in `rust:1.94-slim-bookworm` (`BUILD_IMAGE`, and the comment calling it the acceptance image's base) while `rust-toolchain.toml` and `docker/Dockerfile` are on 1.95 since ADR-0928. Found 2026-10-05.
+- `docs/contracts/kuang/bootstrap-catalog.yaml` pins the Kubernetes provider at `v0.2.0`; the provider has released up to `v0.2.3` (2026-09-08), whose packages the README's system-package example installs. Found 2026-10-05.
 
 **Filed on 2026-09-15.** Every problem this section held went to the tracker as #137–#224, in nine
 milestones cut by subsystem — the subsystem whose code a fix changes: *Shell language, pipelines
