@@ -18,14 +18,20 @@ scripts/release-check.sh   # both, plus the release checklist in docs/ACCEPTANCE
 ```
 
 `scripts/gate.sh` is what every commit must pass: `cargo fmt --check`, `clippy -D warnings`, the
-whole test suite, `cargo xtask spec-check` (contract-to-implementation drift, including the
+tests, `cargo run -p xtask -- spec-check` (contract-to-implementation drift, including the
 checksums over the immutable specifications and the `ono` examples in `README.md`), and
-`cargo doc` with warnings denied. When a current release build is there, it also holds the
-stripped binaries to their size budgets in `docs/contracts/hardening/limits.yaml`
-(`cargo xtask binary-size`, ADR-0864). The budgets are enforced where the bytes that ship are
+`cargo doc` with warnings denied. Locally the tests cover the packages the change can break — the
+ones it touched, every package that depends on them, and `xtask` — and `ONO_TESTS=all` covers
+every package; CI always tests all of them (ADR-0853). When a current release build is there, the
+gate also holds the stripped binaries to their size budgets in
+`docs/contracts/hardening/limits.yaml` (`cargo run -p xtask -- binary-size`, ADR-0864). The budgets are enforced where the bytes that ship are
 made: `scripts/package.sh` checks every packaged binary against the budget of its target triple on
 both architectures, `scripts/build-core.sh` the core binary, and CI's image build the image's `ono`
 (ADR-0866), so a binary that outgrows its budget fails the push or the release that grew it.
+
+The repository's own tooling lives in the `xtask` package. The documents abbreviate it as
+`cargo xtask <task>`; the repository ships no Cargo alias for that, so run it as
+`cargo run -p xtask -- <task>` (`cargo run -p xtask -- docs` regenerates `docs/reference/`).
 
 `scripts/release-check.sh` qualifies a committed tree only: it refuses uncommitted or untracked
 changes and names them, because a package would otherwise carry them.

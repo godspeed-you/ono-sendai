@@ -42,12 +42,13 @@ ono-sendai/
 ├── CLAUDE.md                     thin pointer + Claude-specific notes
 ├── README.md
 ├── Cargo.toml                    workspace root
-├── crates/                       implementation, `ono-*` crates (see spec §24.2)
-├── tests/                        cross-crate integration tests
-├── examples/
+├── crates/                       implementation, `ono-*` crates (see spec §24.2); each carries
+│                                 its own tests/
 ├── xtask/                        spec validation, generators, gates
-├── scripts/                      gate.sh, acceptance.sh, release-check.sh
+├── scripts/                      gate.sh, acceptance.sh, release-check.sh, and the build,
+│                                 packaging, signing and verification scripts of a release
 ├── docker/                       Dockerfile + acceptance/cases/ (the referee, §10)
+├── fuzz/                         fuzz targets, corpus and the coverage-guided campaign
 └── docs/
     ├── specs/                    the immutable narrative specifications (§5.1, §5.2)
     │   ├── ono_sendai_shell_spec_v0.2.md
@@ -61,7 +62,12 @@ ono-sendai/
     │   ├── ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md
     │   │                         enhancement spec, layered on the base (§5.2)
     │   ├── ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md
-    │   │                         enhancement spec, layered on the base (§5.2)
+    │   ├── ono_sendai_shell_spec_v0.6.1_stabilization_polish.md
+    │   ├── ono_sendai_shell_spec_v0.7_presentation_consolidation_rich_tty.md
+    │   ├── ono_sendai_shell_spec_v0.8_deck_workspace_composition.md
+    │   ├── ono_sendai_shell_spec_v0.9_live_view_integration.md
+    │   ├── ono_sendai_shell_spec_v0.10_native_ai_assistance.md
+    │   │                         enhancement specs, each layered on the base (§5.2)
     │   └── spec.sha256           the immutability checksums `spec-check` verifies (§5.2)
     ├── strategy/                 durable product and ecosystem direction — not a release
     │   ├── cloud-native-vision.md
@@ -76,6 +82,12 @@ ono-sendai/
     │   └── kuang11-plugin-package-acquisition-system-distribution.md
     ├── STATE.md                  progress board (§9)
     ├── ACCEPTANCE.md             definition of release-ready + stopping rule (§15)
+    ├── MIGRATION.md              what changes for someone upgrading, version by version
+    ├── guides/                   user guides that outgrow the README (change, temporal)
+    ├── releases/vX.Y.Z.md        release notes, the body of each GitHub release
+    ├── runs/, dogfood/           reports of implementation runs and dogfooding sessions
+    ├── baselines/                frozen performance baselines and recorded binary sizes
+    ├── assets/                   images the README shows
     ├── adr/ADR-*.md              recorded agent decisions (§8)
     ├── contracts/                machine-readable contracts
     │   ├── language.yaml
@@ -497,7 +509,7 @@ from the board. A problem is on exactly one of the two surfaces, never both.
 An increment is done only when the gate passes locally:
 
 ```bash
-scripts/gate.sh          # or: cargo xtask gate
+scripts/gate.sh          # or: cargo run -p xtask -- gate
 ```
 
 which runs, in order:
@@ -505,10 +517,16 @@ which runs, in order:
 ```bash
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo test --all-features <selection>     # the packages the increment can break (ADR-0853)
 cargo run -p xtask -- spec-check          # contract ↔ implementation drift (spec §36.5)
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 ```
+
+Locally the selection is the packages the increment changed, every package that depends on them,
+and `xtask`, whose tests read the whole repository; a changed file that belongs to no package, or
+no change at all, selects the whole workspace. `ONO_TESTS=all` tests every package, and CI always
+does. The repository ships no `cargo xtask` alias: every `cargo xtask <task>` in these documents
+runs as `cargo run -p xtask -- <task>`.
 
 One target of the test step is selected rather than always run. `xtask/tests/packaging.rs` is 76
 seconds of a 264-second warm run and exercises none of the Rust the workspace ships — it drives
@@ -521,7 +539,7 @@ regardless, `ONO_PACKAGING=never` never does. The inputs and the reasoning are i
 **And, for any increment that adds or changes a user-visible capability, the container:**
 
 ```bash
-scripts/acceptance.sh    # or: cargo xtask acceptance
+scripts/acceptance.sh    # or: cargo run -p xtask -- acceptance
 ```
 
 `scripts/acceptance.sh` builds `docker/Dockerfile` and runs every case in
@@ -669,13 +687,15 @@ edit so a later red gate is unambiguously yours.
 | Piece | What it is |
 |---|---|
 | `Cargo.toml`, `rust-toolchain.toml` | workspace, toolchain pinned to 1.95 (ADR-0001, ADR-0928) |
-| `crates/ono-cli` | the `ono` binary — scaffolding: `--version`, `--help`, usage error |
+| `crates/ono-cli` | the `ono` binary: interactive session, `-c`, scripts and `--agent` |
 | `crates/ono-core`, `crates/ono-testkit` | shared types; test helpers for outcome assertions |
 | `xtask` | `gate`, `spec-check`, `acceptance`, `release-check` |
 | `scripts/gate.sh` | the quality gate of §10 |
 | `scripts/acceptance.sh` | builds the container, runs `docker/acceptance/cases/` |
 | `scripts/release-check.sh` | the stopping rule of §15 |
 | `.github/workflows/ci.yml` | gate + acceptance on every push |
+| `.github/workflows/release.yml` | package, rebuild, sign, verify and publish on a `v*` tag |
+| `.github/workflows/{audit,fuzz,verification}.yml` | scheduled advisories, fuzzing and verification runs on `main` |
 
 Rules for the harness itself:
 
@@ -684,13 +704,12 @@ Rules for the harness itself:
 - Never weaken the harness to get a green result: not by deleting a case, not by loosening a
   regex, not by removing `-D warnings`, not by adding `--no-verify`. If a case is wrong, fix the
   case in its own `test:` commit and say why in the body.
-- The scaffolding in `ono-cli/src/main.rs` is meant to be replaced by the real interpreter. Its
-  three acceptance cases are a floor and must keep passing.
-- Crates from spec §24.2 (`ono-parser`, `ono-value`, `ono-pipeline`, …) are created when a phase
-  needs them, not upfront (ADR-0001).
-- `docs/contracts/` registries arrive with Phase D (spec §47); `docs/contracts/kuang/` with Phase I
-  (spec §31.78). `spec-check` already fails on a top-level `spec/`, on a missing narrative spec,
-  on instructions that reference a spec file that does not exist, and on empty contracts.
+- The first three acceptance cases (`000-binary-runs`, `001-help`, `002-usage-error`) date from
+  the scaffolding the interpreter replaced. They are a floor and must keep passing.
+- A crate is created when an increment needs it, not upfront (ADR-0001).
+- `spec-check` fails on a top-level `spec/`, on a missing narrative spec, on instructions that
+  reference a spec file that does not exist, and on empty contracts in `docs/contracts/` and
+  `docs/contracts/kuang/`.
 - **`spec-check` verifies the specification against `docs/specs/spec.sha256` on every gate run.** Any
   edit to the narrative spec turns the gate red (§5.1). Restore the file; do not update the
   checksum. `docs/specs/spec.sha256` is the user's to change, when they replace the spec on purpose.
