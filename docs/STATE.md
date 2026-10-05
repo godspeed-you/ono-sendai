@@ -153,12 +153,24 @@ gh issue list --label class-c    # the large ones, a tranche each
 the Wiki were checked against with the release binary of `57de4ff6`:
 
 - `changes --since 3d` with the recorder off (store `none — session only`) prints nothing and exits 0, so an interval nobody recorded reads as "nothing changed". `docs/guides/temporal.md` ("The answer is bounded by retention") promises `temporal.not_recorded` there, and `at -3d` in the same session does refuse with E1302; with the recorder started, `changes --since 3d` refuses too. Case 244 covers only `at`. Found 2026-10-05.
-- `exec:sort < file` fails `E0001 a stage whose arguments are expressions cannot be redirected (line 1, column 11)`, while `exec:cat < file`, `cat < file` and `exec:sort file` work: the `exec:` prefix does not keep `sort` out of expression mode. The Wiki's Running-Unix-Programs page shows the form as working. Found 2026-10-05.
+- `sort < file` and `exec:sort < file` both fail `E0001 a stage whose arguments are expressions cannot be redirected (line 1, column 11)`, while `cat < file`, `exec:cat < file`, `exec:sort file` and `cat file | sort` work: a redirect after `sort` is parsed in expression mode, with or without the `exec:` prefix. The Wiki's Running-Unix-Programs page showed the form as working. Found 2026-10-05.
 - `link host loop --transport local; get link | to json` lists `job`, `link`, `host`, `host-key`, `client-key`, `package` and `package-source` twice in `targets`. Found 2026-10-05.
 - `explain leave` resolves `leave` as "not a native command" with `input bytes` and the note "`leave` has no target ``", although `leave` runs as the native `ono.context.leave`. Found 2026-10-05.
 - `ono --help` does not list `--agent`, which the README's quick start and `docs/reference/remote-trust.md` use. Found 2026-10-05.
 - `scripts/package.sh` builds packages in `rust:1.94-slim-bookworm` (`BUILD_IMAGE`, and the comment calling it the acceptance image's base) while `rust-toolchain.toml` and `docker/Dockerfile` are on 1.95 since ADR-0928. Found 2026-10-05.
 - `docs/contracts/kuang/bootstrap-catalog.yaml` pins the Kubernetes provider at `v0.2.0`; the provider has released up to `v0.2.3` (2026-09-08), whose packages the README's system-package example installs. Found 2026-10-05.
+
+**Found while bringing the Wiki to 0.6.2 (2026-10-05).** Reproduced by the agents that rewrote the pages, with the release binary of `57de4ff6` in a scratch `XDG_*` environment; each is named on the Wiki's What-Is-Not-Built-Yet page:
+
+- Recovering a `remove file` plan on scratch files (`plan remove file <f>`, `apply`, `recover`) asks for `--accept-newer-state-loss` and lists the removed file itself as state that would be discarded (E1809). Found 2026-10-05.
+- `resume plan <id> --confirm` on a sealed revision that was never applied executed it, as `apply` would. Whether `resume` is meant to start an unapplied plan is undecided. Found 2026-10-05.
+- `why event @e…` answered once, and later refused the same reference on the same store with E1302 ("no source was asked"). Found 2026-10-05.
+- `timeline --since 5m` draws one gap two or three times, shows `evidence: ono, ono`, and `timeline service <name>` does not filter by subject. A second `start recorder` returns no E1314. `get recorder` truncates the store path (`…/ledge`). Found 2026-10-05.
+- `get config --profile` ignores a `change.profile` set in the session. A configuration parse error prints `Ono-Sendai-E0001 expected …` without the error name. Found 2026-10-05.
+- `resolve command raw` and `resolve command adapt` answer E0101, though both are commands. Found 2026-10-05.
+- `find plugin --source local` finds nothing in `ONO_PLUGIN_SOURCES`, and `path:~/…` is not expanded. Found 2026-10-05.
+- Adapters: `ip -4 route` / `ip -4 address` are rewritten to `ip -j route show -4`, which `ip` refuses (`raw ip -4 route` works); the `git log` adapter starts every hash after the first with `\u{a}`; E0911's help after `raw df -h | take 3` suggests `raw raw df -h` and `get command <tool>`, which returns no rows. Found 2026-10-05.
+- `trace connection --remote <ip>` with no matching connection refuses with "no connection answers to ``", an empty name. Found 2026-10-05.
 
 **Filed on 2026-09-15.** Every problem this section held went to the tracker as #137–#224, in nine
 milestones cut by subsystem — the subsystem whose code a fix changes: *Shell language, pipelines
