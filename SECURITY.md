@@ -43,12 +43,13 @@ in the advisory is a better outcome than a silent one.
 
 | Version | Supported |
 |---|---|
-| 0.4.x | yes — security fixes |
-| 0.3.x | no |
-| 0.2.x | no |
+| 0.6.x | yes — security fixes |
+| 0.5.x | no |
+| 0.4.x | no |
+| 0.3.x and older | no |
 | `implementation` branch | no — it is a working branch and is rebuilt without notice |
 
-Only the latest 0.4 patch release receives fixes. There is no long-term-support line: the project
+Only the latest 0.6 patch release receives fixes. There is no long-term-support line: the project
 is pre-1.0 and says so rather than implying a maintenance commitment it cannot keep.
 
 ## What is protected
