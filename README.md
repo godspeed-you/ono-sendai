@@ -175,10 +175,10 @@ together. With this repository checked out, `scripts/verify-release.sh --dir <di
 checks and cross-checks the manifest against the provenance; it is the same script the release
 workflow runs on itself before it publishes anything.
 
-**Not yet proven end to end.** No release has been signed: keyless signing needs a token that
-exists only inside a run of the release workflow, and verifying one needs Sigstore over a network
-the acceptance container does not have. The sequence above is what a reader will run, and the
-first `v*` tag is the run that proves it passes.
+**Proven end to end on every release.** Keyless signing needs a token that exists only inside a
+run of the release workflow, so the proof is that workflow's: every release from v0.4.1 on was
+signed with a certificate issued to this repository's `release.yml` on its tag, and verified
+against that identity before it was published (`docs/ACCEPTANCE.md` §4.8.11).
 
 → What each step proves and what to do when one fails:
 [`docs/reference/release-verification.md`](docs/reference/release-verification.md) ·

@@ -303,4 +303,5 @@ boundaries:
       ship, and what makes that checkable from outside is the checksum manifest, the signature
       over it and the provenance binding each digest to the inputs of Appendix H. A real
       signature needs an OIDC token that exists only inside a release run, so the end-to-end
-      proof is owed by the first `v*` tag and `docs/ACCEPTANCE.md` §4.8.11 says so in the box.
+      proof is the release workflow's: every release from `v0.4.1` on was signed and verified
+      against this identity before publication, and `docs/ACCEPTANCE.md` §4.8.11 records it.

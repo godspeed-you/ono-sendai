@@ -35,11 +35,12 @@
 # with a detached certificate and an in-toto attestation; ADR-0545 records the correction and
 # supersedes that half of ADR-0542.
 #
-# ONE THING IS NOT YET PROVEN END TO END, and the documents say so rather than implying otherwise.
-# No release has been signed: keyless signing needs an OIDC token that exists only inside a run of
-# this repository's release workflow, and verification needs Fulcio and Rekor over a network the
-# acceptance container does not have (§40.2, ADR-0529). The signature and provenance steps below
-# are what a reader will run; the first `v*` tag is what proves they pass.
+# The end-to-end proof is the release workflow's own. Keyless signing needs an OIDC token that
+# exists only inside a run of this repository's release workflow, and verification needs Fulcio
+# and Rekor over a network the acceptance container does not have (§40.2, ADR-0529). The `v0.4.1`
+# run was the first to sign and verify `SHA256SUMS` and `build-provenance.json` against this
+# identity, every release since has done the same before publishing, and `docs/ACCEPTANCE.md`
+# §4.8.11 records it.
 #
 # Decisions: ADR-0528, ADR-0529, ADR-0530, ADR-0542, ADR-0545.
 

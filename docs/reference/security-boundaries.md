@@ -162,7 +162,7 @@ Refusal proved by:
 
 ## `release.publish`
 
-§49.1's "build once, promote after proof": the bytes that were tested are the bytes that ship, and what makes that checkable from outside is the checksum manifest, the signature over it and the provenance binding each digest to the inputs of Appendix H. A real signature needs an OIDC token that exists only inside a release run, so the end-to-end proof is owed by the first `v*` tag and `docs/ACCEPTANCE.md` §4.8.11 says so in the box.
+§49.1's "build once, promote after proof": the bytes that were tested are the bytes that ship, and what makes that checkable from outside is the checksum manifest, the signature over it and the provenance binding each digest to the inputs of Appendix H. A real signature needs an OIDC token that exists only inside a release run, so the end-to-end proof is the release workflow's: every release from `v0.4.1` on was signed and verified against this identity before publication, and `docs/ACCEPTANCE.md` §4.8.11 records it.
 
 Owned by `xtask`, enforced in `xtask/src/provenance.rs`. Specified by v0.4.1 §6.1, §6.2, §47.2, §47.3, §47.4, §49.1, §62.5.
 
