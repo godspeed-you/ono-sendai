@@ -72,7 +72,7 @@ commands:
       - plan restart service nginx
       - plan update package openssl --protection require
       - get service | where state == failed | plan restart service
-      - plan replace file /etc/nginx/nginx.conf from ./nginx.conf
+      - plan copy file ./nginx.conf /etc/nginx/nginx.conf
 
   # --- the plan store, §36.4 -----------------------------------------------------------------
   - id: ono.change-plan.get

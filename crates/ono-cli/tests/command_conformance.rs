@@ -8,11 +8,11 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 96 examples run; 257 are not run, each for the reason listed at the end of this file.
+//! 99 examples run; 254 are not run, each for the reason listed at the end of this file.
 //!
-//! Commands no example of which runs (168):
+//! Commands no example of which runs (166):
 //!
-//! - `ono.change.plan` — exempt: known defect: spells `replace file`, which ADR-0813 maps to `copy file`; the contract example is fixed by the next commit.
+//! - `ono.change.plan` — exempt: plans to replace `/etc/nginx/nginx.conf` from `./nginx.conf`; a scratch directory has neither file.
 //! - `ono.change-plan.inspect` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.
 //! - `ono.change-plan.rebase` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.
 //! - `ono.change-plan.resume` — runs `ono.change-plan.resume`, whose verb `resume` changes the system (verbs.yaml)
@@ -37,7 +37,6 @@
 //! - `ono.data.measure` — runs `ono.data.measure`, which declares `ono.measure/1` — a schema schemas/deferred.yaml says a later phase writes
 //! - `ono.data.from` — runs `curl`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
 //! - `ono.data.tail` — runs `ono.log.get`, which declares privilege `conditional`
-//! - `ono.data.join` — runs `ono.socket.get`, which declares privilege `conditional`
 //! - `ono.data.diff` — refers to an earlier result, which the scratch shell does not have
 //! - `ono.file.get` — runs `ono.file.get`, which declares privilege `conditional`
 //! - `ono.file.find` — runs `ono.file.find`, which declares privilege `conditional`
@@ -79,7 +78,6 @@
 //! - `ono.capability.grant` — runs `ono.capability.grant`, whose verb `grant` changes the system (verbs.yaml)
 //! - `ono.capability.revoke` — runs `ono.capability.revoke`, whose verb `revoke` changes the system (verbs.yaml)
 //! - `ono.assistant.ask` — runs `ono.assistant.ask`, whose capability `assistant.ask` is `mutate` rather than `read`
-//! - `ono.finding.get` — exempt: known defect: `warning` is not one of `ono.finding/1`'s severities (§31.24's closed set), so it reads as a field (Ono-Sendai-E0202); the contract example is fixed by the next commit.
 //! - `ono.meta.help` — runs `ono.meta.help`, which declares `ono.help-page/1` — a schema schemas/deferred.yaml says a later phase writes
 //! - `ono.meta.type` — runs `ono.meta.type`, which declares `ono.type-info/1` — a schema schemas/deferred.yaml says a later phase writes
 //! - `ono.meta.inspect` — runs `ono.meta.inspect`, which declares `ono.inspection/1` — a schema schemas/deferred.yaml says a later phase writes
@@ -393,6 +391,17 @@ fn should_produce_what_ono_data_format_declares_when_example_1_runs() {
     });
 }
 
+/// `get process | format table --columns ["pid", "name", "memory"]`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_data_format_declares_when_example_2_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.data.format",
+        example: "get process | format table --columns [\"pid\", \"name\", \"memory\"]",
+        output: "string",
+    });
+}
+
 /// `get process | view table`
 #[rustfmt::skip]
 #[test]
@@ -401,6 +410,17 @@ fn should_produce_what_ono_data_view_declares_when_example_1_runs() {
         command: "ono.data.view",
         example: "get process | view table",
         output: "null",
+    });
+}
+
+/// `get process | join (get process | where cpu > 1) --on pid`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_data_join_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.data.join",
+        example: "get process | join (get process | where cpu > 1) --on pid",
+        output: "stream<record>",
     });
 }
 
@@ -566,6 +586,17 @@ fn should_produce_what_ono_model_get_declares_when_example_1_runs() {
         command: "ono.model.get",
         example: "get model",
         output: "stream<ono.model-provider/1>",
+    });
+}
+
+/// `get finding | where severity >= medium`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_finding_get_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.finding.get",
+        example: "get finding | where severity >= medium",
+        output: "stream<ono.finding/1>",
     });
 }
 
@@ -1256,7 +1287,7 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.change.plan` `plan restart service nginx` — exempt: plans against the unit `nginx`, which a test host need not have.
 // - `ono.change.plan` `plan update package openssl --protection require` — exempt: spells v0.6 §3.1's intent `update package`, and no verb `update` exists (verbs.yaml); the plan refuses it as not plannable. A gap between the specification's illustration and the verb vocabulary, recorded in ADR-0935, not a property of the test host.
 // - `ono.change.plan` `get service | where state == failed | plan restart service` — exempt: plans against the failed units of the host; a healthy test host has none, and a plan over nothing is refused rather than empty.
-// - `ono.change.plan` `plan replace file /etc/nginx/nginx.conf from ./nginx.conf` — exempt: known defect: spells `replace file`, which ADR-0813 maps to `copy file`; the contract example is fixed by the next commit.
+// - `ono.change.plan` `plan copy file ./nginx.conf /etc/nginx/nginx.conf` — exempt: plans to replace `/etc/nginx/nginx.conf` from `./nginx.conf`; a scratch directory has neither file.
 // - `ono.change-plan.get` `get plan a82f` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.
 // - `ono.change-plan.get` `get plan a82f --revision 1` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.
 // - `ono.change-plan.inspect` `inspect plan a82f` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.
@@ -1294,10 +1325,8 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.data.measure` `get process | measure memory` — runs `ono.data.measure`, which declares `ono.measure/1` — a schema schemas/deferred.yaml says a later phase writes
 // - `ono.data.to` `get process | to json > out.json` — writes through a redirection
 // - `ono.data.from` `curl -s https://example/api | from json | where status == "open"` — runs `curl`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
-// - `ono.data.format` `get process | format table --columns [pid, name, memory]` — exempt: known defect: the example writes the columns as field paths, which read the null input (Ono-Sendai-E0201); the contract example is fixed by the next commit.
 // - `ono.data.view` `trace process 1 | view tree` — runs `ono.process.trace`, which declares privilege `conditional`
 // - `ono.data.tail` `get log --service nginx | tail 30` — runs `ono.log.get`, which declares privilege `conditional`
-// - `ono.data.join` `get process | join (get socket) --on pid` — runs `ono.socket.get`, which declares privilege `conditional`
 // - `ono.data.diff` `get service | diff @-1` — refers to an earlier result, which the scratch shell does not have
 // - `ono.file.get` `get file ./src` — runs `ono.file.get`, which declares privilege `conditional`
 // - `ono.file.get` `get file /tmp --recursive | where modified < now()-30d` — runs `ono.file.get`, which declares privilege `conditional`
@@ -1354,7 +1383,6 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.capability.grant` `grant capability filesystem.read --plugin dev.example.packet-eye --duration 1h` — runs `ono.capability.grant`, whose verb `grant` changes the system (verbs.yaml)
 // - `ono.capability.revoke` `revoke capability filesystem.read --plugin dev.example.packet-eye` — runs `ono.capability.revoke`, whose verb `revoke` changes the system (verbs.yaml)
 // - `ono.assistant.ask` `ask assistant ops-assist "why did image-worker fail?"` — runs `ono.assistant.ask`, whose capability `assistant.ask` is `mutate` rather than `read`
-// - `ono.finding.get` `get finding | where severity >= warning` — exempt: known defect: `warning` is not one of `ono.finding/1`'s severities (§31.24's closed set), so it reads as a field (Ono-Sendai-E0202); the contract example is fixed by the next commit.
 // - `ono.meta.help` `help` — runs `ono.meta.help`, which declares `ono.help-page/1` — a schema schemas/deferred.yaml says a later phase writes
 // - `ono.meta.help` `help get process` — runs `ono.meta.help`, which declares `ono.help-page/1` — a schema schemas/deferred.yaml says a later phase writes
 // - `ono.meta.type` `get process | type` — runs `ono.meta.type`, which declares `ono.type-info/1` — a schema schemas/deferred.yaml says a later phase writes

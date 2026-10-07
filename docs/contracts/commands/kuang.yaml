@@ -382,7 +382,7 @@ commands:
     streaming: true
     phase: I
     examples:
-      - get finding | where severity >= warning
+      - get finding | where severity >= medium
 
   - id: ono.audit.get
     verb: get

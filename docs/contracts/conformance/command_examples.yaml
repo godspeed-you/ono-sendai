@@ -67,6 +67,11 @@ exemptions:
     example: plan restart service nginx
     reason: plans against the unit `nginx`, which a test host need not have.
   - command: ono.change.plan
+    example: plan copy file ./nginx.conf /etc/nginx/nginx.conf
+    reason: >-
+      plans to replace `/etc/nginx/nginx.conf` from `./nginx.conf`; a scratch directory has
+      neither file.
+  - command: ono.change.plan
     example: get service | where state == failed | plan restart service
     reason: >-
       plans against the failed units of the host; a healthy test host has none, and a plan over
@@ -172,21 +177,6 @@ exemptions:
       verb vocabulary, recorded in ADR-0935, not a property of the test host.
 
   # --- defects the suite found, each removed by the commit that fixes it (ADR-0935) ----------
-  - command: ono.data.format
-    example: get process | format table --columns [pid, name, memory]
-    reason: >-
-      known defect: the example writes the columns as field paths, which read the null input
-      (Ono-Sendai-E0201); the contract example is fixed by the next commit.
-  - command: ono.finding.get
-    example: get finding | where severity >= warning
-    reason: >-
-      known defect: `warning` is not one of `ono.finding/1`'s severities (§31.24's closed set),
-      so it reads as a field (Ono-Sendai-E0202); the contract example is fixed by the next commit.
-  - command: ono.change.plan
-    example: plan replace file /etc/nginx/nginx.conf from ./nginx.conf
-    reason: >-
-      known defect: spells `replace file`, which ADR-0813 maps to `copy file`; the contract example
-      is fixed by the next commit.
   - command: ono.context.get
     example: get context
     reason: >-
