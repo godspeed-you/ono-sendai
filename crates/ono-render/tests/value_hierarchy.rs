@@ -132,6 +132,33 @@ fn should_neutralise_a_control_character_in_a_nested_name() {
     );
 }
 
+#[test]
+fn should_respect_the_row_limit_for_the_rows_of_a_hierarchy() {
+    let drawn: Vec<String> = Layout::new(80)
+        .max_rows(3)
+        .render_view_styled(
+            &Renderer::in_zone(TimeZone::UTC),
+            &forest(),
+            View::Table,
+            &Theme::default(),
+            Presentation::Plain,
+        )
+        .into_iter()
+        .map(|line| line.trim_end().to_owned())
+        .collect();
+    assert_eq!(
+        drawn,
+        [
+            "PID  NAME          USER",
+            "  1  init          root",
+            " 20  +-- sshd      root",
+            " 30  |   +-- bash  root",
+            "... 3 more",
+        ],
+        "`render.table.max_rows` counts the rows drawn, descendants included (review C7c)"
+    );
+}
+
 /// One process with a chain of `depth` descendants, each the only child of the one before.
 fn chain(depth: i128) -> Value {
     let schema = schema();
