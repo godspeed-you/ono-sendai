@@ -207,8 +207,8 @@ pub(super) struct StreamedOutput {
     writer: Box<dyn Write>,
     /// Set once the reader of a pipe has gone away, by a watcher that notices it without a write.
     reader_gone: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    /// Tells the watcher to stop, when the output is done with.
-    watching: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// The watcher, stopped — and its copy of the descriptor closed — when the output is done with.
+    watching: Option<Watcher>,
     /// Whether the lines go to the shell's own standard output, whose reader leaving ends the
     /// shell — rather than to a file or a program, whose reader leaving ends the line (ADR-0220).
     own: bool,
@@ -237,10 +237,7 @@ impl StreamedOutput {
             .ok()
             .filter(is_pipe)
             .map(watch_reader);
-        let (reader_gone, watching) = match watched {
-            Some((gone, watching)) => (Some(gone), Some(watching)),
-            None => (None, None),
-        };
+        let (reader_gone, watching) = watched.unzip();
         Ok(Self {
             writer: Box::new(std::io::stdout()),
             reader_gone,
@@ -252,10 +249,7 @@ impl StreamedOutput {
     /// The output that writes into a program's standard input, watching for the program leaving.
     pub(super) fn into_program(input: std::os::fd::OwnedFd) -> Self {
         let watched = input.try_clone().ok().map(watch_reader);
-        let (reader_gone, watching) = match watched {
-            Some((gone, watching)) => (Some(gone), Some(watching)),
-            None => (None, None),
-        };
+        let (reader_gone, watching) = watched.unzip();
         Self {
             writer: Box::new(std::fs::File::from(input)),
             reader_gone,
@@ -290,8 +284,25 @@ impl StreamedOutput {
 
 impl Drop for StreamedOutput {
     fn drop(&mut self) {
-        if let Some(watching) = &self.watching {
-            watching.store(false, std::sync::atomic::Ordering::SeqCst);
+        // The watcher holds a copy of the write end: it is closed here, before the drop returns,
+        // so the end of the lines reaches a fed program the moment the output is done with, not
+        // on the watcher's next look (review C7d).
+        drop(self.watching.take());
+    }
+}
+
+/// A thread watching a pipe's write end for its reader leaving, and how to stop it at once.
+struct Watcher {
+    /// Closing this wakes the watcher.
+    stop: Option<std::os::fd::OwnedFd>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for Watcher {
+    fn drop(&mut self) {
+        drop(self.stop.take());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
         }
     }
 }
@@ -312,36 +323,54 @@ fn is_pipe(descriptor: &std::os::fd::OwnedFd) -> bool {
 /// of the descriptor and ends when told to, or when it has seen the reader go.
 fn watch_reader(
     descriptor: std::os::fd::OwnedFd,
-) -> (
-    std::sync::Arc<std::sync::atomic::AtomicBool>,
-    std::sync::Arc<std::sync::atomic::AtomicBool>,
-) {
+) -> (std::sync::Arc<std::sync::atomic::AtomicBool>, Watcher) {
     let gone = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let watching = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let (report, keep) = (
-        std::sync::Arc::clone(&gone),
-        std::sync::Arc::clone(&watching),
-    );
-    let _ = std::thread::Builder::new()
+    let report = std::sync::Arc::clone(&gone);
+    let Ok((woken, stop)) = nix::unistd::pipe() else {
+        return (
+            gone,
+            Watcher {
+                stop: None,
+                thread: None,
+            },
+        );
+    };
+    let thread = std::thread::Builder::new()
         .name("ono-reader-watch".to_owned())
         .spawn(move || {
             use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
-            while keep.load(std::sync::atomic::Ordering::SeqCst) {
-                let mut descriptors = [PollFd::new(
-                    std::os::fd::AsFd::as_fd(&descriptor),
-                    PollFlags::empty(),
-                )];
-                if poll(&mut descriptors, PollTimeout::from(100_u16)).is_ok_and(|ready| ready > 0)
-                    && descriptors[0].revents().is_some_and(|events| {
-                        events.intersects(PollFlags::POLLERR | PollFlags::POLLHUP)
-                    })
-                {
+            loop {
+                let mut descriptors = [
+                    PollFd::new(std::os::fd::AsFd::as_fd(&descriptor), PollFlags::empty()),
+                    PollFd::new(std::os::fd::AsFd::as_fd(&woken), PollFlags::POLLIN),
+                ];
+                match poll(&mut descriptors, PollTimeout::NONE) {
+                    Ok(_) => {}
+                    Err(nix::errno::Errno::EINTR) => continue,
+                    Err(_) => return,
+                }
+                if descriptors[0].revents().is_some_and(|events| {
+                    events.intersects(PollFlags::POLLERR | PollFlags::POLLHUP)
+                }) {
                     report.store(true, std::sync::atomic::Ordering::SeqCst);
                     return;
                 }
+                if descriptors[1]
+                    .revents()
+                    .is_some_and(|events| !events.is_empty())
+                {
+                    return;
+                }
             }
-        });
-    (gone, watching)
+        })
+        .ok();
+    (
+        gone,
+        Watcher {
+            stop: Some(stop),
+            thread,
+        },
+    )
 }
 
 /// Writes the last segment's result where the stage's redirections say it goes, and answers the
