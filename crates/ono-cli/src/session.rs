@@ -914,7 +914,8 @@ impl Session {
     /// Copied: the working directory, the environment, the scopes and their definitions, the
     /// frames, the retained results and the settings — so a job reads what its line could read
     /// when it was started, and what its blocks bind or rebind stays in the job. Shared: the
-    /// runtime, the providers, the adapters and the theme, which are resources rather than state.
+    /// runtime, the providers, the adapters and the theme, which are resources rather than state —
+    /// except the `env` provider, which answers from the environment and is the job's own.
     /// Not carried: links (a job inside a link frame is refused), the job table, captures, and the
     /// terminal — the job's executor never touches one.
     ///
@@ -935,6 +936,26 @@ impl Session {
         let _ = self.runtime();
         let _ = self.providers();
         let _ = self.shared_adapters();
+        // The environment is state, so the job answers `get env` from a provider of its own: the
+        // session's is published before each of its pipelines, and a job publishing into the same
+        // one would be what the shell's next `get env` read (review R7). Every other provider is
+        // shared as it is.
+        let env_provider = std::sync::Arc::new(ono_provider_linux::EnvProvider::new(
+            self.environment.env_provider.bindings(),
+        ));
+        let providers = self.provider.providers.as_ref().map(|shared| {
+            let session_env = std::sync::Arc::as_ptr(&self.environment.env_provider).cast::<()>();
+            let mut own = ProviderRegistry::new();
+            for provider in shared.providers() {
+                if std::sync::Arc::as_ptr(provider).cast::<()>() == session_env {
+                    own.register(std::sync::Arc::clone(&env_provider)
+                        as std::sync::Arc<dyn ono_provider_api::Provider>);
+                } else {
+                    own.register(std::sync::Arc::clone(provider));
+                }
+            }
+            own
+        });
         Ok(JobSnapshot {
             // A job's children run in process groups of their own and are never handed the
             // terminal: a background job does not read it (spec §18.4).
@@ -942,7 +963,7 @@ impl Session {
             cwd: self.environment.cwd.clone(),
             env: self.environment.env.clone(),
             inherited_env: self.environment.inherited_env.clone(),
-            env_provider: std::sync::Arc::clone(&self.environment.env_provider),
+            env_provider,
             scopes: self.scope.scopes.clone(),
             definitions: self.scope.definitions.clone(),
             status: self.execution.status,
@@ -950,7 +971,7 @@ impl Session {
             frames: self.navigation.frames.clone(),
             selection: self.navigation.selection.clone(),
             results: self.history.results.clone(),
-            providers: self.provider.providers.clone(),
+            providers,
             adapters: self.provider.adapters.clone(),
             #[cfg(feature = "kuang")]
             plugin_providers: self.provider.plugin_providers.clone(),

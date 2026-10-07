@@ -224,6 +224,45 @@ fn should_leave_the_shells_working_directory_where_it_was_when_a_job_tries_to_mo
     }
 }
 
+#[test]
+fn should_keep_what_a_job_binds_in_the_environment_out_of_the_shells() {
+    // Review R7: `get env` answers for the session that asks (ADR-0952 copies the environment
+    // into the job). A job that binds a variable item after item must never be what the shell's
+    // own `get env` reports, however the two interleave.
+    let scratch = scratch();
+    let lines: String = (1..=3000).map(|line| format!("{line}\n")).collect();
+    let source = scratch.write("jobs/lines.log", lines);
+
+    let run = run_bounded(
+        &scratch,
+        &format!(
+            "tail file {} --lines 3000 | each {{ set env LEAKED job; get env LEAKED | count }} &\n\
+             let i = 0\n\
+             while $i < 300 {{ get env LEAKED | count | to json; let i = $i + 1 }}\n\
+             kill %1",
+            source.display()
+        ),
+        BUDGET,
+    );
+
+    assert!(run.finished, "{}", run.report());
+    let reads: Vec<&str> = run
+        .stdout
+        .lines()
+        .filter(|line| line.starts_with('[') && !line.starts_with("[%"))
+        .collect();
+    assert!(
+        reads.len() >= 300,
+        "every read of the shell's environment answered. {}",
+        run.report()
+    );
+    assert!(
+        reads[..300].iter().all(|read| *read == "[0]"),
+        "the shell never sees the job's binding. {}",
+        run.report()
+    );
+}
+
 // --- the same job, at a terminal ---------------------------------------------------------------
 
 #[test]
