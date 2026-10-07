@@ -73,7 +73,7 @@ impl Transform for Count {
     }
 }
 
-/// Computes statistics over a stream that ends (spec §53).
+/// Computes statistics over a stream (spec §53): in constant state, or over the held distribution.
 ///
 /// The results stay typed: the sum of byte sizes is a byte size, the mean of durations is a
 /// duration. The one exception is `stddev`, which is a plain number in the key's own scale —
@@ -91,16 +91,39 @@ pub struct Measure {
     key: Box<dyn KeyFn>,
     percentiles: Vec<f64>,
     window: Option<Window>,
+    /// Whether the distribution is held — every sample, for the median and the percentiles — or
+    /// only the state the other statistics fold into (ADR-0953).
+    distribution: bool,
 }
 
 impl Measure {
-    /// Measures the values `key` extracts.
+    /// Measures the values `key` extracts, holding every sample so the median and any requested
+    /// percentile can be reported. Requires input that ends and materializes within budget.
     #[must_use]
     pub fn new(key: impl KeyFn) -> Self {
         Self {
             key: Box::new(key),
             percentiles: Vec::new(),
             window: None,
+            distribution: true,
+        }
+    }
+
+    /// Measures the values `key` extracts in constant state: count, sum, mean, min, max and the
+    /// standard deviation fold into a fixed amount of state, so nothing is held and no
+    /// materialization budget is charged; the median and the percentiles stay null (ADR-0953).
+    ///
+    /// A stream that ends is answered once, at its end. A stream declared unbounded is a legal
+    /// input — §22.3's refusal is for stages that need the end — and is answered after every
+    /// value with the statistics so far, so a consumer that bounds the answers is answered while
+    /// the source is still open.
+    #[must_use]
+    pub fn constant_state(key: impl KeyFn) -> Self {
+        Self {
+            key: Box::new(key),
+            percentiles: Vec::new(),
+            window: None,
+            distribution: false,
         }
     }
 
@@ -125,10 +148,17 @@ impl Transform for Measure {
     }
 
     fn input_requirement(&self) -> InputRequirement {
-        InputRequirement::Bounded(self.window)
+        if self.distribution {
+            InputRequirement::Bounded(self.window)
+        } else {
+            InputRequirement::Streaming
+        }
     }
 
     fn apply(self: Box<Self>, input: ValueStream) -> ValueStream {
+        if !self.distribution {
+            return running(self.key, input);
+        }
         input.stage(Boundedness::Bounded, move |mut input, sink| async move {
             let schema = match measure_schema() {
                 Ok(schema) => schema,
@@ -187,6 +217,153 @@ impl Transform for Measure {
             let _ = sink.send(record).await;
         })
     }
+}
+
+/// The constant-state statistics of one stream: what [`Measure::constant_state`] folds each value
+/// into. Its size does not depend on how many values there were.
+#[derive(Default)]
+struct Running {
+    count: i128,
+    skipped: i128,
+    sum: Option<Value>,
+    min: Option<Value>,
+    max: Option<Value>,
+    /// Welford's running mean and sum of squared deviations, in the samples' own scale, for the
+    /// population standard deviation without a second pass over samples nobody kept.
+    scaled_mean: f64,
+    squared_deviations: f64,
+}
+
+impl Running {
+    /// Folds one sample in. A sum that cannot be formed — two incompatible units — is the
+    /// stream's failure, as it is for the collecting `measure`.
+    fn fold(&mut self, sample: Value, scale: f64) -> Result<(), ErrorValue> {
+        self.sum = Some(match self.sum.take() {
+            None => sample.clone(),
+            Some(total) => total.add(&sample)?,
+        });
+        if self
+            .min
+            .as_ref()
+            .is_none_or(|least| compare_keys(&sample, least).is_lt())
+        {
+            self.min = Some(sample.clone());
+        }
+        if self
+            .max
+            .as_ref()
+            .is_none_or(|most| compare_keys(&sample, most).is_gt())
+        {
+            self.max = Some(sample);
+        }
+        self.count += 1;
+        let delta = scale - self.scaled_mean;
+        self.scaled_mean += delta / self.count as f64;
+        self.squared_deviations += delta * (scale - self.scaled_mean);
+        Ok(())
+    }
+
+    /// The statistics so far, as an `ono.measure/1` record whose median and percentiles are null.
+    fn record(&self, schema: &Arc<ono_value::Schema>) -> Result<Value, ErrorValue> {
+        let mean = match (&self.sum, self.count) {
+            (Some(total), 1..) => total.div(&Value::Int(self.count)).ok(),
+            _ => None,
+        };
+        let stddev = (self.count > 0)
+            .then(|| Value::Float((self.squared_deviations / self.count as f64).sqrt()));
+        let record = RecordValue::builder(Arc::clone(schema), provenance(schema))
+            .set("count", Value::Int(self.count))?
+            .set("skipped", Value::Int(self.skipped))?
+            .set("sum", crate::schemas::or_null(self.sum.clone()))?
+            .set("mean", crate::schemas::or_null(mean))?
+            .set("median", Value::Null)?
+            .set("min", crate::schemas::or_null(self.min.clone()))?
+            .set("max", crate::schemas::or_null(self.max.clone()))?
+            .set("stddev", crate::schemas::or_null(stddev))?
+            .set("percentiles", Value::Null)?
+            .build();
+        Ok(record.into_value())
+    }
+}
+
+/// `measure` in constant state (ADR-0953): one record at the end of a stream that ends, one after
+/// every value of a stream declared unbounded.
+fn running(key: Box<dyn KeyFn>, input: ValueStream) -> ValueStream {
+    let boundedness = input.boundedness();
+    input.stage(boundedness, move |mut input, sink| async move {
+        let schema = match measure_schema() {
+            Ok(schema) => schema,
+            Err(error) => {
+                let _ = sink.fail(error).await;
+                return;
+            }
+        };
+        let unbounded = !boundedness.is_bounded();
+        let mut state = Running::default();
+        while let Some(value) = input.next_value(&sink).await {
+            match key.key(&value) {
+                Ok(Value::Null) => {
+                    state.skipped += 1;
+                    sink.diagnostics().record_skipped_null();
+                }
+                Ok(sample) => match scale_of(&sample) {
+                    None => {
+                        let error = ErrorValue::new(
+                            ErrorCode::TypeMismatch,
+                            format!("`measure` needs numbers, but found {}", sample.type_name()),
+                        );
+                        if sink.fail(with_identity(error, &value)).await.is_err() {
+                            return;
+                        }
+                        continue;
+                    }
+                    Some(scale) => {
+                        if let Err(error) = state.fold(sample, scale) {
+                            let _ = sink.fail(error).await;
+                            return;
+                        }
+                    }
+                },
+                Err(error) => {
+                    if sink.fail(with_identity(error, &value)).await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
+            }
+            // A stream that does not end has no end to answer at, so the answer is the running
+            // one: what is true of everything read so far, after every value.
+            if unbounded {
+                match state.record(&schema) {
+                    Ok(record) => {
+                        if sink.send(record).await.is_err() {
+                            return;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = sink.fail(error).await;
+                        return;
+                    }
+                }
+            }
+        }
+        if unbounded {
+            return;
+        }
+        // As `count`: a summary of a stream that could not be read is not a summary of nothing
+        // (spec §35.3, ADR-0221).
+        if state.count == 0 && state.skipped == 0 && input.saw_failure() {
+            return;
+        }
+        match state.record(&schema) {
+            Ok(record) => {
+                let _ = sink.send(record).await;
+            }
+            Err(error) => {
+                let _ = sink.fail(error).await;
+            }
+        }
+    })
 }
 
 /// Builds the statistics record. Every field an empty stream cannot answer stays null, never a

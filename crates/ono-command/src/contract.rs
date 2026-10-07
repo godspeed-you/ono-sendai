@@ -573,9 +573,18 @@ pub struct ParameterSpec {
     optional_value: bool,
     default_text: Option<String>,
     default_value: Option<Value>,
+    execution: Option<ExecutionClass>,
 }
 
 impl ParameterSpec {
+    /// The execution class an invocation that sets this option is in, where it differs from the
+    /// command's own — `measure --median` holds the distribution that `measure` alone does not
+    /// (v0.4.1 Appendix E, ADR-0953).
+    #[must_use]
+    pub const fn execution(&self) -> Option<ExecutionClass> {
+        self.execution
+    }
+
     /// The parameter's name, without the `--` an option is written with.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -959,6 +968,24 @@ impl CommandContract {
         self.declared_risk
     }
 
+    /// The execution class of one invocation: the command's own, unless an option it sets
+    /// declares another (ADR-0953). `explain` reports this rather than the command's class, so a
+    /// plan says what *this* stage will hold (v0.4.1 §22.4).
+    #[must_use]
+    pub fn execution_for(&self, arguments: &crate::BoundArguments) -> Option<ExecutionClass> {
+        self.options
+            .iter()
+            .filter_map(|option| option.execution.map(|class| (option.name(), class)))
+            .find(|(name, _)| {
+                !matches!(
+                    arguments.option_binding(name),
+                    None | Some(crate::Binding::Value(Value::Bool(false) | Value::Null))
+                )
+            })
+            .map(|(_, class)| class)
+            .or(self.execution)
+    }
+
     /// The examples the registry documents, every one of which must parse and run (spec §50).
     #[must_use]
     pub fn examples(&self) -> &[String] {
@@ -1057,6 +1084,9 @@ struct RawParameter {
     optional_value: bool,
     #[serde(default)]
     default: Option<RawScalar>,
+    /// The execution class an invocation that sets this option is in (ADR-0953).
+    #[serde(default)]
+    execution: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1252,6 +1282,9 @@ impl From<ContributedParameter> for RawParameter {
             repeatable: parameter.repeatable,
             optional_value: parameter.optional_value,
             default: parameter.default.map(RawScalar::Text),
+            // A contributed command declares one class for itself (spec §31.64); an option that
+            // changes it is a core contract's statement, not something a package can make.
+            execution: None,
         }
     }
 }
@@ -1447,6 +1480,19 @@ fn parameters_with(
                     })
                 })
                 .transpose()?;
+            let execution = parameter
+                .execution
+                .as_deref()
+                .map(|id| {
+                    ExecutionClass::from_id(id).ok_or_else(|| {
+                        error(format!(
+                            "`{}` declares execution `{id}`, which is not a class of v0.4.1 \
+                             Appendix E",
+                            parameter.name
+                        ))
+                    })
+                })
+                .transpose()?;
             Ok(ParameterSpec {
                 name: parameter.name,
                 declared_type,
@@ -1455,6 +1501,7 @@ fn parameters_with(
                 optional_value: parameter.optional_value,
                 default_text,
                 default_value,
+                execution,
             })
         })
         .collect()

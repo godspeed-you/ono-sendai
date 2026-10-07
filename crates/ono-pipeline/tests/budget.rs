@@ -341,3 +341,50 @@ async fn should_refuse_an_unbounded_stream_before_it_consumes_a_value() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn should_measure_constant_state_statistics_without_charging_the_materialization_budget() {
+    // ADR-0953: count, sum, mean, min, max and stddev fold into state of a fixed size, so the
+    // budget a materializer is charged to never sees them. A thousand values under a ten-value
+    // ceiling is answered, with the right figures.
+    within(async {
+        let measured = ValueStream::from_values_with(
+            limited_to(10, MATERIALIZE_MAX_BYTES),
+            (1..=1_000).map(Value::Int),
+        )
+        .transform(Measure::constant_state(|value: &Value| Ok(value.clone())))
+        .expect("a finite source may be measured")
+        .collect()
+        .await;
+
+        assert!(
+            measured.errors().is_empty(),
+            "nothing was held, so no ceiling was reached: {:?}",
+            measured.errors()
+        );
+        let [record] = measured.values() else {
+            panic!(
+                "a stream that ends is answered once, at its end: {:?}",
+                measured.values()
+            );
+        };
+        let field = |name: &str| {
+            record
+                .follow(&[ono_value::FieldStep::required(name)])
+                .expect("a field of ono.measure/1")
+        };
+        assert_eq!(field("count"), Value::Int(1_000));
+        assert_eq!(field("sum"), Value::Int(500_500));
+        assert_eq!(field("mean"), Value::Float(500.5));
+        assert_eq!(field("min"), Value::Int(1));
+        assert_eq!(field("max"), Value::Int(1_000));
+        match field("stddev") {
+            Value::Float(deviation) => assert!(
+                (deviation - 288.674_990_257_209_5).abs() < 1e-6,
+                "the population standard deviation of 1..=1000, got {deviation}"
+            ),
+            other => panic!("stddev is a number, got {other:?}"),
+        }
+    })
+    .await;
+}

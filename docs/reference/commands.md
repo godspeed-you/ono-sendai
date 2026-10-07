@@ -1026,10 +1026,18 @@ Compute statistics over a numeric stream.
 |---|---|---|
 | `key` | `value` | The expression to measure. |
 
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--median` | `bool` | Also report the median. A median is defined over the whole distribution, so asking for one holds every sample: the stage then requires finite input and materializes within `limits.materialize_items` and `limits.materialize_bytes` (ADR-0953). |
+| `--percentiles` | `list<float>` | Also report these nearest-rank percentiles, each between 0 and 100, as the `p<N>` fields of `percentiles`. Like `--median`, this holds every sample and requires finite input (ADR-0953). |
+
 **Examples**
 
 ```text
 get process | measure memory
+get process | measure memory --median --percentiles [90, 99]
 ```
 
 ### `to`

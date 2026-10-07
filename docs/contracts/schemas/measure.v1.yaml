@@ -1,0 +1,62 @@
+# Measure. Derived from spec §53 — `measure` computes statistics "as typed values, not as formatted
+# strings" — and from v0.4.1 Appendix E, which separates what can be folded in constant state from
+# what is defined over the whole distribution (ADR-0455, ADR-0953).
+#
+# The statistics keep the type of what was measured: the sum of byte sizes is a byte size, the
+# mean of durations a duration, so `sum`, `mean`, `median`, `min` and `max` are typed as any value.
+# `stddev` is the exception and a plain number in the samples' own scale, because a standard
+# deviation is derived from a squared quantity and Ono models no squared dimension to name it in.
+# A statistic an empty or unreadable stream cannot answer is null, never a fabricated zero
+# (spec §35.3).
+id: ono.measure/1
+name: Measure
+summary: The statistics `measure` reports over the values its key expression read.
+identity: []
+fields:
+  count:
+    type: int
+    required: true
+    doc: How many values were measured. Nulls are not counted here but in `skipped`.
+  skipped:
+    type: int
+    required: true
+    doc: >-
+      How many values were null and skipped, so an average is never quietly computed over a
+      different population than the user thinks (ADR-0014).
+  sum:
+    type: any
+    nullable: true
+    doc: The sum, in the type of the values measured; null when nothing was measured.
+  mean:
+    type: any
+    nullable: true
+    doc: The arithmetic mean, in the type of the values measured; null when nothing was measured.
+  median:
+    type: any
+    nullable: true
+    doc: >-
+      The median — the midpoint of the two middle values for an even count. Null unless
+      `--median` or `--percentiles` asked for the distribution, and null when nothing was
+      measured.
+  min:
+    type: any
+    nullable: true
+    doc: The smallest value measured; null when nothing was measured.
+  max:
+    type: any
+    nullable: true
+    doc: The largest value measured; null when nothing was measured.
+  stddev:
+    type: float
+    nullable: true
+    doc: >-
+      The population standard deviation, as a plain number in the samples' own scale — bytes,
+      nanoseconds, percent points; null when nothing was measured.
+  percentiles:
+    type: map
+    nullable: true
+    doc: >-
+      The nearest-rank percentiles `--percentiles` asked for, keyed `p<N>` (`p95`), each a value
+      that actually occurred; null unless asked for.
+default_view:
+  columns: [count, sum, mean, min, max]

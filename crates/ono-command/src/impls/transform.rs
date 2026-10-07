@@ -151,7 +151,16 @@ impl CommandImpl for TransformCommand {
             Kind::Count => input.transform(Count::new())?,
             Kind::Measure => {
                 let key = key_function(arguments, "key", &spelling, &scope)?;
-                input.transform(Measure::new(key))?
+                // ADR-0953: the statistics that fold into constant state are all `measure`
+                // computes unless the distribution is asked for, and only asking holds it.
+                let percentiles = percentiles(arguments, &spelling, &scope)?;
+                if arguments.flag("median") || percentiles.is_some() {
+                    input.transform(
+                        Measure::new(key).with_percentiles(percentiles.unwrap_or_default()),
+                    )?
+                } else {
+                    input.transform(Measure::constant_state(key))?
+                }
             }
         };
         Ok(Outcome::Values(output))
@@ -243,6 +252,52 @@ fn key_function(
     let key = expression(arguments, name, spelling)?;
     let scope = Arc::clone(scope);
     Ok(move |value: &Value| evaluate(&key, value, &scope))
+}
+
+/// The percentiles `measure --percentiles` asks for, each between 0 and 100, evaluated with no
+/// record in hand; `None` when none were asked for.
+fn percentiles(
+    arguments: &BoundArguments,
+    spelling: &str,
+    scope: &Arc<Scope>,
+) -> Result<Option<Vec<f64>>, ErrorValue> {
+    let value = match arguments.option_binding("percentiles") {
+        None => return Ok(None),
+        Some(Binding::Value(value)) => value.clone(),
+        Some(Binding::Expressions(expressions)) => {
+            let mut values = Vec::with_capacity(expressions.len());
+            for expression in expressions {
+                values.push(evaluate(expression, &Value::Null, scope)?);
+            }
+            match values.len() {
+                1 => values.remove(0),
+                _ => Value::list(values),
+            }
+        }
+    };
+    let items: Vec<Value> = match value {
+        Value::Null => return Ok(None),
+        Value::List(items) => items.iter().cloned().collect(),
+        single => vec![single],
+    };
+    items
+        .iter()
+        .map(|item| {
+            item.as_float()
+                .ok()
+                .filter(|percentile| (0.0..=100.0).contains(percentile))
+                .ok_or_else(|| {
+                    ErrorValue::new(
+                        ErrorCode::TypeMismatch,
+                        format!(
+                            "`{spelling} --percentiles` takes numbers from 0 to 100, not {item}"
+                        ),
+                    )
+                    .with_help(format!("`{spelling} memory --percentiles [50, 90, 99]`"))
+                })
+        })
+        .collect::<Result<Vec<f64>, ErrorValue>>()
+        .map(Some)
 }
 
 /// The count `take` and `skip` were given, evaluated with no record in hand.

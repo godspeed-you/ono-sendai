@@ -47,7 +47,7 @@ What each pipeline operation may do to a stream, and what a consumer may conclud
 | `ono.data.tail` | `incremental_aggregate` |
 | `ono.data.sort` | `global_reorder` |
 | `ono.data.group` | `global_grouping` |
-| `ono.data.measure` | `explicit_collect` |
+| `ono.data.measure` | `incremental_aggregate` |
 | `ono.data.join` | `explicit_collect` |
 | `ono.data.diff` | `explicit_collect` |
 | `ono.place.map` | `live_view` |

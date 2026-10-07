@@ -1128,6 +1128,26 @@ Default view: `label`, `type`, `state`, `landmark_reasons`
 | `landmark_reasons` | `list<string>` | — | required | Why this node deserves attention, from §3.7's closed vocabulary. Empty when it is no landmark. |
 | `depth` | `int` | — | required | How many hierarchy hops from the map's centre the node was reached (§6.9). |
 
+## Measure — `ono.measure/1`
+
+The statistics `measure` reports over the values its key expression read.
+
+Identity: 
+
+Default view: `count`, `sum`, `mean`, `min`, `max`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `count` | `int` | — | required | How many values were measured. Nulls are not counted here but in `skipped`. |
+| `skipped` | `int` | — | required | How many values were null and skipped, so an average is never quietly computed over a different population than the user thinks (ADR-0014). |
+| `sum` | `any` | — | nullable | The sum, in the type of the values measured; null when nothing was measured. |
+| `mean` | `any` | — | nullable | The arithmetic mean, in the type of the values measured; null when nothing was measured. |
+| `median` | `any` | — | nullable | The median — the midpoint of the two middle values for an even count. Null unless `--median` or `--percentiles` asked for the distribution, and null when nothing was measured. |
+| `min` | `any` | — | nullable | The smallest value measured; null when nothing was measured. |
+| `max` | `any` | — | nullable | The largest value measured; null when nothing was measured. |
+| `stddev` | `float` | — | nullable | The population standard deviation, as a plain number in the samples' own scale — bytes, nanoseconds, percent points; null when nothing was measured. |
+| `percentiles` | `map` | — | nullable | The nearest-rank percentiles `--percentiles` asked for, keyed `p<N>` (`p95`), each a value that actually occurred; null unless asked for. |
+
 ## ModelProvider — `ono.model-provider/1`
 
 One configured model provider, and the data boundary the operator set for it.

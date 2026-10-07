@@ -1108,10 +1108,14 @@ fn plan_stage(
 
     let mut notes = Vec::new();
     let mut narrowed = None;
+    // v0.4.1 §22.4: the class of this invocation, which an option can change — `measure` folds in
+    // constant state, `measure --median` holds the distribution (ADR-0953).
+    let mut execution = contract.execution();
     match contract.bind(resolved.arguments) {
         // The fields a stage reads are the ones its first selector names: `sort memory desc`
         // reads `memory`, and `desc` is the direction rather than a field.
         Ok(bound) => {
+            execution = contract.execution_for(&bound);
             if let Some((_, binding)) = bound.selectors().first() {
                 let mut named = Vec::new();
                 for expression in binding.expressions() {
@@ -1178,9 +1182,8 @@ fn plan_stage(
         adaptation: None,
         // v0.4.1 §22.4: what the stage will hold, and what it is allowed to hold, derived from
         // the classification the contract declares rather than restated here (ADR-0460).
-        execution: contract.execution(),
-        budget: contract
-            .execution()
+        execution,
+        budget: execution
             .filter(|class| class.may_materialize())
             .map(|_| (limits.max_items(), limits.max_bytes())),
     }

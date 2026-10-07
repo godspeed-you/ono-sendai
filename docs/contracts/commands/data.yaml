@@ -210,16 +210,24 @@ commands:
     provider_capability: null
     selectors:
       - {name: key, type: value, doc: "The expression to measure."}
-    options: []
+    options:
+      - {name: median, type: bool, execution: explicit_collect, doc: "Also report the median. A median is defined over the whole distribution, so asking for one holds every sample: the stage then requires finite input and materializes within `limits.materialize_items` and `limits.materialize_bytes` (ADR-0953)."}
+      - {name: percentiles, type: list<float>, execution: explicit_collect, doc: "Also report these nearest-rank percentiles, each between 0 and 100, as the `p<N>` fields of `percentiles`. Like `--median`, this holds every sample and requires finite input (ADR-0953)."}
     privilege: none
     streaming: false
-    execution: explicit_collect   # v0.4.1 Appendix E, docs/contracts/hardening/streaming_classification.yaml
+    execution: incremental_aggregate   # v0.4.1 Appendix E, docs/contracts/hardening/streaming_classification.yaml; `--median` and `--percentiles` make an invocation explicit_collect (ADR-0953)
     phase: B
     note: >-
-      Yields count, sum, mean, min and max as typed values, not as formatted strings
-      (spec §53).
+      Yields count, skipped, sum, mean, min, max and stddev as typed values, not as formatted
+      strings (spec §53), in constant state: nothing is held per value, so no materialization
+      limit applies. Over a stream that ends it answers once, at the end. Over a stream declared
+      unbounded it answers after every value with the statistics so far, so `… | measure x |
+      take 3` is answered while the source is still open (ADR-0953). `median` and `percentiles`
+      are null unless `--median` or `--percentiles` asks for them, and asking holds the
+      distribution.
     examples:
       - get process | measure memory
+      - get process | measure memory --median --percentiles [90, 99]
 
   - id: ono.data.to
     verb: to

@@ -101,6 +101,7 @@ const CONTRACTS: &[&str] = &[
     include_str!(concat!(env!("OUT_DIR"), "/schemas/map-cluster.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/map-edge.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/map-node.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/measure.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/model-provider.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/mount-boundary.v1.json")),
     include_str!(concat!(env!("OUT_DIR"), "/schemas/mount-event.v1.json")),
