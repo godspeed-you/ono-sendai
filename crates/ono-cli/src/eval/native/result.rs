@@ -117,8 +117,15 @@ pub(super) fn deliver_segment(
     let serialised = final_contract.is_some_and(|contract| {
         produces_bytes(contract) || (admits_bytes(contract) && wrote_text(&values))
     });
-    write_result(session, stage, &values, serialised, delivery.source)?;
-    Ok((None, status))
+    let written = write_result(session, stage, &values, serialised, delivery.source)?;
+    Ok((
+        None,
+        if written.is_success() {
+            status
+        } else {
+            written
+        },
+    ))
 }
 
 /// The ActionResult rows of one mutation stage, as the schema writes them: `operation` is the
@@ -202,16 +209,27 @@ pub(super) struct StreamedOutput {
     reader_gone: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// Tells the watcher to stop, when the output is done with.
     watching: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Whether the lines go to the shell's own standard output, whose reader leaving ends the
+    /// shell — rather than to a file or a program, whose reader leaving ends the line (ADR-0220).
+    own: bool,
 }
 
 impl StreamedOutput {
     /// The output a stage's lines go to: the file its redirection names, or the shell's stdout.
     pub(super) fn open(session: &mut Session, stage: &Stage, source: &str) -> Eval<Self> {
         if let Some(file) = crate::eval::output_destination(session, stage, source)? {
+            // A named pipe's reader can leave while nothing is being written, as a pipe's can.
+            let watched = std::os::fd::AsFd::as_fd(&file)
+                .try_clone_to_owned()
+                .ok()
+                .filter(is_pipe)
+                .map(watch_reader);
+            let (reader_gone, watching) = watched.unzip();
             return Ok(Self {
                 writer: Box::new(file),
-                reader_gone: None,
-                watching: None,
+                reader_gone,
+                watching,
+                own: false,
             });
         }
         let watched = std::os::fd::AsFd::as_fd(&std::io::stdout())
@@ -227,6 +245,7 @@ impl StreamedOutput {
             writer: Box::new(std::io::stdout()),
             reader_gone,
             watching,
+            own: true,
         })
     }
 
@@ -241,7 +260,13 @@ impl StreamedOutput {
             writer: Box::new(std::fs::File::from(input)),
             reader_gone,
             watching,
+            own: false,
         }
+    }
+
+    /// Whether the lines go to the shell's own standard output.
+    pub(super) const fn is_the_shells_own(&self) -> bool {
+        self.own
     }
 
     /// Writes one value's line and flushes it, so it is where its reader can see it now.
@@ -319,14 +344,17 @@ fn watch_reader(
     (gone, watching)
 }
 
-/// Writes the last segment's result where the stage's redirections say it goes.
+/// Writes the last segment's result where the stage's redirections say it goes, and answers the
+/// status the writing gives the line: success, or `SIGPIPE`'s when the reader of the file it was
+/// redirected to — a named pipe — left before it had everything (ADR-0220). Only the shell's own
+/// output's reader leaving ends the shell.
 pub(super) fn write_result(
     session: &mut Session,
     stage: &Stage,
     values: &[Value],
     serialised: bool,
     source: &str,
-) -> Eval<()> {
+) -> Eval<ExitStatus> {
     let destination = crate::eval::output_destination(session, stage, source)?;
     // A pipeline run for its value hands on what it would have shown instead of showing it
     // (spec §19.2, ADR-0069; ADR-0072 §4): the values themselves, or the one document a
@@ -338,7 +366,7 @@ pub(super) fn write_result(
         } else {
             session.capture(values)?;
         }
-        return Ok(());
+        return Ok(ExitStatus::SUCCESS);
     }
     // What is about to be shown is what `@-1` and `@N` reuse (spec §20.2). Serialised output is
     // not retained: its values are one rendered document, and reusing the objects it was made
@@ -353,13 +381,19 @@ pub(super) fn write_result(
             } else {
                 rendered_bytes(values, table_row_limit(session))
             };
-            file.write_all(&bytes).map_err(write_failed)?;
-            file.flush().map_err(write_failed)
+            match file.write_all(&bytes).and_then(|()| file.flush()) {
+                Ok(()) => Ok(ExitStatus::SUCCESS),
+                Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {
+                    Ok(ExitStatus::from_signal(13))
+                }
+                Err(error) => Err(write_failed(error)),
+            }
         }
         None if serialised => {
             let mut out = std::io::stdout().lock();
             out.write_all(&bytes_of(values)).map_err(write_failed)?;
-            out.flush().map_err(write_failed)
+            out.flush().map_err(write_failed)?;
+            Ok(ExitStatus::SUCCESS)
         }
         None => {
             let environment: Vec<(String, String)> = session
@@ -381,7 +415,7 @@ pub(super) fn write_result(
                 sink = sink.with_max_rows(limit);
             }
             sink.write(values);
-            Ok(())
+            Ok(ExitStatus::SUCCESS)
         }
     }
 }

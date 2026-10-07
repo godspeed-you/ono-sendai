@@ -277,6 +277,104 @@ fn should_stop_writing_into_a_program_that_has_read_enough() {
     );
 }
 
+/// A named pipe at `path`, and a reader that opens it, reads `bytes` bytes and leaves.
+fn fifo_read_once(path: &Path, bytes: usize) -> std::thread::JoinHandle<Vec<u8>> {
+    let status = Command::new("mkfifo")
+        .arg(path)
+        .status()
+        .expect("mkfifo runs");
+    assert!(status.success(), "the named pipe was made");
+    let path = path.to_path_buf();
+    std::thread::spawn(move || {
+        let mut file = std::fs::File::open(&path).expect("the named pipe opens for reading");
+        let mut read = vec![0_u8; bytes];
+        let _ = std::io::Read::read_exact(&mut file, &mut read);
+        read
+    })
+}
+
+/// Lets a reader still waiting for a writer to open `fifo` go: a shell that never opened it must
+/// not leave the test waiting on its reader.
+fn release(fifo: &Path) {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let _ = std::fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(nix::libc::O_NONBLOCK)
+        .open(fifo);
+}
+
+#[test]
+fn should_end_the_line_with_141_and_go_on_when_a_redirected_streams_reader_leaves() {
+    // Review R6: a redirect target is not the shell's own output. When the reader of a named pipe
+    // the line writes into leaves, the line ends as a program killed by `SIGPIPE` ends — 141 —
+    // and the shell goes on with the next line. The source here never ends, so the reader leaving
+    // has to be noticed without another value being written.
+    let home = scratch();
+    let source = home.write("jsonl/source.log", "first\n");
+    let fifo = home.path().join("jsonl/reader.fifo");
+    let reader = fifo_read_once(&fifo, "\"first\"\n".len());
+
+    let run = run_bounded(
+        &home,
+        &format!(
+            "tail file {} --lines 1 --follow | to jsonl > {}\necho \"after-$?\"",
+            source.display(),
+            fifo.display()
+        ),
+        BUDGET,
+    );
+
+    release(&fifo);
+    assert_eq!(
+        reader.join().expect("the reader ran"),
+        b"\"first\"\n",
+        "the reader got the line as it was written"
+    );
+    assert!(
+        run.finished,
+        "the reader leaving ended the line. {}",
+        run.report()
+    );
+    assert!(
+        run.stdout.contains("after-141"),
+        "the line's status is SIGPIPE's, and the shell went on to the next line. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_end_the_line_with_141_and_go_on_when_a_redirected_documents_reader_leaves() {
+    // The same for a document written whole: more than a pipe holds, so the write is still going
+    // when the reader leaves after its first byte.
+    let home = scratch();
+    let line = "x".repeat(200);
+    let source = home.write(
+        "jsonl/source.log",
+        (0..2000).map(|_| format!("{line}\n")).collect::<String>(),
+    );
+    let fifo = home.path().join("jsonl/reader.fifo");
+    let reader = fifo_read_once(&fifo, 1);
+
+    let run = run_bounded(
+        &home,
+        &format!(
+            "tail file {} --lines 2000 --follow false | to json > {}\necho \"after-$?\"",
+            source.display(),
+            fifo.display()
+        ),
+        BUDGET,
+    );
+
+    release(&fifo);
+    let _ = reader.join();
+    assert!(run.finished, "{}", run.report());
+    assert!(
+        run.stdout.contains("after-141"),
+        "the line's status is SIGPIPE's, and the shell went on to the next line. {}",
+        run.report()
+    );
+}
+
 #[test]
 fn should_keep_memory_flat_while_an_unbounded_stream_is_serialized() {
     // Bounded memory: how much of the source the shell had to read to answer `take 1` after the

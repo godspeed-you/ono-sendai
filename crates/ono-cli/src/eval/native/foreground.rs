@@ -435,6 +435,9 @@ pub(super) fn run_native_segment(
     if let Some(cancel) = cancel {
         cancel.cancel();
     }
+    let to_the_shells_own = streamed
+        .as_ref()
+        .is_some_and(StreamedOutput::is_the_shells_own);
     // The end of the lines is the end of the fed program's input.
     drop(streamed);
     // A fed program is waited for whatever ended the drain, so it is never left behind; its
@@ -449,9 +452,14 @@ pub(super) fn run_native_segment(
     }
     // The reader of the shell's own output left: the shell ends as a program whose reader left
     // ends, in silence and with `SIGPIPE`'s status (ADR-0220, ADR-0954). A fed program that read
-    // what it wanted and left is not that: `yes | head -1` succeeds.
+    // what it wanted and left is not that: `yes | head -1` succeeds. Nor is the reader of a file
+    // the line was redirected to — a named pipe — leaving: that ends the line, with `SIGPIPE`'s
+    // status, and the shell goes on.
     if drained.reader_left && program_status.is_none() {
-        return Err(Flow::Exit(ExitStatus::from_signal(13)));
+        if to_the_shells_own {
+            return Err(Flow::Exit(ExitStatus::from_signal(13)));
+        }
+        return Ok(SegmentEnd::answered(None, ExitStatus::from_signal(13)));
     }
     let values = drained.values;
     let failures = drained.failures;

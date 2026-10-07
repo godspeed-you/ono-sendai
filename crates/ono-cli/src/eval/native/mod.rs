@@ -390,7 +390,7 @@ fn run_from(
         match seed.take() {
             Start::Values(values) => {
                 if let Some(stage) = list.stages.first() {
-                    write_result(session, stage, &values, false, source)?;
+                    status = write_result(session, stage, &values, false, source)?;
                 }
             }
             // No stage follows, so nothing is bound and nothing runs: what the empty segment
@@ -577,7 +577,10 @@ fn run_from(
                                 runtime.block_on(crate::spatial::observe_adapted(&values));
                             }
                             if last {
-                                write_result(session, stage, &values, false, source)?;
+                                let written = write_result(session, stage, &values, false, source)?;
+                                if !written.is_success() {
+                                    status = written;
+                                }
                             } else {
                                 seed = Start::Values(values);
                             }
