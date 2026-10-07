@@ -44,6 +44,10 @@ impl Transform for Group {
         "group"
     }
 
+    fn materializes(&self) -> bool {
+        true
+    }
+
     fn input_requirement(&self) -> InputRequirement {
         InputRequirement::Bounded(self.window)
     }

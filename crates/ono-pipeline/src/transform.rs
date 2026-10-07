@@ -52,6 +52,15 @@ pub trait Transform: Send + 'static {
         InputRequirement::Streaming
     }
 
+    /// Whether the transform retains its input against the materialization budget (§22.2).
+    ///
+    /// A transform that does is refused before it reads anything when the budget admits nothing
+    /// at all (`resource.materialization_limit`, ADR-0934). One that only passes values on, or
+    /// folds them into constant state, retains nothing and is not concerned by the budget.
+    fn materializes(&self) -> bool {
+        false
+    }
+
     /// Runs the transform over `input`.
     ///
     /// Implementations build their output with [`ValueStream::stage`], which inherits the

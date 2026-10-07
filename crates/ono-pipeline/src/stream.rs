@@ -517,8 +517,10 @@ impl ValueStream {
     /// # Errors
     ///
     /// Returns [`ErrorCode::StreamUnboundedOperation`] when a blocking transform is applied to a
-    /// stream that never ends and no window was given (spec §11.1). Nothing runs and nothing is
-    /// consumed: the error arrives before the first value would have.
+    /// stream that never ends and no window was given (spec §11.1), and
+    /// [`ErrorCode::ResourceMaterializationLimit`] when a materializing transform's budget admits
+    /// nothing at all (v0.4.1 §22.2, ADR-0934). Nothing runs and nothing is consumed: the error
+    /// arrives before the first value would have.
     pub fn transform<T: Transform>(self, transform: T) -> Result<Self, ErrorValue> {
         let input = match transform.input_requirement() {
             InputRequirement::Streaming => self,
@@ -526,6 +528,13 @@ impl ValueStream {
             InputRequirement::Bounded(Some(window)) => self.windowed(window),
             InputRequirement::Bounded(None) => return Err(unbounded_error(transform.name())),
         };
+        // §22.2: a budget of zero admits nothing, so a stage that must hold its input refuses
+        // here, before it reads a value, rather than on the first one it would have retained.
+        if transform.materializes()
+            && let Some(refusal) = crate::budget::admits_nothing(transform.name(), input.limits)
+        {
+            return Err(refusal);
+        }
         Ok(Box::new(transform).apply(input))
     }
 

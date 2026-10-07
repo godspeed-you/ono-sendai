@@ -32,6 +32,7 @@ use support::isolated;
 const ITEM_LIMIT: &str = "Ono-Sendai-E1101";
 const BYTE_LIMIT: &str = "Ono-Sendai-E1102";
 const UNBOUNDED: &str = "Ono-Sendai-E0801";
+const ADMITS_NOTHING: &str = "Ono-Sendai-E1103";
 
 /// Runs `script` in a shell that sees nothing of this machine's configuration.
 fn run(dir: &Scratch, script: &str) -> ono_testkit::Run {
@@ -231,6 +232,95 @@ fn should_name_the_finiteness_requirement_and_the_declaring_stage_in_the_refusal
         "one\n",
         "the refusal arrived while the source was still waiting, which is what §22.3's \
          'MUST NOT wait forever' means when written as something a test can read"
+    );
+}
+
+// --- §22.2: a budget of zero admits nothing, and the stage says so first (issue #183) ----------
+
+#[test]
+fn should_refuse_a_materializing_stage_whose_item_budget_admits_nothing() {
+    // §22.2: "A value of zero means 'no values permitted', not unlimited." The refusal is decided
+    // from the configuration before the stage reads anything (ADR-0934; the pipeline's own
+    // `should_refuse_every_materializing_transform_before_it_reads_…` proves the ordering over a
+    // source that never sends), so it reports no consumption, unlike the item ceiling's E1101.
+    let dir = scratch();
+    let run = run(
+        &dir,
+        "set config limits.materialize_items = 0\nget process | sort pid | to json",
+    );
+    let refusal = run.stderr();
+    assert!(
+        refusal.contains(ADMITS_NOTHING) && !refusal.contains(ITEM_LIMIT),
+        "§21.4: a budget that admits nothing is resource.materialization_limit, not a count \
+         that was reached: {refusal:?}"
+    );
+    for fragment in [
+        "sort",
+        "admits nothing",
+        "stage: sort",
+        "setting: limits.materialize_items",
+        "limit: 0",
+    ] {
+        assert!(
+            refusal.contains(fragment),
+            "§54.1: the refusal names `{fragment}`, and its metadata is shown: {refusal:?}"
+        );
+    }
+    assert!(
+        !refusal.contains("consumed"),
+        "nothing was read, so nothing is reported consumed: {refusal:?}"
+    );
+    assert!(!run.status().is_success(), "the refusal fails the pipeline");
+}
+
+#[test]
+fn should_refuse_a_materializing_stage_whose_byte_budget_admits_nothing() {
+    let dir = scratch();
+    let run = run(
+        &dir,
+        "set config limits.materialize_bytes = 0\nget process | group name | count | to json",
+    );
+    let refusal = run.stderr();
+    assert!(
+        refusal.contains(ADMITS_NOTHING) && !refusal.contains(BYTE_LIMIT),
+        "the byte half of the same rule: {refusal:?}"
+    );
+    for fragment in [
+        "group",
+        "limits.materialize_bytes",
+        "setting: limits.materialize_bytes",
+    ] {
+        assert!(
+            refusal.contains(fragment),
+            "§54.1: the refusal names `{fragment}`, and its metadata is shown: {refusal:?}"
+        );
+    }
+}
+
+#[test]
+fn should_leave_a_stage_that_holds_nothing_untouched_when_the_budget_admits_nothing() {
+    // The budget is a materializing stage's; a stream that is only passed along or counted
+    // retains nothing, so a zero budget does not concern it.
+    let dir = scratch();
+    let run = run(
+        &dir,
+        "set config limits.materialize_items = 0\nget process | take 3 | count | to json",
+    );
+    run.assert_success();
+    assert_eq!(run.stdout().trim(), "[3]", "stderr: {}", run.stderr());
+}
+
+#[test]
+fn should_still_refuse_with_the_item_ceiling_when_the_budget_admits_one_value() {
+    let dir = scratch();
+    let run = run(
+        &dir,
+        "set config limits.materialize_items = 1\nget process | sort pid | count | to json",
+    );
+    assert!(
+        run.stderr().contains(ITEM_LIMIT) && !run.stderr().contains(ADMITS_NOTHING),
+        "a budget that admits something is reached, not refused up front: {:?}",
+        run.stderr()
     );
 }
 

@@ -18,7 +18,10 @@
 # §54.1 is the third: the fields `docs/contracts/hardening/refusals.yaml` declares as explaining
 # the refusal reach the screen as `key: value` lines under the message (issue #180, ADR-0938).
 #
-# Decisions: ADR-0452, ADR-0453, ADR-0454, ADR-0455, ADR-0456, ADR-0938.
+# §22.2 is the fourth: "A value of zero means 'no values permitted', not unlimited", so a budget of
+# zero is refused as `resource.materialization_limit` before the stage reads a value (issue #183).
+#
+# Decisions: ADR-0452, ADR-0453, ADR-0454, ADR-0455, ADR-0456, ADR-0934, ADR-0938.
 case: a materializer is bounded in values and in bytes, and refuses with a stable code
 timeout: 120
 env: NO_COLOR=1
@@ -66,6 +69,15 @@ run: |
   ono -c "try { tail file $HOME/case-190.log --lines 1 --follow | sort name | count } catch e { \$e | select name message | to json }"
   wc -l < "$HOME/case-190.log"
 
+  echo "== 22.2: a budget of zero admits nothing, and the stage refuses before it reads (issue 183) =="
+  ono -c "set config limits.materialize_items = 0
+          get file $pop/* | sort name | count" 2>&1
+  ono -c "set config limits.materialize_bytes = 0
+          try { get file $pop/* | group kind | count } catch e { \$e | select name | to json }"
+  echo "== a stage that holds nothing is not concerned by it =="
+  ono -c "set config limits.materialize_items = 0
+          get file $pop/* | take 2 | count | to json"
+
   echo "== and the defaults hold ordinary work (Appendix A) =="
   ono -c "get file $pop/* | sort name | count | to json"
 exit: 0
@@ -84,4 +96,8 @@ stdout-contains: "stage":"sort"
 stdout-contains: [{"name":"stream.unbounded_operation","message":"`sort` requires finite input; the upstream is declared unbounded"}]
 stdout-contains: Ono-Sendai-E1101
 stdout-contains: raise `limits.materialize_bytes` deliberately
+stdout-contains: Ono-Sendai-E1103 resource.materialization_limit `sort` must hold its whole input, and its budget admits nothing: `limits.materialize_items` is 0 values
+stdout-contains:   limit: 0
+stdout-contains: [{"name":"resource.materialization_limit"}]
+stdout-contains: [2]
 stdout-not-contains: panicked

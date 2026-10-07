@@ -341,3 +341,83 @@ async fn should_refuse_an_unbounded_stream_before_it_consumes_a_value() {
     })
     .await;
 }
+
+// --- §22.2: a budget that admits nothing is refused before a value is read (issue #183) ---
+
+#[tokio::test]
+async fn should_refuse_every_materializing_transform_before_it_reads_when_its_budget_admits_nothing()
+ {
+    within(async {
+        // v0.4.1 §22.2: "A value of zero means 'no values permitted', not unlimited." The source
+        // is finite by declaration and never sends nor ends, so a refusal that waited for a value
+        // would never come: `transform` must answer from the budget alone (ADR-0934).
+        for (items, bytes, setting) in [
+            (0, 1 << 30, "limits.materialize_items"),
+            (100, 0, "limits.materialize_bytes"),
+        ] {
+            let names: [&str; 5] = ["sort", "group", "join", "diff", "measure"];
+            for name in names {
+                let source = || {
+                    ValueStream::spawn(
+                        limited_to(items, bytes),
+                        Boundedness::Bounded,
+                        |sink| async move {
+                            std::future::pending::<()>().await;
+                            drop(sink);
+                        },
+                    )
+                };
+                let staged = match name {
+                    "sort" => source().transform(Sort::new(|value: &Value| Ok(value.clone()))),
+                    "group" => source().transform(Group::new(|value: &Value| Ok(value.clone()))),
+                    "join" => source().transform(Join::new(
+                        (0..4).map(|index| demo(index, "process", None)),
+                        |value: &Value| Ok(value.clone()),
+                    )),
+                    "diff" => source().transform(Diff::new(
+                        (0..4).map(|index| demo(index, "process", None)),
+                        |value: &Value| Ok(value.clone()),
+                    )),
+                    _ => source().transform(
+                        Measure::new(|_: &Value| Ok(Value::Int(1))).with_percentiles([50.0]),
+                    ),
+                };
+                let Err(error) = staged else {
+                    panic!("`{name}` was staged under a budget that admits nothing ({setting})");
+                };
+                assert_eq!(error.code(), ErrorCode::ResourceMaterializationLimit);
+                assert_eq!(
+                    error.metadata().get("stage"),
+                    Some(&Value::string(name)),
+                    "§54.1: the refusal names the stage"
+                );
+                assert_eq!(
+                    error.metadata().get("setting"),
+                    Some(&Value::string(setting)),
+                    "§54.1: the refusal names the setting a user would raise"
+                );
+                assert_eq!(error.metadata().get("limit"), Some(&Value::Int(0)));
+            }
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn should_refuse_through_the_helper_before_it_reads_when_the_budget_admits_nothing() {
+    within(async {
+        let stream = ValueStream::spawn(
+            PipelineConfig::new(),
+            Boundedness::Bounded,
+            |sink| async move {
+                std::future::pending::<()>().await;
+                drop(sink);
+            },
+        );
+        let error = materialize(stream, Budget::of("collect", 0, 1 << 20))
+            .await
+            .expect_err("§22.2: a budget of zero admits nothing");
+        assert_eq!(error.code(), ErrorCode::ResourceMaterializationLimit);
+    })
+    .await;
+}
