@@ -15,12 +15,14 @@ use crate::eval::{Eval, Flow};
 use crate::session::Session;
 
 use super::bind::{bind_stage, stage_scope};
-use super::drive::{BlockRequest, BlockSite, asking_stage, block_of, drive_segment, interrupted};
+use super::drive::{
+    BlockRequest, BlockSite, answer, answering, asking_stage, block_of, drive_segment,
+};
 use super::result::{
     Delivery, StreamedOutput, action_records, deliver_segment, live_geometry, report_counts,
     report_failures, streams_bytes, table_row_limit, write_failed,
 };
-use super::segment::{accepts_bytes, each_needs_a_stream, interrupted_flow, produces_bytes};
+use super::segment::{accepts_bytes, each_needs_a_stream, produces_bytes};
 use super::{Seed, implementations};
 
 /// Runs one run of native stages, answering with the bytes a following child process would read.
@@ -182,9 +184,12 @@ pub(super) fn run_native_segment(
             "the operating system refused to start the pipeline runtime",
         ))
     })?;
-    // Owned, so the borrow of the session ends with the assembly below and the evaluator can be
-    // called again while this pipeline is still running — which is the whole point (ADR-0480).
+    // Owned, so the borrow of the session ends here and the evaluator can be called again while
+    // this pipeline is still being started and while it runs — which is the whole point
+    // (ADR-0480).
     let handle = runtime.handle().clone();
+    let providers = providers.clone();
+    let providers = &providers;
 
     // Ctrl-C is delivered to the shell itself while a native pipeline runs — there is no child
     // for the kernel to interrupt — so whatever this thread waits on races the interrupt note and
@@ -344,16 +349,13 @@ pub(super) fn run_native_segment(
         Ok((stream, failed_rows))
     };
 
-    let assembled = handle.block_on(async {
-        tokio::select! {
-            outcome = assemble => outcome,
-            () = interrupted() => Err(ErrorValue::new(ErrorCode::StreamCancelled, "interrupted")),
-        }
-    });
+    // A stage that reads its whole input while it is being started — a mutation collecting its
+    // targets — asks the blocks in front of it for their items now, so they are answered now.
+    let assembled = answering(session, &handle, &mut requests, assemble, answer);
     // Every sender that remains belongs to a block stage, so the driver below learns from the
     // channel closing that no block will ask again.
     drop(asked);
-    let (stream, failed_rows) = assembled.map_err(interrupted_flow)?;
+    let (stream, failed_rows) = assembled?;
 
     // The counters are shared by every stage of the pipeline (ADR-0014); the handle is taken
     // before the stream is drained, because the stream is consumed to do it.

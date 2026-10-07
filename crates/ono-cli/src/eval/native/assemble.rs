@@ -21,7 +21,9 @@ use crate::eval::{Eval, Flow};
 use crate::session::{Function, Session};
 
 use super::bind::{bind_stage, stage_scope};
-use super::drive::{Asked, BlockRequest, BlockSite, FrameCell, asking_stage, block_of};
+use super::drive::{
+    Asked, BlockRequest, BlockSite, FrameCell, answer_within, answering, asking_stage, block_of,
+};
 use super::result::action_records;
 use super::segment::{admits_bytes, continuable_body, native_contract, produces_bytes};
 use super::{Start, implementations, registry};
@@ -187,13 +189,22 @@ fn statement_returns(statement: &Statement) -> bool {
 
 /// What the stages being assembled stand inside.
 struct Within<'a> {
-    /// The invocation scopes of the calls whose bodies these stages are, outermost first.
+    /// The invocation scopes of the calls whose bodies these stages are, outermost first: the
+    /// calls being assembled right now.
     frames: &'a [FrameCell],
+    /// The session's scope depth just before each of those calls pushed its scope, so a block
+    /// asked while they are assembled can be run without the scopes it was not written in.
+    depths: &'a [usize],
     /// Whether a stage after the assembled ones reads what they produce.
     consumed_after: bool,
     /// Where the block stages ask.
     asked: &'a Asked,
+    /// Where those requests arrive, answered while a stage reads its input as it starts.
+    requests: &'a Requests,
 }
+
+/// The receiving end of the block channel, shared by every stage one assembly starts.
+type Requests = std::cell::RefCell<tokio::sync::mpsc::Receiver<BlockRequest>>;
 
 /// Assembles `stages`, which [`list_shape`] has accepted, into the stream they produce.
 fn assemble(
@@ -216,9 +227,8 @@ fn assemble(
                 source,
                 stream.take(),
                 &Within {
-                    frames: within.frames,
                     consumed_after: consumed,
-                    asked: within.asked,
+                    ..*within
                 },
             )?;
             failed_rows |= assembled.failed_rows;
@@ -243,7 +253,7 @@ fn assemble(
             shows_itself = !consumed;
             continue;
         }
-        let (produced, failed) = native_stage(session, stage, source, stream.take())?;
+        let (produced, failed) = native_stage(session, stage, source, stream.take(), within)?;
         failed_rows |= failed;
         shows_itself = false;
         stream = Some(produced);
@@ -287,6 +297,8 @@ fn assemble_call(
     let cell: FrameCell = Arc::new(std::sync::Mutex::new(None));
     let mut frames = within.frames.to_vec();
     frames.push(Arc::clone(&cell));
+    let mut depths = within.depths.to_vec();
+    depths.push(depth);
     let assembled =
         super::super::function::bind_parameters(session, declaration, arguments, &function.source)
             .and_then(|()| {
@@ -297,8 +309,8 @@ fn assemble_call(
                     input,
                     &Within {
                         frames: &frames,
-                        consumed_after: within.consumed_after,
-                        asked: within.asked,
+                        depths: &depths,
+                        ..*within
                     },
                 )
             });
@@ -315,6 +327,7 @@ fn native_stage(
     stage: &Stage,
     source: &str,
     input: Option<ValueStream>,
+    within: &Within<'_>,
 ) -> Eval<(ValueStream, bool)> {
     let registry = registry().map_err(Flow::Failed)?;
     let table = implementations(session).map_err(Flow::Failed)?;
@@ -340,10 +353,12 @@ fn native_stage(
         ))
     })?;
     let handle = runtime.handle().clone();
+    let providers = providers.clone();
+    let providers = &providers;
     let mutating = registry
         .verb(contract.verb())
         .is_some_and(ono_command::VerbSpec::is_mutating);
-    let started = handle.block_on(async {
+    let started = async {
         let started = std::time::Instant::now();
         let requested_at = jiff::Timestamp::now();
         let temporal = crate::temporal::invocation_context(&arguments).await?;
@@ -402,8 +417,35 @@ fn native_stage(
                 Err(error)
             }
         }
-    });
-    started.map_err(super::segment::interrupted_flow)
+    };
+    // A stage that reads its whole input as it starts asks the blocks in front of it now
+    // (`answering`). A block written inside a call still being assembled finds that call's scope
+    // on the session already; the scopes of the calls assembled inside it are not the block's, so
+    // they are lifted off for the item.
+    let mut requests = within.requests.borrow_mut();
+    answering(
+        session,
+        &handle,
+        &mut requests,
+        started,
+        |session, site, item| {
+            let open = site
+                .frames
+                .iter()
+                .zip(within.frames)
+                .take_while(|(written, assembling)| Arc::ptr_eq(written, assembling))
+                .count();
+            let lifted = within
+                .depths
+                .get(open)
+                .map(|depth| session.detach_scopes(*depth));
+            let answered = answer_within(session, site, item, open);
+            if let Some(lifted) = lifted {
+                session.attach_scopes(lifted);
+            }
+            answered
+        },
+    )
 }
 
 /// Runs `list`, whose stages up to and including `through` are assembled into one stream with
@@ -448,6 +490,7 @@ pub(crate) fn run_assembled(
 
     let shared: Arc<str> = Arc::from(source);
     let (asked, requests) = tokio::sync::mpsc::channel::<BlockRequest>(1);
+    let requests: Requests = std::cell::RefCell::new(requests);
     let head_assembled = if head_streams {
         assemble(
             session,
@@ -456,8 +499,10 @@ pub(crate) fn run_assembled(
             None,
             &Within {
                 frames: &[],
+                depths: &[],
                 consumed_after: first_inner < list.stages.len(),
                 asked: &asked,
+                requests: &requests,
             },
         )?
     } else {
@@ -491,8 +536,10 @@ pub(crate) fn run_assembled(
             Some(head_assembled.stream),
             &Within {
                 frames: &[],
+                depths: &[],
                 consumed_after: through + 1 < list.stages.len(),
                 asked: &asked,
+                requests: &requests,
             },
         )?;
         Assembled {
@@ -509,7 +556,7 @@ pub(crate) fn run_assembled(
             stream: assembled.stream,
             failed_rows: assembled.failed_rows,
             shows_itself: assembled.shows_itself,
-            requests: Some((asked, requests)),
+            requests: Some((asked, requests.into_inner())),
         },
     )
 }

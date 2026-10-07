@@ -171,6 +171,70 @@ pub(super) async fn interrupted() {
     }
 }
 
+/// What one turn of [`answering`] came back with.
+enum Turn<T> {
+    /// The work ended, with this outcome.
+    Done(Result<T, ErrorValue>),
+    /// A block stage is waiting for one item to be run.
+    Ask(BlockRequest),
+    /// Ctrl-C reached the shell (spec §18.5).
+    Interrupted,
+}
+
+/// Drives `work` — the starting of a pipeline's stages — to its end, answering every block stage
+/// that asks while it runs.
+///
+/// A stage may read its whole input inside the call that starts it: a mutation collects every
+/// target before it acts on any. When a block stands in front of such a stage, the block's items
+/// are asked for while the stage is still being started, so the requests are answered here, by
+/// the same evaluator that will drain the stream afterwards, rather than only once every stage
+/// has started — which was never (v0.4.1 §25.1). `run` answers one request; the work borrows
+/// nothing of the session, so the evaluator is free to run the block between two turns.
+///
+/// A block that fails or jumps drops the work unfinished: a stage that was still collecting its
+/// input never acts on the part of it that arrived.
+///
+/// # Errors
+///
+/// What the work or a block reports, and the interrupt of spec §18.5.
+pub(super) fn answering<T>(
+    session: &mut Session,
+    handle: &tokio::runtime::Handle,
+    requests: &mut tokio::sync::mpsc::Receiver<BlockRequest>,
+    work: impl std::future::Future<Output = Result<T, ErrorValue>>,
+    mut run: impl FnMut(&mut Session, &BlockSite, Value) -> Eval<(Vec<Value>, bool)>,
+) -> Eval<T> {
+    let mut work = std::pin::pin!(work);
+    loop {
+        if crate::eval::pipeline::interrupt_reached() {
+            return Err(crate::eval::pipeline::interrupted_flow_now());
+        }
+        let turn = handle.block_on(async {
+            tokio::select! {
+                biased;
+                outcome = &mut work => Turn::Done(outcome),
+                Some(request) = requests.recv() => Turn::Ask(request),
+                () = interrupted() => Turn::Interrupted,
+            }
+        });
+        match turn {
+            Turn::Done(outcome) => return outcome.map_err(super::segment::interrupted_flow),
+            Turn::Ask(request) => match run(session, &request.site, request.value) {
+                Ok((values, keep_going)) => {
+                    let _ = request
+                        .reply
+                        .send(BlockReply::Produced { values, keep_going });
+                }
+                Err(flow) => {
+                    let _ = request.reply.send(BlockReply::Stop);
+                    return Err(flow);
+                }
+            },
+            Turn::Interrupted => return Err(crate::eval::pipeline::interrupted_flow_now()),
+        }
+    }
+}
+
 /// What the driver drained out of one segment.
 #[derive(Default)]
 pub(super) struct Drained {
@@ -318,9 +382,26 @@ async fn left(gone: &std::sync::Arc<std::sync::atomic::AtomicBool>) {
 /// `return` inside such a body ends the function, not the caller: the function's stream closes
 /// with the returned value, and its source is read no further — what a collected body does with
 /// the same `return` (§25.5).
-fn answer(session: &mut Session, site: &BlockSite, item: Value) -> Eval<(Vec<Value>, bool)> {
-    let mut marks = Vec::with_capacity(site.frames.len());
-    for cell in &site.frames {
+pub(super) fn answer(
+    session: &mut Session,
+    site: &BlockSite,
+    item: Value,
+) -> Eval<(Vec<Value>, bool)> {
+    answer_within(session, site, item, 0)
+}
+
+/// [`answer`], for a block whose first `open` frames are calls still being assembled: their
+/// scopes are already on the session, where assembly put them, so only the frames after them are
+/// put back for the item.
+pub(super) fn answer_within(
+    session: &mut Session,
+    site: &BlockSite,
+    item: Value,
+    open: usize,
+) -> Eval<(Vec<Value>, bool)> {
+    let closed = site.frames.get(open..).unwrap_or_default();
+    let mut marks = Vec::with_capacity(closed.len());
+    for cell in closed {
         marks.push(session.scope_depth());
         let detached = cell
             .lock()
@@ -330,7 +411,7 @@ fn answer(session: &mut Session, site: &BlockSite, item: Value) -> Eval<(Vec<Val
     }
     let (mut produced, outcome) =
         crate::eval::run_each_item(session, &site.block, &site.source, item, site.consumed);
-    for (cell, mark) in site.frames.iter().zip(marks).rev() {
+    for (cell, mark) in closed.iter().zip(marks).rev() {
         let detached = session.detach_scopes(mark);
         *cell
             .lock()

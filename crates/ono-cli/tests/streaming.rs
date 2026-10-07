@@ -893,6 +893,102 @@ fn should_refuse_an_unbounded_body_the_call_would_have_to_collect() {
     );
 }
 
+// --- a stage that reads its whole input before it answers, after a block (review C1) ----------
+
+/// Runs `script`, in which `{pid}` names a child of this test, and answers the run and the signal
+/// the child died of.
+///
+/// `send signal` reads every object that arrives before it acts on any of them, so a block in
+/// front of it has to be answered while the stage is still being started — the shape that hung.
+fn signalled_through(script: &str) -> (Bounded, Option<i32>) {
+    let home = scratch();
+    let mut child = support::SleepChild::spawn();
+    let script = script.replace("{pid}", &child.pid().to_string());
+    let run = run_bounded(&home, &script, BUDGET);
+    let signal = child.signal_within(Duration::from_secs(5));
+    (run, signal)
+}
+
+#[test]
+fn should_answer_a_stage_that_reads_its_whole_input_after_a_block_in_the_same_line() {
+    // v0.4.1 §25.1: the block runs while its source is open, whichever stage reads what it
+    // emits. A mutation reads all of its targets before it acts, inside the call that starts it;
+    // a block whose items were only answered after every stage had been started was never
+    // answered, and the line never ended.
+    let (run, signal) =
+        signalled_through("get process {pid} | each { @ } | send signal SIGTERM | to json");
+
+    assert!(
+        run.finished,
+        "the block in front of the mutation is answered while the mutation reads. {}",
+        run.report()
+    );
+    assert_eq!(
+        signal,
+        Some(15),
+        "and the object the block passed on is the one the mutation acted on. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_answer_a_stage_that_reads_its_whole_input_after_a_call_whose_body_ends_in_a_block() {
+    // The same through a call (ADR-0950, ADR-0951): the body's block streams into the stage
+    // after the call, and that stage is a mutation.
+    let (run, signal) = signalled_through(
+        "fn mine() { get process {pid} | each { @ } }\nmine | send signal SIGTERM | to json",
+    );
+
+    assert!(
+        run.finished,
+        "the body's block is answered while the mutation after the call reads. {}",
+        run.report()
+    );
+    assert_eq!(signal, Some(15), "{}", run.report());
+}
+
+#[test]
+fn should_answer_a_block_in_front_of_a_mutation_inside_a_streamed_body() {
+    // Both halves inside the assembled stream: a body whose block feeds a mutation in the same
+    // body, and a line whose block feeds a mutation that a call after it continues.
+    for script in [
+        "fn halt() { each { @ } | send signal SIGTERM }\nget process {pid} | halt | to json",
+        "fn keep() { where @ != null }\n\
+         get process {pid} | each { @ } | send signal SIGTERM | keep | to json",
+    ] {
+        let (run, signal) = signalled_through(script);
+
+        assert!(
+            run.finished,
+            "the block is answered while the mutation after it is assembled. {}",
+            run.report()
+        );
+        assert_eq!(signal, Some(15), "{}", run.report());
+    }
+}
+
+#[test]
+fn should_run_a_block_in_its_own_scope_while_a_later_call_reads_its_input() {
+    // §26.3: a block reads the scope it was written in. `f`'s block is asked for its item while
+    // `g` is being started, with `g`'s parameter on the session; that parameter is not the
+    // block's, so the block still reads the caller's `n` and passes the process on.
+    let (run, signal) = signalled_through(
+        "let n = \"caller\"\n\
+         fn f() { each { if $n == \"caller\" { @ } } }\n\
+         fn g(n) { where @ != null | send signal SIGTERM }\n\
+         get process {pid} | f | g \"callee\" | count",
+    );
+
+    assert!(run.finished, "{}", run.report());
+    assert_eq!(
+        run.stdout.lines().last().map(str::trim),
+        Some("1"),
+        "the block read the caller's `n`, not the parameter of the call being started. {}",
+        run.report()
+    );
+    assert_eq!(signal, Some(15), "{}", run.report());
+}
+
 // --- backpressure and cancellation survive the rewrite (§28.3, §28.4, issue #81) ---------------
 
 #[test]
