@@ -1,0 +1,26 @@
+# Issue #223 part 2, at a real terminal and without one, as an unprivileged user.
+#
+# A function or an alias the session defines completes at the head of a line and after a pipe,
+# with its signature or expansion as its doc (ADR-0946). At the terminal, `zqfa<TAB>` after a pipe
+# becomes `zqfancy`, so the line runs and prints a count; uncompleted, `zqfa` is no command.
+case: functions and aliases the session defines complete
+pty: true
+columns: 100
+lines: 30
+timeout: 60
+env: NO_COLOR=1
+stdin: |
+  fn zqfancy() { where pid > 0 }
+  get process | zqfa	| count | to json
+  exit 0
+run: |
+  mkdir -p "$HOME/.config/ono"
+  printf 'alias procfancy = get process | sort pid\n' > "$HOME/.config/ono/config.ono"
+  ono --complete 'procfa' < /dev/null
+  echo
+  ono
+exit: 0
+stdout-contains: {"text":"procfancy","kind":"alias","doc":"get process | sort pid"}
+stdout-matches: \[[0-9]+\]
+stdout-not-contains: command_not_found
+stdout-not-contains: panicked

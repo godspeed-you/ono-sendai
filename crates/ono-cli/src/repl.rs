@@ -71,6 +71,8 @@ pub struct ShellCompleter {
     /// §1.59): what the contracts say, and nothing invented.
     adapters: Option<std::sync::Arc<ono_adapter::Registry>>,
     resolver: Option<ono_command::Resolver>,
+    /// The session's functions and aliases, kept current while the prompt runs (issue #223).
+    definitions: Option<crate::session::SharedDefinitions>,
 }
 
 /// One candidate as the shell offers it: the text, what kind of thing it is, and its doc.
@@ -122,6 +124,7 @@ impl ShellCompleter {
             ),
             adapters: Some(session.shared_adapters()),
             resolver: Some(resolve::resolver(session)),
+            definitions: Some(session.shared_definitions()),
         }
     }
 
@@ -261,6 +264,22 @@ impl ShellCompleter {
             }
         };
         if is_head {
+            // Steps 2 and 3 of the resolution order are the session's own names, and a function
+            // stands at any stage position (ADR-0011, ADR-0951, issue #223).
+            if let Some(definitions) = &self.definitions
+                && let Ok(definitions) = definitions.read()
+            {
+                candidates.extend(
+                    definitions
+                        .iter()
+                        .filter(|defined| defined.name.starts_with(prefix))
+                        .map(|defined| Offered {
+                            text: defined.name.clone(),
+                            kind: defined.kind.as_str(),
+                            doc: Some(defined.doc.clone()),
+                        }),
+                );
+            }
             candidates.extend(
                 self.commands
                     .iter()
@@ -959,6 +978,7 @@ mod tests {
             values: None,
             adapters: None,
             resolver: None,
+            definitions: None,
         }
     }
 

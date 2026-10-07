@@ -397,3 +397,40 @@ fn should_end_the_listing_with_the_incomplete_marker_when_the_set_is_cut_short()
     shell.write_all(b"exit\n").expect("input");
     let _ = shell.wait();
 }
+
+// --- functions and aliases from the live session (issue #223, part 2) -------------------------
+
+#[test]
+fn should_complete_a_function_defined_after_the_prompt_started() {
+    let directory = scratch();
+    let mut shell = interactive_shell_in(&directory);
+    let _ = read_until(&mut shell, "> ", Duration::from_secs(10));
+
+    shell
+        .write_all(b"fn zqfancy() { where pid > 0 }\n")
+        .expect("input");
+    let _ = read_until(&mut shell, "> ", Duration::from_secs(10));
+    shell.write_all(b"get process | zqfa\t").expect("input");
+    // The needle is the completed line, which the echo of the definition never contains.
+    let seen = read_until(&mut shell, "process | zqfancy", Duration::from_secs(10));
+    assert!(
+        seen.contains("get process | zqfancy"),
+        "a function the session defined a moment ago completes, after a pipe too; saw:\n{seen}"
+    );
+
+    shell.write_all(b"\x03").expect("abandon the line");
+    shell
+        .write_all(b"alias zqalias = get process\n")
+        .expect("input");
+    let _ = read_until(&mut shell, "> ", Duration::from_secs(10));
+    shell.write_all(b"zqal\t").expect("input");
+    let seen = read_until(&mut shell, "> zqalias", Duration::from_secs(10));
+    assert!(
+        seen.contains("> zqalias"),
+        "an alias the session defined completes at the head of a line; saw:\n{seen}"
+    );
+
+    shell.write_all(b"\x03").expect("abandon the line");
+    shell.write_all(b"exit\n").expect("input");
+    let _ = shell.wait();
+}

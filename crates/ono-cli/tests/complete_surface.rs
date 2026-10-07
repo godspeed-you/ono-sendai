@@ -104,3 +104,54 @@ fn should_refuse_a_cursor_outside_the_line_with_the_usage_status() {
     complete(&["get pro", "--cursor", "99"]).assert_status(2);
     complete(&[]).assert_status(2);
 }
+
+// --- functions and aliases (issue #223, part 2) -------------------------------------------------
+
+fn with_definitions(line: &str) -> ono_testkit::Run {
+    let directory = scratch();
+    directory.write(
+        "ono/config.ono",
+        "fn myfancyfn(limit) { where pid > $limit }\nalias procfancy = get process | sort pid\n",
+    );
+    Shell::new()
+        .args(["--complete", line])
+        .env("XDG_CONFIG_HOME", directory.path().display().to_string())
+        .run()
+}
+
+#[test]
+fn should_offer_a_user_function_with_its_signature_at_the_head_of_a_line() {
+    let run = with_definitions("myfan");
+    run.assert_success();
+    assert!(
+        run.stdout()
+            .contains(r#"{"text":"myfancyfn","kind":"function","doc":"fn myfancyfn(limit)"}"#),
+        "got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_offer_an_alias_with_its_expansion_at_the_head_of_a_line() {
+    let run = with_definitions("procfa");
+    run.assert_success();
+    assert!(
+        run.stdout()
+            .contains(r#"{"text":"procfancy","kind":"alias","doc":"get process | sort pid"}"#),
+        "got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_offer_a_user_function_after_a_pipe() {
+    // A function stands at any stage position (ADR-0951), so it completes at any of them.
+    let run = with_definitions("get process | myfan");
+    run.assert_success();
+    assert!(
+        run.stdout()
+            .contains(r#""text":"myfancyfn","kind":"function""#),
+        "got {:?}",
+        run.stdout()
+    );
+}

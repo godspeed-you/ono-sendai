@@ -37,6 +37,10 @@ pub enum CandidateKind {
     Field,
     /// An operator or a connector inside an expression (v0.6.1 §13, §15).
     Operator,
+    /// A user function the session defines — resolution step 2 (ADR-0011, issue #223).
+    Function,
+    /// An alias the session defines — resolution step 3 (ADR-0011, issue #223).
+    Alias,
 }
 
 impl CandidateKind {
@@ -50,6 +54,8 @@ impl CandidateKind {
             CandidateKind::Value => "value",
             CandidateKind::Field => "field",
             CandidateKind::Operator => "operator",
+            CandidateKind::Function => "function",
+            CandidateKind::Alias => "alias",
         }
     }
 }
