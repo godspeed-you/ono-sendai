@@ -96,6 +96,8 @@ pub struct StagePlan {
     operation: Option<String>,
     /// What the remote agent answered about adapting this stage, inside a link frame.
     remote_adaptation: Option<String>,
+    /// What the stage acquires before it answers (v0.4.1 §34.4, ADR-0947).
+    acquisition: Option<crate::contract::Acquisition>,
 }
 
 /// The adapter registry's answer for one external stage, as the plan shows it.
@@ -413,6 +415,15 @@ impl StagePlan {
         map.insert(
             "remote_adaptation".into(),
             text(self.remote_adaptation.as_deref()),
+        );
+        map.insert(
+            "acquisition".into(),
+            self.acquisition.map_or(Value::Null, |acquisition| {
+                let mut entry = MapValue::default();
+                entry.insert("scope".into(), Value::string(acquisition.scope().as_str()));
+                entry.insert("cost".into(), Value::string(acquisition.cost()));
+                Value::Map(Arc::new(entry))
+            }),
         );
         map.insert("path".into(), text(self.path.as_deref()));
         map.insert(
@@ -811,6 +822,15 @@ fn render_stage(stage: &Value, into: &mut String) {
         row(into, "execution", &text("execution").unwrap_or_default());
         if let Some(requires) = text("requires") {
             row(into, "requires", &requires);
+        }
+    }
+    // v0.4.1 §34.4: "Any unavoidable global build MUST be visible in `explain`", beside the
+    // materialization rows of §22.4 it is budgeted with (ADR-0947).
+    if let Some(acquisition) = stage.as_map().ok().and_then(|map| map.get("acquisition")) {
+        let scope = entry_text(acquisition, "scope");
+        let cost = entry_text(acquisition, "cost");
+        if let (Some(scope), Some(cost)) = (scope, cost) {
+            row(into, "acquisition", &format!("{scope}, {cost}"));
         }
     }
     if let (Some(items), Some(bytes)) = (
@@ -1304,6 +1324,7 @@ fn function_stage(
         path: None,
         operation: None,
         remote_adaptation: None,
+        acquisition: None,
     })
 }
 
@@ -1347,6 +1368,7 @@ fn plan_stage(
             path: None,
             operation: None,
             remote_adaptation: None,
+            acquisition: None,
         };
     };
 
@@ -1383,6 +1405,7 @@ fn plan_stage(
             path: None,
             operation: None,
             remote_adaptation: None,
+            acquisition: None,
         };
     }
 
@@ -1419,6 +1442,7 @@ fn plan_stage(
             path: None,
             operation: None,
             remote_adaptation: None,
+            acquisition: None,
         };
     }
 
@@ -1462,6 +1486,7 @@ fn plan_stage(
             path: None,
             operation: None,
             remote_adaptation: None,
+            acquisition: None,
         };
     };
 
@@ -1564,6 +1589,9 @@ fn plan_stage(
         path: None,
         operation: None,
         remote_adaptation: None,
+        // v0.4.1 §34.4: an unavoidable global build is visible here, as the contract declares it
+        // and `spec-check` holds it to the code (ADR-0947).
+        acquisition: contract.acquisition(),
     }
 }
 

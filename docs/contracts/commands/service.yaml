@@ -119,6 +119,7 @@ commands:
       - {name: relations, type: list<string>, doc: "Restrict the trace to these relation names."}
     privilege: conditional
     streaming: false
+    acquisition: {scope: global, cost: moderate}
     phase: G
     examples:
       - trace service nginx

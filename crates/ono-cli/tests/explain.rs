@@ -178,3 +178,39 @@ fn should_neutralise_control_characters_in_an_environment_value_when_rendering_t
         "a value must never drive the terminal it is shown on (ADR-0015 T1), got {text:?}"
     );
 }
+
+// --- unavoidable global acquisition (v0.4.1 §34.4, issue #177, ADR-0947) -----------------------
+
+#[test]
+fn should_show_a_global_acquisition_and_its_cost_class_when_explaining_map() {
+    let run = ono("explain map");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("acquisition  global, moderate"),
+        "v0.4.1 §34.4: an unavoidable global build is visible in `explain`, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_carry_the_acquisition_of_a_trace_in_the_plan_value() {
+    let run = ono(r#"explain "trace socket 22" | to json"#);
+    run.assert_success();
+    assert!(
+        run.stdout()
+            .contains(r#""acquisition":{"scope":"global","cost":"expensive"}"#),
+        "the scope and the §34.2 class are fields a script can read, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_show_no_acquisition_for_a_stage_that_asks_one_provider() {
+    let run = ono(r#"explain "get process | where pid > 1" | to json"#);
+    run.assert_success();
+    assert!(
+        run.stdout().contains(r#""acquisition":null"#) && !run.stdout().contains("global"),
+        "a plain producer declares no graph acquisition, got {:?}",
+        run.stdout()
+    );
+}

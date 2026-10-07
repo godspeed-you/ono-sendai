@@ -1725,3 +1725,80 @@ fn should_require_this_repositorys_own_providers_to_declare_an_honest_temporal_m
             .join("\n")
     );
 }
+
+// --- v0.4.1 §34.4: a global acquisition is declared and held to the code (ADR-0947) -----------
+
+/// A fixture repository with one command contract file holding `commands`.
+fn acquisition_fixture(commands: &str) -> Scratch {
+    let repo = scratch();
+    repo.write(
+        "docs/contracts/commands/fixture.yaml",
+        format!("version: 1\nfamily: fixture\ncommands:\n{commands}"),
+    );
+    repo
+}
+
+#[test]
+fn should_accept_the_acquisitions_this_repository_declares() {
+    let problems = xtask::contracts::check_acquisitions(repository());
+    assert!(problems.is_empty(), "got {problems:#?}");
+}
+
+#[test]
+fn should_refuse_a_trace_that_declares_no_global_acquisition() {
+    let repo =
+        acquisition_fixture("  - id: ono.process.trace\n    verb: trace\n    target: process\n");
+    let problems = xtask::contracts::check_acquisitions(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("ono.process.trace")),
+        "a trace answers from whole-target snapshots, so it must say so; got {problems:#?}"
+    );
+}
+
+#[test]
+fn should_refuse_a_trace_that_claims_a_local_acquisition() {
+    let repo = acquisition_fixture(
+        "  - id: ono.process.trace\n    verb: trace\n    target: process\n    acquisition: {scope: local, cost: moderate}\n",
+    );
+    let problems = xtask::contracts::check_acquisitions(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("local")),
+        "got {problems:#?}"
+    );
+}
+
+#[test]
+fn should_refuse_an_acquisition_cheaper_than_the_target_costs_to_enumerate() {
+    let repo = acquisition_fixture(
+        "  - id: ono.file.trace\n    verb: trace\n    target: file\n    acquisition: {scope: global, cost: cheap}\n",
+    );
+    let problems = xtask::contracts::check_acquisitions(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("expensive")),
+        "enumerating `file` is expensive in ono-spatial-query, and a contract may not claim \
+         less; got {problems:#?}"
+    );
+}
+
+#[test]
+fn should_refuse_an_acquisition_outside_the_vocabulary() {
+    let repo = acquisition_fixture(
+        "  - id: ono.place.map-links\n    verb: map\n    target: null\n    acquisition: {scope: everywhere, cost: free}\n",
+    );
+    let problems = xtask::contracts::check_acquisitions(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("everywhere"))
+            && problems
+                .iter()
+                .any(|problem| problem.detail.contains("free")),
+        "got {problems:#?}"
+    );
+}

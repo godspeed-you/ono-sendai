@@ -99,6 +99,7 @@ pub fn check_contracts(root: &Path) -> Vec<Problem> {
     problems.extend(check_identity_tokens(root));
     problems.extend(check_kuang_contracts(root));
     problems.extend(check_hardening_contracts(root));
+    problems.extend(check_acquisitions(root));
 
     problems.sort_by(|a, b| (&a.location, &a.detail).cmp(&(&b.location, &b.detail)));
     problems
@@ -4467,6 +4468,115 @@ pub fn check_provider_temporal_claims(root: &Path) -> Vec<Problem> {
                          retention bounds history a source can be asked for, and this one cannot \
                          be asked for any"
                     ),
+                ));
+            }
+        }
+    }
+    problems
+}
+
+/// The commands of the spatial tier whose implementation observes the whole space — every target
+/// behind every exit — before it answers: `look` and `near` through `view::observe_space`, `map`
+/// through the same horizon, `find place` through a whole-target query per planned target, and
+/// `enter`/`jump` through a sweep on an index miss (`crates/ono-cli/src/spatial/`). v0.4.1 §34.4
+/// makes each of those builds visible in `explain`, so each must declare it.
+const SPATIAL_SWEEPS: &[&str] = &[
+    "ono.place.look",
+    "ono.place.near",
+    "ono.place.map",
+    "ono.place.find",
+    "ono.place.enter",
+    "ono.place.jump",
+];
+
+/// v0.4.1 §34.4: "Any unavoidable global build MUST be visible in `explain`" (issue #177).
+///
+/// A command contract declares `acquisition: {scope, cost}` where the command builds more than one
+/// query's worth before it answers, and `explain` reads it. This holds the declaration to the
+/// code three ways (ADR-0947):
+///
+/// - the words are the vocabulary: `global` or `local`, and one of §34.2's four classes as
+///   `ono_spatial_core::AcquisitionCost` names them;
+/// - every `trace` command, which answers from whole-target snapshots
+///   (`crates/ono-command/src/impls/trace.rs`, `ono_graph`'s `SharedSnapshots::one`), and every
+///   spatial sweep of [`SPATIAL_SWEEPS`] declares a `global` acquisition;
+/// - no declared cost is cheaper than what `ono_spatial_query::acquisition_of_target` says
+///   enumerating the command's target costs.
+pub fn check_acquisitions(root: &Path) -> Vec<Problem> {
+    use ono_spatial_core::AcquisitionCost;
+
+    let mut problems = Vec::new();
+    let commands = root.join("docs").join("contracts").join("commands");
+    let Ok(entries) = std::fs::read_dir(&commands) else {
+        return problems;
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "yaml")
+        })
+        .collect();
+    paths.sort();
+    for path in paths {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+            continue;
+        };
+        let location = relative(root, &path);
+        let mut problem = |detail: String| {
+            problems.push(Problem {
+                location: location.clone(),
+                detail,
+            });
+        };
+        for command in sequence(&document, "commands") {
+            let Some(id) = string_at(command, "id") else {
+                continue;
+            };
+            let must_be_global = string_at(command, "verb").as_deref() == Some("trace")
+                || SPATIAL_SWEEPS.contains(&id.as_str());
+            let Some(acquisition) = command.get("acquisition") else {
+                if must_be_global {
+                    problem(format!(
+                        "`{id}` builds a whole target or the whole space before it answers and \
+                         declares no `acquisition:`; v0.4.1 §34.4: \"Any unavoidable global build \
+                         MUST be visible in `explain`\" (ADR-0947)"
+                    ));
+                }
+                continue;
+            };
+            let scope = string_at(acquisition, "scope").unwrap_or_default();
+            if !matches!(scope.as_str(), "global" | "local") {
+                problem(format!(
+                    "`{id}` declares the acquisition scope `{scope}`; it is `global` or `local`"
+                ));
+            } else if must_be_global && scope != "global" {
+                problem(format!(
+                    "`{id}` declares a `local` acquisition and its implementation acquires \
+                     globally (ADR-0947)"
+                ));
+            }
+            let cost = string_at(acquisition, "cost").unwrap_or_default();
+            let Some(declared) = AcquisitionCost::from_name(&cost) else {
+                problem(format!(
+                    "`{id}` declares the acquisition cost `{cost}`, which is not one of v0.4.1 \
+                     §34.2's classes"
+                ));
+                continue;
+            };
+            if let Some(target) = string_at(command, "target")
+                && let Some(floor) = ono_spatial_query::acquisition_of_target(&target)
+                && declared.weight() < floor.weight()
+            {
+                problem(format!(
+                    "`{id}` declares `{cost}`, and enumerating `{target}` is `{}` in \
+                     `ono_spatial_query::acquisition_of_target`; a contract may not claim a build \
+                     cheaper than the code's own class (v0.4.1 §34.2)",
+                    floor.as_str()
                 ));
             }
         }

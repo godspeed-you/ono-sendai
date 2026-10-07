@@ -676,6 +676,9 @@ pub struct CommandContract {
     privilege: Privilege,
     streaming: bool,
     execution: Option<ExecutionClass>,
+    /// What the command acquires before it answers, where it builds more than one query's worth
+    /// (v0.4.1 §34.4, ADR-0947).
+    acquisition: Option<Acquisition>,
     phase: Phase,
     examples: Vec<String>,
     origin: Origin,
@@ -934,6 +937,13 @@ impl CommandContract {
         self.execution
     }
 
+    /// What the command acquires before it answers (v0.4.1 §34.4): `None` for a command that asks
+    /// one provider one question.
+    #[must_use]
+    pub const fn acquisition(&self) -> Option<Acquisition> {
+        self.acquisition
+    }
+
     /// Whether the command refuses a declared-unbounded upstream immediately (§22.3).
     #[must_use]
     pub fn requires_finite_input(&self) -> bool {
@@ -999,6 +1009,82 @@ impl CommandContract {
     }
 }
 
+/// How much of the system a command acquires before it can answer (v0.4.1 §34.4, ADR-0947).
+///
+/// `global` is a build of a whole target or of the whole spatial graph — every process, every
+/// socket — where a local question could have been answered from a neighbourhood; §34.4 makes such
+/// a build "visible in `explain`". `local` is a lookup confined to the object asked about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AcquisitionScope {
+    /// The whole of one or more targets is read before the answer.
+    Global,
+    /// Only what the question names is read.
+    Local,
+}
+
+impl AcquisitionScope {
+    /// The word the contracts use.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            AcquisitionScope::Global => "global",
+            AcquisitionScope::Local => "local",
+        }
+    }
+}
+
+/// A command's declared acquisition: its scope and the dominant cost class of v0.4.1 §34.2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Acquisition {
+    scope: AcquisitionScope,
+    cost: &'static str,
+}
+
+/// The four classes of v0.4.1 §34.2, as `docs/contracts/hardening/cost_classes.yaml` names them.
+const COST_CLASSES: [&str; 4] = ["cheap", "moderate", "expensive", "external"];
+
+impl Acquisition {
+    fn parse(scope: &str, cost: &str) -> Result<Self, String> {
+        let scope = match scope {
+            "global" => AcquisitionScope::Global,
+            "local" => AcquisitionScope::Local,
+            other => {
+                return Err(format!(
+                    "unknown acquisition scope `{other}`; it is `global` or `local` (ADR-0947)"
+                ));
+            }
+        };
+        let cost = COST_CLASSES
+            .into_iter()
+            .find(|class| *class == cost)
+            .ok_or_else(|| {
+                format!(
+                    "unknown acquisition cost `{cost}`; v0.4.1 §34.2 has `cheap`, `moderate`, \
+                     `expensive` and `external`"
+                )
+            })?;
+        Ok(Self { scope, cost })
+    }
+
+    /// Whether the build is global or local.
+    #[must_use]
+    pub const fn scope(&self) -> AcquisitionScope {
+        self.scope
+    }
+
+    /// The dominant §34.2 cost class.
+    #[must_use]
+    pub const fn cost(&self) -> &'static str {
+        self.cost
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawAcquisition {
+    scope: String,
+    cost: String,
+}
+
 // --- loading -------------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -1032,6 +1118,8 @@ pub(crate) struct RawCommand {
     streaming: bool,
     #[serde(default)]
     execution: Option<String>,
+    #[serde(default)]
+    acquisition: Option<RawAcquisition>,
     phase: String,
     #[serde(default)]
     examples: Vec<RawExample>,
@@ -1185,6 +1273,11 @@ impl RawCommand {
                 )
             })?),
         };
+        let acquisition = self
+            .acquisition
+            .map(|raw| Acquisition::parse(&raw.scope, &raw.cost))
+            .transpose()
+            .map_err(|detail| contract_error(&id, detail))?;
 
         Ok(CommandContract {
             id: self.id,
@@ -1205,6 +1298,7 @@ impl RawCommand {
             privilege,
             streaming: self.streaming,
             execution,
+            acquisition,
             phase,
             examples: self.examples.iter().map(RawExample::text).collect(),
             // A contract file under `docs/contracts/commands/` is the core's own declaration. A
@@ -1410,6 +1504,8 @@ impl ContributedCommand {
             // budget. `explain` therefore shows it as it shows any other stage, without a
             // materialization line it cannot substantiate.
             execution: None,
+            // Nor an acquisition: §34.4's global build is the core's spatial and trace planner.
+            acquisition: None,
             output,
             // `provider_capability` names an entry of `docs/contracts/capabilities.yaml`, which is the
             // core's provider vocabulary. A package's authority is its KUANG/11 capabilities,

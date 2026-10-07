@@ -120,6 +120,7 @@ commands:
       - {name: depth, type: int, doc: "How many relationship hops to follow."}
     privilege: conditional
     streaming: false
+    acquisition: {scope: global, cost: external}
     phase: C
     examples:
       - trace container web-1

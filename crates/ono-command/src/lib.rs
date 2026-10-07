@@ -69,9 +69,9 @@ pub use complete::{
     Candidate, CandidateKind, Completions, StageContext, ValueCompleter, accepts_path, complete,
 };
 pub use contract::{
-    ArgumentMode, CapabilitySpec, CommandContract, Confirmation, ContributedCommand,
-    ContributedParameter, DeclaredType, Elevation, ExecutionClass, IoType, Origin, ParameterSpec,
-    Phase, Privilege, Stability, TargetSpec, VerbSpec,
+    Acquisition, AcquisitionScope, ArgumentMode, CapabilitySpec, CommandContract, Confirmation,
+    ContributedCommand, ContributedParameter, DeclaredType, Elevation, ExecutionClass, IoType,
+    Origin, ParameterSpec, Phase, Privilege, Stability, TargetSpec, VerbSpec,
 };
 pub use explain::{
     Adaptation, ExecutionPlan, FunctionPlan, PlanContext, Resolution, StagePlan, adapt_program,

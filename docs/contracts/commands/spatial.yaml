@@ -36,6 +36,7 @@ commands:
       - {name: all, type: bool, doc: "Answer every match, however many. May be expensive (v0.4 §6.2)."}
     privilege: conditional
     streaming: true
+    acquisition: {scope: global, cost: moderate}
     phase: S
     examples:
       - find place nginx
@@ -59,6 +60,7 @@ commands:
       - {name: changes, type: duration, optional_value: true, doc: "Report what changed in this window, or in `spatial.look.change_window` when the duration is left out (v0.4 §6.1, §24.3)."}
     privilege: none
     streaming: false
+    acquisition: {scope: global, cost: moderate}
     phase: S
     note: >-
       `look` shadows util-linux `look(1)` on hosts that have it; ADR-0124 keeps the bare name for
@@ -87,6 +89,7 @@ commands:
       - {name: all, type: bool, doc: "The complete currently known one-hop neighbourhood. May be expensive (v0.4 §6.2)."}
     privilege: conditional
     streaming: true
+    acquisition: {scope: global, cost: moderate}
     phase: S
     examples:
       - near
@@ -107,6 +110,7 @@ commands:
     options: []
     privilege: conditional
     streaming: false
+    acquisition: {scope: global, cost: moderate}
     phase: S
     note: >-
       The target-less form of `enter`. `enter dir`, `enter process`, `enter user` and the other
@@ -170,6 +174,7 @@ commands:
       - {name: plan, type: string, doc: "Overlay a v0.6 change plan on the map: which drawn objects it would touch, and which of them a recovery asset covers (v0.6 §21.2, §21.3). The overlay names the objects the plan resolved and fabricates no future identity — a restarted service shows that a replacement worker is expected, never a PID that does not exist yet (v0.6 §21.4)."}
     privilege: conditional
     streaming: true
+    acquisition: {scope: global, cost: moderate}
     execution: live_view   # v0.4.1 Appendix E, docs/contracts/hardening/streaming_classification.yaml
     phase: S
     note: >-
@@ -205,6 +210,7 @@ commands:
       - {name: all, type: bool, doc: "The explicit larger bound the default is not, still inside `spatial.map.node_budget` (v0.4 §6.9, §34.2)."}
     privilege: none
     streaming: false
+    acquisition: {scope: local, cost: cheap}
     phase: S
     note: >-
       §19.3: "A map MAY show multiple linked hosts when explicitly requested" — `map links` is
@@ -295,6 +301,7 @@ commands:
     options: []
     privilege: conditional
     streaming: false
+    acquisition: {scope: global, cost: moderate}
     phase: S
     note: >-
       §6.5: `jump` "performs global or cross-scope place resolution without requiring adjacency"

@@ -242,6 +242,7 @@ commands:
     options: []
     privilege: conditional
     streaming: false
+    acquisition: {scope: global, cost: expensive}
     phase: G
     examples:
       - trace mount /mnt/data

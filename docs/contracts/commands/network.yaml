@@ -186,6 +186,7 @@ commands:
       - {name: remote, type: ip, doc: "Trace the connections with this peer (spec §22.3)."}
     privilege: conditional
     streaming: false
+    acquisition: {scope: global, cost: expensive}
     phase: G
     examples:
       - trace connection --remote 10.4.2.11
@@ -204,6 +205,7 @@ commands:
       - {name: port, type: port, doc: "Trace the sockets on this port (spec §22.3)."}
     privilege: conditional
     streaming: false
+    acquisition: {scope: global, cost: expensive}
     phase: G
     examples:
       - trace socket --port 443
@@ -277,6 +279,7 @@ commands:
     options: []
     privilege: none
     streaming: false
+    acquisition: {scope: global, cost: moderate}
     phase: G
     examples:
       - trace route 0.0.0.0/0
@@ -469,6 +472,7 @@ commands:
     options: []
     privilege: conditional
     streaming: false
+    acquisition: {scope: global, cost: moderate}
     phase: G
     examples:
       - trace interface eth0
