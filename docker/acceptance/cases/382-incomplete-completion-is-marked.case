@@ -1,0 +1,20 @@
+# Issue #178, at a real terminal as an unprivileged user.
+#
+# v0.4.1 §36.2: completion MAY return a partial set marked incomplete. `lib` begins more package
+# names than one completion offers, so `get package lib<TAB><TAB>` is cut short — by the soft
+# budget on a cold read, or by the bound on what is offered once the read is in — and the listing
+# ends with its `…` line (ADR-0944).
+case: a completion set that was cut short is marked incomplete
+pty: true
+columns: 100
+lines: 30
+timeout: 60
+env: NO_COLOR=1
+stdin: |
+  get package lib		
+  exit 0
+run: |
+  ono
+exit: 0
+stdout-contains: …
+stdout-not-contains: panicked

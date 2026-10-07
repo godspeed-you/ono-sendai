@@ -16,6 +16,9 @@ use crate::key::KeyPress;
 use crate::keymap::{EditAction, Keymap};
 use crate::prompt::Prompt;
 
+/// The line that ends the listing of a partial completion set (v0.4.1 §36.2).
+const INCOMPLETE: &str = "…";
+
 /// What the caller must do after a key press.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
@@ -84,6 +87,8 @@ pub struct Editor {
     listing: Vec<String>,
     /// The doc of each listed candidate, index for index; empty when none is documented.
     listing_docs: Vec<Option<String>>,
+    /// Whether the listed candidates are a partial set (v0.4.1 §36.2).
+    listing_incomplete: bool,
     completion_offered: bool,
 }
 
@@ -104,6 +109,7 @@ impl Editor {
             search: None,
             listing: Vec::new(),
             listing_docs: Vec::new(),
+            listing_incomplete: false,
             completion_offered: false,
         }
     }
@@ -112,6 +118,7 @@ impl Editor {
     fn clear_listing(&mut self) {
         self.listing.clear();
         self.listing_docs.clear();
+        self.listing_incomplete = false;
     }
 
     /// Uses `highlighter` for the colours of the line being typed.
@@ -305,6 +312,11 @@ impl Editor {
         for line in listed {
             lines.push(theme.paint(&line, Token::Foreground, presentation));
         }
+        // v0.4.1 §36.2's marker: the set is partial, and the listing says so on a line of its
+        // own that is never a candidate (issue #178).
+        if self.listing_incomplete {
+            lines.push(theme.paint(INCOMPLETE, Token::Dim, presentation));
+        }
         Frame {
             lines,
             cursor_row,
@@ -471,6 +483,9 @@ impl Editor {
             .complete(self.buffer.text(), self.buffer.cursor());
         if completion.is_empty() {
             self.clear_listing();
+            // Nothing yet is not nothing at all: a search a budget cut short before it found
+            // anything says so, rather than looking like a word nothing completes (§36.2).
+            self.listing_incomplete = completion.incomplete;
             self.completion_offered = false;
             return Outcome::Continue;
         }
@@ -478,7 +493,11 @@ impl Editor {
         let start = completion.span.start() as usize;
         let end = (completion.span.end() as usize).max(start);
 
-        if let [only] = completion.candidates.as_slice() {
+        // A lone candidate of a partial set is not the only answer, so it is offered like several
+        // would be rather than taken (v0.4.1 §36.2).
+        if let [only] = completion.candidates.as_slice()
+            && !completion.incomplete
+        {
             let candidate = only.clone();
             self.buffer.replace_range(start..end, &candidate);
             self.clear_listing();
@@ -496,6 +515,7 @@ impl Editor {
             }
             self.listing = completion.listing;
             self.listing_docs.clear();
+            self.listing_incomplete = completion.incomplete;
             self.completion_offered = true;
             return Outcome::Continue;
         }
@@ -503,6 +523,9 @@ impl Editor {
         if self.completion_offered {
             self.listing = completion.candidates;
             self.listing_docs = completion.docs;
+            // v0.4.1 §36.2's marker: the set is partial, and the listing says so on a line of
+            // its own that is never a candidate (issue #178).
+            self.listing_incomplete = completion.incomplete;
             return Outcome::Continue;
         }
 

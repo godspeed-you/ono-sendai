@@ -22,4 +22,5 @@ pub fn registry() -> &'static CommandRegistry {
 pub fn complete(line: &str) -> Vec<Candidate> {
     let cursor = line.len();
     ono_command::complete(registry(), &StageContext::from_line(line, cursor), None)
+        .into_candidates()
 }

@@ -297,3 +297,67 @@ fn should_sanitise_a_hostile_candidate_before_showing_it() {
         "the candidate is still shown, as data: {listed:?}"
     );
 }
+
+// --- an incomplete set (v0.4.1 §36.2, issue #178) ---------------------------------------------
+
+#[test]
+fn should_end_the_listing_with_a_marker_when_the_set_was_cut_short() {
+    let mut editor =
+        Editor::new().with_completer(WordCompleter::new(vec!["process", "procfs"]).cut_short());
+    type_text(&mut editor, "get pro");
+    tab(&mut editor);
+    tab(&mut editor);
+    let frame = editor.frame(80, Presentation::Plain, &Theme::default());
+    assert_eq!(
+        frame.lines.last().map(|line| line.trim()),
+        Some("…"),
+        "a partial set says so on a line of its own, got {:?}",
+        frame.lines
+    );
+}
+
+#[test]
+fn should_list_no_marker_when_the_set_is_whole() {
+    let mut editor = Editor::new().with_completer(WordCompleter::new(vec!["process", "procfs"]));
+    type_text(&mut editor, "get pro");
+    tab(&mut editor);
+    tab(&mut editor);
+    let frame = editor.frame(80, Presentation::Plain, &Theme::default());
+    assert!(
+        !frame.lines.iter().any(|line| line.contains('…')),
+        "a whole set carries no marker, got {:?}",
+        frame.lines
+    );
+}
+
+#[test]
+fn should_not_insert_a_lone_candidate_of_a_set_that_was_cut_short() {
+    let mut editor = Editor::new().with_completer(WordCompleter::new(vec!["process"]).cut_short());
+    type_text(&mut editor, "get pro");
+    tab(&mut editor);
+    tab(&mut editor);
+    let frame = editor.frame(80, Presentation::Plain, &Theme::default());
+    assert!(
+        frame.lines.len() > 1 && frame.lines.last().is_some_and(|line| line.trim() == "…"),
+        "one candidate of a partial set is listed with the marker rather than taken as the \
+         only answer, got {:?}",
+        frame.lines
+    );
+}
+
+#[test]
+fn should_show_the_marker_alone_when_a_cut_short_search_found_nothing_yet() {
+    let mut editor = Editor::new().with_completer(WordCompleter::new(vec!["process"]).cut_short());
+    type_text(&mut editor, "get zz");
+    tab(&mut editor);
+    let frame = editor.frame(80, Presentation::Plain, &Theme::default());
+    assert_eq!(
+        frame
+            .lines
+            .iter()
+            .map(|line| line.trim())
+            .collect::<Vec<_>>(),
+        ["> get zz", "…"],
+        "an empty partial set is not an empty answer, and says so"
+    );
+}

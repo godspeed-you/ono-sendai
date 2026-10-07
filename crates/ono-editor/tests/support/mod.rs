@@ -69,6 +69,7 @@ impl Highlighter for DemoHighlighter {
 /// A completer over a fixed candidate list, matching the word before the cursor.
 pub struct WordCompleter {
     candidates: Vec<String>,
+    incomplete: bool,
 }
 
 impl WordCompleter {
@@ -76,7 +77,14 @@ impl WordCompleter {
     pub fn new<S: Into<String>>(candidates: Vec<S>) -> Self {
         Self {
             candidates: candidates.into_iter().map(Into::into).collect(),
+            incomplete: false,
         }
+    }
+
+    /// The same completer, saying its sets were cut short by a budget (v0.4.1 §36.2).
+    pub fn cut_short(mut self) -> Self {
+        self.incomplete = true;
+        self
     }
 }
 
@@ -90,7 +98,7 @@ impl Completer for WordCompleter {
             .filter(|candidate| candidate.starts_with(prefix))
             .cloned()
             .collect();
-        Completion::new(Span::new(start as u32, cursor as u32), matches)
+        Completion::new(Span::new(start as u32, cursor as u32), matches).incomplete(self.incomplete)
     }
 }
 

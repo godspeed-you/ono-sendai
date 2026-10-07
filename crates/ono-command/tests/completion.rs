@@ -144,12 +144,13 @@ fn should_leave_provider_backed_value_completion_to_the_caller() {
             _command: &ono_command::CommandContract,
             parameter: &ono_command::ParameterSpec,
             prefix: &str,
-        ) -> Vec<Candidate> {
+        ) -> ono_command::Completions {
             ["root", "daemon", "deploy"]
                 .into_iter()
                 .filter(|name| name.starts_with(prefix))
                 .map(|name| Candidate::value(name).with_doc(parameter.name()))
-                .collect()
+                .collect::<Vec<_>>()
+                .into()
         }
     }
 
@@ -230,5 +231,56 @@ fn should_narrow_the_help_topics_to_the_prefix_typed() {
     assert!(
         names.iter().all(|name| name.starts_with("he")),
         "got {names:?}"
+    );
+}
+
+/// A value hook that answers with what it has and says whether that is everything (§36.2).
+struct Budgeted {
+    finished: bool,
+}
+
+impl ono_command::ValueCompleter for Budgeted {
+    fn complete(
+        &self,
+        _command: &ono_command::CommandContract,
+        _parameter: &ono_command::ParameterSpec,
+        prefix: &str,
+    ) -> ono_command::Completions {
+        let found: Vec<Candidate> = ["root", "daemon"]
+            .into_iter()
+            .filter(|name| name.starts_with(prefix))
+            .map(Candidate::value)
+            .collect();
+        if self.finished {
+            ono_command::Completions::new(found)
+        } else {
+            ono_command::Completions::partial(found)
+        }
+    }
+}
+
+#[test]
+fn should_mark_a_completion_incomplete_when_the_value_hook_stopped_at_its_budget() {
+    let context = StageContext::from_line("get process --user=", 19);
+    let partial = ono_command::complete(registry(), &context, Some(&Budgeted { finished: false }));
+    assert_eq!(texts(&partial), ["--user=daemon", "--user=root"]);
+    assert!(
+        !partial.is_complete(),
+        "v0.4.1 §36.2: a set the soft budget cut short is marked incomplete"
+    );
+}
+
+#[test]
+fn should_mark_a_completion_complete_when_every_source_finished() {
+    let context = StageContext::from_line("get process --user=", 19);
+    let whole = ono_command::complete(registry(), &context, Some(&Budgeted { finished: true }));
+    assert!(
+        whole.is_complete(),
+        "a hook that finished leaves the set whole"
+    );
+    assert!(
+        ono_command::complete(registry(), &StageContext::from_line("get pro", 7), None)
+            .is_complete(),
+        "what the registry alone answers is always the whole answer"
     );
 }

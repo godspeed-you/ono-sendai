@@ -165,6 +165,8 @@ impl Completer for ShellCompleter {
         // Whether a path can stand here is a property of the position, decided with everything
         // else the registry knows about it — not a fallback for an empty answer (issue #133).
         let mut paths = true;
+        // Whether a source stopped short of everything it could offer (v0.4.1 §36.2).
+        let mut incomplete = false;
 
         if let Ok(registry) = crate::eval::native::registry() {
             let context =
@@ -186,7 +188,9 @@ impl Completer for ShellCompleter {
                     .as_ref()
                     .map(|values| values as &dyn ono_command::ValueCompleter)
             };
-            for candidate in ono_command::complete(registry, &context, values) {
+            let completions = ono_command::complete(registry, &context, values);
+            incomplete = !completions.is_complete();
+            for candidate in completions {
                 candidates.push((
                     candidate.text().to_owned(),
                     candidate.doc().map(str::to_owned),
@@ -232,7 +236,9 @@ impl Completer for ShellCompleter {
         let span = Span::new(start as u32, cursor as u32);
         if neighbourhood.is_empty() {
             let (texts, docs) = candidates.into_iter().unzip();
-            return Completion::new(span, texts).documented(docs);
+            return Completion::new(span, texts)
+                .documented(docs)
+                .incomplete(incomplete);
         }
 
         // §9.4: "prioritize services visible in the current neighborhood and then offer broader
@@ -251,7 +257,9 @@ impl Completer for ShellCompleter {
                 merged.push(candidate);
             }
         }
-        Completion::new(span, merged).shown(listing)
+        Completion::new(span, merged)
+            .shown(listing)
+            .incomplete(incomplete)
     }
 }
 

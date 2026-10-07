@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use ono_command::{Candidate, CommandContract, ParameterSpec, ValueCompleter};
+use ono_command::{Candidate, CommandContract, Completions, ParameterSpec, ValueCompleter};
 use ono_provider_api::{ProviderRegistry, Query};
 
 /// The budgets v0.4.1 §36.2 states, where nobody supplied the shell's own.
@@ -114,11 +114,11 @@ impl ValueCompleter for ProviderValues {
         command: &CommandContract,
         parameter: &ParameterSpec,
         prefix: &str,
-    ) -> Vec<Candidate> {
+    ) -> Completions {
         // A selector of a target-less transform names a field, not an object; that is the
         // schema's business and the shell's `SelectorCompleter` answers it from the contracts.
         let Some(target) = command.target() else {
-            return Vec::new();
+            return Completions::new(Vec::new());
         };
         // Every selector of the command, not only the one the *position* would bind: the binder
         // resolves a positional word by type, so `get user 0` is a uid and `get user root` is a
@@ -133,27 +133,39 @@ impl ValueCompleter for ProviderValues {
             fields.push(parameter.name().to_owned());
         }
 
-        let known = objects(&self.environment, target, &fields, self.soft, self.hard);
-        known
+        let (known, whole) = objects(&self.environment, target, &fields, self.soft, self.hard);
+        let matching: Vec<String> = known
             .into_iter()
             .filter(|value| value.starts_with(prefix))
+            .collect();
+        // §36.2's marker: a set is incomplete when the soft budget answered before the
+        // providers did, when the hard budget stopped the walk, or when a bound — the objects
+        // read, the candidates offered — cut it (issue #178).
+        let whole = whole && matching.len() <= OFFERED;
+        let offered: Vec<Candidate> = matching
+            .into_iter()
             .take(OFFERED)
             .map(|value| Candidate::value(value).with_doc(parameter.doc()))
-            .collect()
+            .collect();
+        if whole {
+            Completions::new(offered)
+        } else {
+            Completions::partial(offered)
+        }
     }
 }
 
 /// What is known about `target`'s objects: from the cache when it is fresh, otherwise from the
-/// providers, within the budget.
+/// providers, within the budget — and whether that is everything the providers hold.
 fn objects(
     environment: &[(String, String)],
     target: &str,
     fields: &[String],
     soft: Duration,
     hard: Duration,
-) -> Vec<String> {
-    if let Some(cached) = cached(target) {
-        return cached;
+) -> (Vec<String>, bool) {
+    if let Some((cached, capped)) = cached(target) {
+        return (cached, !capped);
     }
 
     let (answer, wait) = std::sync::mpsc::channel();
@@ -167,22 +179,26 @@ fn objects(
     // stops looking for more, which is §36.2's "at the hard budget it MUST stop additional
     // discovery work and return what it has".
     std::thread::spawn(move || {
-        let (values, whole) = read(&environment, &owned_target, &owned_fields, deadline);
+        let (values, whole, capped) = read(&environment, &owned_target, &owned_fields, deadline);
         // Only a read that asked every provider is what the target holds; one the hard budget
         // stopped is how far this keystroke got. Keeping the second would make one impatient Tab
         // the shell's answer for the whole of `FRESH`, which is the opposite of what the cache is
         // for — and it is what made `get user <TAB>` offer nothing for five seconds after a
         // completion that ran out of budget (ADR-0550).
         if whole {
-            remember(&owned_target, &values);
+            remember(&owned_target, &values, capped);
         }
-        let _ = answer.send(values);
+        let _ = answer.send((values, whole && !capped));
     });
 
-    wait.recv_timeout(soft).unwrap_or_default()
+    // A keystroke the soft budget answered before the providers did has nothing yet, and says
+    // so rather than offering an empty set as the whole answer.
+    wait.recv_timeout(soft)
+        .unwrap_or_else(|_| (Vec::new(), false))
 }
 
-/// The values of `fields` that the providers for `target` report, and whether it asked them all.
+/// The values of `fields` that the providers for `target` report, whether it asked them all, and
+/// whether a provider filled the `CEILING` the query set — and so may hold more.
 ///
 /// The second half is `false` when the hard budget stopped the walk with providers left to ask,
 /// or when there was no runtime to ask them on. What came back is then a fragment of the answer
@@ -193,17 +209,18 @@ fn read(
     target: &str,
     fields: &[String],
     deadline: Instant,
-) -> (Vec<String>, bool) {
+) -> (Vec<String>, bool, bool) {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
     else {
-        return (Vec::new(), false);
+        return (Vec::new(), false, false);
     };
     let registry = providers(environment);
     runtime.block_on(async {
         let mut found: Vec<String> = Vec::new();
         let mut whole = true;
+        let mut capped = false;
         for provider in registry.for_target(target) {
             // §36.2: "At the hard budget it MUST stop additional discovery work and return what
             // it has." One provider that has begun is allowed to finish — a read cannot be
@@ -219,7 +236,12 @@ fn read(
             let Ok(stream) = provider.snapshot(&Query::target(target).limit(CEILING)) else {
                 continue;
             };
-            for value in stream.collect().await.into_values() {
+            let read = stream.collect().await.into_values();
+            // The query stops the provider at `CEILING`; a provider that filled it may hold more.
+            if read.len() >= CEILING {
+                capped = true;
+            }
+            for value in read {
                 let Ok(record) = value.as_record() else {
                     continue;
                 };
@@ -232,27 +254,28 @@ fn read(
         }
         found.sort_unstable();
         found.dedup();
-        (found, whole)
+        (found, whole, capped)
     })
 }
 
 /// What a provider last said about a target, while it is still fresh.
-type Cache = Mutex<BTreeMap<String, (Instant, Vec<String>)>>;
+type Cache = Mutex<BTreeMap<String, (Instant, Vec<String>, bool)>>;
 
 fn cache() -> &'static Cache {
     static CACHE: OnceLock<Cache> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
-fn cached(target: &str) -> Option<Vec<String>> {
+/// What is cached for `target`, and whether that read filled the `CEILING`.
+fn cached(target: &str) -> Option<(Vec<String>, bool)> {
     let held = cache().lock().ok()?;
-    let (read_at, values) = held.get(target)?;
-    (read_at.elapsed() < FRESH).then(|| values.clone())
+    let (read_at, values, capped) = held.get(target)?;
+    (read_at.elapsed() < FRESH).then(|| (values.clone(), *capped))
 }
 
-fn remember(target: &str, values: &[String]) {
+fn remember(target: &str, values: &[String], capped: bool) {
     if let Ok(mut held) = cache().lock() {
-        held.insert(target.to_owned(), (Instant::now(), values.to_vec()));
+        held.insert(target.to_owned(), (Instant::now(), values.to_vec(), capped));
     }
 }
 

@@ -66,7 +66,7 @@ mod suggest;
 pub use bind::{Binding, BoundArguments};
 pub use check::{check_pipeline, check_pipeline_with};
 pub use complete::{
-    Candidate, CandidateKind, StageContext, ValueCompleter, accepts_path, complete,
+    Candidate, CandidateKind, Completions, StageContext, ValueCompleter, accepts_path, complete,
 };
 pub use contract::{
     ArgumentMode, CapabilitySpec, CommandContract, Confirmation, ContributedCommand,
