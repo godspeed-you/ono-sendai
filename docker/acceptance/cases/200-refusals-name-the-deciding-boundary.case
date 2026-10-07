@@ -41,7 +41,7 @@ run: |
   # Uncaught, because the setting a user would raise is in the refusal's help line and catching
   # the error is what a script does — §54.2 is about the person reading the terminal.
   ono -c 'set config limits.materialize_items = 1
-          get process | sort pid | count' 2>&1 | head -3
+          get process | sort pid | count' 2>&1
 
   echo "== 54.1 example two: the confinement refusal names the control that failed =="
   export ONO_PLUGIN_PATH="$HOME/plugins"
@@ -103,6 +103,9 @@ stdout-contains: history budget (`limits.history_items_per_result`)
 stdout-contains: the command's own output was complete
 stdout-contains: Ono-Sendai-E1101 resource.item_limit
 stdout-contains: limits.materialize_items
+stdout-contains: stage: sort
+stdout-contains: ceiling: values
+stdout-contains: setting: limits.materialize_items
 stdout-contains: "code":"Ono-Sendai-K11802"
 stdout-contains: could not be installed
 stdout-contains: rlimit_open_files
