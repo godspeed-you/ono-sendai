@@ -32,37 +32,51 @@ pub fn is_delimited(stage: &Stage) -> bool {
 
 /// The subject of an `explain` stage that stands at the head of `list`, as text.
 ///
-/// A block is its source between the braces; a string or a variable is what it evaluates to, as
-/// any argument is. The unquoted form of a single stage is its words as the shell expands them,
-/// globs included; across pipes it is the source from `explain`'s first argument to the end of
-/// the list, handed over verbatim — never re-rendered from the AST, which would explain a
-/// normalisation of what the user typed rather than what they typed.
+/// A block is its source between the braces; a variable is its value; a string is what it
+/// evaluates to when every interpolation in it only reads a variable. The unquoted form is the
+/// source from `explain`'s first argument to the end of the list, handed over verbatim — never
+/// re-rendered from the AST, which would explain a normalisation of what the user typed rather
+/// than what they typed, and never rebuilt from expanded words, whose content would become the
+/// subject's structure (ADR-0939).
+///
+/// Nothing here runs anything: a string whose interpolation is a pipeline is refused, because
+/// building the subject would run it before `explain` had a chance not to (spec §15.3).
 ///
 /// # Errors
 ///
-/// The error evaluating a string or a variable produced.
+/// A quoted subject that interpolates something other than a variable, and the error reading a
+/// variable produced.
 pub fn subject(session: &mut Session, list: &StageList, source: &str) -> Eval<String> {
     let Some(stage) = list.stages.first() else {
         return Ok(String::new());
     };
-    if let [Argument::Value(Expr::Block(block))] = stage.arguments.as_slice() {
-        let text = block.span.of(source).trim();
-        let inner = text
-            .strip_prefix('{')
-            .and_then(|text| text.strip_suffix('}'))
-            .unwrap_or(text);
-        return Ok(inner.trim().to_owned());
-    }
-    // A subject with no pipe of its own is its words as the shell expands them, so a glob names
-    // the files it resolves to — spec §17.3's "knows its exact targets before mutating" is what
-    // the plan of `explain remove file *.tmp` must show.
-    if is_delimited(stage) || list.stages.len() == 1 {
-        let words = crate::eval::stage_arguments(session, stage, source)?;
-        return Ok(words
-            .iter()
-            .map(|word| word.to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join(" "));
+    match stage.arguments.as_slice() {
+        [Argument::Value(Expr::Block(block))] => {
+            let text = block.span.of(source).trim();
+            let inner = text
+                .strip_prefix('{')
+                .and_then(|text| text.strip_suffix('}'))
+                .unwrap_or(text);
+            return Ok(inner.trim().to_owned());
+        }
+        [Argument::Value(expression @ (Expr::Str(_) | Expr::Variable(_)))] => {
+            if !reads_only(expression) {
+                return Err(Flow::Failed(
+                    ErrorValue::new(
+                        ErrorCode::SafetyPolicyDenied,
+                        "`explain` runs nothing, and this subject interpolates something that \
+                         would run before it could be explained",
+                    )
+                    .with_help(
+                        "write the subject as a block — `explain { ls $(pwd) }` — to plan it, \
+                         interpolation included, without running any of it (ADR-0939)",
+                    ),
+                ));
+            }
+            let value = crate::eval::eval_expr(session, expression, source)?;
+            return Ok(crate::eval::text_of(&value)?);
+        }
+        _ => {}
     }
     let start = stage
         .arguments
@@ -79,19 +93,62 @@ pub fn subject(session: &mut Session, list: &StageList, source: &str) -> Eval<St
         .to_owned())
 }
 
+/// Whether the unquoted subject of the `explain` stage heading `list` is one stage, whose plan
+/// names the files its globs resolve to (spec §17.3).
+#[must_use]
+pub fn names_glob_targets(list: &StageList) -> bool {
+    list.stages.len() == 1
+        && list
+            .stages
+            .first()
+            .is_some_and(|stage| !is_delimited(stage))
+}
+
+/// Whether evaluating `expression` can do no more than read the session: a literal, a variable,
+/// a field of one, or a string interpolating only those. Anything else — a capture `( … )`, an
+/// interpolated `$( … )`, a call, a block — may run code, and `explain` evaluates none of it
+/// (ADR-0939).
+fn reads_only(expression: &Expr) -> bool {
+    match expression {
+        Expr::Number(_)
+        | Expr::Unit(_)
+        | Expr::Regex(_)
+        | Expr::Ip(_)
+        | Expr::Timestamp(_)
+        | Expr::Bool(..)
+        | Expr::Null(_)
+        | Expr::Variable(_)
+        | Expr::Path(_) => true,
+        Expr::Str(literal) => literal.parts.iter().all(|part| match part {
+            ono_parser::StrPart::Text { .. } => true,
+            ono_parser::StrPart::Expr(inner) => reads_only(inner),
+        }),
+        Expr::Field(access) => reads_only(&access.base),
+        _ => false,
+    }
+}
+
 /// The plan of `subject`, as `ono.execution-plan/1`, without running any part of it.
+///
+/// With `glob_targets`, a glob in the subject's single stage is resolved to the paths it matches
+/// and the stage is shown with them (spec §17.3); the matches are data of the plan, never text
+/// parsed again (ADR-0939).
 ///
 /// # Errors
 ///
 /// An empty subject, one that is not a pipeline, a stage of a tier this build was compiled
-/// without (ADR-0911), a sealed plan that does not exist (ADR-0814), and whatever evaluating a
-/// prefix assignment's value refuses.
-pub fn plan_value(session: &mut Session, subject: &str) -> Eval<Value> {
-    plan(session, subject).map(|plan| plan.to_value())
+/// without (ADR-0911), a sealed plan that does not exist (ADR-0814), a glob that matches nothing
+/// (ADR-0019), and a stage that is nothing but assignments.
+pub fn plan_value(session: &mut Session, subject: &str, glob_targets: bool) -> Eval<Value> {
+    plan(session, subject, glob_targets).map(|plan| plan.to_value())
 }
 
 /// The plan of `subject`, made with everything the session knows.
-fn plan(session: &mut Session, subject: &str) -> Eval<ono_command::ExecutionPlan> {
+fn plan(
+    session: &mut Session,
+    subject: &str,
+    glob_targets: bool,
+) -> Eval<ono_command::ExecutionPlan> {
     if subject.trim().is_empty() {
         return Err(Flow::Failed(
             ErrorValue::new(
@@ -116,7 +173,7 @@ fn plan(session: &mut Session, subject: &str) -> Eval<ono_command::ExecutionPlan
     let mut source = subject.to_owned();
     let mut aliases: Vec<(String, String)> = Vec::new();
     let mut environment: Vec<(String, String)> = Vec::new();
-    let pipeline = loop {
+    let mut pipeline = loop {
         let parsed = ono_parser::parse(&source);
         let Some(mut pipeline) = parsed
             .program()
@@ -131,13 +188,11 @@ fn plan(session: &mut Session, subject: &str) -> Eval<ono_command::ExecutionPlan
             )));
         };
         if let Some((assignments, stripped)) =
-            crate::eval::prefix_assignments(session, &pipeline.head, &source)?
+            crate::eval::strip_prefix_assignments(&pipeline.head, |value| {
+                assigned_value(session, value, &source)
+            })?
         {
-            environment.extend(
-                assignments
-                    .into_iter()
-                    .map(|(name, value)| (name, value.to_string_lossy().into_owned())),
-            );
+            environment.extend(assignments);
             pipeline.head = stripped;
         }
         if let Some((name, text)) = crate::eval::expand_alias(session, &pipeline.head, &source)
@@ -153,6 +208,14 @@ fn plan(session: &mut Session, subject: &str) -> Eval<ono_command::ExecutionPlan
         }
         break pipeline;
     };
+
+    // Spec §17.3: a single stage's glob names the files it resolves to. The matches replace the
+    // pattern in the AST the plan is made from, never in text that would be parsed again, so a
+    // filename is always one argument however it is spelled (ADR-0939).
+    let mut shown: Option<String> = None;
+    if glob_targets && let [stage] = pipeline.head.stages.as_mut_slice() {
+        shown = resolve_globs(session, stage, &source)?;
+    }
 
     // A stage of a compiled-out tier has no plan to report: `explain` says what running it would
     // say (ADR-0911).
@@ -224,6 +287,12 @@ fn plan(session: &mut Session, subject: &str) -> Eval<ono_command::ExecutionPlan
         },
     );
     plan.set_subject(subject.trim());
+    if let Some(shown) = shown {
+        if let Some(planned) = plan.stages_mut().first_mut() {
+            planned.set_source(shown.clone());
+        }
+        plan.set_subject(shown);
+    }
     for (name, expansion) in aliases {
         plan.push_alias(name, expansion);
     }
@@ -374,6 +443,88 @@ fn plan(session: &mut Session, subject: &str) -> Eval<ono_command::ExecutionPlan
         }
     }
     Ok(plan)
+}
+
+/// A prefix assignment's value as `explain` states it: a word with its variables substituted, a
+/// value that only reads the session evaluated, and anything that could run code as the source
+/// text it was written as (ADR-0939).
+fn assigned_value(
+    session: &mut Session,
+    value: crate::eval::AssignedValue<'_>,
+    source: &str,
+) -> Eval<String> {
+    match value {
+        crate::eval::AssignedValue::Word(word) => Ok(crate::expand::expand_to_one(session, word)?
+            .to_string_lossy()
+            .into_owned()),
+        crate::eval::AssignedValue::Expression(expression) if reads_only(expression) => {
+            let value = crate::eval::eval_expr(session, expression, source)?;
+            Ok(crate::eval::text_of(&value)?)
+        }
+        crate::eval::AssignedValue::Expression(expression) => {
+            Ok(expression.span().of(source).to_owned())
+        }
+    }
+}
+
+/// Replaces every glob of `stage` by the paths it matches, and returns the stage's text with the
+/// matches in place of the patterns — `None` when the stage has no glob.
+fn resolve_globs(session: &Session, stage: &mut Stage, source: &str) -> Eval<Option<String>> {
+    let mut arguments = Vec::with_capacity(stage.arguments.len());
+    let mut replaced: Vec<(ono_core::Span, Vec<String>)> = Vec::new();
+    for argument in &stage.arguments {
+        let expanded = crate::expand::expand_globs(session, std::slice::from_ref(argument))?;
+        if let (Argument::Word(word), false) = (argument, expanded.as_slice() == [argument.clone()])
+        {
+            let words = expanded
+                .iter()
+                .filter_map(|argument| match argument {
+                    Argument::Word(word) => Some(word.text.clone()),
+                    _ => None,
+                })
+                .collect();
+            replaced.push((word.span, words));
+        }
+        arguments.extend(expanded);
+    }
+    if replaced.is_empty() {
+        return Ok(None);
+    }
+    stage.arguments = arguments;
+    let mut text = String::new();
+    let mut at = stage.span.start() as usize;
+    for (span, words) in replaced {
+        text.push_str(source.get(at..span.start() as usize).unwrap_or_default());
+        let quoted: Vec<String> = words.iter().map(|word| shown_word(word)).collect();
+        text.push_str(&quoted.join(" "));
+        at = span.end() as usize;
+    }
+    text.push_str(
+        source
+            .get(at..stage.span.end() as usize)
+            .unwrap_or_default(),
+    );
+    Ok(Some(text.trim().to_owned()))
+}
+
+/// A path as a person would type it back: bare when it is one plain word, quoted otherwise, so a
+/// filename holding a `|` or a `$( … )` reads as the one argument it is.
+fn shown_word(word: &str) -> String {
+    let plain = !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_alphanumeric() || "._-/+,:@%=~".contains(c));
+    if plain {
+        word.to_owned()
+    } else if !word.contains('\'') {
+        format!("'{word}'")
+    } else {
+        let escaped = word
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('$', "\\$");
+        format!("\"{escaped}\"")
+    }
 }
 
 /// The word a stage runs: the program behind `raw` or `adapt`, or its head.

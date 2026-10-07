@@ -20,6 +20,7 @@ mod statement;
 
 pub(crate) use block::run_each_item;
 pub use expression::eval_expr;
+pub(crate) use expression::text_of;
 pub use expression::truthy;
 pub(crate) use function::called_function;
 pub use materialize::captured_text;
@@ -31,8 +32,8 @@ pub use pipeline::run_pipeline;
 pub use pipeline::stage_arguments;
 pub use pipeline::start_adapted_segment;
 pub use statement::expand_alias;
-pub(crate) use statement::prefix_assignments;
 pub use statement::run_statement;
+pub(crate) use statement::{AssignedValue, strip_prefix_assignments};
 
 /// Why evaluation of a statement stopped early.
 #[derive(Debug)]

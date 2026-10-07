@@ -311,6 +311,12 @@ impl StagePlan {
         self.demand.as_ref().map(|(demand, _)| demand)
     }
 
+    /// Replaces the stage's text with the words it runs with, such as a glob's matches in place
+    /// of the pattern (spec §17.3). The text is shown, never parsed again (ADR-0939).
+    pub fn set_source(&mut self, source: impl Into<String>) {
+        self.source = source.into();
+    }
+
     /// Records the program an external word resolves to on `PATH` (ADR-0011 T11).
     pub fn set_path(&mut self, path: impl Into<String>) {
         self.path = Some(path.into());

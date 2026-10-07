@@ -47,8 +47,10 @@ fields:
     required: true
     doc: >-
       The variables a prefix assignment (`NAME=value cmd`, spec §54) sets for the stages of this
-      pipeline alone, in the order written: `name` and `value`, evaluated exactly as execution
-      evaluates them (ADR-0943). Empty when the subject has none.
+      pipeline alone, in the order written: `name` and `value`. A value that only reads the
+      session is evaluated as execution evaluates it (ADR-0943); one that would run code, such as
+      `$( … )`, is its source text, because `explain` runs nothing (ADR-0939). Empty when the
+      subject has none.
   context:
     type: map
     nullable: true
