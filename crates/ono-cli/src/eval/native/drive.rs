@@ -722,6 +722,11 @@ impl EvaluatorRun {
         let outcome = crate::eval::pipeline::run_stage_list(&mut session, &list, &source, false);
         let produced = session.end_capture();
         let _ = session.executor().poll_jobs();
+        let abandoned = end_stopped_programs(&mut session);
+        failures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend(abandoned);
         values
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -756,4 +761,50 @@ impl EvaluatorRun {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(ended);
     }
+}
+
+/// Ends every program of a job's line that stopped and is still stopped, and says so.
+///
+/// A job's programs are never handed the terminal (ADR-0952 §3), so one that stopped for it —
+/// `SIGTTOU` writing its settings, `SIGTTIN` reading it — waits for a `fg` nobody can give: the
+/// job's own job table is nobody's to reach. Left alone it stayed stopped behind a job that said
+/// `done` (review R14). It is told to stop, woken so it can, and killed if it will not.
+fn end_stopped_programs(session: &mut Session) -> Vec<ErrorValue> {
+    let stopped: Vec<ono_process::Job> = session
+        .executor()
+        .jobs()
+        .into_iter()
+        .filter(|job| matches!(job.state, ono_process::JobState::Stopped(_)))
+        .collect();
+    let mut reported = Vec::new();
+    for job in stopped {
+        let executor = session.executor();
+        let _ = executor.signal_job(job.id, ono_process::Signal::TERM);
+        let _ = executor.signal_job(job.id, ono_process::Signal::CONT);
+        if !matches!(
+            executor.wait_job(job.id, Some(std::time::Duration::from_secs(2))),
+            Ok(Some(_))
+        ) {
+            let _ = executor.signal_job(job.id, ono_process::Signal::KILL);
+            let _ = executor.wait_job(job.id, Some(std::time::Duration::from_secs(2)));
+        }
+        let signal = match job.state {
+            ono_process::JobState::Stopped(signal) => signal.to_string(),
+            _ => String::new(),
+        };
+        reported.push(
+            ErrorValue::new(
+                ErrorCode::ExternalSignal,
+                format!(
+                    "`{}` was stopped by {signal} waiting for the terminal, which a background \
+                     job does not have, and was ended",
+                    job.command
+                ),
+            )
+            .with_help(
+                "run it in the foreground; a job's programs never get the terminal (spec §18.4)",
+            ),
+        );
+    }
+    reported
 }

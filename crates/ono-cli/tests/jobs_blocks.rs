@@ -458,6 +458,58 @@ fn should_keep_a_foregrounded_job_listed_when_ctrl_c_does_not_stop_its_child() {
     let _ = shell.wait_timeout(Duration::from_secs(20));
 }
 
+#[test]
+fn should_end_a_job_program_that_stopped_for_the_terminal() {
+    // Review R14: a job's programs never get the terminal (ADR-0952 §3). One that tries to set
+    // the terminal is stopped by `SIGTTOU`, and nobody can continue it — the job's own job table
+    // is nobody's to `fg`. It was left stopped behind a job that said `done`; it is ended, and
+    // the job says why.
+    let directory = scratch();
+    let child = directory.path().join("jobs/wants-the-terminal.sh");
+    std::fs::create_dir_all(child.parent().expect("a directory")).expect("the directory exists");
+    support::executable(
+        &child,
+        "#!/bin/sh\nstty -echo < /dev/tty\necho never-reached\n",
+    );
+    let mut shell = support::interactive_shell_in(&directory);
+    read_until(&mut shell, ">", Duration::from_secs(10));
+
+    shell
+        .write_all(
+            format!(
+                "echo \"[1]\" | from json | each {{ {} }} &\n",
+                child.display()
+            )
+            .as_bytes(),
+        )
+        .expect("the terminal accepts input");
+    read_until(&mut shell, "[%1]", Duration::from_secs(10));
+    // `fg` waits for the job, which ends once its program is ended, and reports why.
+    shell
+        .write_all(b"fg %1\n")
+        .expect("the terminal accepts input");
+    let seen = read_until(&mut shell, "was ended", Duration::from_secs(30));
+
+    assert!(
+        gone_within(&child, Duration::from_secs(10)),
+        "the program that stopped for the terminal was ended with its job; saw:\n{seen}"
+    );
+    assert!(
+        seen.contains("external.signal") && seen.contains("was ended"),
+        "and the job reports why when it is collected; saw:\n{seen}"
+    );
+
+    shell
+        .write_all(b"exit 0\n")
+        .expect("the terminal accepts input");
+    let _ = shell.wait_timeout(Duration::from_secs(20));
+    for pid in processes_naming(&child.display().to_string()) {
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .status();
+    }
+}
+
 /// A child that ignores `SIGTERM` and `SIGINT`, announces it has started, and runs until this
 /// test kills it — at a path no other process names.
 struct Stubborn {
