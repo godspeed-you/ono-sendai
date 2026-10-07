@@ -195,6 +195,29 @@ captures:
       collected body produced (§25.5). Nothing accumulates across items.
 
   - file: crates/ono-cli/src/eval/native/drive.rs
+    site: answer_within
+    class: semantic_materialization
+    holds: >-
+      The same one item's values as `answer` above, for a block asked while a call written after
+      it is still being assembled.
+    why: >-
+      `answer` is this with no call open. The scopes of the calls being assembled are already on
+      the session, so only the frames after them are put back for the item (§26.3); what it holds
+      is still one item's result on its way to the reply.
+
+  - file: crates/ono-cli/src/eval/native/drive.rs
+    site: answering
+    class: semantic_materialization
+    holds: >-
+      One item's block result, handed back to the stage that asked while the stages of a pipeline
+      are still being started.
+    why: >-
+      A stage that reads its whole input as it starts — a mutation collecting its targets — asks
+      the blocks in front of it before the driver below exists, so their requests are answered
+      here, one at a time over the channel of one (§25.3, review C1). Nothing accumulates: each
+      reply carries one item's values.
+
+  - file: crates/ono-cli/src/eval/native/drive.rs
     site: run_background
     class: history_cache
     holds: What a background job produced, until `fg` shows it.
