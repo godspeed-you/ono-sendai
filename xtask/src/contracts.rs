@@ -4499,7 +4499,7 @@ const SPATIAL_SWEEPS: &[&str] = &[
 ///   `ono_spatial_core::AcquisitionCost` names them;
 /// - every `trace` command, which answers from whole-target snapshots
 ///   (`crates/ono-command/src/impls/trace.rs`, `ono_graph`'s `SharedSnapshots::one`), and every
-///   spatial sweep of [`SPATIAL_SWEEPS`] declares a `global` acquisition;
+///   spatial sweep of `SPATIAL_SWEEPS` declares a `global` acquisition;
 /// - no declared cost is cheaper than what `ono_spatial_query::acquisition_of_target` says
 ///   enumerating the command's target costs.
 pub fn check_acquisitions(root: &Path) -> Vec<Problem> {
