@@ -2,12 +2,11 @@
 
 use std::os::fd::OwnedFd;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
 use nix::errno::Errno;
 use nix::sys::signal::killpg;
-use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+use nix::sys::wait::{Id, WaitPidFlag, WaitStatus, waitid, waitpid};
 use nix::unistd::Pid;
 use ono_core::ExitStatus;
 
@@ -76,14 +75,35 @@ impl ForegroundOutcome {
 /// when nothing is in the foreground, cancelling does nothing.
 #[derive(Debug, Clone)]
 pub struct Canceller {
-    foreground: Arc<AtomicI32>,
+    foreground: Arc<ForegroundGroup>,
+}
+
+/// The process group in the foreground, or `0`.
+///
+/// A group is signalled only while the lock is held, and the executor clears it under the same
+/// lock in the same step that collects the group's last member. Until then that member is a
+/// zombie holding the group's id, so a signal can never reach a group whose id the kernel has
+/// handed out again — however late a [`Canceller`] on another thread sends it.
+#[derive(Debug, Default)]
+struct ForegroundGroup(std::sync::Mutex<i32>);
+
+impl ForegroundGroup {
+    fn lock(&self) -> std::sync::MutexGuard<'_, i32> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn set(&self, group: i32) {
+        *self.lock() = group;
+    }
 }
 
 impl Canceller {
     /// Whether there is a foreground job to cancel right now.
     #[must_use]
     pub fn is_active(&self) -> bool {
-        self.foreground.load(Ordering::SeqCst) != 0
+        *self.foreground.lock() != 0
     }
 
     /// Interrupts the foreground job, as `Ctrl-C` would.
@@ -103,11 +123,11 @@ impl Canceller {
     /// Returns an error if the signal cannot be sent for a reason other than the job having
     /// already finished.
     pub fn send(&self, signal: Signal) -> Result<()> {
-        let group = self.foreground.load(Ordering::SeqCst);
-        if group == 0 {
+        let group = self.foreground.lock();
+        if *group == 0 {
             return Ok(());
         }
-        signal_group(group, signal)
+        signal_group(*group, signal)
     }
 }
 
@@ -128,7 +148,7 @@ impl Canceller {
 pub struct Executor {
     terminal: Terminal,
     jobs: Vec<Tracked>,
-    foreground: Arc<AtomicI32>,
+    foreground: Arc<ForegroundGroup>,
     /// Numbers handed to jobs this executor does not run — the shell's native pipelines — so
     /// one sequence covers both kinds (spec §18.4).
     reserved: std::collections::BTreeSet<u32>,
@@ -169,7 +189,7 @@ impl Executor {
         Self {
             terminal,
             jobs: Vec::new(),
-            foreground: Arc::new(AtomicI32::new(0)),
+            foreground: Arc::default(),
             reserved: std::collections::BTreeSet::new(),
         }
     }
@@ -213,7 +233,7 @@ impl Executor {
         let running = self.start(pipeline, true)?;
         if running.pgid != 0 {
             self.terminal.give_to(running.pgid)?;
-            self.foreground.store(running.pgid, Ordering::SeqCst);
+            self.foreground.set(running.pgid);
         }
         Ok(Foreground {
             running,
@@ -245,9 +265,9 @@ impl Executor {
     ///
     /// As [`Executor::run_foreground`].
     pub fn finish_foreground(&mut self, mut foreground: Foreground) -> Result<ForegroundOutcome> {
-        let outcome = wait_foreground(&mut foreground.running);
+        let outcome = wait_foreground(&mut foreground.running, &self.foreground);
         if foreground.owns_terminal {
-            self.foreground.store(0, Ordering::SeqCst);
+            self.foreground.set(0);
             let reclaimed = self.terminal.reclaim();
             outcome?;
             reclaimed?;
@@ -333,13 +353,13 @@ impl Executor {
         // read in the instant before the handover and be stopped again by `SIGTTIN`.
         if !running.is_finished() && running.pgid != 0 {
             self.terminal.give_to(running.pgid)?;
-            self.foreground.store(running.pgid, Ordering::SeqCst);
+            self.foreground.set(running.pgid);
         }
         if running.is_stopped() {
             continue_group(&mut running)?;
         }
-        let outcome = wait_foreground(&mut running);
-        self.foreground.store(0, Ordering::SeqCst);
+        let outcome = wait_foreground(&mut running, &self.foreground);
+        self.foreground.set(0);
         let reclaimed = self.terminal.reclaim();
         outcome?;
         reclaimed?;
@@ -729,12 +749,30 @@ impl Foreground {
 }
 
 /// Waits for a foreground pipeline until it finishes or a stage stops.
-fn wait_foreground(running: &mut Running) -> Result<()> {
+///
+/// News is waited for without being collected, and collected under the lock a [`Canceller`]
+/// signals through: the group's last member stays a zombie, holding the group's id, until the
+/// step that collects it also clears the foreground group (review R10).
+fn wait_foreground(running: &mut Running, foreground: &ForegroundGroup) -> Result<()> {
     while !running.is_finished() && !running.is_stopped() {
         if running.pgid == 0 {
             break;
         }
-        reap(running, true)?;
+        match waitid(
+            Id::PGid(Pid::from_raw(running.pgid)),
+            WaitPidFlag::WEXITED
+                | WaitPidFlag::WSTOPPED
+                | WaitPidFlag::WCONTINUED
+                | WaitPidFlag::WNOWAIT,
+        ) {
+            Ok(_) | Err(Errno::EINTR | Errno::ECHILD) => {}
+            Err(errno) => return Err(spawn::system("waiting for a job", errno)),
+        }
+        let mut group = foreground.lock();
+        reap(running, false)?;
+        if running.is_finished() && *group == running.pgid {
+            *group = 0;
+        }
     }
     Ok(())
 }
