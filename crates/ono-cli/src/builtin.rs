@@ -34,6 +34,7 @@ pub fn run(session: &mut Session, name: &str, arguments: &[OsString]) -> Eval<Ex
 }
 
 fn cd(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
+    session.refuse_moving_a_job("cd").map_err(Flow::Failed)?;
     let target = match arguments.first() {
         Some(path) => PathBuf::from(path),
         None => session.home().ok_or_else(|| {

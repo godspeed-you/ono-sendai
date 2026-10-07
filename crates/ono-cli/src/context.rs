@@ -132,6 +132,11 @@ pub fn enter(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitSta
 #[cfg(feature = "spatial")]
 fn enter_place_at(session: &mut Session, word: &str) -> Eval<ExitStatus> {
     let path = crate::spatial::storage::absolute(session, word);
+    if path.is_dir() {
+        session
+            .refuse_moving_a_job(&format!("enter {word}"))
+            .map_err(Flow::Failed)?;
+    }
     let (_, is_directory) =
         crate::spatial::storage::enter_path(session, &path).map_err(Flow::Failed)?;
     if is_directory {
@@ -145,6 +150,9 @@ fn enter_place_at(session: &mut Session, word: &str) -> Eval<ExitStatus> {
 /// Spec §14.2: equivalent in effect to changing the working directory, with the stack's model —
 /// so `leave` restores where the session stood, which plain `cd` never promised.
 fn enter_directory(session: &mut Session, path: &str) -> Eval<ExitStatus> {
+    session
+        .refuse_moving_a_job(&format!("enter dir {path}"))
+        .map_err(Flow::Failed)?;
     let destination = session.cwd().join(path);
     let destination = destination.canonicalize().map_err(|error| {
         Flow::Failed(ErrorValue::new(
@@ -569,6 +577,16 @@ pub fn leave(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitSta
         return Ok(ExitStatus::SUCCESS);
     }
 
+    // A frame that moved the working directory moves it back when it is left, which a job
+    // cannot do (ADR-0955); the refusal comes before any frame is popped.
+    let leaving = if all {
+        session.frames()
+    } else {
+        &session.frames()[session.frames().len().saturating_sub(1)..]
+    };
+    if leaving.iter().any(|frame| frame.restore_cwd.is_some()) {
+        session.refuse_moving_a_job("leave").map_err(Flow::Failed)?;
+    }
     loop {
         let Some(popped) = session.pop_frame() else {
             break;

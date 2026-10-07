@@ -180,6 +180,50 @@ fn should_stop_a_background_block_and_its_child_when_the_job_is_killed() {
     );
 }
 
+#[test]
+fn should_leave_the_shells_working_directory_where_it_was_when_a_job_tries_to_move() {
+    // Review R2: a job's evaluator is a thread of the shell's own process, and the kernel keeps
+    // one working directory per process. A `cd` in a job moved the foreground with it, so the
+    // next relative path the shell resolved — `find file .` — was read in the job's directory.
+    // A job cannot have a working directory of its own, so moving it is refused in the job, and
+    // the shell stays where it stands.
+    for movement in ["cd elsewhere", "enter dir elsewhere"] {
+        let scratch = scratch();
+        scratch.write("start/here-marker", "");
+        scratch.write("start/elsewhere/away-marker", "");
+        let start = scratch.path().join("start");
+
+        let run = run_bounded(
+            &scratch,
+            &format!(
+                "cd {}\n\
+                 fn wander() {{ {movement}; echo moved }}\n\
+                 wander &\n\
+                 fg %1\n\
+                 echo \"status-was-$?\"\n\
+                 find file . --depth 1 | to json",
+                start.display()
+            ),
+            BUDGET,
+        );
+
+        assert!(run.finished, "{}", run.report());
+        assert!(
+            run.stdout.contains("here-marker") && !run.stdout.contains("away-marker"),
+            "`{movement}` in a job: the shell resolves its relative paths where it stands. {}",
+            run.report()
+        );
+        assert!(
+            run.stderr
+                .contains("a background job cannot change the working directory")
+                && run.stdout.contains("status-was-1")
+                && !run.stdout.contains("moved"),
+            "`{movement}` in a job is refused, structured, and the job ends there. {}",
+            run.report()
+        );
+    }
+}
+
 // --- the same job, at a terminal ---------------------------------------------------------------
 
 #[test]

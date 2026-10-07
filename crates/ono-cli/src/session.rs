@@ -1835,8 +1835,39 @@ impl Session {
     /// answering about wherever the shell happened to start. A kernel that refuses the move —
     /// the directory went away between the caller's check and here — leaves the session where it
     /// was rather than splitting the two.
+    ///
+    /// A background job's session never moves: its evaluator is a thread of this process, whose
+    /// one working directory is the foreground's too (ADR-0955). Whatever would move a job is
+    /// refused before it gets here, by [`Session::refuse_moving_a_job`].
     pub fn set_cwd(&mut self, directory: PathBuf) {
+        if self.execution.background_job {
+            return;
+        }
         self.environment.set_cwd(directory);
+    }
+
+    /// Refuses a change of working directory in a background job's session (ADR-0955).
+    ///
+    /// The kernel keeps one working directory per process, and a job's evaluator is a thread of
+    /// the shell's own: moving it would move the foreground, whose next relative path would then
+    /// be resolved wherever the job went. A job keeps the directory it was started in, and its
+    /// programs run there.
+    ///
+    /// # Errors
+    ///
+    /// `type.mismatch` in a background job, naming what tried to move it.
+    pub fn refuse_moving_a_job(&self, what: &str) -> Result<(), ErrorValue> {
+        if !self.execution.background_job {
+            return Ok(());
+        }
+        Err(ErrorValue::new(
+            ono_core::ErrorCode::TypeMismatch,
+            format!("a background job cannot change the working directory: `{what}` would move the shell with it"),
+        )
+        .with_help(
+            "a job runs where it was started; `cd` before backgrounding it, or give the program \
+             its directory (`make -C <dir>`, `sh -c 'cd <dir> && …'`) (ADR-0955)",
+        ))
     }
 
     /// The environment external commands will inherit.
