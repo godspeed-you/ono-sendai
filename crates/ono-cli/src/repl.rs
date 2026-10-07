@@ -201,9 +201,12 @@ impl ShellCompleter {
     /// prompt's Tab and `ono --complete` (ADR-0945).
     #[must_use]
     pub fn answer(&self, line: &str, cursor: usize) -> Answer {
+        // The word starts after the separator, which may be wider than a byte: U+00A0 and U+3000
+        // are whitespace too, and a slice inside one panics.
         let mut start = line[..cursor]
-            .rfind(|c: char| c.is_whitespace() || c == '|')
-            .map_or(0, |at| at + 1);
+            .char_indices()
+            .rfind(|&(_, c)| c.is_whitespace() || c == '|')
+            .map_or(0, |(at, c)| at + c.len_utf8());
         let prefix = &line[start..cursor];
         let is_head = line[..start].trim().is_empty() || line[..start].trim_end().ends_with('|');
 
