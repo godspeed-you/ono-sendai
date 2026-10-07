@@ -40,11 +40,40 @@ pub(crate) fn block_of(stage: &Stage) -> Option<&Block> {
     }
 }
 
+/// Where a block was written, and everything running it needs besides the item.
+///
+/// A block used to be identified by its position in the stage list the driver holds, which made a
+/// function body's block — written in another list, in another source — impossible to drive while
+/// streaming (issue #192). The site carries the block itself, so whichever driver answers the
+/// request can run it (ADR-0950).
+#[derive(Debug)]
+pub(crate) struct BlockSite {
+    /// The block, as it was parsed.
+    pub(super) block: Block,
+    /// The source the block's spans index: the caller's line, or the source a function was
+    /// declared in.
+    pub(super) source: std::sync::Arc<str>,
+    /// ADR-0070 point 3: whether a later stage consumes what the block emits, so its values are
+    /// captured for that stage instead of shown where they stand.
+    pub(super) consumed: bool,
+    /// The invocation scopes of the function calls whose bodies the block was written in,
+    /// outermost first. Each is off the session while the caller's pipeline drains, and is put
+    /// back on top of it for exactly the run of one item (§26.3).
+    pub(super) frames: Vec<FrameCell>,
+}
+
+/// One function call's invocation scope, shared by the block sites of its body.
+pub(crate) type FrameCell =
+    std::sync::Arc<std::sync::Mutex<Option<crate::session::DetachedScopes>>>;
+
+/// The channel a block stage asks its driver through.
+pub(crate) type Asked = tokio::sync::mpsc::Sender<BlockRequest>;
+
 /// One input value, and where the answer goes.
 #[derive(Debug)]
-pub(super) struct BlockRequest {
-    /// Which stage of the list asked, so the driver knows which block to run.
-    stage: usize,
+pub(crate) struct BlockRequest {
+    /// Which block to run.
+    site: std::sync::Arc<BlockSite>,
     /// The value to bind as `@`.
     value: Value,
     /// Where the block's result goes.
@@ -88,8 +117,8 @@ pub(super) enum Driven {
 /// stops consuming upstream and cancels the remaining source where possible".
 pub(super) fn asking_stage(
     input: ValueStream,
-    stage: usize,
-    asked: tokio::sync::mpsc::Sender<BlockRequest>,
+    site: std::sync::Arc<BlockSite>,
+    asked: Asked,
 ) -> ValueStream {
     // One value in, zero or more out: a stream that ends still ends, and one that does not still
     // does not (§25.6, Appendix E's `item_transform`).
@@ -99,7 +128,7 @@ pub(super) fn asking_stage(
             let (reply, answer) = tokio::sync::oneshot::channel();
             if asked
                 .send(BlockRequest {
-                    stage,
+                    site: std::sync::Arc::clone(&site),
                     value,
                     reply,
                 })
@@ -164,8 +193,6 @@ pub(super) fn drive_segment(
     session: &mut Session,
     handle: &tokio::runtime::Handle,
     requests: &mut tokio::sync::mpsc::Receiver<BlockRequest>,
-    stages: &[Stage],
-    source: &str,
     mut draining: Option<ValueStream>,
     mut showing: Option<std::pin::Pin<Box<dyn std::future::Future<Output = Vec<ErrorValue>> + '_>>>,
 ) -> Eval<Drained> {
@@ -209,28 +236,19 @@ pub(super) fn drive_segment(
             }
         });
         match driven {
-            Driven::Ask(request) => {
-                let Some(block) = block_of(&stages[request.stage]) else {
-                    continue;
-                };
-                // ADR-0070 point 3 again, per item: the block's values are captured only where
-                // a later stage consumes them. §25.4 permits this scope because it is one item's
-                // result, and forbids the collection over all items that used to stand here.
-                let consumed = request.stage + 1 < stages.len();
-                match crate::eval::run_each_item(session, block, source, request.value, consumed) {
-                    Ok((produced, keep_going)) => {
-                        let _ = request.reply.send(BlockReply::Produced {
-                            values: produced,
-                            keep_going,
-                        });
-                    }
-                    Err(flow) => {
-                        let _ = request.reply.send(BlockReply::Stop);
-                        drained.stopped = Some(flow);
-                        break;
-                    }
+            Driven::Ask(request) => match answer(session, &request.site, request.value) {
+                Ok((produced, keep_going)) => {
+                    let _ = request.reply.send(BlockReply::Produced {
+                        values: produced,
+                        keep_going,
+                    });
                 }
-            }
+                Err(flow) => {
+                    let _ = request.reply.send(BlockReply::Stop);
+                    drained.stopped = Some(flow);
+                    break;
+                }
+            },
             Driven::Asked => asking = false,
             Driven::Event(StreamEvent::Value(value)) => drained.values.push(value),
             Driven::Event(StreamEvent::Failure(error)) => drained.failures.push(error),
@@ -242,6 +260,47 @@ pub(super) fn drive_segment(
         }
     }
     Ok(drained)
+}
+
+/// Runs one item through the block a site names, in the scope the block was written in.
+///
+/// A block of the caller's own pipeline runs in the caller's scope, which is the session as it
+/// stands. A block of a streamed function body runs in that call's invocation scope: it is put back
+/// on top of the session for this one item and taken off again afterwards, so the parameter the
+/// call bound is what the block reads, a `let` that advances it is what the next item reads, and
+/// the caller's later stages never see it (§26.3, ADR-0950).
+///
+/// `return` inside such a body ends the function, not the caller: the function's stream closes
+/// with the returned value, and its source is read no further — what a collected body does with
+/// the same `return` (§25.5).
+fn answer(session: &mut Session, site: &BlockSite, item: Value) -> Eval<(Vec<Value>, bool)> {
+    let mut marks = Vec::with_capacity(site.frames.len());
+    for cell in &site.frames {
+        marks.push(session.scope_depth());
+        let detached = cell
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        session.attach_scopes(detached.unwrap_or_default());
+    }
+    let (mut produced, outcome) =
+        crate::eval::run_each_item(session, &site.block, &site.source, item, site.consumed);
+    for (cell, mark) in site.frames.iter().zip(marks).rev() {
+        let detached = session.detach_scopes(mark);
+        *cell
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(detached);
+    }
+    match outcome {
+        Ok(keep_going) => Ok((produced, keep_going)),
+        Err(Flow::Return(value)) if !site.frames.is_empty() => {
+            if !matches!(value, Value::Null) {
+                produced.push(value);
+            }
+            Ok((produced, false))
+        }
+        Err(flow) => Err(flow),
+    }
 }
 
 /// Backgrounds a native pipeline as a job (spec §18.4, ADR-0024).

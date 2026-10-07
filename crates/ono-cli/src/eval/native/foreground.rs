@@ -15,7 +15,7 @@ use crate::eval::{Eval, Flow};
 use crate::session::Session;
 
 use super::bind::{bind_stage, stage_scope};
-use super::drive::{BlockRequest, asking_stage, block_of, drive_segment, interrupted};
+use super::drive::{BlockRequest, BlockSite, asking_stage, block_of, drive_segment, interrupted};
 use super::result::{
     Delivery, action_records, deliver_segment, live_geometry, report_counts, report_failures,
     table_row_limit, write_failed,
@@ -140,18 +140,39 @@ pub(super) fn run_native_segment(
     // runs them, on this thread, one item at a time. v0.4.1 §25.1 requires that to happen while
     // the source is still open, and §25.2 forbids the alternative that used to stand here
     // (ADR-0480).
-    let blocks: Vec<(usize, usize)> = indices
+    let shared_source: std::sync::Arc<str> = std::sync::Arc::from(source);
+    let blocks: Vec<(usize, usize, std::sync::Arc<BlockSite>)> = indices
         .iter()
         .enumerate()
-        .filter(|(_, index)| block_of(&list.stages[**index]).is_some())
-        .map(|(position, index)| (position, *index))
+        .filter_map(|(position, index)| {
+            block_of(&list.stages[*index]).map(|block| {
+                (
+                    position,
+                    *index,
+                    std::sync::Arc::new(BlockSite {
+                        block: block.clone(),
+                        source: std::sync::Arc::clone(&shared_source),
+                        consumed: *index + 1 < list.stages.len(),
+                        frames: Vec::new(),
+                    }),
+                )
+            })
+        })
         .collect();
     // ADR-0070 point 3: with stages after it a block's values stream into them; with nothing
     // after it the block's own statements show their results where they stand, and the stage has
-    // no result of its own.
-    let block_shows_itself = blocks.last().is_some_and(|(position, index)| {
+    // no result of its own. A stream assembled before this segment may end in such a block too —
+    // a function whose body ends in one, called last (ADR-0950).
+    let block_shows_itself = blocks.last().is_some_and(|(position, index, _)| {
         *position + 1 == bound.len() && *index + 1 == list.stages.len()
-    });
+    }) || (bound.is_empty()
+        && matches!(
+            seed,
+            Seed::Pipe {
+                shows_itself: true,
+                ..
+            }
+        ));
 
     let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
@@ -177,7 +198,17 @@ pub(super) fn run_native_segment(
     // One request in flight. §25.3 keeps `each` serial, so a queue of items waiting to be run
     // would buy nothing, and §65.7 forbids the shape it would take: "replacing a foreground
     // `Vec` with an unbounded background queue is not a streaming fix".
-    let (asked, mut requests) = tokio::sync::mpsc::channel::<BlockRequest>(1);
+    //
+    // A stream assembled before this segment brings the channel its own block stages ask through,
+    // and this segment's blocks ask through the same one: one driver answers every block of one
+    // pipeline, wherever it was written (ADR-0950).
+    let mut seed = seed;
+    let channel = match &mut seed {
+        Seed::Pipe { requests, .. } => requests.take(),
+        _ => None,
+    };
+    let (asked, mut requests) =
+        channel.unwrap_or_else(|| tokio::sync::mpsc::channel::<BlockRequest>(1));
 
     let assemble = async {
         let mut carried_failure = false;
@@ -186,6 +217,7 @@ pub(super) fn run_native_segment(
             Seed::Pipe {
                 stream,
                 failed_rows,
+                ..
             } => {
                 carried_failure = failed_rows;
                 Some(stream)
@@ -215,11 +247,15 @@ pub(super) fn run_native_segment(
         let mut failed_rows = carried_failure;
         let final_stage = bound.len().saturating_sub(1);
         for (position, (contract, arguments)) in bound.iter().enumerate() {
-            if let Some((_, at)) = blocks.iter().find(|(held, _)| *held == position) {
+            if let Some((_, _, site)) = blocks.iter().find(|(held, _, _)| *held == position) {
                 let Some(previous) = stream.take() else {
                     return Err(each_needs_a_stream());
                 };
-                stream = Some(asking_stage(previous, *at, asked.clone()));
+                stream = Some(asking_stage(
+                    previous,
+                    std::sync::Arc::clone(site),
+                    asked.clone(),
+                ));
                 continue;
             }
             let started = std::time::Instant::now();
@@ -362,15 +398,7 @@ pub(super) fn run_native_segment(
         }
     }
 
-    let drained = drive_segment(
-        session,
-        &handle,
-        &mut requests,
-        &list.stages,
-        source,
-        draining,
-        showing,
-    )?;
+    let drained = drive_segment(session, &handle, &mut requests, draining, showing)?;
     // Whatever is left is left because nobody is reading it any more: cancellation wins over
     // capacity, so a producer behind a stage that stopped does not keep enqueueing (§28.3).
     if let Some(cancel) = cancel {

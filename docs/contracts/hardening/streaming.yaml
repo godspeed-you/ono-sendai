@@ -68,7 +68,7 @@ captures:
       which hold: the limitation is stated by `explain` before the call is run, and the collection
       has a finite-input guard, so an unbounded body is refused rather than waited for (§65.8). A
       body that *is* one native pipeline is not collected at all any more: it becomes a stage of
-      the caller's pipeline (ADR-0481).
+      the caller's pipeline (ADR-0481), its `each { … }` blocks included (ADR-0950).
 
   - file: crates/ono-cli/src/eval/control.rs
     site: run_for
@@ -167,6 +167,32 @@ captures:
       The other end of `Drained` above, one call further along: the values go to the next segment
       as bytes, to the browser, or to `write_result`. Nothing accumulates here that was not
       already drained there, and the two are one collection travelling (§30.2, ADR-0507).
+
+  - file: crates/ono-cli/src/eval/native/assemble.rs
+    site: run_assembled
+    class: semantic_materialization
+    holds: >-
+      The values of the stages in front of the first call between two stages, when those stages
+      cannot be assembled into a stream — a value at the head, a program, a function whose body is
+      several statements.
+    why: >-
+      §26.2 permits a collection where the shape leaves no alternative, and asks for two things
+      of it that both hold: `explain` states it, and it has a finite-input guard — the collection
+      is a capture, so an unbounded producer in front of it is refused rather than waited for
+      (§18.3, §65.8), and its bytes are charged to §23.2's ceiling (ADR-0457). A prefix that can
+      be assembled is not collected at all (ADR-0950, ADR-0951).
+
+  - file: crates/ono-cli/src/eval/native/drive.rs
+    site: answer
+    class: semantic_materialization
+    holds: >-
+      What one item of a block site produced, in the invocation scope the block was written in,
+      on its way to the reply.
+    why: >-
+      `run_each_item`'s one-item result above, reached through the site a request carries rather
+      than through a stage index (ADR-0950). A `return` out of a streamed function body appends the
+      returned value to that one item's values and stops the stage reading, which is what a
+      collected body produced (§25.5). Nothing accumulates across items.
 
   - file: crates/ono-cli/src/eval/native/drive.rs
     site: run_background

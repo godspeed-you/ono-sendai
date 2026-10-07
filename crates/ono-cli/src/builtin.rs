@@ -633,8 +633,7 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             // v0.4.1 §26.2: where a call cannot be continued as a stage of the pipeline it stands
             // in, "that limitation MUST be explicit in `explain`" — so it is stated here rather
             // than left for a user to meet as a refusal over an unbounded source (ADR-0481).
-            let continues = crate::eval::native::continuable_body(&function.declaration.body)
-                .is_some_and(|body| crate::eval::native::continuable_list(session, body));
+            let continues = crate::eval::native::function_shape(session, &function, false).is_ok();
             let continuation = if continues {
                 "its body streams into the stages after the call"
             } else {

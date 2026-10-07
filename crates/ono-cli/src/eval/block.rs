@@ -40,17 +40,17 @@ pub(super) fn each_block_stage(list: &StageList) -> Option<usize> {
 /// with nothing after it its statements show their results where they stand. The capture is one
 /// item's result — §25.4's per-invocation scope — never a collection over all of them.
 ///
-/// # Errors
-///
-/// The block's own `Flow` when it failed, returned or exited: those unwind the pipeline rather
-/// than being answered.
+/// What comes back is what the item produced — kept even when the block then jumped, because a
+/// `return` out of a streamed function body ends that body's stream *after* what the item had
+/// already emitted (§25.5) — and whether the stage keeps reading, or the block's own `Flow` when
+/// it failed, returned or exited: those unwind the pipeline rather than being answered.
 pub(crate) fn run_each_item(
     session: &mut Session,
     block: &Block,
     source: &str,
     item: Value,
     capture: bool,
-) -> Eval<(Vec<Value>, bool)> {
+) -> (Vec<Value>, Eval<bool>) {
     session.push_scope();
     session.bind("@", item);
     if capture {
@@ -63,13 +63,14 @@ pub(crate) fn run_each_item(
         Vec::new()
     };
     session.pop_scope();
-    match outcome {
+    let keep_going = match outcome {
         // §25.5: `continue` skips the remainder of the current item and the next one is read;
         // `break` stops consuming upstream, which the stage does by dropping its input.
-        Ok(_) | Err(Flow::Continue) => Ok((produced, true)),
-        Err(Flow::Break) => Ok((produced, false)),
+        Ok(_) | Err(Flow::Continue) => Ok(true),
+        Err(Flow::Break) => Ok(false),
         Err(other) => Err(other),
-    }
+    };
+    (produced, keep_going)
 }
 
 pub(super) fn run_block(session: &mut Session, block: &Block, source: &str) -> Eval<ExitStatus> {

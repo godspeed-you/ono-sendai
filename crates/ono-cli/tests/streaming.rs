@@ -572,6 +572,113 @@ fn should_keep_the_callers_binding_in_the_stages_after_a_streamed_call() {
     );
 }
 
+// --- a body that runs a block streams too (§26.1, §26.2, issue #192) -----------------------------
+
+#[test]
+fn should_stream_a_function_whose_body_runs_a_block_like_one_whose_body_filters() {
+    // Issue #192's exit test: "a function whose body is `each { … }` streams like one whose body
+    // is `where`". The body's source never ends, so a body that was collected before the stages
+    // after the call ran could not answer `take 1` at all.
+    let source = Following::holding(&["first"]);
+    for body in ["each { @ }", "where @ != \"a line nothing writes\""] {
+        let script = format!(
+            "fn watched() {{ tail file {} --lines 1 --follow | {body} }}\nwatched | take 1 | to json",
+            source.path.display()
+        );
+
+        let run = run_bounded(&source.home, &script, BUDGET);
+
+        assert!(
+            run.finished,
+            "`{body}` in the body: the caller's `take 1` answers from the first value. {}",
+            run.report()
+        );
+        assert_eq!(
+            run.stdout.trim(),
+            "[\"first\"]",
+            "`{body}` in the body: the value crossed the block and the call. {}",
+            run.report()
+        );
+    }
+    assert_eq!(
+        source.lines(),
+        ["first"],
+        "the body's source is still waiting: nothing here waited for it to end"
+    );
+}
+
+#[test]
+fn should_run_a_streamed_body_block_in_the_invocation_scope_of_its_call() {
+    // §26.3: "the refactor MUST preserve deterministic variable binding and mutation semantics".
+    // The block of a streamed body runs while the caller's pipeline drains, after the call has
+    // returned — and it still reads the parameter the call bound, and a `let` that advances that
+    // parameter for one item is what the next item reads, exactly as in a collected body.
+    let source = Following::holding(&["first", "second"]);
+    let script = format!(
+        "fn tagged(tag) {{ tail file {} --lines 2 --follow | each {{ let tag = $tag + \"!\"; $tag }} }}\n\
+         tagged \"go\" | take 2 | to json",
+        source.path.display()
+    );
+
+    let run = run_bounded(&source.home, &script, BUDGET);
+
+    assert!(run.finished, "{}", run.report());
+    assert_eq!(
+        run.stdout.trim(),
+        "[\"go!\",\"go!!\"]",
+        "the block read the call's parameter and its mutation carried to the next item. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_end_a_streamed_body_with_the_value_its_block_returns() {
+    // v0.4.1 §25.5: "`return` exits the containing function according to existing language
+    // semantics". In a body that streams, the function's output ends with the returned value and
+    // its source is read no further — the source here never ends, so a `return` that did not stop
+    // it would leave the run waiting.
+    let source = Following::holding(&["first", "second", "third"]);
+    let script = format!(
+        "fn upto() {{ tail file {} --lines 3 --follow | each {{ if @ == \"second\" {{ return \"stop\" }}; @ }} }}\n\
+         upto | to json",
+        source.path.display()
+    );
+
+    let run = run_bounded(&source.home, &script, BUDGET);
+
+    assert!(
+        run.finished,
+        "`return` ends the function's stream, and with it the source behind it. {}",
+        run.report()
+    );
+    assert_eq!(
+        run.stdout.trim(),
+        "[\"first\",\"stop\"]",
+        "the values before the return, then the returned value, and nothing after. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_say_in_explain_that_a_body_running_a_block_streams() {
+    // §26.2's MUST: whether a call streams or collects is explicit in `explain`. A body that runs
+    // a block now streams, and the plan says so.
+    let scratch = scratch();
+
+    let run = run_bounded(
+        &scratch,
+        "fn pids() { get process | each { @.pid } }\nexplain pids | take 1",
+        BUDGET,
+    );
+
+    assert!(
+        run.stdout
+            .contains("its body streams into the stages after the call"),
+        "a body whose block runs per item is named as one that streams. {}",
+        run.report()
+    );
+}
+
 #[test]
 fn should_say_in_explain_which_calls_stream_and_which_collect() {
     // v0.4.1 §26.2: "if function semantics currently require a complete function result before
