@@ -389,7 +389,7 @@ fn run_from(
                 shows_itself,
                 requests,
             } => {
-                let (_, run_status) = run_native_segment(
+                let ended = run_native_segment(
                     session,
                     registry,
                     list,
@@ -404,8 +404,9 @@ fn run_from(
                     },
                     true,
                     true,
+                    None,
                 )?;
-                status = run_status;
+                status = ended.status;
             }
             Start::Nothing => {}
         }
@@ -604,7 +605,17 @@ fn run_from(
                 status = external_status;
             }
             Segment::Native(indices) => {
-                let (bytes, native_status) = run_native_segment(
+                // A streaming serializer feeds the program after it while that program runs,
+                // when the program is the last stage there is (ADR-0954).
+                let feeds = match segments.get(position + 1) {
+                    Some(Segment::External(program))
+                        if position + 2 == segments.len() && session.link_host().is_none() =>
+                    {
+                        Some(program.as_slice())
+                    }
+                    _ => None,
+                };
+                let ended = run_native_segment(
                     session,
                     registry,
                     list,
@@ -628,9 +639,15 @@ fn run_from(
                     },
                     position == 0,
                     last,
+                    feeds,
                 )?;
-                carried = bytes;
-                status = native_status;
+                status = ended.status;
+                if ended.fed_program {
+                    carried = None;
+                    position += 2;
+                    continue;
+                }
+                carried = ended.bytes;
             }
         }
         position += 1;

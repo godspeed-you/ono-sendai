@@ -1,0 +1,45 @@
+# Issue #214, through the real binary as an unprivileged user.
+#
+# `to jsonl` writes one compact JSON document per value, each on a line of its own, as the value
+# arrives (ADR-0954). The source is a followed file that never closes: the first line has to be on
+# the reader's side while the source still holds one line — the second value does not exist yet —
+# and the second line appears once the second value is written. Nothing below asserts a duration;
+# the waits poll for files and are bounded by the case timeout.
+case: to jsonl streams one line per value while the producer is still running
+timeout: 120
+env: NO_COLOR=1
+run: |
+  src="$HOME/case-363.log"
+  out="$HOME/case-363.out"
+  printf 'first\n' > "$src"
+  : > "$out"
+
+  echo "== the first line exists before the second value does =="
+  ono -c "tail file $src --lines 1 --follow | to jsonl" > "$out" &
+  producer=$!
+  while ! grep -q first "$out"; do sleep 0.05; done
+  echo "lines-in-source=$(wc -l < "$src")"
+  printf 'second\n' >> "$src"
+  while ! grep -q second "$out"; do sleep 0.05; done
+  kill "$producer"; wait "$producer" 2>/dev/null
+  cat "$out"
+
+  echo "== the same encoding to json uses, one document per line =="
+  ono -c 'echo "[1,2]" | from json | each { ({size: (@ * 1KiB), name: "x"}) } | to jsonl'
+
+  echo "== a reader that leaves ends the run quietly =="
+  ono -c "tail file $src --lines 1 --follow | to jsonl" | head -n 1
+  echo "ono-status=${PIPESTATUS[0]}"
+
+  echo "== it feeds a program while the source is open =="
+  ono -c "tail file $src --lines 2 --follow | to jsonl | head -n 1; echo program-status-\$?"
+exit: 0
+stdout-contains: lines-in-source=1
+stdout-contains: "first"
+stdout-contains: "second"
+stdout-contains: {"size":1024,"name":"x"}
+stdout-contains: {"size":2048,"name":"x"}
+stdout-contains: ono-status=141
+stdout-contains: program-status-0
+stdout-not-contains: unbounded_operation
+stdout-not-contains: panicked

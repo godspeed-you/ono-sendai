@@ -574,6 +574,7 @@ pub struct ParameterSpec {
     default_text: Option<String>,
     default_value: Option<Value>,
     execution: Option<ExecutionClass>,
+    values: Vec<String>,
 }
 
 impl ParameterSpec {
@@ -639,6 +640,11 @@ impl ParameterSpec {
     /// and reaches completion through its hook instead.
     #[must_use]
     pub fn closed_set(&self) -> Vec<String> {
+        // A parameter that enumerates the words it accepts — `to`'s formats — is completed from
+        // that list, which is the contract's and the implementation's both (ADR-0954).
+        if !self.values.is_empty() {
+            return self.values.clone();
+        }
         if let Some(values) = self.declared_type.closed_set() {
             return values.iter().map(|value| (*value).to_owned()).collect();
         }
@@ -1087,6 +1093,9 @@ struct RawParameter {
     /// The execution class an invocation that sets this option is in (ADR-0953).
     #[serde(default)]
     execution: Option<String>,
+    /// The closed set of words the parameter accepts, where it enumerates them (ADR-0954).
+    #[serde(default)]
+    values: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1285,6 +1294,7 @@ impl From<ContributedParameter> for RawParameter {
             // A contributed command declares one class for itself (spec §31.64); an option that
             // changes it is a core contract's statement, not something a package can make.
             execution: None,
+            values: Vec::new(),
         }
     }
 }
@@ -1502,6 +1512,7 @@ fn parameters_with(
                 default_text,
                 default_value,
                 execution,
+                values: parameter.values,
             })
         })
         .collect()

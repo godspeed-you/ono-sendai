@@ -109,6 +109,21 @@ fn should_offer_the_closed_set_of_values_a_bool_option_accepts() {
 }
 
 #[test]
+fn should_offer_the_formats_to_writes_including_the_streaming_one() {
+    // ADR-0954: the formats `to` writes are a closed set the contract declares, so completion
+    // offers them from metadata — `to j<TAB>` offers the array and the stream.
+    let candidates = complete("get process | to j");
+    let names = texts(&candidates);
+
+    assert_eq!(names, ["json", "jsonl"]);
+    assert!(
+        candidates
+            .iter()
+            .all(|candidate| candidate.kind() == CandidateKind::Value)
+    );
+}
+
+#[test]
 fn should_offer_a_declared_default_as_a_value_candidate() {
     let candidates = complete("kill process 4419 --signal=");
     let names = texts(&candidates);

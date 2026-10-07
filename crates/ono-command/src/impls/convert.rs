@@ -88,7 +88,7 @@ impl CommandImpl for ConversionCommand {
 
         // Fail on an unknown format before consuming anything: naming a format that does not
         // exist is a typo, and a typo must cost nothing (ADR-0013).
-        self.check(&name, &spelling)?;
+        self.check(ctx.contract(), selector, &name, &spelling)?;
 
         let input = ctx.take_input().ok_or_else(|| {
             ErrorValue::new(
@@ -96,6 +96,9 @@ impl CommandImpl for ConversionCommand {
                 format!("`{spelling} {name}` needs a value, and nothing was piped into it"),
             )
         })?;
+        if self.direction == Direction::Serialize && name == "jsonl" {
+            return json_lines(input, &options, &spelling).map(Outcome::Values);
+        }
         let direction = self.direction;
         let output = input.stage(Boundedness::Bounded, move |mut input, sink| async move {
             let mut values = Vec::new();
@@ -130,11 +133,30 @@ impl CommandImpl for ConversionCommand {
 }
 
 impl ConversionCommand {
-    fn check(&self, name: &str, spelling: &str) -> Result<(), ErrorValue> {
-        let known: &[&str] = match self.direction {
-            Direction::Serialize => &["json", "yaml", "csv", "text", "bytes"],
+    fn check(
+        &self,
+        contract: &crate::CommandContract,
+        selector: &str,
+        name: &str,
+        spelling: &str,
+    ) -> Result<(), ErrorValue> {
+        // Where the contract enumerates the formats, that list is the one — completion offers it,
+        // and accepting anything else would make the two disagree (ADR-0954).
+        let declared: Vec<String> = contract
+            .selectors()
+            .iter()
+            .find(|parameter| parameter.name() == selector)
+            .map(crate::ParameterSpec::closed_set)
+            .unwrap_or_default();
+        let builtin: &[&str] = match self.direction {
+            Direction::Serialize => &["json", "jsonl", "yaml", "csv", "text", "bytes"],
             Direction::Deserialize => &["json", "yaml", "csv"],
             Direction::Render => &["table", "list", "tree", "raw", "hex"],
+        };
+        let known: Vec<&str> = if declared.is_empty() {
+            builtin.to_vec()
+        } else {
+            declared.iter().map(String::as_str).collect()
         };
         if known.contains(&name) {
             return Ok(());
@@ -216,6 +238,50 @@ fn serialize(format: &str, values: &[Value], options: &Options) -> Result<Vec<Va
         other => return Err(unknown_format("to", other)),
     };
     Ok(vec![Value::string(&text)])
+}
+
+/// `to jsonl`: one compact JSON document per value, each a line of its own, sent on as the value
+/// arrives (ADR-0954).
+///
+/// The streaming serializer. Every other format is one document for the whole stream and has to
+/// wait for its end; a JSON Lines document is complete after every line, so this stage holds
+/// nothing between values, keeps the boundedness of its input — a stream that never ends is a
+/// legal input, and its output never ends either — and forwards a failure where it arrives. Each
+/// line is the element `to json` would write for the same value inside its array: one encoder,
+/// `ono_value::to_json_data`, so the two formats cannot disagree about a value.
+fn json_lines(
+    input: ono_pipeline::ValueStream,
+    options: &Options,
+    spelling: &str,
+) -> Result<ono_pipeline::ValueStream, ErrorValue> {
+    if options.pretty {
+        return Err(ErrorValue::new(
+            ErrorCode::TypeMismatch,
+            format!("`{spelling} jsonl` writes one document per line, so it cannot be `--pretty`"),
+        )
+        .with_help(format!(
+            "`{spelling} json --pretty` writes one indented document"
+        )));
+    }
+    let human = options.human;
+    let boundedness = input.boundedness();
+    Ok(input.stage(boundedness, move |mut input, sink| async move {
+        while let Some(event) = input.recv().await {
+            let delivered = match event {
+                StreamEvent::Value(value) => {
+                    let value = if human { humanise(&value) } else { value };
+                    match serde_json::to_string(&ono_value::to_json_data(&value)) {
+                        Ok(line) => sink.send(Value::string(&line)).await.is_ok(),
+                        Err(error) => sink.fail(json_failed(error)).await.is_ok(),
+                    }
+                }
+                StreamEvent::Failure(error) => sink.fail(error).await.is_ok(),
+            };
+            if !delivered {
+                return;
+            }
+        }
+    }))
 }
 
 /// `from <format>`: an explicit representation becomes values again.

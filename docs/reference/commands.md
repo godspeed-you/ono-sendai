@@ -1058,13 +1058,13 @@ Serialize a value or stream into text or bytes.
 
 | name | type | meaning |
 |---|---|---|
-| `format` | `string` | One of `json`, `yaml`, `csv`, `text`, `bytes`. |
+| `format` | `string` | One of `json`, `jsonl`, `yaml`, `csv`, `text`, `bytes`. `jsonl` is JSON Lines: one compact JSON document per value, each on a line of its own, written as the value arrives (ADR-0954). |
 
 **Options**
 
 | name | type | meaning |
 |---|---|---|
-| `--pretty` | `bool` | Indent the output for a human reader (spec §33.5). |
+| `--pretty` | `bool` | Indent the output for a human reader (spec §33.5). Not for `jsonl`, whose documents are one line each. |
 | `--human` | `bool` | Emit display forms such as `1.2 GiB` instead of canonical values. Off by default: §33.5 requires canonical values unless a human format is explicitly requested. |
 | `--field` | `string` | For `text`, emit this one field per line — the bridge spec §29.1 writes for feeding an ordinary Unix tool. Unnecessary once `select` has left exactly one field: a one-field record is already one line. For `bytes`, write this one field's bytes verbatim, which is how an adapted program's body reaches a file (`adapt curl url | to bytes --field body > page.html`, ADR-0223). |
 
@@ -1075,6 +1075,7 @@ get process | to json
 get process | to json --pretty
 get process | to json > out.json
 get mount | select target | to text
+get process | take 3 | to jsonl
 ```
 
 ### `from`

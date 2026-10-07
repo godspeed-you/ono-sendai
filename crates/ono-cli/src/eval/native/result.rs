@@ -28,7 +28,7 @@ use super::segment::{admits_bytes, produces_bytes, wrote_text};
 ///
 /// The first failure, when nothing survived: it is then the answer rather than a note beside one,
 /// and it travels as the error the run failed with (ADR-0221).
-pub(super) fn report_failures(values: &[Value], failures: Vec<ErrorValue>) -> Eval<()> {
+pub(super) fn report_failures(produced: bool, failures: Vec<ErrorValue>) -> Eval<()> {
     if failures.is_empty() {
         return Ok(());
     }
@@ -36,7 +36,7 @@ pub(super) fn report_failures(values: &[Value], failures: Vec<ErrorValue>) -> Ev
         std::io::IsTerminal::is_terminal(&std::io::stderr()),
         &[],
     ));
-    if values.is_empty() {
+    if !produced {
         // Nothing survived, so the failure is the answer rather than a note beside one. It
         // travels as the error the run failed with — reported once, by the caller that
         // reports every failure — and the rest are reported here (ADR-0221).
@@ -144,23 +144,179 @@ pub(super) fn action_records(
 pub(super) fn bytes_of(values: &[Value]) -> Vec<u8> {
     let mut bytes = Vec::new();
     for value in values {
-        match value {
-            // Raw bytes are written byte for byte. A document `to json` or `to text` wrote is
-            // line-oriented and ends with a newline where it has none; `to bytes` is the escape
-            // hatch of spec §12.2, and a byte the shell added would be a byte the file did not
-            // have (ADR-0223).
-            Value::Bytes(raw) => {
-                bytes.extend_from_slice(raw);
-                continue;
-            }
-            Value::String(text) => bytes.extend_from_slice(text.as_bytes()),
-            other => bytes.extend_from_slice(other.to_string().as_bytes()),
-        }
-        if !bytes.ends_with(b"\n") {
-            bytes.push(b'\n');
-        }
+        push_bytes(&mut bytes, value);
     }
     bytes
+}
+
+/// Appends the bytes one serialised value carries.
+fn push_bytes(bytes: &mut Vec<u8>, value: &Value) {
+    match value {
+        // Raw bytes are written byte for byte. A document `to json` or `to text` wrote is
+        // line-oriented and ends with a newline where it has none; `to bytes` is the escape
+        // hatch of spec §12.2, and a byte the shell added would be a byte the file did not
+        // have (ADR-0223).
+        Value::Bytes(raw) => {
+            bytes.extend_from_slice(raw);
+            return;
+        }
+        Value::String(text) => bytes.extend_from_slice(text.as_bytes()),
+        other => bytes.extend_from_slice(other.to_string().as_bytes()),
+    }
+    if !bytes.ends_with(b"\n") {
+        bytes.push(b'\n');
+    }
+}
+
+/// Whether a segment's output is lines a serializer wrote value by value, so it is written as it
+/// arrives rather than when the stream ends (ADR-0954).
+///
+/// That is a segment whose last serializer is `to jsonl` and whose stages after it only pass
+/// lines on as they come — `take 2`, `where …` — rather than wait for the end.
+pub(super) fn streams_bytes(bound: &[(&'static CommandContract, BoundArguments)]) -> bool {
+    let Some(serializer) = bound
+        .iter()
+        .rposition(|(contract, _)| produces_bytes(contract))
+    else {
+        return false;
+    };
+    let (contract, arguments) = &bound[serializer];
+    contract.id() == "ono.data.to"
+        && arguments
+            .selector("format")
+            .and_then(|format| format.as_str().ok())
+            == Some("jsonl")
+        && bound[serializer + 1..].iter().all(|(after, _)| {
+            after.is_streaming()
+                && !after
+                    .execution()
+                    .is_some_and(ono_command::ExecutionClass::may_materialize)
+        })
+}
+
+/// Where a streaming serializer's lines go as they are produced, and whether whoever reads them
+/// is still there (ADR-0954).
+pub(super) struct StreamedOutput {
+    writer: Box<dyn Write>,
+    /// Set once the reader of a pipe has gone away, by a watcher that notices it without a write.
+    reader_gone: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Tells the watcher to stop, when the output is done with.
+    watching: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+}
+
+impl StreamedOutput {
+    /// The output a stage's lines go to: the file its redirection names, or the shell's stdout.
+    pub(super) fn open(session: &mut Session, stage: &Stage, source: &str) -> Eval<Self> {
+        if let Some(file) = crate::eval::output_destination(session, stage, source)? {
+            return Ok(Self {
+                writer: Box::new(file),
+                reader_gone: None,
+                watching: None,
+            });
+        }
+        let watched = std::os::fd::AsFd::as_fd(&std::io::stdout())
+            .try_clone_to_owned()
+            .ok()
+            .filter(is_pipe)
+            .map(watch_reader);
+        let (reader_gone, watching) = match watched {
+            Some((gone, watching)) => (Some(gone), Some(watching)),
+            None => (None, None),
+        };
+        Ok(Self {
+            writer: Box::new(std::io::stdout()),
+            reader_gone,
+            watching,
+        })
+    }
+
+    /// The output that writes into a program's standard input, watching for the program leaving.
+    pub(super) fn into_program(input: std::os::fd::OwnedFd) -> Self {
+        let watched = input.try_clone().ok().map(watch_reader);
+        let (reader_gone, watching) = match watched {
+            Some((gone, watching)) => (Some(gone), Some(watching)),
+            None => (None, None),
+        };
+        Self {
+            writer: Box::new(std::fs::File::from(input)),
+            reader_gone,
+            watching,
+        }
+    }
+
+    /// Writes one value's line and flushes it, so it is where its reader can see it now.
+    ///
+    /// # Errors
+    ///
+    /// The write's own error; a broken pipe is the reader having gone, which the caller decides
+    /// the meaning of.
+    pub(super) fn write(&mut self, value: &Value) -> std::io::Result<()> {
+        let mut bytes = Vec::new();
+        push_bytes(&mut bytes, value);
+        self.writer.write_all(&bytes)?;
+        self.writer.flush()
+    }
+
+    /// The flag a watcher sets when the reader of the pipe has gone, if one is watching.
+    pub(super) fn reader_gone(&self) -> Option<&std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        self.reader_gone.as_ref()
+    }
+}
+
+impl Drop for StreamedOutput {
+    fn drop(&mut self) {
+        if let Some(watching) = &self.watching {
+            watching.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+}
+
+/// Whether a descriptor is a pipe, whose reader can go away while nothing is being written.
+fn is_pipe(descriptor: &std::os::fd::OwnedFd) -> bool {
+    nix::sys::stat::fstat(descriptor).is_ok_and(|status| {
+        nix::sys::stat::SFlag::from_bits_truncate(status.st_mode)
+            .contains(nix::sys::stat::SFlag::S_IFIFO)
+    })
+}
+
+/// Watches the write end of a pipe for its reader going away.
+///
+/// A pipe's write end reports an error condition as soon as no reader is left, without anything
+/// being written — so `… | to jsonl | head -1` ends when `head` leaves, not when the source next
+/// produces a value it would have failed to write (v0.4.1 §28.3). The watcher holds its own copy
+/// of the descriptor and ends when told to, or when it has seen the reader go.
+fn watch_reader(
+    descriptor: std::os::fd::OwnedFd,
+) -> (
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    let gone = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let watching = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let (report, keep) = (
+        std::sync::Arc::clone(&gone),
+        std::sync::Arc::clone(&watching),
+    );
+    let _ = std::thread::Builder::new()
+        .name("ono-reader-watch".to_owned())
+        .spawn(move || {
+            use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+            while keep.load(std::sync::atomic::Ordering::SeqCst) {
+                let mut descriptors = [PollFd::new(
+                    std::os::fd::AsFd::as_fd(&descriptor),
+                    PollFlags::empty(),
+                )];
+                if poll(&mut descriptors, PollTimeout::from(100_u16)).is_ok_and(|ready| ready > 0)
+                    && descriptors[0].revents().is_some_and(|events| {
+                        events.intersects(PollFlags::POLLERR | PollFlags::POLLHUP)
+                    })
+                {
+                    report.store(true, std::sync::atomic::Ordering::SeqCst);
+                    return;
+                }
+            }
+        });
+    (gone, watching)
 }
 
 /// Writes the last segment's result where the stage's redirections say it goes.

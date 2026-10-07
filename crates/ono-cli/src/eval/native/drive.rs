@@ -106,6 +106,8 @@ pub(super) enum Driven {
     Drained,
     /// Ctrl-C reached the shell (spec §18.5).
     Interrupted,
+    /// The reader of a streaming serializer's output went away (ADR-0954).
+    ReaderGone,
 }
 
 /// The stage a block-based `each` becomes: one that asks the evaluator, item by item.
@@ -178,6 +180,11 @@ pub(super) struct Drained {
     pub(super) failures: Vec<ErrorValue>,
     /// The flow a block raised, which stops the drain where the block stopped.
     pub(super) stopped: Option<Flow>,
+    /// How many values a streaming serializer wrote as they arrived instead of collecting them
+    /// here (ADR-0954).
+    pub(super) written: usize,
+    /// Whether the reader of what was being written went away, which ended the drain.
+    pub(super) reader_left: bool,
 }
 
 /// The driver. It is the only thing holding the session, so it is the only thing that can run a
@@ -195,8 +202,12 @@ pub(super) fn drive_segment(
     requests: &mut tokio::sync::mpsc::Receiver<BlockRequest>,
     mut draining: Option<ValueStream>,
     mut showing: Option<std::pin::Pin<Box<dyn std::future::Future<Output = Vec<ErrorValue>> + '_>>>,
+    mut output: Option<&mut super::result::StreamedOutput>,
 ) -> Eval<Drained> {
     let mut drained = Drained::default();
+    let reader_gone = output
+        .as_ref()
+        .and_then(|output| output.reader_gone().cloned());
     let mut asking = true;
     while draining.is_some() || showing.is_some() {
         // Between two items, and before the first. `select!` below only reaches the interrupt
@@ -233,6 +244,12 @@ pub(super) fn drive_segment(
                     Driven::Drained
                 }
                 () = interrupted() => Driven::Interrupted,
+                () = async {
+                    match reader_gone.as_ref() {
+                        Some(gone) => left(gone).await,
+                        None => std::future::pending().await,
+                    }
+                }, if reader_gone.is_some() => Driven::ReaderGone,
             }
         });
         match driven {
@@ -250,16 +267,44 @@ pub(super) fn drive_segment(
                 }
             },
             Driven::Asked => asking = false,
-            Driven::Event(StreamEvent::Value(value)) => drained.values.push(value),
+            // A streaming serializer's line is written now, and nothing is kept (ADR-0954). A
+            // write that finds the reader gone ends the drain as the reader leaving does.
+            Driven::Event(StreamEvent::Value(value)) => match output.as_deref_mut() {
+                Some(output) => match output.write(&value) {
+                    Ok(()) => drained.written += 1,
+                    Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {
+                        drained.reader_left = true;
+                        break;
+                    }
+                    Err(error) => return Err(super::result::write_failed(error)),
+                },
+                None => drained.values.push(value),
+            },
             Driven::Event(StreamEvent::Failure(error)) => drained.failures.push(error),
             Driven::Drained => {
                 draining = None;
                 showing = None;
             }
             Driven::Interrupted => return Err(crate::eval::pipeline::interrupted_flow_now()),
+            Driven::ReaderGone => {
+                drained.reader_left = true;
+                break;
+            }
         }
     }
     Ok(drained)
+}
+
+/// Resolves once a watched reader has gone away.
+async fn left(gone: &std::sync::Arc<std::sync::atomic::AtomicBool>) {
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(40));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tick.tick().await;
+        if gone.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+    }
 }
 
 /// Runs one item through the block a site names, in the scope the block was written in.

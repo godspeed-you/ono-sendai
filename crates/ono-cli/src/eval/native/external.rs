@@ -116,6 +116,7 @@ pub(super) fn run_streamed_segment(
         },
         false,
         last,
+        None,
     )
     .map(|_| ());
     // A reader still running means the consumer stopped before the child's output ended —

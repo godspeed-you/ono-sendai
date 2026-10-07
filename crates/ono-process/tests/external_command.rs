@@ -264,6 +264,45 @@ fn should_feed_more_bytes_than_a_pipe_buffer_holds() {
 }
 
 #[test]
+fn should_hand_the_caller_a_pipe_it_writes_the_childs_stdin_into_while_it_runs() {
+    // `Input::Pipe`: the caller writes while the child runs, and dropping its end is the end of
+    // the child's input. The child answers the first line before the second is written, which is
+    // what writing as you go means.
+    let outcome = within(DEADLINE, || {
+        let mut executor = Executor::detached();
+        let mut started = executor
+            .start_piped(
+                &Command::new("/bin/sh")
+                    .arg("-c")
+                    .arg("read first; echo \"got $first\"; read second; echo \"got $second\"")
+                    .stdin(Input::Pipe)
+                    .stdout(Output::Pipe)
+                    .into(),
+            )
+            .expect("the child starts");
+        let mut input = std::fs::File::from(started.take_stdin().expect("a pipe to write"));
+        let output = std::fs::File::from(started.take_pipe().expect("a pipe to read"));
+        let mut lines = std::io::BufRead::lines(std::io::BufReader::new(output));
+        std::io::Write::write_all(&mut input, b"one\n").expect("the child reads");
+        let first = lines.next().and_then(Result::ok);
+        std::io::Write::write_all(&mut input, b"two\n").expect("the child reads");
+        drop(input);
+        let second = lines.next().and_then(Result::ok);
+        let finished = executor.finish_foreground(started);
+        (first, second, finished)
+    });
+    let (first, second, finished) = outcome;
+    assert_eq!(first.as_deref(), Some("got one"));
+    assert_eq!(second.as_deref(), Some("got two"));
+    assert!(
+        finished
+            .expect("the child is waited for")
+            .status()
+            .is_success()
+    );
+}
+
+#[test]
 fn should_give_the_child_an_empty_stdin_when_it_is_null() {
     let outcome = captured(Command::new("cat").stdin(Input::Null));
     assert_eq!(text(outcome.stdout()), "");

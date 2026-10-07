@@ -32,6 +32,8 @@ pub(crate) struct StageIo {
     pub(crate) stderr: Option<OwnedFd>,
     /// The read end of the pipe the caller reads the child's standard output from.
     pub(crate) pipe: Option<OwnedFd>,
+    /// The write end of the pipe the caller writes the child's standard input into.
+    pub(crate) stdin: Option<OwnedFd>,
 }
 
 /// The descriptors a child is to be given, keyed by the number it will see them as.
@@ -107,6 +109,7 @@ pub(crate) fn prepare(
     let mut stdout = None;
     let mut stderr = None;
     let mut pipe = None;
+    let mut stdin = None;
 
     if let Some(read_end) = piped_input {
         plan.set(0, read_end);
@@ -118,6 +121,11 @@ pub(crate) fn prepare(
                 let (read_end, write_end) = make_pipe()?;
                 plan.set(0, read_end);
                 feed = Some((write_end, bytes.clone()));
+            }
+            Input::Pipe => {
+                let (read_end, write_end) = make_pipe()?;
+                plan.set(0, read_end);
+                stdin = Some(write_end);
             }
         }
     }
@@ -162,6 +170,7 @@ pub(crate) fn prepare(
         stdout,
         stderr,
         pipe,
+        stdin,
     })
 }
 

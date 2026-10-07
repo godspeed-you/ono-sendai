@@ -431,6 +431,7 @@ fn refuse(count: usize, at: usize, refusal: (ExitStatus, Error)) -> Vec<RunningS
             stdout: None,
             stderr: None,
             pipe: None,
+            stdin: None,
         })
         .collect()
 }
@@ -579,6 +580,7 @@ impl Executor {
                     stdout: None,
                     stderr: None,
                     pipe: None,
+                    stdin: None,
                 };
             }
         };
@@ -596,6 +598,7 @@ impl Executor {
             stdout: io.stdout.map(Collector::start),
             stderr: io.stderr.map(Collector::start),
             pipe: io.pipe,
+            stdin: io.stdin,
         }
     }
 
@@ -694,6 +697,15 @@ impl Foreground {
             .stages
             .last_mut()
             .and_then(|stage| stage.pipe.take())
+    }
+
+    /// The write end of the first stage's [`Input::Pipe`](crate::Input::Pipe), the first time it
+    /// is asked for. Dropping it is the end of the command's input.
+    pub fn take_stdin(&mut self) -> Option<std::os::fd::OwnedFd> {
+        self.running
+            .stages
+            .first_mut()
+            .and_then(|stage| stage.stdin.take())
     }
 
     /// Why a stage could not be started, if one could not.
