@@ -18,19 +18,19 @@ fields:
     doc: What sort of frame this is (spec §14.1).
   target:
     type: string
-    required: false
+    nullable: true
     doc: >-
       The target the frame narrows to, such as `service` for `enter service nginx`. Null for
       the ground frame and for frames that narrow nothing.
   identity:
     type: string
-    required: false
+    nullable: true
     doc: >-
       The identity of the entered object — `nginx.service`, `/etc`, `prod-db` — rendered the
       way the prompt shows it. Null for the ground frame.
   selector:
     type: string
-    required: false
+    nullable: true
     doc: >-
       The explicit spelling of what the frame contributes, such as `--service nginx.service`
       (spec §14.5, ADR-0023): every context is expressible without entering it.

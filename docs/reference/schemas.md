@@ -439,9 +439,9 @@ Default view: `depth`, `kind`, `target`, `identity`
 |---|---|---|---|---|
 | `depth` | `int` | — | required | The frame's position, 0 for the session's ground frame. The stack renders bottom-up. |
 | `kind` | `enum` | — | required | What sort of frame this is (spec §14.1). |
-| `target` | `string` | — | optional | The target the frame narrows to, such as `service` for `enter service nginx`. Null for the ground frame and for frames that narrow nothing. |
-| `identity` | `string` | — | optional | The identity of the entered object — `nginx.service`, `/etc`, `prod-db` — rendered the way the prompt shows it. Null for the ground frame. |
-| `selector` | `string` | — | optional | The explicit spelling of what the frame contributes, such as `--service nginx.service` (spec §14.5, ADR-0023): every context is expressible without entering it. |
+| `target` | `string` | — | nullable | The target the frame narrows to, such as `service` for `enter service nginx`. Null for the ground frame and for frames that narrow nothing. |
+| `identity` | `string` | — | nullable | The identity of the entered object — `nginx.service`, `/etc`, `prod-db` — rendered the way the prompt shows it. Null for the ground frame. |
+| `selector` | `string` | — | nullable | The explicit spelling of what the frame contributes, such as `--service nginx.service` (spec §14.5, ADR-0023): every context is expressible without entering it. |
 
 ## Device — `ono.device/1`
 

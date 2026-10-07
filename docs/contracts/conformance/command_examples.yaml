@@ -177,11 +177,6 @@ exemptions:
       verb vocabulary, recorded in ADR-0935, not a property of the test host.
 
   # --- defects the suite found, each removed by the commit that fixes it (ADR-0935) ----------
-  - command: ono.context.get
-    example: get context
-    reason: >-
-      known defect: answers untagged maps where the contract declares `stream<ono.context/1>`;
-      fixed by a following commit.
   - command: ono.route.trace
     example: trace route 0.0.0.0/0
     reason: >-

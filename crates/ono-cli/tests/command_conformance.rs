@@ -8,9 +8,9 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 101 examples run; 252 are not run, each for the reason listed at the end of this file.
+//! 102 examples run; 251 are not run, each for the reason listed at the end of this file.
 //!
-//! Commands no example of which runs (165):
+//! Commands no example of which runs (164):
 //!
 //! - `ono.change.plan` — exempt: plans to replace `/etc/nginx/nginx.conf` from `./nginx.conf`; a scratch directory has neither file.
 //! - `ono.change-plan.inspect` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.
@@ -84,7 +84,6 @@
 //! - `ono.meta.explain` — runs `ono.meta.explain`, which declares `ono.execution-plan/1` — a schema schemas/deferred.yaml says a later phase writes
 //! - `ono.config.set` — runs `ono.config.set`, whose verb `set` changes the system (verbs.yaml)
 //! - `ono.context.leave` — runs `leave`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
-//! - `ono.context.get` — exempt: known defect: answers untagged maps where the contract declares `stream<ono.context/1>`; fixed by a following commit.
 //! - `ono.socket.get` — runs `ono.socket.get`, which declares privilege `conditional`
 //! - `ono.connection.get` — runs `ono.connection.get`, which declares privilege `conditional`
 //! - `ono.dns.resolve` — runs `ono.dns.resolve`, whose capability `dns.resolve` reaches the network
@@ -706,6 +705,17 @@ fn should_produce_what_ono_limits_inspect_declares_when_example_2_runs() {
         command: "ono.limits.inspect",
         example: "inspect limits limits.materialize_bytes",
         output: "stream<ono.limit/1>",
+    });
+}
+
+/// `get context`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_context_get_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.context.get",
+        example: "get context",
+        output: "stream<ono.context/1>",
     });
 }
 
@@ -1418,7 +1428,6 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.config.set` `set config safety.confirm.bulk_threshold = 100` — runs `ono.config.set`, whose verb `set` changes the system (verbs.yaml)
 // - `ono.context.leave` `leave` — runs `leave`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
 // - `ono.context.leave` `leave --all` — runs `leave`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
-// - `ono.context.get` `get context` — exempt: known defect: answers untagged maps where the contract declares `stream<ono.context/1>`; fixed by a following commit.
 // - `ono.socket.get` `get socket` — runs `ono.socket.get`, which declares privilege `conditional`
 // - `ono.socket.get` `get socket | where state == established | group process.name` — runs `ono.socket.get`, which declares privilege `conditional`
 // - `ono.socket.get` `get socket | where state == listen | where local.address not in [127.0.0.1, ::1]` — runs `ono.socket.get`, which declares privilege `conditional`

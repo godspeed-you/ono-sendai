@@ -600,6 +600,31 @@ fn error_map(error: &ErrorValue) -> Value {
 }
 
 /// The stack as `ono.context/1` records, the ground frame first (spec §14.1).
+/// A record of the built-in schema `<name>/1`, holding `fields` in the schema's own order.
+///
+/// The meta commands answer with records of the schemas their contracts declare (issue #149,
+/// ADR-0935). Should the schema be missing from a build, or a field not fit it, the same fields
+/// still answer as an untagged map rather than as nothing.
+fn schema_record(name: &str, provider: &str, fields: Vec<(&str, Value)>) -> Value {
+    let record = ono_value::builtin_schemas()
+        .get(&SchemaId::new(name, 1))
+        .and_then(|schema| {
+            let provenance = Provenance::local(provider, schema.id().clone());
+            let mut builder = RecordValue::builder(schema, provenance);
+            for (field, value) in &fields {
+                builder = builder.set(field, value.clone()).ok()?;
+            }
+            Some(builder.build().into_value())
+        });
+    record.unwrap_or_else(|| {
+        let mut map = MapValue::new();
+        for (field, value) in fields {
+            map.insert(field.into(), value);
+        }
+        Value::Map(Arc::new(map))
+    })
+}
+
 fn context_records(ctx: &Invocation<'_>) -> Vec<Value> {
     let kind_name = |frame: &crate::ContextFrame| match frame.kind() {
         // context.v1 names a container frame by its own kind (spec §14.1: "execution/container
@@ -611,39 +636,40 @@ fn context_records(ctx: &Invocation<'_>) -> Vec<Value> {
     };
 
     let mut records = Vec::with_capacity(ctx.context().len() + 1);
-    let mut ground = MapValue::new();
-    ground.insert("depth".into(), Value::Int(0));
-    ground.insert("kind".into(), Value::string("local"));
-    ground.insert("target".into(), Value::Null);
-    ground.insert("identity".into(), Value::Null);
-    ground.insert("selector".into(), Value::Null);
-    records.push(Value::Map(Arc::new(ground)));
+    records.push(schema_record(
+        "ono.context",
+        "ono.context",
+        vec![
+            ("depth", Value::Int(0)),
+            ("kind", Value::string("local")),
+            ("target", Value::Null),
+            ("identity", Value::Null),
+            ("selector", Value::Null),
+        ],
+    ));
 
     for (index, frame) in ctx.context().iter().enumerate() {
-        let mut entry = MapValue::new();
-        entry.insert("depth".into(), Value::Int(index as i128 + 1));
-        entry.insert("kind".into(), Value::string(kind_name(frame)));
-        entry.insert("target".into(), Value::string(frame.target()));
-        // context.v1 renders the identity the way the prompt shows it: as text, whatever the
-        // object's own identity type is.
-        entry.insert(
-            "identity".into(),
-            Value::string(&frame.identity().to_string()),
-        );
         // Everything a frame contributes can be written out explicitly (spec §14.5, ADR-0023).
-        entry.insert(
-            "selector".into(),
-            match frame.kind() {
-                crate::FrameKind::Object => {
-                    Value::string(&format!("--{} {}", frame.target(), frame.identity()))
-                }
-                crate::FrameKind::Filesystem => Value::string(&format!("cd {}", frame.identity())),
-                crate::FrameKind::Link => {
-                    Value::string(&format!("enter link {}", frame.identity()))
-                }
-            },
-        );
-        records.push(Value::Map(Arc::new(entry)));
+        let selector = match frame.kind() {
+            crate::FrameKind::Object => {
+                Value::string(&format!("--{} {}", frame.target(), frame.identity()))
+            }
+            crate::FrameKind::Filesystem => Value::string(&format!("cd {}", frame.identity())),
+            crate::FrameKind::Link => Value::string(&format!("enter link {}", frame.identity())),
+        };
+        records.push(schema_record(
+            "ono.context",
+            "ono.context",
+            vec![
+                ("depth", Value::Int(index as i128 + 1)),
+                ("kind", Value::string(kind_name(frame))),
+                ("target", Value::string(frame.target())),
+                // context.v1 renders the identity the way the prompt shows it: as text, whatever
+                // the object's own identity type is.
+                ("identity", Value::string(&frame.identity().to_string())),
+                ("selector", selector),
+            ],
+        ));
     }
     records
 }
