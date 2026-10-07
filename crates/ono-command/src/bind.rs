@@ -10,7 +10,7 @@ use ono_core::ErrorCode;
 use ono_parser::{Argument, Expr};
 use ono_value::{ErrorValue, Value};
 
-use crate::contract::{ArgumentMode, CommandContract, ParameterSpec};
+use crate::contract::{ArgumentMode, CommandContract, DeclaredType, ParameterSpec};
 use crate::suggest::closest;
 
 /// What one selector or option was bound to.
@@ -62,6 +62,11 @@ pub struct BoundArguments {
     /// parameter for (spec §14.3, ADR-0076). They reach the provider as selectors and nothing
     /// else — an implementation reading its declared parameters never sees them.
     ambient: Vec<(String, Value)>,
+    /// The declared selectors, in declaration order, so a value an expression evaluates to later
+    /// is held to the same declaration a word was held to here (issue #168, ADR-0937).
+    declared_selectors: Vec<ParameterSpec>,
+    /// The declared options, for the same reason.
+    declared_options: Vec<ParameterSpec>,
 }
 
 impl BoundArguments {
@@ -138,32 +143,114 @@ impl BoundArguments {
     /// Whatever evaluating an argument raises — an undefined variable, a `@` with no current
     /// value, a failed field access — naming the parameter it was written for.
     pub fn evaluated(&self, scope: &crate::Scope) -> Result<Self, ErrorValue> {
-        let resolve =
-            |bindings: &[(String, Binding)]| -> Result<Vec<(String, Binding)>, ErrorValue> {
-                bindings
-                    .iter()
-                    .map(|(name, binding)| {
-                        let Binding::Expressions(expressions) = binding else {
-                            return Ok((name.clone(), binding.clone()));
-                        };
-                        let mut values = Vec::with_capacity(expressions.len());
-                        for expression in expressions {
-                            values.push(crate::expr::evaluate(expression, &Value::Null, scope)?);
-                        }
-                        let value = match values.len() {
-                            1 => values.remove(0),
-                            _ => Value::list(values),
-                        };
-                        Ok((name.clone(), Binding::Value(value)))
-                    })
-                    .collect()
+        let evaluate = |expressions: &[Expr]| -> Result<Vec<Value>, ErrorValue> {
+            expressions
+                .iter()
+                .map(|expression| crate::expr::evaluate(expression, &Value::Null, scope))
+                .collect()
+        };
+
+        let mut selectors: Vec<(String, Binding)> = Vec::with_capacity(self.selectors.len());
+        for (name, binding) in &self.selectors {
+            let Binding::Expressions(expressions) = binding else {
+                selectors.push((name.clone(), binding.clone()));
+                continue;
             };
+            let values = evaluate(expressions)?;
+            let Some(spec) = self.declared_selector(name) else {
+                selectors.push((name.clone(), Binding::Value(gathered(values))));
+                continue;
+            };
+            if let Some(value) = conform_all(spec, &values) {
+                selectors.push((name.clone(), Binding::Value(value)));
+                continue;
+            }
+            // Selectors are alternatives (spec §6.1, §26.2): a word binds to the first free one
+            // whose type it fits, and an evaluated value is held to the same rule, so `get user
+            // $who` with `$who = "root"` is `get user root` (ADR-0937).
+            let free = self.declared_selectors.iter().find_map(|other| {
+                let taken = self
+                    .selectors
+                    .iter()
+                    .any(|(bound, _)| bound == other.name())
+                    || selectors.iter().any(|(bound, _)| bound == other.name());
+                if taken {
+                    return None;
+                }
+                conform_all(other, &values).map(|value| (other.name().to_owned(), value))
+            });
+            match free {
+                Some((other, value)) => selectors.push((other, Binding::Value(value))),
+                None => return Err(self.mismatch("", spec, &values)),
+            }
+        }
+
+        let mut options = Vec::with_capacity(self.options.len());
+        for (name, binding) in &self.options {
+            let Binding::Expressions(expressions) = binding else {
+                options.push((name.clone(), binding.clone()));
+                continue;
+            };
+            let values = evaluate(expressions)?;
+            let value = match self.declared_option(name) {
+                Some(spec) => {
+                    conform_all(spec, &values).ok_or_else(|| self.mismatch("--", spec, &values))?
+                }
+                None => gathered(values),
+            };
+            options.push((name.clone(), Binding::Value(value)));
+        }
+
         Ok(Self {
             spelling: self.spelling.clone(),
-            selectors: resolve(&self.selectors)?,
-            options: resolve(&self.options)?,
+            selectors,
+            options,
             ambient: self.ambient.clone(),
+            declared_selectors: self.declared_selectors.clone(),
+            declared_options: self.declared_options.clone(),
         })
+    }
+
+    fn declared_selector(&self, name: &str) -> Option<&ParameterSpec> {
+        self.declared_selectors
+            .iter()
+            .find(|spec| spec.name() == name)
+    }
+
+    fn declared_option(&self, name: &str) -> Option<&ParameterSpec> {
+        self.declared_options
+            .iter()
+            .find(|spec| spec.name() == name)
+    }
+
+    /// `type.mismatch` for an evaluated value its parameter's declaration does not admit, naming
+    /// the parameter, the declared type and the type received (issue #168).
+    fn mismatch(&self, prefix: &str, spec: &ParameterSpec, values: &[Value]) -> ErrorValue {
+        let received = values
+            .iter()
+            .find(|value| conform(spec, value).is_none())
+            .map_or("value", Value::type_name);
+        ErrorValue::new(
+            ErrorCode::TypeMismatch,
+            format!(
+                "`{prefix}{}` of `{}` is declared `{}`, and its value is a `{received}`",
+                spec.name(),
+                self.spelling,
+                spec.declared_type().name(),
+            ),
+        )
+        .with_help(format!(
+            "give `{prefix}{}` a `{}`; `help {}` lists what each parameter takes",
+            spec.name(),
+            spec.declared_type().name(),
+            self.spelling
+        ))
+        .with_metadata(
+            "parameter",
+            Value::string(&format!("{prefix}{}", spec.name())),
+        )
+        .with_metadata("declared", Value::string(&spec.declared_type().name()))
+        .with_metadata("received", Value::string(received))
     }
 
     /// These arguments with `name` bound to `value` as a selector, unless it is bound already.
@@ -382,6 +469,8 @@ impl CommandContract {
             selectors: merge(selectors, self.selectors()),
             options: merge(options, self.options()),
             ambient: Vec::new(),
+            declared_selectors: self.selectors().to_vec(),
+            declared_options: self.options().to_vec(),
         })
     }
 
@@ -597,6 +686,82 @@ impl CommandContract {
         }
         Ok(query)
     }
+}
+
+/// Several evaluated values of one parameter as the one value a parameter carries: the value
+/// itself when it was written once, a list of them when it was written more than once.
+fn gathered(mut values: Vec<Value>) -> Value {
+    match values.len() {
+        1 => values.remove(0),
+        _ => Value::list(values),
+    }
+}
+
+/// The evaluated values of one parameter held to its declaration, gathered as [`gathered`] does;
+/// `None` when one of them is not admitted.
+fn conform_all(spec: &ParameterSpec, values: &[Value]) -> Option<Value> {
+    values
+        .iter()
+        .map(|value| conform(spec, value))
+        .collect::<Option<Vec<Value>>>()
+        .map(gathered)
+}
+
+/// One evaluated value held to a parameter's declaration (ADR-0937).
+///
+/// A value already of the declared type stands. A list stands where the parameter is a list or is
+/// repeatable, when every item does. Any other scalar is reinterpreted through its canonical text
+/// exactly as a word would be — `"4419"` for an `int`, `443` for a `port`, `"5s"` for a
+/// `duration` — so an expression is never held to a stricter rule than the word it replaces. A
+/// `null` is unknown rather than mistyped (ADR-0014) and stands. Everything else is `None`.
+fn conform(spec: &ParameterSpec, value: &Value) -> Option<Value> {
+    match (spec.declared_type(), value) {
+        (DeclaredType::List(inner), Value::List(items)) => conform_items(inner, items),
+        (declared, Value::List(items)) if spec.is_repeatable() => conform_items(declared, items),
+        (DeclaredType::List(inner), value) => conform_type(inner, value),
+        (declared, value) => conform_type(declared, value),
+    }
+}
+
+fn conform_items(declared: &DeclaredType, items: &[Value]) -> Option<Value> {
+    items
+        .iter()
+        .map(|item| conform_type(declared, item))
+        .collect::<Option<Vec<Value>>>()
+        .map(Value::list)
+}
+
+fn conform_type(declared: &DeclaredType, value: &Value) -> Option<Value> {
+    let fits = match (declared, value) {
+        (_, Value::Null) | (DeclaredType::Value, _) => true,
+        (DeclaredType::Bool, Value::Bool(_))
+        | (DeclaredType::Int, Value::Int(_))
+        | (DeclaredType::Float, Value::Float(_))
+        | (DeclaredType::String, Value::String(_))
+        | (DeclaredType::Path, Value::Path(_))
+        | (DeclaredType::Duration, Value::Duration(_))
+        | (DeclaredType::ByteSize, Value::ByteSize(_))
+        | (DeclaredType::Timestamp, Value::Timestamp(_))
+        | (DeclaredType::Port, Value::Port(_))
+        | (DeclaredType::Ip, Value::Ip(_))
+        | (DeclaredType::IpNetwork, Value::IpNetwork(_))
+        | (DeclaredType::Record, Value::Record(_) | Value::Map(_)) => true,
+        // A reference names an object by its identity text or is the object itself; resolving it
+        // is the command's (ADR-0012 §7).
+        (DeclaredType::Ref(_), value) => !matches!(value, Value::List(_)),
+        _ => false,
+    };
+    if fits {
+        return Some(value.clone());
+    }
+    if matches!(
+        value,
+        Value::List(_) | Value::Map(_) | Value::Record(_) | Value::Bytes(_) | Value::Error(_)
+    ) {
+        return None;
+    }
+    let text = ono_value::canonical_text(value).ok()?;
+    declared.coerce(&text).ok()
 }
 
 fn push(entries: &mut Vec<(String, Vec<Binding>)>, name: &str, binding: Binding) {

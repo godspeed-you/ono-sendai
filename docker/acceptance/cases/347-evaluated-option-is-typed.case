@@ -1,0 +1,17 @@
+# Issue #168, ADR-0937: an evaluated option or selector is held to the type the command declares.
+# `--verb ["get"]` used to reach `get command` as a list, fail its `string` read, and answer the
+# whole registry as if the filter had not been written.
+case: a wrongly typed evaluated option is refused by name, and a fitting one applies like the word
+run: |
+  ono -c 'get command --verb ["get"] | count | to json'
+  echo "status=$?"
+  echo "== the word and the evaluated value answer alike =="
+  ono -c 'get command --verb get | count | to json'
+  ono -c 'get command --verb ("get") | count | to json'
+  echo "== a variable binds to the selector its value fits =="
+  ono -c 'let who = "root"; get user $who | select name uid | to json'
+exit: 0
+stdout-contains: Ono-Sendai-E0201 type.mismatch `--verb` of `get command` is declared `string`, and its value is a `list`
+stdout-contains: status=1
+stdout-contains: [{"name":"root","uid":0}]
+stdout-not-contains: panicked

@@ -45,24 +45,11 @@ impl CommandImpl for ProviderProducer {
         // The query is built from the contract, so a new target is a new registry entry and no
         // new code (ADR-0012, ADR-0021). What a context frame narrows is already in the
         // arguments: the command table filled it in before this ran (spec §14.3, ADR-0076).
-        let mut query = ctx.contract().query(ctx.arguments())?;
         // A parenthesised value — `--since (now() - 1h)` — is bound as an expression and has no
-        // value until it is evaluated here, against the invocation's scope; the contract's
-        // `query` carries only what already is a value (ADR-0085 §2).
-        let arguments = ctx.arguments();
-        for (name, binding) in arguments.selectors().iter().chain(arguments.options()) {
-            if let crate::Binding::Expressions(expressions) = binding {
-                for expression in expressions {
-                    let value =
-                        crate::expr::evaluate(expression, &ono_value::Value::Null, ctx.scope())?;
-                    query = if arguments.selector_binding(name).is_some() {
-                        query.with(ono_provider_api::Selector::field(name, value))
-                    } else {
-                        query.option(name, value)
-                    };
-                }
-            }
-        }
+        // value until it is evaluated here, against the invocation's scope, and held to the
+        // parameter's declared type like a word is (ADR-0085 §2, ADR-0937).
+        let arguments = ctx.arguments().evaluated(ctx.scope())?;
+        let mut query = ctx.contract().query(&arguments)?;
         if self.follow {
             query = query.option("follow", ono_value::Value::Bool(true));
         }
