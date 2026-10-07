@@ -389,6 +389,56 @@ fn should_refuse_an_exemption_without_a_reason() {
     );
 }
 
+// --- review C8: an example that produced nothing held nothing to its declaration -------------
+
+#[test]
+fn should_carry_an_example_that_may_be_empty_and_its_reason_into_the_suite() {
+    let repo = command_registries();
+    repo.write(
+        "docs/contracts/conformance/command_examples.yaml",
+        "version: 1\nexemptions: []\nmay_be_empty:\n  - command: ono.process.get\n    example: get process 4419\n    reason: a test host need not run process 4419.\n",
+    );
+    let suite = command_suite(&repo);
+    assert!(
+        suite.contains(r#"may_be_empty: Some("a test host need not run process 4419."),"#),
+        "an example declared possibly empty carries the reason the harness accepts:\n{suite}"
+    );
+    assert!(
+        suite.contains("may_be_empty: None,"),
+        "every other example must produce a value for the declaration to be checked:\n{suite}"
+    );
+}
+
+#[test]
+fn should_refuse_a_may_be_empty_entry_naming_an_example_no_command_documents() {
+    let repo = command_registries();
+    repo.write(
+        "docs/contracts/conformance/command_examples.yaml",
+        "version: 1\nexemptions: []\nmay_be_empty:\n  - command: ono.process.get\n    example: get process 1\n    reason: stale.\n",
+    );
+    let error = generate(repo.path()).expect_err("a stale entry must stop generation");
+    assert!(
+        error.detail.contains("get process 1") && error.detail.contains("may_be_empty"),
+        "the refusal names the stale entry: {}",
+        error.detail
+    );
+}
+
+#[test]
+fn should_refuse_a_may_be_empty_entry_without_a_reason() {
+    let repo = command_registries();
+    repo.write(
+        "docs/contracts/conformance/command_examples.yaml",
+        "version: 1\nexemptions: []\nmay_be_empty:\n  - command: ono.process.get\n    example: get process 4419\n",
+    );
+    let error = generate(repo.path()).expect_err("an entry without a reason must stop generation");
+    assert!(
+        error.detail.contains("reason"),
+        "the refusal says what is missing: {}",
+        error.detail
+    );
+}
+
 #[test]
 fn should_report_a_committed_command_suite_that_drifted_from_the_contracts() {
     let repo = command_registries();

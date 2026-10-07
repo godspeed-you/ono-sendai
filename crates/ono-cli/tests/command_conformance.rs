@@ -9,6 +9,7 @@
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
 //! 111 examples run; 246 are not run, each for the reason listed at the end of this file.
+//! 52 of the examples that run may produce no value in a fresh environment, each with the reason it carries; every other one must produce at least one.
 //!
 //! Commands no example of which runs (159):
 //!
@@ -194,6 +195,7 @@ fn should_produce_what_ono_change_plan_get_declares_when_example_1_runs() {
         command: "ono.change-plan.get",
         example: "get plan",
         output: "stream<ono.change-plan/1>",
+        may_be_empty: Some("a fresh state directory holds no plan."),
     });
 }
 
@@ -205,6 +207,7 @@ fn should_produce_what_ono_change_plan_get_declares_when_example_3_runs() {
         command: "ono.change-plan.get",
         example: "get plan --state failed",
         output: "stream<ono.change-plan/1>",
+        may_be_empty: Some("a fresh state directory holds no plan, failed or otherwise."),
     });
 }
 
@@ -216,6 +219,7 @@ fn should_produce_what_ono_recovery_get_declares_when_example_1_runs() {
         command: "ono.recovery.get",
         example: "get recovery",
         output: "stream<ono.recovery-asset/1>",
+        may_be_empty: Some("a fresh state directory holds no recovery asset."),
     });
 }
 
@@ -227,6 +231,7 @@ fn should_produce_what_ono_data_where_declares_when_example_1_runs() {
         command: "ono.data.where",
         example: "get process | where cpu > 20",
         output: "stream<any>",
+        may_be_empty: Some("selects processes above a CPU threshold, and how many there are is the test host's load at that instant."),
     });
 }
 
@@ -238,6 +243,7 @@ fn should_produce_what_ono_data_where_declares_when_example_2_runs() {
         command: "ono.data.where",
         example: "get process | where cpu > 20 and user.name != \"root\"",
         output: "stream<any>",
+        may_be_empty: Some("selects processes above a CPU threshold, and how many there are is the test host's load at that instant."),
     });
 }
 
@@ -249,6 +255,7 @@ fn should_produce_what_ono_data_select_declares_when_example_1_runs() {
         command: "ono.data.select",
         example: "get process | select pid name memory",
         output: "stream<record>",
+        may_be_empty: None,
     });
 }
 
@@ -260,6 +267,7 @@ fn should_produce_what_ono_data_select_declares_when_example_2_runs() {
         command: "ono.data.select",
         example: "get process | select pid name {mem_mb: memory / 1MiB}",
         output: "stream<record>",
+        may_be_empty: None,
     });
 }
 
@@ -271,6 +279,7 @@ fn should_produce_what_ono_data_sort_declares_when_example_1_runs() {
         command: "ono.data.sort",
         example: "get process | sort memory desc",
         output: "stream<any>",
+        may_be_empty: None,
     });
 }
 
@@ -282,6 +291,7 @@ fn should_produce_what_ono_data_sort_declares_when_example_2_runs() {
         command: "ono.data.sort",
         example: "get process | sort cpu desc | take 10",
         output: "stream<any>",
+        may_be_empty: None,
     });
 }
 
@@ -293,6 +303,7 @@ fn should_produce_what_ono_data_group_declares_when_example_1_runs() {
         command: "ono.data.group",
         example: "get process | group user.name",
         output: "stream<record>",
+        may_be_empty: None,
     });
 }
 
@@ -304,6 +315,7 @@ fn should_produce_what_ono_data_take_declares_when_example_1_runs() {
         command: "ono.data.take",
         example: "get process | sort cpu desc | take 10",
         output: "stream<any>",
+        may_be_empty: None,
     });
 }
 
@@ -315,6 +327,7 @@ fn should_produce_what_ono_data_skip_declares_when_example_1_runs() {
         command: "ono.data.skip",
         example: "get process | sort cpu desc | skip 1 | take 5",
         output: "stream<any>",
+        may_be_empty: None,
     });
 }
 
@@ -326,6 +339,7 @@ fn should_produce_what_ono_data_reduce_declares_when_example_1_runs() {
         command: "ono.data.reduce",
         example: "get process | select memory | reduce $acc + @ --initial 0",
         output: "value",
+        may_be_empty: None,
     });
 }
 
@@ -337,6 +351,7 @@ fn should_produce_what_ono_data_count_declares_when_example_1_runs() {
         command: "ono.data.count",
         example: "get process | count",
         output: "int",
+        may_be_empty: None,
     });
 }
 
@@ -348,6 +363,7 @@ fn should_produce_what_ono_data_measure_declares_when_example_1_runs() {
         command: "ono.data.measure",
         example: "get process | measure memory",
         output: "ono.measure/1",
+        may_be_empty: None,
     });
 }
 
@@ -359,6 +375,7 @@ fn should_produce_what_ono_data_measure_declares_when_example_2_runs() {
         command: "ono.data.measure",
         example: "get process | measure memory --median --percentiles [90, 99]",
         output: "ono.measure/1",
+        may_be_empty: None,
     });
 }
 
@@ -370,6 +387,7 @@ fn should_produce_what_ono_data_to_declares_when_example_1_runs() {
         command: "ono.data.to",
         example: "get process | to json",
         output: "string | bytes | stream<string>",
+        may_be_empty: None,
     });
 }
 
@@ -381,6 +399,7 @@ fn should_produce_what_ono_data_to_declares_when_example_2_runs() {
         command: "ono.data.to",
         example: "get process | to json --pretty",
         output: "string | bytes | stream<string>",
+        may_be_empty: None,
     });
 }
 
@@ -392,6 +411,7 @@ fn should_produce_what_ono_data_to_declares_when_example_4_runs() {
         command: "ono.data.to",
         example: "get mount | select target | to text",
         output: "string | bytes | stream<string>",
+        may_be_empty: None,
     });
 }
 
@@ -403,6 +423,7 @@ fn should_produce_what_ono_data_to_declares_when_example_5_runs() {
         command: "ono.data.to",
         example: "get process | take 3 | to jsonl",
         output: "string | bytes | stream<string>",
+        may_be_empty: None,
     });
 }
 
@@ -414,6 +435,7 @@ fn should_produce_what_ono_data_format_declares_when_example_1_runs() {
         command: "ono.data.format",
         example: "get process | format table",
         output: "string",
+        may_be_empty: None,
     });
 }
 
@@ -425,6 +447,7 @@ fn should_produce_what_ono_data_format_declares_when_example_2_runs() {
         command: "ono.data.format",
         example: "get process | format table --columns [\"pid\", \"name\", \"memory\"]",
         output: "string",
+        may_be_empty: None,
     });
 }
 
@@ -436,6 +459,7 @@ fn should_produce_what_ono_data_view_declares_when_example_1_runs() {
         command: "ono.data.view",
         example: "get process | view table",
         output: "null",
+        may_be_empty: None,
     });
 }
 
@@ -447,6 +471,7 @@ fn should_produce_what_ono_data_join_declares_when_example_1_runs() {
         command: "ono.data.join",
         example: "get process | join (get process | where cpu > 1) --on pid",
         output: "stream<record>",
+        may_be_empty: Some("selects processes above a CPU threshold, and how many there are is the test host's load at that instant."),
     });
 }
 
@@ -458,6 +483,7 @@ fn should_produce_what_ono_user_get_declares_when_example_1_runs() {
         command: "ono.user.get",
         example: "get user",
         output: "stream<ono.user/1>",
+        may_be_empty: None,
     });
 }
 
@@ -469,6 +495,7 @@ fn should_produce_what_ono_user_get_declares_when_example_2_runs() {
         command: "ono.user.get",
         example: "get user postgres",
         output: "stream<ono.user/1>",
+        may_be_empty: Some("names the user `postgres`, which a test host need not have."),
     });
 }
 
@@ -480,6 +507,7 @@ fn should_produce_what_ono_group_get_declares_when_example_1_runs() {
         command: "ono.group.get",
         example: "get group",
         output: "stream<ono.group/1>",
+        may_be_empty: None,
     });
 }
 
@@ -491,6 +519,7 @@ fn should_produce_what_ono_group_get_declares_when_example_2_runs() {
         command: "ono.group.get",
         example: "get group | where \"postgres\" in members",
         output: "stream<ono.group/1>",
+        may_be_empty: Some("names the user `postgres`, which a test host need not have."),
     });
 }
 
@@ -502,6 +531,7 @@ fn should_produce_what_ono_session_get_declares_when_example_1_runs() {
         command: "ono.session.get",
         example: "get session",
         output: "stream<ono.session/1>",
+        may_be_empty: Some("lists login sessions, and a build host or container need not have one."),
     });
 }
 
@@ -513,6 +543,7 @@ fn should_produce_what_ono_env_get_declares_when_example_1_runs() {
         command: "ono.env.get",
         example: "get env",
         output: "stream<ono.env-var/1>",
+        may_be_empty: None,
     });
 }
 
@@ -524,6 +555,7 @@ fn should_produce_what_ono_env_get_declares_when_example_2_runs() {
         command: "ono.env.get",
         example: "get env PATH",
         output: "stream<ono.env-var/1>",
+        may_be_empty: None,
     });
 }
 
@@ -535,6 +567,7 @@ fn should_produce_what_ono_plugin_get_declares_when_example_1_runs() {
         command: "ono.plugin.get",
         example: "get plugin",
         output: "stream<ono.plugin/1>",
+        may_be_empty: Some("a fresh environment has no plugin installed (`ONO_PLUGIN_PATH` is an empty scratch directory)."),
     });
 }
 
@@ -546,6 +579,7 @@ fn should_produce_what_ono_plugin_get_declares_when_example_2_runs() {
         command: "ono.plugin.get",
         example: "get plugin | where state == loaded",
         output: "stream<ono.plugin/1>",
+        may_be_empty: Some("a fresh environment has no plugin installed (`ONO_PLUGIN_PATH` is an empty scratch directory)."),
     });
 }
 
@@ -557,6 +591,7 @@ fn should_produce_what_ono_plugin_find_declares_when_example_1_runs() {
         command: "ono.plugin.find",
         example: "find plugin postgres",
         output: "stream<ono.plugin-package/1>",
+        may_be_empty: Some("a fresh environment has no plugin installed (`ONO_PLUGIN_PATH` is an empty scratch directory)."),
     });
 }
 
@@ -568,6 +603,7 @@ fn should_produce_what_ono_permission_get_declares_when_example_3_runs() {
         command: "ono.permission.get",
         example: "get permission",
         output: "stream<ono.permission/1>",
+        may_be_empty: Some("lists what installed packages may do, and a fresh environment has none installed."),
     });
 }
 
@@ -579,6 +615,7 @@ fn should_produce_what_ono_capability_get_declares_when_example_1_runs() {
         command: "ono.capability.get",
         example: "get capability",
         output: "stream<ono.capability-grant/1>",
+        may_be_empty: None,
     });
 }
 
@@ -590,6 +627,7 @@ fn should_produce_what_ono_capability_get_declares_when_example_2_runs() {
         command: "ono.capability.get",
         example: "get capability --plugin dev.example.packet-eye",
         output: "stream<ono.capability-grant/1>",
+        may_be_empty: Some("names the plugin `dev.example.packet-eye`, and a fresh environment has none installed."),
     });
 }
 
@@ -601,6 +639,7 @@ fn should_produce_what_ono_assistant_get_declares_when_example_1_runs() {
         command: "ono.assistant.get",
         example: "get assistant",
         output: "stream<ono.assistant/1>",
+        may_be_empty: Some("lists loaded assistant extensions, and a fresh environment loads none."),
     });
 }
 
@@ -612,6 +651,7 @@ fn should_produce_what_ono_model_get_declares_when_example_1_runs() {
         command: "ono.model.get",
         example: "get model",
         output: "stream<ono.model-provider/1>",
+        may_be_empty: Some("a fresh configuration declares no model provider."),
     });
 }
 
@@ -623,6 +663,7 @@ fn should_produce_what_ono_finding_get_declares_when_example_1_runs() {
         command: "ono.finding.get",
         example: "get finding | where severity >= medium",
         output: "stream<ono.finding/1>",
+        may_be_empty: Some("findings are emitted by analyses and assistants, and a fresh environment has run none."),
     });
 }
 
@@ -634,6 +675,7 @@ fn should_produce_what_ono_audit_get_declares_when_example_1_runs() {
         command: "ono.audit.get",
         example: "get audit --plugin dev.example.packet-eye",
         output: "stream<ono.plugin-audit-event/1>",
+        may_be_empty: Some("names the plugin `dev.example.packet-eye`, and a fresh environment has none installed, so no action of it is audited."),
     });
 }
 
@@ -645,6 +687,7 @@ fn should_produce_what_ono_meta_type_declares_when_example_1_runs() {
         command: "ono.meta.type",
         example: "get process | type",
         output: "ono.type-info/1",
+        may_be_empty: None,
     });
 }
 
@@ -656,6 +699,7 @@ fn should_produce_what_ono_meta_type_declares_when_example_2_runs() {
         command: "ono.meta.type",
         example: "type get socket",
         output: "ono.type-info/1",
+        may_be_empty: None,
     });
 }
 
@@ -667,6 +711,7 @@ fn should_produce_what_ono_meta_inspect_declares_when_example_2_runs() {
         command: "ono.meta.inspect",
         example: "get service | where state == failed | take 1 | inspect",
         output: "stream<ono.inspection/1>",
+        may_be_empty: Some("needs a failed service, and a healthy test host has none."),
     });
 }
 
@@ -678,6 +723,7 @@ fn should_produce_what_ono_meta_explain_declares_when_example_3_runs() {
         command: "ono.meta.explain",
         example: "explain \"get process | where cpu > 20\"",
         output: "ono.execution-plan/1",
+        may_be_empty: None,
     });
 }
 
@@ -689,6 +735,7 @@ fn should_produce_what_ono_meta_explain_declares_when_example_4_runs() {
         command: "ono.meta.explain",
         example: "explain { get process | sort pid }",
         output: "ono.execution-plan/1",
+        may_be_empty: None,
     });
 }
 
@@ -700,6 +747,7 @@ fn should_produce_what_ono_command_get_declares_when_example_1_runs() {
         command: "ono.command.get",
         example: "get command",
         output: "stream<ono.command/1>",
+        may_be_empty: None,
     });
 }
 
@@ -711,6 +759,7 @@ fn should_produce_what_ono_command_get_declares_when_example_2_runs() {
         command: "ono.command.get",
         example: "get command --verb trace",
         output: "stream<ono.command/1>",
+        may_be_empty: None,
     });
 }
 
@@ -722,6 +771,7 @@ fn should_produce_what_ono_command_find_declares_when_example_1_runs() {
         command: "ono.command.find",
         example: "find command \"listening ports\"",
         output: "stream<ono.command/1>",
+        may_be_empty: None,
     });
 }
 
@@ -733,6 +783,7 @@ fn should_produce_what_ono_command_resolve_declares_when_example_1_runs() {
         command: "ono.command.resolve",
         example: "resolve command ls",
         output: "ono.command/1",
+        may_be_empty: None,
     });
 }
 
@@ -744,6 +795,7 @@ fn should_produce_what_ono_config_get_declares_when_example_1_runs() {
         command: "ono.config.get",
         example: "get config",
         output: "stream<ono.config-setting/1> | stream<ono.error/1>",
+        may_be_empty: None,
     });
 }
 
@@ -755,6 +807,7 @@ fn should_produce_what_ono_config_get_declares_when_example_2_runs() {
         command: "ono.config.get",
         example: "get config render.",
         output: "stream<ono.config-setting/1> | stream<ono.error/1>",
+        may_be_empty: None,
     });
 }
 
@@ -766,6 +819,7 @@ fn should_produce_what_ono_config_get_declares_when_example_3_runs() {
         command: "ono.config.get",
         example: "get config --problems",
         output: "stream<ono.config-setting/1> | stream<ono.error/1>",
+        may_be_empty: Some("a fresh configuration has no problem to report; the empty answer is the healthy one."),
     });
 }
 
@@ -777,6 +831,7 @@ fn should_produce_what_ono_limits_inspect_declares_when_example_1_runs() {
         command: "ono.limits.inspect",
         example: "inspect limits",
         output: "stream<ono.limit/1>",
+        may_be_empty: None,
     });
 }
 
@@ -788,6 +843,7 @@ fn should_produce_what_ono_limits_inspect_declares_when_example_2_runs() {
         command: "ono.limits.inspect",
         example: "inspect limits limits.materialize_bytes",
         output: "stream<ono.limit/1>",
+        may_be_empty: None,
     });
 }
 
@@ -799,6 +855,7 @@ fn should_produce_what_ono_context_get_declares_when_example_1_runs() {
         command: "ono.context.get",
         example: "get context",
         output: "stream<ono.context/1>",
+        may_be_empty: None,
     });
 }
 
@@ -810,6 +867,7 @@ fn should_produce_what_ono_interface_get_declares_when_example_1_runs() {
         command: "ono.interface.get",
         example: "get interface",
         output: "stream<ono.interface/1>",
+        may_be_empty: None,
     });
 }
 
@@ -821,6 +879,7 @@ fn should_produce_what_ono_interface_get_declares_when_example_2_runs() {
         command: "ono.interface.get",
         example: "get interface | where state == up",
         output: "stream<ono.interface/1>",
+        may_be_empty: Some("a host without networking (a sandbox, `--network none`) has no interface that is up."),
     });
 }
 
@@ -832,6 +891,7 @@ fn should_produce_what_ono_route_get_declares_when_example_1_runs() {
         command: "ono.route.get",
         example: "get route",
         output: "stream<ono.route/1>",
+        may_be_empty: None,
     });
 }
 
@@ -843,6 +903,7 @@ fn should_produce_what_ono_route_get_declares_when_example_2_runs() {
         command: "ono.route.get",
         example: "get route | where destination == null",
         output: "stream<ono.route/1>",
+        may_be_empty: Some("a host without networking has no default route."),
     });
 }
 
@@ -854,6 +915,7 @@ fn should_produce_what_ono_neighbor_get_declares_when_example_1_runs() {
         command: "ono.neighbor.get",
         example: "get neighbor",
         output: "stream<ono.neighbor/1>",
+        may_be_empty: Some("the neighbor table of a host that has talked to nobody yet is empty."),
     });
 }
 
@@ -865,6 +927,7 @@ fn should_produce_what_ono_neighbor_get_declares_when_example_2_runs() {
         command: "ono.neighbor.get",
         example: "get neighbor | where state == reachable",
         output: "stream<ono.neighbor/1>",
+        may_be_empty: Some("the neighbor table of a host that has talked to nobody yet is empty."),
     });
 }
 
@@ -876,6 +939,7 @@ fn should_produce_what_ono_route_trace_declares_when_example_1_runs() {
         command: "ono.route.trace",
         example: "trace route 0.0.0.0/0",
         output: "ono.graph/1",
+        may_be_empty: Some("a host without networking has no default route to trace."),
     });
 }
 
@@ -887,6 +951,7 @@ fn should_produce_what_ono_package_get_declares_when_example_1_runs() {
         command: "ono.package.get",
         example: "get package",
         output: "stream<ono.package/1>",
+        may_be_empty: None,
     });
 }
 
@@ -898,6 +963,7 @@ fn should_produce_what_ono_package_get_declares_when_example_2_runs() {
         command: "ono.package.get",
         example: "get package nginx",
         output: "stream<ono.package/1>",
+        may_be_empty: Some("names the package `nginx`, which a test host need not have installed."),
     });
 }
 
@@ -909,6 +975,7 @@ fn should_produce_what_ono_package_find_declares_when_example_1_runs() {
         command: "ono.package.find",
         example: "find package postgres",
         output: "stream<ono.package/1>",
+        may_be_empty: Some("names `postgres`, which the test host's package database need not know."),
     });
 }
 
@@ -920,6 +987,7 @@ fn should_produce_what_ono_package_source_get_declares_when_example_1_runs() {
         command: "ono.package-source.get",
         example: "get package-source",
         output: "stream<ono.package-source/1>",
+        may_be_empty: None,
     });
 }
 
@@ -931,6 +999,7 @@ fn should_produce_what_ono_process_get_declares_when_example_1_runs() {
         command: "ono.process.get",
         example: "get process",
         output: "stream<ono.process/1>",
+        may_be_empty: None,
     });
 }
 
@@ -942,6 +1011,7 @@ fn should_produce_what_ono_process_get_declares_when_example_3_runs() {
         command: "ono.process.get",
         example: "get process | where cpu > 20",
         output: "stream<ono.process/1>",
+        may_be_empty: Some("selects processes above a CPU threshold, and how many there are is the test host's load at that instant."),
     });
 }
 
@@ -953,6 +1023,7 @@ fn should_produce_what_ono_process_get_declares_when_example_4_runs() {
         command: "ono.process.get",
         example: "get process --sample 500ms | where cpu > 20",
         output: "stream<ono.process/1>",
+        may_be_empty: Some("selects processes above a CPU threshold, and how many there are is the test host's load at that instant."),
     });
 }
 
@@ -964,6 +1035,7 @@ fn should_produce_what_ono_job_get_declares_when_example_1_runs() {
         command: "ono.job.get",
         example: "get job",
         output: "stream<ono.job/1>",
+        may_be_empty: Some("a fresh session has started no job."),
     });
 }
 
@@ -975,6 +1047,7 @@ fn should_produce_what_ono_job_get_declares_when_example_2_runs() {
         command: "ono.job.get",
         example: "get job | where state == running",
         output: "stream<ono.job/1>",
+        may_be_empty: Some("a fresh session has started no job."),
     });
 }
 
@@ -986,6 +1059,7 @@ fn should_produce_what_ono_host_get_declares_when_example_1_runs() {
         command: "ono.host.get",
         example: "get host",
         output: "stream<ono.host/1>",
+        may_be_empty: Some("a fresh configuration names no host source."),
     });
 }
 
@@ -997,6 +1071,7 @@ fn should_produce_what_ono_link_get_declares_when_example_1_runs() {
         command: "ono.link.get",
         example: "get link",
         output: "stream<ono.link/1>",
+        may_be_empty: Some("a fresh session has opened no link."),
     });
 }
 
@@ -1008,6 +1083,7 @@ fn should_produce_what_ono_host_key_get_declares_when_example_1_runs() {
         command: "ono.host-key.get",
         example: "get host-key",
         output: "stream<ono.host-key/1>",
+        may_be_empty: Some("a fresh configuration has pinned no host key."),
     });
 }
 
@@ -1019,6 +1095,7 @@ fn should_produce_what_ono_client_key_get_declares_when_example_1_runs() {
         command: "ono.client-key.get",
         example: "get client-key",
         output: "stream<ono.client-key/1>",
+        may_be_empty: Some("a fresh configuration authorizes no client key."),
     });
 }
 
@@ -1030,6 +1107,7 @@ fn should_produce_what_ono_service_get_declares_when_example_1_runs() {
         command: "ono.service.get",
         example: "get service",
         output: "stream<ono.service/1>",
+        may_be_empty: None,
     });
 }
 
@@ -1041,6 +1119,7 @@ fn should_produce_what_ono_service_get_declares_when_example_2_runs() {
         command: "ono.service.get",
         example: "get service nginx",
         output: "stream<ono.service/1>",
+        may_be_empty: Some("names the service `nginx`, which a test host need not run."),
     });
 }
 
@@ -1052,6 +1131,7 @@ fn should_produce_what_ono_service_get_declares_when_example_3_runs() {
         command: "ono.service.get",
         example: "get service | where state == failed",
         output: "stream<ono.service/1>",
+        may_be_empty: Some("a healthy test host has no failed service."),
     });
 }
 
@@ -1063,6 +1143,7 @@ fn should_produce_what_ono_place_look_declares_when_example_1_runs() {
         command: "ono.place.look",
         example: "look",
         output: "ono.place-view/1 | string",
+        may_be_empty: None,
     });
 }
 
@@ -1074,6 +1155,7 @@ fn should_produce_what_ono_place_look_declares_when_example_2_runs() {
         command: "ono.place.look",
         example: "look --json",
         output: "ono.place-view/1 | string",
+        may_be_empty: None,
     });
 }
 
@@ -1085,6 +1167,7 @@ fn should_produce_what_ono_place_look_declares_when_example_3_runs() {
         command: "ono.place.look",
         example: "look --all",
         output: "ono.place-view/1 | string",
+        may_be_empty: None,
     });
 }
 
@@ -1096,6 +1179,7 @@ fn should_produce_what_ono_place_map_links_declares_when_example_1_runs() {
         command: "ono.place.map-links",
         example: "map links",
         output: "ono.spatial-map/1 | string",
+        may_be_empty: None,
     });
 }
 
@@ -1107,6 +1191,7 @@ fn should_produce_what_ono_place_map_links_declares_when_example_2_runs() {
         command: "ono.place.map-links",
         example: "map links --json",
         output: "ono.spatial-map/1 | string",
+        may_be_empty: None,
     });
 }
 
@@ -1118,6 +1203,7 @@ fn should_produce_what_ono_place_home_declares_when_example_1_runs() {
         command: "ono.place.home",
         example: "home",
         output: "null",
+        may_be_empty: None,
     });
 }
 
@@ -1129,6 +1215,7 @@ fn should_produce_what_ono_place_home_declares_when_example_2_runs() {
         command: "ono.place.home",
         example: "home; look",
         output: "null",
+        may_be_empty: None,
     });
 }
 
@@ -1140,6 +1227,7 @@ fn should_produce_what_ono_place_trail_declares_when_example_1_runs() {
         command: "ono.place.trail",
         example: "trail",
         output: "stream<ono.navigation-step/1> | string",
+        may_be_empty: Some("a fresh session has navigated nowhere, so its trail is empty."),
     });
 }
 
@@ -1151,6 +1239,7 @@ fn should_produce_what_ono_place_trail_declares_when_example_2_runs() {
         command: "ono.place.trail",
         example: "trail --json",
         output: "stream<ono.navigation-step/1> | string",
+        may_be_empty: None,
     });
 }
 
@@ -1162,6 +1251,7 @@ fn should_produce_what_ono_place_trail_declares_when_example_3_runs() {
         command: "ono.place.trail",
         example: "trail --compact",
         output: "stream<ono.navigation-step/1> | string",
+        may_be_empty: None,
     });
 }
 
@@ -1173,6 +1263,7 @@ fn should_produce_what_ono_place_pin_declares_when_example_1_runs() {
         command: "ono.place.pin",
         example: "pin",
         output: "ono.spatial-place/1",
+        may_be_empty: None,
     });
 }
 
@@ -1184,6 +1275,7 @@ fn should_produce_what_ono_place_pin_declares_when_example_2_runs() {
         command: "ono.place.pin",
         example: "pin --name edge-proxy",
         output: "ono.spatial-place/1",
+        may_be_empty: None,
     });
 }
 
@@ -1195,6 +1287,7 @@ fn should_produce_what_ono_mount_get_declares_when_example_1_runs() {
         command: "ono.mount.get",
         example: "get mount",
         output: "stream<ono.mount/1>",
+        may_be_empty: None,
     });
 }
 
@@ -1206,6 +1299,7 @@ fn should_produce_what_ono_mount_get_declares_when_example_2_runs() {
         command: "ono.mount.get",
         example: "get mount | where read_only",
         output: "stream<ono.mount/1>",
+        may_be_empty: Some("a test host need not have a read-only mount."),
     });
 }
 
@@ -1217,6 +1311,7 @@ fn should_produce_what_ono_device_get_declares_when_example_1_runs() {
         command: "ono.device.get",
         example: "get device",
         output: "stream<ono.device/1>",
+        may_be_empty: None,
     });
 }
 
@@ -1228,6 +1323,7 @@ fn should_produce_what_ono_temporal_now_declares_when_example_1_runs() {
         command: "ono.temporal.now",
         example: "now",
         output: "ono.temporal-context/1",
+        may_be_empty: None,
     });
 }
 
@@ -1239,6 +1335,7 @@ fn should_produce_what_ono_temporal_timeline_declares_when_example_1_runs() {
         command: "ono.temporal.timeline",
         example: "timeline",
         output: "stream<ono.temporal-event/1>",
+        may_be_empty: Some("a fresh state directory has recorded no event history."),
     });
 }
 
@@ -1250,6 +1347,7 @@ fn should_produce_what_ono_temporal_timeline_declares_when_example_2_runs() {
         command: "ono.temporal.timeline",
         example: "timeline --since 30m",
         output: "stream<ono.temporal-event/1>",
+        may_be_empty: Some("a fresh state directory has recorded no event history."),
     });
 }
 
@@ -1261,6 +1359,7 @@ fn should_produce_what_ono_temporal_timeline_declares_when_example_3_runs() {
         command: "ono.temporal.timeline",
         example: "timeline service nginx",
         output: "stream<ono.temporal-event/1>",
+        may_be_empty: Some("a fresh state directory has recorded no event history, and a test host need not run `nginx`."),
     });
 }
 
@@ -1272,6 +1371,7 @@ fn should_produce_what_ono_temporal_timeline_declares_when_example_4_runs() {
         command: "ono.temporal.timeline",
         example: "timeline --kind object.changed",
         output: "stream<ono.temporal-event/1>",
+        may_be_empty: Some("a fresh state directory has recorded no event history."),
     });
 }
 
@@ -1283,6 +1383,7 @@ fn should_produce_what_ono_temporal_timeline_declares_when_example_5_runs() {
         command: "ono.temporal.timeline",
         example: "timeline --view",
         output: "stream<ono.temporal-event/1>",
+        may_be_empty: Some("a fresh state directory has recorded no event history."),
     });
 }
 
@@ -1294,6 +1395,7 @@ fn should_produce_what_ono_temporal_timeline_declares_when_example_6_runs() {
         command: "ono.temporal.timeline",
         example: "timeline --since 1h | where kind == \"object.changed\"",
         output: "stream<ono.temporal-event/1>",
+        may_be_empty: Some("a fresh state directory has recorded no event history."),
     });
 }
 
@@ -1305,6 +1407,7 @@ fn should_produce_what_ono_temporal_changes_declares_when_example_1_runs() {
         command: "ono.temporal.changes",
         example: "changes --since 10m",
         output: "stream<ono.temporal-change/1>",
+        may_be_empty: Some("a fresh state directory has recorded no history to compare."),
     });
 }
 
@@ -1316,6 +1419,7 @@ fn should_produce_what_ono_temporal_changes_declares_when_example_2_runs() {
         command: "ono.temporal.changes",
         example: "changes service nginx --since 1h",
         output: "stream<ono.temporal-change/1>",
+        may_be_empty: Some("a fresh state directory has recorded no history, and a test host need not run `nginx`."),
     });
 }
 
@@ -1327,6 +1431,7 @@ fn should_produce_what_ono_temporal_changes_declares_when_example_3_runs() {
         command: "ono.temporal.changes",
         example: "changes --since 12:00 --until 12:30",
         output: "stream<ono.temporal-change/1>",
+        may_be_empty: Some("a fresh state directory has recorded no history to compare."),
     });
 }
 
@@ -1338,6 +1443,7 @@ fn should_produce_what_ono_temporal_changes_declares_when_example_4_runs() {
         command: "ono.temporal.changes",
         example: "changes --since 30m | group subject.object_type",
         output: "stream<ono.temporal-change/1>",
+        may_be_empty: Some("a fresh state directory has recorded no history to compare."),
     });
 }
 
@@ -1349,6 +1455,7 @@ fn should_produce_what_ono_temporal_why_declares_when_example_1_runs() {
         command: "ono.temporal.why",
         example: "why service nginx",
         output: "ono.causal-explanation/1",
+        may_be_empty: None,
     });
 }
 
@@ -1360,6 +1467,7 @@ fn should_produce_what_ono_temporal_why_declares_when_example_3_runs() {
         command: "ono.temporal.why",
         example: "why field state",
         output: "ono.causal-explanation/1",
+        may_be_empty: None,
     });
 }
 
@@ -1371,6 +1479,7 @@ fn should_produce_what_ono_event_find_declares_when_example_1_runs() {
         command: "ono.event.find",
         example: "find event 'kind == \"action.failed\"'",
         output: "stream<ono.temporal-event/1>",
+        may_be_empty: Some("a fresh state directory has recorded no event history."),
     });
 }
 
@@ -1382,6 +1491,7 @@ fn should_produce_what_ono_event_find_declares_when_example_2_runs() {
         command: "ono.event.find",
         example: "find event --since 1h",
         output: "stream<ono.temporal-event/1>",
+        may_be_empty: Some("a fresh state directory has recorded no event history."),
     });
 }
 
@@ -1393,6 +1503,7 @@ fn should_produce_what_ono_event_find_declares_when_example_3_runs() {
         command: "ono.event.find",
         example: "find event 'kind == \"object.appeared\"' | take 20",
         output: "stream<ono.temporal-event/1>",
+        may_be_empty: Some("a fresh state directory has recorded no event history."),
     });
 }
 
@@ -1404,6 +1515,7 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
         command: "ono.recorder.get",
         example: "get recorder",
         output: "ono.recorder-status/1",
+        may_be_empty: None,
     });
 }
 

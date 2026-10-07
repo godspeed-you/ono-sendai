@@ -88,6 +88,8 @@ pub fn generate(root: &Path) -> Result<Page, GenerateError> {
     let spec = root.join("docs").join("contracts");
     let contracts = read_contracts(&spec)?;
     let exemptions = read_exemptions(root)?;
+    let may_be_empty = read_register(root, "may_be_empty")?;
+    let mut ran: BTreeSet<(String, String)> = BTreeSet::new();
 
     let mut used: BTreeSet<(String, String)> = BTreeSet::new();
     let mut tests = String::new();
@@ -125,7 +127,9 @@ pub fn generate(root: &Path) -> Result<Page, GenerateError> {
                 Verdict::Run => {
                     ran_one = true;
                     executed += 1;
-                    write_case(&mut tests, command, index + 1, example);
+                    let empty = may_be_empty.get(&key).map(String::as_str);
+                    ran.insert(key);
+                    write_case(&mut tests, command, index + 1, example, empty);
                 }
                 Verdict::Skipped(reason) => {
                     last_reason.clone_from(&reason);
@@ -158,6 +162,21 @@ pub fn generate(root: &Path) -> Result<Page, GenerateError> {
         }
     }
 
+    // An example that may produce nothing is still run; the register only says why an empty
+    // answer is acceptable, so it must name an example that runs (review C8, ADR-0941).
+    for key in may_be_empty.keys() {
+        if !ran.contains(key) {
+            return Err(GenerateError {
+                detail: format!(
+                    "{EXEMPTIONS} lists `{}` of `{}` under `may_be_empty`, and no runnable example \
+                     of that command reads so. A stale entry is a reason nobody can check; remove \
+                     it",
+                    key.1, key.0
+                ),
+            });
+        }
+    }
+
     let mut contents = String::new();
     contents.push_str(HEADER);
     let _ = writeln!(
@@ -165,6 +184,12 @@ pub fn generate(root: &Path) -> Result<Page, GenerateError> {
         "//! {executed} examples run; {} are not run, each for the reason listed at the end of this \
          file.",
         not_run.len()
+    );
+    let _ = writeln!(
+        contents,
+        "//! {} of the examples that run may produce no value in a fresh environment, each with \
+         the reason it carries; every other one must produce at least one.",
+        may_be_empty.len()
     );
     let _ = writeln!(contents, "//!");
     let _ = writeln!(
@@ -228,7 +253,13 @@ use conformance_harness as harness;
 ";
 
 /// One generated case.
-fn write_case(body: &mut String, command: &Command, index: usize, example: &str) {
+fn write_case(
+    body: &mut String,
+    command: &Command,
+    index: usize,
+    example: &str,
+    may_be_empty: Option<&str>,
+) {
     let _ = writeln!(body, "/// `{}`", one_line(example));
     let _ = writeln!(body, "#[rustfmt::skip]");
     let _ = writeln!(body, "#[test]");
@@ -244,6 +275,7 @@ fn write_case(body: &mut String, command: &Command, index: usize, example: &str)
     let _ = writeln!(body, "        command: {:?},", command.id);
     let _ = writeln!(body, "        example: {example:?},");
     let _ = writeln!(body, "        output: {:?},", command.output);
+    let _ = writeln!(body, "        may_be_empty: {may_be_empty:?},");
     let _ = writeln!(body, "    }});");
     let _ = writeln!(body, "}}\n");
 }
@@ -547,32 +579,43 @@ fn read_contracts(spec: &Path) -> Result<Contracts, GenerateError> {
 
 /// The exemption register, by `(command, example)`.
 fn read_exemptions(root: &Path) -> Result<BTreeMap<(String, String), String>, GenerateError> {
-    let mut exemptions = BTreeMap::new();
+    read_register(root, "exemptions")
+}
+
+/// One section of the register — `exemptions` or `may_be_empty` — by `(command, example)`, with
+/// the reason each entry gives.
+fn read_register(
+    root: &Path,
+    section: &str,
+) -> Result<BTreeMap<(String, String), String>, GenerateError> {
+    let mut entries = BTreeMap::new();
     let Some(document) = load_optional(&root.join(EXEMPTIONS))? else {
-        return Ok(exemptions);
+        return Ok(entries);
     };
-    for entry in sequence(&document, "exemptions") {
+    for entry in sequence(&document, section) {
         let command = string_at(entry, "command").unwrap_or_default();
         let example = string_at(entry, "example").unwrap_or_default();
         let reason = string_at(entry, "reason").unwrap_or_default();
         if command.is_empty() || example.is_empty() || reason.is_empty() {
             return Err(GenerateError {
                 detail: format!(
-                    "{EXEMPTIONS} has an entry without a `command`, an `example` or a `reason` \
-                     (`{command}` `{example}`); an exemption nobody can check is not one"
+                    "{EXEMPTIONS} has a `{section}` entry without a `command`, an `example` or a \
+                     `reason` (`{command}` `{example}`); an entry nobody can check is not one"
                 ),
             });
         }
-        if exemptions
+        if entries
             .insert((command.clone(), example.clone()), reason)
             .is_some()
         {
             return Err(GenerateError {
-                detail: format!("{EXEMPTIONS} exempts `{example}` of `{command}` twice"),
+                detail: format!(
+                    "{EXEMPTIONS} lists `{example}` of `{command}` twice under `{section}`"
+                ),
             });
         }
     }
-    Ok(exemptions)
+    Ok(entries)
 }
 
 /// A Rust identifier fragment for a registry id such as `ono.process.get`.
