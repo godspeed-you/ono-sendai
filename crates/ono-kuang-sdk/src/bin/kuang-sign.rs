@@ -36,6 +36,15 @@ use ono_kuang_protocol::{
     artifact_files, content_digest, packed_files,
 };
 
+/// Writes one line to standard error and ignores a write that fails: a closed stderr costs the
+/// line, never the exit status (issue #163, ADR-0549).
+macro_rules! diagnostic {
+    ($($arg:tt)*) => {{
+        use ::std::io::Write as _;
+        let _ = ::std::writeln!(::std::io::stderr().lock(), $($arg)*);
+    }};
+}
+
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let words: Vec<&str> = arguments.iter().map(String::as_str).collect();
@@ -47,7 +56,7 @@ fn main() -> ExitCode {
         Some((&"describe", rest)) => describe(rest),
         Some((&"pack", rest)) => pack(rest),
         _ => {
-            eprintln!(
+            diagnostic!(
                 "kuang-sign: one of\n  \
                  kuang-sign keygen --out <file>\n  \
                  kuang-sign sign <directory> --key <file>\n  \
@@ -62,7 +71,7 @@ fn main() -> ExitCode {
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("kuang-sign: {error}");
+            diagnostic!("kuang-sign: {error}");
             ExitCode::FAILURE
         }
     }
@@ -96,7 +105,7 @@ fn keygen(words: &[&str]) -> Result<(), KuangError> {
     match option(words, "--out") {
         Some(path) => {
             write_private(&path, &key.to_secret_string())?;
-            eprintln!("kuang-sign: wrote the signing key to {}", path.display());
+            diagnostic!("kuang-sign: wrote the signing key to {}", path.display());
         }
         None => println!("{}", key.to_secret_string()),
     }

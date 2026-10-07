@@ -309,18 +309,18 @@ fn spelled(gate: &Gate) -> ErrorValue {
 
 /// Shows the gate and asks, with the rule's own reason rather than a generic question (§40.2).
 fn ask(plan: &ChangePlan, gate: &Gate) -> Result<bool, ErrorValue> {
-    eprintln!();
-    eprintln!(
+    ono_core::diagnostic!();
+    ono_core::diagnostic!(
         "{} — {} risk",
         plan.id().short(),
         plan.risk().classify().as_str()
     );
-    eprintln!("{}", plan.intent().text());
-    eprintln!();
+    ono_core::diagnostic!("{}", plan.intent().text());
+    ono_core::diagnostic!();
     for reason in &gate.reasons {
-        eprintln!("  {reason}");
+        ono_core::diagnostic!("  {reason}");
     }
-    eprintln!();
+    ono_core::diagnostic!();
     let answer = crate::kuang_permissions::read_answer(&format!(
         "Apply it? {} acknowledges this without asking. [y/N] ",
         gate.flag

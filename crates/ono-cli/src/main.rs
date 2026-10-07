@@ -27,8 +27,8 @@ fn main() -> ExitCode {
             ExitStatus::SUCCESS
         }
         Invocation::Usage(message) => {
-            eprintln!("{}: {message}", ono_core::SHORT_NAME);
-            eprintln!("try `{} --help`", ono_core::SHORT_NAME);
+            ono_core::diagnostic!("{}: {message}", ono_core::SHORT_NAME);
+            ono_core::diagnostic!("try `{} --help`", ono_core::SHORT_NAME);
             ExitStatus::USAGE
         }
         #[cfg(not(feature = "remote"))]
@@ -46,9 +46,9 @@ fn main() -> ExitCode {
                     ExitStatus::SUCCESS
                 }
                 Err(error) => {
-                    eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+                    ono_core::diagnostic!("{}: {}", ono_core::SHORT_NAME, error.message());
                     if let Some(help) = error.help() {
-                        eprintln!("{}: {help}", ono_core::SHORT_NAME);
+                        ono_core::diagnostic!("{}: {help}", ono_core::SHORT_NAME);
                     }
                     ExitStatus::FAILURE
                 }

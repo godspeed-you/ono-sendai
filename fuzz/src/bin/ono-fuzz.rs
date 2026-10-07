@@ -6,6 +6,12 @@
 //! ono-fuzz repro <target> <file>                 execute one input, once
 //! ```
 
+#![allow(
+    clippy::disallowed_macros,
+    reason = "a developer's fuzzing tool run at a terminal or in CI, never the shell a user runs; \
+              its diagnostics need not survive a closed stderr (issue #163)"
+)]
+
 use std::process::ExitCode;
 use std::time::Duration;
 

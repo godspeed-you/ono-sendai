@@ -556,7 +556,7 @@ impl SessionProvider {
                 .collect()
         };
         if !remaining.is_empty() {
-            eprintln!(
+            ono_core::diagnostic!(
                 "Removed {} from Ono. A system-provided source remains available from {}.",
                 package.manifest.package.name,
                 remaining.join(", ")

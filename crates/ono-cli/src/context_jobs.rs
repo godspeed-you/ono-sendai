@@ -133,7 +133,7 @@ pub fn attach(session: &mut Session, number: u32) -> Eval<ExitStatus> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .iter()
     {
-        eprintln!("ono: {failure}");
+        ono_core::diagnostic!("ono: {failure}");
     }
     Ok(ExitStatus::SUCCESS)
 }

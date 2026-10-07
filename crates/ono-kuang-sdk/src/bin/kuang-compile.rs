@@ -27,6 +27,15 @@ use std::process::ExitCode;
 
 use ono_kuang_supervisor::compiled;
 
+/// Writes one line to standard error and ignores a write that fails: a closed stderr costs the
+/// line, never the exit status (issue #163, ADR-0549).
+macro_rules! diagnostic {
+    ($($arg:tt)*) => {{
+        use ::std::io::Write as _;
+        let _ = ::std::writeln!(::std::io::stderr().lock(), $($arg)*);
+    }};
+}
+
 fn main() -> ExitCode {
     let mut store = None;
     let mut components = Vec::new();
@@ -48,7 +57,7 @@ fn main() -> ExitCode {
         return usage();
     }
     let Some(store) = store.or_else(compiled::user_store) else {
-        eprintln!(
+        diagnostic!(
             "kuang-compile: neither XDG_CACHE_HOME nor HOME names a directory to keep the \
              artifact in; pass --store <directory>"
         );
@@ -59,7 +68,7 @@ fn main() -> ExitCode {
         match compiled::compile(component, &store) {
             Ok(artifact) => println!("{}", artifact.display()),
             Err(why) => {
-                eprintln!("kuang-compile: {why}");
+                diagnostic!("kuang-compile: {why}");
                 failed = true;
             }
         }
@@ -72,7 +81,7 @@ fn main() -> ExitCode {
 }
 
 fn usage() -> ExitCode {
-    eprintln!(
+    diagnostic!(
         "kuang-compile: compile a KUANG/11 component for the shell that loads it ({})\n  \
          kuang-compile <component.wasm>...\n  \
          kuang-compile --store <directory> <component.wasm>...\n\

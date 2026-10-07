@@ -77,6 +77,10 @@ fn env_path(name: &str) -> PathBuf {
 }
 
 /// A build defect: said once, on stderr, and the build stops.
+#[allow(
+    clippy::disallowed_macros,
+    reason = "a build script reports to cargo, which always reads its stderr (issue #163)"
+)]
 fn fail(message: &str) -> ! {
     eprintln!("error: {message}");
     std::process::exit(1)

@@ -1143,7 +1143,7 @@ pub fn set_permission(session: &mut Session, request: &SetPermission) -> Eval<Pr
             });
             outcome.map_err(Flow::Failed)?;
             if interactive {
-                eprintln!("{name} access profile: {}", profile.name);
+                ono_core::diagnostic!("{name} access profile: {}", profile.name);
             }
             profile_permissions
         }
@@ -1302,8 +1302,8 @@ fn confirm_widening(
         .iter()
         .any(|descriptor| descriptor.risk == ono_kuang_protocol::PermissionRisk::Destructive);
     if session.is_interactive() {
-        eprintln!("{summary}");
-        eprintln!(
+        ono_core::diagnostic!("{summary}");
+        ono_core::diagnostic!(
             "Individual mutate/destructive commands keep their own confirmations and dry-run rules."
         );
         loop {
@@ -1312,7 +1312,7 @@ fn confirm_widening(
                 "y" | "yes" => return Ok(()),
                 "d" | "details" => {
                     for descriptor in widening {
-                        eprintln!("{}", describe_descriptor(descriptor));
+                        ono_core::diagnostic!("{}", describe_descriptor(descriptor));
                     }
                 }
                 _ => {
@@ -1509,7 +1509,7 @@ fn dropped_by_scope(
 
 /// Prints a question on stderr and reads one line of stdin. `None` when stdin is gone.
 pub(crate) fn read_answer(question: &str) -> Option<String> {
-    eprint!("{question}");
+    let _ = write!(std::io::stderr(), "{question}");
     let _ = std::io::stderr().flush();
     let mut answer = String::new();
     std::io::stdin().read_line(&mut answer).ok()?;
@@ -1613,23 +1613,23 @@ impl ConsentSource for ShellConsent {
             jiff::Timestamp::now().as_millisecond()
         );
         loop {
-            eprintln!();
+            ono_core::diagnostic!();
             match request.program() {
                 Some(program) => {
-                    eprintln!("{display} needs to run:");
-                    eprintln!("  {program} {}", request.arguments.join(" "));
+                    ono_core::diagnostic!("{display} needs to run:");
+                    ono_core::diagnostic!("  {program} {}", request.arguments.join(" "));
                 }
                 None => {
-                    eprintln!(
+                    ono_core::diagnostic!(
                         "{display} needs permission to {}:",
                         lowercase_first(&request.permission.title)
                     );
-                    eprintln!("  {subject}");
+                    ono_core::diagnostic!("  {subject}");
                 }
             }
-            eprintln!();
-            eprintln!("Reason:");
-            eprintln!(
+            ono_core::diagnostic!();
+            ono_core::diagnostic!("Reason:");
+            ono_core::diagnostic!(
                 "  {}",
                 request
                     .permission
@@ -1637,13 +1637,13 @@ impl ConsentSource for ShellConsent {
                     .clone()
                     .unwrap_or_else(|| lowercase_first(&request.permission.title))
             );
-            eprintln!();
+            ono_core::diagnostic!();
             let question = match request.program() {
                 Some(_) => "Allow this helper?",
                 None => "Allow this?",
             };
-            eprintln!("{question}");
-            eprintln!(
+            ono_core::diagnostic!("{question}");
+            ono_core::diagnostic!(
                 "  [o] once  [s] this session  [a] always for this {}  [n] deny  [d] details",
                 match request.program() {
                     Some(_) => "program",
@@ -1660,7 +1660,7 @@ impl ConsentSource for ShellConsent {
                 }
                 "s" | "session" => {
                     self.keep(request, ConsentDuration::Session, &correlation);
-                    eprintln!("Allowed {subject} for {display} this session.");
+                    ono_core::diagnostic!("Allowed {subject} for {display} this session.");
                     return ConsentAnswer::Allow {
                         duration: ConsentDuration::Session,
                         scope: None,
@@ -1668,15 +1668,15 @@ impl ConsentSource for ShellConsent {
                 }
                 "a" | "always" => {
                     self.keep(request, ConsentDuration::Always, &correlation);
-                    eprintln!("Allowed {subject} for {display}.");
+                    ono_core::diagnostic!("Allowed {subject} for {display}.");
                     return ConsentAnswer::Allow {
                         duration: ConsentDuration::Always,
                         scope: None,
                     };
                 }
                 "d" | "details" => {
-                    eprintln!("{}", describe_descriptor(&request.permission));
-                    eprintln!(
+                    ono_core::diagnostic!("{}", describe_descriptor(&request.permission));
+                    ono_core::diagnostic!(
                         "    this call: capability {}, {}",
                         request.capability,
                         request
@@ -1686,7 +1686,7 @@ impl ConsentSource for ShellConsent {
                             .collect::<Vec<_>>()
                             .join(", ")
                     );
-                    eprintln!(
+                    ono_core::diagnostic!(
                         "    an `always` answer grants exactly this scope: {}",
                         request.scope.as_ref().map_or_else(
                             || "unscoped".to_owned(),
