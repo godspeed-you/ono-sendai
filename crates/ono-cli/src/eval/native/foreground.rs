@@ -15,10 +15,10 @@ use crate::eval::{Eval, Flow};
 use crate::session::Session;
 
 use super::bind::{bind_stage, stage_scope};
-use super::drive::{BlockRequest, asking_stage, block_of, drive_segment, interrupted};
+use super::drive::{BlockRequest, BlockSite, asking_stage, block_of, drive_segment, interrupted};
 use super::result::{
-    Delivery, action_records, deliver_segment, live_geometry, report_counts, report_failures,
-    table_row_limit, write_failed,
+    Delivery, StreamedOutput, action_records, deliver_segment, live_geometry, report_counts,
+    report_failures, streams_bytes, table_row_limit, write_failed,
 };
 use super::segment::{accepts_bytes, each_needs_a_stream, interrupted_flow, produces_bytes};
 use super::{Seed, implementations};
@@ -38,7 +38,8 @@ pub(super) fn run_native_segment(
     seed: Seed,
     first: bool,
     last: bool,
-) -> Eval<(Option<Vec<u8>>, ExitStatus)> {
+    feeds: Option<&[usize]>,
+) -> Eval<SegmentEnd> {
     let table = implementations(session).map_err(Flow::Failed)?;
     // Taken before the pipeline borrows the session: a live view paints with the session's
     // theme, not with whatever the default happens to be (spec §44, ADR-0332).
@@ -84,6 +85,7 @@ pub(super) fn run_native_segment(
         && !head.input().accepts_null()
         && accepts_bytes(head.input().text())
         && !std::io::IsTerminal::is_terminal(&std::io::stdin())
+        && !session.is_background_job()
     {
         let mut bytes = Vec::new();
         std::io::Read::read_to_end(&mut std::io::stdin().lock(), &mut bytes)
@@ -100,7 +102,7 @@ pub(super) fn run_native_segment(
     // a package's answer that does not end (ADR-0588) — because for those the segment's work is
     // not running a stage but deciding how the stream is shown.
     if final_contract.is_none() && !matches!(seed, Seed::Stream { .. } | Seed::Pipe { .. }) {
-        return Ok((None, ExitStatus::SUCCESS));
+        return Ok(SegmentEnd::answered(None, ExitStatus::SUCCESS));
     }
     let stage_has_no_redirection = list.stages[*indices.last().unwrap_or(&0)]
         .redirections
@@ -140,18 +142,39 @@ pub(super) fn run_native_segment(
     // runs them, on this thread, one item at a time. v0.4.1 §25.1 requires that to happen while
     // the source is still open, and §25.2 forbids the alternative that used to stand here
     // (ADR-0480).
-    let blocks: Vec<(usize, usize)> = indices
+    let shared_source: std::sync::Arc<str> = std::sync::Arc::from(source);
+    let blocks: Vec<(usize, usize, std::sync::Arc<BlockSite>)> = indices
         .iter()
         .enumerate()
-        .filter(|(_, index)| block_of(&list.stages[**index]).is_some())
-        .map(|(position, index)| (position, *index))
+        .filter_map(|(position, index)| {
+            block_of(&list.stages[*index]).map(|block| {
+                (
+                    position,
+                    *index,
+                    std::sync::Arc::new(BlockSite {
+                        block: block.clone(),
+                        source: std::sync::Arc::clone(&shared_source),
+                        consumed: *index + 1 < list.stages.len(),
+                        frames: Vec::new(),
+                    }),
+                )
+            })
+        })
         .collect();
     // ADR-0070 point 3: with stages after it a block's values stream into them; with nothing
     // after it the block's own statements show their results where they stand, and the stage has
-    // no result of its own.
-    let block_shows_itself = blocks.last().is_some_and(|(position, index)| {
+    // no result of its own. A stream assembled before this segment may end in such a block too —
+    // a function whose body ends in one, called last (ADR-0950).
+    let block_shows_itself = blocks.last().is_some_and(|(position, index, _)| {
         *position + 1 == bound.len() && *index + 1 == list.stages.len()
-    });
+    }) || (bound.is_empty()
+        && matches!(
+            seed,
+            Seed::Pipe {
+                shows_itself: true,
+                ..
+            }
+        ));
 
     let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
@@ -177,7 +200,17 @@ pub(super) fn run_native_segment(
     // One request in flight. §25.3 keeps `each` serial, so a queue of items waiting to be run
     // would buy nothing, and §65.7 forbids the shape it would take: "replacing a foreground
     // `Vec` with an unbounded background queue is not a streaming fix".
-    let (asked, mut requests) = tokio::sync::mpsc::channel::<BlockRequest>(1);
+    //
+    // A stream assembled before this segment brings the channel its own block stages ask through,
+    // and this segment's blocks ask through the same one: one driver answers every block of one
+    // pipeline, wherever it was written (ADR-0950).
+    let mut seed = seed;
+    let channel = match &mut seed {
+        Seed::Pipe { requests, .. } => requests.take(),
+        _ => None,
+    };
+    let (asked, mut requests) =
+        channel.unwrap_or_else(|| tokio::sync::mpsc::channel::<BlockRequest>(1));
 
     let assemble = async {
         let mut carried_failure = false;
@@ -186,6 +219,7 @@ pub(super) fn run_native_segment(
             Seed::Pipe {
                 stream,
                 failed_rows,
+                ..
             } => {
                 carried_failure = failed_rows;
                 Some(stream)
@@ -215,11 +249,15 @@ pub(super) fn run_native_segment(
         let mut failed_rows = carried_failure;
         let final_stage = bound.len().saturating_sub(1);
         for (position, (contract, arguments)) in bound.iter().enumerate() {
-            if let Some((_, at)) = blocks.iter().find(|(held, _)| *held == position) {
+            if let Some((_, _, site)) = blocks.iter().find(|(held, _, _)| *held == position) {
                 let Some(previous) = stream.take() else {
                     return Err(each_needs_a_stream());
                 };
-                stream = Some(asking_stage(previous, *at, asked.clone()));
+                stream = Some(asking_stage(
+                    previous,
+                    std::sync::Arc::clone(site),
+                    asked.clone(),
+                ));
                 continue;
             }
             let started = std::time::Instant::now();
@@ -329,6 +367,24 @@ pub(super) fn run_native_segment(
     // has had its answer — `each { … } | take 1` over a followed file — and a shell that walked
     // away from it would leave the source running (§28.3, §28.4).
     let cancel = stream.as_ref().map(|stream| stream.cancel_token().clone());
+    // A last stage that serializes value by value is written as it goes — to the redirection's
+    // file or to stdout — rather than collected for the end, which is what lets a stream that
+    // never ends be written at all (ADR-0954). A capture still collects: its value is one text.
+    //
+    // The same lines may feed the program after this segment instead, while it runs: written into
+    // its standard input as they are produced, at the pace it reads them (§28.2).
+    let feeding = feeds.filter(|_| !last && !capturing && streams_bytes(&bound));
+    let mut program = None;
+    let mut streamed = if let Some(program_stages) = feeding {
+        let (started, output) = start_fed_program(session, list, program_stages, source)?;
+        program = Some(started);
+        Some(output)
+    } else if last && !capturing && streams_bytes(&bound) {
+        let stage = &list.stages[*indices.last().unwrap_or(&0)];
+        Some(StreamedOutput::open(session, stage, source)?)
+    } else {
+        None
+    };
     let mut showing = None;
     let mut draining = None;
     if let Some(stream) = stream {
@@ -336,6 +392,7 @@ pub(super) fn run_native_segment(
             && !stream.boundedness().is_bounded()
             && stage_has_no_redirection
             && !block_shows_itself
+            && streamed.is_none()
         {
             // A live stream at a terminal renders in place (spec §18.3); anywhere else the
             // representation must be chosen, because an endless unserialised stream into a pipe
@@ -347,8 +404,8 @@ pub(super) fn run_native_segment(
                         "a live stream needs a representation when nobody is watching it",
                     )
                     .with_help(
-                        "pipe it through a serializer — `watch process | to json` — or bound it \
-                         with `take` (spec §18.3)",
+                        "write it as it arrives with the streaming serializer — `watch process | \
+                         to jsonl` — or bound it with `take` (spec §18.3, ADR-0954)",
                     ),
                 ));
             }
@@ -362,25 +419,41 @@ pub(super) fn run_native_segment(
         }
     }
 
-    let drained = drive_segment(
+    let driven = drive_segment(
         session,
         &handle,
         &mut requests,
-        &list.stages,
-        source,
         draining,
         showing,
-    )?;
+        streamed.as_mut(),
+    );
     // Whatever is left is left because nobody is reading it any more: cancellation wins over
-    // capacity, so a producer behind a stage that stopped does not keep enqueueing (§28.3).
+    // capacity, so a producer behind a stage that stopped does not keep enqueueing (§28.3). That
+    // holds however the drain ended — an interrupt and a departed reader included.
     if let Some(cancel) = cancel {
         cancel.cancel();
     }
+    // The end of the lines is the end of the fed program's input.
+    drop(streamed);
+    // A fed program is waited for whatever ended the drain, so it is never left behind; its
+    // status is the pipeline's, as the last program's always is (ADR-0008).
+    let program_status = match program {
+        Some(started) => Some(finish_fed_program(session, started)?),
+        None => None,
+    };
+    let drained = driven?;
     if let Some(flow) = drained.stopped {
         return Err(flow);
     }
+    // The reader of the shell's own output left: the shell ends as a program whose reader left
+    // ends, in silence and with `SIGPIPE`'s status (ADR-0220, ADR-0954). A fed program that read
+    // what it wanted and left is not that: `yes | head -1` succeeds.
+    if drained.reader_left && program_status.is_none() {
+        return Err(Flow::Exit(ExitStatus::from_signal(13)));
+    }
     let values = drained.values;
     let failures = drained.failures;
+    let wrote = drained.written > 0;
 
     // A failure of the provider kind — it could not answer, or not as promised — is never a
     // partial one: no object was lost, the answer was (ADR-0085). What did arrive is still
@@ -388,7 +461,7 @@ pub(super) fn run_native_segment(
     let unanswered = failures
         .iter()
         .any(|failure| failure.kind() == ono_core::ErrorKind::Provider);
-    report_failures(&values, failures)?;
+    report_failures(wrote || !values.is_empty(), failures)?;
 
     // ADR-0014 counts what a pipeline dropped so that "a user who is surprised by a row count
     // has somewhere to look that is not the source code". This is where they look: one note per
@@ -403,6 +476,17 @@ pub(super) fn run_native_segment(
     } else {
         ExitStatus::SUCCESS
     };
+    if let Some(program_status) = program_status {
+        return Ok(SegmentEnd {
+            bytes: None,
+            status: program_status,
+            fed_program: true,
+        });
+    }
+    // What was written as it arrived is already where it was going.
+    if wrote || (last && !capturing && streams_bytes(&bound)) {
+        return Ok(SegmentEnd::answered(None, status));
+    }
     deliver_segment(
         session,
         &Delivery {
@@ -416,4 +500,91 @@ pub(super) fn run_native_segment(
         values,
         status,
     )
+    .map(|(bytes, status)| SegmentEnd::answered(bytes, status))
+}
+
+/// How a native segment ended.
+pub(super) struct SegmentEnd {
+    /// The bytes a following program reads, when the segment is not the last and did not feed it.
+    pub(super) bytes: Option<Vec<u8>>,
+    /// The segment's status — or the fed program's, when it fed one.
+    pub(super) status: ExitStatus,
+    /// Whether the segment ran the program after it, feeding it as it went (ADR-0954).
+    pub(super) fed_program: bool,
+}
+
+impl SegmentEnd {
+    fn answered(bytes: Option<Vec<u8>>, status: ExitStatus) -> Self {
+        Self {
+            bytes,
+            status,
+            fed_program: false,
+        }
+    }
+}
+
+/// Starts the programs after a streaming serializer with a pipe for the first one's standard
+/// input, and the output the serializer's lines are written into (ADR-0954).
+///
+/// The programs are the foreground job, exactly as they would be after any other stage: they get
+/// the terminal, so Ctrl-C reaches them, and their leaving is what ends the stream — the pipe's
+/// write end reports it as soon as no reader is left.
+fn start_fed_program(
+    session: &mut Session,
+    list: &StageList,
+    program_stages: &[usize],
+    source: &str,
+) -> Eval<(ono_process::Foreground, StreamedOutput)> {
+    let mut built = ono_process::Pipeline::new();
+    for (position, index) in program_stages.iter().enumerate() {
+        let mut command =
+            crate::eval::pipeline::build_command(session, &list.stages[*index], source)?;
+        if position == 0 {
+            command = command.stdin(ono_process::Input::Pipe);
+        }
+        built = built.stage(command);
+    }
+    let mut started = session
+        .executor()
+        .start_foreground(&built)
+        .map_err(super::segment::process_error_flow)?;
+    if let Some(failure) = started.failure() {
+        let error = ErrorValue::new(failure.code(), failure.message().to_owned());
+        let outcome = session
+            .executor()
+            .finish_foreground(started)
+            .map_err(super::segment::process_error_flow)?;
+        return Err(Flow::FailedWith(error, outcome.status()));
+    }
+    let Some(input) = started.take_stdin() else {
+        let outcome = session
+            .executor()
+            .finish_foreground(started)
+            .map_err(super::segment::process_error_flow)?;
+        return Err(Flow::FailedWith(
+            ErrorValue::new(
+                ErrorCode::IoPermissionDenied,
+                "the program's input could not be opened",
+            ),
+            outcome.status(),
+        ));
+    };
+    Ok((started, StreamedOutput::into_program(input)))
+}
+
+/// Waits for a fed program and answers its status.
+fn finish_fed_program(session: &mut Session, started: ono_process::Foreground) -> Eval<ExitStatus> {
+    let outcome = session
+        .executor()
+        .finish_foreground(started)
+        .map_err(super::segment::process_error_flow)?;
+    if let ono_process::ForegroundOutcome::Completed(completed) = &outcome
+        && let Some(failure) = completed.failure()
+    {
+        return Err(Flow::FailedWith(
+            ErrorValue::new(failure.code(), failure.message().to_owned()),
+            outcome.status(),
+        ));
+    }
+    Ok(outcome.status())
 }

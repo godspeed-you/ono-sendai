@@ -18,7 +18,7 @@ use super::{Eval, Flow};
 ///
 /// Step 2 of the resolution order (ADR-0011): a bare head or a `fn:` head, before an alias, the
 /// native registry and `PATH`.
-pub(super) fn called_function(
+pub(crate) fn called_function(
     session: &Session,
     stage: &Stage,
 ) -> Option<std::sync::Arc<Function>> {
@@ -43,33 +43,19 @@ pub(super) fn call_function(
     let declaration = &function.declaration;
     let body_source: &str = &function.source;
 
+    // v0.4.1 §26.2's streaming continuation. A body that is one pipeline is one pipeline: it is
+    // assembled where the call stands, and the stream it produces is what the stages after the
+    // call read — so `watched | take 1` is answered from the first value the body produced rather
+    // than from a collection of all of them (ADR-0481, ADR-0950). Every other body still
+    // collects, which §26.2 permits where the shape cannot be continued, and `explain` says so.
+    if list.stages.len() > 1 && super::native::function_shape(session, function, false).is_ok() {
+        return super::native::run_assembled(session, list, source, 0);
+    }
+
     // Arguments are read before the callee's scope exists, so `$x` in an argument is the
     // caller's `x`.
     let arguments = call_arguments(session, stage, source)?;
-    if arguments.len() > declaration.parameters.len() {
-        return Err(Flow::Failed(
-            ErrorValue::new(
-                ErrorCode::TypeMismatch,
-                format!(
-                    "`{}` takes {} argument(s), and {} were given",
-                    declaration.name,
-                    declaration.parameters.len(),
-                    arguments.len()
-                ),
-            )
-            .with_help(format!(
-                "declared at {} as `fn {}({})`",
-                declaration.span,
-                declaration.name,
-                declaration
-                    .parameters
-                    .iter()
-                    .map(|parameter| parameter.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )),
-        ));
-    }
+    check_arity(declaration, arguments.len())?;
 
     session.push_scope();
     let bound = bind_parameters(session, declaration, arguments, body_source);
@@ -79,6 +65,35 @@ pub(super) fn call_function(
     };
     session.pop_scope();
     outcome
+}
+
+/// Refuses a call with more arguments than the declaration has parameters (ADR-0070).
+pub(super) fn check_arity(declaration: &ono_parser::FnDecl, given: usize) -> Eval<()> {
+    if given <= declaration.parameters.len() {
+        return Ok(());
+    }
+    Err(Flow::Failed(
+        ErrorValue::new(
+            ErrorCode::TypeMismatch,
+            format!(
+                "`{}` takes {} argument(s), and {} were given",
+                declaration.name,
+                declaration.parameters.len(),
+                given
+            ),
+        )
+        .with_help(format!(
+            "declared at {} as `fn {}({})`",
+            declaration.span,
+            declaration.name,
+            declaration
+                .parameters
+                .iter()
+                .map(|parameter| parameter.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    ))
 }
 
 /// The argument values a call site supplies, in order: words expanded and lists spliced as for
@@ -205,21 +220,9 @@ pub(super) fn run_function_body(
     source: &str,
     body_source: &str,
 ) -> Eval<ExitStatus> {
+    // A body that could have been continued as a stream already was, in `call_function`; what
+    // reaches here collects, which §26.2 permits where the shape cannot be continued.
     let consumed = list.stages.len() > 1;
-    // v0.4.1 §26.2's streaming continuation. A body that is one pipeline is one pipeline: its
-    // stages are assembled while the invocation's scope is on the session (§26.3), and the stream
-    // they produce is what the stages after the call read — so `watched | take 1` is answered from
-    // the first value the body produced rather than from a collection of all of them (ADR-0481).
-    //
-    // Every other body still collects, which is what it always did: §26.2 permits that where the
-    // shape cannot be continued, and `explain` says so of the call (§22.4).
-    if consumed
-        && let Some(body) = super::native::continuable_body(&declaration.body)
-        && let Some((stream, failed_rows)) =
-            super::native::stream_segment(session, body, body_source)?
-    {
-        return super::native::run_piped(session, list, source, stream, failed_rows);
-    }
     if consumed {
         session.begin_capture();
     }

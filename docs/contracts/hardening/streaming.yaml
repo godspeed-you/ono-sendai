@@ -68,7 +68,7 @@ captures:
       which hold: the limitation is stated by `explain` before the call is run, and the collection
       has a finite-input guard, so an unbounded body is refused rather than waited for (§65.8). A
       body that *is* one native pipeline is not collected at all any more: it becomes a stage of
-      the caller's pipeline (ADR-0481).
+      the caller's pipeline (ADR-0481), its `each { … }` blocks included (ADR-0950).
 
   - file: crates/ono-cli/src/eval/control.rs
     site: run_for
@@ -168,6 +168,32 @@ captures:
       as bytes, to the browser, or to `write_result`. Nothing accumulates here that was not
       already drained there, and the two are one collection travelling (§30.2, ADR-0507).
 
+  - file: crates/ono-cli/src/eval/native/assemble.rs
+    site: run_assembled
+    class: semantic_materialization
+    holds: >-
+      The values of the stages in front of the first call between two stages, when those stages
+      cannot be assembled into a stream — a value at the head, a program, a function whose body is
+      several statements.
+    why: >-
+      §26.2 permits a collection where the shape leaves no alternative, and asks for two things
+      of it that both hold: `explain` states it, and it has a finite-input guard — the collection
+      is a capture, so an unbounded producer in front of it is refused rather than waited for
+      (§18.3, §65.8), and its bytes are charged to §23.2's ceiling (ADR-0457). A prefix that can
+      be assembled is not collected at all (ADR-0950, ADR-0951).
+
+  - file: crates/ono-cli/src/eval/native/drive.rs
+    site: answer
+    class: semantic_materialization
+    holds: >-
+      What one item of a block site produced, in the invocation scope the block was written in,
+      on its way to the reply.
+    why: >-
+      `run_each_item`'s one-item result above, reached through the site a request carries rather
+      than through a stage index (ADR-0950). A `return` out of a streamed function body appends the
+      returned value to that one item's values and stops the stage reading, which is what a
+      collected body produced (§25.5). Nothing accumulates across items.
+
   - file: crates/ono-cli/src/eval/native/drive.rs
     site: run_background
     class: history_cache
@@ -175,6 +201,33 @@ captures:
     why: >-
       A job nobody is watching has nowhere to write, so its result waits for the foreground. It is
       retained state rather than pipeline data in flight, bounded the way §24 bounds retention.
+
+  - file: crates/ono-cli/src/eval/native/drive.rs
+    site: run_evaluated_job
+    class: history_cache
+    holds: What a background job with an evaluator of its own produced, until `fg` shows it.
+    why: >-
+      The same retention as `run_background` above, for a job that runs a block, a function call
+      or a program and so needs an evaluator (ADR-0952). It is the job's result rather than
+      pipeline data in flight, and the job's evaluator collects it under one command's capture,
+      so §23.4's ceiling bounds it while nobody collects it.
+
+  - file: crates/ono-cli/src/eval/native/drive.rs
+    site: EvaluatorRun
+    class: history_cache
+    holds: The shared slot a job's evaluator thread writes its result into.
+    why: >-
+      The thread's end of `run_evaluated_job` above: one slot, filled once when the line ends
+      (ADR-0952).
+
+  - file: crates/ono-cli/src/eval/native/drive.rs
+    site: run
+    class: history_cache
+    holds: What the job's line produced, captured on the job's thread and moved into the slot.
+    why: >-
+      A job nobody is watching has nowhere to write, so its line runs under a capture — the one
+      a foreground `let x = (…)` would open — charged to §23.4's ceiling, and what it captured is
+      handed to `fg` in one move (ADR-0952).
 
   - file: crates/ono-cli/src/eval/native/external.rs
     site: decode_adapted

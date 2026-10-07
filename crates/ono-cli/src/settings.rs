@@ -820,7 +820,7 @@ pub struct Reading {
 }
 
 /// The layered settings of one session.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Settings {
     /// Per key, every layer's value in override order; the last is the effective one.
     layers: BTreeMap<&'static str, Vec<Resolved>>,

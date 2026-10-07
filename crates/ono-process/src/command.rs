@@ -17,6 +17,11 @@ pub enum Input {
     Null,
     /// Bytes the shell supplies, written into a pipe as the command reads them.
     Bytes(Vec<u8>),
+    /// A pipe the caller writes into while the command runs, taken with
+    /// [`Foreground::take_stdin`](crate::Foreground::take_stdin): what the shell produces as it
+    /// goes reaches the command as it goes, and the command's reading pace is the shell's writing
+    /// pace (v0.4.1 §28.2).
+    Pipe,
 }
 
 /// Where one of a command's output streams goes, before redirections are applied.

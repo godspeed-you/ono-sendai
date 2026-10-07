@@ -285,7 +285,7 @@ pub(super) fn run_remote_adapted(
             }
         }
     });
-    let (_, status) = run_native_segment(
+    let ended = run_native_segment(
         session,
         registry,
         list,
@@ -298,8 +298,9 @@ pub(super) fn run_remote_adapted(
         },
         false,
         last,
+        None,
     )?;
     let host = session.link_host().unwrap_or_default();
     session.note_adaptation(format!("{} on {host}", decision.state), argv.join(" "));
-    Ok(RemoteRun::Adapted(status))
+    Ok(RemoteRun::Adapted(ended.status))
 }

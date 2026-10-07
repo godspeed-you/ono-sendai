@@ -39,6 +39,25 @@ pub enum Resolution {
     /// The stage's head is a value rather than a command: a variable, or a parenthesised
     /// pipeline.
     Value,
+    /// A user function — step 2 of ADR-0011's resolution order, ahead of the registry and `PATH`.
+    Function {
+        /// The function's name.
+        name: String,
+    },
+}
+
+/// What the shell knows about a user function a stage calls, for the plan to report it.
+///
+/// The planner has no session: the shell that does decides whether a call can be continued as a
+/// stage of the stream it stands in, and hands the answer over (v0.4.1 §26.2, ADR-0951).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionPlan {
+    /// Where the function was declared, as the shell reports a span.
+    pub declared: String,
+    /// Whether a call at the head of a pipeline streams into the stages after it, or why not.
+    pub at_head: Result<(), String>,
+    /// Whether a call after another stage reads that stage's stream and streams on, or why not.
+    pub with_input: Result<(), String>,
 }
 
 /// One stage of an execution plan.
@@ -104,6 +123,9 @@ pub struct PlanContext<'a> {
     /// The plan shows the budget the pipeline would really run under, so a user who has narrowed
     /// `limits.materialize_bytes` sees their own figure rather than Appendix A's.
     pub limits: MaterializationLimits,
+    /// The user functions a head word names, when the shell knows any: step 2 of the resolution
+    /// order outranks the registry, so the plan asks before it consults it (ADR-0011, ADR-0951).
+    pub functions: Option<&'a dyn Fn(&str) -> Option<FunctionPlan>>,
 }
 
 impl std::fmt::Debug for PlanContext<'_> {
@@ -376,6 +398,13 @@ impl StagePlan {
                 &format!("`{head}` is not a native command"),
             );
         }
+        if let Resolution::Function { name } = &self.resolution {
+            row(
+                into,
+                "resolution",
+                &format!("user function `{name}` — step 2 of the resolution order (ADR-0011)"),
+            );
+        }
         if let Some(provider) = self.provider() {
             row(into, "provider", provider);
         }
@@ -557,6 +586,7 @@ pub fn plan_for(
             executables: None,
             context: &[],
             limits: MaterializationLimits::default(),
+            functions: None,
         },
     )
 }
@@ -581,16 +611,19 @@ pub fn plan_with(
         let mut upstream: Option<IoType> = None;
         let first = stages.len();
         for stage in &list.stages {
-            let planned = plan_stage(
-                registry,
-                providers,
-                context.context,
-                stage,
-                source,
-                ordinal,
-                upstream.as_ref(),
-                context.limits,
-            );
+            let planned = match function_stage(context, stage, source, ordinal, upstream.as_ref()) {
+                Some(planned) => planned,
+                None => plan_stage(
+                    registry,
+                    providers,
+                    context.context,
+                    stage,
+                    source,
+                    ordinal,
+                    upstream.as_ref(),
+                    context.limits,
+                ),
+            };
             upstream = Some(IoType::from_text(&planned.output));
             stages.push(planned);
             ordinal += 1;
@@ -650,7 +683,7 @@ fn plan_demands(stages: &mut [StagePlan], list: &StageList, stdout: Stdout) {
             ),
             None => match stages.get(index + 1) {
                 Some(next) => match &next.resolution {
-                    Resolution::Native { .. } => {
+                    Resolution::Native { .. } | Resolution::Function { .. } => {
                         // What the consumer is declared over decides the demand, not the bytes
                         // the plan threaded into it: `where` is defined over objects even when
                         // the stage before it is a program.
@@ -838,6 +871,79 @@ fn stdout_redirection(stage: &Stage) -> Option<Redirected> {
         .next_back()
 }
 
+/// The plan of a stage whose head names a user function, when the shell said it does.
+///
+/// Step 2 of the resolution order, before the registry: a function named like a native command
+/// shadows it (ADR-0011, ADR-0070). `fn:` forces the step; `ono:` and `exec:` skip it.
+fn function_stage(
+    context: &PlanContext<'_>,
+    stage: &Stage,
+    source: &str,
+    ordinal: usize,
+    upstream: Option<&IoType>,
+) -> Option<StagePlan> {
+    let lookup = context.functions?;
+    let ono_parser::StageHead::Command(name) = &stage.head else {
+        return None;
+    };
+    if !matches!(name.namespace.as_deref(), None | Some("fn")) {
+        return None;
+    }
+    let function = lookup(&name.name)?;
+    let (streams, note) = match upstream {
+        None => match &function.at_head {
+            Ok(()) => (
+                true,
+                "its body streams into the stages after the call (v0.4.1 §26.2)".to_owned(),
+            ),
+            Err(reason) => (
+                false,
+                format!(
+                    "its result is collected before the stages after the call run, so its input \
+                     must be finite: {reason} (v0.4.1 §26.2)"
+                ),
+            ),
+        },
+        Some(_) => match &function.with_input {
+            Ok(()) => (
+                true,
+                "its body reads the stream in front of the call and streams into the stages \
+                 after it (ADR-0951)"
+                    .to_owned(),
+            ),
+            Err(reason) => (
+                false,
+                format!("it cannot read the stream in front of it: {reason} (ADR-0951)"),
+            ),
+        },
+    };
+    Some(StagePlan {
+        ordinal,
+        source: stage.span.of(source).trim().to_owned(),
+        resolution: Resolution::Function {
+            name: name.name.clone(),
+        },
+        origin: Origin::Core,
+        provider: None,
+        capability: None,
+        input: upstream.map_or_else(|| "null".to_owned(), |io| io.text().to_owned()),
+        output: "stream<any>".to_owned(),
+        element_schema: None,
+        streaming: streams,
+        privilege: None,
+        risk: None,
+        fields: read_fields(&stage.arguments),
+        notes: vec![format!("declared at {}; {note}", function.declared)],
+        narrowed: None,
+        demand: None,
+        declared_input: Some("stream<any>".to_owned()),
+        raw: false,
+        adaptation: None,
+        execution: None,
+        budget: None,
+    })
+}
+
 fn plan_stage(
     registry: &CommandRegistry,
     providers: Option<&ProviderRegistry>,
@@ -1002,10 +1108,14 @@ fn plan_stage(
 
     let mut notes = Vec::new();
     let mut narrowed = None;
+    // v0.4.1 §22.4: the class of this invocation, which an option can change — `measure` folds in
+    // constant state, `measure --median` holds the distribution (ADR-0953).
+    let mut execution = contract.execution();
     match contract.bind(resolved.arguments) {
         // The fields a stage reads are the ones its first selector names: `sort memory desc`
         // reads `memory`, and `desc` is the direction rather than a field.
         Ok(bound) => {
+            execution = contract.execution_for(&bound);
             if let Some((_, binding)) = bound.selectors().first() {
                 let mut named = Vec::new();
                 for expression in binding.expressions() {
@@ -1072,9 +1182,8 @@ fn plan_stage(
         adaptation: None,
         // v0.4.1 §22.4: what the stage will hold, and what it is allowed to hold, derived from
         // the classification the contract declares rather than restated here (ADR-0460).
-        execution: contract.execution(),
-        budget: contract
-            .execution()
+        execution,
+        budget: execution
             .filter(|class| class.may_materialize())
             .map(|_| (limits.max_items(), limits.max_bytes())),
     }

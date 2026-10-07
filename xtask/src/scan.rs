@@ -978,6 +978,7 @@ const EVALUATOR_SOURCES: &[&str] = &[
     "crates/ono-cli/src/eval/pipeline.rs",
     "crates/ono-cli/src/eval/statement.rs",
     "crates/ono-cli/src/eval/native/mod.rs",
+    "crates/ono-cli/src/eval/native/assemble.rs",
     "crates/ono-cli/src/eval/native/bind.rs",
     "crates/ono-cli/src/eval/native/drive.rs",
     "crates/ono-cli/src/eval/native/external.rs",

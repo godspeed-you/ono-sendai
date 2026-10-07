@@ -1,0 +1,50 @@
+# Issues #191 and #192, through the real binary as an unprivileged user.
+#
+# A user function is step 2 of the resolution order in every stage of a pipeline (ADR-0011): a
+# call after another stage reads that stage's stream through its body, and a body that runs a
+# block streams like one that filters (v0.4.1 §26.2, ADR-0950, ADR-0951). The source is a followed
+# file, which never closes, so a call that collected its input or its body before the stages after
+# it ran would never answer — nothing below asserts a duration (ADR-0431).
+case: a function streams wherever it stands in a pipeline, its blocks included
+timeout: 120
+env: NO_COLOR=1
+run: |
+  printf 'first\n' > "$HOME/case-360.log"
+
+  echo "== #191: a call between two stages reads the stream in front of it =="
+  ono -c "fn kept() { where @ != \"never\" }
+          tail file $HOME/case-360.log --lines 1 --follow | kept | take 1 | to json"
+
+  echo "== #192: a body that runs a block streams like one that filters =="
+  ono -c "fn shout() { each { @ + \"!\" } }
+          tail file $HOME/case-360.log --lines 1 --follow | shout | take 1 | to json"
+  ono -c "fn watched() { tail file $HOME/case-360.log --lines 1 --follow | each { @ + \"?\" } }
+          watched | take 1 | to json"
+
+  echo "== the source never closed, nor grew =="
+  echo "lines=$(wc -l < "$HOME/case-360.log")"
+
+  echo "== a call between two stages is named by explain =="
+  ono -c 'fn mine() { where pid > 0 }
+          explain get process | mine | take 1'
+
+  echo "== a body that cannot read a stream is refused, not waited on =="
+  ono -c "fn counted() {
+            let wanted = 1
+            where @ != \"x\"
+          }
+          tail file $HOME/case-360.log --lines 1 --follow | counted | take 1"
+  echo "status=$?"
+exit: 0
+stdout-contains: ["first"]
+stdout-contains: ["first!"]
+stdout-contains: ["first?"]
+stdout-contains: lines=1
+stdout-contains: user function `mine`
+stdout-contains: its body reads the stream in front of the call and streams into the stages after it
+stdout-contains: `counted` cannot read the stream in front of it
+stdout-contains: status=1
+stdout-not-contains: is not a native command
+stdout-not-contains: panicked
+profile: full
+profile: core

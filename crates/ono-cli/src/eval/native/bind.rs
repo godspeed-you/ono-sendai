@@ -1,21 +1,17 @@
 //! Binding a native stage, and the scope its expressions read.
 //!
 //! One definition of "bound" for both callers — the drained segment of `foreground` and the
-//! streaming continuation of v0.4.1 §26.2 below — so the two cannot drift apart in what a bound
+//! assembled stream of v0.4.1 §26.2 in `assemble` — so the two cannot drift apart in what a bound
 //! stage is.
 
-use ono_command::{BoundArguments, CommandContract, CommandRegistry, Invocation, Outcome, Scope};
-use ono_core::ErrorCode;
-use ono_parser::{Stage, StageList};
-use ono_pipeline::ValueStream;
-use ono_value::{ActionStatus, ErrorValue, Value};
+use ono_command::{BoundArguments, CommandContract, CommandRegistry, Scope};
+use ono_parser::Stage;
+use ono_value::Value;
 
 use crate::eval::{Eval, Flow};
 use crate::session::Session;
 
-use super::result::action_records;
-use super::segment::{continuable_list, head_name, native_contract, refuse_switched_off_spatial};
-use super::{implementations, registry};
+use super::segment::{head_name, native_contract, refuse_switched_off_spatial};
 
 /// Binds one stage of a native segment: the contract the registry places it at, its globs
 /// expanded, its arguments resolved against that contract.
@@ -45,106 +41,6 @@ pub(super) fn bind_stage(
         .map_err(Flow::Failed)?;
     let arguments = contract.bind(resolved.arguments).map_err(Flow::Failed)?;
     Ok(Some((contract, arguments)))
-}
-
-/// A wholly-native pipeline, assembled into the stream it produces but not drained.
-///
-/// v0.4.1 §26.2: *"a function used as a pipeline stage SHOULD be able to stream values to
-/// downstream stages when the function body itself streams"*, and *"the preferred v0.4.1 outcome
-/// is streaming continuation rather than preservation of an accidental capture architecture"*.
-/// This is that continuation: the body's stages are bound and assembled here, and the stream they
-/// produce is what the caller's next stage reads, so nothing is collected in between and the
-/// caller's `take 1` can answer before the body's source has ended.
-///
-/// §26.3 is satisfied by construction rather than by care: every expression a stage carries is
-/// bound, and the `Scope` it will read is snapshotted, **while the invocation's scope is still on
-/// the session**. What travels into the asynchronous producer is the snapshot, so no lexical
-/// reference outlives the scope that owns it (ADR-0481).
-///
-/// `None` when the pipeline is not of a shape that can be continued — an external program, a
-/// redirection, a serializer that ends the object stream, a `each { … }` block whose evaluator
-/// belongs to another driver, or a stage the registry does not place. The caller then collects,
-/// which is what it always did.
-///
-/// # Errors
-///
-/// The structured error of whichever stage could not be bound or started.
-pub(crate) fn stream_segment(
-    session: &mut Session,
-    list: &StageList,
-    source: &str,
-) -> Eval<Option<(ValueStream, bool)>> {
-    if !continuable_list(session, list) {
-        return Ok(None);
-    }
-    let registry = registry().map_err(Flow::Failed)?;
-    let table = implementations(session).map_err(Flow::Failed)?;
-
-    let mut bound: Vec<(&'static CommandContract, BoundArguments)> = Vec::new();
-    for stage in &list.stages {
-        // `structured` is true throughout: a pipeline that can be continued is one where every
-        // stage hands objects on, which `continuable_list` has already established.
-        let Some(bound_stage) = bind_stage(session, registry, stage, true)? else {
-            return Ok(None);
-        };
-        bound.push(bound_stage);
-    }
-    if bound.is_empty() {
-        return Ok(None);
-    }
-
-    let scope = std::sync::Arc::new(stage_scope(session, &bound, source)?);
-    let adapters = session.shared_adapters();
-    let resolver = crate::resolve::resolver(session);
-    let context = session.context();
-    let materialization = crate::eval::materialize::limits(session);
-    let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
-        Flow::Failed(ErrorValue::new(
-            ErrorCode::IoPermissionDenied,
-            "the operating system refused to start the pipeline runtime",
-        ))
-    })?;
-    let handle = runtime.handle().clone();
-
-    let assembled = handle.block_on(async {
-        let mut stream: Option<ValueStream> = None;
-        let mut failed_rows = false;
-        for (contract, arguments) in &bound {
-            let started = std::time::Instant::now();
-            let temporal = crate::temporal::invocation_context(arguments).await?;
-            let mut invocation = Invocation::new(contract, arguments, providers)
-                .with_scope(std::sync::Arc::clone(&scope))
-                .with_context(context.clone())
-                .with_adapters(std::sync::Arc::clone(&adapters), resolver.clone())
-                .with_temporal(temporal, registry);
-            if let Some(previous) = stream.take() {
-                invocation = invocation.with_input(previous);
-            }
-            match table.run(contract.id(), &mut invocation).await {
-                Ok(Outcome::Values(values)) => {
-                    stream = Some(values.with_materialization_limits(materialization));
-                }
-                Ok(Outcome::Actions(outcomes)) => {
-                    if outcomes
-                        .iter()
-                        .any(|outcome| outcome.status() == ActionStatus::Failed)
-                    {
-                        failed_rows = true;
-                    }
-                    stream = Some(
-                        action_records(contract, outcomes, started)
-                            .with_materialization_limits(materialization),
-                    );
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        Ok((stream, failed_rows))
-    });
-    match assembled.map_err(Flow::Failed)? {
-        (Some(stream), failed_rows) => Ok(Some((stream, failed_rows))),
-        (None, _) => Ok(None),
-    }
 }
 
 /// What the expressions of a native segment can see: the session's `$variables`, and the values

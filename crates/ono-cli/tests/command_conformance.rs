@@ -8,7 +8,7 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 106 examples run; 247 are not run, each for the reason listed at the end of this file.
+//! 108 examples run; 247 are not run, each for the reason listed at the end of this file.
 //!
 //! Commands no example of which runs (161):
 //!
@@ -34,9 +34,9 @@
 //! - `ono.container.remove` — runs `ono.container.remove`, whose verb `remove` changes the system (verbs.yaml)
 //! - `ono.container.set` — runs `ono.container.set`, whose verb `set` changes the system (verbs.yaml)
 //! - `ono.data.each` — runs `ono.service.restart`, whose verb `restart` changes the system (verbs.yaml)
-//! - `ono.data.measure` — runs `ono.data.measure`, which declares `ono.measure/1` — a schema schemas/deferred.yaml says a later phase writes
 //! - `ono.data.from` — runs `curl`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
 //! - `ono.data.tail` — runs `ono.log.get`, which declares privilege `conditional`
+//! - `ono.data.join` — runs `ono.socket.get`, which declares privilege `conditional`
 //! - `ono.data.diff` — refers to an earlier result, which the scratch shell does not have
 //! - `ono.file.get` — runs `ono.file.get`, which declares privilege `conditional`
 //! - `ono.file.find` — runs `ono.file.find`, which declares privilege `conditional`
@@ -342,6 +342,28 @@ fn should_produce_what_ono_data_count_declares_when_example_1_runs() {
     });
 }
 
+/// `get process | measure memory`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_data_measure_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.data.measure",
+        example: "get process | measure memory",
+        output: "ono.measure/1",
+    });
+}
+
+/// `get process | measure memory --median --percentiles [90, 99]`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_data_measure_declares_when_example_2_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.data.measure",
+        example: "get process | measure memory --median --percentiles [90, 99]",
+        output: "ono.measure/1",
+    });
+}
+
 /// `get process | to json`
 #[rustfmt::skip]
 #[test]
@@ -375,6 +397,17 @@ fn should_produce_what_ono_data_to_declares_when_example_4_runs() {
     });
 }
 
+/// `get process | take 3 | to jsonl`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_data_to_declares_when_example_5_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.data.to",
+        example: "get process | take 3 | to jsonl",
+        output: "string | bytes",
+    });
+}
+
 /// `get process | format table`
 #[rustfmt::skip]
 #[test]
@@ -386,13 +419,13 @@ fn should_produce_what_ono_data_format_declares_when_example_1_runs() {
     });
 }
 
-/// `get process | format table --columns ["pid", "name", "memory"]`
+/// `get process | format table --columns [pid, name, memory]`
 #[rustfmt::skip]
 #[test]
 fn should_produce_what_ono_data_format_declares_when_example_2_runs() {
     harness::assert_example_conforms(&harness::ExampleCase {
         command: "ono.data.format",
-        example: "get process | format table --columns [\"pid\", \"name\", \"memory\"]",
+        example: "get process | format table --columns [pid, name, memory]",
         output: "string",
     });
 }
@@ -405,17 +438,6 @@ fn should_produce_what_ono_data_view_declares_when_example_1_runs() {
         command: "ono.data.view",
         example: "get process | view table",
         output: "null",
-    });
-}
-
-/// `get process | join (get process | where cpu > 1) --on pid`
-#[rustfmt::skip]
-#[test]
-fn should_produce_what_ono_data_join_declares_when_example_1_runs() {
-    harness::assert_example_conforms(&harness::ExampleCase {
-        command: "ono.data.join",
-        example: "get process | join (get process | where cpu > 1) --on pid",
-        output: "stream<record>",
     });
 }
 
@@ -1394,11 +1416,11 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.data.group` `get socket | where state == established | group process.name` — runs `ono.socket.get`, which declares privilege `conditional`
 // - `ono.data.each` `get service | where state == failed | each { restart service @ }` — runs `ono.service.restart`, whose verb `restart` changes the system (verbs.yaml)
 // - `ono.data.count` `echo (get process | count)` — runs `echo`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
-// - `ono.data.measure` `get process | measure memory` — runs `ono.data.measure`, which declares `ono.measure/1` — a schema schemas/deferred.yaml says a later phase writes
 // - `ono.data.to` `get process | to json > out.json` — writes through a redirection
 // - `ono.data.from` `curl -s https://example/api | from json | where status == "open"` — runs `curl`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
 // - `ono.data.view` `trace process 1 | view tree` — runs `ono.process.trace`, which declares privilege `conditional`
 // - `ono.data.tail` `get log --service nginx | tail 30` — runs `ono.log.get`, which declares privilege `conditional`
+// - `ono.data.join` `get process | join (get socket) --on pid` — runs `ono.socket.get`, which declares privilege `conditional`
 // - `ono.data.diff` `get service | diff @-1` — refers to an earlier result, which the scratch shell does not have
 // - `ono.file.get` `get file ./src` — runs `ono.file.get`, which declares privilege `conditional`
 // - `ono.file.get` `get file /tmp --recursive | where modified < now()-30d` — runs `ono.file.get`, which declares privilege `conditional`

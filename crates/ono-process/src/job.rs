@@ -119,6 +119,8 @@ pub(crate) struct RunningStage {
     pub(crate) stderr: Option<Collector>,
     /// The read end of the pipe a caller reads standard output from, until it takes it.
     pub(crate) pipe: Option<OwnedFd>,
+    /// The write end of the pipe a caller writes standard input into, until it takes it.
+    pub(crate) stdin: Option<OwnedFd>,
 }
 
 /// A thread draining one captured stream.
@@ -225,6 +227,7 @@ mod tests {
                     stdout: None,
                     stderr: None,
                     pipe: None,
+                    stdin: None,
                 })
                 .collect(),
         }

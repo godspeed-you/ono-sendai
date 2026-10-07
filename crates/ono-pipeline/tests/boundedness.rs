@@ -174,3 +174,72 @@ async fn should_report_a_finite_source_as_bounded() {
     let stream = ValueStream::from_values([Value::Int(1)]);
     assert_eq!(stream.boundedness(), Boundedness::Bounded);
 }
+
+// --- constant-state `measure` (ADR-0953, issue #174) ---------------------------------------------
+
+/// A source that produces `values` and then waits, open, until the test ends.
+fn produces_then_waits(values: Vec<i128>) -> (ValueStream, tokio::sync::oneshot::Sender<()>) {
+    let (release, released) = tokio::sync::oneshot::channel::<()>();
+    let stream = ValueStream::spawn(
+        PipelineConfig::new().with_capacity(4),
+        Boundedness::Unbounded,
+        move |sink| async move {
+            for value in values {
+                if sink.send(Value::Int(value)).await.is_err() {
+                    return;
+                }
+            }
+            let _ = released.await;
+        },
+    );
+    (stream, release)
+}
+
+fn field(record: &Value, name: &str) -> Value {
+    match record.follow(&[ono_value::FieldStep::required(name)]) {
+        Ok(value) => value,
+        Err(error) => unreachable!("`{name}` is a field of ono.measure/1: {error}"),
+    }
+}
+
+#[tokio::test]
+async fn should_answer_after_every_value_when_constant_state_measure_reads_an_unbounded_stream() {
+    // Issue #174's exit test: "`measure count` over an unbounded source answers without
+    // materializing". The source has produced three values and is still open; a stage that
+    // waited for its end, or refused it, would have answered nothing.
+    let (source, still_open) = produces_then_waits(vec![1, 2, 3]);
+    let mut measured = source
+        .transform(Measure::constant_state(|value: &Value| Ok(value.clone())))
+        .expect("constant-state statistics need no end, so an unbounded stream is a legal input");
+    assert_eq!(
+        measured.boundedness(),
+        Boundedness::Unbounded,
+        "a running answer to a stream that does not end does not end either"
+    );
+
+    let mut answers = Vec::new();
+    while answers.len() < 3 {
+        match within(measured.recv()).await {
+            Some(ono_pipeline::StreamEvent::Value(record)) => answers.push(record),
+            other => unreachable!("expected a running record, got {other:?}"),
+        }
+    }
+
+    let counts: Vec<Value> = answers
+        .iter()
+        .map(|record| field(record, "count"))
+        .collect();
+    let sums: Vec<Value> = answers.iter().map(|record| field(record, "sum")).collect();
+    assert_eq!(counts, [Value::Int(1), Value::Int(2), Value::Int(3)]);
+    assert_eq!(sums, [Value::Int(1), Value::Int(3), Value::Int(6)]);
+    assert_eq!(field(&answers[2], "max"), Value::Int(3));
+    assert_eq!(
+        field(&answers[2], "median"),
+        Value::Null,
+        "a median is the distribution's, and nothing here holds it"
+    );
+    assert!(
+        !still_open.is_closed(),
+        "the three answers arrived while the source was still open"
+    );
+}

@@ -12,9 +12,6 @@
 version: 1
 
 deferred:
-  - id: ono.measure/1
-    phase: "B"
-    required_by: [ono.data.measure]
   - id: ono.execution-plan/1
     phase: "D"
     required_by: [ono.meta.explain]

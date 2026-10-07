@@ -32,6 +32,25 @@ thread_local! {
     static REACHED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// How many pipelines of one line this thread is inside, an `each` body's counted (ADR-0782).
     static RUNNING: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// On a background job's evaluator thread, the job's own Ctrl-C (ADR-0952).
+    static JOB: std::cell::RefCell<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Makes this thread a background job's evaluator: from now on its interrupt is `cancel`, set by
+/// `kill %N` or by Ctrl-C under `fg`, and never the terminal's — which belongs to the foreground
+/// line, and which a job must not take from it (spec §18.4, ADR-0952).
+pub(crate) fn enter_background_job(cancel: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+    JOB.with(|job| *job.borrow_mut() = Some(cancel));
+}
+
+/// The job's own interrupt, on a background job's evaluator thread.
+fn job_interrupt() -> Option<bool> {
+    JOB.with(|job| {
+        job.borrow()
+            .as_ref()
+            .map(|cancel| cancel.load(std::sync::atomic::Ordering::SeqCst))
+    })
 }
 
 /// Whether Ctrl-C has reached the shell since the line now running began (spec §18.5).
@@ -49,6 +68,9 @@ thread_local! {
 /// makes happens there too. A background job on a runtime worker has a memory of its own that
 /// nothing ever sets, so a foreground Ctrl-C cannot reach into it (spec §18.4).
 pub(crate) fn interrupt_reached() -> bool {
+    if let Some(cancelled) = job_interrupt() {
+        return cancelled;
+    }
     REACHED.with(|reached| {
         if ono_process::take_interrupt() {
             reached.set(true);
@@ -85,7 +107,9 @@ impl ForegroundRun {
     /// Enters a foreground pipeline, beginning the line where none was running.
     pub(crate) fn begin() -> Self {
         RUNNING.with(|running| {
-            if running.get() == 0 {
+            // A job's evaluator has no prompt behind it and must not read the terminal's
+            // interrupt away from the line that owns it (ADR-0952).
+            if running.get() == 0 && job_interrupt().is_none() {
                 let _ = ono_process::take_interrupt();
                 REACHED.with(|reached| reached.set(false));
                 // The shell is the only place that knows both how a long read is asked for and
@@ -136,6 +160,37 @@ pub(super) fn run_stage_list(
     source: &str,
     background: bool,
 ) -> Eval<ExitStatus> {
+    // Step 2 of the resolution order (ADR-0011) holds in every stage, not only the first: a call
+    // after another stage reads that stage's stream through its body, and everything up to the last
+    // such call is assembled into one stream (v0.4.1 §26.2, ADR-0951). A backgrounded line is the
+    // job's to run, and `explain` in front of a pipeline explains it rather than running it.
+    if !background
+        && list
+            .stages
+            .first()
+            .is_none_or(|first| builtin_name(session, first) != Some("explain"))
+        && let Some(through) = super::native::function_stages(session, list)
+            .into_iter()
+            .rfind(|index| *index >= 1)
+    {
+        if session.mode() == Mode::Config {
+            return Err(Flow::Failed(config_refusal("this command")));
+        }
+        if interrupt_reached() {
+            return Err(interrupted_flow_now());
+        }
+        return super::native::run_assembled(session, list, source, through);
+    }
+
+    // A backgrounded call needs an evaluator to run its body, and a job gets one of its own
+    // (spec §18.4, ADR-0952).
+    if background && !super::native::function_stages(session, list).is_empty() {
+        if session.mode() == Mode::Config {
+            return Err(Flow::Failed(config_refusal("this command")));
+        }
+        return super::native::run_evaluated_job(session, list, source);
+    }
+
     // Step 2 of the resolution order (ADR-0011): a user function wins over everything but a
     // keyword, and the keywords were the parser's.
     if !background
@@ -598,6 +653,11 @@ pub(super) fn run_stage_list(
         return Err(Flow::Failed(refusal));
     }
 
+    // A stopped job starts no program after the one its stop already signalled (ADR-0952).
+    if session.is_background_job() && interrupt_reached() {
+        return Err(interrupted_flow_now());
+    }
+
     // A pipeline being captured hands its stdout to the capture rather than the terminal: the
     // text is the value of `(echo hi)` (ADR-0069).
     if !background && session.capturing() {
@@ -659,6 +719,9 @@ pub fn run_external_segment(
 ) -> Eval<(Option<Vec<u8>>, ExitStatus)> {
     if session.mode() == Mode::Config {
         return Err(Flow::Failed(config_refusal("this command")));
+    }
+    if session.is_background_job() && interrupt_reached() {
+        return Err(interrupted_flow_now());
     }
 
     let captured = last && session.capturing();
@@ -834,6 +897,9 @@ pub(super) fn adapted_command(
         .args(plan.argv().iter().skip(1).map(OsString::from))
         .current_dir(session.cwd())
         .env_clear();
+    if session.is_background_job() {
+        command = command.stdin(ono_process::Input::Null);
+    }
     for (name, value) in session.env() {
         command = command.env(name, value);
     }
@@ -1105,6 +1171,11 @@ pub(super) fn assemble_command(
         .args(arguments)
         .current_dir(session.cwd())
         .env_clear();
+    // Spec §18.4: a background job does not read the terminal. Its programs read an empty input
+    // unless the pipeline gives them one, which a pipe or a redirection still does.
+    if session.is_background_job() {
+        command = command.stdin(ono_process::Input::Null);
+    }
     for (name, value) in session.env() {
         command = command.env(name, value);
     }

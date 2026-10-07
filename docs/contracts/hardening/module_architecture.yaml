@@ -66,10 +66,12 @@ evaluator:
 native_execution:
   crate: ono-cli
   root: src/eval/native
-  spec: "§30.2, ADR-0480, ADR-0507"
+  spec: "§30.2, ADR-0480, ADR-0507, ADR-0950"
   responsibilities:
     - responsibility: segment assembly
       module: segment.rs
+    - responsibility: assembling user function calls into one stream
+      module: assemble.rs
     - responsibility: stage binding
       module: bind.rs
     - responsibility: foreground execution

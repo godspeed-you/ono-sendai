@@ -22,6 +22,7 @@ use ono_value::{ErrorValue, Value};
 use crate::eval::{Eval, Flow};
 use crate::session::Session;
 
+mod assemble;
 mod bind;
 mod drive;
 mod external;
@@ -30,12 +31,12 @@ mod remote;
 mod result;
 mod segment;
 
-pub(crate) use bind::stream_segment;
-pub(crate) use drive::run_background;
+pub(crate) use assemble::{function_shape, function_stages, run_assembled};
+pub(crate) use drive::{run_background, run_evaluated_job};
 #[cfg(feature = "remote")]
 pub(crate) use remote::{literal_argv, remote_decision};
 pub(crate) use result::live_geometry;
-pub(crate) use segment::{adapts_at_terminal, claims, continuable_body, continuable_list};
+pub(crate) use segment::{adapts_at_terminal, claims};
 
 use self::external::{
     decode_adapted, external_demand, negotiate_stage, report_fallback, run_streamed_segment,
@@ -214,6 +215,7 @@ pub fn check(
                 executables: Some(&executables),
                 context: &[],
                 limits: materialization,
+                functions: None,
             },
         )
         .adapted_schemas()
@@ -250,6 +252,8 @@ pub(crate) fn run_piped(
         Start::Pipe {
             stream,
             failed_rows,
+            shows_itself: false,
+            requests: None,
         },
     )
 }
@@ -320,8 +324,19 @@ pub(crate) enum Start {
         stream: ValueStream,
         /// Whether a mutation in that pipeline reported a failed row (spec §16.5, ADR-0006).
         failed_rows: bool,
+        /// Whether the stream ends in a block that shows its own results (ADR-0070 point 3).
+        shows_itself: bool,
+        /// The channel the assembled block stages ask through, which the driver of this run
+        /// answers (ADR-0950).
+        requests: Option<BlockChannel>,
     },
 }
+
+/// Both ends of the channel a pipeline's block stages ask their driver through.
+pub(crate) type BlockChannel = (
+    drive::Asked,
+    tokio::sync::mpsc::Receiver<drive::BlockRequest>,
+);
 
 impl Start {
     /// Whether structure — rather than the head stage's own output — reaches the first stage.
@@ -371,8 +386,10 @@ fn run_from(
             Start::Pipe {
                 stream,
                 failed_rows,
+                shows_itself,
+                requests,
             } => {
-                let (_, run_status) = run_native_segment(
+                let ended = run_native_segment(
                     session,
                     registry,
                     list,
@@ -382,11 +399,14 @@ fn run_from(
                     Seed::Pipe {
                         stream,
                         failed_rows,
+                        shows_itself,
+                        requests,
                     },
                     true,
                     true,
+                    None,
                 )?;
-                status = run_status;
+                status = ended.status;
             }
             Start::Nothing => {}
         }
@@ -585,7 +605,17 @@ fn run_from(
                 status = external_status;
             }
             Segment::Native(indices) => {
-                let (bytes, native_status) = run_native_segment(
+                // A streaming serializer feeds the program after it while that program runs,
+                // when the program is the last stage there is (ADR-0954).
+                let feeds = match segments.get(position + 1) {
+                    Some(Segment::External(program))
+                        if position + 2 == segments.len() && session.link_host().is_none() =>
+                    {
+                        Some(program.as_slice())
+                    }
+                    _ => None,
+                };
+                let ended = run_native_segment(
                     session,
                     registry,
                     list,
@@ -598,16 +628,26 @@ fn run_from(
                         Start::Pipe {
                             stream,
                             failed_rows,
+                            shows_itself,
+                            requests,
                         } => Seed::Pipe {
                             stream,
                             failed_rows,
+                            shows_itself,
+                            requests,
                         },
                     },
                     position == 0,
                     last,
+                    feeds,
                 )?;
-                carried = bytes;
-                status = native_status;
+                status = ended.status;
+                if ended.fed_program {
+                    carried = None;
+                    position += 2;
+                    continue;
+                }
+                carried = ended.bytes;
             }
         }
         position += 1;
@@ -625,6 +665,8 @@ enum Seed {
     Pipe {
         stream: ValueStream,
         failed_rows: bool,
+        shows_itself: bool,
+        requests: Option<BlockChannel>,
     },
     /// Values arriving from a reader thread while the child that produces them still runs.
     Stream {

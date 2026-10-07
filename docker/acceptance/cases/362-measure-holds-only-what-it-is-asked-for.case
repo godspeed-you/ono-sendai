@@ -1,0 +1,46 @@
+# Issue #174, through the real binary as an unprivileged user.
+#
+# `measure` computes count, sum, mean, min, max and stddev in constant state: nothing is held, so a
+# materialization limit does not refuse it, and an unbounded source is a legal input it answers
+# after every value. The median and the percentiles are defined over the whole distribution, and
+# asking for them is what holds it — within the limit, over input that ends (ADR-0953). The
+# unbounded source is a followed file that never closes; nothing below asserts a duration.
+case: measure holds the distribution only when a percentile is asked for
+timeout: 120
+env: NO_COLOR=1
+run: |
+  numbers="[$(seq -s, 1 1000)]"
+
+  echo "== constant-state statistics past a ten-value limit =="
+  ono -c "set config limits.materialize_items = 10
+          echo \"$numbers\" | from json | measure @ | select count sum min max | to json"
+
+  echo "== a percentile still holds the distribution, and the limit refuses it =="
+  ono -c "set config limits.materialize_items = 10
+          echo \"$numbers\" | from json | measure @ --median"
+  echo "status=$?"
+
+  echo "== asked for, the median and the percentiles are reported =="
+  ono -c 'echo "[1,2,3,4,5,6,7,8,9,10]" | from json | measure @ --median --percentiles [90] | select median percentiles | to json'
+
+  echo "== over an unbounded source, the running answer after every value =="
+  printf '1\n2\n3\n' > "$HOME/case-362.log"
+  ono -c "tail file $HOME/case-362.log --lines 3 --follow | each { @ | from json } | measure @ | take 3 | select count sum | to json"
+  echo "lines=$(wc -l < "$HOME/case-362.log")"
+
+  echo "== explain says what each invocation holds =="
+  ono -c 'explain get process | measure pid'
+  ono -c 'explain get process | measure pid --median'
+exit: 0
+stdout-contains: [{"count":1000,"sum":500500,"min":1,"max":1000}]
+stdout-contains: resource.item_limit
+stdout-contains: status=1
+stdout-contains: [{"median":5.5,"percentiles":{"p90":9}}]
+stdout-contains: [{"count":1,"sum":1},{"count":2,"sum":3},{"count":3,"sum":6}]
+stdout-contains: lines=3
+stdout-matches: execution +streaming
+stdout-matches: execution +global materialization
+stdout-not-contains: unbounded_operation
+stdout-not-contains: panicked
+profile: full
+profile: core

@@ -21,6 +21,7 @@ mod statement;
 pub(crate) use block::run_each_item;
 pub use expression::eval_expr;
 pub use expression::truthy;
+pub(crate) use function::called_function;
 pub use materialize::captured_text;
 pub use pipeline::output_destination;
 pub use pipeline::run_adapted_segment;

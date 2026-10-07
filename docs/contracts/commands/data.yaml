@@ -210,16 +210,24 @@ commands:
     provider_capability: null
     selectors:
       - {name: key, type: value, doc: "The expression to measure."}
-    options: []
+    options:
+      - {name: median, type: bool, execution: explicit_collect, doc: "Also report the median. A median is defined over the whole distribution, so asking for one holds every sample: the stage then requires finite input and materializes within `limits.materialize_items` and `limits.materialize_bytes` (ADR-0953)."}
+      - {name: percentiles, type: list<float>, execution: explicit_collect, doc: "Also report these nearest-rank percentiles, each between 0 and 100, as the `p<N>` fields of `percentiles`. Like `--median`, this holds every sample and requires finite input (ADR-0953)."}
     privilege: none
     streaming: false
-    execution: explicit_collect   # v0.4.1 Appendix E, docs/contracts/hardening/streaming_classification.yaml
+    execution: incremental_aggregate   # v0.4.1 Appendix E, docs/contracts/hardening/streaming_classification.yaml; `--median` and `--percentiles` make an invocation explicit_collect (ADR-0953)
     phase: B
     note: >-
-      Yields count, sum, mean, min and max as typed values, not as formatted strings
-      (spec §53).
+      Yields count, skipped, sum, mean, min, max and stddev as typed values, not as formatted
+      strings (spec §53), in constant state: nothing is held per value, so no materialization
+      limit applies. Over a stream that ends it answers once, at the end. Over a stream declared
+      unbounded it answers after every value with the statistics so far, so `… | measure x |
+      take 3` is answered while the source is still open (ADR-0953). `median` and `percentiles`
+      are null unless `--median` or `--percentiles` asks for them, and asking holds the
+      distribution.
     examples:
       - get process | measure memory
+      - get process | measure memory --median --percentiles [90, 99]
 
   - id: ono.data.to
     verb: to
@@ -231,9 +239,9 @@ commands:
     output: "string | bytes"
     provider_capability: null
     selectors:
-      - {name: format, type: string, doc: "One of `json`, `yaml`, `csv`, `text`, `bytes`."}
+      - {name: format, type: string, values: [json, jsonl, yaml, csv, text, bytes], doc: "One of `json`, `jsonl`, `yaml`, `csv`, `text`, `bytes`. `jsonl` is JSON Lines: one compact JSON document per value, each on a line of its own, written as the value arrives (ADR-0954)."}
     options:
-      - {name: pretty, type: bool, doc: "Indent the output for a human reader (spec §33.5)."}
+      - {name: pretty, type: bool, doc: "Indent the output for a human reader (spec §33.5). Not for `jsonl`, whose documents are one line each."}
       - {name: human, type: bool, doc: "Emit display forms such as `1.2 GiB` instead of canonical values. Off by default: §33.5 requires canonical values unless a human format is explicitly requested."}
       - {name: field, type: string, doc: "For `text`, emit this one field per line — the bridge spec §29.1 writes for feeding an ordinary Unix tool. Unnecessary once `select` has left exactly one field: a one-field record is already one line. For `bytes`, write this one field's bytes verbatim, which is how an adapted program's body reaches a file (`adapt curl url | to bytes --field body > page.html`, ADR-0223)."}
     privilege: none
@@ -249,11 +257,19 @@ commands:
       not text — is written as its canonical string rather than as a rounded number, so nothing
       is silently lost (spec §12.2). The consequence is that `to` is one-way: `from json` reads
       the document back as plain maps, which is what making the boundary explicit costs.
+      Every format but one is a single document for the whole stream, written when the stream
+      ends — `to json` is one array — so it needs input that ends. `jsonl` is the streaming
+      serializer: each value becomes one compact JSON document on a line of its own, in the same
+      encoding `to json` gives that value inside its array, and the line is written and flushed
+      as the value arrives. It accepts a stream declared unbounded, holds nothing between values,
+      waits for a slow reader rather than buffering for it, and ends quietly when the reader goes
+      away (ADR-0954).
     examples:
       - get process | to json
       - get process | to json --pretty
       - get process | to json > out.json
       - get mount | select target | to text
+      - get process | take 3 | to jsonl
 
   - id: ono.data.from
     verb: from
@@ -296,7 +312,7 @@ commands:
       the rendering explicit so it can be piped to a byte sink; it never changes the values.
     examples:
       - get process | format table
-      - get process | format table --columns ["pid", "name", "memory"]
+      - get process | format table --columns [pid, name, memory]
 
   - id: ono.data.view
     verb: view
@@ -370,7 +386,7 @@ commands:
       is an `ono.join/1` record — `key`, `left`, `right` — rather than a flat merge, so no
       field-collision rule is frozen before a use case justifies one.
     examples:
-      - get process | join (get process | where cpu > 1) --on pid
+      - get process | join (get socket) --on pid
 
   - id: ono.data.diff
     verb: diff

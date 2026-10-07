@@ -115,13 +115,14 @@ operations:
   - command: ono.data.group
     class: global_grouping
   - command: ono.data.measure
-    class: explicit_collect
+    class: incremental_aggregate
     note: >-
-      Placed by its properties rather than by Appendix E's example name. `count`, `sum`, `mean`,
-      `min` and `max` are constant-state, but an exact percentile is defined over the whole
-      distribution and holds a sample per value (§22.1), so the stage as a whole requires finite
-      input and materializes within budget. Splitting the constant-state statistics from the
-      distribution ones would move the first half to `incremental_aggregate` (ADR-0454).
+      `count`, `skipped`, `sum`, `mean`, `min`, `max` and `stddev` are constant-state, and by
+      default that is all `measure` computes: it holds no sample, refuses no unbounded upstream
+      and answers after every value of one (ADR-0953). An exact median or percentile is defined
+      over the whole distribution and holds a sample per value (§22.1), so an invocation with
+      `--median` or `--percentiles` is `explicit_collect` — the contract declares that on the two
+      options, and `explain` reports the class of the invocation, not of the command.
   - command: ono.data.join
     class: explicit_collect
     note: >-

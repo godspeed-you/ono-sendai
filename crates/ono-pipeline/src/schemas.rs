@@ -103,26 +103,19 @@ pub(crate) fn grouping_schema() -> Result<Arc<Schema>, ErrorValue> {
 }
 
 /// The statistics `measure` reports, as typed values rather than formatted text (spec §53).
+///
+/// The schema is the contract's, `docs/contracts/schemas/measure.v1.yaml`, read from the registry
+/// that embeds it rather than restated here, so what `measure` produces and what the contract
+/// publishes cannot drift apart (ADR-0953).
 pub(crate) fn measure_schema() -> Result<Arc<Schema>, ErrorValue> {
-    static SCHEMA: OnceLock<Result<Arc<Schema>, ErrorValue>> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Schema::builder(SchemaId::new("ono.measure", 1), "Measure")
-                .doc("The statistics a `measure` transform reports (spec §53).")
-                .field(FieldDef::new("count", FieldType::Int).required())
-                .field(FieldDef::new("skipped", FieldType::Int).required())
-                .field(FieldDef::new("sum", FieldType::Any).nullable())
-                .field(FieldDef::new("mean", FieldType::Any).nullable())
-                .field(FieldDef::new("median", FieldType::Any).nullable())
-                .field(FieldDef::new("min", FieldType::Any).nullable())
-                .field(FieldDef::new("max", FieldType::Any).nullable())
-                .field(FieldDef::new("stddev", FieldType::Float).nullable())
-                .field(FieldDef::new("percentiles", FieldType::Map).nullable())
-                .default_view(["count", "sum", "mean", "min", "max"])
-                .build()
-                .map(Arc::new)
+    ono_value::builtin_schemas()
+        .get(&SchemaId::new("ono.measure", 1))
+        .ok_or_else(|| {
+            ErrorValue::new(
+                ono_core::ErrorCode::ProviderSchemaViolation,
+                "the `ono.measure/1` contract is not embedded in this build",
+            )
         })
-        .clone()
 }
 
 /// One matched pair of a `join`.

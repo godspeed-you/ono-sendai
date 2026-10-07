@@ -22,7 +22,11 @@ pub fn stop(session: &mut Session, number: u32) -> Eval<()> {
             format!("no job %{number}"),
         )));
     };
-    job.handle.abort();
+    job.handle.stop(ono_process::Signal::TERM);
+    // A job with an evaluator of its own may be waiting on a child; it is given a moment to
+    // reap it, so `kill %1; jobs` is not a race (v0.4.1 §28.4, ADR-0952).
+    job.handle
+        .wait_until_finished(std::time::Duration::from_secs(2));
     Ok(())
 }
 
@@ -43,8 +47,29 @@ pub fn attach(session: &mut Session, number: u32) -> Eval<ExitStatus> {
         )));
     };
 
+    // A job with an evaluator of its own is waited for, as `fg` waits for a program: the shell
+    // holds the terminal meanwhile, and Ctrl-C ends the job and its children (ADR-0952).
+    let mut interrupted = false;
+    if matches!(job.handle, crate::session::JobRun::Evaluator(_)) {
+        let _ = ono_process::take_interrupt();
+        while !job.handle.is_finished() {
+            if ono_process::take_interrupt() {
+                interrupted = true;
+                job.handle.stop(ono_process::Signal::INT);
+                job.handle
+                    .wait_until_finished(std::time::Duration::from_secs(2));
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
     let live = !job.handle.is_finished();
-    if live && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+    if live
+        && !interrupted
+        && matches!(job.handle, crate::session::JobRun::Task(_))
+        && std::io::IsTerminal::is_terminal(&std::io::stdout())
+    {
         let _ = ono_process::take_interrupt();
         let renderer = Renderer::new();
         let theme = Theme::clone(session.theme());
@@ -82,13 +107,13 @@ pub fn attach(session: &mut Session, number: u32) -> Eval<ExitStatus> {
             painted = lines.len();
             std::thread::sleep(std::time::Duration::from_millis(250));
         }
-        job.handle.abort();
+        job.handle.stop(ono_process::Signal::INT);
         return Ok(ExitStatus::from_signal(2));
     }
 
     // A finished job hands over what it made; an unfinished one without a terminal is stopped —
     // there is nothing to reattach it to.
-    job.handle.abort();
+    job.handle.stop(ono_process::Signal::TERM);
     let values = std::mem::take(
         &mut *job
             .values
@@ -127,13 +152,22 @@ pub fn attach(session: &mut Session, number: u32) -> Eval<ExitStatus> {
             .with_theme(session.theme())
             .write(&shown);
     }
+    // Spec §43: what a job could not do is reported as the foreground would report it — code,
+    // name and help — when the job is collected (ADR-0952).
+    let reporter = crate::report::Reporter::new(Presentation::choose(
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+        &[],
+    ));
     for failure in job
         .failures
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .iter()
     {
-        ono_core::diagnostic!("ono: {failure}");
+        reporter.error(failure);
     }
-    Ok(ExitStatus::SUCCESS)
+    if interrupted {
+        return Ok(ExitStatus::from_signal(2));
+    }
+    Ok(job.handle.status().unwrap_or(ExitStatus::SUCCESS))
 }

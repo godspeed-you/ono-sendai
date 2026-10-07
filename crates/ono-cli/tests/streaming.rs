@@ -30,7 +30,7 @@ use std::time::Duration;
 
 use ono_testkit::{Scratch, scratch};
 
-use support::{Bounded, run_bounded};
+use support::{Bounded, processes_naming, run_bounded};
 
 /// Long enough that a loaded machine cannot turn a working implementation into a failure, and
 /// short enough that a test which never terminates does not hold the suite. Nothing is asserted
@@ -547,6 +547,287 @@ fn should_drop_the_invocation_scope_when_the_function_call_ends() {
 }
 
 #[test]
+fn should_keep_the_callers_binding_in_the_stages_after_a_streamed_call() {
+    // v0.4.1 §26.3: "streaming a block/function MUST NOT let lexical scope references outlive
+    // their owning scope". A call whose body streams into the stages after it returns before those
+    // stages have drained, and the stages after it are the caller's: a block among them reads the
+    // caller's `x`, never the callee's parameter of the same name.
+    let source = Following::holding(&["first", "second"]);
+    let script = format!(
+        "fn streamed(x) {{ tail file {} --lines 2 --follow | take 2 }}\n\
+         let x = \"the caller's\"\n\
+         streamed \"the callee's\" | each {{ $x }} | to json",
+        source.path.display()
+    );
+
+    let run = run_bounded(&source.home, &script, BUDGET);
+
+    assert!(run.finished, "{}", run.report());
+    assert_eq!(
+        run.stdout.trim(),
+        "[\"the caller's\",\"the caller's\"]",
+        "the caller's block reads the caller's binding: the callee's parameter ended with the \
+         call. {}",
+        run.report()
+    );
+}
+
+// --- a body that runs a block streams too (§26.1, §26.2, issue #192) -----------------------------
+
+#[test]
+fn should_stream_a_function_whose_body_runs_a_block_like_one_whose_body_filters() {
+    // Issue #192's exit test: "a function whose body is `each { … }` streams like one whose body
+    // is `where`". The body's source never ends, so a body that was collected before the stages
+    // after the call ran could not answer `take 1` at all.
+    let source = Following::holding(&["first"]);
+    for body in ["each { @ }", "where @ != \"a line nothing writes\""] {
+        let script = format!(
+            "fn watched() {{ tail file {} --lines 1 --follow | {body} }}\nwatched | take 1 | to json",
+            source.path.display()
+        );
+
+        let run = run_bounded(&source.home, &script, BUDGET);
+
+        assert!(
+            run.finished,
+            "`{body}` in the body: the caller's `take 1` answers from the first value. {}",
+            run.report()
+        );
+        assert_eq!(
+            run.stdout.trim(),
+            "[\"first\"]",
+            "`{body}` in the body: the value crossed the block and the call. {}",
+            run.report()
+        );
+    }
+    assert_eq!(
+        source.lines(),
+        ["first"],
+        "the body's source is still waiting: nothing here waited for it to end"
+    );
+}
+
+#[test]
+fn should_run_a_streamed_body_block_in_the_invocation_scope_of_its_call() {
+    // §26.3: "the refactor MUST preserve deterministic variable binding and mutation semantics".
+    // The block of a streamed body runs while the caller's pipeline drains, after the call has
+    // returned — and it still reads the parameter the call bound, and a `let` that advances that
+    // parameter for one item is what the next item reads, exactly as in a collected body.
+    let source = Following::holding(&["first", "second"]);
+    let script = format!(
+        "fn tagged(tag) {{ tail file {} --lines 2 --follow | each {{ let tag = $tag + \"!\"; $tag }} }}\n\
+         tagged \"go\" | take 2 | to json",
+        source.path.display()
+    );
+
+    let run = run_bounded(&source.home, &script, BUDGET);
+
+    assert!(run.finished, "{}", run.report());
+    assert_eq!(
+        run.stdout.trim(),
+        "[\"go!\",\"go!!\"]",
+        "the block read the call's parameter and its mutation carried to the next item. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_end_a_streamed_body_with_the_value_its_block_returns() {
+    // v0.4.1 §25.5: "`return` exits the containing function according to existing language
+    // semantics". In a body that streams, the function's output ends with the returned value and
+    // its source is read no further — the source here never ends, so a `return` that did not stop
+    // it would leave the run waiting.
+    let source = Following::holding(&["first", "second", "third"]);
+    let script = format!(
+        "fn upto() {{ tail file {} --lines 3 --follow | each {{ if @ == \"second\" {{ return \"stop\" }}; @ }} }}\n\
+         upto | to json",
+        source.path.display()
+    );
+
+    let run = run_bounded(&source.home, &script, BUDGET);
+
+    assert!(
+        run.finished,
+        "`return` ends the function's stream, and with it the source behind it. {}",
+        run.report()
+    );
+    assert_eq!(
+        run.stdout.trim(),
+        "[\"first\",\"stop\"]",
+        "the values before the return, then the returned value, and nothing after. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_say_in_explain_that_a_body_running_a_block_streams() {
+    // §26.2's MUST: whether a call streams or collects is explicit in `explain`. A body that runs
+    // a block now streams, and the plan says so.
+    let scratch = scratch();
+
+    let run = run_bounded(
+        &scratch,
+        "fn pids() { get process | each { @.pid } }\nexplain pids | take 1",
+        BUDGET,
+    );
+
+    assert!(
+        run.stdout
+            .contains("its body streams into the stages after the call"),
+        "a body whose block runs per item is named as one that streams. {}",
+        run.report()
+    );
+}
+
+// --- a function between two stages reads the stream in front of it (issue #191) ----------------
+
+#[test]
+fn should_hand_the_stream_to_a_function_called_between_two_stages() {
+    // Issue #191, reproduced: `get process | mine | take 1` ran `mine` as a program. A user
+    // function is step 2 of the resolution order wherever its name stands (ADR-0011), and a call
+    // after a stage reads that stage's stream through its body.
+    let scratch = scratch();
+
+    let run = run_bounded(
+        &scratch,
+        "fn mine() { where pid > 0 }\nget process | mine | take 1 | to json",
+        BUDGET,
+    );
+
+    assert_eq!(run.code, Some(0), "{}", run.report());
+    let answer: serde_json::Value =
+        serde_json::from_str(run.stdout.trim()).expect("`to json` writes one document");
+    let rows = answer.as_array().expect("an array of processes");
+    assert_eq!(rows.len(), 1, "`take 1` after the call. {}", run.report());
+    assert!(
+        rows[0].get("pid").and_then(serde_json::Value::as_i64) > Some(0),
+        "the call's body filtered the processes `get process` produced. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_answer_through_a_function_between_two_stages_before_the_source_ends() {
+    // §2.5's meaning of streaming, through the call: the body reads the caller's stream directly,
+    // so `take 1` after it answers from the first value while the source is still open.
+    let source = Following::holding(&["first"]);
+
+    let script = format!(
+        "fn kept() {{ where @ != \"a line nothing writes\" }}\n\
+         tail file {} --lines 1 --follow | kept | take 1 | to json",
+        source.path.display()
+    );
+
+    let run = run_bounded(&source.home, &script, BUDGET);
+
+    assert!(
+        run.finished,
+        "the call answered from the value the source has already produced. {}",
+        run.report()
+    );
+    assert_eq!(run.stdout.trim(), "[\"first\"]", "{}", run.report());
+    assert_eq!(
+        source.lines(),
+        ["first"],
+        "and the source never ended: nothing waited for it to"
+    );
+}
+
+#[test]
+fn should_stream_through_a_call_at_the_head_and_a_call_between_two_stages() {
+    let source = Following::holding(&["first"]);
+    let script = format!(
+        "fn watched() {{ tail file {} --lines 1 --follow }}\n\
+         fn shout() {{ each {{ @ + \"!\" }} }}\n\
+         watched | shout | take 1 | to json",
+        source.path.display()
+    );
+
+    let run = run_bounded(&source.home, &script, BUDGET);
+
+    assert!(
+        run.finished,
+        "both calls are stages of one stream, the second one's block included. {}",
+        run.report()
+    );
+    assert_eq!(run.stdout.trim(), "[\"first!\"]", "{}", run.report());
+    assert_eq!(source.lines(), ["first"]);
+}
+
+#[test]
+fn should_seed_a_call_between_two_stages_with_what_a_program_wrote() {
+    // The stages in front of the call need not stream: a program's output, decoded, is a finite
+    // stream like any other, and the call reads it.
+    let scratch = scratch();
+
+    let run = run_bounded(
+        &scratch,
+        "fn doubled() { each { @ * 2 } }\necho \"[1,2,3]\" | from json | doubled | to json",
+        BUDGET,
+    );
+
+    assert_eq!(run.code, Some(0), "{}", run.report());
+    assert_eq!(run.stdout.trim(), "[2,4,6]", "{}", run.report());
+}
+
+#[test]
+fn should_refuse_a_call_between_two_stages_whose_body_cannot_read_a_stream() {
+    // ADR-0951: a function between two stages reads its input through its body. A body of
+    // several statements has no first stage to hand the stream to, and the refusal says so before
+    // anything runs — the source here never ends, so a call that tried would never answer.
+    let source = Following::holding(&["first"]);
+    let script = format!(
+        "fn counted() {{\n  let wanted = 1\n  where @ != \"x\"\n}}\n\
+         tail file {} --lines 1 --follow | counted | take 1 | to json",
+        source.path.display()
+    );
+
+    let run = run_bounded(&source.home, &script, BUDGET);
+
+    assert!(run.finished, "a refusal, not a wait. {}", run.report());
+    assert_eq!(run.code, Some(1), "{}", run.report());
+    assert!(
+        run.stderr.contains("type.mismatch")
+            && run
+                .stderr
+                .contains("`counted` cannot read the stream in front of it"),
+        "the structured refusal names the call and why. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_name_a_function_between_two_stages_in_explain_and_say_that_it_streams() {
+    // Issue #191's exit test: "`explain` names it". The plan's stage is the user function, step 2
+    // of the resolution order, and it says whether the call streams.
+    let scratch = scratch();
+
+    let run = run_bounded(
+        &scratch,
+        "fn mine() { where pid > 0 }\nexplain get process | mine | take 1",
+        BUDGET,
+    );
+
+    assert!(
+        !run.stdout.contains("is not a native command"),
+        "the call is not reported as an unknown program. {}",
+        run.report()
+    );
+    assert!(
+        run.stdout.contains("user function `mine`"),
+        "the stage is named as the user function. {}",
+        run.report()
+    );
+    assert!(
+        run.stdout.contains(
+            "its body reads the stream in front of the call and streams into the stages after it"
+        ),
+        "and the plan says the call streams. {}",
+        run.report()
+    );
+}
+
+#[test]
 fn should_say_in_explain_which_calls_stream_and_which_collect() {
     // v0.4.1 §26.2: "if function semantics currently require a complete function result before
     // continuation, that limitation MUST be explicit in `explain`". A body that is one native
@@ -653,31 +934,4 @@ fn should_reap_the_child_process_of_a_cancelled_stage() {
         "the shell has been reaped and the child it stopped reading from is still running. {}",
         run.report()
     );
-}
-
-/// The pids of every process whose command line names `needle`.
-///
-/// Read out of `/proc` rather than from `ps`, so the test depends on the kernel interface the
-/// shell's own process provider depends on and on no other program.
-fn processes_naming(needle: &str) -> Vec<u32> {
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return Vec::new();
-    };
-    let mut found = Vec::new();
-    for entry in entries.flatten() {
-        let Some(pid) = entry
-            .file_name()
-            .to_str()
-            .and_then(|name| name.parse::<u32>().ok())
-        else {
-            continue;
-        };
-        let Ok(cmdline) = std::fs::read(entry.path().join("cmdline")) else {
-            continue;
-        };
-        if String::from_utf8_lossy(&cmdline).contains(needle) {
-            found.push(pid);
-        }
-    }
-    found
 }
