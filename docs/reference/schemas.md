@@ -2455,6 +2455,8 @@ The type of a value, or of what a pipeline declares it produces, with a record's
 
 Identity: 
 
+Default view: `type`, `schema`, `fields`
+
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
 | `subject` | `string` | — | nullable | The pipeline described, as it was written — `get socket` for `type get socket`. Null when the subject is a value that arrived through the pipeline. |

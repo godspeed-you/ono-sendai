@@ -33,4 +33,7 @@ fields:
     type: string
     nullable: true
     doc: For an error value, its stable name from errors.yaml; null for anything else.
-# No `default_view`: a rendered type shows every field, as the untagged answer it replaces did.
+# The rendered view is the answer to "what type": the type, the schema and its fields. The subject
+# is what the user just typed, and `code` belongs to an error value; both stay one `select` away.
+default_view:
+  columns: [type, schema, fields]
