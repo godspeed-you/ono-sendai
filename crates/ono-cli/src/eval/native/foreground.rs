@@ -468,10 +468,25 @@ pub(super) fn run_native_segment(
     // A failure of the provider kind — it could not answer, or not as promised — is never a
     // partial one: no object was lost, the answer was (ADR-0085). What did arrive is still
     // written; the status says the run did not get what it asked for.
-    let unanswered = failures
-        .iter()
-        .any(|failure| failure.kind() == ono_core::ErrorKind::Provider);
+    let unanswered = drained.unanswered
+        || failures
+            .iter()
+            .any(|failure| failure.kind() == ono_core::ErrorKind::Provider);
     report_failures(wrote || !values.is_empty(), failures)?;
+    // Failures a streaming drain reported as they came, with nothing written: the failure was the
+    // answer, as `report_failures` makes it — already on the terminal, so only its status is
+    // left to give (ADR-0221).
+    let nothing_but_failures = drained
+        .first_reported
+        .as_ref()
+        .filter(|_| !wrote)
+        .map(|first| {
+            if first.code() == ErrorCode::StreamCancelled {
+                ExitStatus::from_signal(2)
+            } else {
+                crate::eval::status_for(first)
+            }
+        });
 
     // ADR-0014 counts what a pipeline dropped so that "a user who is surprised by a row count
     // has somewhere to look that is not the source code". This is where they look: one note per
@@ -481,7 +496,9 @@ pub(super) fn run_native_segment(
         report_counts(&counted);
     }
 
-    let status = if failed_rows || unanswered {
+    let status = if let Some(status) = nothing_but_failures {
+        status
+    } else if failed_rows || unanswered {
         ExitStatus::FAILURE
     } else {
         ExitStatus::SUCCESS

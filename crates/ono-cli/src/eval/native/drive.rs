@@ -249,6 +249,12 @@ pub(super) struct Drained {
     pub(super) written: usize,
     /// Whether the reader of what was being written went away, which ended the drain.
     pub(super) reader_left: bool,
+    /// The per-item failures a streaming serializer's drain reported as they arrived, instead of
+    /// collecting them in `failures`: how many, the first of them, and whether any was a
+    /// provider's (ADR-0085) — one value kept, however long the stream runs.
+    pub(super) reported: usize,
+    pub(super) first_reported: Option<ErrorValue>,
+    pub(super) unanswered: bool,
 }
 
 /// The driver. It is the only thing holding the session, so it is the only thing that can run a
@@ -344,7 +350,24 @@ pub(super) fn drive_segment(
                 },
                 None => drained.values.push(value),
             },
-            Driven::Event(StreamEvent::Failure(error)) => drained.failures.push(error),
+            // A streaming drain never ends for an unbounded stream, so a failure waiting for its
+            // end would never be seen and every one of them would be kept (review C4). It is
+            // reported now, as a line is written now.
+            Driven::Event(StreamEvent::Failure(error)) => match output.as_deref() {
+                Some(_) => {
+                    crate::report::Reporter::new(ono_render::Presentation::choose(
+                        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+                        &[],
+                    ))
+                    .error(&error);
+                    drained.reported += 1;
+                    drained.unanswered |= error.kind() == ono_core::ErrorKind::Provider;
+                    if drained.first_reported.is_none() {
+                        drained.first_reported = Some(error);
+                    }
+                }
+                None => drained.failures.push(error),
+            },
             Driven::Drained => {
                 draining = None;
                 showing = None;

@@ -376,6 +376,35 @@ fn should_end_the_line_with_141_and_go_on_when_a_redirected_documents_reader_lea
 }
 
 #[test]
+fn should_report_each_failure_as_it_arrives_while_the_stream_goes_on() {
+    // Review C4: a failure of one item is reported when it arrives, not held for an end an
+    // unbounded stream never reaches — held, nothing was reported at all, and every failure was
+    // one more value kept. The source here never ends; each line it gains fails `where`, and each
+    // failure is on the terminal before the next line exists.
+    let home = scratch();
+    let source = home.write("jsonl/source.log", "first\n");
+    let script = format!(
+        "{} -c 'tail file {} --lines 1 --follow | where @ | to jsonl' 2>&1",
+        ono_testkit::ono_binary().display(),
+        source.display()
+    );
+    let reading = BashReading::start(&home, &script);
+
+    let first = reading.next_line().unwrap_or_default();
+    assert!(
+        first.contains("predicate must be true, false or null"),
+        "the first item's failure was reported while the stream was open, got {first:?}"
+    );
+    let _help = reading.next_line();
+    append(&source, "second");
+    let second = reading.next_line().unwrap_or_default();
+    assert!(
+        second.contains("predicate must be true, false or null"),
+        "and so was the next one, when it arrived, got {second:?}"
+    );
+}
+
+#[test]
 fn should_keep_memory_flat_while_an_unbounded_stream_is_serialized() {
     // Bounded memory: how much of the source the shell had to read to answer `take 1` after the
     // serializer does not grow with how much the source holds.
