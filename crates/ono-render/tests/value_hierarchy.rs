@@ -131,3 +131,74 @@ fn should_neutralise_a_control_character_in_a_nested_name() {
         "a nested name passes through the sanitiser like any cell, got {drawn:?}"
     );
 }
+
+#[test]
+fn should_respect_the_row_limit_for_the_rows_of_a_hierarchy() {
+    let drawn: Vec<String> = Layout::new(80)
+        .max_rows(3)
+        .render_view_styled(
+            &Renderer::in_zone(TimeZone::UTC),
+            &forest(),
+            View::Table,
+            &Theme::default(),
+            Presentation::Plain,
+        )
+        .into_iter()
+        .map(|line| line.trim_end().to_owned())
+        .collect();
+    assert_eq!(
+        drawn,
+        [
+            "PID  NAME          USER",
+            "  1  init          root",
+            " 20  +-- sshd      root",
+            " 30  |   +-- bash  root",
+            "... 3 more",
+        ],
+        "`render.table.max_rows` counts the rows drawn, descendants included (review C7c)"
+    );
+}
+
+/// One process with a chain of `depth` descendants, each the only child of the one before.
+fn chain(depth: i128) -> Value {
+    let schema = schema();
+    let mut current = node(&schema, depth + 1, "leaf", Vec::new());
+    for pid in (1..=depth).rev() {
+        current = node(&schema, pid, "link", vec![current]);
+    }
+    current
+}
+
+#[test]
+fn should_cap_the_guides_of_a_deep_chain_and_mark_what_it_elides() {
+    let drawn = Layout::new(100_000).render_view_styled(
+        &Renderer::in_zone(TimeZone::UTC),
+        &[chain(2_000)],
+        View::Table,
+        &Theme::default(),
+        Presentation::Plain,
+    );
+    let widest = drawn
+        .iter()
+        .map(|line| unicode_width::UnicodeWidthStr::width(line.as_str()))
+        .max()
+        .unwrap_or_default();
+    assert!(
+        widest < 400,
+        "a chain two thousand deep draws a bounded guide per row, not one level per ancestor \
+         (review R13); the widest line is {widest} columns"
+    );
+    let leaf = drawn
+        .iter()
+        .find(|line| line.contains("leaf"))
+        .expect("the deepest row is drawn");
+    assert!(
+        leaf.contains("... +-- leaf"),
+        "a row deeper than the drawn depth says levels were elided, got {leaf:?}"
+    );
+    assert_eq!(
+        drawn.len(),
+        2_002,
+        "every row is still drawn — only the guides are capped"
+    );
+}

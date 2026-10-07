@@ -98,6 +98,31 @@ pub(crate) fn prefix_assignments(
     list: &StageList,
     source: &str,
 ) -> Eval<Option<(Vec<(String, OsString)>, StageList)>> {
+    strip_prefix_assignments(list, |value| match value {
+        AssignedValue::Expression(expression) => Ok(OsString::from(text_of(&eval_expr(
+            session, expression, source,
+        )?)?)),
+        AssignedValue::Word(word) => Ok(expand::expand_to_one(session, word)?),
+    })
+}
+
+/// What follows the `=` of a prefix assignment, before anything reads it.
+pub(crate) enum AssignedValue<'a> {
+    /// The rest of the word, such as `1` in `FOO=1` or `$who` in `GREETING=$who`.
+    Word(&'a str),
+    /// An expression written against the `=`, such as the string in `NAME="a b"`.
+    Expression(&'a ono_parser::Expr),
+}
+
+/// Strips the `NAME=value` words that lead a stage of `list`, reading each value with `value_of`.
+///
+/// Execution and `explain` share this one reading of which words are assignments and which
+/// command follows them (ADR-0943); they differ only in what a value becomes, because `explain`
+/// may evaluate nothing that can run code (ADR-0939).
+pub(crate) fn strip_prefix_assignments<T>(
+    list: &StageList,
+    mut value_of: impl FnMut(AssignedValue<'_>) -> Eval<T>,
+) -> Eval<Option<(Vec<(String, T)>, StageList)>> {
     let Some((index, stage)) = list
         .stages
         .iter()
@@ -119,16 +144,15 @@ pub(crate) fn prefix_assignments(
     while let Some((word, span)) = pending.take() {
         let (name, value) = word.split_once('=').unwrap_or((&word, ""));
         let value = if value.is_empty()
-            && let Some(Argument::Value(expression)) = arguments.peek()
+            && let Some(Argument::Value(expression)) = arguments.peek().copied()
             && expression.span().start() == span.end()
         {
             // `NAME="a b"`: the lexer ends the word at the quote, so the string that follows
             // without a gap is the value.
-            let expression = expression.clone();
             arguments.next();
-            OsString::from(text_of(&eval_expr(session, &expression, source)?)?)
+            value_of(AssignedValue::Expression(expression))?
         } else {
-            expand::expand_to_one(session, value)?
+            value_of(AssignedValue::Word(value))?
         };
         assignments.push((name.to_owned(), value));
         if let Some(Argument::Word(next)) = arguments.peek()

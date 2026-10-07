@@ -19,7 +19,7 @@ fn main() -> ExitCode {
         Invocation::Version => {
             // The full build prints the one line it always has; the core build adds the profile
             // and the tiers it leaves out on a second line (ADR-0911).
-            println!("{}", ono_cli::absent::version_text());
+            write_answer(ono_cli::absent::version_text());
             ExitStatus::SUCCESS
         }
         Invocation::Complete {
@@ -33,11 +33,11 @@ fn main() -> ExitCode {
             let cursor = cursor.unwrap_or(line.len());
             let completer = repl::ShellCompleter::for_session(&mut session);
             let answer = completer.answer(&line, cursor);
-            println!("{}", ono_cli::complete::document(&answer, &line, cursor));
+            write_answer(ono_cli::complete::document(&answer, &line, cursor));
             ExitStatus::SUCCESS
         }
         Invocation::Help => {
-            println!("{}", ono_cli::usage_text());
+            write_answer(ono_cli::usage_text());
             ExitStatus::SUCCESS
         }
         Invocation::Usage(message) => {
@@ -56,7 +56,7 @@ fn main() -> ExitCode {
             // fingerprint is the public contract of §7.2; the key it names never leaves the file.
             match default_identity() {
                 Ok(identity) => {
-                    println!("{}", identity.fingerprint());
+                    write_answer(identity.fingerprint());
                     ExitStatus::SUCCESS
                 }
                 Err(error) => {
@@ -111,7 +111,7 @@ fn main() -> ExitCode {
             if agent_options.print_host_key {
                 // What a person pins this host by, on stdout so it can be read by a script or
                 // copied into `add host-key` on the machine that will link here (spec §21.5).
-                println!("{}", identity.fingerprint());
+                write_answer(identity.fingerprint());
                 return ExitCode::from(ExitStatus::SUCCESS);
             }
             if let Some(address) = &agent_options.listen {
@@ -436,4 +436,14 @@ fn configured_limits() -> ono_protocol::Limits {
         .with_handshake_timeout(std::time::Duration::from_millis(
             ono_cli::limits::magnitude(&settings, "limits.remote_handshake_timeout_ms"),
         ))
+}
+
+/// Writes an invocation flag's one answer to standard output.
+///
+/// A reader that left before the answer arrived (`ono --complete … | head -c0`) costs the answer
+/// and nothing else: the flag keeps its status, as a pipeline whose consumer left does
+/// (ADR-0220). `println!` would panic on that `EPIPE` and exit 101 (review R11).
+fn write_answer(text: impl std::fmt::Display) {
+    use std::io::Write as _;
+    let _ = writeln!(std::io::stdout().lock(), "{text}");
 }

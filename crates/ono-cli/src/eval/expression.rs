@@ -15,7 +15,7 @@ use super::{Eval, Flow};
 /// visible is about showing data to a person: a table cell for an unknown value says `null`. An
 /// interpolated argument is not a rendering, and `echo "Hello $NAME"` printing `Hello null` when
 /// `NAME` is unset would be a worse lie than printing nothing (ADR-0019).
-pub(super) fn text_of(value: &Value) -> Result<String, ErrorValue> {
+pub(crate) fn text_of(value: &Value) -> Result<String, ErrorValue> {
     if matches!(value, Value::Null) {
         return Ok(String::new());
     }

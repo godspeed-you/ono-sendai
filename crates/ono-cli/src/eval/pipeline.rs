@@ -211,7 +211,11 @@ pub(super) fn run_stage_list(
             return Err(Flow::Failed(config_refusal("explain")));
         }
         let subject = crate::explain::subject(session, list, source)?;
-        let plan = crate::explain::plan_value(session, &subject)?;
+        let plan = crate::explain::plan_value(
+            session,
+            &subject,
+            crate::explain::names_glob_targets(list),
+        )?;
         if crate::explain::is_delimited(first) {
             return super::native::run_seeded(session, list, source, vec![plan]);
         }

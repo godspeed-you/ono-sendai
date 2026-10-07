@@ -1,0 +1,25 @@
+# Release review R1 (v0.6.3), through the real binary as an unprivileged user.
+#
+# `explain` runs no part of what it explains (spec §15.3): not a prefix assignment's value, not
+# an argument capture, not a filename a glob matched, not text a variable holds. Every line below
+# plants a command that would create `pwn`; the case fails if it exists afterwards (ADR-0939).
+case: explain runs nothing that its subject, a glob match or a variable spells
+env: NO_COLOR=1
+run: |
+  cd "$(mktemp -d)"
+  touch 'a.tmp | X="$(touch pwn)" ls .tmp' b.tmp
+  ono -c 'explain { X="$(touch pwn)" ls }' >/dev/null
+  ono -c 'explain { X=(touch pwn) ls }' >/dev/null
+  ono -c 'explain ls (touch pwn)' >/dev/null
+  ono -c 'explain remove file *.tmp' | grep -c '^[0-9]\. ' | sed 's/^/stages=/'
+  ono -c "let line = 'get process | X=\"\$(touch pwn)\" ls'; explain \$line" >/dev/null
+  ono -c 'explain "ls $(touch pwn)"' 2>&1 | grep -o 'safety.policy_denied' | head -1
+  ls
+  test -e pwn && echo MARKER-CREATED
+  exit 0
+exit: 0
+stdout-contains: stages=1
+stdout-contains: safety.policy_denied
+stdout-contains: b.tmp
+stdout-not-contains: MARKER-CREATED
+stdout-not-contains: panicked

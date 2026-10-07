@@ -14,13 +14,14 @@ run: |
   echo "== the record names the host it was observed on =="
   ono -c 'link host testbox --transport local; enter link testbox; get process | where pid == 1 | take 1 | inspect | to json' | tail -1
 
+  # Asked of the record rather than matched against the JSON text, so the check does not depend
+  # on the order the provenance map lists its keys in, and fails if `observed` is ever null.
   echo "== and it carries the far side's own observation instant beside that name =="
-  ono -c 'link host testbox --transport local; enter link testbox; get process | where pid == 1 | take 1 | inspect | select provenance | to json' | tail -1
+  ono -c 'link host testbox --transport local; enter link testbox; get process | where pid == 1 | take 1 | inspect | where provenance.link == "testbox" and provenance.observed != null | count | to json' | tail -1 | sed 's/^/observed-beside-the-link=/'
 
   echo "== the same object read locally is attributed to this machine instead =="
   ono -c 'get process | where pid == 1 | take 1 | inspect | to json' | tail -1
 exit: 0
 stdout-contains: "link":"testbox"
-stdout-contains: "observed":
-stdout-not-contains: "link":"testbox","observed":null
+stdout-contains: observed-beside-the-link=[1]
 stdout-not-contains: panicked

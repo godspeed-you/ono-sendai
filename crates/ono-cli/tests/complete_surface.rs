@@ -155,3 +155,18 @@ fn should_offer_a_user_function_after_a_pipe() {
         run.stdout()
     );
 }
+
+#[test]
+fn should_complete_after_a_multi_byte_space_when_the_line_holds_one() {
+    // U+00A0 and U+3000 are whitespace of two and three bytes: the word after one starts on the
+    // next character, never inside the space (review C5).
+    for (line, start) in [("get\u{a0}us", 5), ("get\u{3000}us", 6)] {
+        let run = complete(&[line]);
+        run.assert_success();
+        let text = run.stdout();
+        assert!(
+            text.contains(&format!(r#""start":{start},"#)) && !text.contains("panicked"),
+            "the word being completed starts after the space, at byte {start}, got {text:?}"
+        );
+    }
+}

@@ -214,3 +214,45 @@ fn should_show_no_acquisition_for_a_stage_that_asks_one_provider() {
         run.stdout()
     );
 }
+
+// --- an option given as an expression (review C7b, ADR-0953, ADR-0939) --------------------------
+
+#[test]
+fn should_plan_constant_state_when_a_percentiles_variable_holds_null() {
+    // `measure --percentiles $p` with `$p` null runs in constant state, exactly as `measure`
+    // without the option does; the plan must say what the run will hold.
+    let run =
+        ono(r#"let p = null; explain { get process | measure cpu --percentiles $p } | to json"#);
+    run.assert_success();
+    let text = run.stdout();
+    assert!(
+        text.contains(r#""execution_class":"incremental_aggregate""#)
+            && !text.contains("explicit_collect"),
+        "a null percentile list holds nothing more than `measure` alone, got {text:?}"
+    );
+}
+
+#[test]
+fn should_plan_the_collecting_class_when_a_percentiles_variable_holds_a_list() {
+    let run =
+        ono(r#"let p = [50]; explain { get process | measure cpu --percentiles $p } | to json"#);
+    run.assert_success();
+    assert!(
+        run.stdout()
+            .contains(r#""execution_class":"explicit_collect""#),
+        "a percentile list holds the distribution, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_say_the_value_decides_when_an_option_expression_is_not_evaluated() {
+    let run = ono(r#"explain { get process | measure cpu --percentiles (echo 50) }"#);
+    run.assert_success();
+    assert!(
+        run.stdout()
+            .contains("the value of `--percentiles` decides what this stage holds"),
+        "a class `explain` cannot know without running something is stated as undecided, got {:?}",
+        run.stdout()
+    );
+}

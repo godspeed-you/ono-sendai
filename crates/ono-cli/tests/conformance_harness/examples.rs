@@ -21,6 +21,9 @@ pub struct ExampleCase {
     pub example: &'static str,
     /// The command's declared `output`, as the contract writes it.
     pub output: &'static str,
+    /// Why the example may produce no value in a fresh environment, when the register
+    /// `docs/contracts/conformance/command_examples.yaml` says it may (ADR-0941).
+    pub may_be_empty: Option<&'static str>,
 }
 
 /// Runs the example and holds every value it produces to the declared output.
@@ -28,7 +31,8 @@ pub struct ExampleCase {
 /// # Panics
 ///
 /// When the example fails, prints something that is not an inspection, produces a number of
-/// values its declaration does not admit, or produces a value its declaration does not describe.
+/// values its declaration does not admit, produces a value its declaration does not describe, or
+/// produces no value at all where the register does not say it may (ADR-0941).
 pub fn assert_example_conforms(case: &ExampleCase) {
     let dir = ono_testkit::scratch();
     let declared = Declared::parse(case.output);
@@ -67,6 +71,16 @@ pub fn assert_example_conforms(case: &ExampleCase) {
     let mut problems = Vec::new();
     if let Some(problem) = declared.count_problem(values.len()) {
         problems.push(problem);
+    }
+    // A stream of nothing conforms to every declaration, so an example that produced nothing
+    // held nothing to the contract (review C8): that is a pass nobody earned.
+    if values.is_empty() && !declared.admits_nothing() && case.may_be_empty.is_none() {
+        problems.push(
+            "produced no value, so nothing was held to the declaration; give the example \
+             something to find, or list it under `may_be_empty` in \
+             docs/contracts/conformance/command_examples.yaml with the reason"
+                .to_owned(),
+        );
     }
     for (index, inspection) in values.iter().enumerate() {
         if let Err(problem) = declared.admits(inspection) {
@@ -134,6 +148,13 @@ impl Declared {
         self.alternatives
             .iter()
             .all(|(stream, ty)| !*stream && ty == "null")
+    }
+
+    /// Whether producing no value is itself what the declaration says: a `null` alternative.
+    fn admits_nothing(&self) -> bool {
+        self.alternatives
+            .iter()
+            .any(|(stream, ty)| !*stream && ty == "null")
     }
 
     /// What is wrong with producing `count` values, if anything.

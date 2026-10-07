@@ -18,6 +18,10 @@ use crate::table::{Align, Cell, Column, Table};
 use crate::theme::{Token, sanitise};
 use crate::tree::TreeNode;
 
+/// How many levels of a hierarchy draw their own guide. A row deeper than this is drawn under
+/// the guides of this level with `... ` marking the levels left out (review R13, ADR-0948).
+const HIERARCHY_DRAWN_DEPTH: usize = 32;
+
 /// A built-in view of spec §13.6.
 ///
 /// `json` and `yaml` are absent because they are serializations rather than layouts: they belong
@@ -236,12 +240,12 @@ impl Renderer {
             .unwrap_or(0);
         // Depth first with a stack rather than recursion, so a parent chain as long as the
         // process table cannot overflow it — the provider builds the nesting the same way.
-        let mut pending: Vec<(Value, String, String)> = values
+        let mut pending: Vec<(Value, String, String, usize)> = values
             .iter()
             .rev()
-            .map(|value| (value.clone(), String::new(), String::new()))
+            .map(|value| (value.clone(), String::new(), String::new(), 0))
             .collect();
-        while let Some((value, guide, beneath)) = pending.pop() {
+        while let Some((value, guide, beneath, depth)) = pending.pop() {
             let Ok(record) = value.as_record() else {
                 continue;
             };
@@ -256,11 +260,24 @@ impl Renderer {
             let children = children_of(&value);
             let last = children.len().saturating_sub(1);
             for (index, child) in children.into_iter().enumerate().rev() {
+                // Past the drawn depth the guides stop growing: a row says levels were elided
+                // instead of drawing one per ancestor, so a chain as deep as the process table
+                // costs a bounded cell per row rather than a quadratic column (review R13).
+                if depth >= HIERARCHY_DRAWN_DEPTH {
+                    pending.push((
+                        child,
+                        format!("{beneath}... +-- "),
+                        beneath.clone(),
+                        depth + 1,
+                    ));
+                    continue;
+                }
                 let continues = if index == last { "    " } else { "|   " };
                 pending.push((
                     child,
                     format!("{beneath}+-- "),
                     format!("{beneath}{continues}"),
+                    depth + 1,
                 ));
             }
         }

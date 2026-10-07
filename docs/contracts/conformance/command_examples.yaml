@@ -183,3 +183,168 @@ exemptions:
       spells v0.6 §3.1's intent `update package`, and no verb `update` exists (verbs.yaml); the
       plan refuses it as not plannable. A gap between the specification's illustration and the
       verb vocabulary, recorded in ADR-0935, not a property of the test host.
+
+# --- runs, and may produce no value in a fresh environment ------------------------------------
+#
+# An example that produces nothing conforms to every declaration, so it would pass without having
+# held a single value to its contract (review C8, ADR-0941). The harness refuses an empty answer
+# unless the example is listed here with the reason a fresh environment has nothing to show. A
+# listed example still runs, and every value it does produce is still held to the declaration.
+# The register is checked like the exemptions: an entry naming no runnable example is refused.
+may_be_empty:
+  - command: ono.audit.get
+    example: "get audit --plugin dev.example.packet-eye"
+    reason: "names the plugin `dev.example.packet-eye`, and a fresh environment has none installed, so no action of it is audited."
+  - command: ono.assistant.get
+    example: "get assistant"
+    reason: "lists loaded assistant extensions, and a fresh environment loads none."
+  - command: ono.change-plan.get
+    example: "get plan --state failed"
+    reason: "a fresh state directory holds no plan, failed or otherwise."
+  - command: ono.capability.get
+    example: "get capability --plugin dev.example.packet-eye"
+    reason: "names the plugin `dev.example.packet-eye`, and a fresh environment has none installed."
+  - command: ono.client-key.get
+    example: "get client-key"
+    reason: "a fresh configuration authorizes no client key."
+  - command: ono.change-plan.get
+    example: "get plan"
+    reason: "a fresh state directory holds no plan."
+  - command: ono.config.get
+    example: "get config --problems"
+    reason: "a fresh configuration has no problem to report; the empty answer is the healthy one."
+  - command: ono.event.find
+    example: "find event 'kind == \"action.failed\"'"
+    reason: "a fresh state directory has recorded no event history."
+  - command: ono.event.find
+    example: "find event --since 1h"
+    reason: "a fresh state directory has recorded no event history."
+  - command: ono.event.find
+    example: "find event 'kind == \"object.appeared\"' | take 20"
+    reason: "a fresh state directory has recorded no event history."
+  - command: ono.finding.get
+    example: "get finding | where severity >= medium"
+    reason: "findings are emitted by analyses and assistants, and a fresh environment has run none."
+  - command: ono.group.get
+    example: "get group | where \"postgres\" in members"
+    reason: "names the user `postgres`, which a test host need not have."
+  - command: ono.host.get
+    example: "get host"
+    reason: "a fresh configuration names no host source."
+  - command: ono.host-key.get
+    example: "get host-key"
+    reason: "a fresh configuration has pinned no host key."
+  - command: ono.job.get
+    example: "get job"
+    reason: "a fresh session has started no job."
+  - command: ono.link.get
+    example: "get link"
+    reason: "a fresh session has opened no link."
+  - command: ono.job.get
+    example: "get job | where state == running"
+    reason: "a fresh session has started no job."
+  - command: ono.model.get
+    example: "get model"
+    reason: "a fresh configuration declares no model provider."
+  - command: ono.permission.get
+    example: "get permission"
+    reason: "lists what installed packages may do, and a fresh environment has none installed."
+  - command: ono.package.get
+    example: "get package nginx"
+    reason: "names the package `nginx`, which a test host need not have installed."
+  - command: ono.place.trail
+    example: "trail"
+    reason: "a fresh session has navigated nowhere, so its trail is empty."
+  - command: ono.plugin.get
+    example: "get plugin"
+    reason: "a fresh environment has no plugin installed (`ONO_PLUGIN_PATH` is an empty scratch directory)."
+  - command: ono.plugin.find
+    example: "find plugin postgres"
+    reason: "a fresh environment has no plugin installed (`ONO_PLUGIN_PATH` is an empty scratch directory)."
+  - command: ono.plugin.get
+    example: "get plugin | where state == loaded"
+    reason: "a fresh environment has no plugin installed (`ONO_PLUGIN_PATH` is an empty scratch directory)."
+  - command: ono.recovery.get
+    example: "get recovery"
+    reason: "a fresh state directory holds no recovery asset."
+  - command: ono.service.get
+    example: "get service nginx"
+    reason: "names the service `nginx`, which a test host need not run."
+  - command: ono.temporal.changes
+    example: "changes --since 10m"
+    reason: "a fresh state directory has recorded no history to compare."
+  - command: ono.meta.inspect
+    example: "get service | where state == failed | take 1 | inspect"
+    reason: "needs a failed service, and a healthy test host has none."
+  - command: ono.temporal.changes
+    example: "changes service nginx --since 1h"
+    reason: "a fresh state directory has recorded no history, and a test host need not run `nginx`."
+  - command: ono.temporal.changes
+    example: "changes --since 12:00 --until 12:30"
+    reason: "a fresh state directory has recorded no history to compare."
+  - command: ono.temporal.changes
+    example: "changes --since 30m | group subject.object_type"
+    reason: "a fresh state directory has recorded no history to compare."
+  - command: ono.temporal.timeline
+    example: "timeline"
+    reason: "a fresh state directory has recorded no event history."
+  - command: ono.temporal.timeline
+    example: "timeline --since 30m"
+    reason: "a fresh state directory has recorded no event history."
+  - command: ono.temporal.timeline
+    example: "timeline --kind object.changed"
+    reason: "a fresh state directory has recorded no event history."
+  - command: ono.temporal.timeline
+    example: "timeline service nginx"
+    reason: "a fresh state directory has recorded no event history, and a test host need not run `nginx`."
+  - command: ono.temporal.timeline
+    example: "timeline --view"
+    reason: "a fresh state directory has recorded no event history."
+  - command: ono.temporal.timeline
+    example: "timeline --since 1h | where kind == \"object.changed\""
+    reason: "a fresh state directory has recorded no event history."
+  - command: ono.user.get
+    example: "get user postgres"
+    reason: "names the user `postgres`, which a test host need not have."
+  - command: ono.service.get
+    example: "get service | where state == failed"
+    reason: "a healthy test host has no failed service."
+  - command: ono.data.where
+    example: "get process | where cpu > 20"
+    reason: "selects processes above a CPU threshold, and how many there are is the test host's load at that instant."
+  - command: ono.data.where
+    example: "get process | where cpu > 20 and user.name != \"root\""
+    reason: "selects processes above a CPU threshold, and how many there are is the test host's load at that instant."
+  - command: ono.data.join
+    example: "get process | join (get process | where cpu > 1) --on pid"
+    reason: "selects processes above a CPU threshold, and how many there are is the test host's load at that instant."
+  - command: ono.process.get
+    example: "get process | where cpu > 20"
+    reason: "selects processes above a CPU threshold, and how many there are is the test host's load at that instant."
+  - command: ono.process.get
+    example: "get process --sample 500ms | where cpu > 20"
+    reason: "selects processes above a CPU threshold, and how many there are is the test host's load at that instant."
+  - command: ono.session.get
+    example: "get session"
+    reason: "lists login sessions, and a build host or container need not have one."
+  - command: ono.interface.get
+    example: "get interface | where state == up"
+    reason: "a host without networking (a sandbox, `--network none`) has no interface that is up."
+  - command: ono.route.get
+    example: "get route | where destination == null"
+    reason: "a host without networking has no default route."
+  - command: ono.neighbor.get
+    example: "get neighbor"
+    reason: "the neighbor table of a host that has talked to nobody yet is empty."
+  - command: ono.neighbor.get
+    example: "get neighbor | where state == reachable"
+    reason: "the neighbor table of a host that has talked to nobody yet is empty."
+  - command: ono.route.trace
+    example: "trace route 0.0.0.0/0"
+    reason: "a host without networking has no default route to trace."
+  - command: ono.package.find
+    example: "find package postgres"
+    reason: "names `postgres`, which the test host's package database need not know."
+  - command: ono.mount.get
+    example: "get mount | where read_only"
+    reason: "a test host need not have a read-only mount."

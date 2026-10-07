@@ -3,7 +3,9 @@
 //! `command_conformance.rs` is generated, and a generated suite whose harness accepted anything
 //! would be green forever. These cases seed the drift the issue describes — a command whose values
 //! are not the schema it declares, or not as many as it declares — against a real command and
-//! require the harness to fail; the last one requires it to pass the honest declaration.
+//! require the harness to fail; the last one requires it to pass the honest declaration. An
+//! example that produces nothing checked nothing, and fails unless the register says why it may
+//! (ADR-0941).
 
 #![cfg(feature = "full")]
 #![allow(
@@ -30,6 +32,7 @@ fn should_fail_an_example_whose_records_are_of_another_schema_than_declared() {
         command: "ono.user.get",
         example: "get user",
         output: "stream<ono.group/1>",
+        may_be_empty: None,
     }));
 }
 
@@ -39,6 +42,7 @@ fn should_fail_an_example_that_produces_a_stream_where_one_value_is_declared() {
         command: "ono.user.get",
         example: "get user",
         output: "ono.user/1",
+        may_be_empty: None,
     }));
 }
 
@@ -48,6 +52,7 @@ fn should_fail_an_example_whose_scalar_is_not_the_declared_type() {
         command: "ono.data.count",
         example: "get user | count",
         output: "string",
+        may_be_empty: None,
     }));
 }
 
@@ -57,5 +62,37 @@ fn should_pass_an_example_that_produces_what_it_declares() {
         command: "ono.user.get",
         example: "get user",
         output: "stream<ono.user/1>",
+        may_be_empty: None,
+    }));
+}
+
+#[test]
+fn should_fail_an_example_that_produces_nothing_where_a_stream_is_declared() {
+    // A stream of nothing conforms to every declaration, so it checked nothing (review C8).
+    assert!(refuses(ExampleCase {
+        command: "ono.data.where",
+        example: "get user | where name == \"no-such-user-for-this-test\"",
+        output: "stream<ono.user/1>",
+        may_be_empty: None,
+    }));
+}
+
+#[test]
+fn should_pass_an_example_that_produces_nothing_when_the_register_says_it_may() {
+    assert!(!refuses(ExampleCase {
+        command: "ono.data.where",
+        example: "get user | where name == \"no-such-user-for-this-test\"",
+        output: "stream<ono.user/1>",
+        may_be_empty: Some("names a user no test host has."),
+    }));
+}
+
+#[test]
+fn should_still_hold_a_value_to_the_declaration_when_the_example_may_be_empty() {
+    assert!(refuses(ExampleCase {
+        command: "ono.user.get",
+        example: "get user",
+        output: "stream<ono.group/1>",
+        may_be_empty: Some("allowed to be empty, never allowed to be wrong."),
     }));
 }

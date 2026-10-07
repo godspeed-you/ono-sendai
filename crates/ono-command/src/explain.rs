@@ -311,9 +311,33 @@ impl StagePlan {
         self.demand.as_ref().map(|(demand, _)| demand)
     }
 
+    /// Replaces the stage's text with the words it runs with, such as a glob's matches in place
+    /// of the pattern (spec §17.3). The text is shown, never parsed again (ADR-0939).
+    pub fn set_source(&mut self, source: impl Into<String>) {
+        self.source = source.into();
+    }
+
     /// Records the program an external word resolves to on `PATH` (ADR-0011 T11).
     pub fn set_path(&mut self, path: impl Into<String>) {
         self.path = Some(path.into());
+    }
+
+    /// Replaces the stage's execution class with one decided from the values its options take,
+    /// keeping the budget in step with it (v0.4.1 §22.4, ADR-0940).
+    pub fn set_execution(
+        &mut self,
+        execution: Option<ExecutionClass>,
+        limits: MaterializationLimits,
+    ) {
+        self.execution = execution;
+        self.budget = execution
+            .filter(|class| class.may_materialize())
+            .map(|_| (limits.max_items(), limits.max_bytes()));
+    }
+
+    /// Adds a sentence about this stage alone.
+    pub fn push_note(&mut self, note: impl Into<String>) {
+        self.notes.push(note.into());
     }
 
     /// Records what a mutating stage does, as spec §42.2 words it (`signal TERM`).
