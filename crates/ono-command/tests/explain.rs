@@ -131,7 +131,9 @@ fn should_resolve_every_stage_of_a_read_pipeline() {
             id: "ono.data.to".to_owned()
         }
     );
-    assert_eq!(third.output(), "string | bytes");
+    // The plan reports the contract's declaration, which names the line stream `to jsonl`
+    // writes beside the one document `to json` writes (ADR-0954).
+    assert_eq!(third.output(), "string | bytes | stream<string>");
 }
 
 #[test]
