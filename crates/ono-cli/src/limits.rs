@@ -13,7 +13,9 @@
 //! [`HistoryLimits`] for the retained results — and the rows `inspect limits` shows.
 
 use ono_pipeline::MaterializationLimits;
-use ono_value::{ByteSize, Value};
+use std::sync::Arc;
+
+use ono_value::{ByteSize, Provenance, RecordValue, Schema, SchemaId, Value};
 
 use crate::settings::{CATALOGUE, SettingType, Settings};
 
@@ -135,46 +137,70 @@ impl Default for HistoryLimits {
 /// `security_boundaries.yaml` (ADR-0547).
 #[must_use]
 pub fn rows(settings: &Settings) -> Vec<Value> {
+    // `ono.limit/1` is a built-in schema (ADR-0930), so a row is a record of it, as the contract
+    // declares `inspect limits` to stream (issue #149). A build whose schema did not load still
+    // answers, with untagged rows, rather than with nothing.
+    let schema = ono_value::builtin_schemas().get(&SchemaId::new("ono.limit", 1));
     crate::settings::carried()
         .filter(|setting| setting.key.starts_with(PREFIX))
         .map(|setting| {
             let effective = settings.effective(setting.key);
-            let mut row = ono_value::MapValue::new();
-            row.insert("key".into(), Value::string(setting.key));
-            row.insert(
-                "value".into(),
-                effective.map_or_else(|| setting.default_value(), |r| r.value.clone()),
-            );
-            row.insert(
-                "bytes".into(),
-                match setting.ty {
-                    SettingType::ByteSize => {
-                        Value::Int(i128::from(magnitude(settings, setting.key)))
+            let fields = [
+                ("key", Value::string(setting.key)),
+                (
+                    "value",
+                    effective.map_or_else(|| setting.default_value(), |r| r.value.clone()),
+                ),
+                (
+                    "bytes",
+                    match setting.ty {
+                        SettingType::ByteSize => {
+                            Value::Int(i128::from(magnitude(settings, setting.key)))
+                        }
+                        _ => Value::Null,
+                    },
+                ),
+                ("type", Value::string(setting.ty.name())),
+                (
+                    "layer",
+                    Value::string(effective.map_or("default", |r| r.layer.name())),
+                ),
+                (
+                    "min",
+                    setting
+                        .range
+                        .map_or(Value::Null, |range| numeric(setting.ty, range.min)),
+                ),
+                (
+                    "max",
+                    setting
+                        .range
+                        .map_or(Value::Null, |range| numeric(setting.ty, range.max)),
+                ),
+                ("description", Value::string(setting.description)),
+            ];
+            schema
+                .as_ref()
+                .and_then(|schema| limit_record(schema, &fields))
+                .unwrap_or_else(|| {
+                    let mut row = ono_value::MapValue::new();
+                    for (name, value) in fields {
+                        row.insert(name.into(), value);
                     }
-                    _ => Value::Null,
-                },
-            );
-            row.insert("type".into(), Value::string(setting.ty.name()));
-            row.insert(
-                "layer".into(),
-                Value::string(effective.map_or("default", |r| r.layer.name())),
-            );
-            row.insert(
-                "min".into(),
-                setting
-                    .range
-                    .map_or(Value::Null, |range| numeric(setting.ty, range.min)),
-            );
-            row.insert(
-                "max".into(),
-                setting
-                    .range
-                    .map_or(Value::Null, |range| numeric(setting.ty, range.max)),
-            );
-            row.insert("description".into(), Value::string(setting.description));
-            Value::Map(std::sync::Arc::new(row))
+                    Value::Map(std::sync::Arc::new(row))
+                })
         })
         .collect()
+}
+
+/// One `ono.limit/1` record, or `None` if a field does not fit the schema.
+fn limit_record(schema: &Arc<Schema>, fields: &[(&str, Value)]) -> Option<Value> {
+    let provenance = Provenance::local("ono.config", schema.id().clone());
+    let mut builder = RecordValue::builder(Arc::clone(schema), provenance);
+    for (name, value) in fields {
+        builder = builder.set(name, value.clone()).ok()?;
+    }
+    Some(builder.build().into_value())
 }
 
 /// A bound in the unit its setting is declared in, so a byte ceiling reads as a byte size.

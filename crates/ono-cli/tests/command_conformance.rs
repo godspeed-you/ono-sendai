@@ -8,9 +8,9 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 99 examples run; 254 are not run, each for the reason listed at the end of this file.
+//! 101 examples run; 252 are not run, each for the reason listed at the end of this file.
 //!
-//! Commands no example of which runs (166):
+//! Commands no example of which runs (165):
 //!
 //! - `ono.change.plan` — exempt: plans to replace `/etc/nginx/nginx.conf` from `./nginx.conf`; a scratch directory has neither file.
 //! - `ono.change-plan.inspect` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.
@@ -83,7 +83,6 @@
 //! - `ono.meta.inspect` — runs `ono.meta.inspect`, which declares `ono.inspection/1` — a schema schemas/deferred.yaml says a later phase writes
 //! - `ono.meta.explain` — runs `ono.meta.explain`, which declares `ono.execution-plan/1` — a schema schemas/deferred.yaml says a later phase writes
 //! - `ono.config.set` — runs `ono.config.set`, whose verb `set` changes the system (verbs.yaml)
-//! - `ono.limits.inspect` — exempt: known defect: answers untagged maps where the contract declares `stream<ono.limit/1>`; fixed by a following commit.
 //! - `ono.context.leave` — runs `leave`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
 //! - `ono.context.get` — exempt: known defect: answers untagged maps where the contract declares `stream<ono.context/1>`; fixed by a following commit.
 //! - `ono.socket.get` — runs `ono.socket.get`, which declares privilege `conditional`
@@ -685,6 +684,28 @@ fn should_produce_what_ono_config_get_declares_when_example_3_runs() {
         command: "ono.config.get",
         example: "get config --problems",
         output: "stream<ono.config-setting/1> | stream<ono.error/1>",
+    });
+}
+
+/// `inspect limits`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_limits_inspect_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.limits.inspect",
+        example: "inspect limits",
+        output: "stream<ono.limit/1>",
+    });
+}
+
+/// `inspect limits limits.materialize_bytes`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_limits_inspect_declares_when_example_2_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.limits.inspect",
+        example: "inspect limits limits.materialize_bytes",
+        output: "stream<ono.limit/1>",
     });
 }
 
@@ -1395,8 +1416,6 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.config.set` `set config render.table.max_rows = 200` — runs `ono.config.set`, whose verb `set` changes the system (verbs.yaml)
 // - `ono.config.set` `set config limits.history_bytes_total = 64MiB` — runs `ono.config.set`, whose verb `set` changes the system (verbs.yaml)
 // - `ono.config.set` `set config safety.confirm.bulk_threshold = 100` — runs `ono.config.set`, whose verb `set` changes the system (verbs.yaml)
-// - `ono.limits.inspect` `inspect limits` — exempt: known defect: answers untagged maps where the contract declares `stream<ono.limit/1>`; fixed by a following commit.
-// - `ono.limits.inspect` `inspect limits limits.materialize_bytes` — exempt: known defect: answers untagged maps where the contract declares `stream<ono.limit/1>`; fixed by a following commit.
 // - `ono.context.leave` `leave` — runs `leave`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
 // - `ono.context.leave` `leave --all` — runs `leave`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
 // - `ono.context.get` `get context` — exempt: known defect: answers untagged maps where the contract declares `stream<ono.context/1>`; fixed by a following commit.

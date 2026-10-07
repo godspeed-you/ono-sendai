@@ -182,16 +182,6 @@ exemptions:
     reason: >-
       known defect: answers untagged maps where the contract declares `stream<ono.context/1>`;
       fixed by a following commit.
-  - command: ono.limits.inspect
-    example: inspect limits
-    reason: >-
-      known defect: answers untagged maps where the contract declares `stream<ono.limit/1>`;
-      fixed by a following commit.
-  - command: ono.limits.inspect
-    example: inspect limits limits.materialize_bytes
-    reason: >-
-      known defect: answers untagged maps where the contract declares `stream<ono.limit/1>`;
-      fixed by a following commit.
   - command: ono.route.trace
     example: trace route 0.0.0.0/0
     reason: >-

@@ -117,8 +117,13 @@ fn inspect_limits(session: &Session, words: &[OsString]) -> Result<Vec<Value>, E
     };
     let matched: Vec<Value> = rows
         .into_iter()
-        .filter(|row| match row {
-            Value::Map(map) => match map.get("key") {
+        .filter(|row| {
+            let key = match row {
+                Value::Record(record) => record.get("key"),
+                Value::Map(map) => map.get("key"),
+                _ => None,
+            };
+            match key {
                 Some(Value::String(key)) => {
                     if let Some(prefix) = selector.strip_suffix('.') {
                         key.starts_with(prefix)
@@ -127,8 +132,7 @@ fn inspect_limits(session: &Session, words: &[OsString]) -> Result<Vec<Value>, E
                     }
                 }
                 _ => false,
-            },
-            _ => false,
+            }
         })
         .collect();
     if matched.is_empty() {
