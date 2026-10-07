@@ -178,6 +178,20 @@ pub fn check(
         // check is an optimisation of the failure path, not a second gate.
         return Ok(());
     };
+    // Written with bare words, `explain`'s subject is the rest of the list (spec §11.3,
+    // ADR-0942): those stages are planned, never run, so nothing flows between them to check.
+    let unquoted;
+    let pipeline = match pipeline.head.stages.first() {
+        Some(first)
+            if crate::eval::is_explain(session, first) && !crate::explain::is_delimited(first) =>
+        {
+            let mut alone = pipeline.clone();
+            alone.head.stages.truncate(1);
+            unquoted = alone;
+            &unquoted
+        }
+        _ => pipeline,
+    };
     // A pipeline of external programs alone has no contract to check against, so it is not
     // planned: planning asks for the providers, and building those starts the runtime and
     // connects to the service manager — most of what `ono -c 'echo ready'` cost (spec §34).

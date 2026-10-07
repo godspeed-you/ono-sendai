@@ -180,6 +180,9 @@ fn should_leave_unbound_only_the_delivered_commands_nothing_here_can_answer() {
             // limits printed, and there is no provider that could know what this shell enforces
             // (ADR-0456).
             "ono.limits.inspect",
+            // `explain` plans with the session's aliases, functions, prefix assignments and link,
+            // which only the evaluator has (ADR-0942).
+            "ono.meta.explain",
             // A provider delivers the package mutations by advertising `package.manage`
             // (ADR-0068 §3); a table built without providers binds none of them.
             "ono.package-source.refresh",

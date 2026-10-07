@@ -75,7 +75,7 @@ pub use contract::{
 };
 pub use explain::{
     Adaptation, ExecutionPlan, FunctionPlan, PlanContext, Resolution, StagePlan, adapt_program,
-    is_adapt, is_raw, literal_arguments, plan, plan_for, plan_with, raw_program,
+    is_adapt, is_raw, literal_arguments, plan, plan_for, plan_with, raw_program, render_plan,
 };
 pub use expr::{
     BUILTIN_FUNCTIONS, Scope, builtin_call, check_fields, evaluate, evaluate_binary, evaluate_call,

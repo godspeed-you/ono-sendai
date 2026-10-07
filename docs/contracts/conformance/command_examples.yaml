@@ -167,6 +167,14 @@ exemptions:
   - command: ono.mount.enter
     example: enter mount /mnt/data
     reason: runs only as a statement of its own; in a pipeline this build implements nothing for it.
+  # `explain` written with bare words takes the rest of its pipeline as its subject (spec §11.3,
+  # ADR-0942), so `| inspect | to json` appended to it is explained rather than run. The same
+  # record is observed through the delimited examples `explain "…"` and `explain { … }`.
+  - command: ono.meta.explain
+    example: explain get process
+    reason: >-
+      the unquoted form plans everything after `explain`, so the suite's `| inspect | to json`
+      would become stages of the subject; the delimited examples of the same command run.
 
   # --- examples that name what the shell does not have --------------------------------------
   - command: ono.change.plan

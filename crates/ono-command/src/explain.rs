@@ -90,6 +90,12 @@ pub struct StagePlan {
     execution: Option<ExecutionClass>,
     /// What a materializing stage may collect, in values and bytes (v0.4.1 §22.2, §22.4).
     budget: Option<(u64, u64)>,
+    /// The program an external word resolves to on `PATH`, when the shell looked it up.
+    path: Option<String>,
+    /// What a mutating stage does, in the words of spec §42.2 (`signal TERM`).
+    operation: Option<String>,
+    /// What the remote agent answered about adapting this stage, inside a link frame.
+    remote_adaptation: Option<String>,
 }
 
 /// The adapter registry's answer for one external stage, as the plan shows it.
@@ -303,22 +309,42 @@ impl StagePlan {
         self.demand.as_ref().map(|(demand, _)| demand)
     }
 
+    /// Records the program an external word resolves to on `PATH` (ADR-0011 T11).
+    pub fn set_path(&mut self, path: impl Into<String>) {
+        self.path = Some(path.into());
+    }
+
+    /// Records what a mutating stage does, as spec §42.2 words it (`signal TERM`).
+    pub fn set_operation(&mut self, operation: impl Into<String>) {
+        self.operation = Some(operation.into());
+    }
+
+    /// Records what the remote agent answered about adapting this stage (spec v0.3 §1.54).
+    pub fn set_remote_adaptation(&mut self, state: impl Into<String>) {
+        self.remote_adaptation = Some(state.into());
+    }
+
     fn to_value(&self) -> Value {
+        let text = |value: Option<&str>| value.map_or(Value::Null, Value::string);
         let mut map = MapValue::default();
         map.insert("ordinal".into(), Value::Int(self.ordinal as i128));
         map.insert("source".into(), Value::string(&self.source));
-        map.insert(
-            "command".into(),
-            self.command().map_or(Value::Null, Value::string),
-        );
+        let (resolution, head) = match &self.resolution {
+            Resolution::Native { .. } => ("native", None),
+            Resolution::External { head } => ("external", Some(head.as_str())),
+            Resolution::Function { name } => ("function", Some(name.as_str())),
+            Resolution::Value => ("value", None),
+        };
+        map.insert("resolution".into(), Value::string(resolution));
+        map.insert("head".into(), text(head));
+        map.insert("command".into(), text(self.command()));
         map.insert("origin".into(), Value::string(&self.origin.to_string()));
+        map.insert("narrowed".into(), text(self.narrowed.as_deref()));
+        map.insert("provider".into(), text(self.provider()));
+        map.insert("capability".into(), text(self.capability()));
         map.insert(
-            "provider".into(),
-            self.provider().map_or(Value::Null, Value::string),
-        );
-        map.insert(
-            "capability".into(),
-            self.capability().map_or(Value::Null, Value::string),
+            "fields".into(),
+            Value::list(self.fields.iter().map(|field| Value::string(field))),
         );
         map.insert("input".into(), Value::string(&self.input));
         map.insert("output".into(), Value::string(&self.output));
@@ -327,12 +353,12 @@ impl StagePlan {
         // stage will hold is a field a script can read and not only a line a renderer prints.
         map.insert("execution".into(), Value::string(self.execution_mode()));
         map.insert(
+            "execution_class".into(),
+            text(self.execution.map(ExecutionClass::id)),
+        );
+        map.insert(
             "requires".into(),
-            if self.requires_finite_input() {
-                Value::string("finite input")
-            } else {
-                Value::Null
-            },
+            text(self.requires_finite_input().then_some("finite input")),
         );
         map.insert(
             "budget_items".into(),
@@ -346,135 +372,95 @@ impl StagePlan {
         );
         map.insert(
             "privilege".into(),
-            self.privilege
-                .map_or(Value::Null, |privilege| Value::string(privilege.as_str())),
+            text(self.privilege.map(Privilege::as_str)),
         );
-        map.insert(
-            "risk".into(),
-            self.risk
-                .map_or(Value::Null, |risk| Value::string(risk.as_str())),
-        );
-        map.insert(
-            "fields".into(),
-            Value::list(self.fields.iter().map(|field| Value::string(field))),
-        );
-        map.insert(
-            "narrowed".into(),
-            self.narrowed
-                .as_ref()
-                .map_or(Value::Null, |spelling| Value::string(spelling)),
-        );
+        map.insert("risk".into(), text(self.risk.map(Risk::as_str)));
+        map.insert("operation".into(), text(self.operation.as_deref()));
+        map.insert("raw".into(), Value::Bool(self.raw));
         map.insert(
             "demand".into(),
             self.demand()
                 .map_or(Value::Null, |demand| Value::string(&demand.to_string())),
         );
         map.insert(
+            "demand_reason".into(),
+            text(self.demand.as_ref().map(|(_, reason)| reason.as_str())),
+        );
+        let adaptation = self.adaptation.as_ref();
+        map.insert(
             "adaptation".into(),
-            self.adaptation
-                .as_ref()
-                .map_or(Value::Null, |adaptation| Value::string(&adaptation.state)),
+            text(adaptation.map(|adaptation| adaptation.state.as_str())),
+        );
+        map.insert(
+            "argv".into(),
+            adaptation
+                .and_then(|adaptation| adaptation.argv.as_ref())
+                .map_or(Value::Null, |argv| {
+                    Value::list(argv.iter().map(|word| Value::string(word)))
+                }),
+        );
+        let candidates = adaptation.and_then(|adaptation| adaptation.candidates.as_ref());
+        map.insert(
+            "candidates".into(),
+            candidates.map_or(Value::Null, |(candidates, _)| {
+                Value::list(candidates.iter().map(|candidate| Value::string(candidate)))
+            }),
+        );
+        map.insert(
+            "selection".into(),
+            text(candidates.map(|(_, selection)| selection.as_str())),
+        );
+        map.insert(
+            "remote_adaptation".into(),
+            text(self.remote_adaptation.as_deref()),
+        );
+        map.insert("path".into(), text(self.path.as_deref()));
+        map.insert(
+            "notes".into(),
+            Value::list(self.notes.iter().map(|note| Value::string(note))),
         );
         Value::Map(Arc::new(map))
-    }
-
-    fn render(&self, into: &mut String) {
-        let _ = writeln!(into, "{}. {}", self.ordinal, self.source);
-        if let Some(id) = self.command() {
-            row(into, "command", id);
-        }
-        // A core command's origin is the answer nobody asks for; a contributed one's is the first
-        // question about it (spec §31.64).
-        if !self.origin.is_core() {
-            row(into, "origin", &self.origin.to_string());
-        }
-        if let Some(narrowed) = &self.narrowed {
-            row(into, "narrowed", narrowed);
-        }
-        if let Resolution::External { head } = &self.resolution {
-            row(
-                into,
-                "resolution",
-                &format!("`{head}` is not a native command"),
-            );
-        }
-        if let Resolution::Function { name } = &self.resolution {
-            row(
-                into,
-                "resolution",
-                &format!("user function `{name}` — step 2 of the resolution order (ADR-0011)"),
-            );
-        }
-        if let Some(provider) = self.provider() {
-            row(into, "provider", provider);
-        }
-        if let Some(capability) = self.capability() {
-            row(into, "capability", capability);
-        }
-        if !self.fields.is_empty() {
-            row(into, "field", &self.fields.join(", "));
-        }
-        row(into, "input", &self.input);
-        row(into, "output", &self.output);
-        if self.raw {
-            row(
-                into,
-                "adaptation",
-                &format!("bypassed (`{}`, spec v0.3 §1.17)", ono_adapter::RAW),
-            );
-        }
-        if let Some((demand, reason)) = &self.demand {
-            row(into, "demand", &format!("{demand} ({reason})"));
-        }
-        if let Some(adaptation) = &self.adaptation {
-            row(into, "adaptation", &adaptation.state);
-            if let Some(argv) = &adaptation.argv {
-                row(into, "argv", &argv.join(" "));
-            }
-            if let Some((candidates, selection)) = &adaptation.candidates {
-                row(
-                    into,
-                    "candidates",
-                    &format!("{} ({selection})", candidates.join(", ")),
-                );
-            }
-        }
-        row(into, "streaming", if self.streaming { "yes" } else { "no" });
-        // v0.4.1 §22.4's three lines, and only where they say something. A budget printed beside a
-        // stage that materializes nothing would be noise pretending to be a guarantee.
-        if let Some(class) = self.execution {
-            row(into, "execution", class.execution_mode());
-            if class.requires_finite_input() {
-                row(into, "requires", "finite input");
-            }
-        }
-        if let Some((items, bytes)) = self.budget {
-            row(
-                into,
-                "budget",
-                &format!("{items} values / {}", human_bytes(bytes)),
-            );
-        }
-        if let Some(privilege) = self.privilege {
-            row(into, "privilege", privilege.as_str());
-        }
-        if let Some(risk) = self.risk {
-            row(into, "risk", risk.as_str());
-        }
-        for note in &self.notes {
-            row(into, "note", note);
-        }
     }
 }
 
 /// The plan of a whole pipeline: what each stage resolves to, and what it would do.
+///
+/// One value carries everything `explain` says, and the rendering is drawn from that value
+/// ([`render_plan`]): text and data cannot drift because the text is made from the data
+/// (ADR-0942).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecutionPlan {
+    subject: String,
     source: String,
     stages: Vec<StagePlan>,
+    /// Every alias expanded on the way to `source`: its name and its expansion.
+    aliases: Vec<(String, String)>,
+    /// What a prefix assignment sets for this pipeline alone (spec §54, ADR-0943).
+    environment: Vec<(String, String)>,
+    /// The execution context of a link frame, as labelled rows (spec §42.2).
+    context: Option<Vec<(String, Option<String>)>>,
+    notes: Vec<String>,
+    /// Whether the subject named a sealed change plan rather than a pipeline (ADR-0814).
+    change_plan: bool,
 }
 
 impl ExecutionPlan {
+    /// The explanation of a sealed v0.6 plan: no stages, the explanation itself as notes
+    /// (ADR-0814).
+    #[must_use]
+    pub fn of_change_plan(subject: &str, lines: Vec<String>) -> Self {
+        Self {
+            subject: subject.to_owned(),
+            source: subject.to_owned(),
+            stages: Vec::new(),
+            aliases: Vec::new(),
+            environment: Vec::new(),
+            context: None,
+            notes: lines,
+            change_plan: true,
+        }
+    }
+
     /// The pipeline the plan was made for, exactly as it was typed.
     #[must_use]
     pub fn source(&self) -> &str {
@@ -485,6 +471,37 @@ impl ExecutionPlan {
     #[must_use]
     pub fn stages(&self) -> &[StagePlan] {
         &self.stages
+    }
+
+    /// The stages, for the shell to add what only it knows about them.
+    pub fn stages_mut(&mut self) -> &mut [StagePlan] {
+        &mut self.stages
+    }
+
+    /// Records what `explain` was asked about, when it differs from what was planned — an alias,
+    /// a prefix assignment.
+    pub fn set_subject(&mut self, subject: impl Into<String>) {
+        self.subject = subject.into();
+    }
+
+    /// Records an alias expanded on the way to the planned pipeline (ADR-0011 step 3).
+    pub fn push_alias(&mut self, name: impl Into<String>, expansion: impl Into<String>) {
+        self.aliases.push((name.into(), expansion.into()));
+    }
+
+    /// Records a variable a prefix assignment sets for this pipeline (spec §54, ADR-0943).
+    pub fn push_environment(&mut self, name: impl Into<String>, value: impl Into<String>) {
+        self.environment.push((name.into(), value.into()));
+    }
+
+    /// Records the execution context of a link frame, as labelled rows (spec §42.2).
+    pub fn set_context(&mut self, rows: Vec<(String, Option<String>)>) {
+        self.context = Some(rows);
+    }
+
+    /// Adds a sentence to the plan's notes.
+    pub fn push_note(&mut self, note: impl Into<String>) {
+        self.notes.push(note.into());
     }
 
     /// Whether any stage would change something outside the shell.
@@ -505,29 +522,366 @@ impl ExecutionPlan {
             .collect()
     }
 
-    /// The plan as plain text, in the shape of spec §42.1.
+    /// The plan as plain text, in the shape of spec §42.1: the rendering of [`Self::to_value`].
     #[must_use]
     pub fn render(&self) -> String {
-        let mut text = String::from("PIPELINE\n");
-        for stage in &self.stages {
-            stage.render(&mut text);
-            let _ = writeln!(text);
-        }
-        text
+        render_plan(&self.to_value()).join("\n")
     }
 
-    /// The plan as structured data, so a script can read it without parsing the rendering.
+    /// The plan as an `ono.execution-plan/1` record, so a script can read it without parsing the
+    /// rendering.
     #[must_use]
     pub fn to_value(&self) -> Value {
-        let mut map = MapValue::default();
-        map.insert("source".into(), Value::string(&self.source));
-        map.insert("mutating".into(), Value::Bool(self.is_mutating()));
-        map.insert(
-            "stages".into(),
-            Value::list(self.stages.iter().map(StagePlan::to_value)),
-        );
-        Value::Map(Arc::new(map))
+        let pairs = |pairs: &[(String, String)], first: &str, second: &str| {
+            Value::list(pairs.iter().map(|(a, b)| {
+                let mut map = MapValue::default();
+                map.insert(first.into(), Value::string(a));
+                map.insert(second.into(), Value::string(b));
+                Value::Map(Arc::new(map))
+            }))
+        };
+        let context = self.context.as_ref().map_or(Value::Null, |rows| {
+            let mut map = MapValue::default();
+            for (label, value) in rows {
+                map.insert(
+                    label.as_str().into(),
+                    value.as_deref().map_or(Value::Null, Value::string),
+                );
+            }
+            Value::Map(Arc::new(map))
+        });
+        let fields = vec![
+            ("subject", Value::string(&self.subject)),
+            (
+                "kind",
+                Value::string(if self.change_plan {
+                    "change-plan"
+                } else {
+                    "pipeline"
+                }),
+            ),
+            ("source", Value::string(&self.source)),
+            ("mutating", Value::Bool(self.is_mutating())),
+            ("aliases", pairs(&self.aliases, "name", "expansion")),
+            ("environment", pairs(&self.environment, "name", "value")),
+            ("context", context),
+            (
+                "stages",
+                Value::list(self.stages.iter().map(StagePlan::to_value)),
+            ),
+            (
+                "notes",
+                Value::list(self.notes.iter().map(|note| Value::string(note))),
+            ),
+        ];
+        let record = ono_value::builtin_schemas()
+            .get(&ono_value::SchemaId::new("ono.execution-plan", 1))
+            .and_then(|schema| {
+                let provenance = ono_value::Provenance::local("ono.shell", schema.id().clone());
+                let mut builder = ono_value::RecordValue::builder(schema, provenance);
+                for (field, value) in &fields {
+                    builder = builder.set(field, value.clone()).ok()?;
+                }
+                Some(builder.build().into_value())
+            });
+        record.unwrap_or_else(|| {
+            let mut map = MapValue::default();
+            for (field, value) in fields {
+                map.insert(field.into(), value);
+            }
+            Value::Map(Arc::new(map))
+        })
     }
+}
+
+/// The lines an `ono.execution-plan/1` record renders as: spec §42.1's PIPELINE layout, then the
+/// execution context and the mutations of §42.2, then everything else the plan notes.
+///
+/// Every line is drawn from a field of the value, so what a terminal shows and what `to json`
+/// writes cannot say different things (ADR-0942). The text is not sanitised here: the plan
+/// quotes source text and paths a user does not control, and the caller that writes the lines
+/// to a terminal neutralises them (ADR-0015 T1).
+#[must_use]
+pub fn render_plan(plan: &Value) -> Vec<String> {
+    let field = |name: &str| -> Value {
+        match plan {
+            Value::Record(record) => record.get(name).cloned().unwrap_or(Value::Null),
+            Value::Map(map) => map.get(name).cloned().unwrap_or(Value::Null),
+            _ => Value::Null,
+        }
+    };
+    let list = |value: Value| -> Vec<Value> {
+        value
+            .as_list()
+            .map(|items| items.to_vec())
+            .unwrap_or_default()
+    };
+    let mut pieces: Vec<String> = Vec::new();
+
+    for alias in list(field("aliases")) {
+        pieces.push(format!(
+            "  `{}` is an alias for `{}` — step 3 of the resolution order; explaining the \
+             expansion",
+            entry_text(&alias, "name").unwrap_or_default(),
+            entry_text(&alias, "expansion").unwrap_or_default()
+        ));
+    }
+    let notes: Vec<String> = list(field("notes"))
+        .iter()
+        .filter_map(|note| note.as_str().ok().map(str::to_owned))
+        .collect();
+    if field("kind").as_str().ok() == Some("change-plan") {
+        pieces.extend(notes);
+        return pieces
+            .iter()
+            .flat_map(|piece| piece.split('\n'))
+            .map(str::to_owned)
+            .collect();
+    }
+
+    let stages = list(field("stages"));
+    let mut text = String::from("PIPELINE\n");
+    for (name, value) in list(field("environment"))
+        .iter()
+        .filter_map(|entry| Some((entry_text(entry, "name")?, entry_text(entry, "value")?)))
+    {
+        row(&mut text, "environment", &format!("{name}={value}"));
+    }
+    for stage in &stages {
+        render_stage(stage, &mut text);
+        let _ = writeln!(text);
+    }
+    pieces.push(text);
+
+    let context = field("context");
+    let host = entry_text(&context, "host");
+    if !context.is_null() {
+        let mut block = String::from("EXECUTION CONTEXT\n");
+        for label in ["link", "transport", "mode", "answers", "identity"] {
+            if let Some(value) = entry_text(&context, label) {
+                row(&mut block, label, &value);
+            }
+        }
+        pieces.push(block);
+    }
+    for stage in &stages {
+        let Some(risk) = entry_text(stage, "risk") else {
+            continue;
+        };
+        if !matches!(risk.as_str(), "mutate" | "destructive") {
+            continue;
+        }
+        let mut block = String::from("MUTATION\n");
+        row(
+            &mut block,
+            "stage",
+            &format!(
+                "{}. {}",
+                entry_int(stage, "ordinal"),
+                entry_text(stage, "source").unwrap_or_default()
+            ),
+        );
+        row(
+            &mut block,
+            "operation",
+            &entry_text(stage, "operation").unwrap_or_else(|| "unknown".to_owned()),
+        );
+        row(
+            &mut block,
+            "targets",
+            &entry_text(stage, "input").unwrap_or_default(),
+        );
+        row(
+            &mut block,
+            "risk",
+            &if context.is_null() {
+                risk
+            } else {
+                format!("{risk} + remote")
+            },
+        );
+        if let Some(privilege) = entry_text(stage, "privilege") {
+            row(&mut block, "privilege", &privilege);
+        }
+        pieces.push(block);
+    }
+    for stage in &stages {
+        if let Some(state) = entry_text(stage, "remote_adaptation") {
+            pieces.push(format!(
+                "  adaptation on {}: {state}",
+                host.as_deref().unwrap_or("the link")
+            ));
+        }
+    }
+    pieces.extend(notes);
+    pieces
+        .iter()
+        .flat_map(|piece| piece.split('\n'))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// One stage of the PIPELINE block, in spec §42.1's layout.
+fn render_stage(stage: &Value, into: &mut String) {
+    let text = |name: &str| entry_text(stage, name);
+    let _ = writeln!(
+        into,
+        "{}. {}",
+        entry_int(stage, "ordinal"),
+        text("source").unwrap_or_default()
+    );
+    if let Some(id) = text("command") {
+        row(into, "command", &id);
+    }
+    // A core command's origin is the answer nobody asks for; a contributed one's is the first
+    // question about it (spec §31.64).
+    if let Some(origin) = text("origin").filter(|origin| origin != "core") {
+        row(into, "origin", &origin);
+    }
+    if let Some(narrowed) = text("narrowed") {
+        row(into, "narrowed", &narrowed);
+    }
+    let head = text("head").unwrap_or_default();
+    match text("resolution").as_deref() {
+        Some("external") => row(
+            into,
+            "resolution",
+            &format!("`{head}` is not a native command"),
+        ),
+        Some("function") => row(
+            into,
+            "resolution",
+            &format!("user function `{head}` — step 2 of the resolution order (ADR-0011)"),
+        ),
+        _ => {}
+    }
+    if let Some(provider) = text("provider") {
+        row(into, "provider", &provider);
+    }
+    if let Some(capability) = text("capability") {
+        row(into, "capability", &capability);
+    }
+    let fields = entry_strings(stage, "fields");
+    if !fields.is_empty() {
+        row(into, "field", &fields.join(", "));
+    }
+    row(into, "input", &text("input").unwrap_or_default());
+    row(into, "output", &text("output").unwrap_or_default());
+    if entry_bool(stage, "raw") {
+        row(
+            into,
+            "adaptation",
+            &format!("bypassed (`{}`, spec v0.3 §1.17)", ono_adapter::RAW),
+        );
+    }
+    if let Some(demand) = text("demand") {
+        row(
+            into,
+            "demand",
+            &format!("{demand} ({})", text("demand_reason").unwrap_or_default()),
+        );
+    }
+    if let Some(adaptation) = text("adaptation") {
+        row(into, "adaptation", &adaptation);
+        let argv = entry_strings(stage, "argv");
+        if !argv.is_empty() {
+            row(into, "argv", &argv.join(" "));
+        }
+        let candidates = entry_strings(stage, "candidates");
+        if let Some(selection) = text("selection") {
+            row(
+                into,
+                "candidates",
+                &format!("{} ({selection})", candidates.join(", ")),
+            );
+        }
+    }
+    row(
+        into,
+        "streaming",
+        if entry_bool(stage, "streaming") {
+            "yes"
+        } else {
+            "no"
+        },
+    );
+    // v0.4.1 §22.4's three lines, and only where they say something. A budget printed beside a
+    // stage that materializes nothing would be noise pretending to be a guarantee.
+    if text("execution_class").is_some() {
+        row(into, "execution", &text("execution").unwrap_or_default());
+        if let Some(requires) = text("requires") {
+            row(into, "requires", &requires);
+        }
+    }
+    if let (Some(items), Some(bytes)) = (
+        entry_u64(stage, "budget_items"),
+        entry_u64(stage, "budget_bytes"),
+    ) {
+        row(
+            into,
+            "budget",
+            &format!("{items} values / {}", human_bytes(bytes)),
+        );
+    }
+    if let Some(privilege) = text("privilege") {
+        row(into, "privilege", &privilege);
+    }
+    if let Some(risk) = text("risk") {
+        row(into, "risk", &risk);
+    }
+    for note in entry_strings(stage, "notes") {
+        row(into, "note", &note);
+    }
+}
+
+/// One entry of a map, or of a record, as text; `None` where it is absent or null.
+fn entry_text(value: &Value, name: &str) -> Option<String> {
+    let entry = match value {
+        Value::Map(map) => map.get(name),
+        Value::Record(record) => record.get(name),
+        _ => None,
+    }?;
+    match entry {
+        Value::Null => None,
+        Value::String(_) => entry.as_str().ok().map(str::to_owned),
+        other => Some(other.to_string()),
+    }
+}
+
+fn entry_int(value: &Value, name: &str) -> i128 {
+    match value.as_map().ok().and_then(|map| map.get(name)) {
+        Some(Value::Int(number)) => *number,
+        _ => 0,
+    }
+}
+
+fn entry_u64(value: &Value, name: &str) -> Option<u64> {
+    match value.as_map().ok().and_then(|map| map.get(name)) {
+        Some(Value::Int(number)) => u64::try_from(*number).ok(),
+        _ => None,
+    }
+}
+
+fn entry_bool(value: &Value, name: &str) -> bool {
+    matches!(
+        value.as_map().ok().and_then(|map| map.get(name)),
+        Some(Value::Bool(true))
+    )
+}
+
+fn entry_strings(value: &Value, name: &str) -> Vec<String> {
+    value
+        .as_map()
+        .ok()
+        .and_then(|map| map.get(name))
+        .and_then(|list| list.as_list().ok())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().ok().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn row(into: &mut String, label: &str, value: &str) {
@@ -642,8 +996,14 @@ pub fn plan_with(
     }
 
     ExecutionPlan {
+        subject: source.to_owned(),
         source: source.to_owned(),
         stages,
+        aliases: Vec::new(),
+        environment: Vec::new(),
+        context: None,
+        notes: Vec::new(),
+        change_plan: false,
     }
 }
 
@@ -941,6 +1301,9 @@ fn function_stage(
         adaptation: None,
         execution: None,
         budget: None,
+        path: None,
+        operation: None,
+        remote_adaptation: None,
     })
 }
 
@@ -981,6 +1344,9 @@ fn plan_stage(
             adaptation: None,
             execution: None,
             budget: None,
+            path: None,
+            operation: None,
+            remote_adaptation: None,
         };
     };
 
@@ -1014,6 +1380,9 @@ fn plan_stage(
             adaptation: None,
             execution: None,
             budget: None,
+            path: None,
+            operation: None,
+            remote_adaptation: None,
         };
     }
 
@@ -1047,6 +1416,9 @@ fn plan_stage(
             adaptation: None,
             execution: None,
             budget: None,
+            path: None,
+            operation: None,
+            remote_adaptation: None,
         };
     }
 
@@ -1087,6 +1459,9 @@ fn plan_stage(
             adaptation: None,
             execution: None,
             budget: None,
+            path: None,
+            operation: None,
+            remote_adaptation: None,
         };
     };
 
@@ -1186,6 +1561,9 @@ fn plan_stage(
         budget: execution
             .filter(|class| class.may_materialize())
             .map(|_| (limits.max_items(), limits.max_bytes())),
+        path: None,
+        operation: None,
+        remote_adaptation: None,
     }
 }
 

@@ -1,0 +1,78 @@
+# ExecutionPlan. Spec §9.1 Meta: "`explain <command>` | Show resolution, provider, coercions,
+# privilege and planned effects. | `ExecutionPlan`"; §15.3 and §42 give its shape. Output of
+# `explain` (`docs/contracts/commands/meta.yaml` → `ono.meta.explain`).
+#
+# One builder answers both halves of `explain` (ADR-0942): the rendered plan a terminal shows is
+# presentation of this record and nothing else, so every line `explain` prints — an alias it
+# expanded, the environment a prefix assignment sets (ADR-0943), the execution context of a link,
+# a mutation's operation, which program a word resolves to — is a field here first. Text and data
+# cannot drift because the text is drawn from the data.
+id: ono.execution-plan/1
+name: ExecutionPlan
+summary: What a pipeline would do — resolution, provider, types, privilege, risk and effects of every stage — without running it.
+fields:
+  subject:
+    type: string
+    required: true
+    doc: >-
+      What `explain` was asked about — `get process | sort pid` for both `explain get process |
+      sort pid` and `explain "get process | sort pid"`. A subject of one stage written with bare
+      words is its words as the shell expands them, so a glob names its files (spec §17.3).
+  kind:
+    type: enum
+    required: true
+    values: [pipeline, change-plan]
+    doc: >-
+      `pipeline` for a pipeline planned stage by stage; `change-plan` when the subject names a
+      sealed v0.6 plan (`explain plan a82f`, ADR-0814), whose explanation is `notes` and which has
+      no stages.
+  source:
+    type: string
+    required: true
+    doc: >-
+      The pipeline that was planned: the subject, or the expansion of the alias it names (step 3
+      of the resolution order, ADR-0011). Every stage's `source` quotes it.
+  mutating:
+    type: bool
+    required: true
+    doc: Whether any stage would change something outside the shell (its risk is `mutate` or `destructive`).
+  aliases:
+    type: list<map>
+    required: true
+    doc: >-
+      Every alias expanded on the way to `source`, in order: `name` and `expansion`. Empty when
+      the subject names none.
+  environment:
+    type: list<map>
+    required: true
+    doc: >-
+      The variables a prefix assignment (`NAME=value cmd`, spec §54) sets for the stages of this
+      pipeline alone, in the order written: `name` and `value`, evaluated exactly as execution
+      evaluates them (ADR-0943). Empty when the subject has none.
+  context:
+    type: map
+    nullable: true
+    doc: >-
+      The execution context while connected to a link (spec §42.2): `link`, `transport`, `mode`,
+      `answers` (an agentless link's reduced target set, else null) and `identity`. Null on the
+      local machine.
+  stages:
+    type: list<map>
+    required: true
+    doc: >-
+      One entry per stage, in pipeline order (spec §42.1): `ordinal`, `source`, `resolution`
+      (`native`, `function`, `external` or `value`), `head`, `command`, `origin`, `narrowed`,
+      `provider`, `capability`, `fields`, `input`, `output`, `streaming`, `execution`,
+      `execution_class`, `requires`, `budget_items`, `budget_bytes`, `privilege`, `risk`,
+      `operation` (a mutation's effect, `signal TERM`), `raw`, `demand`, `demand_reason`,
+      `adaptation`, `argv`, `candidates`, `selection`, `remote_adaptation`, `path` (the program
+      an external word resolves to on `PATH`) and `notes`.
+  notes:
+    type: list<string>
+    required: true
+    doc: >-
+      Everything else the plan says, in the order it says it: which step of the resolution order
+      a word that is not a native command took (a user function, a shell builtin, a program on
+      `PATH`, nothing), whether configuration mode would allow any of it, and for a `change-plan`
+      the explanation of the sealed plan.
+# No `default_view`: a plan renders as the PIPELINE layout of spec §42.1, drawn from these fields.

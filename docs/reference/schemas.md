@@ -548,6 +548,24 @@ Default view: `kind`, `reference`, `source`, `samples`, `observed_at`
 | `command` | `string` | — | nullable | An Ono command that reproduces the observation, for `kind: command`. It must parse and be runnable — spec §31.87 asks that the same question be investigable manually from the citations. Null for the other kinds. |
 | `unavailable_reason` | `string` | — | nullable | Why the observation could not be made, for `kind: unavailable`. Null otherwise. |
 
+## ExecutionPlan — `ono.execution-plan/1`
+
+What a pipeline would do — resolution, provider, types, privilege, risk and effects of every stage — without running it.
+
+Identity: 
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `subject` | `string` | — | required | What `explain` was asked about — `get process | sort pid` for both `explain get process | sort pid` and `explain "get process | sort pid"`. A subject of one stage written with bare words is its words as the shell expands them, so a glob names its files (spec §17.3). |
+| `kind` | `enum` | — | required | `pipeline` for a pipeline planned stage by stage; `change-plan` when the subject names a sealed v0.6 plan (`explain plan a82f`, ADR-0814), whose explanation is `notes` and which has no stages. |
+| `source` | `string` | — | required | The pipeline that was planned: the subject, or the expansion of the alias it names (step 3 of the resolution order, ADR-0011). Every stage's `source` quotes it. |
+| `mutating` | `bool` | — | required | Whether any stage would change something outside the shell (its risk is `mutate` or `destructive`). |
+| `aliases` | `list<map>` | — | required | Every alias expanded on the way to `source`, in order: `name` and `expansion`. Empty when the subject names none. |
+| `environment` | `list<map>` | — | required | The variables a prefix assignment (`NAME=value cmd`, spec §54) sets for the stages of this pipeline alone, in the order written: `name` and `value`, evaluated exactly as execution evaluates them (ADR-0943). Empty when the subject has none. |
+| `context` | `map` | — | nullable | The execution context while connected to a link (spec §42.2): `link`, `transport`, `mode`, `answers` (an agentless link's reduced target set, else null) and `identity`. Null on the local machine. |
+| `stages` | `list<map>` | — | required | One entry per stage, in pipeline order (spec §42.1): `ordinal`, `source`, `resolution` (`native`, `function`, `external` or `value`), `head`, `command`, `origin`, `narrowed`, `provider`, `capability`, `fields`, `input`, `output`, `streaming`, `execution`, `execution_class`, `requires`, `budget_items`, `budget_bytes`, `privilege`, `risk`, `operation` (a mutation's effect, `signal TERM`), `raw`, `demand`, `demand_reason`, `adaptation`, `argv`, `candidates`, `selection`, `remote_adaptation`, `path` (the program an external word resolves to on `PATH`) and `notes`. |
+| `notes` | `list<string>` | — | required | Everything else the plan says, in the order it says it: which step of the resolution order a word that is not a native command took (a user function, a shell builtin, a program on `PATH`, nothing), whether configuration mode would allow any of it, and for a `change-plan` the explanation of the sealed plan. |
+
 ## FileEvent — `ono.file-event/1`
 
 One change to one file or directory entry, as a live stream emits it.

@@ -124,6 +124,19 @@ impl Sink {
         if values.is_empty() {
             return Vec::new();
         }
+        // A plan renders as spec §42.1 lays it out, drawn from the record and nothing else, so the
+        // text a terminal shows and the value a pipeline receives cannot drift (ADR-0942). The
+        // plan quotes source text and paths a user does not control: every line is neutralised
+        // before it reaches the terminal or the file (ADR-0015 T1, T9).
+        if let [value] = values
+            && let Ok(record) = value.as_record()
+            && record.schema_id().to_string() == "ono.execution-plan/1"
+        {
+            return ono_command::render_plan(value)
+                .iter()
+                .map(|line| ono_render::sanitise(line))
+                .collect();
+        }
         // A graph never renders as a table (spec §13.6): its record revives and draws as the
         // trees it holds, wherever it came from — a live trace, a file, a pipe.
         if let [value] = values

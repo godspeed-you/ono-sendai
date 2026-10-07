@@ -3060,13 +3060,15 @@ Show the resolution, provider, coercions, privilege and planned effects without 
 
 | name | type | meaning |
 |---|---|---|
-| `subject` | `string` | The command or pipeline to plan, written as words or quoted. |
+| `subject` | `string` | The command or pipeline to plan. Written as bare words it is the rest of the pipeline, pipes included (spec §11.3); written as one quoted string or one `{ … }` block it is delimited, and the plan flows into the stages after it (ADR-0942). |
 
 **Examples**
 
 ```text
 explain get process
 explain get file /tmp --recursive | remove file
+explain "get process | where cpu > 20"
+explain { get process | sort pid }
 ```
 
 ### `get command`

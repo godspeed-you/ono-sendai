@@ -1,10 +1,10 @@
-//! The commands that describe the shell rather than the system: `help`, `explain`, `type`,
-//! `inspect`, `get command` and `find command`.
+//! The commands that describe the shell rather than the system: `help`, `type`, `inspect`,
+//! `get command` and `find command`. `explain` is the shell's: its plan needs the session's
+//! aliases, functions, prefix assignments and link, which only the shell has (ADR-0942).
 //!
-//! All six answer from the registry and from the values already in hand, so none of them touches
-//! a provider and none of them runs anything. That is what makes `explain` safe to type in front
-//! of a destructive pipeline (spec §15.3, §42) and `type` safe to type in front of an expensive
-//! one (spec §15.2).
+//! All of them answer from the registry and from the values already in hand, so none of them
+//! touches a provider and none of them runs anything. That is what makes `type` safe to type in
+//! front of an expensive pipeline (spec §15.2).
 
 use std::sync::Arc;
 
@@ -26,7 +26,6 @@ pub(crate) enum Kind {
     /// `get context` — the stack, ground first (spec §14.1).
     GetContext,
     Help,
-    Explain,
     Type,
     Inspect,
     GetCommand,
@@ -71,33 +70,6 @@ impl CommandImpl for MetaCommand {
                     .to_owned();
                 let page = crate::help(self.registry, Some(ctx.providers()), &topic)?;
                 Ok(values([page.to_value()]))
-            }
-            Kind::Explain => {
-                let subject = written.require_selector("subject")?.as_str()?;
-                let parsed = ono_parser::parse(subject);
-                let pipeline = parsed
-                    .program()
-                    .statements
-                    .first()
-                    .and_then(ono_parser::Statement::as_pipeline)
-                    .ok_or_else(|| not_a_pipeline(subject))?;
-                let resolver = ctx.resolver().cloned();
-                let executables = |name: &str| resolver.as_ref().and_then(|resolve| resolve(name));
-                let plan = crate::plan_with(
-                    self.registry,
-                    Some(ctx.providers()),
-                    pipeline,
-                    subject,
-                    &crate::PlanContext {
-                        stdout: ono_adapter::Stdout::Stream,
-                        adapters: ctx.adapters(),
-                        executables: Some(&executables),
-                        context: ctx.context(),
-                        limits: MaterializationLimits::default(),
-                        functions: None,
-                    },
-                );
-                Ok(values([plan.to_value()]))
             }
             Kind::GetContext => Ok(values(context_records(ctx))),
             Kind::Type => self.describe_type(ctx, &written),
@@ -314,7 +286,7 @@ fn not_a_pipeline(subject: &str) -> ErrorValue {
         ErrorCode::ParseSyntax,
         format!("`{subject}` is not a pipeline"),
     )
-    .with_help("quote a whole pipeline, as in `explain \"get process | to json\"`")
+    .with_help("quote a whole pipeline, as in `type \"get process | to json\"`")
 }
 
 /// The schema of `ono.command/1` (`docs/contracts/schemas/command.v1.yaml`).
