@@ -1,0 +1,18 @@
+# Issue #223 part 1, through the real binary as an unprivileged user.
+#
+# `explain NAME=value cmd` strips the assignment with the function execution uses, plans the
+# command after it, and states the environment the stages would run with (ADR-0943).
+case: explain plans the command after a prefix assignment and states its environment
+env: NO_COLOR=1
+run: |
+  echo "== native =="
+  ono -c 'explain FOO=1 get process'
+  echo "== external, as data =="
+  ono -c 'explain "FOO=1 BAR=two ls -l" | to json'
+exit: 0
+stdout-contains: command      ono.process.get
+stdout-contains: environment  FOO=1
+stdout-contains: "environment":[{"name":"FOO","value":"1"},{"name":"BAR","value":"two"}]
+stdout-contains: "resolution":"external","head":"ls"
+stdout-not-contains: `FOO=1` is not a native command
+stdout-not-contains: panicked

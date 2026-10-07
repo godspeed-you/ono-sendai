@@ -87,7 +87,7 @@ commands:
     output: ono.execution-plan/1
     provider_capability: null
     selectors:
-      - {name: subject, type: string, repeatable: true, doc: "The command or pipeline to plan, written as words or quoted."}
+      - {name: subject, type: string, repeatable: true, doc: "The command or pipeline to plan. Written as bare words it is the rest of the pipeline, pipes included (spec §11.3); written as one quoted string or one `{ … }` block it is delimited, and the plan flows into the stages after it (ADR-0942)."}
     options: []
     privilege: none
     streaming: false
@@ -96,10 +96,14 @@ commands:
       Reports which resolution step matched, what was skipped and why (ADR-0011), which is what
       makes spec §6.5's order "explicit and inspectable" — reported by the code rather than
       described beside it. Adapters must be visible here and must never rewrite a user's
-      command opaquely (spec §12.4).
+      command opaquely (spec §12.4). The answer is one `ono.execution-plan/1` record; a delimited
+      subject makes `explain` an ordinary producer, so `explain "get process | sort pid" | to json`
+      serialises the plan and `explain { get process } | select stages` reads it (ADR-0942).
     examples:
       - explain get process
       - explain get file /tmp --recursive | remove file
+      - explain "get process | where cpu > 20"
+      - explain { get process | sort pid }
 
   - id: ono.command.get
     verb: get

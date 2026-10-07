@@ -168,7 +168,7 @@ pub(super) fn run_stage_list(
         && list
             .stages
             .first()
-            .is_none_or(|first| builtin_name(session, first) != Some("explain"))
+            .is_none_or(|first| !is_explain(session, first))
         && let Some(through) = super::native::function_stages(session, list)
             .into_iter()
             .rfind(|index| *index >= 1)
@@ -198,6 +198,26 @@ pub(super) fn run_stage_list(
         && let Some(function) = called_function(session, stage)
     {
         return call_function(session, &function, list, source);
+    }
+
+    // `explain` answers with one `ono.execution-plan/1` and runs nothing (spec §15.3). With a
+    // delimited subject — one quoted string, one block, one variable — it is a producer like any
+    // other and the plan flows into the stages after it; written with bare words, its subject is
+    // the rest of the list, as spec §11.3 spells it (ADR-0942).
+    if let Some(first) = list.stages.first()
+        && is_explain(session, first)
+    {
+        if session.mode() == Mode::Config {
+            return Err(Flow::Failed(config_refusal("explain")));
+        }
+        let subject = crate::explain::subject(session, list, source)?;
+        let plan = crate::explain::plan_value(session, &subject)?;
+        if crate::explain::is_delimited(first) {
+            return super::native::run_seeded(session, list, source, vec![plan]);
+        }
+        let mut alone = list.clone();
+        alone.stages.truncate(1);
+        return super::native::run_seeded(session, &alone, source, vec![plan]);
     }
 
     // Spec §54: `NAME=value command …` sets the variable for this pipeline alone (ADR-0071 §2).
@@ -370,27 +390,6 @@ pub(super) fn run_stage_list(
 
         let arguments = stage_arguments(session, stage, source)?;
         return builtin::run(session, name, &arguments);
-    }
-
-    // `explain` in front of a pipeline explains the whole pipeline, exactly as spec §11.3
-    // spells it: `explain get process | where cpu > 20 | stop process`. The pipes belong to the
-    // subject, so the subject is the source text from explain's first word to the end of the
-    // list, handed over verbatim — never re-rendered from the AST, which would explain a
-    // normalisation of what the user typed rather than what they typed.
-    if list.stages.len() > 1
-        && let Some(first) = list.stages.first()
-        && builtin_name(session, first) == Some("explain")
-        && let Some(end) = list.stages.last().map(|stage| stage.span.end())
-    {
-        let start = first
-            .arguments
-            .first()
-            .map_or(first.span.end(), |argument| argument.span().start());
-        let subject = source
-            .get(start as usize..end as usize)
-            .unwrap_or_default()
-            .trim();
-        return builtin::run(session, "explain", &[OsString::from(subject)]);
     }
 
     // A builtin in a longer pipeline used to be handed to `exec`, which reported it as not found
@@ -1020,6 +1019,18 @@ pub(super) fn config_refusal(what: &str) -> ErrorValue {
 
 pub(super) fn process_error(error: ono_process::Error) -> Flow {
     Flow::Failed(ErrorValue::new(error.code(), error.message().to_owned()))
+}
+
+/// Whether `stage` is `explain` — the shell's own, bare or spelled `ono:explain` — rather than a
+/// function or a program that shares the name (ADR-0011, ADR-0942).
+pub(crate) fn is_explain(session: &Session, stage: &Stage) -> bool {
+    if let StageHead::Command(name) = &stage.head
+        && name.namespace.as_deref() == Some("ono")
+        && name.name == "explain"
+    {
+        return true;
+    }
+    builtin_name(session, stage) == Some("explain")
 }
 
 pub(super) fn builtin_name(session: &Session, stage: &Stage) -> Option<&'static str> {

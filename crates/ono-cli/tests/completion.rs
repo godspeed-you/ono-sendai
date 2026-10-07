@@ -319,3 +319,118 @@ fn should_list_the_operators_of_a_field_and_no_file_after_it() {
     shell.write_all(b"exit\n").expect("input");
     let _ = shell.wait();
 }
+
+// --- v0.4.1 §36.2: a partial set is marked incomplete (issue #178) ------------------------------
+
+/// The first selector of `id`. Each test below asks about a target of its own, because what a
+/// provider said is cached per target for the whole process and the tests run side by side.
+fn selector_of(
+    id: &str,
+) -> (
+    &'static ono_command::CommandContract,
+    &'static ono_command::ParameterSpec,
+) {
+    let registry = ono_command::CommandRegistry::embedded().expect("the embedded contracts parse");
+    let command = registry
+        .commands()
+        .iter()
+        .find(|command| command.id() == id)
+        .unwrap_or_else(|| panic!("`{id}` is a stable command"));
+    let parameter = command
+        .selectors()
+        .first()
+        .unwrap_or_else(|| panic!("`{id}` takes a selector"));
+    (command, parameter)
+}
+
+#[test]
+fn should_mark_the_answer_incomplete_when_the_provider_is_slower_than_the_soft_budget() {
+    let (command, parameter) = selector_of("ono.interface.get");
+    let impatient = ono_cli::complete::ProviderValues::new(Vec::new())
+        .budgeted(Duration::from_nanos(1), Duration::from_nanos(1));
+    let answer = ono_command::ValueCompleter::complete(&impatient, command, parameter, "zz-none");
+    assert!(
+        !answer.is_complete(),
+        "§36.2: what the soft budget answered before the provider did is marked incomplete"
+    );
+}
+
+#[test]
+fn should_mark_the_answer_complete_when_the_provider_answered_within_the_budget() {
+    let (command, parameter) = selector_of("ono.group.get");
+    let patient = ono_cli::complete::ProviderValues::new(Vec::new());
+    // `root` exists on every Linux host, and few groups begin with it, so no bound cuts the set.
+    let mut answer = ono_command::ValueCompleter::complete(&patient, command, parameter, "roo");
+    let deadline = Instant::now() + ono_testkit::under_load(Duration::from_secs(2));
+    while !answer.is_complete() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+        answer = ono_command::ValueCompleter::complete(&patient, command, parameter, "roo");
+    }
+    assert!(
+        answer.is_complete(),
+        "an answer every provider gave inside the budget is the whole set; got {answer:?}"
+    );
+    assert!(
+        !answer.is_empty(),
+        "and it holds this machine's `root` group"
+    );
+}
+
+#[test]
+fn should_end_the_listing_with_the_incomplete_marker_when_the_set_is_cut_short() {
+    // `lib` begins far more package names than a completion offers, so the set is partial
+    // whichever way it is cut: by the soft budget on a cold read, or by the bound on what one
+    // completion offers once the read is in. Every host this suite and the container run on has
+    // a package database with dozens of `lib…` packages.
+    let directory = scratch();
+    let mut shell = interactive_shell_in(&directory);
+    let _ = read_until(&mut shell, "> ", Duration::from_secs(10));
+
+    shell.write_all(b"get package lib\t\t").expect("input");
+    let seen = read_until(&mut shell, "…", Duration::from_secs(10));
+    assert!(
+        seen.contains('…'),
+        "§36.2: a completion set cut short shows the incomplete marker; saw:\n{seen}"
+    );
+
+    shell.write_all(b"\x03").expect("abandon the line");
+    shell.write_all(b"exit\n").expect("input");
+    let _ = shell.wait();
+}
+
+// --- functions and aliases from the live session (issue #223, part 2) -------------------------
+
+#[test]
+fn should_complete_a_function_defined_after_the_prompt_started() {
+    let directory = scratch();
+    let mut shell = interactive_shell_in(&directory);
+    let _ = read_until(&mut shell, "> ", Duration::from_secs(10));
+
+    shell
+        .write_all(b"fn zqfancy() { where pid > 0 }\n")
+        .expect("input");
+    let _ = read_until(&mut shell, "> ", Duration::from_secs(10));
+    shell.write_all(b"get process | zqfa\t").expect("input");
+    // The needle is the completed line, which the echo of the definition never contains.
+    let seen = read_until(&mut shell, "process | zqfancy", Duration::from_secs(10));
+    assert!(
+        seen.contains("get process | zqfancy"),
+        "a function the session defined a moment ago completes, after a pipe too; saw:\n{seen}"
+    );
+
+    shell.write_all(b"\x03").expect("abandon the line");
+    shell
+        .write_all(b"alias zqalias = get process\n")
+        .expect("input");
+    let _ = read_until(&mut shell, "> ", Duration::from_secs(10));
+    shell.write_all(b"zqal\t").expect("input");
+    let seen = read_until(&mut shell, "> zqalias", Duration::from_secs(10));
+    assert!(
+        seen.contains("> zqalias"),
+        "an alias the session defined completes at the head of a line; saw:\n{seen}"
+    );
+
+    shell.write_all(b"\x03").expect("abandon the line");
+    shell.write_all(b"exit\n").expect("input");
+    let _ = shell.wait();
+}

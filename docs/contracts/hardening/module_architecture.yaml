@@ -143,6 +143,10 @@ composition_root:
     - context_jobs.rs
     - eval
     - expand.rs
+    # The session's half of `explain` (ADR-0942): the aliases, prefix assignments, functions,
+    # link and `PATH` the plan needs, which only the session has. The plan itself is built and
+    # rendered by `ono-command`'s `plan_with` and `render_plan`.
+    - explain.rs
     - hosts.rs
     - invocation.rs
     - kuang_acquire.rs

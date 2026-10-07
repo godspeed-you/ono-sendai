@@ -1,4 +1,5 @@
-//! The commands that describe the shell: `type`, `inspect`, `help`, `explain`, `get command`.
+//! The commands that describe the shell: `type`, `inspect`, `help`, `get command`. `explain` is
+//! the shell's (ADR-0942); `crates/ono-cli/tests/explain.rs` holds it.
 
 #![allow(
     clippy::panic,
@@ -182,7 +183,7 @@ async fn should_show_the_causal_chain_of_an_error() {
     );
 }
 
-// --- help and explain ----------------------------------------------------------------------------
+// --- help ----------------------------------------------------------------------------------
 
 #[tokio::test]
 async fn should_answer_help_with_the_page_the_registry_generates() {
@@ -198,25 +199,6 @@ async fn should_answer_help_with_the_page_the_registry_generates() {
         synopsis.contains("get process"),
         "spec §15.2: the page derives from metadata — {synopsis}"
     );
-}
-
-#[tokio::test]
-async fn should_answer_explain_with_a_plan_and_run_nothing() {
-    let ran = run(
-        r#"explain "get process | to json""#,
-        &fixture::no_providers(),
-    )
-    .await
-    .expect("the pipeline runs");
-
-    let plan = ran.only();
-    let stages = field(plan, "stages").as_list().expect("a stage list");
-    assert_eq!(stages.len(), 2);
-    assert_eq!(
-        field(&stages[0], "command"),
-        &Value::string("ono.process.get")
-    );
-    assert_eq!(field(plan, "mutating"), &Value::Bool(false));
 }
 
 // --- get command / find command -------------------------------------------------------------------

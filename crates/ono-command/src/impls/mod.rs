@@ -195,7 +195,6 @@ fn implementation_of(
         "ono.process.inspect" | "ono.plugin.inspect" => Arc::new(inspect::InspectCommand::new(id)),
         "ono.context.get" => Arc::new(MetaCommand::new(id, meta::Kind::GetContext, registry)),
         "ono.meta.help" => Arc::new(MetaCommand::new(id, meta::Kind::Help, registry)),
-        "ono.meta.explain" => Arc::new(MetaCommand::new(id, meta::Kind::Explain, registry)),
         "ono.meta.type" => Arc::new(MetaCommand::new(id, meta::Kind::Type, registry)),
         "ono.meta.inspect" => Arc::new(MetaCommand::new(id, meta::Kind::Inspect, registry)),
         "ono.command.get" => Arc::new(MetaCommand::new(id, meta::Kind::GetCommand, registry)),

@@ -93,7 +93,7 @@ pub(super) fn is_job_kill(stage: &Stage) -> bool {
 ///
 /// `None` when no stage starts with an assignment. A stage that is nothing but assignments is
 /// refused: a lasting binding has two explicit spellings already.
-pub(super) fn prefix_assignments(
+pub(crate) fn prefix_assignments(
     session: &mut Session,
     list: &StageList,
     source: &str,

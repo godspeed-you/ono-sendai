@@ -28,6 +28,10 @@ pub struct Completion {
     /// A doc is shown beside its candidate when the candidates are listed, and is never part of
     /// what gets inserted (issue #136).
     pub docs: Vec<Option<String>>,
+    /// Whether the candidates are a partial set — cut short by a budget or a bound — rather than
+    /// every candidate there is (v0.4.1 §36.2, issue #178). A listing of a partial set ends with
+    /// a marker line, and a lone candidate of one is listed rather than inserted.
+    pub incomplete: bool,
 }
 
 impl Completion {
@@ -39,7 +43,15 @@ impl Completion {
             candidates,
             listing: Vec::new(),
             docs: Vec::new(),
+            incomplete: false,
         }
+    }
+
+    /// The same candidates, marked as a partial set when `incomplete` is true (v0.4.1 §36.2).
+    #[must_use]
+    pub fn incomplete(mut self, incomplete: bool) -> Self {
+        self.incomplete = incomplete;
+        self
     }
 
     /// The same candidates, shown as soon as they are offered.

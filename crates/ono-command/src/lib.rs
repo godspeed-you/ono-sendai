@@ -66,16 +66,16 @@ mod suggest;
 pub use bind::{Binding, BoundArguments};
 pub use check::{check_pipeline, check_pipeline_with};
 pub use complete::{
-    Candidate, CandidateKind, StageContext, ValueCompleter, accepts_path, complete,
+    Candidate, CandidateKind, Completions, StageContext, ValueCompleter, accepts_path, complete,
 };
 pub use contract::{
-    ArgumentMode, CapabilitySpec, CommandContract, Confirmation, ContributedCommand,
-    ContributedParameter, DeclaredType, Elevation, ExecutionClass, IoType, Origin, ParameterSpec,
-    Phase, Privilege, Stability, TargetSpec, VerbSpec,
+    Acquisition, AcquisitionScope, ArgumentMode, CapabilitySpec, CommandContract, Confirmation,
+    ContributedCommand, ContributedParameter, DeclaredType, Elevation, ExecutionClass, IoType,
+    Origin, ParameterSpec, Phase, Privilege, Stability, TargetSpec, VerbSpec,
 };
 pub use explain::{
     Adaptation, ExecutionPlan, FunctionPlan, PlanContext, Resolution, StagePlan, adapt_program,
-    is_adapt, is_raw, literal_arguments, plan, plan_for, plan_with, raw_program,
+    is_adapt, is_raw, literal_arguments, plan, plan_for, plan_with, raw_program, render_plan,
 };
 pub use expr::{
     BUILTIN_FUNCTIONS, Scope, builtin_call, check_fields, evaluate, evaluate_binary, evaluate_call,

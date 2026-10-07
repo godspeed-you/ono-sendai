@@ -193,6 +193,80 @@ impl Renderer {
         node
     }
 
+    /// The rows of a hierarchy, where `values` are records that nest records of their own schema
+    /// under the extension `children` — `get process --tree` (spec §10.4, ADR-0091 §3).
+    ///
+    /// Each descendant is a row under its parent, depth first, its first non-numeric column
+    /// indented with the guides of spec §22.4's tree (`+-- `, `|   `). The columns are the
+    /// table's: the schema's default view. `None` when no record nests anything, which is
+    /// every stream but a hierarchy; the caller then draws the ordinary table (ADR-0948).
+    #[must_use]
+    pub fn hierarchy(&self, values: &[Value]) -> Option<Table> {
+        let Shape::Records(schema) = Shape::of(values) else {
+            return None;
+        };
+        let children_of = |value: &Value| -> Vec<Value> {
+            value
+                .as_record()
+                .ok()
+                .and_then(|record| record.extra().get("children"))
+                .and_then(|children| children.as_list().ok())
+                .map(|children| {
+                    children
+                        .iter()
+                        .filter(|child| {
+                            child
+                                .as_record()
+                                .is_ok_and(|record| record.schema_id() == schema.id())
+                        })
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        if values.iter().all(|value| children_of(value).is_empty()) {
+            return None;
+        }
+
+        let mut table = self.record_table(&schema, &[]);
+        let columns = columns_of(&schema);
+        let guided = columns
+            .iter()
+            .position(|name| schema.field(name).is_none_or(|field| !numeric(field.ty())))
+            .unwrap_or(0);
+        // Depth first with a stack rather than recursion, so a parent chain as long as the
+        // process table cannot overflow it — the provider builds the nesting the same way.
+        let mut pending: Vec<(Value, String, String)> = values
+            .iter()
+            .rev()
+            .map(|value| (value.clone(), String::new(), String::new()))
+            .collect();
+        while let Some((value, guide, beneath)) = pending.pop() {
+            let Ok(record) = value.as_record() else {
+                continue;
+            };
+            let mut row: Vec<Cell> = columns
+                .iter()
+                .map(|name| self.field_cell(record, name))
+                .collect();
+            if let Some(cell) = row.get_mut(guided) {
+                *cell = Cell::new(format!("{guide}{}", cell.text())).with_token(cell.token());
+            }
+            table.push_row(row);
+            let children = children_of(&value);
+            let last = children.len().saturating_sub(1);
+            for (index, child) in children.into_iter().enumerate().rev() {
+                let continues = if index == last { "    " } else { "|   " };
+                pending.push((
+                    child,
+                    format!("{beneath}+-- "),
+                    format!("{beneath}{continues}"),
+                ));
+            }
+        }
+        Some(table)
+    }
+
     fn record_table(&self, schema: &Schema, values: &[Value]) -> Table {
         let columns = columns_of(schema);
 

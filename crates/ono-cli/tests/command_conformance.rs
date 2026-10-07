@@ -8,9 +8,9 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 109 examples run; 246 are not run, each for the reason listed at the end of this file.
+//! 111 examples run; 246 are not run, each for the reason listed at the end of this file.
 //!
-//! Commands no example of which runs (160):
+//! Commands no example of which runs (159):
 //!
 //! - `ono.change.plan` — exempt: plans to replace `/etc/nginx/nginx.conf` from `./nginx.conf`; a scratch directory has neither file.
 //! - `ono.change-plan.inspect` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.
@@ -78,7 +78,6 @@
 //! - `ono.capability.revoke` — runs `ono.capability.revoke`, whose verb `revoke` changes the system (verbs.yaml)
 //! - `ono.assistant.ask` — runs `ono.assistant.ask`, whose capability `assistant.ask` is `mutate` rather than `read`
 //! - `ono.meta.help` — runs `ono.meta.help`, which declares `ono.help-page/1` — a schema schemas/deferred.yaml says a later phase writes
-//! - `ono.meta.explain` — runs `ono.meta.explain`, which declares `ono.execution-plan/1` — a schema schemas/deferred.yaml says a later phase writes
 //! - `ono.config.set` — runs `ono.config.set`, whose verb `set` changes the system (verbs.yaml)
 //! - `ono.context.leave` — runs `leave`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
 //! - `ono.socket.get` — runs `ono.socket.get`, which declares privilege `conditional`
@@ -668,6 +667,28 @@ fn should_produce_what_ono_meta_inspect_declares_when_example_2_runs() {
         command: "ono.meta.inspect",
         example: "get service | where state == failed | take 1 | inspect",
         output: "stream<ono.inspection/1>",
+    });
+}
+
+/// `explain "get process | where cpu > 20"`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_meta_explain_declares_when_example_3_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.meta.explain",
+        example: "explain \"get process | where cpu > 20\"",
+        output: "ono.execution-plan/1",
+    });
+}
+
+/// `explain { get process | sort pid }`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_meta_explain_declares_when_example_4_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.meta.explain",
+        example: "explain { get process | sort pid }",
+        output: "ono.execution-plan/1",
     });
 }
 
@@ -1489,8 +1510,8 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.meta.help` `help` — runs `ono.meta.help`, which declares `ono.help-page/1` — a schema schemas/deferred.yaml says a later phase writes
 // - `ono.meta.help` `help get process` — runs `ono.meta.help`, which declares `ono.help-page/1` — a schema schemas/deferred.yaml says a later phase writes
 // - `ono.meta.inspect` `inspect @1` — refers to an earlier result, which the scratch shell does not have
-// - `ono.meta.explain` `explain get process` — runs `ono.meta.explain`, which declares `ono.execution-plan/1` — a schema schemas/deferred.yaml says a later phase writes
-// - `ono.meta.explain` `explain get file /tmp --recursive | remove file` — runs `ono.meta.explain`, which declares `ono.execution-plan/1` — a schema schemas/deferred.yaml says a later phase writes
+// - `ono.meta.explain` `explain get process` — exempt: the unquoted form plans everything after `explain`, so the suite's `| inspect | to json` would become stages of the subject; the delimited examples of the same command run.
+// - `ono.meta.explain` `explain get file /tmp --recursive | remove file` — runs `ono.file.remove`, whose verb `remove` changes the system (verbs.yaml)
 // - `ono.config.set` `set config prompt.path = "smart"` — runs `ono.config.set`, whose verb `set` changes the system (verbs.yaml)
 // - `ono.config.set` `set config render.table.max_rows = 200` — runs `ono.config.set`, whose verb `set` changes the system (verbs.yaml)
 // - `ono.config.set` `set config limits.history_bytes_total = 64MiB` — runs `ono.config.set`, whose verb `set` changes the system (verbs.yaml)

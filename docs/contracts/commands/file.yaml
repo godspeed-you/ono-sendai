@@ -199,6 +199,7 @@ commands:
       - {name: users, type: bool, doc: "Include the users behind the holding processes (spec §22.3)."}
     privilege: conditional
     streaming: false
+    acquisition: {scope: global, cost: expensive}
     phase: G
     examples:
       - trace file /var/lib/postgresql/data --users

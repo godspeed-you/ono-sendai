@@ -157,6 +157,7 @@ commands:
     options: []
     privilege: none
     streaming: false
+    acquisition: {scope: global, cost: external}
     phase: H
     examples:
       - trace host prod-db
@@ -346,6 +347,7 @@ commands:
     options: []
     privilege: none
     streaming: false
+    acquisition: {scope: global, cost: external}
     phase: H
     examples:
       - trace link prod-db

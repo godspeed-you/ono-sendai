@@ -23,6 +23,7 @@ pub use expression::eval_expr;
 pub use expression::truthy;
 pub(crate) use function::called_function;
 pub use materialize::captured_text;
+pub(crate) use pipeline::is_explain;
 pub use pipeline::output_destination;
 pub use pipeline::run_adapted_segment;
 pub use pipeline::run_external_segment;
@@ -30,6 +31,7 @@ pub use pipeline::run_pipeline;
 pub use pipeline::stage_arguments;
 pub use pipeline::start_adapted_segment;
 pub use statement::expand_alias;
+pub(crate) use statement::prefix_assignments;
 pub use statement::run_statement;
 
 /// Why evaluation of a statement stopped early.

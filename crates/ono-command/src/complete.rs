@@ -37,6 +37,27 @@ pub enum CandidateKind {
     Field,
     /// An operator or a connector inside an expression (v0.6.1 §13, §15).
     Operator,
+    /// A user function the session defines — resolution step 2 (ADR-0011, issue #223).
+    Function,
+    /// An alias the session defines — resolution step 3 (ADR-0011, issue #223).
+    Alias,
+}
+
+impl CandidateKind {
+    /// The word `ono.completion/1` names the kind with (ADR-0945).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            CandidateKind::Verb => "verb",
+            CandidateKind::Target => "target",
+            CandidateKind::Option => "option",
+            CandidateKind::Value => "value",
+            CandidateKind::Field => "field",
+            CandidateKind::Operator => "operator",
+            CandidateKind::Function => "function",
+            CandidateKind::Alias => "alias",
+        }
+    }
 }
 
 /// One completion candidate.
@@ -365,21 +386,117 @@ fn is_operator_piece(kind: TokenKind, text: &str) -> bool {
     }
 }
 
+/// The candidates a completion offers, and whether they are all there are.
+///
+/// v0.4.1 §36.2: "At the soft budget, completion MAY return a partial set marked incomplete." A
+/// bare list cannot say that, so a set cut short — by a budget, or by a bound on how much was
+/// read or offered — carries `complete: false`, and a reader can tell it from one that is whole
+/// (issue #178). It reads as the slice of its candidates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Completions {
+    candidates: Vec<Candidate>,
+    complete: bool,
+}
+
+impl Completions {
+    /// A whole set: every candidate there is.
+    #[must_use]
+    pub fn new(candidates: Vec<Candidate>) -> Self {
+        Self {
+            candidates,
+            complete: true,
+        }
+    }
+
+    /// A partial set: what was found before a budget or a bound stopped the search.
+    #[must_use]
+    pub fn partial(candidates: Vec<Candidate>) -> Self {
+        Self {
+            candidates,
+            complete: false,
+        }
+    }
+
+    /// Whether these are all the candidates there are.
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        self.complete
+    }
+
+    /// The candidates.
+    #[must_use]
+    pub fn candidates(&self) -> &[Candidate] {
+        &self.candidates
+    }
+
+    /// The candidates, owned.
+    #[must_use]
+    pub fn into_candidates(self) -> Vec<Candidate> {
+        self.candidates
+    }
+}
+
+impl From<Vec<Candidate>> for Completions {
+    fn from(candidates: Vec<Candidate>) -> Self {
+        Self::new(candidates)
+    }
+}
+
+impl std::ops::Deref for Completions {
+    type Target = [Candidate];
+
+    fn deref(&self) -> &[Candidate] {
+        &self.candidates
+    }
+}
+
+impl IntoIterator for Completions {
+    type Item = Candidate;
+    type IntoIter = std::vec::IntoIter<Candidate>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.candidates.into_iter()
+    }
+}
+
 /// What only a provider can complete: the users on this machine, the services of this host.
 ///
 /// The registry offers what metadata knows and stops there; this hook is where the caller adds
 /// the rest. Spec §15.1 wants completion to be provider-aware, and this is the seam.
 pub trait ValueCompleter {
-    /// The values for `parameter` of `command` that begin with `prefix`.
+    /// The values for `parameter` of `command` that begin with `prefix`, and whether they are
+    /// all of them (v0.4.1 §36.2).
     fn complete(
         &self,
         command: &CommandContract,
         parameter: &ParameterSpec,
         prefix: &str,
-    ) -> Vec<Candidate>;
+    ) -> Completions;
 }
 
-/// The candidates for the token under the cursor, sorted and without repeats.
+/// A value hook that remembers whether any answer it passed on was partial.
+struct Watched<'a> {
+    hook: &'a dyn ValueCompleter,
+    whole: std::cell::Cell<bool>,
+}
+
+impl ValueCompleter for Watched<'_> {
+    fn complete(
+        &self,
+        command: &CommandContract,
+        parameter: &ParameterSpec,
+        prefix: &str,
+    ) -> Completions {
+        let answer = self.hook.complete(command, parameter, prefix);
+        if !answer.is_complete() {
+            self.whole.set(false);
+        }
+        answer
+    }
+}
+
+/// The candidates for the token under the cursor, sorted and without repeats, marked incomplete
+/// when the value hook stopped short of everything (v0.4.1 §36.2).
 ///
 /// ```
 /// use ono_command::{CommandRegistry, StageContext};
@@ -394,11 +511,25 @@ pub fn complete(
     registry: &CommandRegistry,
     context: &StageContext,
     values: Option<&dyn ValueCompleter>,
-) -> Vec<Candidate> {
-    let mut candidates = gather(registry, context, values);
+) -> Completions {
+    let watched = values.map(|hook| Watched {
+        hook,
+        whole: std::cell::Cell::new(true),
+    });
+    let mut candidates = gather(
+        registry,
+        context,
+        watched
+            .as_ref()
+            .map(|watched| watched as &dyn ValueCompleter),
+    );
     candidates.sort_by(|left, right| left.text.cmp(&right.text));
     candidates.dedup_by(|left, right| left.text == right.text);
-    candidates
+    if watched.is_some_and(|watched| !watched.whole.get()) {
+        Completions::partial(candidates)
+    } else {
+        Completions::new(candidates)
+    }
 }
 
 /// Whether a filesystem path can stand at the cursor (v0.6.1 §16).
@@ -580,7 +711,9 @@ fn selector_values(
             .map(|value| Candidate::value(value).with_doc(selector.doc()))
             .collect();
     }
-    values.map_or_else(Vec::new, |hook| hook.complete(command, selector, prefix))
+    values.map_or_else(Vec::new, |hook| {
+        hook.complete(command, selector, prefix).into_candidates()
+    })
 }
 
 fn option_values(
@@ -594,7 +727,9 @@ fn option_values(
     };
     let closed = option.closed_set();
     let offered = if closed.is_empty() {
-        values.map_or_else(Vec::new, |hook| hook.complete(command, option, written))
+        values.map_or_else(Vec::new, |hook| {
+            hook.complete(command, option, written).into_candidates()
+        })
     } else {
         closed
             .into_iter()

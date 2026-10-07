@@ -115,6 +115,10 @@ const BOUND_ELSEWHERE: &[(&str, &str)] = &[
         "the evaluator's settings catalogue, which is what the shell enforces (ADR-0456)",
     ),
     ("ono.env.set", "the evaluator's own scope (ADR-0020 §9)"),
+    (
+        "ono.meta.explain",
+        "the evaluator, which plans with the session's aliases, functions and link (ADR-0942)",
+    ),
     // --- `ono-cli` answers it as a shell builtin -----------------------------------------------
     // KUANG/11's lifecycle and the remote link table are the shell's: the supervisor and the
     // link store are session state, so `crates/ono-cli/src/plugins.rs` and `remote.rs` claim

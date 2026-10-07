@@ -1,0 +1,27 @@
+# Issue #173, through the real binary as an unprivileged user.
+#
+# `explain` answers with one `ono.execution-plan/1`. A delimited subject — a quoted string or a
+# block — makes it a producer whose plan flows into the stages after it; written with bare words,
+# the subject is the rest of the line, as spec §11.3 spells it (ADR-0942).
+case: explain yields its plan as a value a pipeline can read
+env: NO_COLOR=1
+run: |
+  echo "== a quoted subject, serialised =="
+  ono -c 'explain "get process | sort pid" | to json'
+  echo
+  echo "== a block subject, read by a stage =="
+  ono -c 'explain { get process | sort pid } | select kind mutating | to json'
+  echo
+  echo "== a plan bound to a variable =="
+  ono -c 'let p = (explain "get process | sort pid | take 3"); $p.stages | count | to json'
+  echo
+  echo "== the unquoted form explains the whole line =="
+  ono -c 'explain get process | sort pid | to json'
+exit: 0
+stdout-contains: "subject":"get process | sort pid"
+stdout-contains: "command":"ono.data.sort"
+stdout-contains: [{"kind":"pipeline","mutating":false}]
+stdout-contains: [3]
+stdout-contains: 3. to json
+stdout-contains: PIPELINE
+stdout-not-contains: panicked

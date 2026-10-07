@@ -53,6 +53,7 @@ pub mod context;
 pub mod context_jobs;
 pub mod eval;
 pub mod expand;
+pub mod explain;
 pub mod hosts;
 pub mod invocation;
 #[cfg(feature = "kuang")]
@@ -128,6 +129,9 @@ pub fn usage_text() -> String {
          options:\n\
          \x20 -c <source>      run <source>, then exit with its status\n\
          \x20 -                read a script from standard input\n\
+         \x20 --complete <line> [--cursor <n>]\n\
+         \x20                  print what Tab would offer at byte <n> of <line> (default: its\n\
+         \x20                  end) as one ono.completion/1 JSON document, and exit\n\
          \x20 --config <path>  read this configuration file instead of the usual layers\n\
          {peer_key}\
          \x20 --no-config      read no configuration at all\n\

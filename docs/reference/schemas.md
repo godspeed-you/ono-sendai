@@ -374,6 +374,21 @@ Default view: `short_hash`, `authored`, `author`, `subject`
 | `subject` | `string` | — | required | The first line of the message. |
 | `parents` | `list<string>` | — | required | The parents' full object names; empty for a root commit. |
 
+## Completion — `ono.completion/1`
+
+What the word under the cursor could become — the candidates, the span they replace, and whether the set is whole.
+
+Identity: 
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `line` | `string` | — | required | The line completed, as it was given. |
+| `cursor` | `int` | — | required | The cursor, a byte offset into `line`; the end of the line when none was given. |
+| `start` | `int` | — | required | Where the text a candidate replaces begins, a byte offset into `line`. |
+| `end` | `int` | — | required | Where it ends, a byte offset into `line` — the cursor. |
+| `complete` | `bool` | — | required | Whether the candidates are every candidate there is. False when a budget or a bound cut the set short (v0.4.1 §36.2, ADR-0944): asking again — a provider's answer is cached once it is in — may offer more. |
+| `candidates` | `list<map>` | — | required | One entry per candidate, in the order the prompt offers them: `text` (what replaces the span), `kind` — `verb`, `target`, `option`, `value`, `field`, `operator`, `function`, `alias`, `builtin`, `program`, `path`, `place` or `relation` — and `doc`, the one line the prompt shows beside it, or null. |
+
 ## ConfigSetting — `ono.config-setting/1`
 
 One resolved configuration setting together with the layer that set it.
@@ -547,6 +562,24 @@ Default view: `kind`, `reference`, `source`, `samples`, `observed_at`
 | `observed_at` | `timestamp` | — | required | When the observation was made, or when the window ended. |
 | `command` | `string` | — | nullable | An Ono command that reproduces the observation, for `kind: command`. It must parse and be runnable — spec §31.87 asks that the same question be investigable manually from the citations. Null for the other kinds. |
 | `unavailable_reason` | `string` | — | nullable | Why the observation could not be made, for `kind: unavailable`. Null otherwise. |
+
+## ExecutionPlan — `ono.execution-plan/1`
+
+What a pipeline would do — resolution, provider, types, privilege, risk and effects of every stage — without running it.
+
+Identity: 
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `subject` | `string` | — | required | What `explain` was asked about — `get process | sort pid` for both `explain get process | sort pid` and `explain "get process | sort pid"`. A subject of one stage written with bare words is its words as the shell expands them, so a glob names its files (spec §17.3). |
+| `kind` | `enum` | — | required | `pipeline` for a pipeline planned stage by stage; `change-plan` when the subject names a sealed v0.6 plan (`explain plan a82f`, ADR-0814), whose explanation is `notes` and which has no stages. |
+| `source` | `string` | — | required | The pipeline that was planned: the subject, or the expansion of the alias it names (step 3 of the resolution order, ADR-0011). Every stage's `source` quotes it. |
+| `mutating` | `bool` | — | required | Whether any stage would change something outside the shell (its risk is `mutate` or `destructive`). |
+| `aliases` | `list<map>` | — | required | Every alias expanded on the way to `source`, in order: `name` and `expansion`. Empty when the subject names none. |
+| `environment` | `list<map>` | — | required | The variables a prefix assignment (`NAME=value cmd`, spec §54) sets for the stages of this pipeline alone, in the order written: `name` and `value`, evaluated exactly as execution evaluates them (ADR-0943). Empty when the subject has none. |
+| `context` | `map` | — | nullable | The execution context while connected to a link (spec §42.2): `link`, `transport`, `mode`, `answers` (an agentless link's reduced target set, else null) and `identity`. Null on the local machine. |
+| `stages` | `list<map>` | — | required | One entry per stage, in pipeline order (spec §42.1): `ordinal`, `source`, `resolution` (`native`, `function`, `external` or `value`), `head`, `command`, `origin`, `narrowed`, `provider`, `capability`, `fields`, `input`, `output`, `streaming`, `execution`, `execution_class`, `requires`, `budget_items`, `budget_bytes`, `acquisition` (what the stage builds before it answers, `scope` and §34.2 `cost`, null where it asks one provider one question — v0.4.1 §34.4, ADR-0947), `privilege`, `risk`, `operation` (a mutation's effect, `signal TERM`), `raw`, `demand`, `demand_reason`, `adaptation`, `argv`, `candidates`, `selection`, `remote_adaptation`, `path` (the program an external word resolves to on `PATH`) and `notes`. |
+| `notes` | `list<string>` | — | required | Everything else the plan says, in the order it says it: which step of the resolution order a word that is not a native command took (a user function, a shell builtin, a program on `PATH`, nothing), whether configuration mode would allow any of it, and for a `change-plan` the explanation of the sealed plan. |
 
 ## FileEvent — `ono.file-event/1`
 

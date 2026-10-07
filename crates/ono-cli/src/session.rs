@@ -81,6 +81,7 @@ impl JobSnapshot {
                 scopes: self.scopes,
                 definitions: self.definitions,
                 expanding: Vec::new(),
+                published: SharedDefinitions::default(),
             },
             execution: ExecutionState {
                 status: self.status,
@@ -137,6 +138,22 @@ pub struct Alias {
     /// The pipeline text the alias stands for, exactly as written after the `=`.
     pub expansion: String,
 }
+
+/// A function or an alias the session defines at its outermost scope, as completion offers it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefinedName {
+    /// The name a line calls it by.
+    pub name: String,
+    /// Whether it is a function or an alias.
+    pub kind: ono_command::CandidateKind,
+    /// The declaration signature of a function, the expansion of an alias.
+    pub doc: String,
+}
+
+/// The session's functions and aliases as a view the line editor can hold while the evaluator
+/// keeps defining them: the completer is built once, and a name defined at the prompt a moment
+/// ago must still complete (issue #223).
+pub type SharedDefinitions = std::sync::Arc<std::sync::RwLock<Vec<DefinedName>>>;
 
 /// What a name can be defined as, beside the values `let` binds.
 #[derive(Debug, Clone)]
@@ -210,6 +227,8 @@ struct ScopeState {
     /// The aliases being expanded right now, so an expansion is never expanded again
     /// (ADR-0011 step 3, ADR-0070).
     expanding: Vec<String>,
+    /// The outermost scope's functions and aliases, published for completion (issue #223).
+    published: SharedDefinitions,
 }
 
 /// What the session is running, under which rules, and what it has captured.
@@ -848,6 +867,7 @@ impl Session {
                 scopes: vec![Scope::new()],
                 definitions: vec![BTreeMap::new()],
                 expanding: Vec::new(),
+                published: SharedDefinitions::default(),
             },
             execution: ExecutionState {
                 status: ExitStatus::SUCCESS,
@@ -965,6 +985,41 @@ impl Session {
     pub fn define(&mut self, name: impl Into<String>, definition: Definition) {
         if let Some(scope) = self.scope.definitions.last_mut() {
             scope.insert(name.into(), definition);
+        }
+        // The prompt only ever stands in the outermost scope, so that is what completion sees.
+        if self.scope.definitions.len() == 1 {
+            self.publish_definitions();
+        }
+    }
+
+    /// The session's functions and aliases as completion reads them, kept current as the
+    /// session defines more (issue #223).
+    #[must_use]
+    pub fn shared_definitions(&self) -> SharedDefinitions {
+        std::sync::Arc::clone(&self.scope.published)
+    }
+
+    fn publish_definitions(&self) {
+        let Some(outermost) = self.scope.definitions.first() else {
+            return;
+        };
+        let names = outermost
+            .iter()
+            .map(|(name, definition)| match definition {
+                Definition::Function(function) => DefinedName {
+                    name: name.clone(),
+                    kind: ono_command::CandidateKind::Function,
+                    doc: signature(function),
+                },
+                Definition::Alias(alias) => DefinedName {
+                    name: name.clone(),
+                    kind: ono_command::CandidateKind::Alias,
+                    doc: alias.expansion.clone(),
+                },
+            })
+            .collect();
+        if let Ok(mut published) = self.scope.published.write() {
+            *published = names;
         }
     }
 
@@ -2136,4 +2191,15 @@ fn contribute_spatial_type(
         &roles,
         registered.contribution.parent.as_deref(),
     );
+}
+
+/// A function's declaration up to its body — `fn top(limit)` — the line completion shows beside it.
+fn signature(function: &Function) -> String {
+    let declaration = &function.declaration;
+    function
+        .source
+        .get(declaration.span.start() as usize..declaration.body.span.start() as usize)
+        .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| format!("fn {}", declaration.name))
 }

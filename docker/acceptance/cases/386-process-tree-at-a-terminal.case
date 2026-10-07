@@ -1,0 +1,20 @@
+# Issue #223 part 3, at a real terminal as an unprivileged user.
+#
+# `get process --tree` nests descendants under `children`; at a terminal the rendering draws that
+# hierarchy — a row per process under its parent, indented with spec §22.4's guides (ADR-0948).
+# The case's own shell runs under `script(1)`, so there is always a parent with children.
+case: get process --tree draws the hierarchy at a terminal
+pty: true
+columns: 120
+lines: 40
+timeout: 60
+env: NO_COLOR=1
+stdin: |
+  get process --tree
+  exit 0
+run: |
+  ono
+exit: 0
+stdout-contains: +-- 
+stdout-contains: PID
+stdout-not-contains: panicked

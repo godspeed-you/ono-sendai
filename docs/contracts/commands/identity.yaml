@@ -261,6 +261,7 @@ commands:
     options: []
     privilege: conditional
     streaming: false
+    acquisition: {scope: global, cost: moderate}
     phase: G
     examples:
       - trace user postgres

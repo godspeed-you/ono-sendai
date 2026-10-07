@@ -46,6 +46,9 @@ run: |
   roots=$(ono -c 'get process --tree | count | to json' | tr -d '[]')
   if [ "$roots" -lt "$flat" ] 2>/dev/null; then echo "tree-has-fewer-roots"; fi
   ono -c 'get process --tree | to json' | grep -q '"children"' && echo "tree-nests-children"
+  # Redirected, the rendering stays the table of the roots: the hierarchy is drawn only for a
+  # person at a terminal (case 386, ADR-0948).
+  ono -c 'get process --tree' | grep -q -- '+-- ' || echo "tree-redirected-is-a-table"
 exit: 0
 stdout-contains: detail-of-init
 stdout-contains: detail-has-cgroup
@@ -64,4 +67,5 @@ stdout-contains: [{"status":"success"}]
 stdout-contains: child-status=143
 stdout-contains: tree-has-fewer-roots
 stdout-contains: tree-nests-children
+stdout-contains: tree-redirected-is-a-table
 stdout-not-contains: WRONG
