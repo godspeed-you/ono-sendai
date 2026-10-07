@@ -467,6 +467,22 @@ fn keep(record: &RecordValue, query: &Query) -> bool {
             endpoint_port(record, "local") == Some(*port)
                 || endpoint_port(record, "remote") == Some(*port)
         }
+        // `ono.route/1` records the default route's destination as null — "a real answer, not
+        // an unknown one" — so `trace route 0.0.0.0/0`, the way the contract's own example names
+        // the default route, would match nothing by equality. A zero-length prefix names the
+        // default route of its address family (issue #149).
+        Selector::Field {
+            name,
+            value: Value::IpNetwork(network),
+        } if name == "destination" && network.prefix_len() == 0 => {
+            let family = if network.address().is_ipv4() {
+                "inet"
+            } else {
+                "inet6"
+            };
+            matches!(record.get("destination"), Some(Value::Null) | None)
+                && record.get("family") == Some(&Value::String(family.into()))
+        }
         other => other.matches(record),
     })
 }

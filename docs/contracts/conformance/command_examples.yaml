@@ -175,10 +175,3 @@ exemptions:
       spells v0.6 §3.1's intent `update package`, and no verb `update` exists (verbs.yaml); the
       plan refuses it as not plannable. A gap between the specification's illustration and the
       verb vocabulary, recorded in ADR-0935, not a property of the test host.
-
-  # --- defects the suite found, each removed by the commit that fixes it (ADR-0935) ----------
-  - command: ono.route.trace
-    example: trace route 0.0.0.0/0
-    reason: >-
-      known defect: `0.0.0.0/0` does not find the default route, whose destination
-      `ono.route/1` records as null; fixed by a following commit.

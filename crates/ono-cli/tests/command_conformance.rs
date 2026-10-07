@@ -8,9 +8,9 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 102 examples run; 251 are not run, each for the reason listed at the end of this file.
+//! 103 examples run; 250 are not run, each for the reason listed at the end of this file.
 //!
-//! Commands no example of which runs (164):
+//! Commands no example of which runs (163):
 //!
 //! - `ono.change.plan` — exempt: plans to replace `/etc/nginx/nginx.conf` from `./nginx.conf`; a scratch directory has neither file.
 //! - `ono.change-plan.inspect` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.
@@ -93,7 +93,6 @@
 //! - `ono.socket.watch` — runs `ono.socket.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
 //! - `ono.interface.watch` — runs `ono.interface.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
 //! - `ono.route.watch` — runs `ono.route.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
-//! - `ono.route.trace` — exempt: known defect: `0.0.0.0/0` does not find the default route, whose destination `ono.route/1` records as null; fixed by a following commit.
 //! - `ono.route.add` — runs `ono.route.add`, whose verb `add` changes the system (verbs.yaml)
 //! - `ono.route.remove` — runs `ono.route.remove`, whose verb `remove` changes the system (verbs.yaml)
 //! - `ono.route.set` — runs `ono.route.set`, whose verb `set` changes the system (verbs.yaml)
@@ -785,6 +784,17 @@ fn should_produce_what_ono_neighbor_get_declares_when_example_2_runs() {
     });
 }
 
+/// `trace route 0.0.0.0/0`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_route_trace_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.route.trace",
+        example: "trace route 0.0.0.0/0",
+        output: "ono.graph/1",
+    });
+}
+
 /// `get package`
 #[rustfmt::skip]
 #[test]
@@ -1443,7 +1453,6 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.socket.watch` `watch socket 443` — runs `ono.socket.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
 // - `ono.interface.watch` `watch interface` — runs `ono.interface.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
 // - `ono.route.watch` `watch route` — runs `ono.route.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
-// - `ono.route.trace` `trace route 0.0.0.0/0` — exempt: known defect: `0.0.0.0/0` does not find the default route, whose destination `ono.route/1` records as null; fixed by a following commit.
 // - `ono.route.add` `add route 10.0.0.0/8 --gateway 192.168.1.1` — runs `ono.route.add`, whose verb `add` changes the system (verbs.yaml)
 // - `ono.route.remove` `remove route 10.0.0.0/8` — runs `ono.route.remove`, whose verb `remove` changes the system (verbs.yaml)
 // - `ono.route.set` `set route 10.0.0.0/8 --metric 200` — runs `ono.route.set`, whose verb `set` changes the system (verbs.yaml)
