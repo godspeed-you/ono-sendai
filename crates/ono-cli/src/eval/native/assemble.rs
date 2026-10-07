@@ -575,13 +575,15 @@ fn runtime_handle(session: &mut Session) -> Eval<tokio::runtime::Handle> {
 }
 
 /// The refusal for a call that cannot read the stream in front of it.
+///
+/// The stage named is the first one whose shape fails — the stages before it can all read the
+/// stream they are handed — which is not necessarily the first call of the line.
 fn cannot_take_input(session: &Session, inner: &[Stage], source: &str, reason: &str) -> ErrorValue {
-    let call = inner
-        .iter()
-        .find(|stage| crate::eval::called_function(session, stage).is_some())
-        .map_or("the call", |stage| super::segment::head_name(stage));
-    let written = inner
-        .first()
+    let failing = (0..inner.len())
+        .find(|end| list_shape(session, &inner[..=*end], true, &mut Vec::new()).is_err())
+        .and_then(|end| inner.get(end));
+    let call = failing.map_or("the call", |stage| super::segment::head_name(stage));
+    let written = failing
         .map(|stage| stage.span.of(source).trim().to_owned())
         .unwrap_or_default();
     ErrorValue::new(

@@ -797,6 +797,35 @@ fn should_refuse_a_call_between_two_stages_whose_body_cannot_read_a_stream() {
 }
 
 #[test]
+fn should_name_the_call_that_cannot_read_its_stream_when_another_call_stands_before_it() {
+    // ADR-0951's refusal names the call it refuses. With a call that can read its stream in front
+    // of one that cannot, the one that cannot is the one named — review C7a found the first call
+    // of the line named whichever failed.
+    let source = Following::holding(&["first"]);
+    let script = format!(
+        "fn passing() {{ where @ != \"x\" }}\n\
+         fn counted() {{\n  let wanted = 1\n  where @ != \"x\"\n}}\n\
+         tail file {} --lines 1 --follow | passing | counted | take 1 | to json",
+        source.path.display()
+    );
+
+    let run = run_bounded(&source.home, &script, BUDGET);
+
+    assert!(run.finished, "a refusal, not a wait. {}", run.report());
+    assert!(
+        run.stderr
+            .contains("`counted` cannot read the stream in front of it"),
+        "the refusal names the call whose body cannot read a stream. {}",
+        run.report()
+    );
+    assert!(
+        !run.stderr.contains("`passing` cannot"),
+        "and not the call before it, which can. {}",
+        run.report()
+    );
+}
+
+#[test]
 fn should_name_a_function_between_two_stages_in_explain_and_say_that_it_streams() {
     // Issue #191's exit test: "`explain` names it". The plan's stage is the user function, step 2
     // of the resolution order, and it says whether the call streams.
