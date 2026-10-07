@@ -148,6 +148,10 @@ pub fn load(session: &mut Session, options: &Options, reporter: &Reporter) {
         session
             .settings_mut()
             .apply_environment(&environment, &mut report);
+        // A retired name met in the environment is noticed here (ADR-0933).
+        for notice in session.settings_mut().take_notices() {
+            reporter.notice(&notice);
+        }
     }
 
     // Every layer is in, so the figures the session enforces can be taken from them. The result

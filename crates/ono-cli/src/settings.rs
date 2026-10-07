@@ -222,13 +222,6 @@ pub const CATALOGUE: &[SettingSpec] = &[
         range: None,
     },
     SettingSpec {
-        key: "history.result_cache",
-        ty: SettingType::ByteSize,
-        description: "How much memory retained results may occupy (spec §20.2, §30). Superseded by `limits.history_bytes_total`, which v0.4.1 §55.1 names and the shell reads; kept declared so an existing configuration file still parses (v0.4.1 §4.5).",
-        default: DefaultValue::Bytes(64 * 1024 * 1024),
-        range: None,
-    },
-    SettingSpec {
         key: "safety.confirm.remote_destructive",
         ty: SettingType::Bool,
         description: "Whether a destructive command inside a link frame asks first (spec §17.4, §30). Recorded; confirmation is not interactive yet.",
@@ -449,7 +442,7 @@ pub const CATALOGUE: &[SettingSpec] = &[
     SettingSpec {
         key: "limits.history_bytes_total",
         ty: SettingType::ByteSize,
-        description: "How many bytes the whole result history may hold before oldest-first eviction (v0.4.1 §24.1, §24.2, Appendix A). Supersedes `history.result_cache`, which nothing reads.",
+        description: "How many bytes the whole result history may hold before oldest-first eviction (v0.4.1 §24.1, §24.2, Appendix A). `history.result_cache`, the name spec §30's example used, is read as a retired name for this key (ADR-0933).",
         default: DefaultValue::Bytes(67_108_864),
         range: Some(Range {
             min: 0,
@@ -753,6 +746,49 @@ pub fn spec(key: &str) -> Option<&'static SettingSpec> {
     CATALOGUE.iter().find(|setting| setting.key == key)
 }
 
+/// A key the catalogue no longer declares, and the key that replaced it (issue #175, ADR-0933).
+///
+/// v0.6.1 §32: a configuration that parsed yesterday does not stop the shell starting, so a
+/// retired name is read as its replacement — in a file, at the prompt, in its `ONO_*` variable
+/// and in `get config` — and noticed once per session, naming the key to write instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Retired {
+    /// The name that is no longer declared.
+    pub key: &'static str,
+    /// The declared key that holds its value now.
+    pub replacement: &'static str,
+}
+
+/// Every retired setting name.
+pub const RETIRED: &[Retired] = &[Retired {
+    key: "history.result_cache",
+    replacement: "limits.history_bytes_total",
+}];
+
+impl Retired {
+    /// The `ONO_*` variable the retired name had, by ADR-0010's mechanical mapping.
+    #[must_use]
+    pub fn environment_variable(&self) -> String {
+        format!("ONO_{}", self.key.to_ascii_uppercase().replace('.', "_"))
+    }
+
+    /// What the shell says when it meets the retired name.
+    #[must_use]
+    pub fn notice(&self) -> String {
+        format!(
+            "`{}` is a retired name for `{}`, which holds its value now; write `{}` instead \
+             (ADR-0933)",
+            self.key, self.replacement, self.replacement
+        )
+    }
+}
+
+/// The retirement `key` names, if it is a retired name.
+#[must_use]
+pub fn retired(key: &str) -> Option<&'static Retired> {
+    RETIRED.iter().find(|retired| retired.key == key)
+}
+
 /// The settings this build carries: the catalogue, without the keys of a tier it was compiled
 /// without (#127, ADR-0911). The full build carries every one.
 pub fn carried() -> impl Iterator<Item = &'static SettingSpec> {
@@ -792,6 +828,10 @@ pub struct Settings {
     problems: Vec<Value>,
     /// The file being evaluated right now, so `set config` in it knows its layer and line.
     reading: Option<Reading>,
+    /// The retired names this session has met, so each is noticed once (ADR-0933).
+    retired_seen: Vec<&'static str>,
+    /// Notices not yet said, oldest first.
+    notices: Vec<String>,
 }
 
 impl Default for Settings {
@@ -822,7 +862,27 @@ impl Settings {
             layers,
             problems: Vec::new(),
             reading: None,
+            retired_seen: Vec::new(),
+            notices: Vec::new(),
         }
+    }
+
+    /// The key `key` stands for: itself, or the replacement of a retired name — which is noticed
+    /// the first time this session meets it (ADR-0933).
+    pub fn canonical<'k>(&mut self, key: &'k str) -> &'k str {
+        let Some(retired) = retired(key) else {
+            return key;
+        };
+        if !self.retired_seen.contains(&retired.key) {
+            self.retired_seen.push(retired.key);
+            self.notices.push(retired.notice());
+        }
+        retired.replacement
+    }
+
+    /// The notices not yet said, which the caller says now.
+    pub fn take_notices(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.notices)
     }
 
     /// Marks the start of reading a configuration file.
@@ -908,6 +968,7 @@ impl Settings {
         source: Option<PathBuf>,
         line: Option<u32>,
     ) -> Result<bool, ErrorValue> {
+        let key = self.canonical(key);
         if let Some(tier) = crate::absent::tier_of_setting(key).filter(|tier| !tier.is_built()) {
             return Err(crate::absent::not_in_build(key, tier));
         }
@@ -972,6 +1033,26 @@ impl Settings {
         variables: &BTreeMap<OsString, OsString>,
         report: &mut dyn FnMut(&ErrorValue),
     ) {
+        // A retired name's variable first, so the replacement's own variable, read below at the
+        // same layer, wins when both are set (ADR-0933).
+        for retired in RETIRED {
+            let name = retired.environment_variable();
+            let Some(raw) = variables.get(OsStr::new(&name)) else {
+                continue;
+            };
+            let word = raw.to_string_lossy().into_owned();
+            if let Err(error) = self.assign(
+                retired.key,
+                Given::Word(word),
+                Layer::Environment,
+                None,
+                None,
+            ) {
+                let error = error.with_help(format!("set by the environment variable `{name}`"));
+                report(&error);
+                self.note_problem(&error);
+            }
+        }
         // A variable for a setting this build does not carry is not this shell's to read: the
         // environment may well have been set up for the full build (ADR-0911).
         for setting in carried() {

@@ -166,7 +166,7 @@ fn resolve_command(session: &Session, words: &[OsString]) -> Result<Vec<Value>, 
 
 /// `get config [key|prefix.] [--problems] [--overridden] [--profile]` (spec §30, ADR-0094,
 /// ADR-0836).
-fn get_config(session: &Session, words: &[OsString]) -> Result<Vec<Value>, ErrorValue> {
+fn get_config(session: &mut Session, words: &[OsString]) -> Result<Vec<Value>, ErrorValue> {
     let mut selector: Option<String> = None;
     let mut problems = false;
     let mut overridden = false;
@@ -235,7 +235,17 @@ fn get_config(session: &Session, words: &[OsString]) -> Result<Vec<Value>, Error
             })
             .collect());
     }
+    // A retired name answers the setting that replaced it (ADR-0933).
+    let selector = selector.map(|key| session.settings_mut().canonical(&key).to_owned());
+    say_notices(session);
     session.settings().records(selector.as_deref(), overridden)
+}
+
+/// Says the settings' pending notices on standard error, out of the data (spec §33.2).
+fn say_notices(session: &mut Session) {
+    for notice in session.settings_mut().take_notices() {
+        crate::report::notice(&notice);
+    }
 }
 
 /// `set config <key> = <value>`: one typed assignment at the layer being read — the file's
@@ -291,6 +301,9 @@ fn set_config(session: &mut Session, stage: &Stage, source: &str) -> Eval<Vec<Va
         None => (Layer::Invocation, None, None),
     };
     let in_file = file.is_some();
+    // A retired name sets the key that replaced it, and the result names that key (ADR-0933).
+    let key = session.settings_mut().canonical(&key).to_owned();
+    say_notices(session);
     let changed = match session
         .settings_mut()
         .assign(&key, given, layer, file, line)
