@@ -147,8 +147,10 @@ impl Transform for Measure {
         "measure"
     }
 
+    // Only the distribution is held; constant-state statistics retain nothing (ADR-0953), so a
+    // budget of zero concerns `measure` only when a percentile is asked for (ADR-0934).
     fn materializes(&self) -> bool {
-        true
+        self.distribution
     }
 
     fn input_requirement(&self) -> InputRequirement {

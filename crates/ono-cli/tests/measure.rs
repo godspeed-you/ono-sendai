@@ -184,3 +184,32 @@ fn should_explain_measure_as_streaming_unless_a_percentile_is_asked_for() {
         );
     }
 }
+
+#[test]
+fn should_measure_constant_state_statistics_when_the_budget_admits_nothing() {
+    // v0.4.1 §22.2 makes a budget of zero "no values permitted", and `resource.materialization_limit`
+    // refuses a stage that must hold its input under it (ADR-0934). Constant-state `measure` holds
+    // nothing (ADR-0953), so a zero budget does not concern it; asking for the distribution does.
+    let scratch = scratch();
+    let plain = run_bounded(
+        &scratch,
+        "set config limits.materialize_items = 0\n\
+         echo \"[1,2,3]\" | from json | measure @ | to json",
+        BUDGET,
+    );
+    assert_eq!(plain.code, Some(0), "{}", plain.report());
+    assert_eq!(document(&plain.stdout)[0]["count"], 3, "{}", plain.report());
+
+    let median = run_bounded(
+        &scratch,
+        "set config limits.materialize_items = 0\n\
+         echo \"[1,2,3]\" | from json | measure @ --median | to json",
+        BUDGET,
+    );
+    assert_ne!(median.code, Some(0), "{}", median.report());
+    assert!(
+        median.stderr.contains("Ono-Sendai-E1103"),
+        "holding the distribution under a budget of zero is refused as E1103. {}",
+        median.report()
+    );
+}
