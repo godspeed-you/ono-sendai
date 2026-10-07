@@ -136,6 +136,28 @@ pub(super) fn run_stage_list(
     source: &str,
     background: bool,
 ) -> Eval<ExitStatus> {
+    // Step 2 of the resolution order (ADR-0011) holds in every stage, not only the first: a call
+    // after another stage reads that stage's stream through its body, and everything up to the last
+    // such call is assembled into one stream (v0.4.1 §26.2, ADR-0951). A backgrounded line is the
+    // job's to run, and `explain` in front of a pipeline explains it rather than running it.
+    if !background
+        && list
+            .stages
+            .first()
+            .is_none_or(|first| builtin_name(session, first) != Some("explain"))
+        && let Some(through) = super::native::function_stages(session, list)
+            .into_iter()
+            .rfind(|index| *index >= 1)
+    {
+        if session.mode() == Mode::Config {
+            return Err(Flow::Failed(config_refusal("this command")));
+        }
+        if interrupt_reached() {
+            return Err(interrupted_flow_now());
+        }
+        return super::native::run_assembled(session, list, source, through);
+    }
+
     // Step 2 of the resolution order (ADR-0011): a user function wins over everything but a
     // keyword, and the keywords were the parser's.
     if !background

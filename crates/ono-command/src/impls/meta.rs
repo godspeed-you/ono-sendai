@@ -94,6 +94,7 @@ impl CommandImpl for MetaCommand {
                         executables: Some(&executables),
                         context: ctx.context(),
                         limits: MaterializationLimits::default(),
+                        functions: None,
                     },
                 );
                 Ok(values([plan.to_value()]))
@@ -138,6 +139,7 @@ impl MetaCommand {
                     executables: Some(&executables),
                     context: ctx.context(),
                     limits: MaterializationLimits::default(),
+                    functions: None,
                 },
             );
             let last = plan

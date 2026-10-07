@@ -254,7 +254,7 @@ resolution_order:
     skipped and why — the order is reported by the code, not merely documented beside it.
   steps:
     - {step: 1, kind: keyword,  doc: "A language keyword or control form."}
-    - {step: 2, kind: function, doc: "A user function, in the innermost scope that defines one."}
+    - {step: 2, kind: function, doc: "A user function, in the innermost scope that defines one — in every stage of a pipeline, not only the first. A call after another stage reads that stage's stream through its body (ADR-0951)."}
     - {step: 3, kind: alias,    doc: "An alias. Expanded exactly once, then re-resolved from step 1, so an alias may shadow a native command and a cycle terminates."}
     - {step: 4, kind: native,   doc: "The native command registry, including KUANG/11 contributions."}
     - {step: 5, kind: external, doc: "The first executable hit on PATH, with the usual executable-bit rules."}
@@ -270,7 +270,7 @@ resolution_order:
 # ---------------------------------------------------------------------------------------------
 statements:
   - {form: "let name [: type] = pipeline", doc: "Declare or rebind a binding in the current scope (spec §19.2). The only binding form; rebinding is a further `let`."}
-  - {form: "fn name(param: Type = default, …) -> Type { … }", doc: "Declare a function (spec §19.3)."}
+  - {form: "fn name(param: Type = default, …) -> Type { … }", doc: "Declare a function (spec §19.3). A call stands in any stage of a pipeline. At the head, its body produces the stream the stages after it read; a body that is one pipeline streams into them, any other is collected first (v0.4.1 §26.2, ADR-0481, ADR-0950). After another stage, its body must be one pipeline whose first stage reads a stream — a transform, `each { … }`, or a call of the same shape — and that stage reads the stream in front of the call; any other body is refused with `type.mismatch` before anything runs (ADR-0951)."}
   - {form: "alias name = pipeline", doc: "Declare an alias (spec §6.5 step 2). Its text replaces the head word that names it, exactly once, and the result is resolved again from step 1 (ADR-0070)."}
   - {form: "if expr { … } else if expr { … } else { … }", doc: "Conditional (spec §19.5)."}
   - {form: "for name in expr { … }", doc: "Iterate over a list or stream."}

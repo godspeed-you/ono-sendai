@@ -679,6 +679,154 @@ fn should_say_in_explain_that_a_body_running_a_block_streams() {
     );
 }
 
+// --- a function between two stages reads the stream in front of it (issue #191) ----------------
+
+#[test]
+fn should_hand_the_stream_to_a_function_called_between_two_stages() {
+    // Issue #191, reproduced: `get process | mine | take 1` ran `mine` as a program. A user
+    // function is step 2 of the resolution order wherever its name stands (ADR-0011), and a call
+    // after a stage reads that stage's stream through its body.
+    let scratch = scratch();
+
+    let run = run_bounded(
+        &scratch,
+        "fn mine() { where pid > 0 }\nget process | mine | take 1 | to json",
+        BUDGET,
+    );
+
+    assert_eq!(run.code, Some(0), "{}", run.report());
+    let answer: serde_json::Value =
+        serde_json::from_str(run.stdout.trim()).expect("`to json` writes one document");
+    let rows = answer.as_array().expect("an array of processes");
+    assert_eq!(rows.len(), 1, "`take 1` after the call. {}", run.report());
+    assert!(
+        rows[0].get("pid").and_then(serde_json::Value::as_i64) > Some(0),
+        "the call's body filtered the processes `get process` produced. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_answer_through_a_function_between_two_stages_before_the_source_ends() {
+    // §2.5's meaning of streaming, through the call: the body reads the caller's stream directly,
+    // so `take 1` after it answers from the first value while the source is still open.
+    let source = Following::holding(&["first"]);
+
+    let script = format!(
+        "fn kept() {{ where @ != \"a line nothing writes\" }}\n\
+         tail file {} --lines 1 --follow | kept | take 1 | to json",
+        source.path.display()
+    );
+
+    let run = run_bounded(&source.home, &script, BUDGET);
+
+    assert!(
+        run.finished,
+        "the call answered from the value the source has already produced. {}",
+        run.report()
+    );
+    assert_eq!(run.stdout.trim(), "[\"first\"]", "{}", run.report());
+    assert_eq!(
+        source.lines(),
+        ["first"],
+        "and the source never ended: nothing waited for it to"
+    );
+}
+
+#[test]
+fn should_stream_through_a_call_at_the_head_and_a_call_between_two_stages() {
+    let source = Following::holding(&["first"]);
+    let script = format!(
+        "fn watched() {{ tail file {} --lines 1 --follow }}\n\
+         fn shout() {{ each {{ @ + \"!\" }} }}\n\
+         watched | shout | take 1 | to json",
+        source.path.display()
+    );
+
+    let run = run_bounded(&source.home, &script, BUDGET);
+
+    assert!(
+        run.finished,
+        "both calls are stages of one stream, the second one's block included. {}",
+        run.report()
+    );
+    assert_eq!(run.stdout.trim(), "[\"first!\"]", "{}", run.report());
+    assert_eq!(source.lines(), ["first"]);
+}
+
+#[test]
+fn should_seed_a_call_between_two_stages_with_what_a_program_wrote() {
+    // The stages in front of the call need not stream: a program's output, decoded, is a finite
+    // stream like any other, and the call reads it.
+    let scratch = scratch();
+
+    let run = run_bounded(
+        &scratch,
+        "fn doubled() { each { @ * 2 } }\necho \"[1,2,3]\" | from json | doubled | to json",
+        BUDGET,
+    );
+
+    assert_eq!(run.code, Some(0), "{}", run.report());
+    assert_eq!(run.stdout.trim(), "[2,4,6]", "{}", run.report());
+}
+
+#[test]
+fn should_refuse_a_call_between_two_stages_whose_body_cannot_read_a_stream() {
+    // ADR-0951: a function between two stages reads its input through its body. A body of
+    // several statements has no first stage to hand the stream to, and the refusal says so before
+    // anything runs — the source here never ends, so a call that tried would never answer.
+    let source = Following::holding(&["first"]);
+    let script = format!(
+        "fn counted() {{\n  let wanted = 1\n  where @ != \"x\"\n}}\n\
+         tail file {} --lines 1 --follow | counted | take 1 | to json",
+        source.path.display()
+    );
+
+    let run = run_bounded(&source.home, &script, BUDGET);
+
+    assert!(run.finished, "a refusal, not a wait. {}", run.report());
+    assert_eq!(run.code, Some(1), "{}", run.report());
+    assert!(
+        run.stderr.contains("type.mismatch")
+            && run
+                .stderr
+                .contains("`counted` cannot read the stream in front of it"),
+        "the structured refusal names the call and why. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_name_a_function_between_two_stages_in_explain_and_say_that_it_streams() {
+    // Issue #191's exit test: "`explain` names it". The plan's stage is the user function, step 2
+    // of the resolution order, and it says whether the call streams.
+    let scratch = scratch();
+
+    let run = run_bounded(
+        &scratch,
+        "fn mine() { where pid > 0 }\nexplain get process | mine | take 1",
+        BUDGET,
+    );
+
+    assert!(
+        !run.stdout.contains("is not a native command"),
+        "the call is not reported as an unknown program. {}",
+        run.report()
+    );
+    assert!(
+        run.stdout.contains("user function `mine`"),
+        "the stage is named as the user function. {}",
+        run.report()
+    );
+    assert!(
+        run.stdout.contains(
+            "its body reads the stream in front of the call and streams into the stages after it"
+        ),
+        "and the plan says the call streams. {}",
+        run.report()
+    );
+}
+
 #[test]
 fn should_say_in_explain_which_calls_stream_and_which_collect() {
     // v0.4.1 §26.2: "if function semantics currently require a complete function result before

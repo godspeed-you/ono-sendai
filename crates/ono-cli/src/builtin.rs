@@ -475,6 +475,26 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         .map(|name| (name.to_owned(), crate::resolve::find_on_path(session, name)))
         .collect();
     let executables = |name: &str| resolved.get(name).cloned().flatten();
+    // Step 2 of the resolution order outranks the registry, so the plan is told which heads are
+    // user functions and whether a call of each can stream where it stands (ADR-0951).
+    let functions: std::collections::BTreeMap<String, ono_command::FunctionPlan> = pipeline
+        .head
+        .stages
+        .iter()
+        .filter_map(|stage| stage.head.name())
+        .filter_map(|name| {
+            let function = session.function(name)?;
+            Some((
+                name.to_owned(),
+                ono_command::FunctionPlan {
+                    declared: function.declaration.span.to_string(),
+                    at_head: crate::eval::native::function_shape(session, &function, false),
+                    with_input: crate::eval::native::function_shape(session, &function, true),
+                },
+            ))
+        })
+        .collect();
+    let function_plans = |name: &str| functions.get(name).cloned();
     // Inside a link frame the remote negotiates (spec v0.3 §1.54): the local registry is not
     // consulted for the plan, and the remote's answer is reported per stage below.
     let remote_host = session.link_host();
@@ -497,6 +517,7 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             // v0.4.1 §22.4: the plan shows the budget the pipeline would really run under, so a
             // user who narrowed `limits.materialize_bytes` sees their own figure.
             limits,
+            functions: Some(&function_plans),
         },
     );
     // The plan quotes the source it was given and the paths it resolved, both of which are
@@ -615,7 +636,7 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
     // A stage the registry does not know is an external program, and which one it will be is the
     // half of the answer the plan cannot give (ADR-0011 T11: a shadowing binary is only
     // defensible if the shell will say which one it picked).
-    for stage in &pipeline.head.stages {
+    for (position, stage) in pipeline.head.stages.iter().enumerate() {
         let Some(name) = ono_command::raw_program(stage)
             .or_else(|| ono_command::adapt_program(stage))
             .or_else(|| stage.head.name())
@@ -633,11 +654,16 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             // v0.4.1 §26.2: where a call cannot be continued as a stage of the pipeline it stands
             // in, "that limitation MUST be explicit in `explain`" — so it is stated here rather
             // than left for a user to meet as a refusal over an unbounded source (ADR-0481).
-            let continues = crate::eval::native::function_shape(session, &function, false).is_ok();
-            let continuation = if continues {
-                "its body streams into the stages after the call"
+            let continuation = if position == 0 {
+                match crate::eval::native::function_shape(session, &function, false) {
+                    Ok(()) => "its body streams into the stages after the call".to_owned(),
+                    Err(_) => "its result is collected before the stages after the call run, so its input must be finite".to_owned(),
+                }
             } else {
-                "its result is collected before the stages after the call run, so its input must be finite"
+                match crate::eval::native::function_shape(session, &function, true) {
+                    Ok(()) => "its body reads the stream in front of the call and streams into the stages after it".to_owned(),
+                    Err(reason) => format!("it cannot read the stream in front of it: {reason}"),
+                }
             };
             let declared = function.declaration.span;
             print_safely(&format!(

@@ -111,6 +111,7 @@ impl ShellCompleter {
                 executables: Some(&executables),
                 context: &[],
                 limits: ono_pipeline::MaterializationLimits::default(),
+                functions: None,
             },
         );
         let stages = plan.stages();

@@ -31,7 +31,7 @@ mod remote;
 mod result;
 mod segment;
 
-pub(crate) use assemble::{function_shape, run_assembled};
+pub(crate) use assemble::{function_shape, function_stages, run_assembled};
 pub(crate) use drive::run_background;
 #[cfg(feature = "remote")]
 pub(crate) use remote::{literal_argv, remote_decision};
@@ -215,6 +215,7 @@ pub fn check(
                 executables: Some(&executables),
                 context: &[],
                 limits: materialization,
+                functions: None,
             },
         )
         .adapted_schemas()
