@@ -20,7 +20,9 @@
 #
 # Fields of a registry row
 #
-#   file          the file name inside this directory.
+#   file          the file name inside this directory, or a path relative to it for a contract
+#                 that lives elsewhere (`../temporal/…`, `../../baselines/…`). Every directory a
+#                 row reaches, and `docs/baselines/`, is swept like this one (ADR-0931).
 #   domain        the §52.1 contract domain it is, or `null` for one this repository added.
 #   validated_by  the gate checks that hold it, as `path::function`. It must live under `xtask/`:
 #                 §52.3 puts the validation in the gate, and a crate test that reads the same
@@ -491,6 +493,45 @@ registries:
       compared bidirectionally against `docs/contracts/errors.yaml`. Its load-bearing column is
       `nothing_changed`: Appendix F's whole matrix turns on an operator being able to tell a
       refusal from a partial apply, and this is where that fact is recorded per code.
+
+  # --- the frozen records of `docs/baselines/` -------------------------------------------------
+  # Records rather than registries: each states what one tranche or one release build measured,
+  # and none is edited after it is written (ADR-0785, ADR-0864). They stay where release notes,
+  # ADRs and scripts link them, and are indexed from here by relative path, as the temporal and
+  # change registries are, because §52.3's word is *every* and the gate validates them like any
+  # other contract. `xtask/src/contracts.rs::check_registry_inventory` sweeps `docs/baselines/`
+  # too, so the next tranche's snapshot arrives with its row (issue #171, ADR-0931).
+
+  - file: ../../baselines/v0.4.1.json
+    domain: null
+    validated_by: [xtask/src/baseline.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.4.1 §57 (H0), §52.3, §32.4"
+    doc: >-
+      The frozen snapshot of the v0.4.1 tranche: test and acceptance counts, the benchmarks of the
+      regression baseline it names, the environment they were measured on and the release inputs,
+      with a written reason for every absence (ADR-0548). Written once by `cargo xtask baseline
+      --write`.
+
+  - file: ../../baselines/v0.5.0.json
+    domain: null
+    validated_by: [xtask/src/baseline.rs::check]
+    consumed_by: [xtask]
+    spec: "v0.4.1 §52.3, §57 (H0); v0.5 §49"
+    doc: >-
+      The frozen snapshot of the v0.5 tranche, in the shape of `v0.4.1.json`: one snapshot per
+      tranche, never an edit of an earlier one, and together they name every benchmark the
+      regression baseline holds (ADR-0785).
+
+  - file: ../../baselines/binary-size.yaml
+    domain: null
+    validated_by: [xtask/src/binary_size.rs::check_record]
+    consumed_by: [xtask]
+    spec: "v0.4.1 §35.3, §50.1–§50.3, §52.2, Appendix H"
+    doc: >-
+      The stripped size of every shipped binary per target triple, recorded from a release build
+      by `cargo xtask metrics --write` and held against the `build_budgets` of `limits.yaml`; the
+      README and the release input manifest quote it (ADR-0864, ADR-0867).
 
 # ---------------------------------------------------------------------------------------------
 # §52.3's first named failure: an unknown capability id in an authorization fixture.

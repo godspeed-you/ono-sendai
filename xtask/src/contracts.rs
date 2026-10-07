@@ -3976,25 +3976,63 @@ pub fn check_registry_inventory(root: &Path) -> Vec<Problem> {
         }
     }
 
-    for entry in std::fs::read_dir(&directory)
-        .into_iter()
-        .flatten()
-        .flatten()
-    {
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if !(name.ends_with(".yaml") || name.ends_with(".json")) || indexed.contains(name) {
-            continue;
+    // Every directory the index answers for: its own, every directory a row reaches by relative
+    // path (ADR-0625), and `docs/baselines/`, where the gate validates the frozen snapshots and the
+    // binary-size record although they are records rather than registries (issue #171, ADR-0931).
+    // A machine-readable file in any of them without a row fails here.
+    let indexed: BTreeSet<PathBuf> = indexed
+        .iter()
+        .map(|file| lexically_normal(&directory.join(file)))
+        .collect();
+    let mut swept: BTreeSet<PathBuf> = BTreeSet::from([
+        lexically_normal(&directory),
+        lexically_normal(&root.join(crate::baseline::DIRECTORY)),
+    ]);
+    swept.extend(
+        indexed
+            .iter()
+            .filter_map(|path| path.parent().map(Path::to_path_buf)),
+    );
+    for swept_directory in &swept {
+        for entry in std::fs::read_dir(swept_directory)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if !(name.ends_with(".yaml") || name.ends_with(".json"))
+                || indexed.contains(&lexically_normal(&path))
+            {
+                continue;
+            }
+            problems.push(problem(format!(
+                "says nothing about `{}`, which is a machine-readable contract in a directory this \
+                 index answers for. v0.4.1 §52.3 asks the gate to validate every one of them, so a \
+                 registry arrives with its validator or it does not arrive",
+                relative(root, &path)
+            )));
         }
-        problems.push(problem(format!(
-            "says nothing about `{name}`, which is a machine-readable contract in this directory. \
-             v0.4.1 §52.3 asks the gate to validate every one of them, so a registry arrives with \
-             its validator or it does not arrive"
-        )));
     }
     problems
+}
+
+/// `a/b/../c` as `a/c`, without touching the file system, so a row's relative path and a
+/// directory listing compare as one path.
+fn lexically_normal(path: &Path) -> PathBuf {
+    let mut normal = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normal.pop();
+            }
+            other => normal.push(other),
+        }
+    }
+    normal
 }
 
 /// Resolves `docs/contracts/hardening/remote_limits.yaml` against everything it points at.

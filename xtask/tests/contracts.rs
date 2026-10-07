@@ -1308,6 +1308,46 @@ fn should_report_a_hardening_registry_no_gate_check_validates() {
 }
 
 #[test]
+fn should_report_a_baseline_snapshot_the_registry_index_does_not_name() {
+    // Issue #171, ADR-0931: `docs/baselines/` holds machine-readable records the gate validates
+    // (`xtask::baseline::check`, `xtask::binary_size::check_record`), outside the directory the
+    // index lives in. A snapshot written there without a row is a contract nothing indexes.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    repo.write(
+        "docs/baselines/v9.9.9.json",
+        "{\"version\": \"9.9.9\", \"counts\": {}}\n",
+    );
+    let problems = xtask::contracts::check_registry_inventory(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("docs/baselines/v9.9.9.json")),
+        "a baseline snapshot the index does not name is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_an_unindexed_contract_in_a_directory_the_registry_index_reaches() {
+    // The index reaches `docs/contracts/temporal/`, `change/` and `recovery/` by relative path
+    // (ADR-0625). A directory it reaches is a directory it answers for, so a file added beside
+    // the indexed ones without a row is reported as in the index's own directory.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    repo.write(
+        "docs/contracts/temporal/invented_windows.yaml",
+        "version: 1\nwindows: []\n",
+    );
+    let problems = xtask::contracts::check_registry_inventory(repo.path());
+    assert!(
+        problems.iter().any(|problem| problem
+            .detail
+            .contains("docs/contracts/temporal/invented_windows.yaml")),
+        "an unindexed contract beside indexed ones is reported: {problems:?}"
+    );
+}
+
+#[test]
 fn should_report_a_registry_index_naming_a_gate_check_that_does_not_exist() {
     // An index is only evidence if `validated_by` is resolved. A row naming a function nobody
     // wrote reads exactly like a row naming one that runs.
