@@ -1,0 +1,49 @@
+# Release review R2, R6 and C2 of v0.6.3, through the real binary as an unprivileged user.
+#
+# A background job's evaluator is a thread of the shell's own process, so a job may not move the
+# working directory (ADR-0955): the foreground keeps resolving relative paths where it stands. The
+# reader of a named pipe a line is redirected to leaving ends that line with 141 and the shell goes
+# on (ADR-0220 is for the shell's own output only). A job whose program ignores `kill %N` stays
+# listed until it has ended. Nothing below asserts a duration.
+case: a job cannot move the shell, a redirect's reader ends only the line, a stubborn job stays listed
+timeout: 120
+env: NO_COLOR=1
+run: |
+  echo "== a job's cd is refused and the shell stays where it stands =="
+  mkdir -p "$HOME/case-391/elsewhere"
+  : > "$HOME/case-391/here-marker"
+  : > "$HOME/case-391/elsewhere/away-marker"
+  ono -c "cd $HOME/case-391
+          fn wander() { cd elsewhere; echo moved }
+          wander &
+          fg %1
+          echo \"job-status-\$?\"
+          find file . --depth 1 | to json"
+
+  echo "== the reader of a redirected stream leaves =="
+  printf 'first\n' > "$HOME/case-391.log"
+  mkfifo "$HOME/case-391.fifo"
+  (head -n 1 < "$HOME/case-391.fifo" > /dev/null) &
+  ono -c "tail file $HOME/case-391.log --lines 1 --follow | to jsonl > $HOME/case-391.fifo
+          echo \"after-redirect-\$?\""
+  wait
+
+  echo "== a job whose program ignores the signal stays listed =="
+  printf '#!/bin/sh\ntrap "" TERM INT\nexec </dev/null >/dev/null 2>&1\n: > "$HOME/case-391.started"\nwhile :; do sleep 1; done\n' > "$HOME/case-391-stubborn.sh"
+  chmod +x "$HOME/case-391-stubborn.sh"
+  ono -c "tail file $HOME/case-391.log --lines 1 --follow | each { $HOME/case-391-stubborn.sh } &
+          sh -c 'while [ ! -e \"\$HOME/case-391.started\" ]; do sleep 0.05; done'
+          kill %1
+          jobs
+          echo stubborn-listed"
+  pkill -KILL -f case-391-stubborn.sh || true
+exit: 0
+stdout-contains: a background job cannot change the working directory
+stdout-contains: job-status-1
+stdout-contains: here-marker
+stdout-not-contains: away-marker
+stdout-not-contains: moved
+stdout-contains: after-redirect-141
+stdout-contains: has not stopped yet
+stdout-contains: stubborn-listed
+stdout-not-contains: panicked
