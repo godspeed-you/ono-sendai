@@ -26,6 +26,14 @@ pub enum Mode {
 /// One lexical scope's bindings.
 type Scope = BTreeMap<String, Value>;
 
+/// Scopes taken off a session by [`Session::detach_scopes`], to be put back by
+/// [`Session::attach_scopes`]: the invocation frame of a function whose body outlives the call.
+#[derive(Debug, Default)]
+pub struct DetachedScopes {
+    scopes: Vec<Scope>,
+    definitions: Vec<BTreeMap<String, Definition>>,
+}
+
 /// A function the user declared with `fn` (spec §19.3, ADR-0070).
 #[derive(Debug)]
 pub struct Function {
@@ -1703,6 +1711,36 @@ impl Session {
             self.scope.scopes.pop();
             self.scope.definitions.pop();
         }
+    }
+
+    /// How many scopes are open, for [`Session::detach_scopes`].
+    #[must_use]
+    pub fn scope_depth(&self) -> usize {
+        self.scope.scopes.len()
+    }
+
+    /// Takes every scope above `depth` off the session, innermost last, without dropping them.
+    ///
+    /// A function call whose body streams into its caller's pipeline ends before the stream does
+    /// (v0.4.1 §26.2, §26.3): its invocation scope must leave the session when the call returns,
+    /// or the caller's later stages would read the callee's parameters, and must still exist for
+    /// the blocks of its body, which run while the caller's pipeline drains. Detaching it keeps
+    /// both promises (ADR-0950). The outermost scope is never detached.
+    pub fn detach_scopes(&mut self, depth: usize) -> DetachedScopes {
+        let depth = depth.max(1);
+        if depth >= self.scope.scopes.len() {
+            return DetachedScopes::default();
+        }
+        DetachedScopes {
+            scopes: self.scope.scopes.split_off(depth),
+            definitions: self.scope.definitions.split_off(depth),
+        }
+    }
+
+    /// Puts scopes [`Session::detach_scopes`] took back on top of the session, as they were.
+    pub fn attach_scopes(&mut self, detached: DetachedScopes) {
+        self.scope.scopes.extend(detached.scopes);
+        self.scope.definitions.extend(detached.definitions);
     }
 
     /// The status of the last statement.

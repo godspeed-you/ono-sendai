@@ -218,7 +218,13 @@ pub(super) fn run_function_body(
         && let Some((stream, failed_rows)) =
             super::native::stream_segment(session, body, body_source)?
     {
-        return super::native::run_piped(session, list, source, stream, failed_rows);
+        // The body is assembled, so the call is over: the stages after it are the caller's, and
+        // they must read the caller's bindings rather than the invocation scope `call_function`
+        // pushed (§26.3). The scope is taken off for the drain and put back for `pop_scope`.
+        let invocation = session.detach_scopes(session.scope_depth().saturating_sub(1));
+        let outcome = super::native::run_piped(session, list, source, stream, failed_rows);
+        session.attach_scopes(invocation);
+        return outcome;
     }
     if consumed {
         session.begin_capture();

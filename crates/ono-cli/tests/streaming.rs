@@ -547,6 +547,32 @@ fn should_drop_the_invocation_scope_when_the_function_call_ends() {
 }
 
 #[test]
+fn should_keep_the_callers_binding_in_the_stages_after_a_streamed_call() {
+    // v0.4.1 §26.3: "streaming a block/function MUST NOT let lexical scope references outlive
+    // their owning scope". A call whose body streams into the stages after it returns before those
+    // stages have drained, and the stages after it are the caller's: a block among them reads the
+    // caller's `x`, never the callee's parameter of the same name.
+    let source = Following::holding(&["first", "second"]);
+    let script = format!(
+        "fn streamed(x) {{ tail file {} --lines 2 --follow | take 2 }}\n\
+         let x = \"the caller's\"\n\
+         streamed \"the callee's\" | each {{ $x }} | to json",
+        source.path.display()
+    );
+
+    let run = run_bounded(&source.home, &script, BUDGET);
+
+    assert!(run.finished, "{}", run.report());
+    assert_eq!(
+        run.stdout.trim(),
+        "[\"the caller's\",\"the caller's\"]",
+        "the caller's block reads the caller's binding: the callee's parameter ended with the \
+         call. {}",
+        run.report()
+    );
+}
+
+#[test]
 fn should_say_in_explain_which_calls_stream_and_which_collect() {
     // v0.4.1 §26.2: "if function semantics currently require a complete function result before
     // continuation, that limitation MUST be explicit in `explain`". A body that is one native
