@@ -84,7 +84,8 @@ pub fn subject(session: &mut Session, list: &StageList, source: &str) -> Eval<St
 /// # Errors
 ///
 /// An empty subject, one that is not a pipeline, a stage of a tier this build was compiled
-/// without (ADR-0911), and a sealed plan that does not exist (ADR-0814).
+/// without (ADR-0911), a sealed plan that does not exist (ADR-0814), and whatever evaluating a
+/// prefix assignment's value refuses.
 pub fn plan_value(session: &mut Session, subject: &str) -> Eval<Value> {
     plan(session, subject).map(|plan| plan.to_value())
 }
@@ -109,13 +110,15 @@ fn plan(session: &mut Session, subject: &str) -> Eval<ono_command::ExecutionPlan
         return Ok(ono_command::ExecutionPlan::of_change_plan(subject, lines));
     }
 
-    // The order execution resolves a stage list in (ADR-0011, ADR-0070): an alias is expanded
-    // once and the expansion resolved again from the top.
+    // The order execution resolves a stage list in (ADR-0011, ADR-0070): a prefix assignment is
+    // stripped by the function running the line strips it with (spec §54, ADR-0943), then an
+    // alias is expanded once and the expansion resolved again from the top.
     let mut source = subject.to_owned();
     let mut aliases: Vec<(String, String)> = Vec::new();
+    let mut environment: Vec<(String, String)> = Vec::new();
     let pipeline = loop {
         let parsed = ono_parser::parse(&source);
-        let Some(pipeline) = parsed
+        let Some(mut pipeline) = parsed
             .program()
             .statements
             .first()
@@ -127,6 +130,16 @@ fn plan(session: &mut Session, subject: &str) -> Eval<ono_command::ExecutionPlan
                 format!("`{source}` is not a pipeline"),
             )));
         };
+        if let Some((assignments, stripped)) =
+            crate::eval::prefix_assignments(session, &pipeline.head, &source)?
+        {
+            environment.extend(
+                assignments
+                    .into_iter()
+                    .map(|(name, value)| (name, value.to_string_lossy().into_owned())),
+            );
+            pipeline.head = stripped;
+        }
         if let Some((name, text)) = crate::eval::expand_alias(session, &pipeline.head, &source)
             && !aliases.iter().any(|(expanded, _)| *expanded == name)
         {
@@ -213,6 +226,9 @@ fn plan(session: &mut Session, subject: &str) -> Eval<ono_command::ExecutionPlan
     plan.set_subject(subject.trim());
     for (name, expansion) in aliases {
         plan.push_alias(name, expansion);
+    }
+    for (name, value) in environment {
+        plan.push_environment(name, value);
     }
 
     // Spec §42.2: while connected, the plan shows the execution context, so the risk of acting

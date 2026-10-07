@@ -115,3 +115,66 @@ fn should_render_the_same_resolution_sentences_it_carries() {
         run.stdout()
     );
 }
+
+// --- prefix assignments (spec §54, issue #223, ADR-0943) ---------------------------------------
+
+#[test]
+fn should_plan_the_command_after_a_prefix_assignment_when_explaining_it() {
+    let run = ono("explain FOO=1 get process");
+    run.assert_success();
+    let text = run.stdout();
+    assert!(
+        text.contains("command      ono.process.get"),
+        "the stage is `get process` run with FOO set, exactly as execution strips it, got {text:?}"
+    );
+    assert!(
+        !text.contains("is not a native command"),
+        "`FOO=1` is an assignment, never a program to look up, got {text:?}"
+    );
+    assert!(
+        text.contains("environment  FOO=1"),
+        "the plan states the environment the stages would run with, got {text:?}"
+    );
+}
+
+#[test]
+fn should_carry_the_environment_of_a_prefix_assignment_in_the_plan_value() {
+    let run = ono(r#"explain "FOO=1 BAR=two ls -l" | to json"#);
+    run.assert_success();
+    let text = run.stdout();
+    assert!(
+        text.contains(r#""environment":[{"name":"FOO","value":"1"},{"name":"BAR","value":"two"}]"#),
+        "every assignment, in order, with its value, got {text:?}"
+    );
+    assert!(
+        text.contains(r#""resolution":"external","head":"ls""#),
+        "the external stage is `ls`, not `FOO=1`, got {text:?}"
+    );
+}
+
+#[test]
+fn should_evaluate_a_prefix_assignment_value_as_execution_does() {
+    let run = ono(r#"let who = "me"; explain { GREETING=$who get process } | to json"#);
+    run.assert_success();
+    assert!(
+        run.stdout()
+            .contains(r#""environment":[{"name":"GREETING","value":"me"}]"#),
+        "the value is expanded exactly as running the line would expand it, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_neutralise_control_characters_in_an_environment_value_when_rendering_the_plan() {
+    let run = ono(r#"let t = "a\u{1b}]0;pwn\u{7}b"; explain { T=$t ls }"#);
+    run.assert_success();
+    let text = run.stdout();
+    assert!(
+        text.contains("environment  T=a"),
+        "the variable is stated, got {text:?}"
+    );
+    assert!(
+        !text.contains('\u{1b}') && !text.contains('\u{7}'),
+        "a value must never drive the terminal it is shown on (ADR-0015 T1), got {text:?}"
+    );
+}

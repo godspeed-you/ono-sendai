@@ -31,6 +31,7 @@ pub use pipeline::run_pipeline;
 pub use pipeline::stage_arguments;
 pub use pipeline::start_adapted_segment;
 pub use statement::expand_alias;
+pub(crate) use statement::prefix_assignments;
 pub use statement::run_statement;
 
 /// Why evaluation of a statement stopped early.
