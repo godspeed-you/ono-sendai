@@ -45,7 +45,7 @@ Describe a proposed change as an inspectable object, and change nothing.
 plan restart service nginx
 plan update package openssl --protection require
 get service | where state == failed | plan restart service
-plan replace file /etc/nginx/nginx.conf from ./nginx.conf
+plan copy file ./nginx.conf /etc/nginx/nginx.conf
 ```
 
 ### `get plan`
@@ -1050,7 +1050,7 @@ Serialize a value or stream into text or bytes.
 | stability | stable |
 | phase | B |
 | input | `any` |
-| output | `string | bytes` |
+| output | `string | bytes | stream<string>` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
 
@@ -1141,7 +1141,7 @@ Render a value explicitly for a human.
 
 ```text
 get process | format table
-get process | format table --columns [pid, name, memory]
+get process | format table --columns ["pid", "name", "memory"]
 ```
 
 ### `view`
@@ -1233,7 +1233,7 @@ Join two record streams on a key.
 **Examples**
 
 ```text
-get process | join (get socket) --on pid
+get process | join (get process | where cpu > 1) --on pid
 ```
 
 ### `diff`
@@ -2926,7 +2926,7 @@ Query the findings emitted by analyses and assistants.
 **Examples**
 
 ```text
-get finding | where severity >= warning
+get finding | where severity >= medium
 ```
 
 ### `get audit`
@@ -3025,7 +3025,7 @@ Show a detailed field, value and provenance view of any value.
 | stability | stable |
 | phase | D |
 | input | `null | any` |
-| output | `ono.inspection/1` |
+| output | `stream<ono.inspection/1>` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
 

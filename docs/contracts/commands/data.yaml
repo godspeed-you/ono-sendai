@@ -236,7 +236,7 @@ commands:
     stability: stable
     argument_mode: words                  # ADR-0009: format names and options, never expressions
     input: any
-    output: "string | bytes"
+    output: "string | bytes | stream<string>"  # `jsonl`: one line per value (ADR-0954)
     provider_capability: null
     selectors:
       - {name: format, type: string, values: [json, jsonl, yaml, csv, text, bytes], doc: "One of `json`, `jsonl`, `yaml`, `csv`, `text`, `bytes`. `jsonl` is JSON Lines: one compact JSON document per value, each on a line of its own, written as the value arrives (ADR-0954)."}
@@ -312,7 +312,7 @@ commands:
       the rendering explicit so it can be piped to a byte sink; it never changes the values.
     examples:
       - get process | format table
-      - get process | format table --columns [pid, name, memory]
+      - get process | format table --columns ["pid", "name", "memory"]
 
   - id: ono.data.view
     verb: view
@@ -386,7 +386,7 @@ commands:
       is an `ono.join/1` record — `key`, `left`, `right` — rather than a flat merge, so no
       field-collision rule is frozen before a use case justifies one.
     examples:
-      - get process | join (get socket) --on pid
+      - get process | join (get process | where cpu > 1) --on pid
 
   - id: ono.data.diff
     verb: diff
