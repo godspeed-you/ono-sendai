@@ -162,8 +162,8 @@ impl Scope {
 /// field's access failed.
 pub fn evaluate(expression: &Expr, current: &Value, scope: &Scope) -> Result<Value, ErrorValue> {
     match expression {
-        Expr::Number(literal) => Ok(number(literal.value)),
-        Expr::Unit(literal) => quantity(literal.value, literal.unit),
+        Expr::Number(literal) => Ok(number_literal(literal.value)),
+        Expr::Unit(literal) => unit_literal(literal.value, literal.unit),
         Expr::Bool(value, _) => Ok(Value::Bool(*value)),
         Expr::Null(_) => Ok(Value::Null),
         Expr::Str(literal) => {
@@ -644,7 +644,9 @@ fn record_key(key: &RecordKey, current: &Value, scope: &Scope) -> Result<String,
     }
 }
 
-fn number(value: NumberValue) -> Value {
+/// A numeric literal as a value: an integer or a float, as written.
+#[must_use]
+pub fn number_literal(value: NumberValue) -> Value {
     match value {
         NumberValue::Int(int) => Value::Int(i128::from(int)),
         NumberValue::Float(float) => Value::Float(float),
@@ -652,7 +654,12 @@ fn number(value: NumberValue) -> Value {
 }
 
 /// A numeric literal with a unit suffix becomes the semantic scalar of spec §10.6.
-fn quantity(value: NumberValue, unit: Unit) -> Result<Value, ErrorValue> {
+///
+/// # Errors
+///
+/// `type.invalid_unit` for a byte size that is negative or not finite, and for a duration that is
+/// not finite.
+pub fn unit_literal(value: NumberValue, unit: Unit) -> Result<Value, ErrorValue> {
     let magnitude = match value {
         NumberValue::Int(int) => int as f64,
         NumberValue::Float(float) => float,
@@ -688,42 +695,90 @@ fn binary_op(
     current: &Value,
     scope: &Scope,
 ) -> Result<Value, ErrorValue> {
+    // The record's own schema decides whether a bare word is one of an enum field's values
+    // (ADR-0096), exactly as the pre-flight check decided it against the advertised schema.
+    let schema = match current {
+        Value::Record(record) => Some(&**record.schema()),
+        _ => None,
+    };
+    evaluate_binary(binary, schema, |side| evaluate(side, current, scope))
+}
+
+/// Evaluates an infix operator with the semantics the language gives it, reading each operand
+/// through `operand`.
+///
+/// This is the one implementation of the binary operators (issue #137). A pipeline stage reads
+/// its operands against the record in hand; the session evaluator reads them with its own
+/// variables, `$(…)` and parenthesised pipelines, and its own error type — the operator means the
+/// same thing either way. `schema` is the schema of the current record, where there is one: it
+/// alone lets a bare word name one of an enum field's values (ADR-0096) and an ordering
+/// comparison over an enum field order by the declared variants (ADR-0222). Without a current
+/// record neither reading applies.
+///
+/// `and` and `or` short-circuit, so `operand` is not asked for the right side once the left one
+/// decided the answer.
+///
+/// ```
+/// use ono_command::evaluate_binary;
+/// use ono_parser::Expr;
+/// use ono_value::{ErrorValue, Value};
+///
+/// let parsed = ono_parser::parse("where 7 % 2");
+/// let stage = &parsed.program().statements[0]
+///     .as_pipeline()
+///     .expect("a pipeline")
+///     .head
+///     .stages[0];
+/// let Some(Expr::Binary(binary)) = stage.arguments[0].as_value() else {
+///     unreachable!("`7 % 2` is a binary expression")
+/// };
+/// let value = evaluate_binary(binary, None, |side| {
+///     ono_command::evaluate(side, &Value::Null, &ono_command::Scope::new())
+/// })?;
+/// assert_eq!(value, Value::Int(1));
+/// # Ok::<(), ErrorValue>(())
+/// ```
+///
+/// # Errors
+///
+/// Whatever `operand` reported, and the structured error of an operation the operands do not
+/// support: `type.mismatch`, or `type.invalid_unit` for two dimensions that do not meet.
+pub fn evaluate_binary<E: From<ErrorValue>>(
+    binary: &ono_parser::BinaryExpr,
+    schema: Option<&Schema>,
+    mut operand: impl FnMut(&Expr) -> Result<Value, E>,
+) -> Result<Value, E> {
     // `and` and `or` short-circuit, so a question one operand already decided is not made unknown
     // by the other, and an operand that would fail is not evaluated at all.
     match binary.op {
         BinaryOp::And => {
-            let left = evaluate(&binary.lhs, current, scope)?;
+            let left = operand(&binary.lhs)?;
             if matches!(left, Value::Bool(false)) {
                 return Ok(Value::Bool(false));
             }
-            let right = evaluate(&binary.rhs, current, scope)?;
+            let right = operand(&binary.rhs)?;
             return Ok(kleene_and(&left, &right));
         }
         BinaryOp::Or => {
-            let left = evaluate(&binary.lhs, current, scope)?;
+            let left = operand(&binary.lhs)?;
             if matches!(left, Value::Bool(true)) {
                 return Ok(Value::Bool(true));
             }
-            let right = evaluate(&binary.rhs, current, scope)?;
+            let right = operand(&binary.rhs)?;
             return Ok(kleene_or(&left, &right));
         }
         _ => {}
     }
 
-    // The record's own schema decides whether a bare word is one of an enum field's values
-    // (ADR-0096), exactly as the pre-flight check decided it against the advertised schema.
-    let enum_value = match current {
-        Value::Record(record) => enum_word(binary, record.schema()),
-        _ => None,
-    };
-    let operand = |side: &Expr| -> Result<Value, ErrorValue> {
+    let enum_value = schema.and_then(|schema| enum_word(binary, schema));
+    let mut side = |expression: &Expr| -> Result<Value, E> {
         match enum_value {
-            Some((value, word)) if std::ptr::eq(word, side) => Ok(Value::string(value)),
-            _ => evaluate(side, current, scope),
+            Some((value, word)) if std::ptr::eq(word, expression) => Ok(Value::string(value)),
+            _ => operand(expression),
         }
     };
-    let left = operand(&binary.lhs)?;
-    let right = operand(&binary.rhs)?;
+    let left = side(&binary.lhs)?;
+    let right = side(&binary.rhs)?;
 
     // `x == null` is an identity test rather than a three-valued comparison (ADR-0014): without
     // the exception the commonest question anyone asks would silently match nothing.
@@ -750,8 +805,7 @@ fn binary_op(
     // severity rather than by spelling — the comparison spec §41.4 writes and the one alphabet
     // gets backwards (ADR-0222). Only an ordering comparison over a field the schema declares as
     // an enum takes this reading; equality is equality either way.
-    if let Value::Record(record) = current
-        && let Some(variants) = ordered_enum(binary, record.schema())
+    if let Some(variants) = schema.and_then(|schema| ordered_enum(binary, schema))
         && let (Some(left), Some(right)) = (rank(&left, &variants), rank(&right, &variants))
     {
         let ordering = left.cmp(&right);
@@ -765,8 +819,8 @@ fn binary_op(
     }
 
     Ok(match binary.op {
-        BinaryOp::Eq => Value::Bool(equals(&left, &right)),
-        BinaryOp::NotEq => Value::Bool(!equals(&left, &right)),
+        BinaryOp::Eq => Value::Bool(values_equal(&left, &right)),
+        BinaryOp::NotEq => Value::Bool(!values_equal(&left, &right)),
         BinaryOp::Lt => Value::Bool(left.compare_to(&right)?.is_lt()),
         BinaryOp::LtEq => Value::Bool(left.compare_to(&right)?.is_le()),
         BinaryOp::Gt => Value::Bool(left.compare_to(&right)?.is_gt()),
@@ -800,7 +854,10 @@ fn kleene_or(left: &Value, right: &Value) -> Value {
     }
 }
 
-fn equals(left: &Value, right: &Value) -> bool {
+/// Whether two values are equal as `==` answers it: identical, or comparable and the same — so
+/// `1 == 1.0` and `1KiB == 1024B` hold.
+#[must_use]
+pub fn values_equal(left: &Value, right: &Value) -> bool {
     if left == right {
         return true;
     }
@@ -809,7 +866,7 @@ fn equals(left: &Value, right: &Value) -> bool {
 
 fn contains(haystack: &Value, needle: &Value) -> bool {
     match haystack {
-        Value::List(items) => items.iter().any(|item| equals(item, needle)),
+        Value::List(items) => items.iter().any(|item| values_equal(item, needle)),
         Value::String(text) => {
             ono_value::canonical_text(needle).is_ok_and(|needle| text.contains(&needle))
         }
@@ -841,7 +898,13 @@ fn remainder(left: &Value, right: &Value) -> Result<Value, ErrorValue> {
     }
 }
 
-fn index_into(base: &Value, key: &Value) -> Result<Value, ErrorValue> {
+/// `base[key]`: a list by position from zero, a map or a record by name; a position or name that
+/// is not there is unknown.
+///
+/// # Errors
+///
+/// `type.mismatch` for a negative position and for a value that cannot be indexed by that key.
+pub fn index_into(base: &Value, key: &Value) -> Result<Value, ErrorValue> {
     match (base, key) {
         (Value::List(items), Value::Int(index)) => {
             let index = usize::try_from(*index).map_err(|_| {

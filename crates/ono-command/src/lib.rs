@@ -78,8 +78,9 @@ pub use explain::{
     literal_arguments, plan, plan_for, plan_with, raw_program,
 };
 pub use expr::{
-    BUILTIN_FUNCTIONS, Scope, builtin_call, check_fields, evaluate, evaluate_call,
-    evaluate_to_value, is_now_call, is_true, nested_pipelines,
+    BUILTIN_FUNCTIONS, Scope, builtin_call, check_fields, evaluate, evaluate_binary, evaluate_call,
+    evaluate_to_value, index_into, is_now_call, is_true, nested_pipelines, number_literal,
+    unit_literal, values_equal,
 };
 pub use help::{
     CommandHelp, HelpPage, ParameterHelp, TargetHelp, TopicHelp, VerbHelp, help, topics,

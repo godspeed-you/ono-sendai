@@ -1,8 +1,8 @@
 //! Expression evaluation: values, operators and the three-valued logic of spec §10.5.
 
 use ono_core::ErrorCode;
-use ono_parser::{BinaryOp, Expr, NumberValue, StrPart, UnaryOp, Unit};
-use ono_value::{ByteSize, Duration as OnoDuration, ErrorValue, MapValue, Percent, Value};
+use ono_parser::{Expr, StrPart, UnaryOp};
+use ono_value::{ErrorValue, MapValue, Value};
 
 use crate::session::Session;
 
@@ -30,8 +30,8 @@ pub(super) fn string_of(session: &mut Session, expression: &Expr, source: &str) 
 /// Evaluates an expression to a value.
 pub fn eval_expr(session: &mut Session, expression: &Expr, source: &str) -> Eval<Value> {
     match expression {
-        Expr::Number(literal) => Ok(number_value(literal.value)),
-        Expr::Unit(literal) => Ok(unit_value(literal.value, literal.unit)?),
+        Expr::Number(literal) => Ok(ono_command::number_literal(literal.value)),
+        Expr::Unit(literal) => Ok(ono_command::unit_literal(literal.value, literal.unit)?),
         Expr::Bool(value, _) => Ok(Value::Bool(*value)),
         Expr::Null(_) => Ok(Value::Null),
         Expr::Str(literal) => {
@@ -129,7 +129,7 @@ pub fn eval_expr(session: &mut Session, expression: &Expr, source: &str) -> Eval
         Expr::Index(index) => {
             let base = eval_expr(session, &index.base, source)?;
             let key = eval_expr(session, &index.index, source)?;
-            Ok(index_into(&base, &key)?)
+            Ok(ono_command::index_into(&base, &key)?)
         }
         Expr::Call(call) => {
             // `language.yaml`'s `builtin_functions` is the closed list, and `ono-command` holds
@@ -228,130 +228,16 @@ pub(super) fn lookup_variable(session: &Session, name: &str) -> Value {
     })
 }
 
-pub(super) fn number_value(value: NumberValue) -> Value {
-    match value {
-        NumberValue::Int(int) => Value::Int(i128::from(int)),
-        NumberValue::Float(float) => Value::Float(float),
-    }
-}
-
-pub(super) fn unit_value(value: NumberValue, unit: Unit) -> Result<Value, ErrorValue> {
-    let magnitude = match value {
-        NumberValue::Int(int) => int as f64,
-        NumberValue::Float(float) => float,
-    };
-    let suffix = unit.as_str();
-    if let Some(byte_unit) = ono_value::ByteUnit::from_suffix(suffix) {
-        let bytes = magnitude * byte_unit.factor() as f64;
-        if !bytes.is_finite() || bytes < 0.0 {
-            return Err(ErrorValue::new(
-                ErrorCode::TypeInvalidUnit,
-                format!("{magnitude}{suffix} is not a byte size"),
-            ));
-        }
-        return Ok(Value::ByteSize(ByteSize::from_bytes(bytes as u128)));
-    }
-    if let Some(time_unit) = ono_value::DurationUnit::from_suffix(suffix) {
-        let nanoseconds = magnitude * time_unit.nanoseconds() as f64;
-        if !nanoseconds.is_finite() {
-            return Err(ErrorValue::new(
-                ErrorCode::TypeInvalidUnit,
-                format!("{magnitude}{suffix} is not a duration"),
-            ));
-        }
-        return Ok(Value::Duration(OnoDuration::from_nanoseconds(
-            nanoseconds as i128,
-        )));
-    }
-    Ok(Value::Percent(Percent::new(magnitude)))
-}
-
-/// Evaluates an infix operator with the three-valued semantics ADR-0014 freezes.
+/// Evaluates an infix operator: `ono-command`'s one implementation of the operators, with each
+/// operand read by this evaluator, so its variables, `$(…)` and parenthesised pipelines take part
+/// (issue #137). The session has no current record, so the enum readings of ADR-0096 and
+/// ADR-0222 do not apply here.
 pub(super) fn eval_binary(
     session: &mut Session,
     binary: &ono_parser::BinaryExpr,
     source: &str,
 ) -> Eval<Value> {
-    // `and` and `or` short-circuit, so a decided result is not made unknown by the other operand.
-    match binary.op {
-        BinaryOp::And => {
-            let left = eval_expr(session, &binary.lhs, source)?;
-            if matches!(left, Value::Bool(false)) {
-                return Ok(Value::Bool(false));
-            }
-            let right = eval_expr(session, &binary.rhs, source)?;
-            return Ok(kleene_and(&left, &right));
-        }
-        BinaryOp::Or => {
-            let left = eval_expr(session, &binary.lhs, source)?;
-            if matches!(left, Value::Bool(true)) {
-                return Ok(Value::Bool(true));
-            }
-            let right = eval_expr(session, &binary.rhs, source)?;
-            return Ok(kleene_or(&left, &right));
-        }
-        _ => {}
-    }
-
-    let left = eval_expr(session, &binary.lhs, source)?;
-    let right = eval_expr(session, &binary.rhs, source)?;
-
-    // `x == null` is an identity test, not a three-valued comparison (ADR-0014): without the
-    // exception the commonest question anyone asks would silently match nothing.
-    if matches!(binary.op, BinaryOp::Eq | BinaryOp::NotEq)
-        && (matches!(&binary.lhs, Expr::Null(_)) || matches!(&binary.rhs, Expr::Null(_)))
-    {
-        // One side is the literal `null`, so the question is only whether the other side is.
-        let other = if matches!(&binary.lhs, Expr::Null(_)) {
-            &right
-        } else {
-            &left
-        };
-        let is_null = matches!(other, Value::Null);
-        return Ok(Value::Bool(match binary.op {
-            BinaryOp::Eq => is_null,
-            _ => !is_null,
-        }));
-    }
-
-    if matches!(left, Value::Null) || matches!(right, Value::Null) {
-        return Ok(Value::Null);
-    }
-
-    Ok(match binary.op {
-        BinaryOp::Eq => Value::Bool(equals(&left, &right)),
-        BinaryOp::NotEq => Value::Bool(!equals(&left, &right)),
-        BinaryOp::Lt => Value::Bool(left.compare_to(&right)?.is_lt()),
-        BinaryOp::LtEq => Value::Bool(left.compare_to(&right)?.is_le()),
-        BinaryOp::Gt => Value::Bool(left.compare_to(&right)?.is_gt()),
-        BinaryOp::GtEq => Value::Bool(left.compare_to(&right)?.is_ge()),
-        BinaryOp::In => Value::Bool(contains(&right, &left)),
-        BinaryOp::NotIn => Value::Bool(!contains(&right, &left)),
-        BinaryOp::Match => Value::Bool(regex_matches(&right, &left)?),
-        BinaryOp::NotMatch => Value::Bool(!regex_matches(&right, &left)?),
-        BinaryOp::Add => left.add(&right)?,
-        BinaryOp::Sub => left.sub(&right)?,
-        BinaryOp::Mul => left.mul(&right)?,
-        BinaryOp::Div => left.div(&right)?,
-        BinaryOp::Rem => remainder(&left, &right)?,
-        BinaryOp::And | BinaryOp::Or => Value::Null,
-    })
-}
-
-pub(super) fn kleene_and(left: &Value, right: &Value) -> Value {
-    match (left, right) {
-        (Value::Bool(false), _) | (_, Value::Bool(false)) => Value::Bool(false),
-        (Value::Null, _) | (_, Value::Null) => Value::Null,
-        _ => Value::Bool(truthy(left) && truthy(right)),
-    }
-}
-
-pub(super) fn kleene_or(left: &Value, right: &Value) -> Value {
-    match (left, right) {
-        (Value::Bool(true), _) | (_, Value::Bool(true)) => Value::Bool(true),
-        (Value::Null, _) | (_, Value::Null) => Value::Null,
-        _ => Value::Bool(truthy(left) || truthy(right)),
-    }
+    ono_command::evaluate_binary(binary, None, |side| eval_expr(session, side, source))
 }
 
 /// Whether a value counts as true where a condition is wanted.
@@ -360,69 +246,9 @@ pub(super) fn kleene_or(left: &Value, right: &Value) -> Value {
 /// admit only decided matches (ADR-0014).
 #[must_use]
 pub fn truthy(value: &Value) -> bool {
-    matches!(value, Value::Bool(true))
+    ono_command::is_true(value)
 }
 
 pub(super) fn equals(left: &Value, right: &Value) -> bool {
-    if left == right {
-        return true;
-    }
-    left.compare_to(right).is_ok_and(std::cmp::Ordering::is_eq)
-}
-
-pub(super) fn contains(haystack: &Value, needle: &Value) -> bool {
-    match haystack {
-        Value::List(items) => items.iter().any(|item| equals(item, needle)),
-        Value::String(text) => {
-            ono_value::canonical_text(needle).is_ok_and(|needle| text.contains(&needle))
-        }
-        _ => false,
-    }
-}
-
-pub(super) fn regex_matches(pattern: &Value, subject: &Value) -> Result<bool, ErrorValue> {
-    let regex = pattern.as_regex()?;
-    let text = ono_value::canonical_text(subject)?;
-    Ok(regex.is_match(&text))
-}
-
-pub(super) fn remainder(left: &Value, right: &Value) -> Result<Value, ErrorValue> {
-    match (left, right) {
-        (Value::Int(a), Value::Int(b)) if *b != 0 => Ok(Value::Int(a % b)),
-        (Value::Int(_), Value::Int(_)) => Err(ErrorValue::new(
-            ErrorCode::TypeMismatch,
-            "the remainder of a division by zero is undefined",
-        )),
-        _ => Err(ErrorValue::new(
-            ErrorCode::TypeMismatch,
-            format!(
-                "`%` needs two integers, got {} and {}",
-                left.type_name(),
-                right.type_name()
-            ),
-        )),
-    }
-}
-
-pub(super) fn index_into(base: &Value, key: &Value) -> Result<Value, ErrorValue> {
-    match (base, key) {
-        (Value::List(items), Value::Int(index)) => {
-            let index = usize::try_from(*index).map_err(|_| {
-                ErrorValue::new(ErrorCode::TypeMismatch, "a list index cannot be negative")
-            })?;
-            Ok(items.get(index).cloned().unwrap_or(Value::Null))
-        }
-        (Value::Map(map), Value::String(key)) => Ok(map.get(key).cloned().unwrap_or(Value::Null)),
-        (Value::Record(record), Value::String(field)) => {
-            Ok(record.get(field).cloned().unwrap_or(Value::Null))
-        }
-        _ => Err(ErrorValue::new(
-            ErrorCode::TypeMismatch,
-            format!(
-                "{} cannot be indexed by {}",
-                base.type_name(),
-                key.type_name()
-            ),
-        )),
-    }
+    ono_command::values_equal(left, right)
 }
