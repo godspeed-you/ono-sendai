@@ -322,6 +322,24 @@ impl StagePlan {
         self.path = Some(path.into());
     }
 
+    /// Replaces the stage's execution class with one decided from the values its options take,
+    /// keeping the budget in step with it (v0.4.1 §22.4, ADR-0940).
+    pub fn set_execution(
+        &mut self,
+        execution: Option<ExecutionClass>,
+        limits: MaterializationLimits,
+    ) {
+        self.execution = execution;
+        self.budget = execution
+            .filter(|class| class.may_materialize())
+            .map(|_| (limits.max_items(), limits.max_bytes()));
+    }
+
+    /// Adds a sentence about this stage alone.
+    pub fn push_note(&mut self, note: impl Into<String>) {
+        self.notes.push(note.into());
+    }
+
     /// Records what a mutating stage does, as spec §42.2 words it (`signal TERM`).
     pub fn set_operation(&mut self, operation: impl Into<String>) {
         self.operation = Some(operation.into());

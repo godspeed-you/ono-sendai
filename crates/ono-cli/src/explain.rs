@@ -350,6 +350,41 @@ fn plan(
         }
     }
 
+    // An option that changes what a stage holds (ADR-0953) decides it by its value, so a plan
+    // reads the value of every option expression that only reads the session, as the run will —
+    // `measure --percentiles $p` with `$p` null holds constant state. An expression that could run
+    // code stays unevaluated, and the plan says the value decides (ADR-0940).
+    for (stage, planned) in pipeline.head.stages.iter().zip(plan.stages_mut()) {
+        let Some(verb) = stage.head.name() else {
+            continue;
+        };
+        if planned.command().is_none() {
+            continue;
+        }
+        let Ok(resolved) = registry.resolve(verb, &stage.arguments) else {
+            continue;
+        };
+        let Ok(bound) = resolved.contract.bind(resolved.arguments) else {
+            continue;
+        };
+        let (execution, undecided) = resolved.contract.execution_deciding(&bound, |expression| {
+            if !reads_only(expression) {
+                return None;
+            }
+            crate::eval::eval_expr(session, expression, &source).ok()
+        });
+        if execution != planned.execution() {
+            planned.set_execution(execution, limits);
+        }
+        for option in undecided {
+            planned.push_note(format!(
+                "the value of `--{option}` decides what this stage holds; `explain` evaluates \
+                 no expression that could run something, so the class shown is the one it has \
+                 when the option is set (ADR-0940)"
+            ));
+        }
+    }
+
     #[cfg(feature = "remote")]
     if let Some(host) = &remote_host {
         let agentless = session.link(host).is_some_and(|link| link.agentless);

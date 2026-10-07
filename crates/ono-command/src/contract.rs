@@ -989,17 +989,52 @@ impl CommandContract {
     /// plan says what *this* stage will hold (v0.4.1 §22.4).
     #[must_use]
     pub fn execution_for(&self, arguments: &crate::BoundArguments) -> Option<ExecutionClass> {
-        self.options
-            .iter()
-            .filter_map(|option| option.execution.map(|class| (option.name(), class)))
-            .find(|(name, _)| {
-                !matches!(
-                    arguments.option_binding(name),
-                    None | Some(crate::Binding::Value(Value::Bool(false) | Value::Null))
-                )
-            })
-            .map(|(_, class)| class)
-            .or(self.execution)
+        self.execution_deciding(arguments, |_| None).0
+    }
+
+    /// [`execution_for`](Self::execution_for), with `value_of` answering for an option written as
+    /// an expression — the value it would evaluate to, or `None` when the caller cannot know it
+    /// without running something (ADR-0940).
+    ///
+    /// The second half names every class-deciding option whose value stayed unknown; such an
+    /// option counts as set, the class that may hold more, and the caller says it is undecided.
+    pub fn execution_deciding(
+        &self,
+        arguments: &crate::BoundArguments,
+        mut value_of: impl FnMut(&ono_parser::Expr) -> Option<Value>,
+    ) -> (Option<ExecutionClass>, Vec<String>) {
+        let mut undecided = Vec::new();
+        for option in &self.options {
+            let Some(class) = option.execution else {
+                continue;
+            };
+            let set = match arguments.option_binding(option.name()) {
+                None => false,
+                Some(crate::Binding::Value(value)) => {
+                    !matches!(value, Value::Bool(false) | Value::Null)
+                }
+                Some(crate::Binding::Expressions(expressions)) => {
+                    // The value the stage would see: one expression is its value, several are a
+                    // list, exactly as the command reads them.
+                    let values: Option<Vec<Value>> =
+                        expressions.iter().map(&mut value_of).collect();
+                    match values {
+                        Some(mut values) if values.len() == 1 => {
+                            !matches!(values.remove(0), Value::Bool(false) | Value::Null)
+                        }
+                        Some(_) => true,
+                        None => {
+                            undecided.push(option.name().to_owned());
+                            true
+                        }
+                    }
+                }
+            };
+            if set {
+                return (Some(class), undecided);
+            }
+        }
+        (self.execution, undecided)
     }
 
     /// The examples the registry documents, every one of which must parse and run (spec §50).
