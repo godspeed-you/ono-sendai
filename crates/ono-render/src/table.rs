@@ -350,7 +350,19 @@ impl Layout {
     ) -> Vec<String> {
         match view {
             View::Table => {
-                let table = renderer.table(values);
+                // A hierarchy is drawn as one for a person reading it; a pipe, a file and a
+                // script get the table of what the stream holds, which is deterministic and what
+                // every reader of a table expects (spec §4.6, ADR-0948).
+                let person = paint.is_some_and(|paint| {
+                    matches!(
+                        paint.presentation,
+                        Presentation::Terminal | Presentation::Plain
+                    )
+                });
+                let table = person
+                    .then(|| renderer.hierarchy(values))
+                    .flatten()
+                    .unwrap_or_else(|| renderer.table(values));
                 self.render_with(&table, paint)
             }
             View::List => {
