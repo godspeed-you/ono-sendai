@@ -263,6 +263,44 @@ fn should_keep_what_a_job_binds_in_the_environment_out_of_the_shells() {
     );
 }
 
+#[test]
+fn should_keep_a_killed_job_listed_while_its_child_has_not_stopped() {
+    // Review C2: `kill %N` signals the job and waits a bounded moment. A child that ignores the
+    // signal keeps the job's evaluator waiting on it, so the job has not ended — and a job that
+    // has not ended stays in the table, where `jobs` shows it and the shell can still reach it,
+    // rather than leaving a thread and a process nobody tracks.
+    let scratch = scratch();
+    let source = scratch.write("jobs/source.log", "first\n");
+    let child = Stubborn::at(&scratch, "killed");
+
+    let run = run_bounded(
+        &scratch,
+        &format!(
+            "tail file {} --lines 1 --follow | each {{ {} }} &\n\
+             sh -c 'while [ ! -e {} ]; do sleep 0.05; done'\n\
+             kill %1\n\
+             echo \"killed-$?\"\n\
+             jobs",
+            source.display(),
+            child.path.display(),
+            child.started().display()
+        ),
+        BUDGET,
+    );
+
+    assert!(run.finished, "{}", run.report());
+    assert!(
+        run.stdout.contains("killed-0"),
+        "`kill %1` delivered its signal. {}",
+        run.report()
+    );
+    assert!(
+        run.stdout.contains("[%1]"),
+        "the job whose child ignored the signal is still listed. {}",
+        run.report()
+    );
+}
+
 // --- the same job, at a terminal ---------------------------------------------------------------
 
 #[test]
@@ -362,6 +400,98 @@ fn should_interrupt_a_foregrounded_block_job_with_ctrl_c_and_reap_its_child() {
         .write_all(b"exit 0\n")
         .expect("the terminal accepts input");
     let _ = shell.wait_timeout(Duration::from_secs(20));
+}
+
+#[test]
+fn should_keep_a_foregrounded_job_listed_when_ctrl_c_does_not_stop_its_child() {
+    // Review C2, under `fg`: Ctrl-C ends the wait and gives the prompt back with 130, and a job
+    // whose child ignored the interrupt is still a job — listed, not dropped.
+    let directory = scratch();
+    let source = directory.write("jobs/source.log", "first\n");
+    let child = Stubborn::at(&directory, "interrupted");
+    let mut shell = support::interactive_shell_in(&directory);
+    read_until(&mut shell, ">", Duration::from_secs(10));
+
+    shell
+        .write_all(
+            format!(
+                "tail file {} --lines 1 --follow | each {{ {} }} &\n",
+                source.display(),
+                child.path.display()
+            )
+            .as_bytes(),
+        )
+        .expect("the terminal accepts input");
+    read_until(&mut shell, "[%1]", Duration::from_secs(10));
+    assert!(
+        appears_within(&child.started(), BUDGET),
+        "the job's block started its child"
+    );
+
+    shell
+        .write_all(b"echo \"foregrounding-$?\"; fg %1\n")
+        .expect("the terminal accepts input");
+    read_until(&mut shell, "foregrounding-0", Duration::from_secs(20));
+    std::thread::sleep(Duration::from_millis(300));
+    shell
+        .write_all(&[0x03])
+        .expect("the terminal accepts Ctrl-C");
+    shell
+        .write_all(b"echo \"after-fg-$?\"; jobs; echo \"listed-$?\"\n")
+        .expect("the terminal accepts input");
+    let seen = read_until(&mut shell, "listed-0", Duration::from_secs(30));
+
+    assert!(
+        seen.contains("after-fg-130"),
+        "Ctrl-C ended the wait with the interrupt's status; saw:\n{seen}"
+    );
+    let after = seen.split("after-fg-130").nth(1).unwrap_or_default();
+    assert!(
+        after.contains("[%1]"),
+        "the job whose child ignored Ctrl-C is still listed; saw:\n{seen}"
+    );
+
+    drop(child);
+    shell
+        .write_all(b"exit 0\n")
+        .expect("the terminal accepts input");
+    let _ = shell.wait_timeout(Duration::from_secs(20));
+}
+
+/// A child that ignores `SIGTERM` and `SIGINT`, announces it has started, and runs until this
+/// test kills it — at a path no other process names.
+struct Stubborn {
+    path: std::path::PathBuf,
+}
+
+impl Stubborn {
+    fn at(scratch: &Scratch, name: &str) -> Self {
+        let path = scratch.path().join(format!("jobs/stubborn-{name}.sh"));
+        std::fs::create_dir_all(path.parent().expect("a directory")).expect("the directory exists");
+        let started = started_marker(&path);
+        support::executable(
+            &path,
+            &format!(
+                "#!/bin/sh\ntrap '' TERM INT\nexec </dev/null >/dev/null 2>&1\n: > '{}'\nwhile :; do sleep 1; done\n",
+                started.display()
+            ),
+        );
+        Self { path }
+    }
+
+    fn started(&self) -> std::path::PathBuf {
+        started_marker(&self.path)
+    }
+}
+
+impl Drop for Stubborn {
+    fn drop(&mut self) {
+        for pid in processes_naming(&self.path.display().to_string()) {
+            let _ = std::process::Command::new("kill")
+                .args(["-KILL", &pid.to_string()])
+                .status();
+        }
+    }
 }
 
 /// A script that announces it has started and then waits far longer than any test runs, at a

@@ -1412,6 +1412,15 @@ impl Session {
         &self.jobs.native_jobs
     }
 
+    /// Native job `number`, left in the table.
+    #[must_use]
+    pub fn native_job(&self, number: u32) -> Option<&NativeJob> {
+        self.jobs
+            .native_jobs
+            .iter()
+            .find(|job| job.number == number)
+    }
+
     /// Removes and answers native job `number`, releasing its number.
     pub fn take_native_job(&mut self, number: u32) -> Option<NativeJob> {
         let index = self
