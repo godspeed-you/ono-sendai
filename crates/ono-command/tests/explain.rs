@@ -131,9 +131,11 @@ fn should_resolve_every_stage_of_a_read_pipeline() {
             id: "ono.data.to".to_owned()
         }
     );
-    // The plan reports the contract's declaration, which names the line stream `to jsonl`
-    // writes beside the one document `to json` writes (ADR-0954).
-    assert_eq!(third.output(), "string | bytes | stream<string>");
+    assert_eq!(
+        third.output(),
+        "string | bytes | stream<string>",
+        "the plan reports the output `to` declares, which since ADR-0954 includes `jsonl`'s lines"
+    );
 }
 
 #[test]
@@ -220,7 +222,9 @@ fn should_say_when_a_head_is_not_a_native_command() {
 fn should_offer_the_plan_as_structured_data() {
     let plan = plan_of("get process | to json", None);
     let value = plan.to_value();
-    let map = value.as_map().expect("a plan is a map of fields");
+    let map = value
+        .as_record()
+        .expect("a plan is an ono.execution-plan/1 record (ADR-0942)");
     let stages = map
         .get("stages")
         .and_then(|stages| stages.as_list().ok())
@@ -451,7 +455,9 @@ fn should_carry_the_materialization_of_every_stage_into_the_structured_plan() {
     // prints: a script asking "what will this hold" reads fields, not a rendering (§53.2).
     let plan = plan_of("get process | sort memory desc", None);
     let value = plan.to_value();
-    let map = value.as_map().expect("a plan is a map of fields");
+    let map = value
+        .as_record()
+        .expect("a plan is an ono.execution-plan/1 record (ADR-0942)");
     let stages = map
         .get("stages")
         .and_then(|stages| stages.as_list().ok())
