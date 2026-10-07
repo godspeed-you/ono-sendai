@@ -3606,6 +3606,21 @@ pub fn check_security_boundaries(root: &Path) -> Vec<Problem> {
                 problems.push(problem(format!("`{id}` states no `{field}`")));
             }
         }
+        // SECURITY.md's table is generated from these words (issue #170, ADR-0932), so a boundary
+        // without them would be a blank row on the page a reporter reads first (v0.4.1 §51.4).
+        let front_door = row.get("front_door").unwrap_or(&Yaml::Null);
+        for field in ["title", "crosses", "enforced"] {
+            if string_at(front_door, field)
+                .unwrap_or_default()
+                .trim()
+                .is_empty()
+            {
+                problems.push(problem(format!(
+                    "`{id}` states no `front_door.{field}`, which SECURITY.md's boundary table \
+                     is generated from"
+                )));
+            }
+        }
 
         let Some(owner) = string_at(row, "owner") else {
             problems.push(problem(format!(

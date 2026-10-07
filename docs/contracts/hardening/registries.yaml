@@ -120,9 +120,11 @@ registries:
     consumed_by: [xtask]
     spec: "v0.4.1 §6.1, §6.2, §10.2, §20"
     doc: >-
-      The twelve boundaries of §6.1 with their input trust, their required enforcement, the one
-      crate that owns each and the negative tests §20 accepts them on. Also the vocabulary
-      `refusals.yaml` and `remote_trust.yaml` join against (ADR-0546).
+      The twelve boundaries of §6.1, and the compiled-component store the repository added, with
+      their input trust, their required enforcement, the one crate that owns each and the
+      negative tests §20 accepts them on. Also the vocabulary `refusals.yaml` and
+      `remote_trust.yaml` join against (ADR-0546), and the words SECURITY.md's boundary table is
+      generated from (ADR-0932).
 
   - file: refusals.yaml
     domain: null

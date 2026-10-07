@@ -14,6 +14,7 @@ Where untrusted input enters Ono-Sendai, what must hold before it goes further, 
 | `provider.act` | authorized request | capability + risk/elevation checks | `ono-protocol` |
 | `kuang.native.spawn` | package process | manifest + fail-closed confinement | `ono-kuang-supervisor` |
 | `kuang.protocol` | plugin bytes | frame/credit/schema limits | `ono-kuang-protocol` |
+| `kuang.compiled.load` | compiled artifact | trusted store + no links + examined bytes loaded + exact engine stamp | `ono-kuang-supervisor` |
 | `external.adapter` | process output | adapter decoder and schema validation | `ono-adapter` |
 | `pipeline.materialization` | value stream | count + byte budget | `ono-value` |
 | `release.build` | CI inputs | immutable refs + locked dependencies | `xtask` |
@@ -121,6 +122,21 @@ Refusal proved by:
 - `crates/ono-kuang-protocol/src/frame.rs::should_refuse_garbage_bytes_as_malformed_when_decoding`
 - `crates/ono-kuang-protocol/tests/manifest_validation.rs::should_refuse_a_nested_document_before_it_costs_anything_to_refuse_it`
 - `crates/ono-kuang-protocol/tests/manifest_validation.rs::should_refuse_an_unknown_capability_id_rather_than_ignore_it`
+
+## `kuang.compiled.load`
+
+The shell links the WebAssembly runtime and no compiler, so what runs is an artifact `kuang-compile` wrote into the operator's cache or the system store. Loading it is mapping native code into the shell, which the sandbox cannot defend against, so the store is held to the trust of the home directory and the system: an artifact is opened through one descriptor on a walk that follows no link, its owner and every directory above it are checked on that descriptor, and the engine refuses an artifact stamped by another wasmtime release or architecture. The machine code itself is not checksummed; SECURITY.md says so.
+
+Owned by `ono-kuang-supervisor`, enforced in `crates/ono-kuang-supervisor/src/compiled.rs`. Specified by v0.4.1 §6.2, §15.2, §16.1, §20; ADR-0870, ADR-0915, ADR-0916.
+
+Refusal proved by:
+
+- `crates/ono-kuang-sdk/tests/compiled.rs::should_refuse_an_artifact_other_users_could_have_written`
+- `crates/ono-kuang-sdk/tests/compiled.rs::should_refuse_an_artifact_that_is_a_symbolic_link`
+- `crates/ono-kuang-sdk/tests/compiled.rs::should_refuse_a_store_that_is_a_symbolic_link`
+- `crates/ono-kuang-sdk/tests/compiled.rs::should_refuse_an_artifact_below_a_directory_others_can_write`
+- `crates/ono-kuang-sdk/tests/compiled.rs::should_refuse_an_artifact_another_engine_version_wrote_and_name_the_compile_step`
+- `crates/ono-kuang-sdk/tests/compiled.rs::should_refuse_an_artifact_compiled_for_another_architecture`
 
 ## `external.adapter`
 

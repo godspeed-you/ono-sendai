@@ -1131,6 +1131,42 @@ fn should_report_a_boundary_the_specification_requires_and_the_inventory_omits()
 }
 
 #[test]
+fn should_report_a_boundary_that_gives_the_security_page_no_words() {
+    // Issue #170, ADR-0932: SECURITY.md's table is generated from each boundary's `front_door`.
+    // A boundary without it would be a blank row on the front door, so it fails here first.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let text = std::fs::read_to_string(
+        repository().join("docs/contracts/hardening/security_boundaries.yaml"),
+    )
+    .expect("the inventory");
+    let mut document: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&text).expect("the inventory is YAML");
+    let row = document["boundaries"]
+        .as_sequence_mut()
+        .expect("the inventory declares boundaries")
+        .iter_mut()
+        .find(|row| row["id"].as_str() == Some("release.publish"))
+        .expect("the inventory declares `release.publish`");
+    row.as_mapping_mut()
+        .expect("a boundary is a mapping")
+        .remove("front_door")
+        .expect("`release.publish` states a `front_door`");
+    repo.write(
+        "docs/contracts/hardening/security_boundaries.yaml",
+        serde_yaml_ng::to_string(&document).expect("the inventory serializes"),
+    );
+    let problems = xtask::contracts::check_security_boundaries(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("release.publish")
+                && problem.detail.contains("front_door")),
+        "a boundary SECURITY.md cannot render is reported: {problems:?}"
+    );
+}
+
+#[test]
 fn should_report_a_boundary_whose_named_security_test_does_not_exist() {
     // §20: "A security control is accepted only when there is an automated negative test proving
     // the forbidden behavior is refused." A row naming a test nobody wrote is the inventory
