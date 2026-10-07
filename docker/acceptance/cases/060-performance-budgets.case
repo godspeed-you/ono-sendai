@@ -4,7 +4,7 @@
 # The numbers asserted here are the spec's limits, not its targets, and they are measured as a
 # median over many runs so that one scheduling hiccup cannot fail the suite. The exact figures
 # are printed either way, so a regression that stays inside the limit is still visible in a diff.
-case: startup and parsing stay inside the budgets of spec section 34
+case: startup, parsing and the first completion stay inside the budgets of spec section 34
 timeout: 180
 run: |
   measure() {
@@ -40,9 +40,21 @@ run: |
   # stream bounded to one row — startup, provider, first record, render and teardown together —
   # which is strictly harsher than the budgeted moment.
   measure first-process-row 50 ono --no-config -c 'get process | take 1'
+
+  # The first completion, without a terminal (issue #176, ADR-0945): `ono --complete` runs the
+  # completer the prompt installs and prints what Tab would offer. Spec section 34 budgets the
+  # first completion results from local metadata at 50 ms; this is the whole run, startup
+  # included, a fresh process each time, so every sample is a first completion.
+  measure first-completion 50 ono --no-config --complete 'get pro'
+
+  # A provider-backed first completion (v0.4.1 §36.2, §61.4): a request that triggers discovery
+  # MUST return partial results or stop by the 150 ms hard budget. Again the whole cold run.
+  measure first-value-completion 150 ono --no-config --complete 'get user ro'
 exit: 0
 stdout-contains: cold-start: within budget
 stdout-contains: bare-start: within budget
 stdout-contains: first-process-row: within budget
 stdout-contains: parse-pipeline: within budget
+stdout-contains: first-completion: within budget
+stdout-contains: first-value-completion: within budget
 stdout-not-contains: OVER BUDGET

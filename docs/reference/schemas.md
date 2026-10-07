@@ -374,6 +374,21 @@ Default view: `short_hash`, `authored`, `author`, `subject`
 | `subject` | `string` | — | required | The first line of the message. |
 | `parents` | `list<string>` | — | required | The parents' full object names; empty for a root commit. |
 
+## Completion — `ono.completion/1`
+
+What the word under the cursor could become — the candidates, the span they replace, and whether the set is whole.
+
+Identity: 
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `line` | `string` | — | required | The line completed, as it was given. |
+| `cursor` | `int` | — | required | The cursor, a byte offset into `line`; the end of the line when none was given. |
+| `start` | `int` | — | required | Where the text a candidate replaces begins, a byte offset into `line`. |
+| `end` | `int` | — | required | Where it ends, a byte offset into `line` — the cursor. |
+| `complete` | `bool` | — | required | Whether the candidates are every candidate there is. False when a budget or a bound cut the set short (v0.4.1 §36.2, ADR-0944): asking again — a provider's answer is cached once it is in — may offer more. |
+| `candidates` | `list<map>` | — | required | One entry per candidate, in the order the prompt offers them: `text` (what replaces the span), `kind` — `verb`, `target`, `option`, `value`, `field`, `operator`, `function`, `alias`, `builtin`, `program`, `path`, `place` or `relation` — and `doc`, the one line the prompt shows beside it, or null. |
+
 ## ConfigSetting — `ono.config-setting/1`
 
 One resolved configuration setting together with the layer that set it.

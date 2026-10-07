@@ -39,6 +39,21 @@ pub enum CandidateKind {
     Operator,
 }
 
+impl CandidateKind {
+    /// The word `ono.completion/1` names the kind with (ADR-0945).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            CandidateKind::Verb => "verb",
+            CandidateKind::Target => "target",
+            CandidateKind::Option => "option",
+            CandidateKind::Value => "value",
+            CandidateKind::Field => "field",
+            CandidateKind::Operator => "operator",
+        }
+    }
+}
+
 /// One completion candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {

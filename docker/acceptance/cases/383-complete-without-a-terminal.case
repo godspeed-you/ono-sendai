@@ -1,0 +1,21 @@
+# Issue #176, without a terminal, as an unprivileged user.
+#
+# `ono --complete <line> [--cursor N]` prints what Tab would offer as one `ono.completion/1` JSON
+# document, from the completer the prompt installs (ADR-0945).
+case: a tool asks the shell what Tab would offer and reads it as JSON
+env: NO_COLOR=1
+run: |
+  echo "== a target from the registry =="
+  ono --no-config --complete 'get pro' < /dev/null
+  echo "== at a cursor =="
+  ono --no-config --complete 'get pro | count' --cursor 7 < /dev/null
+  echo "== a builtin =="
+  ono --no-config --complete 'c' < /dev/null
+  echo "== a cursor outside the line =="
+  ono --no-config --complete 'get pro' --cursor 99; echo "status=$?"
+exit: 0
+stdout-contains: {"line":"get pro","cursor":7,"start":4,"end":7,"complete":true,
+stdout-contains: {"text":"process","kind":"target","doc":
+stdout-contains: {"text":"cd","kind":"builtin"
+stdout-contains: status=2
+stdout-not-contains: panicked

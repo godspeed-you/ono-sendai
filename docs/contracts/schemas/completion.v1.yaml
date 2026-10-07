@@ -1,0 +1,40 @@
+# Completion. Spec §15.1 makes completion system exploration and v0.4.1 §36.2 gives it budgets and
+# a partial set marked incomplete; ADR-0252 named a non-interactive surface for it and issue #176
+# delivers one: `ono --complete <line> [--cursor N]` writes one of these as JSON (ADR-0945), from
+# the same completer the interactive prompt installs, so an editor or a tool sees exactly what Tab
+# would offer.
+id: ono.completion/1
+name: Completion
+summary: What the word under the cursor could become — the candidates, the span they replace, and whether the set is whole.
+fields:
+  line:
+    type: string
+    required: true
+    doc: The line completed, as it was given.
+  cursor:
+    type: int
+    required: true
+    doc: The cursor, a byte offset into `line`; the end of the line when none was given.
+  start:
+    type: int
+    required: true
+    doc: Where the text a candidate replaces begins, a byte offset into `line`.
+  end:
+    type: int
+    required: true
+    doc: Where it ends, a byte offset into `line` — the cursor.
+  complete:
+    type: bool
+    required: true
+    doc: >-
+      Whether the candidates are every candidate there is. False when a budget or a bound cut the
+      set short (v0.4.1 §36.2, ADR-0944): asking again — a provider's answer is cached once it is
+      in — may offer more.
+  candidates:
+    type: list<map>
+    required: true
+    doc: >-
+      One entry per candidate, in the order the prompt offers them: `text` (what replaces the
+      span), `kind` — `verb`, `target`, `option`, `value`, `field`, `operator`, `function`,
+      `alias`, `builtin`, `program`, `path`, `place` or `relation` — and `doc`, the one line the
+      prompt shows beside it, or null.

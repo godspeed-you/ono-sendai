@@ -24,6 +24,17 @@ pub enum Invocation {
     /// The non-secret half of the identity of §8.1, and the canonical spelling: the same
     /// fingerprint `--agent --print-host-key` prints, asked for without claiming to be an agent.
     PrintPeerKey,
+    /// Complete `line` at `cursor` the way the prompt would, print the answer as one
+    /// `ono.completion/1` JSON document and exit — the non-interactive completion surface
+    /// (issue #176, ADR-0945). `cursor` is a byte offset; `None` is the end of the line.
+    Complete {
+        /// The line to complete.
+        line: String,
+        /// Where the cursor stands, as a byte offset into `line`.
+        cursor: Option<usize>,
+        /// The configuration options given before `--complete`.
+        options: Options,
+    },
     /// Print the version and exit.
     Version,
     /// Print usage and exit.
@@ -109,6 +120,44 @@ impl Invocation {
                         }
                     }
                     return Self::Agent(options, agent);
+                }
+                "--complete" => {
+                    rest.next();
+                    let Some(line) = rest.next() else {
+                        return Self::Usage("--complete needs a line to complete".to_owned());
+                    };
+                    let cursor = match rest.next().as_deref() {
+                        None => None,
+                        Some("--cursor") => match rest.next().map(|n| n.parse::<usize>()) {
+                            Some(Ok(cursor)) => Some(cursor),
+                            _ => {
+                                return Self::Usage(
+                                    "--cursor needs a byte offset into the line".to_owned(),
+                                );
+                            }
+                        },
+                        Some(other) => {
+                            return Self::Usage(format!(
+                                "unrecognised arguments after --complete: {other}"
+                            ));
+                        }
+                    };
+                    if let Some(extra) = rest.next() {
+                        return Self::Usage(format!(
+                            "unrecognised arguments after --complete: {extra}"
+                        ));
+                    }
+                    if cursor.is_some_and(|at| at > line.len() || !line.is_char_boundary(at)) {
+                        return Self::Usage(
+                            "--cursor must be a byte offset at a character boundary of the line"
+                                .to_owned(),
+                        );
+                    }
+                    return Self::Complete {
+                        line,
+                        cursor,
+                        options,
+                    };
                 }
                 "--no-config" => {
                     rest.next();

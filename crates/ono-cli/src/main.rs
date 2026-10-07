@@ -22,6 +22,20 @@ fn main() -> ExitCode {
             println!("{}", ono_cli::absent::version_text());
             ExitStatus::SUCCESS
         }
+        Invocation::Complete {
+            line,
+            cursor,
+            options,
+        } => {
+            // What Tab would offer, without a terminal: the completer the prompt installs, over
+            // a session read the way `-c` reads one (issue #176, ADR-0945).
+            let (mut session, _reporter) = start(false, &options);
+            let cursor = cursor.unwrap_or(line.len());
+            let completer = repl::ShellCompleter::for_session(&mut session);
+            let answer = completer.answer(&line, cursor);
+            println!("{}", ono_cli::complete::document(&answer, &line, cursor));
+            ExitStatus::SUCCESS
+        }
         Invocation::Help => {
             println!("{}", ono_cli::usage_text());
             ExitStatus::SUCCESS

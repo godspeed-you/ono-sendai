@@ -61,7 +61,7 @@ fn token_colour(kind: ono_parser::TokenKind) -> Token {
 /// builtins a name could resolve to (ADR-0011); and the filesystem. The registry is consulted
 /// first because it is the only one that can offer a *target* or an *option*, and spec §34
 /// budgets 50 ms for the first results from local metadata — which is a lookup, not a search.
-struct ShellCompleter {
+pub struct ShellCompleter {
     commands: Vec<String>,
     /// What only a provider can complete: the users on this machine, the services of this host
     /// (spec §15.1, ADR-0252). `None` where no provider should be asked at all.
@@ -73,7 +73,58 @@ struct ShellCompleter {
     resolver: Option<ono_command::Resolver>,
 }
 
+/// One candidate as the shell offers it: the text, what kind of thing it is, and its doc.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Offered {
+    /// What replaces the span.
+    pub text: String,
+    /// The kind, in `ono.completion/1`'s words (ADR-0945).
+    pub kind: &'static str,
+    /// The one line shown beside it, where it has one.
+    pub doc: Option<String>,
+}
+
+/// What the shell's completer answers for one line and cursor — what Tab shows, as data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Answer {
+    /// The bytes of the line the candidates replace.
+    pub span: Span,
+    /// The candidates, in the order they are offered.
+    pub candidates: Vec<Offered>,
+    /// The discovery listing shown at once, where the candidates are a neighbourhood (§9.4).
+    pub listing: Vec<String>,
+    /// Whether the candidates are every candidate there is (v0.4.1 §36.2, ADR-0944).
+    pub complete: bool,
+}
+
 impl ShellCompleter {
+    /// The completer the prompt installs for `session`: its commands, its provider values within
+    /// the session's §36.2 budgets, its adapters and its `PATH` (ADR-0252, ADR-0945).
+    #[must_use]
+    pub fn for_session(session: &mut Session) -> Self {
+        let (soft, hard) = crate::limits::completion(session.settings());
+        Self {
+            commands: resolve::candidates(session, ""),
+            values: Some(
+                crate::complete::ProviderValues::new(
+                    session
+                        .env()
+                        .iter()
+                        .map(|(name, value)| {
+                            (
+                                name.to_string_lossy().into_owned(),
+                                value.to_string_lossy().into_owned(),
+                            )
+                        })
+                        .collect(),
+                )
+                .budgeted(soft, hard),
+            ),
+            adapters: Some(session.shared_adapters()),
+            resolver: Some(resolve::resolver(session)),
+        }
+    }
+
     /// The schema flowing out of the stages before the one under the cursor, planned the way
     /// the pipeline would be — so an adapted `ps aux |` answers with Process fields, operators
     /// and values exactly as `get process |` does (spec v0.3 §1.59, §1.61).
@@ -142,8 +193,11 @@ impl ShellCompleter {
     }
 }
 
-impl Completer for ShellCompleter {
-    fn complete(&self, line: &str, cursor: usize) -> Completion {
+impl ShellCompleter {
+    /// What the word ending at `cursor` could become: the one completion pipeline behind both the
+    /// prompt's Tab and `ono --complete` (ADR-0945).
+    #[must_use]
+    pub fn answer(&self, line: &str, cursor: usize) -> Answer {
         let mut start = line[..cursor]
             .rfind(|c: char| c.is_whitespace() || c == '|')
             .map_or(0, |at| at + 1);
@@ -159,9 +213,9 @@ impl Completer for ShellCompleter {
             spatial_offers(line, start, prefix)
         };
 
-        // Each candidate with the doc the registry gives it, which the editor shows beside it and
-        // never inserts (issue #136).
-        let mut candidates: Vec<(String, Option<String>)> = Vec::new();
+        // Each candidate with its kind and the doc the registry gives it, which the editor shows
+        // beside it and never inserts (issue #136).
+        let mut candidates: Vec<Offered> = Vec::new();
         // Whether a path can stand here is a property of the position, decided with everything
         // else the registry knows about it — not a fallback for an empty answer (issue #133).
         let mut paths = true;
@@ -191,21 +245,35 @@ impl Completer for ShellCompleter {
             let completions = ono_command::complete(registry, &context, values);
             incomplete = !completions.is_complete();
             for candidate in completions {
-                candidates.push((
-                    candidate.text().to_owned(),
-                    candidate.doc().map(str::to_owned),
-                ));
+                candidates.push(Offered {
+                    text: candidate.text().to_owned(),
+                    kind: candidate.kind().as_str(),
+                    doc: candidate.doc().map(str::to_owned),
+                });
             }
         }
 
-        let undocumented = |text: String| (text, None);
+        let undocumented = |kind: &'static str| {
+            move |text: String| Offered {
+                text,
+                kind,
+                doc: None,
+            }
+        };
         if is_head {
             candidates.extend(
                 self.commands
                     .iter()
                     .filter(|name| name.starts_with(prefix))
-                    .cloned()
-                    .map(undocumented),
+                    .map(|name| Offered {
+                        text: name.clone(),
+                        kind: if resolve::BUILTINS.contains(&name.as_str()) {
+                            "builtin"
+                        } else {
+                            "program"
+                        },
+                        doc: None,
+                    }),
             );
         } else if prefix.starts_with('-') {
             // An adapter's declared invocations are the only flags it can vouch for (spec v0.3
@@ -214,52 +282,97 @@ impl Completer for ShellCompleter {
                 self.declared_flags(line, start)
                     .into_iter()
                     .filter(|flag| flag.starts_with(prefix))
-                    .map(undocumented),
+                    .map(undocumented("option")),
             );
         } else if paths {
             // An option is the registry's business; a path is the filesystem's.
-            candidates.extend(path_candidates(prefix).into_iter().map(undocumented));
+            candidates.extend(
+                path_candidates(prefix)
+                    .into_iter()
+                    .map(undocumented("path")),
+            );
         }
 
         // One candidate per text, keeping a doc wherever one of its sources had it.
-        candidates.sort_by(|left, right| left.0.cmp(&right.0));
+        candidates.sort_by(|left, right| left.text.cmp(&right.text));
         candidates.dedup_by(|later, kept| {
-            if later.0 != kept.0 {
+            if later.text != kept.text {
                 return false;
             }
-            if kept.1.is_none() {
-                kept.1 = later.1.take();
+            if kept.doc.is_none() {
+                kept.doc = later.doc.take();
             }
             true
         });
 
         let span = Span::new(start as u32, cursor as u32);
         if neighbourhood.is_empty() {
-            let (texts, docs) = candidates.into_iter().unzip();
-            return Completion::new(span, texts)
-                .documented(docs)
-                .incomplete(incomplete);
+            return Answer {
+                span,
+                candidates,
+                listing: Vec::new(),
+                complete: !incomplete,
+            };
         }
 
         // §9.4: "prioritize services visible in the current neighborhood and then offer broader
         // matches" — in that order, and shown, because the point is to teach the neighbourhood.
+        let kind = neighbourhood_kind(line, start);
         let mut listing: Vec<String> = neighbourhood
             .iter()
             .map(|offer| offer.line.clone())
             .collect();
-        let mut merged: Vec<String> = neighbourhood
+        let mut merged: Vec<Offered> = neighbourhood
             .into_iter()
-            .map(|offer| offer.insert)
+            .map(|offer| Offered {
+                text: offer.insert,
+                kind,
+                doc: None,
+            })
             .collect();
-        for (candidate, _) in candidates {
-            if !merged.contains(&candidate) {
-                listing.push(format!("  {candidate}"));
+        for candidate in candidates {
+            if !merged.iter().any(|kept| kept.text == candidate.text) {
+                listing.push(format!("  {}", candidate.text));
                 merged.push(candidate);
             }
         }
-        Completion::new(span, merged)
-            .shown(listing)
+        Answer {
+            span,
+            candidates: merged,
+            listing,
+            complete: !incomplete,
+        }
+    }
+}
+
+impl Completer for ShellCompleter {
+    fn complete(&self, line: &str, cursor: usize) -> Completion {
+        let answer = self.answer(line, cursor);
+        let incomplete = !answer.complete;
+        let (texts, docs): (Vec<String>, Vec<Option<String>>) = answer
+            .candidates
+            .into_iter()
+            .map(|offered| (offered.text, offered.doc))
+            .unzip();
+        if answer.listing.is_empty() {
+            return Completion::new(answer.span, texts)
+                .documented(docs)
+                .incomplete(incomplete);
+        }
+        Completion::new(answer.span, texts)
+            .shown(answer.listing)
             .incomplete(incomplete)
+    }
+}
+
+/// What the spatial verb before the cursor offers: places, or the relations of `follow`.
+fn neighbourhood_kind(line: &str, start: usize) -> &'static str {
+    let stage = &line[..start];
+    let stage = &stage[stage.rfind(['|', ';', '&']).map_or(0, |at| at + 1)..];
+    if stage.trim() == "follow" {
+        "relation"
+    } else {
+        "place"
     }
 }
 
@@ -338,27 +451,7 @@ pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> Exi
     let mut history = open_history(session, options);
     let mut editor = Editor::new()
         .with_highlighter(ParserHighlighter)
-        .with_completer(ShellCompleter {
-            commands: resolve::candidates(session, ""),
-            values: Some({
-                let (soft, hard) = crate::limits::completion(session.settings());
-                crate::complete::ProviderValues::new(
-                    session
-                        .env()
-                        .iter()
-                        .map(|(name, value)| {
-                            (
-                                name.to_string_lossy().into_owned(),
-                                value.to_string_lossy().into_owned(),
-                            )
-                        })
-                        .collect(),
-                )
-                .budgeted(soft, hard)
-            }),
-            adapters: Some(session.shared_adapters()),
-            resolver: Some(resolve::resolver(session)),
-        });
+        .with_completer(ShellCompleter::for_session(session));
     editor.set_history(
         history
             .as_ref()

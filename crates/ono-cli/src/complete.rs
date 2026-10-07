@@ -303,3 +303,53 @@ fn readable(value: &ono_value::Value) -> Option<String> {
         _ => None,
     }
 }
+
+/// The answer of the shell's completer for `line` at `cursor`, as one `ono.completion/1` JSON
+/// document — what `ono --complete` prints (issue #176, ADR-0945).
+///
+/// The record is built against the schema the contracts declare and written with `to json`'s
+/// encoding, so a tool reads the fields `docs/reference/schemas.md` documents and nothing else.
+#[must_use]
+pub fn document(answer: &crate::repl::Answer, line: &str, cursor: usize) -> String {
+    use std::sync::Arc;
+
+    use ono_value::{MapValue, Value};
+
+    let offset = |at: usize| Value::Int(i128::try_from(at).unwrap_or(i128::MAX));
+    let candidates = Value::list(answer.candidates.iter().map(|offered| {
+        let mut map = MapValue::default();
+        map.insert("text".into(), Value::string(&offered.text));
+        map.insert("kind".into(), Value::string(offered.kind));
+        map.insert(
+            "doc".into(),
+            offered.doc.as_deref().map_or(Value::Null, Value::string),
+        );
+        Value::Map(Arc::new(map))
+    }));
+    let fields = [
+        ("line", Value::string(line)),
+        ("cursor", offset(cursor)),
+        ("start", offset(answer.span.start() as usize)),
+        ("end", offset(answer.span.end() as usize)),
+        ("complete", Value::Bool(answer.complete)),
+        ("candidates", candidates),
+    ];
+    let record = ono_value::builtin_schemas()
+        .get(&ono_value::SchemaId::new("ono.completion", 1))
+        .and_then(|schema| {
+            let provenance = ono_value::Provenance::local("ono.shell", schema.id().clone());
+            let mut builder = ono_value::RecordValue::builder(schema, provenance);
+            for (field, value) in &fields {
+                builder = builder.set(field, value.clone()).ok()?;
+            }
+            Some(builder.build().into_value())
+        });
+    let value = record.unwrap_or_else(|| {
+        let mut map = MapValue::default();
+        for (field, value) in fields {
+            map.insert(field.into(), value);
+        }
+        Value::Map(Arc::new(map))
+    });
+    ono_value::to_json_data(&value).to_string()
+}
