@@ -881,3 +881,30 @@ pub fn kuang_shell(home: &ono_testkit::Scratch, script: &str) -> ono_testkit::Ru
         .timeout(Duration::from_secs(30))
         .run()
 }
+
+/// The pids of every process whose command line names `needle`.
+///
+/// Read out of `/proc` rather than from `ps`, so the test depends on the kernel interface the
+/// shell's own process provider depends on and on no other program.
+pub fn processes_naming(needle: &str) -> Vec<u32> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Ok(cmdline) = std::fs::read(entry.path().join("cmdline")) else {
+            continue;
+        };
+        if String::from_utf8_lossy(&cmdline).contains(needle) {
+            found.push(pid);
+        }
+    }
+    found
+}

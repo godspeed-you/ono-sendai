@@ -84,6 +84,7 @@ pub(super) fn run_native_segment(
         && !head.input().accepts_null()
         && accepts_bytes(head.input().text())
         && !std::io::IsTerminal::is_terminal(&std::io::stdin())
+        && !session.is_background_job()
     {
         let mut bytes = Vec::new();
         std::io::Read::read_to_end(&mut std::io::stdin().lock(), &mut bytes)

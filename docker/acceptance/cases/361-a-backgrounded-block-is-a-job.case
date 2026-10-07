@@ -1,0 +1,43 @@
+# Issue #193, through the real binary as an unprivileged user.
+#
+# A backgrounded pipeline that runs a block is a job with an evaluator of its own (spec §18.4,
+# ADR-0952): `jobs` lists it, `fg` collects what it produced, what its block rebinds stays in the
+# job, and `kill %N` stops it together with the program its block is running. Where the job has to
+# have started its program before it is killed, the script waits for a file the program writes;
+# nothing below asserts a duration.
+case: a backgrounded block runs as a job that fg collects and kill stops
+timeout: 120
+env: NO_COLOR=1
+run: |
+  echo "== the job runs, is listed, and fg collects it =="
+  ono -c 'let seen = 0
+          echo "[1,2,3]" | from json | each { let seen = $seen + 1; @ * 2 } | to json &
+          jobs
+          fg %1
+          echo "seen-in-the-shell-$seen"'
+
+  echo "== a failure is reported when the job is collected, with its status =="
+  ono -c 'echo "[1]" | from json | each { a-command-no-host-has } &
+          fg %1
+          echo "status-was-$?"'
+
+  echo "== kill stops the job and the program its block runs =="
+  printf 'first\n' > "$HOME/case-361.log"
+  printf '#!/bin/sh\n: > "$HOME/case-361.started"\nexec sleep 3600\n' > "$HOME/case-361-child.sh"
+  chmod +x "$HOME/case-361-child.sh"
+  ono -c "tail file $HOME/case-361.log --lines 1 --follow | each { $HOME/case-361-child.sh } &
+          sh -c 'while [ ! -e \"\$HOME/case-361.started\" ]; do sleep 0.05; done'
+          kill %1
+          jobs
+          echo killed-and-listed"
+  echo "children-left=$(pgrep -fc '^sleep 3600$' || true)"
+exit: 0
+stdout-contains: [%1] 
+stdout-contains: [2,4,6]
+stdout-contains: seen-in-the-shell-0
+stdout-contains: resolve.command_not_found
+stdout-contains: status-was-127
+stdout-contains: killed-and-listed
+stdout-contains: children-left=0
+stdout-not-contains: cannot mix native stages
+stdout-not-contains: panicked

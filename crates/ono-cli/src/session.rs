@@ -34,6 +34,94 @@ pub struct DetachedScopes {
     definitions: Vec<BTreeMap<String, Definition>>,
 }
 
+/// The part of a session a background job's evaluator is built from (ADR-0952).
+///
+/// Every field can cross to the job's thread, which a whole `Session` cannot: the job builds its
+/// own session out of this on its own thread, with an executor that never touches a terminal.
+pub struct JobSnapshot {
+    executor: Executor,
+    cwd: PathBuf,
+    env: BTreeMap<OsString, OsString>,
+    inherited_env: BTreeMap<OsString, OsString>,
+    env_provider: std::sync::Arc<ono_provider_linux::EnvProvider>,
+    scopes: Vec<Scope>,
+    definitions: Vec<BTreeMap<String, Definition>>,
+    status: ExitStatus,
+    runtime: Option<std::sync::Arc<tokio::runtime::Runtime>>,
+    frames: Vec<ShellFrame>,
+    selection: Option<Value>,
+    results: ono_history::ResultHistory,
+    providers: Option<ProviderRegistry>,
+    adapters: Option<std::sync::Arc<ono_adapter::Registry>>,
+    #[cfg(feature = "kuang")]
+    plugin_providers: Vec<std::sync::Arc<crate::plugin_provider::PluginProvider>>,
+    settings: crate::settings::Settings,
+    theme: std::sync::Arc<ono_render::Theme>,
+}
+
+impl JobSnapshot {
+    /// What signals the process group the job's evaluator is waiting on, if any — `kill %N` and
+    /// Ctrl-C under `fg` reach the job's children through it (spec §18.4).
+    #[must_use]
+    pub fn canceller(&self) -> ono_process::Canceller {
+        self.executor.canceller()
+    }
+
+    /// The job's own session, on the thread that will run it.
+    #[must_use]
+    pub fn into_session(self) -> Session {
+        Session {
+            environment: EnvironmentState {
+                cwd: self.cwd,
+                env: self.env,
+                inherited_env: self.inherited_env,
+                env_provider: self.env_provider,
+            },
+            scope: ScopeState {
+                scopes: self.scopes,
+                definitions: self.definitions,
+                expanding: Vec::new(),
+            },
+            execution: ExecutionState {
+                status: self.status,
+                executor: self.executor,
+                mode: Mode::Normal,
+                interactive: false,
+                leaving: None,
+                runtime: self.runtime,
+                background_job: true,
+                captures: Vec::new(),
+                capture_budget: Budget::command_captures(),
+            },
+            navigation: NavigationState {
+                frames: self.frames,
+                #[cfg(feature = "remote")]
+                links: Vec::new(),
+                selection: self.selection,
+            },
+            history: ResultHistoryState {
+                results: self.results,
+            },
+            jobs: JobState {
+                native_jobs: Vec::new(),
+                job_started: BTreeMap::new(),
+                tables: std::sync::Arc::default(),
+            },
+            provider: ProviderState {
+                providers: self.providers,
+                adapters: self.adapters,
+                adaptations: Vec::new(),
+                #[cfg(feature = "kuang")]
+                plugin_providers: self.plugin_providers,
+            },
+            presentation: PresentationState {
+                settings: self.settings,
+                theme: self.theme,
+            },
+        }
+    }
+}
+
 /// A function the user declared with `fn` (spec §19.3, ADR-0070).
 #[derive(Debug)]
 pub struct Function {
@@ -138,7 +226,13 @@ struct ExecutionState {
     leaving: Option<ExitStatus>,
     /// Built on first use. A shell that runs `echo hi` should not have paid for a thread pool to
     /// do it, and spec §34's cold-start budget is measured on exactly that command.
-    runtime: Option<tokio::runtime::Runtime>,
+    ///
+    /// Shared with the evaluator a background job forks off (ADR-0952): a provider's sockets
+    /// belong to the reactor of the runtime that opened them, so a job runs on the same one.
+    runtime: Option<std::sync::Arc<tokio::runtime::Runtime>>,
+    /// Whether this session is the evaluator of a background job (spec §18.4, ADR-0952): what it
+    /// runs never reads the terminal, and its Ctrl-C is the job's own cancellation.
+    background_job: bool,
     /// Sub-pipelines being captured as values, innermost last: while one is open, a finished
     /// native pipeline hands its values here instead of to the terminal (ADR-0072 §4).
     captures: Vec<Vec<Value>>,
@@ -504,8 +598,83 @@ pub struct NativeJob {
     pub failures: std::sync::Arc<std::sync::Mutex<Vec<ono_value::ErrorValue>>>,
     /// When the pipeline was detached.
     pub started: Value,
-    /// The task driving the stream; aborting it drops every receiver, which stops the producers.
-    pub handle: tokio::task::JoinHandle<()>,
+    /// What runs the job: a task driving a stream, or an evaluator of its own (ADR-0952).
+    pub handle: JobRun,
+}
+
+/// What runs a backgrounded native pipeline.
+#[derive(Debug)]
+pub enum JobRun {
+    /// A stream chain driven by a task on the session runtime. Aborting it drops every receiver,
+    /// which stops the producers (ADR-0024).
+    Task(tokio::task::JoinHandle<()>),
+    /// A line run by an evaluator of its own on a thread of its own, because it holds a block,
+    /// a function call or a program the stream chain alone cannot carry (ADR-0952).
+    Evaluator(EvaluatorJob),
+}
+
+/// The handles on a job that has an evaluator of its own.
+#[derive(Debug)]
+pub struct EvaluatorJob {
+    /// The job's Ctrl-C: what its evaluator reads where the foreground reads the terminal's.
+    pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Signals the process group the job's evaluator is waiting on, if it is waiting on one.
+    pub canceller: ono_process::Canceller,
+    /// The evaluator's thread.
+    pub thread: std::thread::JoinHandle<()>,
+    /// The status the line ended with, once it has.
+    pub status: std::sync::Arc<std::sync::Mutex<Option<ExitStatus>>>,
+}
+
+impl JobRun {
+    /// Whether the job has ended.
+    #[must_use]
+    pub fn is_finished(&self) -> bool {
+        match self {
+            JobRun::Task(handle) => handle.is_finished(),
+            JobRun::Evaluator(job) => job.thread.is_finished(),
+        }
+    }
+
+    /// Stops the job: the task is aborted, or the evaluator is cancelled and the process group it
+    /// waits on is sent `signal` — `SIGTERM` for `kill %N`, `SIGINT` for Ctrl-C under `fg`.
+    pub fn stop(&self, signal: ono_process::Signal) {
+        match self {
+            JobRun::Task(handle) => handle.abort(),
+            JobRun::Evaluator(job) => {
+                job.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+                let _ = job.canceller.send(signal);
+            }
+        }
+    }
+
+    /// Waits for a stopped job to end, signalling its evaluator's process group again while it
+    /// has not: a child it started in the instant after the first signal is stopped too. Gives up
+    /// after `budget` — a job is never a reason for the shell itself to hang.
+    pub fn wait_until_finished(&self, budget: std::time::Duration) {
+        let JobRun::Evaluator(job) = self else {
+            return;
+        };
+        let deadline = std::time::Instant::now() + budget;
+        while !job.thread.is_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            if job.cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                let _ = job.canceller.send(ono_process::Signal::TERM);
+            }
+        }
+    }
+
+    /// The status the job ended with, when its evaluator recorded one.
+    #[must_use]
+    pub fn status(&self) -> Option<ExitStatus> {
+        match self {
+            JobRun::Task(_) => None,
+            JobRun::Evaluator(job) => *job
+                .status
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        }
+    }
 }
 
 /// One pushed frame, with the shell-side state `leave` restores.
@@ -687,6 +856,7 @@ impl Session {
                 interactive,
                 leaving: None,
                 runtime: None,
+                background_job: false,
                 captures: Vec::new(),
                 capture_budget: Budget::command_captures(),
             },
@@ -716,6 +886,57 @@ impl Session {
                 theme: std::sync::Arc::new(ono_render::Theme::default()),
             },
         }
+    }
+
+    /// What a background job's evaluator starts from: this session as it stands, copied where it
+    /// is state and shared where it is a resource (spec §18.4, ADR-0952).
+    ///
+    /// Copied: the working directory, the environment, the scopes and their definitions, the
+    /// frames, the retained results and the settings — so a job reads what its line could read
+    /// when it was started, and what its blocks bind or rebind stays in the job. Shared: the
+    /// runtime, the providers, the adapters and the theme, which are resources rather than state.
+    /// Not carried: links (a job inside a link frame is refused), the job table, captures, and the
+    /// terminal — the job's executor never touches one.
+    ///
+    /// # Errors
+    ///
+    /// `type.mismatch` inside a link frame, whose connection cannot be shared with a job.
+    pub fn fork_for_job(&mut self) -> Result<JobSnapshot, ErrorValue> {
+        if let Some(host) = self.link_host() {
+            return Err(ErrorValue::new(
+                ono_core::ErrorCode::TypeMismatch,
+                format!(
+                    "a background job cannot run a block inside the link frame on `{host}` yet"
+                ),
+            )
+            .with_help("leave the frame and background it here, or run it in the foreground"));
+        }
+        // The job shares the session's runtime and providers, so they exist before it starts.
+        let _ = self.runtime();
+        let _ = self.providers();
+        let _ = self.shared_adapters();
+        Ok(JobSnapshot {
+            // A job's children run in process groups of their own and are never handed the
+            // terminal: a background job does not read it (spec §18.4).
+            executor: Executor::detached(),
+            cwd: self.environment.cwd.clone(),
+            env: self.environment.env.clone(),
+            inherited_env: self.environment.inherited_env.clone(),
+            env_provider: std::sync::Arc::clone(&self.environment.env_provider),
+            scopes: self.scope.scopes.clone(),
+            definitions: self.scope.definitions.clone(),
+            status: self.execution.status,
+            runtime: self.execution.runtime.clone(),
+            frames: self.navigation.frames.clone(),
+            selection: self.navigation.selection.clone(),
+            results: self.history.results.clone(),
+            providers: self.provider.providers.clone(),
+            adapters: self.provider.adapters.clone(),
+            #[cfg(feature = "kuang")]
+            plugin_providers: self.provider.plugin_providers.clone(),
+            settings: self.presentation.settings.clone(),
+            theme: std::sync::Arc::clone(&self.presentation.theme),
+        })
     }
 
     /// The configuration settings, with the layer that set each one (spec §30).
@@ -802,9 +1023,10 @@ impl Session {
                 .enable_all()
                 .thread_name("ono")
                 .build()
-                .ok();
+                .ok()
+                .map(std::sync::Arc::new);
         }
-        self.execution.runtime.as_ref()
+        self.execution.runtime.as_deref()
     }
 
     /// A handle to the runtime, cloneable and borrow-free, once it exists.
@@ -812,7 +1034,7 @@ impl Session {
     pub fn runtime_handle(&self) -> Option<tokio::runtime::Handle> {
         self.execution
             .runtime
-            .as_ref()
+            .as_deref()
             .map(tokio::runtime::Runtime::handle)
             .cloned()
     }
@@ -1008,7 +1230,7 @@ impl Session {
         connection.hangup();
         let agent = connection.agent.clone();
         drop(connection);
-        let (Some(agent), Some(runtime)) = (agent, self.execution.runtime.as_ref()) else {
+        let (Some(agent), Some(runtime)) = (agent, self.execution.runtime.as_deref()) else {
             return;
         };
         runtime.block_on(agent.end(AGENT_GRACE));
@@ -1203,10 +1425,12 @@ impl Session {
                 process_group: None,
                 pids: None,
                 started: job.started.clone(),
-                exit_status: finished.then_some(if failed {
-                    ExitStatus::FAILURE
-                } else {
-                    ExitStatus::SUCCESS
+                exit_status: finished.then(|| {
+                    job.handle.status().unwrap_or(if failed {
+                        ExitStatus::FAILURE
+                    } else {
+                        ExitStatus::SUCCESS
+                    })
                 }),
             });
         }
@@ -1344,13 +1568,13 @@ impl Session {
         self.publish_env();
         #[cfg(feature = "remote")]
         if let Some(linked) = self.linked_registry() {
-            let runtime = self.execution.runtime.as_ref()?;
+            let runtime = self.execution.runtime.as_deref()?;
             let held = self.navigation.links[linked].connection.as_ref()?;
             return Some((runtime, &held.registry));
         }
         self.providers();
         match (
-            self.execution.runtime.as_ref(),
+            self.execution.runtime.as_deref(),
             self.provider.providers.as_ref(),
         ) {
             (Some(runtime), Some(providers)) => Some((runtime, providers)),
@@ -1713,6 +1937,12 @@ impl Session {
         }
     }
 
+    /// Whether this session is a background job's evaluator (ADR-0952).
+    #[must_use]
+    pub const fn is_background_job(&self) -> bool {
+        self.execution.background_job
+    }
+
     /// How many scopes are open, for [`Session::detach_scopes`].
     #[must_use]
     pub fn scope_depth(&self) -> usize {
@@ -1803,6 +2033,16 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        // A job with an evaluator of its own may be waiting on a child process; a shell that
+        // leaves stops it first, so the child is signalled and reaped rather than left running
+        // after the shell has gone (v0.4.1 §28.4, ADR-0952).
+        for job in &self.jobs.native_jobs {
+            if matches!(job.handle, JobRun::Evaluator(_)) {
+                job.handle.stop(ono_process::Signal::TERM);
+                job.handle
+                    .wait_until_finished(std::time::Duration::from_secs(2));
+            }
+        }
         // Spec §31.37: the last pipeline's audit events are written before the session goes.
         #[cfg(feature = "kuang")]
         self.with_kuang(crate::kuang_host::Host::persist_audit);

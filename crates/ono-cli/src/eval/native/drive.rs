@@ -324,15 +324,17 @@ pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> 
             "the command registry could not be read",
         ))
     })?;
+    // A stream chain carries native stages and nothing else. A block, a function call or a
+    // program needs an evaluator, and gets one of its own (ADR-0952).
     let [Segment::Native(indices)] = segments.as_slice() else {
-        return Err(Flow::Failed(
-            ErrorValue::new(
-                ErrorCode::TypeMismatch,
-                "a background job cannot mix native stages with external programs yet",
-            )
-            .with_help("background the native part alone, or serialise into a file"),
-        ));
+        return run_evaluated_job(session, list, source);
     };
+    if indices
+        .iter()
+        .any(|index| block_of(&list.stages[*index]).is_some())
+    {
+        return run_evaluated_job(session, list, source);
+    }
 
     let mut bound: Vec<(&'static CommandContract, BoundArguments)> = Vec::new();
     let mut structured = true;
@@ -458,7 +460,151 @@ pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> 
         values,
         failures,
         started: Value::now(),
-        handle,
+        handle: crate::session::JobRun::Task(handle),
     });
     Ok(ExitStatus::SUCCESS)
+}
+
+/// Backgrounds a line that needs an evaluator — a block, a function call, a program — as a job
+/// with an evaluator of its own (spec §18.4, ADR-0952).
+///
+/// A block holds statements, and only an evaluator runs statements: the foreground's is busy with
+/// the next line, so the job gets one of its own, on a thread of its own, built from a copy of the
+/// session (`Session::fork_for_job`). It runs the line exactly as the foreground would, with its
+/// results captured for `fg` instead of shown, and with three differences that make it a job:
+///
+/// - its programs run in process groups of their own, are never handed the terminal and read an
+///   empty input — a background job does not read the terminal;
+/// - its interrupt is its own: `kill %N` and Ctrl-C under `fg` stop it, and a Ctrl-C aimed at the
+///   foreground never reaches it;
+/// - what its blocks bind or rebind stays in the job's copy of the session.
+///
+/// # Errors
+///
+/// A refusal inside a link frame, or the operating system's refusal to start a thread.
+pub(crate) fn run_evaluated_job(
+    session: &mut Session,
+    list: &StageList,
+    source: &str,
+) -> Eval<ExitStatus> {
+    let snapshot = session.fork_for_job().map_err(Flow::Failed)?;
+    let command_text = source
+        .get(list.span.start() as usize..list.span.end() as usize)
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    let values: std::sync::Arc<std::sync::Mutex<Vec<Value>>> = std::sync::Arc::default();
+    let failures: std::sync::Arc<std::sync::Mutex<Vec<ErrorValue>>> = std::sync::Arc::default();
+    let status: std::sync::Arc<std::sync::Mutex<Option<ExitStatus>>> = std::sync::Arc::default();
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let canceller = snapshot.canceller();
+
+    let number = session.executor().reserve_job_number();
+    let job = EvaluatorRun {
+        snapshot,
+        list: list.clone(),
+        source: source.to_owned(),
+        values: std::sync::Arc::clone(&values),
+        failures: std::sync::Arc::clone(&failures),
+        status: std::sync::Arc::clone(&status),
+        cancel: std::sync::Arc::clone(&cancel),
+    };
+    let thread = match std::thread::Builder::new()
+        .name(format!("ono-job-{number}"))
+        .spawn(move || job.run())
+    {
+        Ok(thread) => thread,
+        Err(error) => {
+            session.executor().release_job_number(number);
+            return Err(Flow::Failed(ErrorValue::new(
+                ErrorCode::IoPermissionDenied,
+                format!("the operating system refused to start the job: {error}"),
+            )));
+        }
+    };
+
+    eprintln!("[%{number}]");
+    session.push_native_job(crate::session::NativeJob {
+        number,
+        command: command_text,
+        model: std::sync::Arc::default(),
+        values,
+        failures,
+        started: Value::now(),
+        handle: crate::session::JobRun::Evaluator(crate::session::EvaluatorJob {
+            cancel,
+            canceller,
+            thread,
+            status,
+        }),
+    });
+    Ok(ExitStatus::SUCCESS)
+}
+
+/// Everything a job's evaluator thread owns.
+struct EvaluatorRun {
+    snapshot: crate::session::JobSnapshot,
+    list: StageList,
+    source: String,
+    values: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+    failures: std::sync::Arc<std::sync::Mutex<Vec<ErrorValue>>>,
+    status: std::sync::Arc<std::sync::Mutex<Option<ExitStatus>>>,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl EvaluatorRun {
+    /// Runs the line on this thread, as the job's evaluator, and records how it ended.
+    fn run(self) {
+        let EvaluatorRun {
+            snapshot,
+            list,
+            source,
+            values,
+            failures,
+            status,
+            cancel,
+        } = self;
+        crate::eval::pipeline::enter_background_job(std::sync::Arc::clone(&cancel));
+        let mut session = snapshot.into_session();
+        // One shell command, captured for `fg`: the job's results are what it hands over, and
+        // §23.4's ceiling bounds what it may hold while nobody collects them (ADR-0457).
+        session.begin_command_captures();
+        session.begin_capture();
+        let outcome = crate::eval::pipeline::run_stage_list(&mut session, &list, &source, false);
+        let produced = session.end_capture();
+        let _ = session.executor().poll_jobs();
+        values
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend(produced);
+        // The interrupt a stopped job unwinds with is how it was told to stop, not something that
+        // went wrong, so it is not kept for `fg` to report.
+        let stopped = cancel.load(std::sync::atomic::Ordering::SeqCst);
+        let record = |error: ErrorValue| {
+            if stopped && error.code() == ErrorCode::StreamCancelled {
+                return;
+            }
+            failures
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(error);
+        };
+        let ended = match outcome {
+            Ok(status) => status,
+            Err(Flow::Failed(error)) => {
+                let status = crate::eval::status_for(&error);
+                record(error);
+                status
+            }
+            Err(Flow::FailedWith(error, status)) => {
+                record(error);
+                status
+            }
+            Err(Flow::Exit(status)) => status,
+            Err(Flow::Return(_) | Flow::Break | Flow::Continue) => ExitStatus::SUCCESS,
+        };
+        *status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(ended);
+    }
 }

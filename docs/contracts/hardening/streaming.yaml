@@ -202,6 +202,33 @@ captures:
       A job nobody is watching has nowhere to write, so its result waits for the foreground. It is
       retained state rather than pipeline data in flight, bounded the way §24 bounds retention.
 
+  - file: crates/ono-cli/src/eval/native/drive.rs
+    site: run_evaluated_job
+    class: history_cache
+    holds: What a background job with an evaluator of its own produced, until `fg` shows it.
+    why: >-
+      The same retention as `run_background` above, for a job that runs a block, a function call
+      or a program and so needs an evaluator (ADR-0952). It is the job's result rather than
+      pipeline data in flight, and the job's evaluator collects it under one command's capture,
+      so §23.4's ceiling bounds it while nobody collects it.
+
+  - file: crates/ono-cli/src/eval/native/drive.rs
+    site: EvaluatorRun
+    class: history_cache
+    holds: The shared slot a job's evaluator thread writes its result into.
+    why: >-
+      The thread's end of `run_evaluated_job` above: one slot, filled once when the line ends
+      (ADR-0952).
+
+  - file: crates/ono-cli/src/eval/native/drive.rs
+    site: run
+    class: history_cache
+    holds: What the job's line produced, captured on the job's thread and moved into the slot.
+    why: >-
+      A job nobody is watching has nowhere to write, so its line runs under a capture — the one
+      a foreground `let x = (…)` would open — charged to §23.4's ceiling, and what it captured is
+      handed to `fg` in one move (ADR-0952).
+
   - file: crates/ono-cli/src/eval/native/external.rs
     site: decode_adapted
     class: semantic_materialization

@@ -30,7 +30,7 @@ use std::time::Duration;
 
 use ono_testkit::{Scratch, scratch};
 
-use support::{Bounded, run_bounded};
+use support::{Bounded, processes_naming, run_bounded};
 
 /// Long enough that a loaded machine cannot turn a working implementation into a failure, and
 /// short enough that a test which never terminates does not hold the suite. Nothing is asserted
@@ -934,31 +934,4 @@ fn should_reap_the_child_process_of_a_cancelled_stage() {
         "the shell has been reaped and the child it stopped reading from is still running. {}",
         run.report()
     );
-}
-
-/// The pids of every process whose command line names `needle`.
-///
-/// Read out of `/proc` rather than from `ps`, so the test depends on the kernel interface the
-/// shell's own process provider depends on and on no other program.
-fn processes_naming(needle: &str) -> Vec<u32> {
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return Vec::new();
-    };
-    let mut found = Vec::new();
-    for entry in entries.flatten() {
-        let Some(pid) = entry
-            .file_name()
-            .to_str()
-            .and_then(|name| name.parse::<u32>().ok())
-        else {
-            continue;
-        };
-        let Ok(cmdline) = std::fs::read(entry.path().join("cmdline")) else {
-            continue;
-        };
-        if String::from_utf8_lossy(&cmdline).contains(needle) {
-            found.push(pid);
-        }
-    }
-    found
 }

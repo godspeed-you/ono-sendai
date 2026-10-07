@@ -62,7 +62,7 @@ operators:
     - {symbol: "|",  production: stage_list, doc: "Connect one stage's output to the next stage's input."}
     - {symbol: "&&", production: and_or,     doc: "Run the next pipeline only if this one succeeded. Chains on exit status, not on truth."}
     - {symbol: "||", production: and_or,     doc: "Run the next pipeline only if this one failed."}
-    - {symbol: "&",  production: pipeline,   doc: "Detach the pipeline into a job (spec §18.4)."}
+    - {symbol: "&",  production: pipeline,   doc: "Detach the pipeline into a job (spec §18.4). A job that runs a block, a function call or a program has an evaluator of its own, on a copy of the session's scopes, that never reads the terminal; `fg` collects it and `kill %N` stops it with its children (ADR-0952)."}
     - {symbol: ";",  production: terminator, doc: "End a statement."}
   redirection:
     doc: >-
