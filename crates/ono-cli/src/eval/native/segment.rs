@@ -235,6 +235,12 @@ pub(super) fn wrote_text(values: &[Value]) -> bool {
 pub(super) fn produces_bytes(contract: &CommandContract) -> bool {
     let output = contract.output().text();
     output.split('|').map(str::trim).all(|alternative| {
+        // `stream<string>` is text a line at a time — `to jsonl` (ADR-0954) — and ends the object
+        // stream exactly as one string does.
+        let alternative = alternative
+            .strip_prefix("stream<")
+            .and_then(|inner| inner.strip_suffix('>'))
+            .unwrap_or(alternative);
         matches!(alternative, "string" | "bytes")
             || alternative.starts_with("string")
             || alternative.starts_with("bytes")
