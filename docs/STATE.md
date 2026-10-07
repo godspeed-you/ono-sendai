@@ -135,6 +135,26 @@ gh issue view <NN>               # the evidence for one problem
 gh issue list --label class-c    # the large ones, a tranche each
 ```
 
+**Found during the v0.6.3 run (2026-10-07).** Outside the milestone, so not fixed in it (ADR-0929):
+
+- Remote refusals lose their explaining metadata on the wire: the link `Reject` frame carries only code + message (crates/ono-protocol/src/link.rs ~408). Repro: loopback agent, pinned host key, no client key → client sees E1202 without peer_fingerprint/store_present. Protocol contract change. Found while delivering #180.
+- Unary minus on null differs between evaluators: `let r = (- null)` → E0201 "cannot subtract int and null", `each (- null)` → null. Unary ops were outside #137.
+- `collapse` in crates/ono-command/src/bind.rs drops word values when the same parameter is also written as an expression: `--x a --x (b)` keeps only `b`.
+- Stdout broken pipe also on `ono --print-peer-key 2>&1 | head -c0` → 101 (println!), beside the known `help | head` entry.
+- refusals.yaml `explains` keys are checked per deciding crate, not per construction site (ADR-0537 check_refusals).
+- Collecting serializers and `from` wait forever on an unbounded stream: `tail file x --follow | to json` (yaml, csv, text, `| from json`) neither refuses nor ends; memory grows. ADR-0455's early refusal does not fire for `to`/`from`.
+- Plain native background jobs (ADR-0024 task path) collect until `fg`; `fg` without a terminal aborts a still-running bounded job instead of waiting — racy.
+- The line editor holds the terminal raw ~1.5–2 s after each prompt waiting on an unanswered cursor-position query; a Ctrl-C typed then is a keystroke, not a signal.
+- `explain` shows `streaming no` beside `execution streaming` for aggregates (`count`, `measure`): the contract's `streaming:` flag and the execution class disagree.
+- `from jsonl` does not exist (the symmetric reader of `to jsonl`).
+- `help` produces no value: it is a builtin that prints text, while spec §9.1 says HelpPage; `ono.help-page/1` stays deferred (ADR-0935 deviation).
+- `enter user|group|interface|process|link|service|mount` declare `ono.context/1` output but produce no value; in a pipeline they fail E0101 "declared but this build implements nothing". Exempted in docs/contracts/conformance/command_examples.yaml.
+- `plan update package openssl …`: v0.6 spec uses `update package` (§3.1) but no `update` verb exists; the plan refuses it. Exempted.
+- ADR-0813 documents `copy file ./nginx.conf to /etc/…`, but `copy file` accepts only `<from> <to>`; the `to` form is refused "takes 2 selector(s)".
+- `docs/contracts/hardening/streaming.yaml` and two code comments still illustrate `join (get socket) --on pid`, which cannot work (sockets carry no pid).
+- Command conformance skips every `privilege: conditional` command (`get file`, `get socket`, `get container`, …); running them needs a contract field saying the example is safe unprivileged.
+- `ono_pipeline::materialize`/`materialize_with` have no production callers.
+
 **Found during the v0.6.2 run (2026-09-24).** Outside the milestone, so not fixed in it (v0.6.1 §24):
 
 - `ono -c 'help' | head -3` panics "failed printing to stdout: Broken pipe", exit 101 (full and core; `| head -30` fine). Likely `println!` in the help builtin (crates/ono-cli/src/builtin.rs). Found by core-build agent 2026-09-24.
