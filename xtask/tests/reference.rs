@@ -548,10 +548,10 @@ fn should_render_a_boundary_page_that_matches_the_inventory() {
     let boundaries = document["boundaries"]
         .as_sequence()
         .expect("the inventory declares boundaries");
-    assert_eq!(
-        boundaries.len(),
-        12,
-        "v0.4.1 §6.1 names twelve boundaries at minimum"
+    assert!(
+        boundaries.len() >= 12,
+        "v0.4.1 §6.1 names twelve boundaries at minimum, and the inventory declares {}",
+        boundaries.len()
     );
     for boundary in boundaries {
         for field in ["id", "input_trust", "required_enforcement", "owner"] {
