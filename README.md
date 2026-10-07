@@ -527,8 +527,8 @@ built.
 ```text
 crates=48
 workspace_members=50
-tests=7162
-tests_that_can_skip=132
+tests=7165
+tests_that_can_skip=121
 expected_ci_skips=16
 acceptance_cases=262
 adrs=637

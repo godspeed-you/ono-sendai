@@ -108,28 +108,7 @@ declared:
   - id: "crates/ono-cli/tests/services_logs.rs::should_accept_piped_service_records_when_set_service_has_no_selector"
     category: external_tool_unavailable
     prerequisite: "the host runs systemd with a journal this user may read"
-  - id: "crates/ono-cli/tests/services_logs.rs::should_emit_existing_records_in_order_before_following_when_lines_is_given"
-    category: external_tool_unavailable
-    prerequisite: "the host runs systemd with a journal this user may read"
-  - id: "crates/ono-cli/tests/services_logs.rs::should_emit_journal_events_with_the_schema_fields_when_the_journal_is_queried"
-    category: external_tool_unavailable
-    prerequisite: "the host runs systemd with a journal this user may read"
-  - id: "crates/ono-cli/tests/services_logs.rs::should_emit_structured_log_records_when_the_log_is_queried"
-    category: external_tool_unavailable
-    prerequisite: "the host runs systemd with a journal this user may read"
-  - id: "crates/ono-cli/tests/services_logs.rs::should_emit_the_most_recent_event_and_return_when_the_journal_is_tailed_through_take"
-    category: external_tool_unavailable
-    prerequisite: "the host runs systemd with a journal this user may read"
-  - id: "crates/ono-cli/tests/services_logs.rs::should_filter_journal_events_by_priority_when_where_composes_over_the_typed_stream"
-    category: external_tool_unavailable
-    prerequisite: "the host runs systemd with a journal this user may read"
   - id: "crates/ono-cli/tests/services_logs.rs::should_list_the_dependencies_of_a_unit_as_a_field_of_its_record"
-    category: external_tool_unavailable
-    prerequisite: "the host runs systemd with a journal this user may read"
-  - id: "crates/ono-cli/tests/services_logs.rs::should_only_emit_recent_events_when_since_is_a_relative_timestamp"
-    category: external_tool_unavailable
-    prerequisite: "the host runs systemd with a journal this user may read"
-  - id: "crates/ono-cli/tests/services_logs.rs::should_order_the_level_by_severity_rather_than_by_spelling"
     category: external_tool_unavailable
     prerequisite: "the host runs systemd with a journal this user may read"
   - id: "crates/ono-cli/tests/services_logs.rs::should_relate_a_service_to_the_units_it_requires"
@@ -139,18 +118,6 @@ declared:
     category: external_tool_unavailable
     prerequisite: "the host runs systemd with a journal this user may read"
   - id: "crates/ono-cli/tests/services_logs.rs::should_report_one_failed_row_when_the_unit_to_modify_does_not_exist"
-    category: external_tool_unavailable
-    prerequisite: "the host runs systemd with a journal this user may read"
-  - id: "crates/ono-cli/tests/services_logs.rs::should_restrict_journal_events_to_the_current_boot_when_boot_is_zero"
-    category: external_tool_unavailable
-    prerequisite: "the host runs systemd with a journal this user may read"
-  - id: "crates/ono-cli/tests/services_logs.rs::should_restrict_log_records_by_minimum_severity_when_level_is_given"
-    category: external_tool_unavailable
-    prerequisite: "the host runs systemd with a journal this user may read"
-  - id: "crates/ono-cli/tests/services_logs.rs::should_restrict_log_records_to_one_unit_when_service_is_given"
-    category: external_tool_unavailable
-    prerequisite: "the host runs systemd with a journal this user may read"
-  - id: "crates/ono-cli/tests/services_logs.rs::should_run_the_failed_service_example_when_a_level_threshold_composes"
     category: external_tool_unavailable
     prerequisite: "the host runs systemd with a journal this user may read"
   - id: "crates/ono-cli/tests/services_logs.rs::should_trace_a_service_to_the_processes_it_owns"
