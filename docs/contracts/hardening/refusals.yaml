@@ -69,13 +69,15 @@ refusals:
   - error: resource.materialization_limit
     boundary: pipeline.materialization
     decided_by: ono-pipeline
-    raised: false
-    explains: []
+    raised: true
+    explains: [stage, ceiling, limit, setting]
+    says: "admits nothing"
     doc: >-
-      Declared by §21.4 for the case where the stage requires finite input or its budget admits
-      nothing at all, and not constructed anywhere: the finite-input refusal is
-      `stream.unbounded_operation` and the two budget ceilings are the rows above. Recorded here
-      as unraised so the gap is visible rather than inferred.
+      §21.4's refusal for a budget that admits nothing at all — §22.2: "A value of zero means 'no
+      values permitted', not unlimited." A materializing stage under `limits.materialize_items = 0`
+      or `limits.materialize_bytes = 0` refuses before it reads a value, naming the stage, the
+      setting and the figure; a budget that admits something is reached instead, as the two rows
+      above. The finite-input refusal stays `stream.unbounded_operation` (ADR-0934).
 
   # --- §22.3, the finiteness requirement — §54.1's third example ------------------------------
   - error: stream.unbounded_operation

@@ -1131,6 +1131,42 @@ fn should_report_a_boundary_the_specification_requires_and_the_inventory_omits()
 }
 
 #[test]
+fn should_report_a_boundary_that_gives_the_security_page_no_words() {
+    // Issue #170, ADR-0932: SECURITY.md's table is generated from each boundary's `front_door`.
+    // A boundary without it would be a blank row on the front door, so it fails here first.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let text = std::fs::read_to_string(
+        repository().join("docs/contracts/hardening/security_boundaries.yaml"),
+    )
+    .expect("the inventory");
+    let mut document: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&text).expect("the inventory is YAML");
+    let row = document["boundaries"]
+        .as_sequence_mut()
+        .expect("the inventory declares boundaries")
+        .iter_mut()
+        .find(|row| row["id"].as_str() == Some("release.publish"))
+        .expect("the inventory declares `release.publish`");
+    row.as_mapping_mut()
+        .expect("a boundary is a mapping")
+        .remove("front_door")
+        .expect("`release.publish` states a `front_door`");
+    repo.write(
+        "docs/contracts/hardening/security_boundaries.yaml",
+        serde_yaml_ng::to_string(&document).expect("the inventory serializes"),
+    );
+    let problems = xtask::contracts::check_security_boundaries(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("release.publish")
+                && problem.detail.contains("front_door")),
+        "a boundary SECURITY.md cannot render is reported: {problems:?}"
+    );
+}
+
+#[test]
 fn should_report_a_boundary_whose_named_security_test_does_not_exist() {
     // §20: "A security control is accepted only when there is an automated negative test proving
     // the forbidden behavior is refused." A row naming a test nobody wrote is the inventory
@@ -1304,6 +1340,46 @@ fn should_report_a_hardening_registry_no_gate_check_validates() {
             .iter()
             .any(|problem| problem.detail.contains("invented_ceilings.yaml")),
         "a registry the index does not name is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_baseline_snapshot_the_registry_index_does_not_name() {
+    // Issue #171, ADR-0931: `docs/baselines/` holds machine-readable records the gate validates
+    // (`xtask::baseline::check`, `xtask::binary_size::check_record`), outside the directory the
+    // index lives in. A snapshot written there without a row is a contract nothing indexes.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    repo.write(
+        "docs/baselines/v9.9.9.json",
+        "{\"version\": \"9.9.9\", \"counts\": {}}\n",
+    );
+    let problems = xtask::contracts::check_registry_inventory(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("docs/baselines/v9.9.9.json")),
+        "a baseline snapshot the index does not name is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_an_unindexed_contract_in_a_directory_the_registry_index_reaches() {
+    // The index reaches `docs/contracts/temporal/`, `change/` and `recovery/` by relative path
+    // (ADR-0625). A directory it reaches is a directory it answers for, so a file added beside
+    // the indexed ones without a row is reported as in the index's own directory.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    repo.write(
+        "docs/contracts/temporal/invented_windows.yaml",
+        "version: 1\nwindows: []\n",
+    );
+    let problems = xtask::contracts::check_registry_inventory(repo.path());
+    assert!(
+        problems.iter().any(|problem| problem
+            .detail
+            .contains("docs/contracts/temporal/invented_windows.yaml")),
+        "an unindexed contract beside indexed ones is reported: {problems:?}"
     );
 }
 

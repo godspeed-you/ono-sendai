@@ -677,7 +677,7 @@ pub(super) fn run_stage_list(
             .run_background(&built)
             .map_err(process_error)?;
         session.note_job_started(id.number());
-        eprintln!("[{id}]");
+        ono_core::diagnostic!("[{id}]");
         return Ok(ExitStatus::SUCCESS);
     }
 

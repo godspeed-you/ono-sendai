@@ -53,6 +53,7 @@ fn isolated(dir: &Scratch) -> Shell {
         .env_remove("ONO_LIMITS_HISTORY_ITEMS_PER_RESULT")
         .env_remove("ONO_LIMITS_HISTORY_BYTES_PER_RESULT")
         .env_remove("ONO_LIMITS_HISTORY_BYTES_TOTAL")
+        .env_remove("ONO_HISTORY_RESULT_CACHE")
         .env_remove("ONO_LIMITS_COMPLETION_SOFT_MS")
         .env_remove("ONO_LIMITS_COMPLETION_HARD_MS")
         .env_remove("ONO_LIMITS_REMOTE_CONNECTIONS")
@@ -689,8 +690,9 @@ fn should_leave_the_setting_untouched_when_an_assignment_is_rejected() {
 
 #[test]
 fn should_store_a_bytesize_setting_as_a_bytesize() {
-    let run =
-        ono("set config history.result_cache = 64MiB\nget config history.result_cache | to json");
+    let run = ono(
+        "set config limits.history_bytes_total = 64MiB\nget config limits.history_bytes_total | to json",
+    );
     assert_not_the_placeholder(&run);
     run.assert_success();
 
@@ -702,7 +704,7 @@ fn should_store_a_bytesize_setting_as_a_bytesize() {
     );
     assert!(
         text(&setting, "type").contains("byte"),
-        "the declared type of `history.result_cache` is a byte size (spec §30): {setting:?}"
+        "the declared type of `limits.history_bytes_total` is a byte size (spec §30): {setting:?}"
     );
 }
 
@@ -949,5 +951,114 @@ fn should_apply_the_documented_environment_override_for_a_limits_key() {
             .contains("ONO_LIMITS_REMOTE_HANDSHAKE_TIMEOUT_MS"),
         "the diagnostic names the variable that set it (ADR-0010): {:?}",
         refused.stderr()
+    );
+}
+
+// --- the retired history key, issue #175 and ADR-0933 -------------------------------------------
+
+/// The notice a retired key earns, as the shell words it on standard error.
+const RETIRED_NOTICE: &str =
+    "`history.result_cache` is a retired name for `limits.history_bytes_total`";
+
+#[test]
+fn should_set_the_history_ceiling_when_the_retired_key_is_set_at_the_prompt() {
+    let run = ono("set config history.result_cache = 32MiB | to json\n\
+         get config limits.history_bytes_total | select value layer | to json");
+    run.assert_success();
+    let documents: Vec<&str> = run.stdout().lines().collect();
+    assert!(
+        documents
+            .first()
+            .is_some_and(|result| result.contains("limits.history_bytes_total")
+                && result.contains("\"status\":\"success\"")),
+        "the action result names the key that now holds the value: {}",
+        run.stdout()
+    );
+    assert!(
+        documents
+            .last()
+            .is_some_and(|row| row.contains("\"value\":33554432") && row.contains("invocation")),
+        "one key names the ceiling, and it holds what the retired name was given: {}",
+        run.stdout()
+    );
+    assert!(
+        run.stderr().contains(RETIRED_NOTICE),
+        "the retired name is noticed, naming its replacement: {}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_start_and_apply_a_config_file_naming_the_retired_key_with_one_notice() {
+    // v0.6.1 §32: a configuration that parsed yesterday does not stop the shell starting. Two
+    // assignments of the retired key in one file earn one notice per load, not one per line.
+    let dir = scratch();
+    dir.write(
+        "ono/config.ono",
+        "set config history.result_cache = 16MiB\nset config history.result_cache = 32MiB\n",
+    );
+    let run = isolated(&dir)
+        .args([
+            "-c",
+            "get config limits.history_bytes_total | select value layer | to json",
+        ])
+        .run();
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "[{\"value\":33554432,\"layer\":\"user\"}]",
+        "the file's value reaches the one ceiling key at the user layer"
+    );
+    assert_eq!(
+        run.stderr().matches(RETIRED_NOTICE).count(),
+        1,
+        "one notice per load: {}",
+        run.stderr()
+    );
+    let problems = isolated(&dir)
+        .args(["-c", "get config --problems | count | to json"])
+        .run();
+    assert_eq!(
+        problems.stdout().trim(),
+        "[0]",
+        "a retired name that was applied is not a configuration problem: {}",
+        problems.stderr()
+    );
+}
+
+#[test]
+fn should_read_the_retired_environment_variable_as_the_history_ceiling() {
+    let dir = scratch();
+    let run = isolated(&dir)
+        .env("ONO_HISTORY_RESULT_CACHE", "8MiB")
+        .args([
+            "-c",
+            "get config limits.history_bytes_total | select value layer | to json",
+        ])
+        .run();
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "[{\"value\":8388608,\"layer\":\"environment\"}]",
+        "ADR-0010's mechanical mapping of the retired key still reaches the ceiling"
+    );
+    assert!(run.stderr().contains(RETIRED_NOTICE), "{}", run.stderr());
+}
+
+#[test]
+fn should_list_one_key_for_the_history_ceiling() {
+    let run = ono("get config | where key ~= /result_cache/ | count | to json");
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "[0]",
+        "issue #175: one key names the ceiling, and `get config` lists only it"
+    );
+    let run = ono("get config history.result_cache | select key | to json");
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "[{\"key\":\"limits.history_bytes_total\"}]",
+        "reading the retired name answers the setting that replaced it"
     );
 }

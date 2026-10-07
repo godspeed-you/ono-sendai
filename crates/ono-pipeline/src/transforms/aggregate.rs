@@ -147,6 +147,10 @@ impl Transform for Measure {
         "measure"
     }
 
+    fn materializes(&self) -> bool {
+        true
+    }
+
     fn input_requirement(&self) -> InputRequirement {
         if self.distribution {
             InputRequirement::Bounded(self.window)

@@ -84,6 +84,12 @@ impl Reporter {
         {
             let _ = writeln!(out, "  … {rest} more");
         }
+        // v0.4.1 §54.1: a refusal tells the user which boundary decided. The census in
+        // `docs/contracts/hardening/refusals.yaml` declares, per error, the metadata that says so,
+        // and that declaration — not a list kept here — decides what is shown (ADR-0938).
+        for (key, value) in explained(error) {
+            let _ = writeln!(out, "  {key}: {value}");
+        }
         if let Some(help) = error.help() {
             let hint = self.theme.paint(help, Token::ErrorHint, self.presentation);
             let _ = writeln!(out, "  {hint}");
@@ -162,6 +168,72 @@ fn details(error: &ErrorValue) -> Vec<String> {
             .collect(),
         _ => Vec::new(),
     }
+}
+
+/// `docs/contracts/hardening/refusals.yaml` as it is on disk.
+///
+/// Read only when an error is reported, never at startup, so it is parsed on first use rather than
+/// transcoded at build time — the same trade `ono-command` makes for `language.yaml` (ADR-0571).
+const REFUSALS_FILE: &str = include_str!("../../../docs/contracts/hardening/refusals.yaml");
+
+/// The longest metadata value a refusal shows, in characters.
+///
+/// The keys `explains` lists are figures, names and fingerprints. A value longer than this is not
+/// one of those, and the whole of it stays on the error value for a script to read.
+const SHOWN_VALUE_WIDTH: usize = 160;
+
+/// Error name → the metadata keys that explain it, in the order the census lists them.
+fn explaining_keys() -> &'static std::collections::BTreeMap<String, Vec<String>> {
+    static KEYS: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<String>>> =
+        std::sync::OnceLock::new();
+    KEYS.get_or_init(|| {
+        #[derive(serde::Deserialize)]
+        struct Census {
+            #[serde(default)]
+            refusals: Vec<Row>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Row {
+            error: Option<String>,
+            #[serde(default)]
+            explains: Vec<String>,
+        }
+        // The file is the gate's to keep valid (spec-check reads it on every run); a binary built
+        // from a tree where it was not would show no explanation rather than fail to report.
+        serde_yaml_ng::from_str::<Census>(REFUSALS_FILE)
+            .map(|census| {
+                census
+                    .refusals
+                    .into_iter()
+                    .filter_map(|row| Some((row.error?, row.explains)))
+                    .filter(|(_, keys)| !keys.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+/// The metadata that says which boundary decided `error`, as `key: value` pairs in the census's
+/// order, sanitised and bounded. Empty for an error the census does not explain.
+fn explained(error: &ErrorValue) -> Vec<(String, String)> {
+    let Some(keys) = explaining_keys().get(error.code().name()) else {
+        return Vec::new();
+    };
+    keys.iter()
+        .filter_map(|key| {
+            let value = error.metadata().get(key.as_str())?;
+            let text = match value {
+                ono_value::Value::Null => "null".to_owned(),
+                other => ono_value::canonical_text(other)
+                    .unwrap_or_else(|_| format!("<{}>", other.type_name())),
+            };
+            let mut shown = ono_render::sanitise(&text).replace('\n', " ");
+            if shown.chars().count() > SHOWN_VALUE_WIDTH {
+                shown = shown.chars().take(SHOWN_VALUE_WIDTH).collect::<String>() + "…";
+            }
+            Some((key.clone(), shown))
+        })
+        .collect()
 }
 
 /// How much of a line a diagnostic may show, in characters.

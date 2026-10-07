@@ -12,7 +12,8 @@ Temporal & Causal Systems Interface. v0.6 and v0.6.1 have no section because the
 shell that never types `plan` behaves as v0.5 did, the new `change.*` and `recovery.*` settings
 default to the specification's reference configuration, and nothing a v0.6.0 configuration,
 script or plugin relies on changed in v0.6.1 (`docs/releases/v0.6.0.md`, `v0.6.1.md`, under
-*Compatibility*). Section 10 is v0.6.2, the KUANG/11 compiler leaving the shell.
+*Compatibility*). Section 10 is v0.6.2, the KUANG/11 compiler leaving the shell. Section 11 is
+v0.6.3, one setting name retired.
 
 ## 1. Ordinary local use — nothing to do
 
@@ -328,6 +329,28 @@ compiled form of it, written by the SDK's `kuang-compile` into `~/.cache/ono/kua
   and the component, command and engine.
 
 Native-process packages are unaffected.
+
+## 11. `history.result_cache` is a retired name for `limits.history_bytes_total`
+
+*(spec §30, v0.4.1 §55.1, v0.6.1 §32; issue #175; ADR-0456, ADR-0933)*
+
+**Nothing breaks; one line is worth rewriting.** Two keys used to name the ceiling on how many
+bytes the result history may hold: `history.result_cache`, from spec §30's example, and
+`limits.history_bytes_total`, v0.4.1's name for it. Only the second was ever enforced — the first
+was declared and read by nothing, so setting it changed nothing. From v0.6.3 one key names the
+ceiling, and the old name is read as that key:
+
+- `set config history.result_cache = 64MiB` in `config.ono` or at the prompt sets
+  `limits.history_bytes_total`, range-checked like any other assignment of it. Where the old key
+  used to be silently ignored, the figure you wrote now takes effect.
+- `ONO_HISTORY_RESULT_CACHE` is read as `ONO_LIMITS_HISTORY_BYTES_TOTAL`; when both are set, the
+  new variable wins.
+- `get config history.result_cache` answers the `limits.history_bytes_total` row, and `get config`
+  lists only that key.
+- The first time a session meets the old name the shell says so once, on standard error:
+  `` `history.result_cache` is a retired name for `limits.history_bytes_total`, which holds its value
+  now; write `limits.history_bytes_total` instead ``. Rewriting the line silences it. The notice is
+  not a configuration problem: `get config --problems` does not list it.
 
 ## What to read next
 

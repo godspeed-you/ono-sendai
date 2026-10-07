@@ -3,6 +3,12 @@
 //! `cargo xtask <task>` is the single entry point an agent uses to verify its work. Every task
 //! is also runnable as a plain script so it works identically in CI and inside a container.
 
+#![allow(
+    clippy::disallowed_macros,
+    reason = "repository automation a developer or CI runs, never the shell a user runs; its \
+              reports need not survive a closed stderr (issue #163)"
+)]
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 

@@ -161,7 +161,7 @@ pub fn install(session: &mut Session, reference: &str, options: &InstallOptions)
     for warning in
         session.with_kuang(|host| crate::kuang_catalog::rejected_roots(&host.system_scan()))
     {
-        eprintln!("warning: {} {}", warning.code(), warning.message());
+        ono_core::diagnostic!("warning: {} {}", warning.code(), warning.message());
     }
 
     // 1. Resolve. An ambiguity is a picker interactively and a structured refusal otherwise
@@ -323,7 +323,7 @@ pub fn install(session: &mut Session, reference: &str, options: &InstallOptions)
             .is_some_and(|runtime| runtime.kind == RuntimeKind::NativeProcess)
     {
         // K11P §13.4: local development semantics, said rather than silent.
-        eprintln!(
+        ono_core::diagnostic!(
             "warning: `{name}` is an unsigned native plugin; it runs as your user account and \
              this execution tier is not complete filesystem or network isolation (K11P §27.1)"
         );
@@ -333,7 +333,7 @@ pub fn install(session: &mut Session, reference: &str, options: &InstallOptions)
     {
         // K11A §11.1: a system package is provenance, not publisher trust, and the difference is
         // said at the one moment it is decided.
-        eprintln!(
+        ono_core::diagnostic!(
             "warning: `{name}` is signed by a key no trust store enrols ({}); it came from a \
              system package, which is provenance and not publisher trust (K11A §11.1) — enrol \
              the key in `<config>/kuang/trust.yaml` to make it trusted",
@@ -377,17 +377,17 @@ pub fn install(session: &mut Session, reference: &str, options: &InstallOptions)
         if interactive {
             match previous {
                 Some(previous) => {
-                    eprintln!(
+                    ono_core::diagnostic!(
                         "Updated {name} {} -> {version}",
                         previous.manifest.package.version
                     );
                     if plan.delta.as_ref().is_some_and(Vec::is_empty) {
-                        eprintln!("Permissions unchanged.");
+                        ono_core::diagnostic!("Permissions unchanged.");
                     }
                 }
-                None => eprintln!("Installed {name} {version}"),
+                None => ono_core::diagnostic!("Installed {name} {version}"),
             }
-            eprintln!("Ready to use.");
+            ono_core::diagnostic!("Ready to use.");
         }
     }
     let mut result = action_result(outcome, "ono.plugin.install", started);
@@ -403,9 +403,9 @@ pub fn install(session: &mut Session, reference: &str, options: &InstallOptions)
 /// The interactive picker of K11P §10.3: numbered candidates, one chosen by number, none by
 /// order.
 fn pick(reference: &str, candidates: &[crate::kuang_catalog::Candidate]) -> Option<String> {
-    eprintln!("`{reference}` names {} packages:", candidates.len());
+    ono_core::diagnostic!("`{reference}` names {} packages:", candidates.len());
     for (index, candidate) in candidates.iter().enumerate() {
-        eprintln!(
+        ono_core::diagnostic!(
             "  [{}] {} — {} ({})",
             index + 1,
             candidate.id,
@@ -556,15 +556,15 @@ fn prompt(
         && trust.signature == "valid"
         && !matches!(trust.standing, Trust::SystemTrusted | Trust::UserTrusted);
     loop {
-        eprintln!();
-        eprintln!(
+        ono_core::diagnostic!();
+        ono_core::diagnostic!(
             "{} {}",
             capitalise(&manifest.package.name),
             manifest.package.version
         );
-        eprintln!("Publisher: {}", trust.publisher);
-        eprintln!("Signature: {}", trust.signature);
-        eprintln!(
+        ono_core::diagnostic!("Publisher: {}", trust.publisher);
+        ono_core::diagnostic!("Signature: {}", trust.signature);
+        ono_core::diagnostic!(
             "Publisher trust: {}",
             match trust.standing {
                 Trust::SystemTrusted => "system-trusted",
@@ -574,7 +574,7 @@ fn prompt(
                 Trust::Unknown => "unknown",
             }
         );
-        eprintln!(
+        ono_core::diagnostic!(
             "Runtime: {}",
             match manifest.runtime.as_ref().map(|runtime| runtime.kind) {
                 Some(RuntimeKind::NativeProcess) => "native process",
@@ -584,11 +584,11 @@ fn prompt(
             }
         );
         if let Some((catalog, verification)) = &located.catalog {
-            eprintln!("Catalog: {catalog} ({})", verification.id());
+            ono_core::diagnostic!("Catalog: {catalog} ({})", verification.id());
         }
         // Where the payload came from, as a fact beside the trust facts and never in place of
         // the permission plan (K11A §11.1, §12).
-        eprintln!(
+        ono_core::diagnostic!(
             "Source: {}{}",
             located
                 .origin
@@ -602,65 +602,65 @@ fn prompt(
         );
         if native {
             // Gate M: the isolation statement of K11P §18.2, on every native install.
-            eprintln!("  {}", isolation_statement(manifest));
+            ono_core::diagnostic!("  {}", isolation_statement(manifest));
         }
         if unknown_native {
-            eprintln!();
-            eprintln!("Runtime warning");
-            eprintln!("This is a native plugin. It runs as your user account.");
-            eprintln!(
+            ono_core::diagnostic!();
+            ono_core::diagnostic!("Runtime warning");
+            ono_core::diagnostic!("This is a native plugin. It runs as your user account.");
+            ono_core::diagnostic!(
                 "Ono can mediate brokered capabilities, but this execution tier does not prevent"
             );
-            eprintln!("direct filesystem or network access available to your user.");
-            eprintln!("No trust store enrols its publisher key ({}).", trust.key);
+            ono_core::diagnostic!("direct filesystem or network access available to your user.");
+            ono_core::diagnostic!("No trust store enrols its publisher key ({}).", trust.key);
         } else if native && trust.signature == "absent" {
-            eprintln!();
-            eprintln!(
+            ono_core::diagnostic!();
+            ono_core::diagnostic!(
                 "Warning: this package is unsigned; it installs with local-development semantics \
                  (K11P §13.4)."
             );
         }
         if let Some(entries) = plan.delta.as_ref().filter(|entries| !entries.is_empty()) {
-            eprintln!();
-            eprintln!(
+            ono_core::diagnostic!();
+            ono_core::diagnostic!(
                 "{} {} requests additional access:",
                 capitalise(&manifest.package.name),
                 manifest.package.version
             );
             for entry in entries {
-                eprintln!("  {}", entry.detail);
+                ono_core::diagnostic!("  {}", entry.detail);
             }
-            eprintln!();
-            eprintln!("Existing access is unchanged.");
+            ono_core::diagnostic!();
+            ono_core::diagnostic!("Existing access is unchanged.");
         } else {
             let profile_title = plan.profile.as_ref().map_or_else(
                 || "No".to_owned(),
                 |profile| profile_title(&plan.set, profile),
             );
-            eprintln!();
-            eprintln!("{profile_title} access:");
+            ono_core::diagnostic!();
+            ono_core::diagnostic!("{profile_title} access:");
             for descriptor in plan.granted.iter().chain(&plan.automatic) {
-                eprintln!("  - {}", line_of(descriptor));
+                ono_core::diagnostic!("  - {}", line_of(descriptor));
             }
             if plan.granted.is_empty() && plan.automatic.is_empty() {
-                eprintln!("  (nothing)");
+                ono_core::diagnostic!("  (nothing)");
             }
             if !plan.jit.is_empty() {
-                eprintln!();
-                eprintln!("Asked only when needed:");
+                ono_core::diagnostic!();
+                ono_core::diagnostic!("Asked only when needed:");
                 for descriptor in &plan.jit {
-                    eprintln!("  - {}", descriptor.title);
+                    ono_core::diagnostic!("  - {}", descriptor.title);
                 }
             }
             if !plan.explicit.is_empty() {
-                eprintln!();
-                eprintln!("Not granted:");
+                ono_core::diagnostic!();
+                ono_core::diagnostic!("Not granted:");
                 for descriptor in &plan.explicit {
-                    eprintln!("  - {}", descriptor.title);
+                    ono_core::diagnostic!("  - {}", descriptor.title);
                 }
             }
         }
-        eprintln!();
+        ono_core::diagnostic!();
         let question = match (
             upgrade,
             plan.delta
@@ -689,9 +689,9 @@ fn prompt(
             "" if default_yes => return Ok(true),
             "d" | "details" => {
                 let rendered = ono_value::to_yaml_data(plan_value).unwrap_or_default();
-                eprintln!("INSTALL PLAN\n{rendered}");
+                ono_core::diagnostic!("INSTALL PLAN\n{rendered}");
                 for descriptor in &plan.set.descriptors {
-                    eprintln!("{}", describe_descriptor(descriptor));
+                    ono_core::diagnostic!("{}", describe_descriptor(descriptor));
                 }
             }
             _ => return Ok(false),
@@ -990,7 +990,7 @@ fn transact(
             .map(|decision| decision.permission.clone())
             .collect();
         for permission in stale {
-            eprintln!(
+            ono_core::diagnostic!(
                 "note: the earlier decision about `{permission}` was made for another publisher \
                  key and does not apply"
             );

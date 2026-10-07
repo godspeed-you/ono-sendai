@@ -481,7 +481,7 @@ fn run_from(
                             // The remote has nothing for this invocation: say so, and let the
                             // program run as it always has — locally, raw.
                             if matches!(demand_kind, OutputDemand::Interactive) {
-                                eprintln!(
+                                ono_core::diagnostic!(
                                     "{}",
                                     ono_render::sanitise(&format!(
                                         "{}: {reason}; running `{}` locally",

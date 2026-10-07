@@ -565,7 +565,7 @@ pub fn leave(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitSta
 
     if session.frames().is_empty() {
         // ADR-0023: a stack that can be popped past its base is a stack that will be.
-        eprintln!("ono: nothing to leave: the session stands on its ground context");
+        ono_core::diagnostic!("ono: nothing to leave: the session stands on its ground context");
         return Ok(ExitStatus::SUCCESS);
     }
 
@@ -706,7 +706,7 @@ pub fn establish(
             // Spec §21.3: no agent over there is a reason to fall back, not to fail. Said on
             // stderr because it changes what the link can do, and a script reading stdout must
             // still read only the data it asked for (spec §12.5).
-            eprintln!(
+            ono_core::diagnostic!(
                 "{}: {host} has no `ono --agent`; falling back to agentless mode (spec §21.3)",
                 ono_core::SHORT_NAME
             );

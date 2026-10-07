@@ -457,7 +457,7 @@ impl CommandImpl for Verify {
                     })
                     .collect();
                 for line in ono_change_render::recovery_verification(&record, &results, 80) {
-                    eprintln!("{line}");
+                    ono_core::diagnostic!("{line}");
                 }
             }
             // §23.3 and v0.2 §43: the per-check results are the answer, and a required check that

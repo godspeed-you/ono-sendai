@@ -497,7 +497,7 @@ pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> 
     });
 
     let number = session.executor().reserve_job_number();
-    eprintln!("[%{number}]");
+    ono_core::diagnostic!("[%{number}]");
     session.push_native_job(crate::session::NativeJob {
         number,
         command: command_text,
@@ -568,7 +568,7 @@ pub(crate) fn run_evaluated_job(
         }
     };
 
-    eprintln!("[%{number}]");
+    ono_core::diagnostic!("[%{number}]");
     session.push_native_job(crate::session::NativeJob {
         number,
         command: command_text,

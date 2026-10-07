@@ -3215,7 +3215,7 @@ Change a configuration setting in the current scope.
 
 | name | type | meaning |
 |---|---|---|
-| `key` | `string` | The dotted setting key. |
+| `key` | `string` | The dotted setting key. A retired name — `history.result_cache` — sets the key that replaced it (`limits.history_bytes_total`), with a notice naming it (ADR-0933). |
 | `value` | `value` | The new value, in the setting's declared type. |
 
 **Examples**
@@ -3223,7 +3223,7 @@ Change a configuration setting in the current scope.
 ```text
 set config prompt.path = "smart"
 set config render.table.max_rows = 200
-set config history.result_cache = 64MiB
+set config limits.history_bytes_total = 64MiB
 set config safety.confirm.bulk_threshold = 100
 ```
 

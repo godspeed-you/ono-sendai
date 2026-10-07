@@ -52,6 +52,10 @@ impl Transform for Sort {
         "sort"
     }
 
+    fn materializes(&self) -> bool {
+        true
+    }
+
     fn input_requirement(&self) -> InputRequirement {
         InputRequirement::Bounded(self.window)
     }

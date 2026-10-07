@@ -7,3 +7,13 @@ type-complexity-threshold = 500
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
+
+# Issue #163, ADR-0549: `eprintln!` panics when standard error is a pipe nobody reads, which
+# turns a refusal into exit 101. A diagnostic is commentary and must not be able to kill the
+# process that writes it: product code says it with `ono_core::diagnostic!` or the `Reporter`,
+# both of which ignore a failed write. A test, a build script or a developer tool that wants the
+# panicking form allows it explicitly, with the reason.
+disallowed-macros = [
+    { path = "std::eprintln", reason = "panics on a closed stderr; use `ono_core::diagnostic!` (issue #163, ADR-0549)" },
+    { path = "std::eprint", reason = "panics on a closed stderr; write to `std::io::stderr()` and ignore the error (issue #163, ADR-0549)" },
+]

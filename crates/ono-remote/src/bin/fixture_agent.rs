@@ -23,7 +23,7 @@ fn main() -> ExitCode {
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            eprintln!("ono-remote-fixture-agent: cannot start a runtime: {error}");
+            ono_core::diagnostic!("ono-remote-fixture-agent: cannot start a runtime: {error}");
             return ExitCode::FAILURE;
         }
     };

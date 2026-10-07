@@ -1,0 +1,24 @@
+# Issue #175, ADR-0933: one key names the history ceiling. `history.result_cache`, spec §30's
+# example name, is read as `limits.history_bytes_total` with one notice naming it, so a
+# configuration that parsed yesterday still starts the shell (v0.6.1 §32).
+case: the retired history key sets the one history ceiling, with one notice
+timeout: 60
+run: |
+  export ONO_CONFIG_DIR="$HOME/.config/ono-case-371"
+  mkdir -p "$ONO_CONFIG_DIR"
+  printf 'set config history.result_cache = 16MiB\nset config history.result_cache = 32MiB\n' > "$ONO_CONFIG_DIR/config.ono"
+  echo "== the file's value reaches the ceiling =="
+  ono -c 'get config limits.history_bytes_total | select value layer | to json' 2>/dev/null
+  echo "notices=$(ono -c 'echo started' 2>&1 >/dev/null | grep -c 'retired name')"
+  ono -c 'get config --problems | count | to json' 2>/dev/null
+  echo "== one key is listed =="
+  ono -c 'get config | where key ~= /result_cache/ | count | to json' 2>/dev/null
+  echo "== at the prompt, the result names the key that holds the value =="
+  ono --no-config -c 'set config history.result_cache = 8MiB | select target | to json' 2>&1
+exit: 0
+stdout-contains: [{"value":33554432,"layer":"user"}]
+stdout-contains: notices=1
+stdout-contains: [0]
+stdout-contains: limits.history_bytes_total
+stdout-contains: `history.result_cache` is a retired name for `limits.history_bytes_total`
+stdout-not-contains: panicked

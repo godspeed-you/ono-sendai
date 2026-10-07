@@ -965,7 +965,7 @@ fn configured_keymap() -> Keymap {
         && !overrides.trim().is_empty()
         && let Err(problem) = keymap.apply_overrides(&overrides)
     {
-        eprintln!(
+        ono_core::diagnostic!(
             "{}: spatial.map.keys — {problem}; the default bindings are in force",
             ono_core::SHORT_NAME
         );

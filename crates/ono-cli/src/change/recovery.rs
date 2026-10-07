@@ -489,7 +489,7 @@ impl CommandImpl for RemoveRecovery {
                     &blocked,
                     80,
                 ) {
-                    eprintln!("{line}");
+                    ono_core::diagnostic!("{line}");
                 }
                 let message = if blocked.is_empty() {
                     format!(

@@ -96,6 +96,10 @@ impl Transform for Join {
         "join"
     }
 
+    fn materializes(&self) -> bool {
+        true
+    }
+
     fn input_requirement(&self) -> InputRequirement {
         InputRequirement::Bounded(self.window)
     }
@@ -254,6 +258,10 @@ impl Diff {
 impl Transform for Diff {
     fn name(&self) -> &'static str {
         "diff"
+    }
+
+    fn materializes(&self) -> bool {
+        true
     }
 
     fn input_requirement(&self) -> InputRequirement {

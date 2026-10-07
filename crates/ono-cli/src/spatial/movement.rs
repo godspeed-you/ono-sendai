@@ -105,7 +105,7 @@ pub fn go_back(
             // informing the user". The movement succeeded, so this is a notice on stderr
             // rather than a failure — a script that navigates must not die because a
             // process it visited has since exited.
-            eprintln!(
+            ono_core::diagnostic!(
                 "{}: {} place{} on the trail no longer exist{}; went back past {}",
                 ono_core::SHORT_NAME,
                 skipped.len(),
@@ -402,7 +402,7 @@ fn crossed_link(selector: &str) -> Result<Option<crate::spatial::RemoteHost>, Er
 /// objects rather than prose (§29.1, §29.4) — the same channel `back` announces a skipped place
 /// on (§20.3).
 fn announce(link: &str) {
-    eprintln!(
+    ono_core::diagnostic!(
         "{}: crossed the link `{link}`; this place is remote, on host {link}",
         ono_core::SHORT_NAME
     );

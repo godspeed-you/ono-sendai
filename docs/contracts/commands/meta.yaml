@@ -194,7 +194,7 @@ commands:
     output: ono.action-result/1
     provider_capability: config.set
     selectors:
-      - {name: key, type: string, doc: "The dotted setting key."}
+      - {name: key, type: string, doc: "The dotted setting key. A retired name — `history.result_cache` — sets the key that replaced it (`limits.history_bytes_total`), with a notice naming it (ADR-0933)."}
       - {name: value, type: value, doc: "The new value, in the setting's declared type."}
     options: []
     privilege: none
@@ -203,7 +203,7 @@ commands:
     examples:
       - set config prompt.path = "smart"
       - set config render.table.max_rows = 200
-      - set config history.result_cache = 64MiB
+      - set config limits.history_bytes_total = 64MiB
       - set config safety.confirm.bulk_threshold = 100
 
   # --- runtime limits, v0.4.1 §54.3 ---------------------------------------------------------
