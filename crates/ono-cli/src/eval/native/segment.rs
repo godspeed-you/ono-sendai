@@ -234,13 +234,23 @@ pub(super) fn wrote_text(values: &[Value]) -> bool {
 /// Whether a command's output is bytes or text rather than objects.
 pub(super) fn produces_bytes(contract: &CommandContract) -> bool {
     let output = contract.output().text();
-    output.split('|').map(str::trim).all(|alternative| {
-        // `stream<string>` is text a line at a time — `to jsonl` (ADR-0954) — and ends the object
-        // stream exactly as one string does.
-        let alternative = alternative
-            .strip_prefix("stream<")
-            .and_then(|inner| inner.strip_suffix('>'))
-            .unwrap_or(alternative);
+    let alternatives: Vec<&str> = output.split('|').map(str::trim).collect();
+    // A command whose output admits bytes is a serializer (spec §12.3: objects become bytes only
+    // through `to` or `format`), and a `stream<string>` it declares is its text a line at a time —
+    // `to jsonl` (ADR-0954). Anywhere else `stream<string>` is a stream of string *values*, such as
+    // the lines `tail file` reads, which a native `sort` still orders.
+    let serializer = alternatives
+        .iter()
+        .any(|alternative| alternative.starts_with("bytes"));
+    alternatives.iter().all(|&alternative| {
+        let alternative = if serializer {
+            alternative
+                .strip_prefix("stream<")
+                .and_then(|inner| inner.strip_suffix('>'))
+                .unwrap_or(alternative)
+        } else {
+            alternative
+        };
         matches!(alternative, "string" | "bytes")
             || alternative.starts_with("string")
             || alternative.starts_with("bytes")
