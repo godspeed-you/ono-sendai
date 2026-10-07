@@ -26,6 +26,10 @@
 #                conditional works unprivileged for some targets and needs privilege for others
 #                            — the common case on Linux, and the one a shell must not paper over;
 #                required    cannot work without privilege.
+#   `network`    true for a provider capability that leaves the host — a name resolution, a
+#                probe of another machine. Absent means the capability answers from this host
+#                alone. The command conformance suite reads it: an example that would reach the
+#                network does not run in its hermetic shell (issue #149, ADR-0935).
 
 version: 1
 
@@ -202,10 +206,12 @@ provider_capabilities:
     summary: Perform an explicit name resolution.
     risk: read
     elevation: none
+    network: true
   - id: port.probe
     summary: Attempt a connection to a host and port and time the result.
     risk: observe
     elevation: none
+    network: true
 
   # identity, spec §23.6
   - id: user.list
@@ -312,6 +318,7 @@ provider_capabilities:
     summary: Check a host's reachability and advertised capabilities.
     risk: observe
     elevation: none
+    network: true
   - id: host.trust
     summary: Record, replace or forget a pinned host key (spec §21.5, ADR-0015 T5/T6).
     risk: mutate

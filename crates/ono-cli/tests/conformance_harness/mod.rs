@@ -18,6 +18,12 @@
     reason = "a shared test harness states its preconditions the way a test does (AGENTS.md §16)"
 )]
 
+mod examples;
+
+// The provider suite includes this harness too and asks nothing of examples.
+#[allow(unused_imports)]
+pub use examples::{ExampleCase, assert_example_conforms};
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;

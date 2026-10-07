@@ -13,6 +13,7 @@ pub mod binary_size;
 pub mod bindings;
 pub mod change;
 pub mod conformance;
+pub mod conformance_examples;
 pub mod contracts;
 pub mod evidence;
 pub mod metrics;

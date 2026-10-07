@@ -168,7 +168,8 @@ docs/contracts/hardening/limits.yaml (issue #125, ADR-0864) [--binary <path>] [-
     eprintln!("  baseline       the frozen v0.4.1 baseline of spec section 57 phase H0 [--write]");
     eprintln!("  docs           regenerate docs/reference/ from the contracts (spec section 36.2)");
     eprintln!(
-        "  conformance    regenerate the provider conformance suite from docs/contracts (spec section 35.3)"
+        "  conformance    regenerate the provider and command conformance suites from docs/contracts \
+(spec section 35.3, issue #149)"
     );
     eprintln!("  acceptance     build the container and run the acceptance suite");
     eprintln!("  release-check  the full release gate of docs/ACCEPTANCE.md");

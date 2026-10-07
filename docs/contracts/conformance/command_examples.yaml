@@ -1,0 +1,209 @@
+# Documented examples the command conformance suite would run and cannot, with the reason.
+#
+# `crates/ono-cli/tests/command_conformance.rs` is generated from `docs/contracts/commands/*.yaml`
+# by `cargo xtask conformance` (issue #149, ADR-0935). It runs every example whose contracts say it
+# is safe to run in a hermetic scratch shell — declared commands only, no mutating verb
+# (`verbs.yaml`), privilege `none`, a `read` capability that stays on this host
+# (`capabilities.yaml`), no live source, no redirection, no reference to an earlier session, no
+# output schema still owed by `schemas/deferred.yaml` — and holds every value it produces to the
+# command's declared `output`. Those rules are the contracts'; they are not restated here.
+#
+# What the contracts cannot see is listed here instead: an example that names an object a fresh
+# environment does not have, or a command whose value cannot be observed through a pipeline.
+# The register is checked both ways when the suite is generated: an entry that names an example
+# no command documents, or one the contracts already skip, is refused as stale, so an exemption
+# cannot outlive its reason unnoticed.
+#
+# Fields
+#
+#   command   the command id whose `examples:` documents the example.
+#   example   the example, character for character.
+#   reason    why it cannot run here, in terms a reader can check.
+
+version: 1
+
+exemptions:
+  # --- objects a fresh environment does not have ---------------------------------------------
+  - command: ono.change-plan.get
+    example: get plan a82f
+    reason: names the plan `a82f`, and a fresh state directory holds no plan.
+  - command: ono.change-plan.get
+    example: get plan a82f --revision 1
+    reason: names the plan `a82f`, and a fresh state directory holds no plan.
+  - command: ono.change-plan.inspect
+    example: inspect plan a82f
+    reason: names the plan `a82f`, and a fresh state directory holds no plan.
+  - command: ono.change-plan.inspect
+    example: inspect plan a82f --resolution
+    reason: names the plan `a82f`, and a fresh state directory holds no plan.
+  - command: ono.change-plan.inspect
+    example: inspect plan a82f --protection
+    reason: names the plan `a82f`, and a fresh state directory holds no plan.
+  - command: ono.change-plan.rebase
+    example: rebase plan a82f
+    reason: names the plan `a82f`, and a fresh state directory holds no plan.
+  - command: ono.change.impact
+    example: impact a82f
+    reason: names the plan `a82f`, and a fresh state directory holds no plan.
+  - command: ono.change.impact
+    example: impact a82f --depth 3
+    reason: names the plan `a82f`, and a fresh state directory holds no plan.
+  - command: ono.change.verify
+    example: verify a82f
+    reason: names the plan `a82f`, and a fresh state directory holds no plan.
+  - command: ono.change.recover
+    example: recover a82f
+    reason: names the plan `a82f`, and a fresh state directory holds no plan.
+  - command: ono.change.recover
+    example: recover a82f --goal restore-changed-objects
+    reason: names the plan `a82f`, and a fresh state directory holds no plan.
+  - command: ono.recovery.get
+    example: get recovery --plan a82f
+    reason: names the plan `a82f`, and a fresh state directory holds no plan.
+  - command: ono.recovery.inspect
+    example: inspect recovery r-a82f
+    reason: names the recovery asset `r-a82f`, and a fresh state directory holds none.
+  - command: ono.change.plan
+    example: plan restart service nginx
+    reason: plans against the unit `nginx`, which a test host need not have.
+  - command: ono.change.plan
+    example: get service | where state == failed | plan restart service
+    reason: >-
+      plans against the failed units of the host; a healthy test host has none, and a plan over
+      nothing is refused rather than empty.
+  - command: ono.process.get
+    example: get process 4419
+    reason: names the process 4419, which a test host need not be running.
+  - command: ono.host.trace
+    example: trace host prod-db
+    reason: names the host `prod-db`, which a fresh configuration does not know.
+  - command: ono.link.trace
+    example: trace link prod-db
+    reason: names the link `prod-db`, which a fresh configuration does not hold.
+  - command: ono.permission.get
+    example: get permission kubernetes
+    reason: names the package `kubernetes`, and a fresh plugin path has none installed.
+  - command: ono.permission.get
+    example: get permission kubernetes --all
+    reason: names the package `kubernetes`, and a fresh plugin path has none installed.
+  - command: ono.plugin.inspect
+    example: inspect plugin kubernetes
+    reason: names the package `kubernetes`, and a fresh plugin path has none installed.
+  - command: ono.plugin.inspect
+    example: inspect plugin dev.example.packet-eye
+    reason: names the package `dev.example.packet-eye`, and a fresh plugin path has none installed.
+  - command: ono.plugin.verify
+    example: verify plugin dev.example.packet-eye
+    reason: names the package `dev.example.packet-eye`, and a fresh plugin path has none installed.
+  - command: ono.temporal.at
+    example: at -10m
+    reason: >-
+      asks for recorded history, and a fresh shell has recorded nothing: recording is off until
+      `start recorder` (v0.5 §10.2), which mutates.
+  - command: ono.temporal.at
+    example: at 12:17
+    reason: >-
+      asks for recorded history, and a fresh shell has recorded nothing: recording is off until
+      `start recorder` (v0.5 §10.2), which mutates.
+  - command: ono.temporal.at
+    example: at 2026-08-31T12:17:00+02:00
+    reason: >-
+      asks for recorded history, and a fresh shell has recorded nothing: recording is off until
+      `start recorder` (v0.5 §10.2), which mutates.
+  - command: ono.place.back
+    example: back
+    reason: returns to the previous place, and a fresh session has not moved (spatial.history_empty).
+  - command: ono.place.up
+    example: up
+    reason: >-
+      moves to the parent place, and a fresh one-shot session starts at the top of the host's
+      canonical hierarchy (spatial.no_parent).
+  - command: ono.place.unpin
+    example: unpin
+    reason: removes the pin of the current place, and a fresh session has pinned nothing.
+  - command: ono.place.unpin
+    example: unpin edge-proxy
+    reason: removes the pin `edge-proxy`, and a fresh session has pinned nothing.
+
+  # --- programs no contract describes -------------------------------------------------------
+  - command: ono.temporal.present
+    example: present git status
+    reason: >-
+      runs `git status`, an external program whose effects and output no contract states, in a
+      scratch directory that is not a repository.
+  - command: ono.temporal.present
+    example: present printf ok
+    reason: >-
+      runs `printf`, an external program that writes to the terminal before the action result,
+      so its output is not one inspectable document.
+
+  # --- commands whose value a pipeline cannot observe ---------------------------------------
+  # `enter <target>` changes the session's context frame and runs only as a statement of its own:
+  # placed in a pipeline it is refused as declared-but-not-implemented, so its declared
+  # `ono.context/1` cannot reach `inspect` (found by the suite; see ADR-0935).
+  - command: ono.user.enter
+    example: enter user postgres
+    reason: runs only as a statement of its own; in a pipeline this build implements nothing for it.
+  - command: ono.group.enter
+    example: enter group docker
+    reason: runs only as a statement of its own; in a pipeline this build implements nothing for it.
+  - command: ono.interface.enter
+    example: enter interface eth0
+    reason: runs only as a statement of its own; in a pipeline this build implements nothing for it.
+  - command: ono.process.enter
+    example: enter process 4419
+    reason: runs only as a statement of its own; in a pipeline this build implements nothing for it.
+  - command: ono.link.enter
+    example: enter link prod-db
+    reason: runs only as a statement of its own; in a pipeline this build implements nothing for it.
+  - command: ono.service.enter
+    example: enter service nginx
+    reason: runs only as a statement of its own; in a pipeline this build implements nothing for it.
+  - command: ono.mount.enter
+    example: enter mount /mnt/data
+    reason: runs only as a statement of its own; in a pipeline this build implements nothing for it.
+
+  # --- examples that name what the shell does not have --------------------------------------
+  - command: ono.change.plan
+    example: plan update package openssl --protection require
+    reason: >-
+      spells v0.6 §3.1's intent `update package`, and no verb `update` exists (verbs.yaml); the
+      plan refuses it as not plannable. A gap between the specification's illustration and the
+      verb vocabulary, recorded in ADR-0935, not a property of the test host.
+
+  # --- defects the suite found, each removed by the commit that fixes it (ADR-0935) ----------
+  - command: ono.data.format
+    example: get process | format table --columns [pid, name, memory]
+    reason: >-
+      known defect: the example writes the columns as field paths, which read the null input
+      (Ono-Sendai-E0201); the contract example is fixed by the next commit.
+  - command: ono.finding.get
+    example: get finding | where severity >= warning
+    reason: >-
+      known defect: `warning` is not one of `ono.finding/1`'s severities (§31.24's closed set),
+      so it reads as a field (Ono-Sendai-E0202); the contract example is fixed by the next commit.
+  - command: ono.change.plan
+    example: plan replace file /etc/nginx/nginx.conf from ./nginx.conf
+    reason: >-
+      known defect: spells `replace file`, which ADR-0813 maps to `copy file`; the contract example
+      is fixed by the next commit.
+  - command: ono.context.get
+    example: get context
+    reason: >-
+      known defect: answers untagged maps where the contract declares `stream<ono.context/1>`;
+      fixed by a following commit.
+  - command: ono.limits.inspect
+    example: inspect limits
+    reason: >-
+      known defect: answers untagged maps where the contract declares `stream<ono.limit/1>`;
+      fixed by a following commit.
+  - command: ono.limits.inspect
+    example: inspect limits limits.materialize_bytes
+    reason: >-
+      known defect: answers untagged maps where the contract declares `stream<ono.limit/1>`;
+      fixed by a following commit.
+  - command: ono.route.trace
+    example: trace route 0.0.0.0/0
+    reason: >-
+      known defect: `0.0.0.0/0` does not find the default route, whose destination
+      `ono.route/1` records as null; fixed by a following commit.

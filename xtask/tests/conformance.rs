@@ -94,14 +94,18 @@ const PROCFS_PROVIDER: &str = r"providers:
 ";
 
 #[test]
-fn should_write_one_suite_beside_the_shell_when_generated() {
+fn should_write_the_provider_and_the_command_suite_beside_the_shell_when_generated() {
     let repo = registries();
     let pages = generate(repo.path()).expect("generation must succeed");
     let paths: Vec<&str> = pages.iter().map(|page| page.path.as_str()).collect();
     assert_eq!(
         paths,
-        vec!["crates/ono-cli/tests/provider_conformance.rs"],
-        "the suite is one file, and it lives where the shell's own tests do"
+        vec![
+            "crates/ono-cli/tests/provider_conformance.rs",
+            "crates/ono-cli/tests/command_conformance.rs",
+        ],
+        "the providers' suite and the commands' suite (issue #149) live where the shell's own \
+         tests do, and share one harness"
     );
 }
 
@@ -232,5 +236,178 @@ fn should_match_the_committed_suite_of_this_repository() {
         problems.is_empty(),
         "the committed conformance suite must be what the declarations produce; run `cargo \
          xtask conformance`: {problems:?}"
+    );
+}
+
+// --- issue #149: every command produces what it declares ---------------------------------------
+
+/// The registries plus what the command half reads: verbs, a read-only command with two
+/// examples, and a register of exemptions.
+fn command_registries() -> Scratch {
+    let repo = registries();
+    repo.write("docs/contracts/verbs.yaml", VERBS);
+    repo.write(
+        "docs/contracts/commands/process.yaml",
+        format!("{PROCESS_COMMANDS}{GET_PROCESS}"),
+    );
+    repo
+}
+
+const VERBS: &str = r"version: 1
+verbs:
+  - verb: get
+    mutating: false
+    pipeline_role: producer
+  - verb: kill
+    mutating: true
+    pipeline_role: consumer
+  - verb: watch
+    mutating: false
+    pipeline_role: stream producer
+";
+
+const GET_PROCESS: &str = r#"  - id: ono.process.get
+    verb: get
+    target: process
+    summary: Enumerate processes.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.process/1>
+    provider_capability: process.list
+    privilege: none
+    streaming: true
+    phase: C
+    examples: ["get process", "get process 4419"]
+"#;
+
+fn command_suite(repo: &Scratch) -> String {
+    generate(repo.path()).expect("generation must succeed")[1]
+        .contents
+        .clone()
+}
+
+#[test]
+fn should_run_an_example_its_contracts_let_run_against_the_declared_output() {
+    let suite = command_suite(&command_registries());
+    assert!(
+        suite.contains(r#"example: "get process","#)
+            && suite.contains(r#"output: "stream<ono.process/1>","#),
+        "a read-only, unprivileged example is held to the command's declared output:\n{suite}"
+    );
+}
+
+#[test]
+fn should_skip_an_example_whose_verb_mutates_and_say_why() {
+    let suite = command_suite(&command_registries());
+    assert!(
+        !suite.contains(r#"example: "kill process 1","#),
+        "an example that changes the system never runs in the gate:\n{suite}"
+    );
+    assert!(
+        suite.contains("`ono.process.kill` `kill process 1` — runs `ono.process.kill`, whose verb `kill` changes the system"),
+        "the suite says why it did not run it:\n{suite}"
+    );
+    assert!(
+        suite.contains("- `ono.process.kill` —"),
+        "a command none of whose examples runs is named at the head of the suite:\n{suite}"
+    );
+}
+
+#[test]
+fn should_skip_an_example_whose_output_schema_is_still_deferred() {
+    let repo = command_registries();
+    repo.write(
+        "docs/contracts/schemas/deferred.yaml",
+        "version: 1\ndeferred:\n  - id: ono.process/1\n    phase: C\n    required_by: [ono.process.get]\n",
+    );
+    let suite = command_suite(&repo);
+    assert!(
+        !suite.contains(r#"example: "get process","#) && suite.contains("deferred.yaml"),
+        "a declared output nobody has written yet cannot be held to anything:\n{suite}"
+    );
+}
+
+#[test]
+fn should_carry_an_exempted_example_and_its_reason_into_the_suite() {
+    let repo = command_registries();
+    repo.write(
+        "docs/contracts/conformance/command_examples.yaml",
+        "version: 1\nexemptions:\n  - command: ono.process.get\n    example: get process 4419\n    reason: names a process a test host need not run.\n",
+    );
+    let suite = command_suite(&repo);
+    assert!(
+        !suite.contains(r#"example: "get process 4419","#)
+            && suite.contains("exempt: names a process a test host need not run."),
+        "an exempted example does not run, and the reason is in the suite:\n{suite}"
+    );
+}
+
+#[test]
+fn should_refuse_an_exemption_naming_an_example_no_command_documents() {
+    let repo = command_registries();
+    repo.write(
+        "docs/contracts/conformance/command_examples.yaml",
+        "version: 1\nexemptions:\n  - command: ono.process.get\n    example: get process 1\n    reason: stale.\n",
+    );
+    let error = generate(repo.path()).expect_err("a stale exemption must stop generation");
+    assert!(
+        error.detail.contains("get process 1") && error.detail.contains("no command documents"),
+        "the refusal names the stale entry: {}",
+        error.detail
+    );
+}
+
+#[test]
+fn should_refuse_an_exemption_for_an_example_the_contracts_already_skip() {
+    let repo = command_registries();
+    repo.write(
+        "docs/contracts/conformance/command_examples.yaml",
+        "version: 1\nexemptions:\n  - command: ono.process.kill\n    example: kill process 1\n    reason: redundant.\n",
+    );
+    let error = generate(repo.path()).expect_err("a redundant exemption must stop generation");
+    assert!(
+        error.detail.contains("kill process 1") && error.detail.contains("already skip"),
+        "the refusal names the redundant entry: {}",
+        error.detail
+    );
+}
+
+#[test]
+fn should_refuse_an_exemption_without_a_reason() {
+    let repo = command_registries();
+    repo.write(
+        "docs/contracts/conformance/command_examples.yaml",
+        "version: 1\nexemptions:\n  - command: ono.process.get\n    example: get process 4419\n",
+    );
+    let error =
+        generate(repo.path()).expect_err("an exemption without a reason must stop generation");
+    assert!(
+        error.detail.contains("reason"),
+        "the refusal says what is missing: {}",
+        error.detail
+    );
+}
+
+#[test]
+fn should_report_a_committed_command_suite_that_drifted_from_the_contracts() {
+    let repo = command_registries();
+    for page in generate(repo.path()).expect("generation") {
+        repo.write(&page.path, &page.contents);
+    }
+    assert_eq!(check_committed(repo.path()), Vec::new());
+    repo.write(
+        "docs/contracts/commands/process.yaml",
+        format!(
+            "{PROCESS_COMMANDS}{}",
+            GET_PROCESS.replace("stream<ono.process/1>", "ono.process/1")
+        ),
+    );
+    let problems = check_committed(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.location == "crates/ono-cli/tests/command_conformance.rs"),
+        "a declaration that changed without the suite following is reported: {problems:?}"
     );
 }

@@ -11,6 +11,11 @@
 //!
 //! The generated file is committed and the gate compares it with what the registries produce, the
 //! same way `docs/reference/` is checked (spec §36.2, `docs/ACCEPTANCE.md` §4.5).
+//!
+//! The same generator writes the commands' half, `crates/ono-cli/tests/command_conformance.rs`:
+//! every documented example the contracts let run hermetically, held to the command's declared
+//! output ([`crate::conformance_examples`], issue #149, ADR-0935). Both files share one harness,
+//! `crates/ono-cli/tests/conformance_harness/`, and one `check_committed`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -139,10 +144,15 @@ pub fn generate(root: &Path) -> Result<Vec<Page>, GenerateError> {
     }
     contents.push_str("    ]).await;\n}\n");
 
-    Ok(vec![Page {
-        path: SUITE.to_owned(),
-        contents,
-    }])
+    Ok(vec![
+        Page {
+            path: SUITE.to_owned(),
+            contents,
+        },
+        // The commands' half: every documented example the contracts let run, held to the
+        // declared output (issue #149, ADR-0935).
+        crate::conformance_examples::generate(root)?,
+    ])
 }
 
 /// Writes the generated suite into the tree.
@@ -183,9 +193,9 @@ pub fn check_committed(root: &Path) -> Vec<Problem> {
             Ok(_) => problems.push(Problem {
                 location: page.path.clone(),
                 detail:
-                    "does not match what docs/contracts/providers/ and docs/contracts/schemas/ \
-                         produce; run `cargo xtask conformance` (spec §35.3). If the difference \
-                         is deliberate, the declaration is where it belongs, not the suite"
+                    "does not match what docs/contracts/ produces; run `cargo xtask conformance` \
+                         (spec §35.3, issue #149). If the difference is deliberate, the \
+                         declaration is where it belongs, not the suite"
                         .to_owned(),
             }),
             Err(_) => problems.push(Problem {
