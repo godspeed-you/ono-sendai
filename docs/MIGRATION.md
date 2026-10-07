@@ -12,8 +12,9 @@ Temporal & Causal Systems Interface. v0.6 and v0.6.1 have no section because the
 shell that never types `plan` behaves as v0.5 did, the new `change.*` and `recovery.*` settings
 default to the specification's reference configuration, and nothing a v0.6.0 configuration,
 script or plugin relies on changed in v0.6.1 (`docs/releases/v0.6.0.md`, `v0.6.1.md`, under
-*Compatibility*). Section 10 is v0.6.2, the KUANG/11 compiler leaving the shell. Section 11 is
-v0.6.3, one setting name retired.
+*Compatibility*). Section 10 is v0.6.2, the KUANG/11 compiler leaving the shell. Sections 11–13 are
+v0.6.3: one setting name retired, `measure`'s median behind an option, and what a script can now
+see differently.
 
 ## 1. Ordinary local use — nothing to do
 
@@ -367,6 +368,45 @@ From v0.6.3 a plain `measure` keeps constant state — `count`, `sum`, `mean`, `
 
 Asking holds the distribution again, under the same materialization budget as before. A script
 that read `median` from a plain `measure` reads `null` now; add `--median`.
+
+## 13. What a script can see differently after v0.6.3
+
+*(GitHub milestone `v0.6.3`; ADR-0929)*
+
+**Nothing a correct script relied on was taken away, but some answers are now stricter or richer.**
+Each item below is a contract the release made true; check a script that parses the old shape.
+
+- **A wrongly typed evaluated argument is refused** (#168, ADR-0937). `get command --verb ["get"]`
+  used to drop the filter and answer the whole registry; it now fails with
+  `Ono-Sendai-E0201 type.mismatch` naming the option, the declared and the received type. A value
+  that fits — `--verb ("get")`, `--verb $verb` holding a string — behaves as the word would.
+- **Refusals print the fields that decided them** (#180, ADR-0938). After the message and before
+  the help, a refusal shows `key: value` lines such as `stage: sort`, `limit: 2`, `consumed: 3`,
+  `setting: limits.materialize_items`. A script that read a fixed number of stderr lines
+  (`2>&1 | head -2`) reads a different part of it now; catch the error (`catch e { $e.name }`)
+  instead of parsing the text.
+- **A budget of zero is refused as `resource.materialization_limit`** (Ono-Sendai-E1103, #183,
+  ADR-0934) before the stage reads, where it used to fail on the first value with
+  `resource.item_limit` (E1101).
+- **`type`, `inspect`, `inspect limits` and `get context` answer records** — `ono.type-info/1`,
+  `ono.inspection/1`, `ono.limit/1`, `ono.context/1` — as their contracts always declared, instead
+  of plain maps (#149, ADR-0935). `| to json` carries every declared field, so a field a map used to
+  omit may now appear as `null`.
+- **`explain` with a quoted, braced or `$variable` subject is a producer** (#173, ADR-0942):
+  `explain "get process | sort pid" | to json` serialises the plan. The unquoted whole-line form is
+  unchanged. A subject that would have to run code to be explained — `$( … )` in a quoted subject —
+  is refused, and a prefix-assignment value that could run code is shown as written rather than
+  evaluated (ADR-0939). `get process | explain "…"` and the library's `ono:explain` stage are gone:
+  `explain` is the shell's.
+- **`to`'s formats are a closed list**, `jsonl` among them (#214, ADR-0954); a misspelt format is
+  refused, naming the nearest format.
+- **A background job may not change directory** (ADR-0955): `cd`, `enter <dir>` and a restoring
+  `leave` inside `… &` are refused with `type.mismatch`, because a job shares the shell's one
+  working directory. Change directory before backgrounding, or pass absolute paths.
+- **A redirected stream whose reader leaves ends that line with status 141** and the shell carries
+  on; the shell itself exits with 141 only when its own standard output is gone.
+- **`ono --complete '<line>' [--cursor N]`** is new (#176, ADR-0945): one `ono.completion/1` JSON
+  document of what Tab would offer, with `complete: false` when the set was cut short.
 
 ## What to read next
 

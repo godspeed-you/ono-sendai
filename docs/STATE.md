@@ -34,10 +34,12 @@ request.
 git push origin implementation && git push origin --tags
 ```
 
-**The workspace declares `0.6.2`.** `v0.6.2`, the Verification Foundation over `v0.6.1`, is
-tagged, published (2026-09-25) and on `main`; its milestone is closed. Its note, with the
-traceability of all 24 issues, is `docs/releases/v0.6.2.md`, and its run record
-`docs/runs/v0.6.2-2026-09-24.md`; every earlier release has its note beside it in
+**The workspace declares `0.6.3`.** `v0.6.3`, Language and Contract Stabilization over `v0.6.2`, is
+implemented on `implementation` and qualified by `scripts/release-check.sh`; it is **not tagged,
+published or on `main`** — promotion is the user's (AGENTS.md §12.1). Its note, with the traceability
+of all 21 issues (the milestone's 20 and #280, ADR-0929), is `docs/releases/v0.6.3.md`, and its run
+record `docs/runs/v0.6.3-2026-10-07.md`. `v0.6.2`, the Verification Foundation, is tagged, published
+(2026-09-25) and on `main`; every earlier release has its note beside it in
 `docs/releases/`, and `gh release list` shows what is published.
 
 ---
@@ -110,8 +112,9 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 ## What is left, and why
 
 **v0.7 is the next tranche** (above), and nothing of it is started. The known problems are in the
-tracker, by release milestone (`v0.6.3` … `v0.10.0`); `v0.6.2` — the test suite, the harness, CI,
-packaging, release tooling and binary size, including #124–#127 — is implemented. Promoting `implementation` to `main` is the user's
+tracker, by release milestone (`v0.6.4` … `v0.10.0`); `v0.6.2` — the test suite, the harness, CI,
+packaging, release tooling and binary size — and `v0.6.3` — command contracts, errors and
+diagnostics, the shell language, pipelines and completion — are implemented. Promoting `implementation` to `main` is the user's
 decision; an agent carries it out only when told to, in that request (AGENTS.md §12.1).
 
 ---
@@ -154,6 +157,20 @@ gh issue list --label class-c    # the large ones, a tranche each
 - `docs/contracts/hardening/streaming.yaml` and two code comments still illustrate `join (get socket) --on pid`, which cannot work (sockets carry no pid).
 - Command conformance skips every `privilege: conditional` command (`get file`, `get socket`, `get container`, …); running them needs a contract field saying the example is safe unprivileged.
 - `ono_pipeline::materialize`/`materialize_with` have no production callers.
+
+- `xtask/src/bindings.rs`'s doc comment says "Sixty-five stable commands" are bound elsewhere; the register lists about 81.
+- ADR-0496's incremental neighbourhood is still not delivered: every spatial command and every trace builds globally, which #177 now shows in `explain` but does not remove; `trace <target>` reads the whole target even for one object (`SharedSnapshots::one`).
+- The completion completeness tests share the process-wide provider cache, so each test asks a different target; a per-test cache would make them independent.
+- Case 382 and the PTY incomplete-marker test rely on the package database holding more than 50 `lib…` packages (true on Debian/Ubuntu and in the image).
+- `println!` sites still exit 101 on a closed stdout: `ono -c 'help' | head -c0` (builtin.rs:340,366), plugins.rs:270,275,360,385, context.rs:645 — the stdout side of the known `help | head` entry.
+- explain's option-class post-pass (ADR-0940) and the mutation-operation pass cover only the head stage list, not the lists after `&&`/`||`.
+- 52 of the 111 command-conformance examples are declared possibly empty in a fresh environment (`may_be_empty`, ADR-0941); fixtures (recorded history, a fixture plugin, a seeded plan) would let them check a schema.
+- A background job's native commands with relative paths resolve against the foreground's *current* directory (the process has one), so a foreground `cd` after the job started redirects them; fixing it needs providers to be handed a working directory (ADR-0955).
+- The live view (`live.rs`) still collects its failures until the view closes.
+- `tail file` follows by default, so `tail file x | to json > f` never ends — an instance of the collecting-serializer entry above.
+- On shell exit, a job child that ignores SIGTERM is left running after the 2 s wait.
+- `crates/ono-cli/tests/change_gates.rs` plans against `get service | take 50` on the live host; transient docker units appearing and vanishing mid-test (`run-docker-netns-….mount`, `docker-….scope`) give E1711 change.target_unresolved.
+- Background jobs start with an empty KUANG host (`JobSnapshot::into_session` builds fresh `SessionTables`), so a job using a package command loads its own instance.
 
 **Found during the v0.6.2 run (2026-09-24).** Outside the milestone, so not fixed in it (v0.6.1 §24):
 

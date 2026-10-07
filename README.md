@@ -97,9 +97,9 @@ Each [GitHub release](https://github.com/godspeed-you/ono-sendai/releases) carri
 
 ```bash
 # Debian, Ubuntu and relatives
-sudo apt install ./ono_0.6.2_amd64.deb          # or ono_0.6.2_arm64.deb
+sudo apt install ./ono_0.6.3_amd64.deb          # or ono_0.6.3_arm64.deb
 # Fedora, RHEL and relatives
-sudo dnf install ./ono-0.6.2-1.x86_64.rpm       # or ono-0.6.2-1.aarch64.rpm
+sudo dnf install ./ono-0.6.3-1.x86_64.rpm       # or ono-0.6.3-1.aarch64.rpm
 
 chsh -s /usr/bin/ono                             # make it your login shell
 ```
@@ -137,7 +137,7 @@ before you install anything. `cosign` is the one tool you add
 ([sigstore/cosign](https://github.com/sigstore/cosign)); everything else is coreutils.
 
 ```bash
-VERSION=0.6.2; ARCH=amd64
+VERSION=0.6.3; ARCH=amd64
 BASE=https://github.com/godspeed-you/ono-sendai/releases/download/v$VERSION
 curl -fLO $BASE/ono_${VERSION}_${ARCH}.deb
 curl -fLO $BASE/SHA256SUMS
@@ -501,13 +501,14 @@ in this shell is a side effect of telling the truth about the system.
 
 ## Project status
 
-**Current release: v0.6.2.** All ten phases of the specification are implemented, with the External
+**Current release: v0.6.3.** All ten phases of the specification are implemented, with the External
 Command Adaptation Layer (v0.3), the Spatial Systems Interface (v0.4), the hardening layer (v0.4.1),
 the Temporal & Causal Systems Interface (v0.5) and Prospective Change, Protection & Recovery (v0.6)
-on top of them. v0.6.1 polished v0.6.0; v0.6.2 is the verification foundation under both: a 22 MB
-binary instead of 46 MB, held to a size budget wherever it is packaged, KUANG/11 components compiled
-once at install, a static core build, and a test suite and release tooling that give the same answer
-on a busy machine as on a quiet one (`docs/releases/v0.6.2.md`). Every ticked box of
+on top of them. v0.6.1 polished v0.6.0; v0.6.2 is the verification foundation under both; v0.6.3
+stabilizes the language and the contracts: functions that are pipeline stages wherever they stand,
+blocks that stream inside functions and run as background jobs, `to jsonl`, an `explain` whose plan
+is data, completion outside a terminal, and command examples run against the schemas their commands
+declare (`docs/releases/v0.6.3.md`). Every ticked box of
 `docs/ACCEPTANCE.md` names an automated proof, and no box is open. Primary platform is Linux (x86_64
 and aarch64). Four further enhancement specifications — Presentation Consolidation & Rich TTY
 (v0.7), Deck Workspace Composition (v0.8), Live View Integration (v0.9) and Native AI Assistance

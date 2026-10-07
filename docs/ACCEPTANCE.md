@@ -192,7 +192,8 @@ huge stdout and an endless stream) build the rest (ADR-0333):
       with a full frame each in under a second.
 - [x] first completion results < 50 ms from local metadata —
       `ono-command/tests/completion.rs::should_stay_far_inside_the_first_completion_budget`:
-      a thousand registry completions in under a second.
+      a thousand registry completions in under a second; and end to end, without a terminal, by
+      `060-performance-budgets`' `first-completion` (`ono --complete 'get pro'`, issue #176).
 - [x] parse and highlight update < 5 ms for ordinary command lines — `060-performance-budgets`
       bounds a whole pipeline run, startup included, at 50 ms; the parser's own measurement
       (2.4 microseconds for a four-stage line) is in `crates/ono-parser/tests/robustness.rs` and
