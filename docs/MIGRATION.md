@@ -352,6 +352,22 @@ ceiling, and the old name is read as that key:
   now; write `limits.history_bytes_total` instead ``. Rewriting the line silences it. The notice is
   not a configuration problem: `get config --problems` does not list it.
 
+## 12. `measure` reports the median when it is asked for
+
+*(v0.2 §19, v0.4.1 §22.1; issue #174; ADR-0953)*
+
+**One field moved behind an option.** `measure` used to hold every value it read in order to
+report a median, which made it a global materialization bounded by `limits.materialize_items`.
+From v0.6.3 a plain `measure` keeps constant state — `count`, `sum`, `mean`, `min`, `max` and
+`stddev` — holds nothing, and answers on an unbounded stream after every value. Its `median` and
+`percentiles` fields are `null` unless you ask:
+
+- `… | measure memory --median` reports the median;
+- `… | measure memory --percentiles [90, 99]` reports those percentiles.
+
+Asking holds the distribution again, under the same materialization budget as before. A script
+that read `median` from a plain `measure` reads `null` now; add `--median`.
+
 ## What to read next
 
 - [`SECURITY.md`](../SECURITY.md) — the trust boundaries and how to report a vulnerability.
