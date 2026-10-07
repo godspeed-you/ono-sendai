@@ -131,7 +131,11 @@ fn should_resolve_every_stage_of_a_read_pipeline() {
             id: "ono.data.to".to_owned()
         }
     );
-    assert_eq!(third.output(), "string | bytes");
+    assert_eq!(
+        third.output(),
+        "string | bytes | stream<string>",
+        "the plan reports the output `to` declares, which since ADR-0954 includes `jsonl`'s lines"
+    );
 }
 
 #[test]
