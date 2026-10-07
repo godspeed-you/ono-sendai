@@ -484,6 +484,50 @@ fn should_stop_a_streaming_serializer_on_ctrl_c_and_keep_the_prompt() {
     let _ = shell.wait_timeout(Duration::from_secs(20));
 }
 
+#[test]
+fn should_give_the_prompt_back_when_a_fed_program_is_stopped_with_ctrl_z() {
+    // Review C3: the program a streaming serializer feeds is the foreground job, so Ctrl-Z stops
+    // it — and the shell, waiting for the next value of a source that never ends, did not notice
+    // and never came back. A stopped fed program is a stopped job: the prompt returns with the
+    // status of a stopped command, 128 + SIGTSTP, and `jobs` lists it.
+    let directory = scratch();
+    let source = directory.write("jsonl/source.log", "first\n");
+    let mut shell = support::interactive_shell_in(&directory);
+    read_until(&mut shell, ">", Duration::from_secs(10));
+
+    shell
+        .write_all(
+            format!(
+                "tail file {} --lines 1 --follow | to jsonl | cat\n",
+                source.display()
+            )
+            .as_bytes(),
+        )
+        .expect("the terminal accepts input");
+    let seen = read_until(&mut shell, "\"first\"", Duration::from_secs(20));
+    assert!(
+        seen.contains("\"first\""),
+        "the program got the first line while the source was open; saw:\n{seen}"
+    );
+
+    shell
+        .write_all(&[0x1a])
+        .expect("the terminal accepts Ctrl-Z");
+    shell
+        .write_all(b"echo \"after-$?\"; jobs\n")
+        .expect("the terminal accepts input");
+    let seen = read_until(&mut shell, "after-148", Duration::from_secs(20));
+    assert!(
+        seen.contains("after-148"),
+        "Ctrl-Z stopped the fed program and gave the prompt back; saw:\n{seen}"
+    );
+
+    shell
+        .write_all(b"kill %1; exit 0\n")
+        .expect("the terminal accepts input");
+    let _ = shell.wait_timeout(Duration::from_secs(20));
+}
+
 /// `bash -c script`, with its standard output read line by line as it arrives.
 struct BashReading {
     child: Child,

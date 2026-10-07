@@ -204,7 +204,10 @@ pub(super) fn streams_bytes(bound: &[(&'static CommandContract, BoundArguments)]
 /// Where a streaming serializer's lines go as they are produced, and whether whoever reads them
 /// is still there (ADR-0954).
 pub(super) struct StreamedOutput {
-    writer: Box<dyn Write>,
+    /// Where the lines are written on the driver's own thread: a file or the shell's stdout.
+    writer: Option<Box<dyn Write>>,
+    /// Where the lines go when they feed a program: a thread that writes them (review C3).
+    feeder: Option<Feeder>,
     /// Set once the reader of a pipe has gone away, by a watcher that notices it without a write.
     reader_gone: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// The watcher, stopped — and its copy of the descriptor closed — when the output is done with.
@@ -226,7 +229,8 @@ impl StreamedOutput {
                 .map(watch_reader);
             let (reader_gone, watching) = watched.unzip();
             return Ok(Self {
-                writer: Box::new(file),
+                writer: Some(Box::new(file)),
+                feeder: None,
                 reader_gone,
                 watching,
                 own: false,
@@ -239,7 +243,8 @@ impl StreamedOutput {
             .map(watch_reader);
         let (reader_gone, watching) = watched.unzip();
         Ok(Self {
-            writer: Box::new(std::io::stdout()),
+            writer: Some(Box::new(std::io::stdout())),
+            feeder: None,
             reader_gone,
             watching,
             own: true,
@@ -247,15 +252,39 @@ impl StreamedOutput {
     }
 
     /// The output that writes into a program's standard input, watching for the program leaving.
+    ///
+    /// The lines are written by a thread of their own, handed over one at a time: a program
+    /// stopped with Ctrl-Z stops reading, and a write into its full pipe would hold whoever made
+    /// it for as long as the program stays stopped. The driver hands a line over only when the
+    /// thread can take it, so it stays free to notice the stop (review C3), and nothing more than
+    /// the one line in hand is held for a slow reader (§28.2).
     pub(super) fn into_program(input: std::os::fd::OwnedFd) -> Self {
         let watched = input.try_clone().ok().map(watch_reader);
         let (reader_gone, watching) = watched.unzip();
         Self {
-            writer: Box::new(std::fs::File::from(input)),
+            writer: None,
+            feeder: Some(Feeder::start(std::fs::File::from(input))),
             reader_gone,
             watching,
             own: false,
         }
+    }
+
+    /// Where a fed program's lines are handed over, when the output feeds one.
+    pub(super) fn feeder(&self) -> Option<tokio::sync::mpsc::Sender<Vec<u8>>> {
+        self.feeder.as_ref().map(|feeder| feeder.lines.clone())
+    }
+
+    /// Why the thread writing a fed program's lines stopped, if a write failed for a reason other
+    /// than the program having left.
+    pub(super) fn feed_failure(&self) -> Option<std::io::Error> {
+        self.feeder.as_ref().and_then(|feeder| {
+            feeder
+                .failed
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+        })
     }
 
     /// Whether the lines go to the shell's own standard output.
@@ -270,10 +299,16 @@ impl StreamedOutput {
     /// The write's own error; a broken pipe is the reader having gone, which the caller decides
     /// the meaning of.
     pub(super) fn write(&mut self, value: &Value) -> std::io::Result<()> {
-        let mut bytes = Vec::new();
-        push_bytes(&mut bytes, value);
-        self.writer.write_all(&bytes)?;
-        self.writer.flush()
+        let bytes = line_of(value);
+        match self.writer.as_mut() {
+            Some(writer) => {
+                writer.write_all(&bytes)?;
+                writer.flush()
+            }
+            // A fed program's lines are handed to its thread by the driver, inside its select,
+            // through `feeder` — never written from here.
+            None => Err(std::io::Error::from(std::io::ErrorKind::Unsupported)),
+        }
     }
 
     /// The flag a watcher sets when the reader of the pipe has gone, if one is watching.
@@ -288,6 +323,54 @@ impl Drop for StreamedOutput {
         // so the end of the lines reaches a fed program the moment the output is done with, not
         // on the watcher's next look (review C7d).
         drop(self.watching.take());
+    }
+}
+
+/// The bytes one value's line is written as.
+pub(super) fn line_of(value: &Value) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    push_bytes(&mut bytes, value);
+    bytes
+}
+
+/// The thread that writes a fed program's lines, and the channel of one line it reads them from.
+///
+/// Dropping the sender is the end of the lines: the thread writes what it holds and closes the
+/// program's input, which is its end of input. A thread blocked in a write to a stopped program
+/// is left to finish when the program is continued, or to fail when it is killed.
+struct Feeder {
+    lines: tokio::sync::mpsc::Sender<Vec<u8>>,
+    failed: std::sync::Arc<std::sync::Mutex<Option<std::io::Error>>>,
+}
+
+impl Feeder {
+    fn start(mut input: std::fs::File) -> Self {
+        let (lines, mut taken) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+        let failed: std::sync::Arc<std::sync::Mutex<Option<std::io::Error>>> =
+            std::sync::Arc::default();
+        let report = std::sync::Arc::clone(&failed);
+        let started = std::thread::Builder::new()
+            .name("ono-feed".to_owned())
+            .spawn(move || {
+                while let Some(line) = taken.blocking_recv() {
+                    if let Err(error) = input.write_all(&line) {
+                        // The program leaving is the watcher's to report; anything else is a
+                        // failure of the write.
+                        if error.kind() != std::io::ErrorKind::BrokenPipe {
+                            *report
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(error);
+                        }
+                        return;
+                    }
+                }
+            });
+        if let Err(error) = started {
+            *failed
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(error);
+        }
+        Self { lines, failed }
     }
 }
 

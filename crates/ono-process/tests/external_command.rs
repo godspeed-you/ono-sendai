@@ -303,6 +303,41 @@ fn should_hand_the_caller_a_pipe_it_writes_the_childs_stdin_into_while_it_runs()
 }
 
 #[test]
+fn should_tell_the_caller_a_started_pipeline_stopped_and_still_file_it_as_a_stopped_job() {
+    // A caller that is busy writing into a started pipeline asks whether it has stopped rather
+    // than waiting on it; asking does not take the news away from `finish_foreground`, which
+    // still answers a stopped pipeline as a stopped job.
+    let outcome = within(DEADLINE, || {
+        let mut executor = Executor::detached();
+        let started = executor
+            .start_piped(
+                &Command::new("/bin/sh")
+                    .arg("-c")
+                    .arg("kill -STOP $$")
+                    .into(),
+            )
+            .expect("the child starts");
+        while !started.has_stopped() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let finished = executor
+            .finish_foreground(started)
+            .expect("the child is waited for");
+        let stopped = matches!(finished, ForegroundOutcome::Stopped { .. });
+        if let Some(job) = finished.stopped() {
+            let _ = executor.signal_job(job, ono_process::Signal::KILL);
+            let _ = executor.signal_job(job, ono_process::Signal::CONT);
+            let _ = executor.wait_job(job, Some(Duration::from_secs(5)));
+        }
+        stopped
+    });
+    assert!(
+        outcome,
+        "the pipeline that stopped is answered as a stopped job"
+    );
+}
+
+#[test]
 fn should_give_the_child_an_empty_stdin_when_it_is_null() {
     let outcome = captured(Command::new("cat").stdin(Input::Null));
     assert_eq!(text(outcome.stdout()), "");

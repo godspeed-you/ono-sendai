@@ -737,6 +737,23 @@ impl Foreground {
             .find_map(|stage| stage.failure.as_ref())
     }
 
+    /// Whether a process of the pipeline has stopped — Ctrl-Z, `SIGTTIN` — without collecting
+    /// the news: [`Executor::finish_foreground`] still sees the stop and files the pipeline as a
+    /// stopped job, as it would have had the shell been waiting on it.
+    #[must_use]
+    pub fn has_stopped(&self) -> bool {
+        if self.running.pgid <= 0 {
+            return false;
+        }
+        matches!(
+            waitid(
+                Id::PGid(Pid::from_raw(self.running.pgid)),
+                WaitPidFlag::WSTOPPED | WaitPidFlag::WNOHANG | WaitPidFlag::WNOWAIT,
+            ),
+            Ok(WaitStatus::Stopped(..))
+        )
+    }
+
     /// Asks every process of the pipeline to stop (`SIGTERM` to the group).
     pub fn terminate(&self) {
         if self.running.pgid > 0 {

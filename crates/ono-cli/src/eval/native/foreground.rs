@@ -421,6 +421,11 @@ pub(super) fn run_native_segment(
         }
     }
 
+    // A fed program that stops — Ctrl-Z — ends the drain, so the shell can take the terminal back
+    // and file it as a stopped job (ADR-0956).
+    let has_stopped = program
+        .as_ref()
+        .map(|started: &ono_process::Foreground| move || started.has_stopped());
     let driven = drive_segment(
         session,
         &handle,
@@ -428,6 +433,7 @@ pub(super) fn run_native_segment(
         draining,
         showing,
         streamed.as_mut(),
+        has_stopped.as_ref().map(|probe| probe as &dyn Fn() -> bool),
     );
     // Whatever is left is left because nobody is reading it any more: cancellation wins over
     // capacity, so a producer behind a stage that stopped does not keep enqueueing (§28.3). That

@@ -108,6 +108,12 @@ pub(super) enum Driven {
     Interrupted,
     /// The reader of a streaming serializer's output went away (ADR-0954).
     ReaderGone,
+    /// A fed program's writing thread took the line in hand.
+    Fed,
+    /// A fed program's writing thread is gone: the program left, or a write failed.
+    FeedEnded,
+    /// The program being fed has stopped — Ctrl-Z (ADR-0956).
+    ProgramStopped,
 }
 
 /// The stage a block-based `each` becomes: one that asks the evaluator, item by item.
@@ -249,6 +255,8 @@ pub(super) struct Drained {
     pub(super) written: usize,
     /// Whether the reader of what was being written went away, which ended the drain.
     pub(super) reader_left: bool,
+    /// Whether the program being fed stopped, which ended the drain (ADR-0956).
+    pub(super) program_stopped: bool,
     /// The per-item failures a streaming serializer's drain reported as they arrived, instead of
     /// collecting them in `failures`: how many, the first of them, and whether any was a
     /// provider's (ADR-0085) — one value kept, however long the stream runs.
@@ -273,13 +281,19 @@ pub(super) fn drive_segment(
     mut draining: Option<ValueStream>,
     mut showing: Option<std::pin::Pin<Box<dyn std::future::Future<Output = Vec<ErrorValue>> + '_>>>,
     mut output: Option<&mut super::result::StreamedOutput>,
+    stopped: Option<&dyn Fn() -> bool>,
 ) -> Eval<Drained> {
     let mut drained = Drained::default();
     let reader_gone = output
         .as_ref()
         .and_then(|output| output.reader_gone().cloned());
+    // A fed program's lines are handed to the thread that writes them inside the select, so a
+    // program that has stopped reading never holds the driver in a write, and its stop is
+    // noticed (ADR-0956). One line is in hand at most: the stream is not read while it is.
+    let feeder = output.as_ref().and_then(|output| output.feeder());
+    let mut pending: Option<Vec<u8>> = None;
     let mut asking = true;
-    while draining.is_some() || showing.is_some() {
+    while draining.is_some() || showing.is_some() || pending.is_some() {
         // Between two items, and before the first. `select!` below only reaches the interrupt
         // branch when nothing else is ready, and a stage running a block is never idle for long
         // enough: the driver leaves the runtime to run the item, and while it is away nothing it
@@ -295,12 +309,24 @@ pub(super) fn drive_segment(
                     Some(request) => Driven::Ask(request),
                     None => Driven::Asked,
                 },
+                permit = async {
+                    match feeder.as_ref() {
+                        Some(feeder) => feeder.reserve().await.ok(),
+                        None => std::future::pending().await,
+                    }
+                }, if pending.is_some() => match permit {
+                    Some(permit) => {
+                        permit.send(pending.take().unwrap_or_default());
+                        Driven::Fed
+                    }
+                    None => Driven::FeedEnded,
+                },
                 event = async {
                     match draining.as_mut() {
                         Some(stream) => stream.recv().await,
                         None => std::future::pending().await,
                     }
-                }, if draining.is_some() => match event {
+                }, if draining.is_some() && pending.is_none() => match event {
                     Some(event) => Driven::Event(event),
                     None => Driven::Drained,
                 },
@@ -320,6 +346,12 @@ pub(super) fn drive_segment(
                         None => std::future::pending().await,
                     }
                 }, if reader_gone.is_some() => Driven::ReaderGone,
+                () = async {
+                    match stopped {
+                        Some(stopped) => program_stopped(stopped).await,
+                        None => std::future::pending().await,
+                    }
+                }, if stopped.is_some() => Driven::ProgramStopped,
             }
         });
         match driven {
@@ -339,6 +371,21 @@ pub(super) fn drive_segment(
             Driven::Asked => asking = false,
             // A streaming serializer's line is written now, and nothing is kept (ADR-0954). A
             // write that finds the reader gone ends the drain as the reader leaving does.
+            Driven::Event(StreamEvent::Value(value)) if feeder.is_some() => {
+                pending = Some(super::result::line_of(&value));
+            }
+            Driven::Fed => drained.written += 1,
+            Driven::FeedEnded => {
+                if let Some(error) = output.as_ref().and_then(|output| output.feed_failure()) {
+                    return Err(super::result::write_failed(error));
+                }
+                drained.reader_left = true;
+                break;
+            }
+            Driven::ProgramStopped => {
+                drained.program_stopped = true;
+                break;
+            }
             Driven::Event(StreamEvent::Value(value)) => match output.as_deref_mut() {
                 Some(output) => match output.write(&value) {
                     Ok(()) => drained.written += 1,
@@ -380,6 +427,18 @@ pub(super) fn drive_segment(
         }
     }
     Ok(drained)
+}
+
+/// Resolves once the program being fed has stopped.
+async fn program_stopped(stopped: &dyn Fn() -> bool) {
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(40));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tick.tick().await;
+        if stopped() {
+            return;
+        }
+    }
 }
 
 /// Resolves once a watched reader has gone away.
