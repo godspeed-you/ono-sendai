@@ -8,9 +8,9 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 103 examples run; 250 are not run, each for the reason listed at the end of this file.
+//! 106 examples run; 247 are not run, each for the reason listed at the end of this file.
 //!
-//! Commands no example of which runs (163):
+//! Commands no example of which runs (161):
 //!
 //! - `ono.change.plan` — exempt: plans to replace `/etc/nginx/nginx.conf` from `./nginx.conf`; a scratch directory has neither file.
 //! - `ono.change-plan.inspect` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.
@@ -79,8 +79,6 @@
 //! - `ono.capability.revoke` — runs `ono.capability.revoke`, whose verb `revoke` changes the system (verbs.yaml)
 //! - `ono.assistant.ask` — runs `ono.assistant.ask`, whose capability `assistant.ask` is `mutate` rather than `read`
 //! - `ono.meta.help` — runs `ono.meta.help`, which declares `ono.help-page/1` — a schema schemas/deferred.yaml says a later phase writes
-//! - `ono.meta.type` — runs `ono.meta.type`, which declares `ono.type-info/1` — a schema schemas/deferred.yaml says a later phase writes
-//! - `ono.meta.inspect` — runs `ono.meta.inspect`, which declares `ono.inspection/1` — a schema schemas/deferred.yaml says a later phase writes
 //! - `ono.meta.explain` — runs `ono.meta.explain`, which declares `ono.execution-plan/1` — a schema schemas/deferred.yaml says a later phase writes
 //! - `ono.config.set` — runs `ono.config.set`, whose verb `set` changes the system (verbs.yaml)
 //! - `ono.context.leave` — runs `leave`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
@@ -605,6 +603,39 @@ fn should_produce_what_ono_audit_get_declares_when_example_1_runs() {
         command: "ono.audit.get",
         example: "get audit --plugin dev.example.packet-eye",
         output: "stream<ono.plugin-audit-event/1>",
+    });
+}
+
+/// `get process | type`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_meta_type_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.meta.type",
+        example: "get process | type",
+        output: "ono.type-info/1",
+    });
+}
+
+/// `type get socket`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_meta_type_declares_when_example_2_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.meta.type",
+        example: "type get socket",
+        output: "ono.type-info/1",
+    });
+}
+
+/// `get service | where state == failed | take 1 | inspect`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_meta_inspect_declares_when_example_2_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.meta.inspect",
+        example: "get service | where state == failed | take 1 | inspect",
+        output: "stream<ono.inspection/1>",
     });
 }
 
@@ -1426,10 +1457,7 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.assistant.ask` `ask assistant ops-assist "why did image-worker fail?"` — runs `ono.assistant.ask`, whose capability `assistant.ask` is `mutate` rather than `read`
 // - `ono.meta.help` `help` — runs `ono.meta.help`, which declares `ono.help-page/1` — a schema schemas/deferred.yaml says a later phase writes
 // - `ono.meta.help` `help get process` — runs `ono.meta.help`, which declares `ono.help-page/1` — a schema schemas/deferred.yaml says a later phase writes
-// - `ono.meta.type` `get process | type` — runs `ono.meta.type`, which declares `ono.type-info/1` — a schema schemas/deferred.yaml says a later phase writes
-// - `ono.meta.type` `type get socket` — runs `ono.meta.type`, which declares `ono.type-info/1` — a schema schemas/deferred.yaml says a later phase writes
-// - `ono.meta.inspect` `inspect @1` — runs `ono.meta.inspect`, which declares `ono.inspection/1` — a schema schemas/deferred.yaml says a later phase writes
-// - `ono.meta.inspect` `get service | where state == failed | take 1 | inspect` — runs `ono.meta.inspect`, which declares `ono.inspection/1` — a schema schemas/deferred.yaml says a later phase writes
+// - `ono.meta.inspect` `inspect @1` — refers to an earlier result, which the scratch shell does not have
 // - `ono.meta.explain` `explain get process` — runs `ono.meta.explain`, which declares `ono.execution-plan/1` — a schema schemas/deferred.yaml says a later phase writes
 // - `ono.meta.explain` `explain get file /tmp --recursive | remove file` — runs `ono.meta.explain`, which declares `ono.execution-plan/1` — a schema schemas/deferred.yaml says a later phase writes
 // - `ono.config.set` `set config prompt.path = "smart"` — runs `ono.config.set`, whose verb `set` changes the system (verbs.yaml)

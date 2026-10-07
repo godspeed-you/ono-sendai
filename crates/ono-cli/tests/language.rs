@@ -265,11 +265,11 @@ fn should_name_the_alias_and_its_expansion_when_explain_inspects_the_resolution(
 
 #[test]
 fn should_evaluate_now_to_a_timestamp() {
-    let run = ono("let t = (now()); $t | type | to json");
+    let run = ono("let t = (now()); $t | type | select type schema | to json");
     run.assert_success();
     assert_eq!(
         run.stdout(),
-        "[{\"type\":\"timestamp\",\"schema\":null,\"fields\":null}]\n",
+        "[{\"type\":\"timestamp\",\"schema\":null}]\n",
         "language.yaml `builtin_functions`: `now()` returns a timestamp, got stdout {:?} \
          stderr {:?}",
         run.stdout(),
@@ -322,11 +322,11 @@ fn should_compare_a_file_time_against_an_iso_8601_literal() {
 
 #[test]
 fn should_type_an_iso_8601_literal_as_a_timestamp() {
-    let run = ono("let t = (2000-01-01T00:00:00Z); $t | type | to json");
+    let run = ono("let t = (2000-01-01T00:00:00Z); $t | type | select type schema | to json");
     run.assert_success();
     assert_eq!(
         run.stdout(),
-        "[{\"type\":\"timestamp\",\"schema\":null,\"fields\":null}]\n",
+        "[{\"type\":\"timestamp\",\"schema\":null}]\n",
         "spec §6.3 / §10.2: `2000-01-01T00:00:00Z` is a timestamp value, got stdout {:?} \
          stderr {:?}",
         run.stdout(),

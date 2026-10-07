@@ -21,9 +21,3 @@ deferred:
   - id: ono.help-page/1
     phase: "D"
     required_by: [ono.meta.help]
-  - id: ono.inspection/1
-    phase: "D"
-    required_by: [ono.meta.inspect]
-  - id: ono.type-info/1
-    phase: "D"
-    required_by: [ono.meta.type]

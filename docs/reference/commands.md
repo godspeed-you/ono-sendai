@@ -3016,7 +3016,7 @@ Show a detailed field, value and provenance view of any value.
 | stability | stable |
 | phase | D |
 | input | `null | any` |
-| output | `ono.inspection/1` |
+| output | `stream<ono.inspection/1>` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
 

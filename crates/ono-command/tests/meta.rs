@@ -13,13 +13,17 @@ use fixture::{FixtureProvider, providers, run};
 use ono_core::ErrorCode;
 use ono_value::{ErrorValue, Value};
 
-/// One entry of a map value.
+/// One field of a record — `type` and `inspect` answer `ono.type-info/1` and `ono.inspection/1`
+/// records — or one entry of a map, which the field lists inside them are.
 fn field<'a>(value: &'a Value, name: &str) -> &'a Value {
-    value
-        .as_map()
-        .unwrap_or_else(|_| panic!("expected a map, got {}", value.type_name()))
-        .get(name)
-        .unwrap_or_else(|| panic!("expected a `{name}` entry"))
+    match value {
+        Value::Record(record) => record.get(name),
+        other => other
+            .as_map()
+            .unwrap_or_else(|_| panic!("expected a record or a map, got {}", other.type_name()))
+            .get(name),
+    }
+    .unwrap_or_else(|| panic!("expected a `{name}` entry"))
 }
 
 // --- type --------------------------------------------------------------------------------------

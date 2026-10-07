@@ -61,7 +61,7 @@ commands:
     stability: stable
     argument_mode: words
     input: "null | any"
-    output: ono.inspection/1
+    output: stream<ono.inspection/1>   # one inspection per value it is given (issue #149, ADR-0935)
     provider_capability: null
     selectors:
       - {name: subject, type: value, doc: "The value to inspect; omitted when one arrives through the pipeline or is selected interactively."}

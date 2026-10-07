@@ -1,0 +1,36 @@
+# TypeInfo. Spec §9.1 Meta: "`type <expr|value>` | Show type/schema. | `TypeInfo`". Written from
+# what `type` produces (issue #149, ADR-0935): over a value that arrives through the pipeline it
+# describes that value; given a pipeline as words it describes the pipeline's declared output
+# without running it (the v0.2 §11.3 pre-flight type), so a reader can ask what a command yields
+# before asking for it. Output of `type` (`docs/contracts/commands/meta.yaml` → `ono.meta.type`).
+id: ono.type-info/1
+name: TypeInfo
+summary: The type of a value, or of what a pipeline declares it produces, with a record's schema and fields.
+fields:
+  subject:
+    type: string
+    nullable: true
+    doc: >-
+      The pipeline described, as it was written — `get socket` for `type get socket`. Null when
+      the subject is a value that arrived through the pipeline.
+  type:
+    type: string
+    required: true
+    doc: >-
+      The type: a value's own type name (`record`, `int`, `string`, `error`, …), or the pipeline's
+      declared output as its contract spells it (`stream<ono.socket/1>`).
+  schema:
+    type: string
+    nullable: true
+    doc: The schema id of a record, or of a stream's records; null for a value that is not one.
+  fields:
+    type: list<map>
+    nullable: true
+    doc: >-
+      One entry per field of that schema, in its order: `name`, `type` (as the schema declares
+      it), `nullable` and `doc`. Null where `schema` is.
+  code:
+    type: string
+    nullable: true
+    doc: For an error value, its stable name from errors.yaml; null for anything else.
+# No `default_view`: a rendered type shows every field, as the untagged answer it replaces did.

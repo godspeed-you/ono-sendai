@@ -396,42 +396,48 @@ fn subject_text(selector: Option<&Value>) -> Option<String> {
     }
 }
 
-/// What `type` reports about a value that is already in hand.
+/// What `type` reports about a value that is already in hand, as an `ono.type-info/1` record.
 fn type_of_value(value: &Value) -> Value {
-    let mut described = MapValue::new();
-    described.insert("type".into(), Value::string(value.type_name()));
-    match value {
-        Value::Record(record) => {
-            described.insert(
-                "schema".into(),
-                Value::string(&record.schema_id().to_string()),
-            );
-            described.insert("fields".into(), field_list(record.schema()));
-        }
-        Value::Error(error) => {
-            described.insert("code".into(), Value::string(error.code().name()));
-        }
-        _ => {
-            described.insert("schema".into(), Value::Null);
-            described.insert("fields".into(), Value::Null);
-        }
-    }
-    Value::Map(Arc::new(described))
+    let (schema, fields, code) = match value {
+        Value::Record(record) => (
+            Value::string(&record.schema_id().to_string()),
+            field_list(record.schema()),
+            Value::Null,
+        ),
+        Value::Error(error) => (Value::Null, Value::Null, Value::string(error.code().name())),
+        _ => (Value::Null, Value::Null, Value::Null),
+    };
+    schema_record(
+        "ono.type-info",
+        "ono.meta",
+        vec![
+            ("subject", Value::Null),
+            ("type", Value::string(value.type_name())),
+            ("schema", schema),
+            ("fields", fields),
+            ("code", code),
+        ],
+    )
 }
 
-/// What `type` reports about a pipeline it did not run.
+/// What `type` reports about a pipeline it did not run, as an `ono.type-info/1` record.
 fn type_of_declaration(subject: &str, output: &str, schema: Option<&Schema>) -> Value {
-    let mut described = MapValue::new();
-    described.insert("subject".into(), Value::string(subject));
-    described.insert("type".into(), Value::string(output));
-    described.insert(
-        "schema".into(),
-        schema.map_or(Value::Null, |schema| {
-            Value::string(&schema.id().to_string())
-        }),
-    );
-    described.insert("fields".into(), schema.map_or(Value::Null, field_list));
-    Value::Map(Arc::new(described))
+    schema_record(
+        "ono.type-info",
+        "ono.meta",
+        vec![
+            ("subject", Value::string(subject)),
+            ("type", Value::string(output)),
+            (
+                "schema",
+                schema.map_or(Value::Null, |schema| {
+                    Value::string(&schema.id().to_string())
+                }),
+            ),
+            ("fields", schema.map_or(Value::Null, field_list)),
+            ("code", Value::Null),
+        ],
+    )
 }
 
 fn field_list(schema: &Schema) -> Value {
@@ -445,29 +451,48 @@ fn field_list(schema: &Schema) -> Value {
     }))
 }
 
-/// The detailed view of one value: fields with their access, provenance, and — for an error — the
-/// whole causal chain (spec §15.2, §16.2, §25.2).
+/// The detailed view of one value as an `ono.inspection/1` record: fields with their access,
+/// provenance, and — for an error — the whole causal chain (spec §15.2, §16.2, §25.2).
 fn inspection(value: &Value) -> Value {
-    let mut described = MapValue::new();
-    described.insert("type".into(), Value::string(value.type_name()));
-    match value {
-        Value::Record(record) => {
-            described.insert(
-                "schema".into(),
-                Value::string(&record.schema_id().to_string()),
-            );
-            described.insert("identity".into(), Value::Map(Arc::new(record.identity())));
-            described.insert("fields".into(), inspected_fields(record));
-            described.insert("provenance".into(), provenance_map(record.provenance()));
-        }
-        Value::Error(error) => {
-            described.insert("error".into(), error_map(error));
-        }
-        other => {
-            described.insert("value".into(), other.clone());
-        }
-    }
-    Value::Map(Arc::new(described))
+    let (schema, identity, fields, provenance, error, held) = match value {
+        Value::Record(record) => (
+            Value::string(&record.schema_id().to_string()),
+            Value::Map(Arc::new(record.identity())),
+            inspected_fields(record),
+            provenance_map(record.provenance()),
+            Value::Null,
+            Value::Null,
+        ),
+        Value::Error(error) => (
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            error_map(error),
+            Value::Null,
+        ),
+        other => (
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            other.clone(),
+        ),
+    };
+    schema_record(
+        "ono.inspection",
+        "ono.meta",
+        vec![
+            ("type", Value::string(value.type_name())),
+            ("schema", schema),
+            ("identity", identity),
+            ("fields", fields),
+            ("provenance", provenance),
+            ("error", error),
+            ("value", held),
+        ],
+    )
 }
 
 fn inspected_fields(record: &RecordValue) -> Value {

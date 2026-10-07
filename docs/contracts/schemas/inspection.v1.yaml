@@ -1,0 +1,48 @@
+# Inspection. Spec §9.1 Meta: "`inspect <value>` | Detailed field/value/provenance view. |
+# `Inspection`". Written from what `inspect` produces (issue #149, ADR-0935): one record per value,
+# carrying the three absences of §10.5 as three different words per field, the provenance of
+# §10.7, and, for an error, the whole causal chain of §25.2. It is also the public boundary the
+# command conformance suite observes values through, because it is the one that reports a
+# record's schema id. Output of `inspect` (`docs/contracts/commands/meta.yaml` → `ono.meta.inspect`).
+id: ono.inspection/1
+name: Inspection
+summary: The detailed view of one value — its type, a record's schema, identity, fields with their access, and provenance.
+fields:
+  type:
+    type: string
+    required: true
+    doc: The value's type name — `record`, `error`, `int`, `string`, `bytes`, …
+  schema:
+    type: string
+    nullable: true
+    doc: A record's schema id; null for any other value.
+  identity:
+    type: map
+    nullable: true
+    doc: A record's identity fields and their values (spec §27.3); null for any other value.
+  fields:
+    type: list<map>
+    nullable: true
+    doc: >-
+      One entry per declared field of a record, in its schema's order: `name`, `type` as the
+      schema declares it, `access` — `known`, `unknown`, `absent` or `failed`, the absences of
+      spec §10.5 kept apart — and `value`, which for a failed access is the error. Null for any
+      other value.
+  provenance:
+    type: map
+    nullable: true
+    doc: >-
+      Where a record came from (spec §10.7): `provider`, `observed`, `source`, `link`, `schema`,
+      `confidence`, and for an adapted value the questions of v0.3 §1.8. Null for any other value.
+  error:
+    type: map
+    nullable: true
+    doc: >-
+      For an error value, the error: `code`, `name`, `kind`, `message`, `help`, `target`,
+      `retryable`, `metadata` and the causal `chain` (spec §25.2). Null for any other value.
+  value:
+    type: any
+    nullable: true
+    doc: For a value that is neither a record nor an error, the value itself; null otherwise.
+# No `default_view`: a rendered inspection shows every field — the detailed view §9.1 asks for,
+# provenance included — as the untagged answer it replaces did.

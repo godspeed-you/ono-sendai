@@ -852,6 +852,22 @@ Default view: `plan_id`, `direct_targets`, `dependents`, `transitive`, `boundary
 | `complete` | `bool` | — | required | Whether traversal reached the edge of the evidence rather than a budget (§52.2). |
 | `truncated_reason` | `string` | — | nullable | Why traversal stopped early, where it did. Null when `complete` is true. |
 
+## Inspection — `ono.inspection/1`
+
+The detailed view of one value — its type, a record's schema, identity, fields with their access, and provenance.
+
+Identity: 
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `type` | `string` | — | required | The value's type name — `record`, `error`, `int`, `string`, `bytes`, … |
+| `schema` | `string` | — | nullable | A record's schema id; null for any other value. |
+| `identity` | `map` | — | nullable | A record's identity fields and their values (spec §27.3); null for any other value. |
+| `fields` | `list<map>` | — | nullable | One entry per declared field of a record, in its schema's order: `name`, `type` as the schema declares it, `access` — `known`, `unknown`, `absent` or `failed`, the absences of spec §10.5 kept apart — and `value`, which for a failed access is the error. Null for any other value. |
+| `provenance` | `map` | — | nullable | Where a record came from (spec §10.7): `provider`, `observed`, `source`, `link`, `schema`, `confidence`, and for an adapted value the questions of v0.3 §1.8. Null for any other value. |
+| `error` | `map` | — | nullable | For an error value, the error: `code`, `name`, `kind`, `message`, `help`, `target`, `retryable`, `metadata` and the causal `chain` (spec §25.2). Null for any other value. |
+| `value` | `any` | — | nullable | For a value that is neither a record nor an error, the value itself; null otherwise. |
+
 ## InterfaceAddress — `ono.interface-address/1`
 
 One address configured on a network interface.
@@ -2432,6 +2448,20 @@ Default view: `place_label`, `from`, `until`, `truncated`
 | `coverage` | `record` | — | required | The composed coverage summary over the window (§8.5). |
 | `truncated` | `bool` | — | required | Whether the event list was cut by a limit rather than by the window (§19.4's density handling). A reader must be able to tell a quiet interval from a truncated one. |
 | `provenance` | `record` | — | required | Where the answer came from (v0.2 §25.2). |
+
+## TypeInfo — `ono.type-info/1`
+
+The type of a value, or of what a pipeline declares it produces, with a record's schema and fields.
+
+Identity: 
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `subject` | `string` | — | nullable | The pipeline described, as it was written — `get socket` for `type get socket`. Null when the subject is a value that arrived through the pipeline. |
+| `type` | `string` | — | required | The type: a value's own type name (`record`, `int`, `string`, `error`, …), or the pipeline's declared output as its contract spells it (`stream<ono.socket/1>`). |
+| `schema` | `string` | — | nullable | The schema id of a record, or of a stream's records; null for a value that is not one. |
+| `fields` | `list<map>` | — | nullable | One entry per field of that schema, in its order: `name`, `type` (as the schema declares it), `nullable` and `doc`. Null where `schema` is. |
+| `code` | `string` | — | nullable | For an error value, its stable name from errors.yaml; null for anything else. |
 
 ## UserEvent — `ono.user-event/1`
 

@@ -15,7 +15,7 @@ run: |
   ono -c 'link host testbox --transport local; enter link testbox; get process | where pid == 1 | take 1 | inspect | to json' | tail -1
 
   echo "== and it carries the far side's own observation instant beside that name =="
-  ono -c 'link host testbox --transport local; enter link testbox; get process | where pid == 1 | take 1 | inspect | select observed | to json' | tail -1
+  ono -c 'link host testbox --transport local; enter link testbox; get process | where pid == 1 | take 1 | inspect | select provenance | to json' | tail -1
 
   echo "== the same object read locally is attributed to this machine instead =="
   ono -c 'get process | where pid == 1 | take 1 | inspect | to json' | tail -1
