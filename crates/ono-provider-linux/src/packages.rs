@@ -438,7 +438,20 @@ pub(crate) struct Answer {
 
 /// Runs one manager invocation to completion, in the C locale so its answers are stable.
 pub(crate) async fn run(program: &Path, arguments: &[String]) -> Result<Answer, ErrorValue> {
-    let output = tokio::process::Command::new(program)
+    run_in(program, arguments, None).await
+}
+
+/// [`run`], in `directory` when one is given.
+pub(crate) async fn run_in(
+    program: &Path,
+    arguments: &[String],
+    directory: Option<&Path>,
+) -> Result<Answer, ErrorValue> {
+    let mut command = tokio::process::Command::new(program);
+    if let Some(directory) = directory {
+        command.current_dir(directory);
+    }
+    let output = command
         .args(arguments)
         .env("LC_ALL", "C")
         .env("DEBIAN_FRONTEND", "noninteractive")
@@ -983,7 +996,7 @@ impl Provider for PackageProvider {
             return self.refresh_source(action).await;
         }
         let dpkg = self.manager()?;
-        let name = package_name(action.target())?.to_owned();
+        let name = local_package(action, package_name(action.target())?);
         let mutation = Mutation::of(action, &dpkg, &name)?;
         if action.is_dry_run() {
             return Ok(ActionOutcome::skipped(
@@ -1012,7 +1025,9 @@ impl Provider for PackageProvider {
         }
         let before = installed_version(&dpkg, &name).await?;
         for (program, arguments) in &mutation.commands {
-            let answer = run(program, arguments).await?;
+            // The manager runs where the action's paths mean something: a job's directory
+            // (ADR-0957), the process's otherwise.
+            let answer = run_in(program, arguments, action.working_directory()).await?;
             if answer.status != Some(0) {
                 return Ok(ActionOutcome::failed(
                     action,
@@ -1085,5 +1100,42 @@ mod tests {
         assert_eq!(hits[0], ("curl".into(), "command line tool".into()));
         assert_eq!(hits[1], ("libcurl4".into(), "easy-to-use - library".into()));
         assert!(parse_search(b"no separator here\n").is_err());
+    }
+}
+
+/// A package name as the action means it (ADR-0957): a local archive written as a relative path
+/// — `./foo.deb`, `../pkgs/foo.deb`, the form apt takes for a file — is joined onto the action's
+/// directory; a package name is not a path and travels as written.
+fn local_package(action: &Action, name: &str) -> String {
+    if name.starts_with("./") || name.starts_with("../") {
+        return action
+            .resolve_path(Path::new(name))
+            .to_string_lossy()
+            .into_owned();
+    }
+    name.to_owned()
+}
+
+#[cfg(test)]
+mod local_packages {
+    use super::local_package;
+    use ono_provider_api::{Action, ObjectId};
+    use ono_value::SchemaId;
+
+    #[test]
+    fn should_anchor_a_relative_archive_and_leave_a_package_name_alone_when_adding_from_a_job() {
+        let action = Action::new(
+            "package",
+            "add",
+            ObjectId::new(SchemaId::new("ono.package", 1), []),
+        )
+        .within(std::sync::Arc::from(std::path::Path::new("/job")));
+        assert_eq!(local_package(&action, "./foo.deb"), "/job/./foo.deb");
+        assert_eq!(
+            local_package(&action, "../pkgs/foo.deb"),
+            "/job/../pkgs/foo.deb"
+        );
+        assert_eq!(local_package(&action, "openssl"), "openssl");
+        assert_eq!(local_package(&action, "/srv/foo.deb"), "/srv/foo.deb");
     }
 }

@@ -413,3 +413,233 @@ fn should_plan_a_jobs_relative_target_in_the_jobs_directory() {
         run.report()
     );
 }
+
+// --- every way a relative path reaches a job (review of #302) ------------------------------------
+
+#[test]
+fn should_remove_the_jobs_file_when_records_captured_before_launch_are_piped_into_a_mutation() {
+    // Review H1: records named relatively before the job started carry identities like `a.o`.
+    // Piped into a mutation inside the job they mean the directory the job was started in.
+    let rig = Rig::new();
+    rig.put("start/a.o", "");
+    rig.put("moved/a.o", "");
+
+    let run = run_bounded(
+        &rig.scratch,
+        &format!(
+            "cd {start}\n\
+             let fs = (get file a.o)\n\
+             fn clean() {{ {wait}; $fs | remove file --confirm | to json }}\n\
+             clean &\n\
+             cd {moved}\n\
+             {open}\n\
+             fg %1",
+            start = rig.start().display(),
+            moved = rig.moved().display(),
+            wait = rig.wait_at_gate(),
+            open = rig.open_gate(),
+        ),
+        BUDGET,
+    );
+
+    assert!(run.finished, "{}", run.report());
+    assert!(
+        !rig.exists("start/a.o") && rig.exists("moved/a.o"),
+        "the piped record's relative identity meant the job's directory. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_run_an_opaque_plan_action_applied_in_a_job_in_the_jobs_directory() {
+    // Review H2: an opaque action's program is a child the job starts, so it runs where the job
+    // was started.
+    let rig = Rig::new();
+    rig.put("start/a.o", "");
+    rig.put("moved/a.o", "");
+
+    let run = run_bounded(
+        &rig.scratch,
+        &format!(
+            "set config change.allow_opaque_actions true\n\
+             cd {start}\n\
+             fn wipe() {{ {wait}; plan --opaque rm a.o | apply --accept-risk --accept-irreversible --confirm | to json }}\n\
+             wipe &\n\
+             cd {moved}\n\
+             {open}\n\
+             fg %1",
+            start = rig.start().display(),
+            moved = rig.moved().display(),
+            wait = rig.wait_at_gate(),
+            open = rig.open_gate(),
+        ),
+        BUDGET,
+    );
+
+    assert!(run.finished, "{}", run.report());
+    assert!(
+        !rig.exists("start/a.o") && rig.exists("moved/a.o"),
+        "the opaque program ran in the job's directory. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_read_a_plugin_package_named_relatively_in_a_job_from_the_jobs_directory() {
+    // Review H3: `path:./pkg` is a relative path like any other.
+    let rig = Rig::new();
+    support::lay_out_echo_package(&rig.start(), "dev.ono.example.anchored", "");
+
+    let run = run_bounded(
+        &rig.scratch,
+        &format!(
+            "cd {start}\n\
+             fn check() {{ {wait}; verify plugin path:./dev.ono.example.anchored | to json }}\n\
+             check &\n\
+             cd {moved}\n\
+             {open}\n\
+             fg %1",
+            start = rig.start().display(),
+            moved = rig.moved().display(),
+            wait = rig.wait_at_gate(),
+            open = rig.open_gate(),
+        ),
+        BUDGET,
+    );
+
+    assert!(run.finished, "{}", run.report());
+    assert!(
+        !run.stderr.contains("holds no `manifest.yaml`")
+            && run.stdout.contains("dev.ono.example.anchored"),
+        "the job read the package in its own directory. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_start_a_handler_named_relatively_in_a_job_from_and_in_the_jobs_directory() {
+    // Review H4: a program a native command starts on a job's behalf runs in the job's directory,
+    // and a path-shaped program name means the job's directory.
+    let rig = Rig::new();
+    rig.put("start/a.txt", "");
+    rig.put("moved/a.txt", "");
+    for side in ["start", "moved"] {
+        let tool = rig.root.join(side).join("tool");
+        support::executable(
+            &tool,
+            &format!(
+                "#!/bin/sh\necho \"{side} $(pwd)\" > {}\n",
+                rig.root.join("ran").display()
+            ),
+        );
+    }
+
+    let run = run_bounded(
+        &rig.scratch,
+        &format!(
+            "cd {start}\n\
+             fn show() {{ {wait}; open file a.txt --with ./tool | to json }}\n\
+             show &\n\
+             cd {moved}\n\
+             {open}\n\
+             fg %1",
+            start = rig.start().display(),
+            moved = rig.moved().display(),
+            wait = rig.wait_at_gate(),
+            open = rig.open_gate(),
+        ),
+        BUDGET,
+    );
+
+    assert!(run.finished, "{}", run.report());
+    let ran = std::fs::read_to_string(rig.root.join("ran")).unwrap_or_default();
+    let (which, cwd) = ran.trim().split_once(' ').unwrap_or_default();
+    assert_eq!(
+        which,
+        "start",
+        "the job's own `./tool` ran. {}",
+        run.report()
+    );
+    assert_eq!(
+        Path::new(cwd).canonicalize().ok(),
+        rig.start().canonicalize().ok(),
+        "it ran in the job's directory. {}",
+        run.report()
+    );
+}
+
+#[test]
+#[cfg(feature = "remote")]
+fn should_send_a_jobs_relative_path_to_a_link_as_written() {
+    // Review H5: inside a link frame the remote answers, and a local directory means nothing
+    // there; the path travels as it was written.
+    let rig = Rig::new();
+
+    let run = run_bounded(
+        &rig.scratch,
+        &format!(
+            "cd {start}\n\
+             fn far() {{ {wait}; link host far --transport local; enter link far; get file relname-only | to json }}\n\
+             far &\n\
+             cd {moved}\n\
+             {open}\n\
+             fg %1",
+            start = rig.start().display(),
+            moved = rig.moved().display(),
+            wait = rig.wait_at_gate(),
+            open = rig.open_gate(),
+        ),
+        BUDGET,
+    );
+
+    assert!(run.finished, "{}", run.report());
+    let anchored = rig.start().join("relname-only").display().to_string();
+    assert!(
+        run.stderr.contains("relname-only") && !run.stderr.contains(&anchored),
+        "the remote was asked for the path as written. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_keep_a_trailing_slash_when_a_job_anchors_a_path() {
+    // Review L1: `link/` names what the link points to, `link` the link. Anchoring keeps the text
+    // it joins, so the job acts on the object the same words name in the foreground.
+    let rig = Rig::new();
+    rig.put("start/target/inside.txt", "");
+    std::os::unix::fs::symlink(rig.start().join("target"), rig.start().join("link"))
+        .expect("the link");
+
+    let run = run_bounded(
+        &rig.scratch,
+        &format!(
+            "cd {start}\n\
+             fn kind() {{ {wait}; get file link/ | select kind | to json }}\n\
+             kind &\n\
+             cd {moved}\n\
+             {open}\n\
+             fg %1\n\
+             cd {start}\n\
+             get file link/ | select kind | to json",
+            start = rig.start().display(),
+            moved = rig.moved().display(),
+            wait = rig.wait_at_gate(),
+            open = rig.open_gate(),
+        ),
+        BUDGET,
+    );
+
+    assert!(run.finished, "{}", run.report());
+    let kinds: Vec<&str> = run
+        .stdout
+        .lines()
+        .filter(|line| line.starts_with("[{\"kind\""))
+        .collect();
+    assert_eq!(kinds.len(), 2, "both described it. {}", run.report());
+    assert_eq!(
+        kinds[0],
+        kinds[1],
+        "the job described `link/` as the foreground does. {}",
+        run.report()
+    );
+}

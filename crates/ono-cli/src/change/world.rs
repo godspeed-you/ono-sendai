@@ -617,6 +617,7 @@ pub fn execute(
     handle: &tokio::runtime::Handle,
     providers: &ProviderRegistry,
     action: &PlanAction,
+    directory: Option<&Path>,
 ) -> ExecutionOutcome {
     match action.execution() {
         Execution::ProviderAction {
@@ -647,6 +648,9 @@ pub fn execute(
                 Ok(identified) => identified.into_action(&target, &verb),
                 Err(refusal) => return ExecutionOutcome::Failed(refusal),
             };
+            if let Some(directory) = directory {
+                request = request.within(std::sync::Arc::from(directory));
+            }
             for (name, value) in arguments {
                 if !matches!(
                     name.as_ref(),
@@ -675,7 +679,7 @@ pub fn execute(
             program: Some(program),
             argv,
             ..
-        } => run_program(program, argv),
+        } => run_program(program, argv, directory),
         // §6.3's escape with no program to run is a description and nothing else. Appendix F.2's
         // uncertainty boundary is the honest answer: nothing was established.
         Execution::Opaque { program: None, .. } => {
@@ -716,9 +720,13 @@ fn digest_observation(path: &str, expected: &str) -> Observation {
     }
 }
 
-/// Runs a resolved program with its argument vector and no shell (§2.17, §12.3, §43.6).
-fn run_program(program: &str, argv: &[Arc<str>]) -> ExecutionOutcome {
+/// Runs a resolved program with its argument vector and no shell (§2.17, §12.3, §43.6), in
+/// `directory` when the plan is applied from a background job (ADR-0957).
+fn run_program(program: &str, argv: &[Arc<str>], directory: Option<&Path>) -> ExecutionOutcome {
     let mut command = std::process::Command::new(program);
+    if let Some(directory) = directory {
+        command.current_dir(directory);
+    }
     for argument in argv {
         command.arg(argument.as_ref());
     }

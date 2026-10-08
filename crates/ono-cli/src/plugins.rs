@@ -663,13 +663,15 @@ pub fn run(session: &mut Session, request: Request, words: &[String]) -> Eval<Pr
                     ),
                 ));
             };
+            let reference = anchored_reference(session, reference);
+            let source = option("--source").map(|source| anchored_reference(session, source));
             crate::kuang_install::install(
                 session,
-                reference,
+                &reference,
                 &crate::kuang_install::InstallOptions {
                     access: option("--access").map(str::to_owned),
                     confirm: flag("--confirm"),
-                    source: option("--source").map(str::to_owned),
+                    source,
                 },
             )
         }
@@ -688,9 +690,10 @@ pub fn run(session: &mut Session, request: Request, words: &[String]) -> Eval<Pr
                 ));
             };
             session.publish_host();
+            let reference = anchored_reference(session, reference);
             let verification = session
                 .with_kuang(|host| {
-                    host.resolve(reference)
+                    host.resolve(&reference)
                         .and_then(|resolved| host.verify(&resolved))
                 })
                 .map_err(Flow::Failed)?;
@@ -1338,4 +1341,27 @@ fn declaration(id: &str) -> Option<&'static CommandContract> {
 /// The id a package's own command is registered under.
 fn contributed_command_id(package: &str, command: &str) -> String {
     format!("{package}.command.{command}")
+}
+
+/// A package reference as the session means it: an explicit local path — `./pkg`, `../pkg`,
+/// `path:pkg` — is relative to the session's directory, which in a background job is the one the
+/// job was started in, not wherever the foreground has moved the process (ADR-0957). It is
+/// written back absolute, so the record of where the package came from names the directory that
+/// was read. Every other reference, and every reference outside a job, is left as written.
+fn anchored_reference(session: &Session, reference: &str) -> String {
+    if session.anchoring_directory().is_none() {
+        return reference.to_owned();
+    }
+    let (prefix, path) = match reference.strip_prefix("path:") {
+        Some(path) => ("path:", path),
+        None => match ono_kuang_protocol::PluginRef::parse(reference) {
+            ono_kuang_protocol::PluginRef::Path(_) => ("", reference),
+            _ => return reference.to_owned(),
+        },
+    };
+    let path = std::path::Path::new(path);
+    if !path.is_relative() || path.starts_with("~") {
+        return reference.to_owned();
+    }
+    format!("{prefix}{}", session.anchored_path(path).display())
 }

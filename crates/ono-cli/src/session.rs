@@ -2092,22 +2092,20 @@ impl Session {
     /// whose relative paths the kernel resolves through the directory the session keeps it in.
     #[must_use]
     pub fn anchoring_directory(&self) -> Option<std::sync::Arc<Path>> {
-        self.execution
-            .background_job
-            .then(|| std::sync::Arc::from(self.environment.cwd.as_path()))
+        // Inside a link frame a link's remote answers, and a directory of this machine means
+        // nothing there: its paths travel as they were written (ADR-0957).
+        if !self.execution.background_job || self.link_host().is_some() {
+            return None;
+        }
+        Some(std::sync::Arc::from(self.environment.cwd.as_path()))
     }
 
     /// `path` as this session means it: anchored on a job's directory when it is relative and
     /// the session is a job's (ADR-0957), as it stands otherwise.
     #[must_use]
     pub fn anchored_path(&self, path: &Path) -> PathBuf {
-        if self.execution.background_job && path.is_relative() {
-            return self
-                .environment
-                .cwd
-                .join(path)
-                .components()
-                .collect::<PathBuf>();
+        if self.anchoring_directory().is_some() {
+            return ono_provider_api::anchor_path(Some(&self.environment.cwd), path);
         }
         path.to_path_buf()
     }

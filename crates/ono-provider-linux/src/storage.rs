@@ -857,6 +857,7 @@ impl StorageProvider {
         let Some(source) = action.argument("source").and_then(text_of) else {
             return missing(action, "source");
         };
+        let source = mount_source(action, &source);
         let Some(target) = Self::action_target(action) else {
             return missing(action, "target");
         };
@@ -1388,5 +1389,63 @@ mod fuzz {
             let _ = parse_mountinfo(&" - ".repeat(length));
             let _ = parse_mountinfo(&"\\040".repeat(length));
         }
+    }
+}
+
+/// A mount source as the action means it (ADR-0957).
+///
+/// A source is a device, an image file or a name the filesystem type gives meaning to — `tmpfs`,
+/// `proc`, `server:/export`. Only one that is plainly a relative path — it starts with `./` or
+/// `../`, or holds a `/` and no `:` — is joined onto the action's directory; everything else
+/// travels as written.
+fn mount_source(action: &Action, source: &str) -> String {
+    let path_shaped = source.starts_with("./")
+        || source.starts_with("../")
+        || (source.contains('/') && !source.contains(':'));
+    if !path_shaped {
+        return source.to_owned();
+    }
+    action
+        .resolve_path(std::path::Path::new(source))
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[cfg(test)]
+mod mount_sources {
+    use super::mount_source;
+    use ono_provider_api::{Action, ObjectId};
+    use ono_value::SchemaId;
+
+    fn in_job() -> Action {
+        Action::new(
+            "filesystem",
+            "mount",
+            ObjectId::new(SchemaId::new("ono.mount", 1), []),
+        )
+        .within(std::sync::Arc::from(std::path::Path::new("/job")))
+    }
+
+    #[test]
+    fn should_anchor_a_relative_image_path_and_leave_names_alone_when_mounting_from_a_job() {
+        let action = in_job();
+        assert_eq!(mount_source(&action, "./disk.img"), "/job/./disk.img");
+        assert_eq!(
+            mount_source(&action, "images/disk.img"),
+            "/job/images/disk.img"
+        );
+        assert_eq!(mount_source(&action, "/dev/sdb1"), "/dev/sdb1");
+        assert_eq!(mount_source(&action, "tmpfs"), "tmpfs");
+        assert_eq!(mount_source(&action, "server:/export"), "server:/export");
+    }
+
+    #[test]
+    fn should_leave_a_relative_source_as_written_outside_a_job() {
+        let action = Action::new(
+            "filesystem",
+            "mount",
+            ObjectId::new(SchemaId::new("ono.mount", 1), []),
+        );
+        assert_eq!(mount_source(&action, "./disk.img"), "./disk.img");
     }
 }

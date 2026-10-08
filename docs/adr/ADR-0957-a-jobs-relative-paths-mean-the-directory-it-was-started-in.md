@@ -25,39 +25,52 @@ reach anything that acts on them, or hand every provider a directory to resolve 
 
 ## Decision
 
-**A job's relative paths are anchored on the job's directory where they become arguments, and the
-job's provider queries name that directory.**
+**One rule: inside a job nothing resolves a relative path or starts a child through the process
+working directory. Every relative path the job uses — bound, piped, captured before launch,
+recorded in a plan, or handed to a child — means the job's directory, except where a link's remote
+answers.**
 
-1. **The carrier is the invocation's scope.** `Scope::with_working_directory` fixes the directory a
-   command's relative paths mean. The foreground's scopes carry none: its relative paths stay
-   relative and the kernel resolves them through the directory the session keeps the process in,
-   exactly as before. A job's scopes carry the job's directory, fixed at launch — the session `cwd`
-   a job's evaluator was forked with (ADR-0952 §1, which ADR-0955 made immutable), or, for a line
-   of native stages on ADR-0024's task path, the foreground's directory at the moment it was
-   backgrounded.
-2. **Anchoring is by declared type, at the one seam every command runs through.** `CommandTable::run`
-   anchors the bound arguments before the implementation runs, after the context frames have filled
-   theirs in: every value bound to a `path` or `list<path>` parameter that is relative is joined
-   onto the directory. An argument written as an expression is anchored when it is evaluated
-   (`BoundArguments::evaluated`), so `remove file $name` and `each { remove file @ }` are held to
-   the same rule as a word. Glob expansion still yields the relative names it matched in the job's
-   directory; they are anchored as they are bound. No command is special-cased.
-3. **The join is lexical.** `.` components fall away, `..` stays, nothing is canonicalized, symlinks
-   are not resolved, and a path that does not exist yet — a `write file` or `copy file` destination
-   — is anchored like one that does. Absolute paths and values of other types are untouched.
-4. **An omitted path means the directory too.** Arguments anchored on a directory carry it, and the
-   provider query built from them names it (`Query::within`). A provider that defaults a path to
-   "here" — the file provider's `get dir`, `get file`, `find file` — defaults it to the query's
-   directory, and resolves a relative path in it, through `Query::resolve_path`; without a
-   directory, both stay what they were.
-5. **The other native consumers of a job's paths follow the same directory:** a native stage's
-   redirection is opened in it (`Session::anchored_path`), and a `plan` made in a job resolves its
-   operation's paths there before it freezes them. Programs, glob expansion and `PATH` resolution
-   already used the session's `cwd`, which is the job's directory.
+The job's directory is the session `cwd` its evaluator was forked with (ADR-0952 §1), which
+ADR-0955 made immutable; since ADR-0958 every backgrounded line is such a job. The rule is carried
+by these mechanisms, each at a seam rather than in a command:
 
-What a job reports names the files it acted on: its records carry the anchored, absolute path —
-`get file a.o &` collects `/…/build/a.o`, not `a.o` — because a relative name in a job's output no
-longer means anything once the foreground has moved. The foreground's output is unchanged.
+1. **Arguments.** `Scope::with_working_directory` fixes the directory a command's relative paths
+   mean; a job's scopes carry the job's directory and the foreground's carry none, so the
+   foreground resolves exactly as before. `CommandTable::run`, the seam every command runs
+   through, anchors every relative value bound to a `path` or `list<path>` parameter after the
+   context frames have filled theirs in; an expression argument is anchored when it is evaluated
+   (`BoundArguments::evaluated`). Glob expansion yields the relative names it matched in the job's
+   directory, anchored as they are bound. No command is special-cased.
+2. **Piped objects.** A record that reaches a mutation inside a job may carry a relative path — one
+   captured before the job started (`let fs = (get file a.o)`), or retained by the foreground. Its
+   `path`-typed identity values and, for the filesystem's own objects, its source path are
+   anchored before the action is built, so the action finds the object the record named.
+3. **Omitted paths.** Anchored arguments put the directory on the provider query
+   (`Query::within`); a provider that defaults a path to "here" — `get dir`, `get file`,
+   `find file` — defaults to it.
+4. **Children.** An action built in a job carries the directory (`Action::within`). A program a
+   provider starts for it runs there — the `open file` handler, a package manager — and a
+   path-shaped program or operand the provider would otherwise hand on relative is anchored: a
+   `--with ./tool` handler, a `./foo.deb` archive, a mount source that is plainly a path (`./disk.img`,
+   `images/disk.img`, not `tmpfs` or `server:/export`). An opaque plan action applied in a job runs
+   its program in the job's directory, and a provider action applied there carries it.
+   The job's own programs, glob expansion and `PATH` lookup already used the session's `cwd`.
+5. **Strings that name local paths.** A plugin reference written as a path — `./pkg`, `path:pkg` —
+   is anchored, and recorded absolute; so is `find plugin --source path:…`.
+6. **Redirections and plans.** A native stage's redirection is opened in the job's directory
+   (`Session::anchored_path`), and a `plan` made in a job resolves its operation's paths there
+   before it freezes them.
+7. **Links.** Inside a link frame a link's remote answers, and a directory of this machine means
+   nothing there: the job's paths travel to it as written, with no directory on the query.
+
+**The join keeps the text it joins** (`ono_provider_api::anchor_path`): `./x` becomes `<dir>/./x`,
+`link/` keeps its trailing slash, `..` stays, nothing is canonicalized and symlinks are not
+resolved, so the anchored path names the object the same words name in the foreground. A path that
+does not exist yet is anchored like one that does; absolute paths and values of other types are
+untouched.
+
+What a job reports names the objects it acted on: its records carry the anchored, absolute path —
+`get file a.o &` collects `/…/build/a.o`, not `a.o`. The foreground's output is unchanged.
 
 ADR-0955's refusal of `cd`, `enter dir` and a restoring `leave` inside a job stands: the job's
 directory is fixed, and nothing in a job moves it. This ADR replaces only that ADR's stated gap.
@@ -65,19 +78,30 @@ directory is fixed, and nothing in a job moves it. This ADR replaces only that A
 ## Consequences
 
 Easy: `remove file *.o &` acts on the job's files whatever the foreground does next; a job started
-inside an entered directory keeps it after the foreground leaves; every native command — reads,
-listings, mutations, plans, redirections — gets the rule without code of its own.
+inside an entered directory keeps it after the foreground leaves; every native command gets the
+rule without code of its own.
+
+Accepted:
+
+- Every `path`-typed parameter is anchored in a job — `add user --home rel` gets an absolute home.
+  A job's relative path means its directory, whatever it names (review L2).
+- The job's directory is named by its path at launch. Renaming it and creating another of the same
+  name makes the job act in the new one; removing it makes the job's operations fail — nothing
+  falls back to the process directory. That follows from naming the directory, and is a
+  deliberate act rather than a race (review L3).
 
 Hard:
 
-- A provider that resolves a path the user did not write as a `path` parameter — a path inside a
-  record that arrived on the pipeline from somewhere other than the job's own stages, such as a
-  retained result `@-1` the foreground produced before it moved — sees it as written. A job's own
-  stages produce anchored paths, so this needs a relative path made outside the job.
+- A provider that resolves a relative path held in a string field it alone interprets, and that is
+  none of the above, still sees it as written. Every such site found in this build is listed
+  above; a new one has to follow the rule.
 - A KUANG/11 plugin provider receives anchored paths but not the directory of an omitted one; the
   host protocol carries no working directory. No plugin target defaults a path today.
 - A job's records show absolute paths where the foreground would show the relative ones it was
   given.
+- `$var | plan …` and `@-1 | plan …` are refused before any path is resolved (`plan` reads piped
+  objects only after a command head), in the foreground as in a job, so the plan path of point 2
+  is reached only through the job's own stages, which are anchored.
 
 Encoded by `crates/ono-cli/tests/jobs_directory.rs`:
 `::should_write_where_a_native_job_started_when_the_foreground_moved_before_it_wrote`,
@@ -87,7 +111,16 @@ Encoded by `crates/ono-cli/tests/jobs_directory.rs`:
 `::should_open_a_jobs_native_redirection_in_the_jobs_directory`,
 `::should_keep_the_jobs_directory_when_the_foreground_leaves_the_directory_it_entered`,
 `::should_run_a_jobs_programs_in_the_jobs_directory_and_leave_the_foregrounds_paths_relative`,
-`::should_plan_a_jobs_relative_target_in_the_jobs_directory`; acceptance case `392`.
+`::should_plan_a_jobs_relative_target_in_the_jobs_directory`,
+`::should_remove_the_jobs_file_when_records_captured_before_launch_are_piped_into_a_mutation`,
+`::should_run_an_opaque_plan_action_applied_in_a_job_in_the_jobs_directory`,
+`::should_read_a_plugin_package_named_relatively_in_a_job_from_the_jobs_directory`,
+`::should_start_a_handler_named_relatively_in_a_job_from_and_in_the_jobs_directory`,
+`::should_send_a_jobs_relative_path_to_a_link_as_written`,
+`::should_keep_a_trailing_slash_when_a_job_anchors_a_path`; the unit tests of
+`ono-provider-api` (`anchoring`), `ono-provider-linux` (`mount_sources`, `local_packages` —
+mounting and installing need root, so the anchoring itself is what is tested); acceptance case
+`392`.
 
 ## Alternatives considered
 

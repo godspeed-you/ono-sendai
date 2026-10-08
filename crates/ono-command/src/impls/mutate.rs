@@ -200,8 +200,14 @@ impl ProviderMutation {
         let mut outcomes = Vec::with_capacity(targets.len() + failures.len());
         outcomes.append(&mut failures);
         let dry_run = written.option("dry-run") == Some(&Value::Bool(true));
+        // A job's actions say which directory their relative paths mean, and where a program a
+        // provider starts for them runs (issue #302, ADR-0957).
+        let directory = ctx.scope().working_directory().cloned();
         for object in targets {
             let mut action = Action::new(target, &operation, object.id);
+            if let Some(directory) = &directory {
+                action = action.within(std::sync::Arc::clone(directory));
+            }
             if let Some(source) = object.source {
                 action = action.with_source(source);
             }
@@ -272,12 +278,16 @@ impl ProviderMutation {
                     // form the object's schema declares, the same one a graph node draws and the
                     // same one the selector branch resolves through the provider.
                     StreamEvent::Value(Value::Record(record)) => match ObjectRef::of(&record) {
-                        Some(reference) => objects.push(Target {
-                            id: reference.id().clone(),
-                            source: record.provenance().source().map(str::to_owned),
-                            label: Some(reference.label().to_owned()),
-                            unresolved: None,
-                        }),
+                        Some(reference) => objects.push(anchored_target(
+                            ctx.scope().working_directory(),
+                            target,
+                            Target {
+                                id: reference.id().clone(),
+                                source: record.provenance().source().map(str::to_owned),
+                                label: Some(reference.label().to_owned()),
+                                unresolved: None,
+                            },
+                        )),
                         None => {
                             return Err(ErrorValue::new(
                                 ErrorCode::TypeMismatch,
@@ -419,6 +429,57 @@ impl ProviderMutation {
             });
         }
         Ok(objects)
+    }
+}
+
+/// A piped object as a job means it (issue #302, ADR-0957).
+///
+/// A record carries the path it was reached by — its provenance source, and for some schemas its
+/// identity. One made before the job started, or by a provider that reports paths as written,
+/// carries a relative one, which meant the directory it was made in: the job's. Inside a job it
+/// is anchored there, so the action finds the object the record named, not a namesake wherever
+/// the foreground has moved since. Identity values typed `path` are anchored whatever the target;
+/// the source is a path only for the filesystem's own objects, so only theirs is.
+fn anchored_target(
+    directory: Option<&std::sync::Arc<std::path::Path>>,
+    kind: &str,
+    target: Target,
+) -> Target {
+    let Some(directory) = directory else {
+        return target;
+    };
+    let anchored = |text: &str| -> String {
+        ono_provider_api::anchor_path(Some(directory), std::path::Path::new(text))
+            .to_string_lossy()
+            .into_owned()
+    };
+    let relative_source = matches!(kind, "file" | "dir")
+        && target
+            .source
+            .as_deref()
+            .is_some_and(|source| std::path::Path::new(source).is_relative());
+    let label = match (&target.label, &target.source) {
+        (Some(label), Some(source)) if relative_source && label == source => Some(anchored(label)),
+        _ => target.label,
+    };
+    Target {
+        id: ObjectId::new(
+            target.id.schema().clone(),
+            target
+                .id
+                .values()
+                .iter()
+                .map(|value| crate::bind::anchor_value(directory, value)),
+        ),
+        source: target.source.as_deref().map(|source| {
+            if relative_source {
+                anchored(source)
+            } else {
+                source.to_owned()
+            }
+        }),
+        label,
+        unresolved: target.unresolved,
     }
 }
 

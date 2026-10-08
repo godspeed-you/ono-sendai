@@ -764,15 +764,12 @@ fn names_paths(declared: &DeclaredType) -> bool {
     }
 }
 
-/// `value` with every relative path in it joined onto `directory`, lexically (ADR-0957).
-fn anchor_value(directory: &std::path::Path, value: &Value) -> Value {
+/// `value` with every relative path in it joined onto `directory`, keeping the text it joins
+/// (ADR-0957).
+pub(crate) fn anchor_value(directory: &std::path::Path, value: &Value) -> Value {
     match value {
         Value::Path(path) if path.is_relative() => Value::Path(std::sync::Arc::from(
-            directory
-                .join(path)
-                .components()
-                .collect::<std::path::PathBuf>()
-                .as_path(),
+            ono_provider_api::anchor_path(Some(directory), path).as_path(),
         )),
         Value::List(items) => Value::list(items.iter().map(|item| anchor_value(directory, item))),
         other => other.clone(),

@@ -332,6 +332,8 @@ impl CommandImpl for ResumePlan {
             let reference = super::reference_of(ctx, "reference").await?;
             super::gates::require_confirmation("resume plan", given, interactive)?;
             let providers = ctx.providers().clone();
+            // A job applies where it was started (ADR-0957).
+            let directory = ctx.scope().working_directory().cloned();
             let handle = super::runtime_handle()?;
             let state = change_session().await?;
             let plan = super::plan_of(&state, &reference)?;
@@ -404,7 +406,7 @@ impl CommandImpl for ResumePlan {
                 None => super::world::over_link(
                     &plan,
                     action,
-                    super::world::execute(&handle, &providers, action),
+                    super::world::execute(&handle, &providers, action, directory.as_deref()),
                 ),
             };
             let observe = |contract: &_| super::world::observe(&handle, &providers, contract);

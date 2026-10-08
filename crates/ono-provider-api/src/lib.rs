@@ -34,7 +34,7 @@ pub use capability::{Availability, Capability, Risk};
 pub use events::{EventSink, EventStream};
 pub use label::{declared_label, endpoint_label, endpoint_text, label_of};
 pub use object::{EventKind, ObjectEvent, ObjectId, ObjectRef};
-pub use query::{Query, Selector};
+pub use query::{Query, Selector, anchor_path};
 pub use registry::ProviderRegistry;
 pub use temporal::{TemporalCapabilities, TimeWindow, unsupported_history};
 

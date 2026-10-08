@@ -14,6 +14,7 @@ pub struct Action {
     arguments: Vec<(String, Value)>,
     dry_run: bool,
     source: Option<String>,
+    directory: Option<std::sync::Arc<std::path::Path>>,
 }
 
 impl Action {
@@ -28,7 +29,30 @@ impl Action {
             arguments: Vec::new(),
             dry_run: false,
             source: None,
+            directory: None,
         }
+    }
+
+    /// Says which directory a relative path in this action means, and where a program the
+    /// provider starts for it runs: a background job's, which the foreground may have left
+    /// (issue #302, ADR-0957). Without one, both are the process's working directory.
+    #[must_use]
+    pub fn within(mut self, directory: std::sync::Arc<std::path::Path>) -> Self {
+        self.directory = Some(directory);
+        self
+    }
+
+    /// The directory the action's relative paths mean, when it names one.
+    #[must_use]
+    pub fn working_directory(&self) -> Option<&std::path::Path> {
+        self.directory.as_deref()
+    }
+
+    /// `path` as this action means it: joined onto its directory when it is relative and the
+    /// action names one, as it stands otherwise (see [`crate::Query::resolve_path`]).
+    #[must_use]
+    pub fn resolve_path(&self, path: &std::path::Path) -> std::path::PathBuf {
+        crate::query::anchor_path(self.directory.as_deref(), path)
     }
 
     /// Records where the object was observed: the provenance `source` of the record it came

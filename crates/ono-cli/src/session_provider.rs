@@ -1170,10 +1170,18 @@ impl Provider for SessionProvider {
                             _ => None,
                         });
                     if let Some(term) = term {
+                        // `path:<dir>` is relative to the query's directory, a job's included
+                        // (ADR-0957).
                         let source = query
                             .option_value("source")
                             .and_then(|value| value.as_str().ok())
-                            .map(str::to_owned);
+                            .map(|source| match source.strip_prefix("path:") {
+                                Some(path) => format!(
+                                    "path:{}",
+                                    query.resolve_path(std::path::Path::new(path)).display()
+                                ),
+                                None => source.to_owned(),
+                            });
                         let (records, failures) =
                             self.lock().kuang.package_records(term, source.as_deref())?;
                         return Ok(stream_of(

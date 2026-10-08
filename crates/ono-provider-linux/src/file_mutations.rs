@@ -308,15 +308,28 @@ async fn set(provider: &FileProvider, action: &Action, path: &Path) -> ActionOut
     }
 }
 
+/// The program `open file` starts: `--with`, or `xdg-open`. A name with a `/` in it is a path,
+/// and a relative one means the action's directory (ADR-0957); a bare name is looked up on `PATH`.
+fn handler_of(action: &Action) -> String {
+    let named = action
+        .argument("with")
+        .and_then(|value| value.as_str().ok())
+        .map_or_else(|| "xdg-open".to_owned(), str::to_owned);
+    if named.contains('/') {
+        return action
+            .resolve_path(Path::new(&named))
+            .to_string_lossy()
+            .into_owned();
+    }
+    named
+}
+
 /// `open file`: the handler named by `--with`, or `xdg-open`, with the path as its argument.
 ///
 /// The handler's exit status is the outcome; a handler that cannot be started is
 /// `provider.unavailable` naming it, because nothing on this host can open the file.
 fn open(action: &Action, path: &Path) -> ActionOutcome {
-    let handler = action
-        .argument("with")
-        .and_then(|value| value.as_str().ok())
-        .map_or_else(|| "xdg-open".to_owned(), str::to_owned);
+    let handler = handler_of(action);
     if let Err(error) = path.symlink_metadata() {
         return ActionOutcome::failed(action, io_error(&error, path));
     }
@@ -326,7 +339,13 @@ fn open(action: &Action, path: &Path) -> ActionOutcome {
             format!("would open {} with {handler}", path.display()),
         );
     }
-    match std::process::Command::new(&handler)
+    let mut command = std::process::Command::new(&handler);
+    // A program started for a job runs in the job's directory, as the job's own programs do
+    // (ADR-0957).
+    if let Some(directory) = action.working_directory() {
+        command.current_dir(directory);
+    }
+    match command
         .arg(path)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())

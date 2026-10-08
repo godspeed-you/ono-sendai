@@ -95,15 +95,12 @@ impl Query {
 
     /// `path` as this query means it: joined onto its directory when it is relative and the
     /// query names one, as it stands otherwise.
+    ///
+    /// The join keeps the text it joins — `./x` stays `<dir>/./x` and `link/` keeps its slash —
+    /// so the anchored path names the object the same words name in the foreground (ADR-0957).
     #[must_use]
     pub fn resolve_path(&self, path: &std::path::Path) -> std::path::PathBuf {
-        match &self.directory {
-            Some(directory) if path.is_relative() => directory
-                .join(path)
-                .components()
-                .collect::<std::path::PathBuf>(),
-            _ => path.to_path_buf(),
-        }
+        anchor_path(self.directory.as_deref(), path)
     }
 
     /// The target being asked for.
@@ -229,5 +226,55 @@ impl Selector {
             Selector::Field { name, .. } | Selector::Contains { name, .. } => Some(name),
             Selector::Identity(_) => None,
         }
+    }
+}
+
+/// `path` joined onto `directory` when it is relative and there is a directory, as it stands
+/// otherwise. Lexical, and keeping the text it joins: nothing is canonicalized, `.` and `..` stay
+/// and a trailing slash survives (ADR-0957).
+#[must_use]
+pub fn anchor_path(
+    directory: Option<&std::path::Path>,
+    path: &std::path::Path,
+) -> std::path::PathBuf {
+    match directory {
+        Some(directory) if path.is_relative() => {
+            let mut joined = directory.as_os_str().to_owned();
+            if !directory.as_os_str().as_encoded_bytes().ends_with(b"/") {
+                joined.push("/");
+            }
+            joined.push(path.as_os_str());
+            std::path::PathBuf::from(joined)
+        }
+        _ => path.to_path_buf(),
+    }
+}
+
+#[cfg(test)]
+mod anchoring {
+    use super::anchor_path as anchor;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn should_keep_the_text_it_joins_when_a_relative_path_is_anchored() {
+        let dir = Path::new("/job");
+        assert_eq!(
+            anchor(Some(dir), Path::new("link/")),
+            PathBuf::from("/job/link/")
+        );
+        assert_eq!(
+            anchor(Some(dir), Path::new("./x")),
+            PathBuf::from("/job/./x")
+        );
+        assert_eq!(
+            anchor(Some(dir), Path::new("../y")),
+            PathBuf::from("/job/../y")
+        );
+        assert_eq!(anchor(Some(dir), Path::new("/abs")), PathBuf::from("/abs"));
+        assert_eq!(anchor(None, Path::new("rel")), PathBuf::from("rel"));
+        assert_eq!(
+            anchor(Some(Path::new("/")), Path::new("x")),
+            PathBuf::from("/x")
+        );
     }
 }
