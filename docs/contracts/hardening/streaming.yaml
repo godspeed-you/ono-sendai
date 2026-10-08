@@ -218,22 +218,15 @@ captures:
       reply carries one item's values.
 
   - file: crates/ono-cli/src/eval/native/drive.rs
-    site: run_background
+    site: run_evaluated_job
     class: history_cache
     holds: What a background job produced, until `fg` shows it.
     why: >-
-      A job nobody is watching has nowhere to write, so its result waits for the foreground. It is
-      retained state rather than pipeline data in flight, bounded the way §24 bounds retention.
-
-  - file: crates/ono-cli/src/eval/native/drive.rs
-    site: run_evaluated_job
-    class: history_cache
-    holds: What a background job with an evaluator of its own produced, until `fg` shows it.
-    why: >-
-      The same retention as `run_background` above, for a job that runs a block, a function call
-      or a program and so needs an evaluator (ADR-0952). It is the job's result rather than
-      pipeline data in flight, and the job's evaluator collects it under one command's capture,
-      so §23.4's ceiling bounds it while nobody collects it.
+      A job nobody is watching has nowhere to write, so its result waits for the foreground.
+      Every backgrounded line runs on an evaluator of its own (ADR-0952, ADR-0958); it is the
+      job's result rather than pipeline data in flight, and the job's evaluator collects it under
+      one command's capture, so §23.4's ceiling bounds it while nobody collects it — a live stream
+      at the job's end value by value as it arrives.
 
   - file: crates/ono-cli/src/eval/native/drive.rs
     site: EvaluatorRun
@@ -315,8 +308,8 @@ captures:
   - file: crates/ono-cli/src/session.rs
     site: NativeJob
     class: history_cache
-    holds: A background job's values, shared with the task producing them.
-    why: The retained side of `run_background` above.
+    holds: A background job's values, shared with the evaluator producing them.
+    why: The retained side of `run_evaluated_job` above, bounded by its capture (ADR-0958).
 
   - file: crates/ono-cli/src/session.rs
     site: retain_result

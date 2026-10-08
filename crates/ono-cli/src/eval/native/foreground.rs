@@ -16,7 +16,7 @@ use crate::session::Session;
 
 use super::bind::{bind_stage, stage_scope};
 use super::drive::{
-    BlockRequest, BlockSite, answer, answering, asking_stage, block_of, drive_segment,
+    BlockRequest, BlockSite, JobFold, answer, answering, asking_stage, block_of, drive_segment,
 };
 use super::result::{
     Delivery, StreamedOutput, action_records, deliver_segment, live_geometry, report_counts,
@@ -376,12 +376,17 @@ pub(super) fn run_native_segment(
     // The same lines may feed the program after this segment instead, while it runs: written into
     // its standard input as they are produced, at the pace it reads them (§28.2).
     let feeding = feeds.filter(|_| !last && !capturing && streams_bytes(&bound));
+    // A redirection names a file whatever is capturing around the line, and a capture never sees
+    // what goes to it — so the lines go to the file as they come there too. A background job's
+    // `watch … | to jsonl > log &` is written as it runs instead of held until an end it never
+    // reaches (ADR-0958).
+    let streams_out = last && (!capturing || !stage_has_no_redirection) && streams_bytes(&bound);
     let mut program = None;
     let mut streamed = if let Some(program_stages) = feeding {
         let (started, output) = start_fed_program(session, list, program_stages, source)?;
         program = Some(started);
         Some(output)
-    } else if last && !capturing && streams_bytes(&bound) {
+    } else if streams_out {
         let stage = &list.stages[*indices.last().unwrap_or(&0)];
         Some(StreamedOutput::open(session, stage, source)?)
     } else {
@@ -389,6 +394,7 @@ pub(super) fn run_native_segment(
     };
     let mut showing = None;
     let mut draining = None;
+    let mut fold = None;
     if let Some(stream) = stream {
         if last
             && !stream.boundedness().is_bounded()
@@ -398,8 +404,22 @@ pub(super) fn run_native_segment(
         {
             // A live stream at a terminal renders in place (spec §18.3); anywhere else the
             // representation must be chosen, because an endless unserialised stream into a pipe
-            // or file is a table that never learns its widths.
-            if capturing || !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+            // or file is a table that never learns its widths. At the end of a background job's
+            // own line it is the job's: folded into the table `fg` repaints, and the rest kept as
+            // it arrives under the job's capture ceiling (ADR-0958).
+            let job_model = session
+                .job_model()
+                .filter(|_| session.capturing_for_a_job())
+                .cloned();
+            if let Some(model) = job_model {
+                let (_, height) = live_geometry();
+                fold = Some(JobFold {
+                    model,
+                    rows: height.saturating_sub(3).max(4),
+                    serialised: final_contract.is_some_and(produces_bytes),
+                });
+                draining = Some(stream);
+            } else if capturing || !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
                 return Err(Flow::Failed(
                     ErrorValue::new(
                         ErrorCode::StreamUnboundedOperation,
@@ -410,12 +430,13 @@ pub(super) fn run_native_segment(
                          to jsonl` — or bound it with `take` (spec §18.3, ADR-0954)",
                     ),
                 ));
+            } else {
+                let (width, height) = live_geometry();
+                showing = Some(Box::pin(crate::live::show(stream, width, height, &theme))
+                    as std::pin::Pin<
+                        Box<dyn std::future::Future<Output = Vec<ErrorValue>>>,
+                    >);
             }
-            let (width, height) = live_geometry();
-            showing = Some(Box::pin(crate::live::show(stream, width, height, &theme))
-                as std::pin::Pin<
-                    Box<dyn std::future::Future<Output = Vec<ErrorValue>>>,
-                >);
         } else {
             draining = Some(stream);
         }
@@ -434,6 +455,7 @@ pub(super) fn run_native_segment(
         showing,
         streamed.as_mut(),
         has_stopped.as_ref().map(|probe| probe as &dyn Fn() -> bool),
+        fold.as_ref(),
     );
     // Whatever is left is left because nobody is reading it any more: cancellation wins over
     // capacity, so a producer behind a stage that stopped does not keep enqueueing (§28.3). That
@@ -517,7 +539,7 @@ pub(super) fn run_native_segment(
         });
     }
     // What was written as it arrived is already where it was going.
-    if wrote || (last && !capturing && streams_bytes(&bound)) {
+    if wrote || streams_out {
         return Ok(SegmentEnd::answered(None, status));
     }
     deliver_segment(

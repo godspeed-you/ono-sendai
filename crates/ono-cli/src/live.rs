@@ -76,7 +76,7 @@ pub async fn show(
 ///
 /// The model keeps only the newest `limit` such rows — a tail, as a log is read — so the
 /// screen shows what just happened and a follower that never ends holds nothing it cannot show.
-fn absorb(rows: &mut BTreeMap<String, Value>, value: &Value, limit: usize) -> bool {
+pub(crate) fn absorb(rows: &mut BTreeMap<String, Value>, value: &Value, limit: usize) -> bool {
     if apply(rows, value) {
         return true;
     }

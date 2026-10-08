@@ -23,7 +23,6 @@ use crate::session::{Mode, Session};
 use super::block::each_block_stage;
 use super::expression::{eval_expr, text_of};
 use super::function::{call_function, called_function};
-use super::materialize::captured_text;
 use super::statement::{expand_alias, is_job_kill, prefix_assignments};
 use super::{Eval, Flow};
 
@@ -765,7 +764,7 @@ pub fn run_external_segment(
             .unwrap_or_default()
     });
     if captured {
-        session.capture(&[captured_text(bytes.as_deref().unwrap_or_default())])?;
+        session.capture_text(bytes.as_deref().unwrap_or_default())?;
         return Ok((None, outcome.status()));
     }
     Ok((bytes, outcome.status()))

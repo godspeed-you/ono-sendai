@@ -57,9 +57,18 @@ pub struct JobSnapshot {
     plugin_providers: Vec<std::sync::Arc<crate::plugin_provider::PluginProvider>>,
     settings: crate::settings::Settings,
     theme: std::sync::Arc<ono_render::Theme>,
+    live: Option<LiveModel>,
 }
 
 impl JobSnapshot {
+    /// Gives the job the model a live stream at the end of its line folds its events into, which
+    /// `fg` repaints (ADR-0024, ADR-0958).
+    #[must_use]
+    pub fn with_live_model(mut self, model: LiveModel) -> Self {
+        self.live = Some(model);
+        self
+    }
+
     /// What signals the process group the job's evaluator is waiting on, if any — `kill %N` and
     /// Ctrl-C under `fg` reach the job's children through it (spec §18.4).
     #[must_use]
@@ -93,6 +102,7 @@ impl JobSnapshot {
                 background_job: true,
                 captures: Vec::new(),
                 capture_budget: Budget::command_captures(),
+                job_model: self.live,
             },
             navigation: NavigationState {
                 frames: self.frames,
@@ -257,6 +267,9 @@ struct ExecutionState {
     captures: Vec<Vec<Value>>,
     /// What every capture inside the current shell command may retain together (v0.4.1 §23.4).
     capture_budget: Budget,
+    /// A background job's live model: where a live stream at the end of the job's own line folds
+    /// its events, for `fg` to repaint (ADR-0024, ADR-0958). `None` outside a job.
+    job_model: Option<LiveModel>,
 }
 
 /// Where the session has gone: the context stack, the links it stands on, what it selected.
@@ -602,39 +615,34 @@ impl std::fmt::Debug for LinkConnection {
     }
 }
 
-/// One backgrounded native pipeline.
+/// The rows a live job folds its events into, keyed by identity — what `fg` repaints at a
+/// terminal (ADR-0024).
+pub type LiveModel = std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, Value>>>;
+
+/// One backgrounded line, run by an evaluator of its own (ADR-0952, ADR-0958).
 #[derive(Debug)]
 pub struct NativeJob {
     /// The number the user addresses it by, reserved from the executor's sequence.
     pub number: u32,
     /// The pipeline as it was typed.
     pub command: String,
-    /// Rows keyed by identity — what a live view folds events into, and what `fg` repaints.
-    pub model: std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, Value>>>,
-    /// Values a bounded pipeline produced, delivered when the job is foregrounded or reaped.
+    /// Rows keyed by identity — what a live stream at the end of the job's line folds its events
+    /// into, and what `fg` repaints.
+    pub model: LiveModel,
+    /// What the job produced, handed over when it has ended: its capture, bounded by v0.4.1
+    /// §23.4's ceiling (ADR-0958).
     pub values: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
-    /// The failures the stream reported.
+    /// The failures the job's line reported.
     pub failures: std::sync::Arc<std::sync::Mutex<Vec<ono_value::ErrorValue>>>,
     /// When the pipeline was detached.
     pub started: Value,
-    /// What runs the job: a task driving a stream, or an evaluator of its own (ADR-0952).
+    /// The evaluator running the job.
     pub handle: JobRun,
 }
 
-/// What runs a backgrounded native pipeline.
+/// The handles on a job's evaluator, which runs the line on a thread of its own (ADR-0952).
 #[derive(Debug)]
-pub enum JobRun {
-    /// A stream chain driven by a task on the session runtime. Aborting it drops every receiver,
-    /// which stops the producers (ADR-0024).
-    Task(tokio::task::JoinHandle<()>),
-    /// A line run by an evaluator of its own on a thread of its own, because it holds a block,
-    /// a function call or a program the stream chain alone cannot carry (ADR-0952).
-    Evaluator(EvaluatorJob),
-}
-
-/// The handles on a job that has an evaluator of its own.
-#[derive(Debug)]
-pub struct EvaluatorJob {
+pub struct JobRun {
     /// The job's Ctrl-C: what its evaluator reads where the foreground reads the terminal's.
     pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Signals the process group the job's evaluator is waiting on, if it is waiting on one.
@@ -649,50 +657,44 @@ impl JobRun {
     /// Whether the job has ended.
     #[must_use]
     pub fn is_finished(&self) -> bool {
-        match self {
-            JobRun::Task(handle) => handle.is_finished(),
-            JobRun::Evaluator(job) => job.thread.is_finished(),
-        }
+        self.thread.is_finished()
     }
 
-    /// Stops the job: the task is aborted, or the evaluator is cancelled and the process group it
-    /// waits on is sent `signal` — `SIGTERM` for `kill %N`, `SIGINT` for Ctrl-C under `fg`.
+    /// Stops the job: its evaluator is cancelled, and the process group it waits on is sent
+    /// `signal` — `SIGTERM` for `kill %N`, `SIGINT` for Ctrl-C under `fg`.
     pub fn stop(&self, signal: ono_process::Signal) {
-        match self {
-            JobRun::Task(handle) => handle.abort(),
-            JobRun::Evaluator(job) => {
-                job.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
-                let _ = job.canceller.send(signal);
-            }
-        }
+        self.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+        let _ = self.canceller.send(signal);
     }
 
     /// Waits for a stopped job to end, signalling its evaluator's process group again while it
     /// has not: a child it started in the instant after the first signal is stopped too. Gives up
     /// after `budget` — a job is never a reason for the shell itself to hang.
     pub fn wait_until_finished(&self, budget: std::time::Duration) {
-        let JobRun::Evaluator(job) = self else {
-            return;
-        };
         let deadline = std::time::Instant::now() + budget;
-        while !job.thread.is_finished() && std::time::Instant::now() < deadline {
+        while !self.thread.is_finished() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(10));
-            if job.cancel.load(std::sync::atomic::Ordering::SeqCst) {
-                let _ = job.canceller.send(ono_process::Signal::TERM);
+            if self.cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                let _ = self.canceller.send(ono_process::Signal::TERM);
             }
         }
     }
 
-    /// The status the job ended with, when its evaluator recorded one.
+    /// The status the job ended with.
+    ///
+    /// `None` while it runs. A job whose evaluator ended without recording one did not finish
+    /// its line — its thread died — and that is a failure, never a success (ADR-0958).
     #[must_use]
     pub fn status(&self) -> Option<ExitStatus> {
-        match self {
-            JobRun::Task(_) => None,
-            JobRun::Evaluator(job) => *job
-                .status
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        if !self.thread.is_finished() {
+            return None;
         }
+        Some(
+            self.status
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .unwrap_or(ExitStatus::FAILURE),
+        )
     }
 }
 
@@ -879,6 +881,7 @@ impl Session {
                 background_job: false,
                 captures: Vec::new(),
                 capture_budget: Budget::command_captures(),
+                job_model: None,
             },
             navigation: NavigationState {
                 frames: Vec::new(),
@@ -977,6 +980,7 @@ impl Session {
             plugin_providers: self.provider.plugin_providers.clone(),
             settings: self.presentation.settings.clone(),
             theme: std::sync::Arc::clone(&self.presentation.theme),
+            live: None,
         })
     }
 
@@ -1496,12 +1500,6 @@ impl Session {
         }
         for job in &self.jobs.native_jobs {
             let finished = job.handle.is_finished();
-            let failed = finished
-                && !job
-                    .failures
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .is_empty();
             rows.push(JobRow {
                 number: job.number,
                 kind: "native",
@@ -1510,13 +1508,7 @@ impl Session {
                 process_group: None,
                 pids: None,
                 started: job.started.clone(),
-                exit_status: finished.then(|| {
-                    job.handle.status().unwrap_or(if failed {
-                        ExitStatus::FAILURE
-                    } else {
-                        ExitStatus::SUCCESS
-                    })
-                }),
+                exit_status: job.handle.status(),
             });
         }
         rows.sort_by_key(|row| row.number);
@@ -2059,6 +2051,41 @@ impl Session {
         self.execution.background_job
     }
 
+    /// Whether the innermost open capture is a background job's own: the one its evaluator opens
+    /// around the job's line, which `fg` hands over (ADR-0952 §4). A capture the line opens itself
+    /// — `let x = (…)` — is not.
+    #[must_use]
+    pub fn capturing_for_a_job(&self) -> bool {
+        self.execution.background_job && self.execution.captures.len() == 1
+    }
+
+    /// The live model of the job this session runs, when it is a job's (ADR-0958).
+    #[must_use]
+    pub fn job_model(&self) -> Option<&LiveModel> {
+        self.execution.job_model.as_ref()
+    }
+
+    /// Hands the text a serializer or a program wrote to the innermost capture.
+    ///
+    /// A capture inside a line is a value, so the text becomes one string with its trailing
+    /// newlines removed, as command substitution has it (ADR-0072 §4). A job's own capture is not
+    /// a value anybody reads: it is what `fg` shows in place of the terminal the job never had, so
+    /// it keeps the bytes as they were written, and `fg` writes them as the foreground would have
+    /// (ADR-0958). Nothing written is nothing kept.
+    ///
+    /// # Errors
+    ///
+    /// The structured refusal of §21.4 when the command's capture ceiling is reached.
+    pub fn capture_text(&mut self, bytes: &[u8]) -> Result<bool, ErrorValue> {
+        if self.capturing_for_a_job() {
+            if bytes.is_empty() {
+                return Ok(true);
+            }
+            return self.capture(&[Value::Bytes(bytes.to_vec().into())]);
+        }
+        self.capture(&[crate::eval::captured_text(bytes)])
+    }
+
     /// The directory this session's relative paths are anchored on, when the process's working
     /// directory is not theirs: a background job's, which is the directory it was started in
     /// while the foreground moves the process (issue #302, ADR-0957). `None` for the foreground,
@@ -2179,11 +2206,9 @@ impl Drop for Session {
         // leaves stops it first, so the child is signalled and reaped rather than left running
         // after the shell has gone (v0.4.1 §28.4, ADR-0952).
         for job in &self.jobs.native_jobs {
-            if matches!(job.handle, JobRun::Evaluator(_)) {
-                job.handle.stop(ono_process::Signal::TERM);
-                job.handle
-                    .wait_until_finished(std::time::Duration::from_secs(2));
-            }
+            job.handle.stop(ono_process::Signal::TERM);
+            job.handle
+                .wait_until_finished(std::time::Duration::from_secs(2));
         }
         // Spec §31.37: the last pipeline's audit events are written before the session goes.
         #[cfg(feature = "kuang")]

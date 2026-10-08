@@ -474,7 +474,7 @@ pub(super) fn write_result(
     // nothing was shown. A redirection still means the file.
     if destination.is_none() && session.capturing() {
         if serialised {
-            session.capture(&[crate::eval::captured_text(&bytes_of(values))])?;
+            session.capture_text(&bytes_of(values))?;
         } else {
             session.capture(values)?;
         }

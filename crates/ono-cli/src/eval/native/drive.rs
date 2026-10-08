@@ -6,7 +6,6 @@
 //! serial, so one request in flight is all the channel ever carries, and §65.7 forbids the
 //! unbounded queue that a deeper one would be.
 
-use ono_command::{BoundArguments, CommandContract, Invocation, Outcome, Scope};
 use ono_core::{ErrorCode, ExitStatus};
 use ono_parser::{Argument, Block, Expr, Stage, StageHead, StageList};
 use ono_pipeline::{StreamEvent, ValueStream};
@@ -14,12 +13,6 @@ use ono_value::{ErrorValue, Value};
 
 use crate::eval::{Eval, Flow};
 use crate::session::Session;
-
-use super::result::action_records;
-use super::segment::{
-    Segment, head_name, native_contract, produces_bytes, refuse_switched_off_spatial, segments,
-};
-use super::{implementations, registry};
 
 /// The block a stage runs, when the stage is `each { … }`.
 ///
@@ -241,6 +234,50 @@ pub(super) fn answering<T>(
     }
 }
 
+/// How a background job keeps a live stream at the end of its own line (ADR-0958).
+///
+/// The foreground shows such a stream in place (spec §18.3); a job has nobody watching it, and
+/// its line's result is what `fg` hands over. So the drain does what the live view would do with
+/// what the live view shows — folds it into the job's table, which `fg` repaints — and keeps the
+/// rest as it arrives in the job's capture, charged to §23.4's ceiling value by value: a stream
+/// that never ends is never held whole, and one that reaches the ceiling ends there with the
+/// structured refusal.
+pub(super) struct JobFold {
+    /// The job's table, which `fg` repaints.
+    pub(super) model: crate::session::LiveModel,
+    /// How many plain records the table keeps, newest last, as the live view does.
+    pub(super) rows: usize,
+    /// Whether the values are a serializer's text, kept as the bytes it wrote.
+    pub(super) serialised: bool,
+}
+
+impl JobFold {
+    /// Folds one value into the job's table, or keeps it in the job's capture; answers whether
+    /// it was kept.
+    ///
+    /// A record is what the live view shows — an event replaces or removes its object's row, a
+    /// plain record is a row of its own — whether or not it changed what the table shows.
+    fn keep(&self, session: &mut Session, value: Value) -> Eval<bool> {
+        if !self.serialised && value.as_record().is_ok() {
+            crate::live::absorb(
+                &mut self
+                    .model
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+                &value,
+                self.rows,
+            );
+            return Ok(false);
+        }
+        let kept = if self.serialised {
+            session.capture_text(&super::result::bytes_of(std::slice::from_ref(&value)))
+        } else {
+            session.capture(std::slice::from_ref(&value))
+        };
+        kept.map_err(Flow::Failed)
+    }
+}
+
 /// What the driver drained out of one segment.
 #[derive(Default)]
 pub(super) struct Drained {
@@ -282,6 +319,7 @@ pub(super) fn drive_segment(
     mut showing: Option<std::pin::Pin<Box<dyn std::future::Future<Output = Vec<ErrorValue>> + '_>>>,
     mut output: Option<&mut super::result::StreamedOutput>,
     stopped: Option<&dyn Fn() -> bool>,
+    fold: Option<&JobFold>,
 ) -> Eval<Drained> {
     let mut drained = Drained::default();
     let reader_gone = output
@@ -395,7 +433,15 @@ pub(super) fn drive_segment(
                     }
                     Err(error) => return Err(super::result::write_failed(error)),
                 },
-                None => drained.values.push(value),
+                None => match fold {
+                    // Kept as it arrives, so it counts as written: nothing is left to deliver.
+                    Some(fold) => {
+                        if fold.keep(session, value)? {
+                            drained.written += 1;
+                        }
+                    }
+                    None => drained.values.push(value),
+                },
             },
             // A streaming drain never ends for an unbounded stream, so a failure waiting for its
             // end would never be seen and every one of them would be kept (review C4). It is
@@ -511,170 +557,20 @@ pub(super) fn answer_within(
     }
 }
 
-/// Backgrounds a native pipeline as a job (spec §18.4, ADR-0024).
+/// Backgrounds a line as a job (spec §18.4, ADR-0024, ADR-0958).
 ///
-/// The stream chain is built exactly as a foreground run builds it, then driven by a task on the
-/// session runtime instead of being awaited: events fold into a row model the way the live view
-/// folds them, other values collect, and `fg` later repaints or prints whichever the pipeline
-/// produced. Aborting the task drops every receiver, which stops the producers — the same
-/// cancellation the foreground path uses.
+/// Every backgrounded line is run the one way: by an evaluator of its own (ADR-0952), whatever
+/// its stages are. A line of native stages only used to be a task driving the stream chain, whose
+/// values `fg` collected into an uncapped vector and whose foregrounding either repainted a table
+/// its values never reached or, without a terminal, aborted it and called that success (issue
+/// #301). A job's result is its line's: its values are a capture bounded by §23.4, its status is
+/// the one the line ended with, and a live stream at its end folds into the model `fg` repaints.
 ///
 /// # Errors
 ///
-/// The structured error of whichever stage could not be resolved or bound, or a refusal when
-/// the pipeline mixes in external stages, which a job with no process group cannot carry yet.
+/// A refusal inside a link frame, or the operating system's refusal to start a thread.
 pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> Eval<ExitStatus> {
-    let registry = registry().map_err(Flow::Failed)?;
-    let table = implementations(session).map_err(Flow::Failed)?;
-    let segments = segments(session, list, 0, false).ok_or_else(|| {
-        Flow::Failed(ErrorValue::new(
-            ErrorCode::ResolveCommandNotFound,
-            "the command registry could not be read",
-        ))
-    })?;
-    // A stream chain carries native stages and nothing else. A block, a function call or a
-    // program needs an evaluator, and gets one of its own (ADR-0952).
-    let [Segment::Native(indices)] = segments.as_slice() else {
-        return run_evaluated_job(session, list, source);
-    };
-    if indices
-        .iter()
-        .any(|index| block_of(&list.stages[*index]).is_some())
-    {
-        return run_evaluated_job(session, list, source);
-    }
-
-    let mut bound: Vec<(&'static CommandContract, BoundArguments)> = Vec::new();
-    let mut structured = true;
-    for index in indices {
-        let stage = &list.stages[*index];
-        let contract = native_contract(session, registry, stage, structured).ok_or_else(|| {
-            Flow::Failed(ErrorValue::new(
-                ErrorCode::ResolveCommandNotFound,
-                format!("`{}` is not a native command here", stage.span),
-            ))
-        })?;
-        refuse_switched_off_spatial(session, contract, stage)?;
-        let arguments =
-            crate::expand::expand_globs(session, &stage.arguments).map_err(Flow::Failed)?;
-        let resolved = registry
-            .resolve(head_name(stage), &arguments)
-            .map_err(Flow::Failed)?;
-        let arguments = contract.bind(resolved.arguments).map_err(Flow::Failed)?;
-        structured = !produces_bytes(contract);
-        bound.push((contract, arguments));
-    }
-
-    let command_text = source
-        .get(list.span.start() as usize..list.span.end() as usize)
-        .unwrap_or_default()
-        .trim()
-        .to_owned();
-    // The job's relative paths mean the directory it is started in, which is the foreground's
-    // now and may not be when the job reaches them (issue #302, ADR-0957).
-    let scope = std::sync::Arc::new(
-        Scope::new().with_working_directory(std::sync::Arc::from(session.cwd())),
-    );
-    let context = session.context();
-    let adapters = session.shared_adapters();
-    let resolver = crate::resolve::resolver(session);
-    let materialization = crate::eval::materialize::limits(session);
-    let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
-        Flow::Failed(ErrorValue::new(
-            ErrorCode::IoPermissionDenied,
-            "the operating system refused to start the pipeline runtime",
-        ))
-    })?;
-    let providers = providers.clone();
-
-    let model = std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
-    let values: std::sync::Arc<std::sync::Mutex<Vec<Value>>> =
-        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let failures = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-
-    let task_model = std::sync::Arc::clone(&model);
-    let task_values = std::sync::Arc::clone(&values);
-    let task_failures = std::sync::Arc::clone(&failures);
-    let handle = runtime.spawn(async move {
-        let mut stream: Option<ValueStream> = None;
-        for (contract, arguments) in &bound {
-            let started = std::time::Instant::now();
-            let temporal = match crate::temporal::invocation_context(arguments).await {
-                Ok(temporal) => temporal,
-                Err(error) => {
-                    let _ = task_failures.lock().map(|mut held| held.push(error));
-                    return;
-                }
-            };
-            let mut invocation = Invocation::new(contract, arguments, &providers)
-                .with_scope(std::sync::Arc::clone(&scope))
-                .with_context(context.clone())
-                .with_adapters(std::sync::Arc::clone(&adapters), resolver.clone())
-                .with_temporal(temporal, registry);
-            if let Some(previous) = stream.take() {
-                invocation = invocation.with_input(previous);
-            }
-            match table.run(contract.id(), &mut invocation).await {
-                // v0.4.1 §22.2, as in the foreground loop: the configured limits are stated where
-                // the pipeline is assembled, and every stage below inherits them (ADR-0454).
-                Ok(Outcome::Values(produced)) => {
-                    stream = Some(produced.with_materialization_limits(materialization));
-                }
-                Ok(Outcome::Actions(outcomes)) => {
-                    stream = Some(
-                        action_records(contract, outcomes, started)
-                            .with_materialization_limits(materialization),
-                    );
-                }
-                Err(error) => {
-                    task_failures
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .push(error);
-                    return;
-                }
-            }
-        }
-        let Some(mut stream) = stream else {
-            return;
-        };
-        while let Some(event) = stream.recv().await {
-            match event {
-                StreamEvent::Value(value) => {
-                    if !crate::live::apply(
-                        &mut task_model
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner),
-                        &value,
-                    ) {
-                        task_values
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .push(value);
-                    }
-                }
-                StreamEvent::Failure(error) => {
-                    task_failures
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .push(error);
-                }
-            }
-        }
-    });
-
-    let number = session.executor().reserve_job_number();
-    ono_core::diagnostic!("[%{number}]");
-    session.push_native_job(crate::session::NativeJob {
-        number,
-        command: command_text,
-        model,
-        values,
-        failures,
-        started: Value::now(),
-        handle: crate::session::JobRun::Task(handle),
-    });
-    Ok(ExitStatus::SUCCESS)
+    run_evaluated_job(session, list, source)
 }
 
 /// Backgrounds a line that needs an evaluator — a block, a function call, a program — as a job
@@ -699,7 +595,11 @@ pub(crate) fn run_evaluated_job(
     list: &StageList,
     source: &str,
 ) -> Eval<ExitStatus> {
-    let snapshot = session.fork_for_job().map_err(Flow::Failed)?;
+    let model: crate::session::LiveModel = std::sync::Arc::default();
+    let snapshot = session
+        .fork_for_job()
+        .map_err(Flow::Failed)?
+        .with_live_model(std::sync::Arc::clone(&model));
     let command_text = source
         .get(list.span.start() as usize..list.span.end() as usize)
         .unwrap_or_default()
@@ -739,16 +639,16 @@ pub(crate) fn run_evaluated_job(
     session.push_native_job(crate::session::NativeJob {
         number,
         command: command_text,
-        model: std::sync::Arc::default(),
+        model,
         values,
         failures,
         started: Value::now(),
-        handle: crate::session::JobRun::Evaluator(crate::session::EvaluatorJob {
+        handle: crate::session::JobRun {
             cancel,
             canceller,
             thread,
             status,
-        }),
+        },
     });
     Ok(ExitStatus::SUCCESS)
 }
