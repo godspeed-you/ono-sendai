@@ -1,8 +1,9 @@
 # Issue #303, through the real binary as an unprivileged user.
 #
 # A shell that leaves ends the jobs it owns (ADR-0959): `SIGTERM` to every job's programs at once,
-# one shared grace period, then `SIGKILL` to what remains. Three jobs run a program that ignores
-# `SIGTERM`; after the shell has exited none of them is left, which is polled with a bound. Each
+# one shared grace period, then `SIGKILL` to what remains — whether it reaches its end or is sent
+# `SIGTERM` itself, and whether a program was backgrounded from a function or directly. The jobs
+# run a program that ignores `SIGTERM`; afterwards none of them is left, polled with a bound. Each
 # program announces that it runs by writing a file, and the shell waits for those files before it
 # leaves; nothing below asserts a duration.
 case: a leaving shell ends its jobs even when their programs ignore SIGTERM
@@ -14,7 +15,7 @@ run: |
   ono -c "fn stubborn(marker) { $HOME/case-394-stubborn.sh \$marker }
           stubborn $HOME/case-394.one &
           stubborn $HOME/case-394.two &
-          stubborn $HOME/case-394.three &
+          $HOME/case-394-stubborn.sh $HOME/case-394.three &
           sh -c 'while [ ! -e $HOME/case-394.one ] || [ ! -e $HOME/case-394.two ] || [ ! -e $HOME/case-394.three ]; do sleep 0.05; done'
           echo all-started"
   echo "shell-exit-$?"
@@ -25,8 +26,28 @@ run: |
   while [ -n "$(left)" ] && [ "$tries" -lt 200 ]; do sleep 0.05; tries=$((tries + 1)); done
   echo "left-behind=$(left | wc -l)"
   for pid in $(left); do kill -KILL "$pid" || true; done
+
+  echo "== a shell sent SIGTERM ends its jobs first =="
+  rm -f "$HOME"/case-394.one "$HOME"/case-394.two
+  ono -c "fn stubborn(marker) { $HOME/case-394-stubborn.sh \$marker }
+          stubborn $HOME/case-394.one &
+          $HOME/case-394-stubborn.sh $HOME/case-394.two &
+          sh -c 'while [ ! -e $HOME/case-394.one ] || [ ! -e $HOME/case-394.two ]; do sleep 0.05; done'
+          echo signal-me > $HOME/case-394.ready
+          sh -c 'while :; do sleep 1; done'" &
+  shell=$!
+  while [ ! -e "$HOME/case-394.ready" ]; do sleep 0.05; done
+  kill -TERM "$shell"
+  wait "$shell"
+  echo "terminated-exit-$?"
+  tries=0
+  while [ -n "$(left)" ] && [ "$tries" -lt 200 ]; do sleep 0.05; tries=$((tries + 1)); done
+  echo "left-after-term=$(left | wc -l)"
+  for pid in $(left); do kill -KILL "$pid" || true; done
 exit: 0
 stdout-contains: all-started
 stdout-contains: shell-exit-0
 stdout-contains: left-behind=0
+stdout-contains: terminated-exit-143
+stdout-contains: left-after-term=0
 stdout-not-contains: panicked
