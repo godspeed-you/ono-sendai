@@ -266,7 +266,9 @@ The enhancements present, newest first:
   Consolidation & Rich TTY Interface: one deterministic policy that unifies the existing v0.2
   render hints, presentation profiles and constrained view tree into a production-quality rich
   terminal path, ahead of the Deck workspace v0.8 later composes. Added 2026-09-01, **not
-  implemented**; `docs/STATE.md` records it as the next tranche.
+  implemented**; `docs/STATE.md` records it as the first presentation tranche, behind the
+  stabilization milestones `v0.6.4` (System and Spatial Model), `v0.6.5` (KUANG/11 Ecosystem) and
+  `v0.6.6` (Remote and Change), of which `v0.6.4` is the next tranche.
 - `docs/specs/ono_sendai_shell_spec_v0.6.1_stabilization_polish.md` — Stabilization and Polish:
   a patch release over the released v0.6.0 that fixes and consolidates existing behaviour —
   permission/scope state, plugin target resolution in functions, unknown `ss` socket types, REPL
