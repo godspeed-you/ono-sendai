@@ -146,43 +146,32 @@ gh issue view <NN>               # the evidence for one problem
 gh issue list --label class-c    # the large ones, a tranche each
 ```
 
-**Found during the v0.6.3 run (2026-10-07).** Outside the milestone, so not fixed in it (ADR-0929):
+**Filed on 2026-10-08.** The thirty problems the v0.6.3 run recorded here (2026-10-07) were
+triaged against the tracker at `v0.6.3` = `b55ff186`, each re-checked: twenty-six went in as the
+twenty-four issues #282–#305 (#293 and #297 carry two entries each), one was already #182, and three
+needed no issue of their own — one was fixed in v0.6.3, one is contract behaviour whose consequence
+is #283, and one was not a defect as recorded (its residue is evidence on #228). #282 also carries the
+v0.6.2 run's `help | head -3` entry, which left the section below with it. Nothing of the v0.6.3 run is
+on this board any more; the record of where each went:
 
-- Remote refusals lose their explaining metadata on the wire: the link `Reject` frame carries only code + message (crates/ono-protocol/src/link.rs ~408). Repro: loopback agent, pinned host key, no client key → client sees E1202 without peer_fingerprint/store_present. Protocol contract change. Found while delivering #180.
-- Unary minus on null differs between evaluators: `let r = (- null)` → E0201 "cannot subtract int and null", `each (- null)` → null. Unary ops were outside #137.
-- `collapse` in crates/ono-command/src/bind.rs drops word values when the same parameter is also written as an expression: `--x a --x (b)` keeps only `b`.
-- Stdout broken pipe also on `ono --print-peer-key 2>&1 | head -c0` → 101 (println!), beside the known `help | head` entry.
-- refusals.yaml `explains` keys are checked per deciding crate, not per construction site (ADR-0537 check_refusals).
-- Collecting serializers and `from` wait forever on an unbounded stream: `tail file x --follow | to json` (yaml, csv, text, `| from json`) neither refuses nor ends; memory grows. ADR-0455's early refusal does not fire for `to`/`from`.
-- Plain native background jobs (ADR-0024 task path) collect until `fg`; `fg` without a terminal aborts a still-running bounded job instead of waiting — racy.
-- The line editor holds the terminal raw ~1.5–2 s after each prompt waiting on an unanswered cursor-position query; a Ctrl-C typed then is a keystroke, not a signal.
-- `explain` shows `streaming no` beside `execution streaming` for aggregates (`count`, `measure`): the contract's `streaming:` flag and the execution class disagree.
-- `from jsonl` does not exist (the symmetric reader of `to jsonl`).
-- `help` produces no value: it is a builtin that prints text, while spec §9.1 says HelpPage; `ono.help-page/1` stays deferred (ADR-0935 deviation).
-- `enter user|group|interface|process|link|service|mount` declare `ono.context/1` output but produce no value; in a pipeline they fail E0101 "declared but this build implements nothing". Exempted in docs/contracts/conformance/command_examples.yaml.
-- `plan update package openssl …`: v0.6 spec uses `update package` (§3.1) but no `update` verb exists; the plan refuses it. Exempted.
-- ADR-0813 documents `copy file ./nginx.conf to /etc/…`, but `copy file` accepts only `<from> <to>`; the `to` form is refused "takes 2 selector(s)".
-- `docs/contracts/hardening/streaming.yaml` and two code comments still illustrate `join (get socket) --on pid`, which cannot work (sockets carry no pid).
-- Command conformance skips every `privilege: conditional` command (`get file`, `get socket`, `get container`, …); running them needs a contract field saying the example is safe unprivileged.
-- `ono_pipeline::materialize`/`materialize_with` have no production callers.
-
-- `xtask/src/bindings.rs`'s doc comment says "Sixty-five stable commands" are bound elsewhere; the register lists about 81.
-- ADR-0496's incremental neighbourhood is still not delivered: every spatial command and every trace builds globally, which #177 now shows in `explain` but does not remove; `trace <target>` reads the whole target even for one object (`SharedSnapshots::one`).
-- The completion completeness tests share the process-wide provider cache, so each test asks a different target; a per-test cache would make them independent.
-- Case 382 and the PTY incomplete-marker test rely on the package database holding more than 50 `lib…` packages (true on Debian/Ubuntu and in the image).
-- `println!` sites still exit 101 on a closed stdout: `ono -c 'help' | head -c0` (builtin.rs:340,366), plugins.rs:270,275,360,385, context.rs:645 — the stdout side of the known `help | head` entry.
-- explain's option-class post-pass (ADR-0940) and the mutation-operation pass cover only the head stage list, not the lists after `&&`/`||`.
-- 52 of the 111 command-conformance examples are declared possibly empty in a fresh environment (`may_be_empty`, ADR-0941); fixtures (recorded history, a fixture plugin, a seeded plan) would let them check a schema.
-- A background job's native commands with relative paths resolve against the foreground's *current* directory (the process has one), so a foreground `cd` after the job started redirects them; fixing it needs providers to be handed a working directory (ADR-0955).
-- The live view (`live.rs`) still collects its failures until the view closes.
-- `tail file` follows by default, so `tail file x | to json > f` never ends — an instance of the collecting-serializer entry above.
-- On shell exit, a job child that ignores SIGTERM is left running after the 2 s wait.
-- `crates/ono-cli/tests/change_gates.rs` plans against `get service | take 50` on the live host; transient docker units appearing and vanishing mid-test (`run-docker-netns-….mount`, `docker-….scope`) give E1711 change.target_unresolved.
-- Background jobs start with an empty KUANG host (`JobSnapshot::into_session` builds fresh `SessionTables`), so a job using a package command loads its own instance.
+- Remote refusal metadata lost on the wire → #182 (existing, evidence added) · unary minus on `null` → #284 ·
+  `collapse` dropping a word value → #285 · `--print-peer-key` exiting 101 on a closed stdout → fixed in v0.6.3
+  by 613b9054, no issue · per-crate `explains` check → #286 · collecting serializers and `from` on unbounded
+  input → #283 (follow-up to #68) · native background jobs and `fg` → #301 · the editor's 2 s wait → not a
+  defect as recorded: one bounded cursor-position query, paid once per session and only on terminals that
+  never answer; evidence on #228 · `explain` `streaming no` beside `execution streaming` → #287 ·
+  `from jsonl` → #288 · `help` producing no value → #289 · seven `enter <target>` commands → #290 (v0.6.4) ·
+  `plan update package` → #291 (v0.6.6) · ADR-0813's `copy file … to …` → #292 (v0.6.6) · `join (get socket)`
+  illustrations and the "Sixty-five" count → #293 · unused `materialize` helpers → #294 · conformance skipping
+  `conditional` commands → #295 (v0.6.4) · global builds in `trace` and the spatial queries → #296 (v0.6.4) ·
+  completion tests on shared cache and host packages (two entries) → #297 · stdout `println!` exits 101 → #282 ·
+  `explain` passes after `&&`/`||` → #298 · 52 `may_be_empty` examples → #299 · a job's relative paths and a
+  later `cd` → #302 · live-view failures held unbounded → #305 · `tail file` following by default → contract
+  behaviour (`follow: default true`); its hang is #283's case, no issue · a job child ignoring SIGTERM on exit →
+  #303 · `change_gates.rs` and docker units → #300 (v0.6.6) · a job's own plugin instance → #304 (v0.6.5).
 
 **Found during the v0.6.2 run (2026-09-24).** Outside the milestone, so not fixed in it (v0.6.1 §24):
 
-- `ono -c 'help' | head -3` panics "failed printing to stdout: Broken pipe", exit 101 (full and core; `| head -30` fine). Likely `println!` in the help builtin (crates/ono-cli/src/builtin.rs). Found by core-build agent 2026-09-24.
 - `cargo test -p ono-cli --test plugins` fails 19/26 unless `kuang-example-plugin` and `kuang-compile` are already in target/debug (`cargo build -p ono-kuang-sdk`); the gate builds `--workspace --bins` first, a narrow run does not know it. Found 2026-09-24.
 - Possible ETXTBSY in the product: `crates/ono-cli/src/kuang_host.rs:2630` copies plugin files with `std::fs::copy` inside a multi-threaded ono that may later exec them (ADR-0891's mechanism). Not reproduced. Found 2026-09-24.
 - Journal follower may survive Ctrl-C under load: one `/bin/sh …/journalctl --output=json --no-pager --follow` shim outlived an adapters.rs run at load ~40; not reproduced in 55 runs with the new death assertion (#162). Hypothesis: the stream is not always dropped before the session ends. Found 2026-09-24.
