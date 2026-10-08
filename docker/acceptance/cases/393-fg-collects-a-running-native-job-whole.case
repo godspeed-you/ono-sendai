@@ -1,0 +1,49 @@
+# Issue #301, through the real binary as an unprivileged user.
+#
+# Foregrounding a job changes its attachment, not its result (ADR-0958). Without a terminal `fg`
+# waits for a running native job instead of aborting it: the values it produces before and after
+# `fg` each appear once and `fg` returns the job's status. A failed job is not reported as a
+# success, and what a job retains obeys the command capture ceiling, past which it ends with the
+# structured refusal. The script appends the job's remaining lines only once the shell has printed
+# that it is about to run `fg`; nothing below asserts a duration.
+case: fg waits for a running native job and returns its values once, its status and its ceiling
+timeout: 120
+env: NO_COLOR=1
+run: |
+  echo "== fg without a terminal waits for the job =="
+  printf 'value-one\n' > "$HOME/case-393.log"
+  ono -c "tail file $HOME/case-393.log --lines 5 --follow | take 3 &
+          echo fg-next; fg %1
+          echo \"fg-status-\$?\"" > "$HOME/case-393.out" 2>&1 &
+  shell=$!
+  while ! grep -q fg-next "$HOME/case-393.out" 2>/dev/null; do sleep 0.05; done
+  printf 'value-two\nvalue-three\n' >> "$HOME/case-393.log"
+  wait "$shell"
+  cat "$HOME/case-393.out"
+  echo "counts=$(grep -c value-one "$HOME/case-393.out")$(grep -c value-two "$HOME/case-393.out")$(grep -c value-three "$HOME/case-393.out")"
+
+  echo "== a failed job is not a success =="
+  ono -c "get file $HOME/case-393-not-there &
+          fg %1
+          echo \"failed-status-\$?\""
+
+  echo "== what a job retains has a ceiling =="
+  {
+    printf '['
+    for i in $(seq 1 400); do printf '"line-%04d-%s",' "$i" xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; done
+    printf '"end"]'
+  } > "$HOME/case-393.json"
+  ono -c "set config limits.command_capture_bytes 8KiB
+          read file $HOME/case-393.json | from json &
+          fg %1
+          echo \"ceiling-status-\$?\""
+exit: 0
+stdout-contains: fg-status-0
+stdout-contains: counts=111
+stdout-contains: failed-status-1
+stdout-contains: io.not_found
+stdout-contains: resource.byte_limit
+stdout-contains: limits.command_capture_bytes
+stdout-contains: ceiling-status-1
+stdout-not-contains: line-0400
+stdout-not-contains: panicked
