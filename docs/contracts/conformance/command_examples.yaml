@@ -115,6 +115,13 @@ exemptions:
     reason: >-
       asks for recorded history, and a fresh shell has recorded nothing: recording is off until
       `start recorder` (v0.5 §10.2), which mutates.
+  - command: ono.temporal.changes
+    example: "changes --since 12:00 --until 12:30"
+    reason: >-
+      names a time of day, so whether it can run depends on the wall clock: before 12:30 local
+      time the interval lies in the future and is refused as `temporal.invalid_time` (E1301), after
+      it the interval is in the past. A test whose verdict depends on when it runs is not one
+      (AGENTS.md §11).
   - command: ono.place.back
     example: back
     reason: returns to the previous place, and a fresh session has not moved (spatial.history_empty).
@@ -279,9 +286,6 @@ may_be_empty:
   - command: ono.temporal.changes
     example: "changes service nginx --since 1h"
     reason: "a fresh state directory has recorded no history, and a test host need not run `nginx`."
-  - command: ono.temporal.changes
-    example: "changes --since 12:00 --until 12:30"
-    reason: "a fresh state directory has recorded no history to compare."
   - command: ono.temporal.changes
     example: "changes --since 30m | group subject.object_type"
     reason: "a fresh state directory has recorded no history to compare."
