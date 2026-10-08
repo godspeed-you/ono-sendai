@@ -1,0 +1,44 @@
+# Issue #302, through the real binary as an unprivileged user.
+#
+# A job's relative paths mean the directory it was started in (ADR-0957). Each job below waits at a
+# gate — a named pipe it reads by its absolute path — until the foreground has moved, and the
+# script opens the gate only after the move, so the order is the script's and not a race. The
+# directory the foreground moves to holds namesakes of the job's files; they must survive. The
+# foreground's own relative paths are unchanged. Nothing below asserts a duration.
+case: a background job's relative paths keep the directory it was started in
+timeout: 120
+env: NO_COLOR=1
+run: |
+  mkdir -p "$HOME/case-392/start" "$HOME/case-392/moved"
+  : > "$HOME/case-392/start/one.o"
+  : > "$HOME/case-392/start/two.o"
+  : > "$HOME/case-392/start/keep.txt"
+  : > "$HOME/case-392/moved/one.o"
+  : > "$HOME/case-392/moved/two.o"
+  mkfifo "$HOME/case-392.gate" "$HOME/case-392.write-gate"
+
+  echo "== a job's glob and removal stay in its directory =="
+  ono -c "cd $HOME/case-392/start
+          fn clean() { sh -c 'read line < $HOME/case-392.gate'; remove file *.o --confirm | count | to json }
+          clean &
+          cd $HOME/case-392/moved
+          sh -c 'echo go > $HOME/case-392.gate'
+          fg %1
+          echo \"job-status-\$?\"
+          get file one.o | select path | to json"
+
+  echo "== a native job writes its relative file where it started =="
+  ono -c "cd $HOME/case-392/start
+          read file $HOME/case-392.write-gate | write file out.txt &
+          cd $HOME/case-392/moved
+          sh -c 'echo go > $HOME/case-392.write-gate'
+          sh -c 'while [ ! -e $HOME/case-392/start/out.txt ] && [ ! -e $HOME/case-392/moved/out.txt ]; do sleep 0.05; done'"
+
+  echo "start-holds=[$(ls "$HOME/case-392/start" | tr '\n' ' ')]"
+  echo "moved-holds=[$(ls "$HOME/case-392/moved" | tr '\n' ' ')]"
+exit: 0
+stdout-contains: job-status-0
+stdout-contains: [{"path":"one.o"}]
+stdout-contains: start-holds=[keep.txt out.txt ]
+stdout-contains: moved-holds=[one.o two.o ]
+stdout-not-contains: panicked
