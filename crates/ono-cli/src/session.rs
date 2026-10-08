@@ -2189,9 +2189,7 @@ impl Session {
     /// whose relative paths the kernel resolves through the directory the session keeps it in.
     #[must_use]
     pub fn anchoring_directory(&self) -> Option<std::sync::Arc<Path>> {
-        // Inside a link frame a link's remote answers, and a directory of this machine means
-        // nothing there: its paths travel as they were written (ADR-0957).
-        if !self.execution.background_job || self.link_host().is_some() {
+        if !self.execution.background_job {
             return None;
         }
         Some(std::sync::Arc::from(self.environment.cwd.as_path()))

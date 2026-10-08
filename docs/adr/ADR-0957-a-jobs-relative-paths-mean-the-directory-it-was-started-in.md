@@ -52,16 +52,27 @@ by these mechanisms, each at a seam rather than in a command:
    provider starts for it runs there — the `open file` handler, a package manager — and a
    path-shaped program or operand the provider would otherwise hand on relative is anchored: a
    `--with ./tool` handler, a `./foo.deb` archive, a mount source that is plainly a path (`./disk.img`,
-   `images/disk.img`, not `tmpfs` or `server:/export`). An opaque plan action applied in a job runs
-   its program in the job's directory, and a provider action applied there carries it.
+   `images/disk.img`, not `tmpfs` or `server:/export`, nor a bare `disk.img`, which may be a
+   device name), in `mount filesystem` and `add mount` alike. An opaque plan action applied in a
+   job runs its program in the job's directory, and a provider action applied there carries it.
    The job's own programs, glob expansion and `PATH` lookup already used the session's `cwd`.
+   Children whose arguments carry no relative path the job meant — `journalctl`, the account
+   tools (whose `--home`/`--shell` are already anchored as `path` parameters), a plugin's build
+   tool, the probes of `enter` — run where the process stands; their directory changes nothing
+   they do, so the rule is stated as above and not as "every child" (review M6).
 5. **Strings that name local paths.** A plugin reference written as a path — `./pkg`, `path:pkg` —
    is anchored, and recorded absolute; so is `find plugin --source path:…`.
 6. **Redirections and plans.** A native stage's redirection is opened in the job's directory
-   (`Session::anchored_path`), and a `plan` made in a job resolves its operation's paths there
-   before it freezes them.
-7. **Links.** Inside a link frame a link's remote answers, and a directory of this machine means
-   nothing there: the job's paths travel to it as written, with no directory on the query.
+   (`Session::anchored_path`). **A plan freezes absolute paths:** its operands, and relative paths
+   piped into it, are anchored on the directory the plan is made in — the foreground's, or a
+   job's — and the action that applies it names that absolute path. Applying a plan later,
+   after a `cd` or from a job, acts on what was planned. Before this, `plan remove file a.o` in
+   one directory, `cd`, `apply` removed the namesake in the new directory — a foreground defect of
+   the same class, fixed by the same change (review N1).
+7. **Links.** Inside a link frame a link's remote answers what the stages ask, and a directory of
+   this machine means nothing there: those paths travel to it as written, with no directory on
+   the query. What stays on this side — a redirection, a plugin reference, a program — is still
+   anchored (review S3).
 
 **The join keeps the text it joins** (`ono_provider_api::anchor_path`): `./x` becomes `<dir>/./x`,
 `link/` keeps its trailing slash, `..` stays, nothing is canonicalized and symlinks are not
@@ -99,9 +110,11 @@ Hard:
   host protocol carries no working directory. No plugin target defaults a path today.
 - A job's records show absolute paths where the foreground would show the relative ones it was
   given.
-- `$var | plan …` and `@-1 | plan …` are refused before any path is resolved (`plan` reads piped
-  objects only after a command head), in the foreground as in a job, so the plan path of point 2
-  is reached only through the job's own stages, which are anchored.
+- `$var | plan …` works only as a whole top-level line; inside a function body or a block, and
+  with a redirection, it is refused (`this stage has no command to run`, a separate limitation).
+  A job can therefore pipe captured records into `plan` only as its whole line, which cannot be
+  held at a gate; its piped subjects are anchored like the rest (point 6), proven by reading
+  rather than by a test.
 
 Encoded by `crates/ono-cli/tests/jobs_directory.rs`:
 `::should_write_where_a_native_job_started_when_the_foreground_moved_before_it_wrote`,
@@ -117,7 +130,11 @@ Encoded by `crates/ono-cli/tests/jobs_directory.rs`:
 `::should_read_a_plugin_package_named_relatively_in_a_job_from_the_jobs_directory`,
 `::should_start_a_handler_named_relatively_in_a_job_from_and_in_the_jobs_directory`,
 `::should_send_a_jobs_relative_path_to_a_link_as_written`,
-`::should_keep_a_trailing_slash_when_a_job_anchors_a_path`; the unit tests of
+`::should_keep_a_trailing_slash_when_a_job_anchors_a_path`,
+`::should_apply_a_plan_made_where_the_job_started_to_that_file_after_the_foreground_moved`,
+`::should_apply_a_plan_to_the_file_it_froze_when_the_foreground_moved_before_applying`,
+`::should_open_a_jobs_redirection_locally_in_the_jobs_directory_inside_a_link_frame`,
+`::should_send_a_relative_path_as_written_from_a_job_started_inside_a_link_frame`; the unit tests of
 `ono-provider-api` (`anchoring`), `ono-provider-linux` (`mount_sources`, `local_packages` —
 mounting and installing need root, so the anchoring itself is what is tested); acceptance case
 `392`.

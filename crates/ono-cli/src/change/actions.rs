@@ -416,7 +416,19 @@ pub fn resolve(
     };
     // §5.3: a pipeline supplies the objects the mutation acts on, and the statement then names
     // none. What was typed still wins over what the pipe carried, exactly as a context frame does.
-    let from_pipe = piped_subjects(piped, operation.subject);
+    // Piped subjects are paths as their records named them; a relative one meant the directory
+    // the plan is made in (ADR-0957).
+    let from_pipe: Vec<String> = piped_subjects(piped, operation.subject)
+        .into_iter()
+        .map(|subject| match directory {
+            Some(directory) if operation.subject == "path" => {
+                ono_provider_api::anchor_path(Some(directory), std::path::Path::new(&subject))
+                    .to_string_lossy()
+                    .into_owned()
+            }
+            _ => subject,
+        })
+        .collect();
     let subjects = match subject_of(&bound, operation) {
         Some(named) => vec![named],
         None if !from_pipe.is_empty() => from_pipe,

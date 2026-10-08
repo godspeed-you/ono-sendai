@@ -57,7 +57,13 @@ pub(super) fn stage_scope(
     let mut scope = Scope::new();
     // Issue #302: a job's relative paths mean the directory it was started in, whatever the
     // foreground has done to the process's directory since (ADR-0957).
-    if let Some(directory) = session.anchoring_directory() {
+    // Inside a link frame the remote answers what the stages ask, and a directory of this
+    // machine means nothing there: their paths travel as written. What stays on this side — a
+    // redirection, a plugin reference — is still anchored (review S3).
+    if let Some(directory) = session
+        .anchoring_directory()
+        .filter(|_| session.link_host().is_none())
+    {
         scope = scope.with_working_directory(directory);
     }
     // v0.2 §20.2: `@-1` and `@N` name the results this session retained. A command argument that

@@ -107,12 +107,14 @@ fn plan(session: &mut Session, stage: &Stage, input: &[Value]) -> Result<Vec<Val
         )
     })?;
     let options = contract.bind(&own)?;
-    // A job's plan resolves its relative paths in the job's directory, as every other native
-    // command of a job does (issue #302, ADR-0957); the options carry that directory to the
-    // operations they plan.
-    let options = match session.anchoring_directory() {
-        Some(directory) => options.anchored(&directory),
-        None => options,
+    // A plan freezes absolute paths: its operands are anchored on the directory the plan is made
+    // in — the foreground's, or a job's own (issue #302, ADR-0957) — so applying it later, after
+    // a `cd` or from a job, acts on what was planned and never on a namesake wherever the process
+    // stands then (review N1). Inside a link frame the remote resolves them, as written.
+    let options = if host.is_none() {
+        options.anchored(&std::sync::Arc::from(session.cwd()))
+    } else {
+        options
     };
     let statements = statements_of(&rest)?;
     let handle = runtime_handle(session)?;

@@ -643,3 +643,134 @@ fn should_keep_a_trailing_slash_when_a_job_anchors_a_path() {
         run.report()
     );
 }
+
+// --- second review of #302 -------------------------------------------------------------------
+
+#[test]
+fn should_apply_a_plan_made_where_the_job_started_to_that_file_after_the_foreground_moved() {
+    // Review N1: a plan freezes the absolute path of its target; applying it — here in a job,
+    // after the foreground moved to a directory with a namesake — acts on that path, never on
+    // the operand as written resolved wherever the process now stands.
+    let rig = Rig::new();
+    rig.put("start/a.o", "start\n");
+    rig.put("moved/a.o", "moved\n");
+
+    let run = run_bounded(
+        &rig.scratch,
+        &format!(
+            "cd {start}\n\
+             let p = (plan remove file a.o)\n\
+             fn ap() {{ {wait}; $p | apply --confirm | to json }}\n\
+             ap &\n\
+             cd {moved}\n\
+             {open}\n\
+             fg %1",
+            start = rig.start().display(),
+            moved = rig.moved().display(),
+            wait = rig.wait_at_gate(),
+            open = rig.open_gate(),
+        ),
+        BUDGET,
+    );
+
+    assert!(run.finished, "{}", run.report());
+    assert!(
+        !rig.exists("start/a.o") && rig.exists("moved/a.o"),
+        "the plan's own file was removed and the namesake kept. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_apply_a_plan_to_the_file_it_froze_when_the_foreground_moved_before_applying() {
+    // Review N1, the foreground half of the same defect: plan in one directory, `cd`, apply.
+    let rig = Rig::new();
+    rig.put("start/a.o", "start\n");
+    rig.put("moved/a.o", "moved\n");
+
+    let run = run_bounded(
+        &rig.scratch,
+        &format!(
+            "cd {start}\n\
+             let p = (plan remove file a.o)\n\
+             cd {moved}\n\
+             $p | apply --confirm | to json",
+            start = rig.start().display(),
+            moved = rig.moved().display(),
+        ),
+        BUDGET,
+    );
+
+    assert!(run.finished, "{}", run.report());
+    assert!(
+        !rig.exists("start/a.o") && rig.exists("moved/a.o"),
+        "the plan's own file was removed and the namesake kept. {}",
+        run.report()
+    );
+}
+
+#[test]
+#[cfg(feature = "remote")]
+fn should_open_a_jobs_redirection_locally_in_the_jobs_directory_inside_a_link_frame() {
+    // Review S3: inside a link frame the remote answers what the line asks, but a redirection is
+    // this machine's file and means the job's directory. The job here was started inside the
+    // foreground's link frame (review R3), and waits on a gate the remote reads by its absolute
+    // path — the local transport's agent is this machine.
+    let rig = Rig::new();
+
+    let run = run_bounded(
+        &rig.scratch,
+        &format!(
+            "cd {start}\n\
+             link host far --transport local\n\
+             enter link far\n\
+             read file {gate} | to json > out.json &\n\
+             leave\n\
+             cd {moved}\n\
+             {open}\n\
+             {wait}\n\
+             echo settled",
+            start = rig.start().display(),
+            moved = rig.moved().display(),
+            gate = rig.gate().display(),
+            open = rig.open_gate(),
+            wait = wait_for_either(&[&rig.start().join("out.json"), &rig.moved().join("out.json")]),
+        ),
+        BUDGET,
+    );
+
+    assert!(run.finished, "{}", run.report());
+    assert!(
+        rig.exists("start/out.json") && !rig.exists("moved/out.json"),
+        "the job's redirection opened its file where the job was started. {}",
+        run.report()
+    );
+}
+
+#[test]
+#[cfg(feature = "remote")]
+fn should_send_a_relative_path_as_written_from_a_job_started_inside_a_link_frame() {
+    // Review H5, for a job started inside the foreground's link frame.
+    let rig = Rig::new();
+
+    let run = run_bounded(
+        &rig.scratch,
+        &format!(
+            "cd {start}\n\
+             link host far --transport local\n\
+             enter link far\n\
+             get file relname-only | to json &\n\
+             fg %1",
+            start = rig.start().display(),
+        ),
+        BUDGET,
+    );
+
+    assert!(run.finished, "{}", run.report());
+    let anchored = rig.start().join("relname-only").display().to_string();
+    assert!(
+        run.stderr.contains("relname-only") && !run.stderr.contains(&anchored),
+        "the remote was asked for the path as written. {}",
+        run.report()
+    );
+}

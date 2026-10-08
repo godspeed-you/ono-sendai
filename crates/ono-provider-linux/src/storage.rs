@@ -1092,6 +1092,9 @@ impl StorageProvider {
         let Some(source) = action.argument("source").and_then(text_of) else {
             return missing(action, "source");
         };
+        // An fstab line outlives the directory it was written from: a path-shaped source is
+        // recorded as the job meant it (ADR-0957).
+        let source = mount_source(action, &source);
         let Some(target) = Self::action_target(action) else {
             return missing(action, "target");
         };
