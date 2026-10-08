@@ -51,10 +51,16 @@ is an **enhancement layered on it** — the External Command Adaptation Layer �
 immutable (AGENTS.md §5.2, ADR-0026). `spec-check` fails if either is missing a checksum line in
 `docs/specs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
 
-**Build order for what remains: v0.7, then v0.8, then v0.9, then v0.10.** v0.4.1, v0.5, v0.6 and v0.6.1 are
-implemented and released (`v0.4.1` … `v0.6.1`). Each remaining tranche's own §0.1 progression
-diagram names the one before it as its prerequisite, so for these three arrival order and build
-order coincide.
+**Build order for what remains: v0.6.4, then v0.6.5, then v0.6.6, then v0.7, v0.8, v0.9 and v0.10.**
+v0.4.1, v0.5, v0.6, v0.6.1 and v0.6.2 are implemented and released (`v0.4.1` … `v0.6.2`), and v0.6.3
+is implemented and release-checked on `implementation`. Three stabilization tranches come first,
+each a GitHub milestone that is its authoritative inventory, as v0.6.2's and v0.6.3's were
+(ADR-0862, ADR-0929): `v0.6.4` — System and Spatial Model Stabilization (providers, adapters and
+process execution; spatial navigation and the map), `v0.6.5` — KUANG/11 Ecosystem Stabilization
+(plugins, contributed providers, plugin and provider conformance), and `v0.6.6` — Remote and
+Change Stabilization (remote links and trust; the temporal ledger and change planning). The
+presentation releases follow them: each of v0.7 … v0.10's own §0.1 progression diagram names the
+one before it as its prerequisite, so for those four arrival order and build order coincide.
 
 **v0.7 arrived on `main` on 2026-09-01** as
 `docs/specs/ono_sendai_shell_spec_v0.7_presentation_consolidation_rich_tty.md` — Presentation
@@ -64,8 +70,8 @@ profiles and constrained view tree into a production-quality rich terminal path,
 `HistoryEntry`/`ResultRef` and the v0.4–v0.6 context surfaced consistently near the prompt. Its
 own §0.5 states it exists so a later Deck workspace has something solid to compose, and must
 stay valuable even if that workspace is never built. Merged into `implementation`, checksummed
-(`docs/specs/spec.sha256`) and enumerated (AGENTS.md §5/§5.2), **not implemented**, and **the next
-tranche**. It has no `docs/ACCEPTANCE.md` checklist yet; writing one is its first task, and it
+(`docs/specs/spec.sha256`) and enumerated (AGENTS.md §5/§5.2), **not implemented**, and **the first
+presentation tranche**, after the v0.6.4–v0.6.6 stabilization milestones. It has no `docs/ACCEPTANCE.md` checklist yet; writing one is its first task, and it
 claims §4.13 (§4.12 is v0.6's).
 
 **v0.8 arrived on `main` the same day** as
@@ -111,8 +117,10 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## What is left, and why
 
-**v0.7 is the next tranche** (above), and nothing of it is started. The known problems are in the
-tracker, by release milestone (`v0.6.4` … `v0.10.0`); `v0.6.2` — the test suite, the harness, CI,
+**v0.6.4 — System and Spatial Model Stabilization — is the next tranche**, then `v0.6.5` and
+`v0.6.6`, then v0.7 (above); nothing of them is started. The known problems are in the tracker, by
+release milestone (`v0.6.4` … `v0.10.0`), and those three milestones are the inventories of the
+stabilization tranches; `v0.6.2` — the test suite, the harness, CI,
 packaging, release tooling and binary size — and `v0.6.3` — command contracts, errors and
 diagnostics, the shell language, pipelines and completion — are implemented. Promoting `implementation` to `main` is the user's
 decision; an agent carries it out only when told to, in that request (AGENTS.md §12.1).
