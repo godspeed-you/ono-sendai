@@ -365,11 +365,15 @@ pub enum Resolution {
 ///   where the contract that exists declares a query rather than a mutation;
 /// - `change.opaque_action_forbidden` where the statement runs an external program and §6.3's
 ///   escape was not given.
+///
+/// `directory` is the directory the operation's relative paths mean, when the plan is made where
+/// the process's working directory is not that — in a background job (ADR-0957).
 pub fn resolve(
     registry: &CommandRegistry,
     statement: &Statement,
     opaque: OpaquePermission,
     piped: &[Value],
+    directory: Option<&std::sync::Arc<std::path::Path>>,
 ) -> Result<Resolution, ErrorValue> {
     if statement.is_verification() {
         return verification_of(statement);
@@ -405,6 +409,11 @@ pub fn resolve(
         return Err(error::action_not_plannable(&statement.source, &detail));
     };
     let bound = contract.bind(resolved.arguments)?;
+    // Planned from a job, the operation's relative paths mean the job's directory (ADR-0957).
+    let bound = match directory {
+        Some(directory) => bound.anchored(directory),
+        None => bound,
+    };
     // §5.3: a pipeline supplies the objects the mutation acts on, and the statement then names
     // none. What was typed still wins over what the pipe carried, exactly as a context frame does.
     let from_pipe = piped_subjects(piped, operation.subject);

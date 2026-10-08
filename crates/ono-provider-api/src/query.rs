@@ -14,6 +14,7 @@ pub struct Query {
     selectors: Vec<Selector>,
     options: Vec<(String, Value)>,
     limit: Option<usize>,
+    directory: Option<std::sync::Arc<std::path::Path>>,
 }
 
 impl Query {
@@ -26,6 +27,7 @@ impl Query {
             selectors: Vec::new(),
             options: Vec::new(),
             limit: None,
+            directory: None,
         }
     }
 
@@ -71,6 +73,37 @@ impl Query {
     pub fn limit(mut self, limit: usize) -> Self {
         self.limit = Some(limit);
         self
+    }
+
+    /// Says which directory a relative or omitted path in this query means.
+    ///
+    /// Without one it is the process's working directory, which is the foreground session's. A
+    /// background job asks in the directory it was started in, which the foreground may since
+    /// have left (issue #302, ADR-0957): a provider that defaults a path — a listing of "here" —
+    /// defaults it to this directory.
+    #[must_use]
+    pub fn within(mut self, directory: std::sync::Arc<std::path::Path>) -> Self {
+        self.directory = Some(directory);
+        self
+    }
+
+    /// The directory a relative or omitted path means, when the query names one.
+    #[must_use]
+    pub fn working_directory(&self) -> Option<&std::path::Path> {
+        self.directory.as_deref()
+    }
+
+    /// `path` as this query means it: joined onto its directory when it is relative and the
+    /// query names one, as it stands otherwise.
+    #[must_use]
+    pub fn resolve_path(&self, path: &std::path::Path) -> std::path::PathBuf {
+        match &self.directory {
+            Some(directory) if path.is_relative() => directory
+                .join(path)
+                .components()
+                .collect::<std::path::PathBuf>(),
+            _ => path.to_path_buf(),
+        }
     }
 
     /// The target being asked for.

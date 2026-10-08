@@ -55,6 +55,11 @@ pub(super) fn stage_scope(
     source: &str,
 ) -> Eval<Scope> {
     let mut scope = Scope::new();
+    // Issue #302: a job's relative paths mean the directory it was started in, whatever the
+    // foreground has done to the process's directory since (ADR-0957).
+    if let Some(directory) = session.anchoring_directory() {
+        scope = scope.with_working_directory(directory);
+    }
     // v0.2 §20.2: `@-1` and `@N` name the results this session retained. A command argument that
     // writes one — v0.4 §28.2's `enter @-1` — reads the same values the pipeline head does, or
     // the reference would mean two different things in two positions of one language.

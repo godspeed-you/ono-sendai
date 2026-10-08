@@ -151,7 +151,13 @@ impl Request {
                 _ => None,
             })
             .filter(|roots| !roots.is_empty())
-            .unwrap_or_else(|| vec![PathBuf::from(".")]);
+            // An omitted path is "here", and a relative one is relative to it: the query's
+            // directory where it names one — a background job's (ADR-0957) — and the process's
+            // otherwise.
+            .unwrap_or_else(|| vec![PathBuf::from(".")])
+            .into_iter()
+            .map(|root| query.resolve_path(&root))
+            .collect::<Vec<_>>();
         let listing = query.target_name() != "file";
         // `find file /var/log` binds its path to the selector named `root`, and find *is* the
         // walk (docs/contracts/commands/file.yaml: "discover files by walking a root"); only

@@ -550,7 +550,16 @@ impl CommandTable {
             ctx.context(),
             ctx.arguments(),
         )?;
-        match narrowed {
+        // Issue #302: an invocation whose scope fixes a working directory — a background job's —
+        // has its relative paths anchored on it here, at the same seam, so every implementation
+        // acts on the paths the job meant when it was started, wherever the foreground has moved
+        // the process since (ADR-0957).
+        let anchored = match (ctx.scope().working_directory(), narrowed) {
+            (Some(directory), Some(arguments)) => Some(arguments.anchored(directory)),
+            (Some(directory), None) => Some(ctx.arguments().anchored(directory)),
+            (None, narrowed) => narrowed,
+        };
+        match anchored {
             Some(arguments) => {
                 let mut inner = ctx.rebind(&arguments);
                 implementation.invoke_async(&mut inner).await

@@ -107,6 +107,13 @@ fn plan(session: &mut Session, stage: &Stage, input: &[Value]) -> Result<Vec<Val
         )
     })?;
     let options = contract.bind(&own)?;
+    // A job's plan resolves its relative paths in the job's directory, as every other native
+    // command of a job does (issue #302, ADR-0957); the options carry that directory to the
+    // operations they plan.
+    let options = match session.anchoring_directory() {
+        Some(directory) => options.anchored(&directory),
+        None => options,
+    };
     let statements = statements_of(&rest)?;
     let handle = runtime_handle(session)?;
     let interactive = session.is_interactive();
@@ -356,7 +363,13 @@ async fn build(
     };
     let mut resolutions = Vec::with_capacity(statements.len());
     for statement in statements {
-        match super::actions::resolve(registry, statement, opaque, input) {
+        match super::actions::resolve(
+            registry,
+            statement,
+            opaque,
+            input,
+            options.working_directory(),
+        ) {
             Ok(resolution) => resolutions.push(resolution),
             // §6.3's escape is an explicit request: the refusal above is the default, and only a
             // caller who wrote `--opaque` on a host that permits it gets past it.

@@ -2059,6 +2059,32 @@ impl Session {
         self.execution.background_job
     }
 
+    /// The directory this session's relative paths are anchored on, when the process's working
+    /// directory is not theirs: a background job's, which is the directory it was started in
+    /// while the foreground moves the process (issue #302, ADR-0957). `None` for the foreground,
+    /// whose relative paths the kernel resolves through the directory the session keeps it in.
+    #[must_use]
+    pub fn anchoring_directory(&self) -> Option<std::sync::Arc<Path>> {
+        self.execution
+            .background_job
+            .then(|| std::sync::Arc::from(self.environment.cwd.as_path()))
+    }
+
+    /// `path` as this session means it: anchored on a job's directory when it is relative and
+    /// the session is a job's (ADR-0957), as it stands otherwise.
+    #[must_use]
+    pub fn anchored_path(&self, path: &Path) -> PathBuf {
+        if self.execution.background_job && path.is_relative() {
+            return self
+                .environment
+                .cwd
+                .join(path)
+                .components()
+                .collect::<PathBuf>();
+        }
+        path.to_path_buf()
+    }
+
     /// How many scopes are open, for [`Session::detach_scopes`].
     #[must_use]
     pub fn scope_depth(&self) -> usize {

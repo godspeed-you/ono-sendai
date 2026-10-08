@@ -570,7 +570,11 @@ pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> 
         .unwrap_or_default()
         .trim()
         .to_owned();
-    let scope = std::sync::Arc::new(Scope::new());
+    // The job's relative paths mean the directory it is started in, which is the foreground's
+    // now and may not be when the job reaches them (issue #302, ADR-0957).
+    let scope = std::sync::Arc::new(
+        Scope::new().with_working_directory(std::sync::Arc::from(session.cwd())),
+    );
     let context = session.context();
     let adapters = session.shared_adapters();
     let resolver = crate::resolve::resolver(session);

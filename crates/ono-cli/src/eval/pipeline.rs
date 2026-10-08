@@ -948,6 +948,8 @@ pub fn output_destination(
         }
     };
 
+    // A job's redirection opens its file in the job's directory, as its programs' do (ADR-0957).
+    let path = session.anchored_path(&path);
     let mut options = std::fs::OpenOptions::new();
     options.create(true).write(true);
     if append {

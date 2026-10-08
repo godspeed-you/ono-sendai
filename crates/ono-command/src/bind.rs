@@ -67,6 +67,10 @@ pub struct BoundArguments {
     declared_selectors: Vec<ParameterSpec>,
     /// The declared options, for the same reason.
     declared_options: Vec<ParameterSpec>,
+    /// The directory the relative paths among these arguments were anchored on, when they were
+    /// (issue #302, ADR-0957). A provider query built from them names it, so a path the command
+    /// left out means that directory too.
+    directory: Option<std::sync::Arc<std::path::Path>>,
 }
 
 impl BoundArguments {
@@ -201,14 +205,71 @@ impl BoundArguments {
             options.push((name.clone(), Binding::Value(value)));
         }
 
-        Ok(Self {
+        let evaluated = Self {
             spelling: self.spelling.clone(),
             selectors,
             options,
             ambient: self.ambient.clone(),
             declared_selectors: self.declared_selectors.clone(),
             declared_options: self.declared_options.clone(),
+            directory: self.directory.clone(),
+        };
+        // An evaluated path is held to the same directory a written one is: `remove file $name`
+        // in a job means the job's `$name`, wherever the foreground has gone (ADR-0957).
+        Ok(match scope.working_directory() {
+            Some(directory) => evaluated.anchored(directory),
+            None => evaluated,
         })
+    }
+
+    /// These arguments with every relative path anchored on `directory`.
+    ///
+    /// A relative path means the working directory, and the process has one working directory,
+    /// which the foreground moves. A command that must keep the meaning its path had when it was
+    /// bound — a background job's (issue #302) — has each value bound to a `path` parameter, or
+    /// to a list of them, joined onto the directory that path means. The join is lexical: `.`
+    /// components fall away and `..` stays, nothing is canonicalized, and a path that does not
+    /// exist yet — a destination about to be written — is anchored like one that does. Absolute
+    /// paths and values of other types are untouched, and an expression still unevaluated is
+    /// anchored when it is evaluated (ADR-0957).
+    #[must_use]
+    pub fn anchored(&self, directory: &std::sync::Arc<std::path::Path>) -> Self {
+        let anchor = |declared: &[ParameterSpec], bindings: &[(String, Binding)]| {
+            bindings
+                .iter()
+                .map(|(name, binding)| {
+                    let is_path = declared
+                        .iter()
+                        .find(|spec| spec.name() == name)
+                        .is_some_and(|spec| names_paths(spec.declared_type()));
+                    match binding {
+                        Binding::Value(value) if is_path => {
+                            (name.clone(), Binding::Value(anchor_value(directory, value)))
+                        }
+                        other => (name.clone(), other.clone()),
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        Self {
+            spelling: self.spelling.clone(),
+            selectors: anchor(&self.declared_selectors, &self.selectors),
+            options: anchor(&self.declared_options, &self.options),
+            ambient: self
+                .ambient
+                .iter()
+                .map(|(field, value)| (field.clone(), anchor_value(directory, value)))
+                .collect(),
+            declared_selectors: self.declared_selectors.clone(),
+            declared_options: self.declared_options.clone(),
+            directory: Some(std::sync::Arc::clone(directory)),
+        }
+    }
+
+    /// The directory these arguments' relative paths were anchored on, if they were.
+    #[must_use]
+    pub fn working_directory(&self) -> Option<&std::sync::Arc<std::path::Path>> {
+        self.directory.as_ref()
     }
 
     fn declared_selector(&self, name: &str) -> Option<&ParameterSpec> {
@@ -471,6 +532,7 @@ impl CommandContract {
             ambient: Vec::new(),
             declared_selectors: self.selectors().to_vec(),
             declared_options: self.options().to_vec(),
+            directory: None,
         })
     }
 
@@ -684,7 +746,36 @@ impl CommandContract {
         for (field, value) in arguments.ambient() {
             query = query.with(ono_provider_api::Selector::field(field, value.clone()));
         }
+        // Arguments anchored on a directory ask the provider in it, so a path the command left
+        // out — `get dir`, `find file` — means that directory as well (ADR-0957).
+        if let Some(directory) = arguments.working_directory() {
+            query = query.within(std::sync::Arc::clone(directory));
+        }
         Ok(query)
+    }
+}
+
+/// Whether a parameter of `declared` type carries filesystem paths.
+fn names_paths(declared: &DeclaredType) -> bool {
+    match declared {
+        DeclaredType::Path => true,
+        DeclaredType::List(inner) => names_paths(inner),
+        _ => false,
+    }
+}
+
+/// `value` with every relative path in it joined onto `directory`, lexically (ADR-0957).
+fn anchor_value(directory: &std::path::Path, value: &Value) -> Value {
+    match value {
+        Value::Path(path) if path.is_relative() => Value::Path(std::sync::Arc::from(
+            directory
+                .join(path)
+                .components()
+                .collect::<std::path::PathBuf>()
+                .as_path(),
+        )),
+        Value::List(items) => Value::list(items.iter().map(|item| anchor_value(directory, item))),
+        other => other.clone(),
     }
 }
 

@@ -51,6 +51,7 @@ pub struct Scope {
     previous: Vec<Value>,
     items: Vec<Value>,
     pipelines: BTreeMap<Span, Value>,
+    directory: Option<std::sync::Arc<std::path::Path>>,
 }
 
 impl Scope {
@@ -99,6 +100,24 @@ impl Scope {
     pub fn with_pipeline_result(mut self, span: Span, value: Value) -> Self {
         self.pipelines.insert(span, value);
         self
+    }
+
+    /// Fixes the directory the command's relative paths mean, for a command that must not read
+    /// them through the process's working directory: a background job's, whose directory is the
+    /// one it was started in while the foreground moves the process (issue #302, ADR-0957).
+    ///
+    /// Without one, a relative path is left relative, and the kernel resolves it through the
+    /// process's directory — which, for the foreground, is the session's own (v0.4.1 §31.3).
+    #[must_use]
+    pub fn with_working_directory(mut self, directory: std::sync::Arc<std::path::Path>) -> Self {
+        self.directory = Some(directory);
+        self
+    }
+
+    /// The directory the command's relative paths mean, when the scope fixes one.
+    #[must_use]
+    pub fn working_directory(&self) -> Option<&std::sync::Arc<std::path::Path>> {
+        self.directory.as_ref()
     }
 
     /// The value bound to `$name`, if anything is.
