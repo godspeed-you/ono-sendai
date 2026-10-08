@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use ono_testkit::{Scratch, scratch};
 
-use support::{processes_naming, run_bounded};
+use support::{Streaming, processes_naming, run_bounded};
 
 const BUDGET: Duration = Duration::from_secs(60);
 
@@ -194,7 +194,8 @@ fn should_end_a_job_whose_program_was_stopped_when_the_shell_exits() {
 #[test]
 fn should_leave_promptly_when_its_jobs_end_on_the_signal() {
     // The common case stays cheap: a job whose program ends on SIGTERM, and a native job with
-    // no program at all, are over long before the grace period is.
+    // no program at all, are over long before the grace period is. Measured from the line that
+    // says the shell is leaving, so the shell's start-up is not part of it (review R9).
     let home = scratch();
     let log = home.write("jobs/follow.log", "line\n");
     let programs = [Stubborn::yielding(&home, "polite")];
@@ -203,9 +204,39 @@ fn should_leave_promptly_when_its_jobs_end_on_the_signal() {
         &format!("tail file {} --follow &\necho leaving\n", log.display()),
     );
 
-    let begun = Instant::now();
-    let run = run_bounded(&home, &script, BUDGET);
-    let took = begun.elapsed();
+    let mut shell = Streaming::start(home.path(), &script);
+    assert!(shell.until("leaving"), "the script reached its end");
+    let leaving = Instant::now();
+    let (finished, stdout, stderr) = shell.finish();
+    let took = leaving.elapsed();
+
+    assert!(finished, "{stdout}\n{stderr}");
+    assert!(
+        programs[0].gone_within(Duration::from_secs(10)),
+        "the job's program ended with the shell. {stdout}\n{stderr}"
+    );
+    assert!(
+        took < Duration::from_millis(1500),
+        "jobs that end on the signal do not hold the exit for the grace period: {took:?}"
+    );
+}
+
+#[test]
+fn should_end_a_program_backgrounded_at_the_prompt_when_the_shell_exits() {
+    // Review R1: a program backgrounded directly is a job the shell owns as much as one a
+    // function or a pipeline started; leaving ends it the same way.
+    let home = scratch();
+    let program = Stubborn::at(&home, "direct");
+
+    let run = run_bounded(
+        &home,
+        &format!(
+            "{} &\nsh -c 'while [ ! -e {} ]; do sleep 0.02; done'\necho leaving",
+            program.path.display(),
+            program.started().display()
+        ),
+        BUDGET,
+    );
 
     assert!(
         run.finished && run.stdout.contains("leaving"),
@@ -213,13 +244,202 @@ fn should_leave_promptly_when_its_jobs_end_on_the_signal() {
         run.report()
     );
     assert!(
-        programs[0].gone_within(Duration::from_secs(10)),
-        "the job's program ended with the shell. {}",
+        program.gone_within(Duration::from_secs(10)),
+        "the directly backgrounded program did not outlive the shell. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_leave_a_program_detached_with_setsid_fork_running_after_the_shell_exits() {
+    // The documented way out (ADR-0959): `setsid --fork` starts the program in a session and a
+    // process group of its own, which is not a job of the shell's, so leaving does not end it.
+    let home = scratch();
+    let program = Stubborn::at(&home, "detached");
+
+    let run = run_bounded(
+        &home,
+        &format!(
+            "setsid --fork {}\nsh -c 'while [ ! -e {} ]; do sleep 0.02; done'\necho leaving",
+            program.path.display(),
+            program.started().display()
+        ),
+        BUDGET,
+    );
+
+    assert!(
+        run.finished && run.stdout.contains("leaving"),
+        "{}",
         run.report()
     );
     assert!(
-        took < Duration::from_millis(1900),
-        "jobs that end on the signal do not hold the exit for the grace period: {took:?}. {}",
+        !processes_naming(&program.path.display().to_string()).is_empty(),
+        "a program detached with `setsid --fork` outlives the shell. {}",
         run.report()
     );
+}
+
+#[test]
+fn should_end_an_adapted_program_a_job_runs_when_the_shell_exits() {
+    // Review R5: a program whose records the shell decodes as it runs (ADR-0059) is started
+    // without the terminal; it is still the job's, and leaving ends it.
+    let home = scratch();
+    let shims = home.path().join("shims");
+    std::fs::create_dir_all(&shims).expect("the shim directory");
+    let started = shims.join("journalctl.started");
+    support::executable(
+        &shims.join("journalctl"),
+        &format!(
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'systemd 259 (259.5)'; exit 0; fi\n\
+             trap '' TERM INT\nexec 2>/dev/null\n: > '{}'\nwhile :; do sleep 1; done\n",
+            started.display()
+        ),
+    );
+    let guard = Stubborn {
+        path: shims.join("journalctl"),
+    };
+
+    let run = run_bounded(
+        &home,
+        &format!(
+            "set env PATH = \"{}:$PATH\"\n\
+             fn follow() {{ journalctl -f | select message }}\n\
+             follow &\n\
+             sh -c 'while [ ! -e {} ]; do sleep 0.02; done'\necho leaving",
+            shims.display(),
+            started.display()
+        ),
+        BUDGET,
+    );
+
+    assert!(
+        run.finished && run.stdout.contains("leaving"),
+        "{}",
+        run.report()
+    );
+    assert!(
+        guard.gone_within(Duration::from_secs(10)),
+        "the adapted program did not outlive the shell. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_ask_a_stubborn_program_to_stop_once_rather_than_over_and_over() {
+    // Review R6: `kill %N` and leaving each send SIGTERM once to a group, not every ten
+    // milliseconds for as long as they wait.
+    let home = scratch();
+    let counted = home.path().join("jobs/terms");
+    let path = home.path().join("jobs/counting.sh");
+    std::fs::create_dir_all(home.path().join("jobs")).expect("the directory");
+    let started = path.with_extension("started");
+    support::executable(
+        &path,
+        &format!(
+            "#!/bin/sh\ntrap 'echo term >> {}' TERM\ntrap '' INT\n: > '{}'\n\
+             while :; do sleep 0.05; done\n",
+            counted.display(),
+            started.display()
+        ),
+    );
+    let guard = Stubborn { path: path.clone() };
+
+    let run = run_bounded(
+        &home,
+        &format!(
+            "fn counting() {{ {} }}\ncounting &\n\
+             sh -c 'while [ ! -e {} ]; do sleep 0.02; done'\nkill %1\necho leaving",
+            path.display(),
+            started.display()
+        ),
+        BUDGET,
+    );
+
+    assert!(
+        run.finished && run.stdout.contains("leaving"),
+        "{}",
+        run.report()
+    );
+    assert!(
+        guard.gone_within(Duration::from_secs(10)),
+        "{}",
+        run.report()
+    );
+    let terms = std::fs::read_to_string(&counted)
+        .unwrap_or_default()
+        .lines()
+        .count();
+    assert!(
+        (1..=2).contains(&terms),
+        "one SIGTERM for `kill %1` and one for leaving, not {terms}. {}",
+        run.report()
+    );
+}
+
+/// Starts a shell whose jobs — one a native job's program, one a program backgrounded directly,
+/// one in the foreground — all ignore SIGTERM, sends it `signal` once they run, and answers
+/// whether it left within the bound with `128 + signal`, leaving nothing behind (review R2).
+fn ends_its_jobs_on(signal: &str, number: i32) {
+    let home = scratch();
+    let programs = [
+        Stubborn::at(&home, &format!("{signal}-job")),
+        Stubborn::at(&home, &format!("{signal}-direct")),
+        Stubborn::at(&home, &format!("{signal}-foreground")),
+    ];
+    let script = format!(
+        "fn stubborn() {{ {job} }}\nstubborn &\n{direct} &\n\
+         sh -c 'while [ ! -e {job_started} ] || [ ! -e {direct_started} ]; do sleep 0.02; done'\n\
+         echo ready\n{foreground}\n",
+        job = programs[0].path.display(),
+        direct = programs[1].path.display(),
+        foreground = programs[2].path.display(),
+        job_started = programs[0].started().display(),
+        direct_started = programs[1].started().display(),
+    );
+
+    let mut shell = Streaming::start(home.path(), &script);
+    assert!(shell.until("ready"), "the jobs started");
+    let deadline = Instant::now() + BUDGET;
+    while !programs[2].started().exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let killed = std::process::Command::new("kill")
+        .args([&format!("-{signal}"), &shell.pid().to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(killed.success(), "the signal was sent");
+    let code = shell.exit_code();
+    let (finished, stdout, stderr) = shell.finish();
+
+    assert!(
+        finished,
+        "the shell left on SIG{signal}. {stdout}\n{stderr}"
+    );
+    assert_eq!(
+        code,
+        Some(128 + number),
+        "the shell's status says which signal ended it"
+    );
+    for program in &programs {
+        assert!(
+            program.gone_within(Duration::from_secs(10)),
+            "{} did not outlive the shell. {stdout}\n{stderr}",
+            program.path.display()
+        );
+    }
+}
+
+#[test]
+fn should_end_its_jobs_when_the_shell_is_sent_sigterm() {
+    ends_its_jobs_on("TERM", 15);
+}
+
+#[test]
+fn should_end_its_jobs_when_the_shells_terminal_hangs_up() {
+    ends_its_jobs_on("HUP", 1);
+}
+
+#[test]
+fn should_end_its_jobs_when_a_script_is_interrupted() {
+    ends_its_jobs_on("INT", 2);
 }

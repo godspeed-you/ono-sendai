@@ -174,6 +174,8 @@ fn main() -> ExitCode {
         }
     };
 
+    // A signal that is ending the shell owns its exit and its status (ADR-0959).
+    ono_cli::shutdown::yield_to_termination();
     ExitCode::from(status)
 }
 
@@ -214,6 +216,10 @@ fn start(interactive: bool, options: &Options) -> (Session, Reporter) {
         Presentation::Plain
     };
     let reporter = Reporter::new(presentation);
+    // A signal that ends the shell ends what it owns first (issue #303, ADR-0959).
+    if let Err(error) = ono_cli::shutdown::on_termination(interactive) {
+        reporter.error(&error);
+    }
     config::load(&mut session, options, &reporter);
     // The theme is only known once the configuration has been read, and the reporter that read
     // it had to exist first — so the one the session keeps is themed afterwards (ADR-0332).

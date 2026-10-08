@@ -22,13 +22,12 @@
 
 mod support;
 
-use std::io::Read as _;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use ono_testkit::scratch;
 
-use support::{read_until, run_bounded};
+use support::{Streaming, read_until, run_bounded};
 
 const BUDGET: Duration = Duration::from_secs(60);
 
@@ -39,90 +38,6 @@ fn append(path: &Path, line: &str) {
         .open(path)
         .expect("the followed file exists");
     writeln!(file, "{line}").expect("the line is appended");
-}
-
-/// `ono -c script` without a terminal, whose output the test reads as it comes.
-struct Streaming {
-    child: std::process::Child,
-    out: std::sync::mpsc::Receiver<String>,
-    err: std::thread::JoinHandle<String>,
-    seen: String,
-}
-
-impl Streaming {
-    fn start(home: &Path, script: &str) -> Self {
-        let mut child = std::process::Command::new(ono_testkit::ono_binary())
-            .args(["-c", script])
-            .env("HOME", home)
-            .env("XDG_CONFIG_HOME", home.join("xdg"))
-            .env("XDG_STATE_HOME", home.join("state"))
-            .env("ONO_CONFIG_DIR", home.join("ono"))
-            .env("NO_COLOR", "1")
-            .env_remove("ONO_CONFIG")
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .expect("the ono binary is built");
-        let mut stdout = child.stdout.take().expect("stdout was piped");
-        let (sender, out) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let mut buffer = [0u8; 4096];
-            while let Ok(count) = stdout.read(&mut buffer) {
-                if count == 0 {
-                    break;
-                }
-                let _ = sender.send(String::from_utf8_lossy(&buffer[..count]).into_owned());
-            }
-        });
-        let mut stderr = child.stderr.take().expect("stderr was piped");
-        let err = std::thread::spawn(move || {
-            let mut text = String::new();
-            let _ = stderr.read_to_string(&mut text);
-            text
-        });
-        Self {
-            child,
-            out,
-            err,
-            seen: String::new(),
-        }
-    }
-
-    /// Reads standard output until `needle` has appeared, within the budget.
-    fn until(&mut self, needle: &str) -> bool {
-        let deadline = Instant::now() + BUDGET;
-        while !self.seen.contains(needle) {
-            let left = deadline.saturating_duration_since(Instant::now());
-            match self.out.recv_timeout(left) {
-                Ok(chunk) => self.seen.push_str(&chunk),
-                Err(_) => return false,
-            }
-        }
-        true
-    }
-
-    /// Waits for the shell to end, within the budget, and answers everything it wrote. A shell
-    /// that overran is killed with what it started, so no test leaves one behind.
-    fn finish(mut self) -> (bool, String, String) {
-        let deadline = Instant::now() + BUDGET;
-        let mut finished = false;
-        while Instant::now() < deadline {
-            if let Ok(Some(_)) = self.child.try_wait() {
-                finished = true;
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        if !finished {
-            ono_testkit::kill_tree(self.child.id());
-        }
-        let _ = self.child.wait();
-        while let Ok(chunk) = self.out.recv_timeout(Duration::from_millis(200)) {
-            self.seen.push_str(&chunk);
-        }
-        (finished, self.seen, self.err.join().unwrap_or_default())
-    }
 }
 
 #[test]

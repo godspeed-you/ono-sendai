@@ -175,6 +175,10 @@ composition_root:
     - session.rs
     - session_provider.rs
     - settings.rs
+    # How a leaving shell ends what it owns (ADR-0959): the escalation over the process groups
+    # every executor holds, and the signal path that runs it. The groups are `ono-process`'s; when
+    # and in what order a shell gives them up is the shell's.
+    - shutdown.rs
     - sink.rs
     - spatial
     - temporal

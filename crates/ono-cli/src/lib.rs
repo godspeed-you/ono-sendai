@@ -102,6 +102,7 @@ pub mod resolve;
 pub mod session;
 pub mod session_provider;
 pub mod settings;
+pub mod shutdown;
 pub mod sink;
 #[cfg(feature = "spatial")]
 pub mod spatial;

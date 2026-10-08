@@ -69,7 +69,7 @@ mod terminal;
 
 pub use command::{Command, Input, Output, Redirect};
 pub use error::{Error, Result};
-pub use executor::{Canceller, Executor, Foreground, ForegroundOutcome};
+pub use executor::{Canceller, Executor, Foreground, ForegroundOutcome, OwnedGroup, owned_groups};
 pub use fd::Fd;
 pub use job::{Job, JobChange, JobId, JobProcess, JobState};
 pub use pipeline::{Pipeline, PipelineOutcome, StageOutcome};
@@ -85,6 +85,7 @@ pub fn effective_uid() -> u32 {
 }
 
 pub use signals::{
-    Signal, install_child_watch, install_shell_signals, take_child_transition, take_interrupt,
+    Signal, install_child_watch, install_shell_signals, install_termination_watch,
+    take_child_transition, take_interrupt,
 };
 pub use terminal::{Terminal, WindowSize};

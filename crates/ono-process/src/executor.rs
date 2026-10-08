@@ -99,7 +99,93 @@ impl ForegroundGroup {
     }
 }
 
+/// Every group cell an executor of this process holds — each executor's foreground group and each
+/// of its background jobs' — so a shell that leaves can reach everything it owns, whichever thread
+/// started it (ADR-0959). Weak: a cell goes when its executor or its job does.
+static OWNED: std::sync::Mutex<Vec<std::sync::Weak<ForegroundGroup>>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Records `cell` as one of the groups this process owns.
+fn own(cell: &Arc<ForegroundGroup>) {
+    let mut owned = OWNED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    owned.retain(|weak| weak.strong_count() > 0);
+    owned.push(Arc::downgrade(cell));
+}
+
+/// Every process group this process still owns: a foreground group some executor is waiting on,
+/// or a background job's that has a member left to collect (ADR-0959).
+#[must_use]
+pub fn owned_groups() -> Vec<OwnedGroup> {
+    OWNED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .filter_map(std::sync::Weak::upgrade)
+        .map(OwnedGroup)
+        .filter(|group| group.group() != 0)
+        .collect()
+}
+
+/// A process group this process owns, held as the cell that names it.
+///
+/// The cell names the group while one of its members is uncollected, and is cleared under its
+/// lock in the same step that collects the last one (review R10 of v0.6.3), so a signal sent
+/// through it never reaches a group whose id the kernel has handed out again.
+#[derive(Debug, Clone)]
+pub struct OwnedGroup(Arc<ForegroundGroup>);
+
+impl OwnedGroup {
+    /// The group's id, or `0` once it is gone.
+    #[must_use]
+    pub fn group(&self) -> i32 {
+        *self.0.lock()
+    }
+
+    /// Sends `signal` to the group while it is still owned; answers whether it was.
+    pub fn send(&self, signal: Signal) -> bool {
+        let group = self.0.lock();
+        if *group == 0 {
+            return false;
+        }
+        let _ = signal_group(*group, signal);
+        true
+    }
+
+    /// Collects whatever members of the group have ended, without waiting; answers whether
+    /// nothing of it is left. The last collection clears the cell under the same lock.
+    pub fn collect(&self) -> bool {
+        let mut group = self.0.lock();
+        if *group == 0 {
+            return true;
+        }
+        loop {
+            match waitpid(Pid::from_raw(-*group), Some(WaitPidFlag::WNOHANG)) {
+                Ok(WaitStatus::StillAlive) => return false,
+                Ok(_) | Err(Errno::EINTR) => {}
+                Err(_) => {
+                    *group = 0;
+                    return true;
+                }
+            }
+        }
+    }
+}
+
 impl Canceller {
+    /// The process group it would signal right now, or `0`.
+    #[must_use]
+    pub fn group(&self) -> i32 {
+        *self.foreground.lock()
+    }
+
+    /// The same group as an [`OwnedGroup`], for the shutdown that ends what the shell owns.
+    #[must_use]
+    pub fn owned(&self) -> OwnedGroup {
+        OwnedGroup(Arc::clone(&self.foreground))
+    }
+
     /// Whether there is a foreground job to cancel right now.
     #[must_use]
     pub fn is_active(&self) -> bool {
@@ -158,6 +244,22 @@ pub struct Executor {
 struct Tracked {
     id: JobId,
     running: Running,
+    /// The job's group while one of its members is uncollected, cleared in the step that
+    /// collects the last (ADR-0959).
+    group: Arc<ForegroundGroup>,
+}
+
+impl Tracked {
+    /// Collects what `waitpid` has to say about the job, clearing its group under the same lock
+    /// when nothing of it is left.
+    fn reap(&mut self, block: bool) -> Result<()> {
+        let mut group = self.group.lock();
+        let reaped = reap(&mut self.running, block);
+        if self.running.is_finished() {
+            *group = 0;
+        }
+        reaped
+    }
 }
 
 impl std::fmt::Debug for Running {
@@ -186,12 +288,28 @@ impl Executor {
     }
 
     fn with_terminal(terminal: Terminal) -> Self {
+        let foreground = Arc::default();
+        own(&foreground);
         Self {
             terminal,
             jobs: Vec::new(),
-            foreground: Arc::default(),
+            foreground,
             reserved: std::collections::BTreeSet::new(),
         }
+    }
+
+    /// The process groups this executor owns: the one it waits on in the foreground, if any, and
+    /// each background job's with a member left to collect (ADR-0959).
+    #[must_use]
+    pub fn owned_groups(&self) -> Vec<OwnedGroup> {
+        std::iter::once(OwnedGroup(Arc::clone(&self.foreground)))
+            .chain(
+                self.jobs
+                    .iter()
+                    .map(|tracked| OwnedGroup(Arc::clone(&tracked.group))),
+            )
+            .filter(|group| group.group() != 0)
+            .collect()
     }
 
     /// The terminal this executor hands to foreground jobs, if there is one.
@@ -253,6 +371,11 @@ impl Executor {
     /// As [`Executor::run_foreground`].
     pub fn start_piped(&mut self, pipeline: &Pipeline) -> Result<Foreground> {
         let running = self.start(pipeline, false)?;
+        // Owned like any foreground group, though not given the terminal: `kill %N`, Ctrl-C under
+        // `fg` and a leaving shell reach it through the canceller (review R5).
+        if running.pgid != 0 {
+            self.foreground.set(running.pgid);
+        }
         Ok(Foreground {
             running,
             owns_terminal: false,
@@ -266,8 +389,9 @@ impl Executor {
     /// As [`Executor::run_foreground`].
     pub fn finish_foreground(&mut self, mut foreground: Foreground) -> Result<ForegroundOutcome> {
         let outcome = wait_foreground(&mut foreground.running, &self.foreground);
+        // A pipeline that stopped keeps no claim on the cell: it becomes a job of its own.
+        self.foreground.set(0);
         if foreground.owns_terminal {
-            self.foreground.set(0);
             let reclaimed = self.terminal.reclaim();
             outcome?;
             reclaimed?;
@@ -309,7 +433,7 @@ impl Executor {
         let mut changes = Vec::new();
         for tracked in &mut self.jobs {
             let previous = tracked.running.state();
-            reap(&mut tracked.running, false)?;
+            tracked.reap(false)?;
             let current = tracked.running.state();
             if current != previous {
                 changes.push(JobChange {
@@ -347,13 +471,25 @@ impl Executor {
     /// Returns an error if there is no such job, or if the terminal cannot be moved.
     pub fn foreground(&mut self, id: JobId) -> Result<ForegroundOutcome> {
         let index = self.locate(id)?;
-        let mut running = self.jobs.remove(index).running;
+        let tracked = self.jobs.remove(index);
+        let mut running = {
+            // The group moves from the job's cell to the foreground's under both locks, so no
+            // moment exists in which a leaving shell could not reach it.
+            let mut foreground = self.foreground.lock();
+            let mut group = tracked.group.lock();
+            if !tracked.running.is_finished() && tracked.running.pgid != 0 {
+                *foreground = tracked.running.pgid;
+            }
+            *group = 0;
+            drop(group);
+            drop(foreground);
+            tracked.running
+        };
         self.terminal.remember_attributes();
         // The terminal is handed over before the group is woken: a job continued first could
         // read in the instant before the handover and be stopped again by `SIGTTIN`.
         if !running.is_finished() && running.pgid != 0 {
             self.terminal.give_to(running.pgid)?;
-            self.foreground.set(running.pgid);
         }
         if running.is_stopped() {
             continue_group(&mut running)?;
@@ -386,11 +522,15 @@ impl Executor {
     /// Returns an error if there is no such job, or if the signal cannot be sent.
     pub fn signal_job(&mut self, id: JobId, signal: Signal) -> Result<()> {
         let index = self.locate(id)?;
-        let group = self.jobs[index].running.pgid;
-        if group == 0 {
-            return Ok(());
+        {
+            // Through the job's cell: a job whose last member was collected is not signalled,
+            // because its group id may already be someone else's.
+            let group = self.jobs[index].group.lock();
+            if *group == 0 {
+                return Ok(());
+            }
+            signal_group(*group, signal)?;
         }
-        signal_group(group, signal)?;
         if signal == Signal::CONT {
             resume(&mut self.jobs[index].running);
         }
@@ -409,7 +549,7 @@ impl Executor {
         let deadline = timeout.map(|timeout| Instant::now() + timeout);
         loop {
             let index = self.locate(id)?;
-            reap(&mut self.jobs[index].running, false)?;
+            self.jobs[index].reap(false)?;
             if self.jobs[index].running.is_finished() {
                 let running = self.jobs.remove(index).running;
                 let snapshot = running.snapshot(id);
@@ -644,7 +784,9 @@ impl Executor {
     /// Adds a pipeline to the job table under the lowest free job number.
     fn register(&mut self, running: Running) -> JobId {
         let id = JobId::new(self.free_number());
-        self.jobs.push(Tracked { id, running });
+        let group = Arc::new(ForegroundGroup(std::sync::Mutex::new(running.pgid)));
+        own(&group);
+        self.jobs.push(Tracked { id, running, group });
         id
     }
 

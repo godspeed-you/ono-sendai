@@ -199,6 +199,80 @@ pub fn install_child_watch() -> Result<()> {
     Ok(())
 }
 
+/// The write end of the pipe the termination handler writes a signal's number into, or `-1`.
+static TERMINATION_PIPE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+extern "C" fn note_termination(signal: libc::c_int) {
+    let descriptor = TERMINATION_PIPE.load(Ordering::Relaxed);
+    if descriptor >= 0 {
+        let byte = u8::try_from(signal).unwrap_or(0);
+        // SAFETY: `write` is async-signal-safe; the buffer is one byte on this frame, and a
+        // failed write — a full pipe, a second signal — loses nothing the first one did not say.
+        unsafe {
+            let _ = libc::write(descriptor, std::ptr::from_ref(&byte).cast(), 1);
+        }
+    }
+}
+
+/// Hands the first of `signals` that arrives to `leave`, on a thread of its own (ADR-0959).
+///
+/// A shell told to end — its terminal hung up, `SIGTERM`, `SIGINT` where nothing else takes it —
+/// still owns its jobs, and ending them takes longer than a signal handler may run. The handler
+/// writes the signal's number into a pipe and nothing else, async-signal-safe by construction;
+/// a thread reading the pipe calls `leave`, which is expected not to return. `SA_RESTART` is set,
+/// so whatever the shell was doing carries on undisturbed while the thread ends its jobs.
+///
+/// # Errors
+///
+/// Returns an error if the pipe, the thread or a disposition cannot be set up.
+pub fn install_termination_watch(
+    signals: &[Signal],
+    leave: impl FnOnce(Signal) + Send + 'static,
+) -> Result<()> {
+    let (read_end, write_end) = nix::unistd::pipe2(nix::fcntl::OFlag::O_CLOEXEC)
+        .map_err(|errno| Error::from_errno("opening the termination pipe", errno))?;
+    nix::fcntl::fcntl(
+        &write_end,
+        nix::fcntl::FcntlArg::F_SETFL(nix::fcntl::OFlag::O_NONBLOCK),
+    )
+    .map_err(|errno| Error::from_errno("opening the termination pipe", errno))?;
+    TERMINATION_PIPE.store(
+        std::os::fd::IntoRawFd::into_raw_fd(write_end),
+        Ordering::Relaxed,
+    );
+    std::thread::Builder::new()
+        .name("ono-termination".to_owned())
+        .spawn(move || {
+            let mut file = std::fs::File::from(read_end);
+            let mut byte = [0u8; 1];
+            loop {
+                match std::io::Read::read(&mut file, &mut byte) {
+                    Ok(1) => {
+                        if let Some(signal) = Signal::from_number(i32::from(byte[0])) {
+                            leave(signal);
+                            return;
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    _ => return,
+                }
+            }
+        })
+        .map_err(|error| Error::new(ono_core::ErrorCode::IoPermissionDenied, error.to_string()))?;
+    for signal in signals {
+        let action = SigAction::new(
+            SigHandler::Handler(note_termination),
+            SaFlags::SA_RESTART,
+            SigSet::empty(),
+        );
+        // SAFETY: the handler loads one atomic and calls `write`, both async-signal-safe;
+        // ADR-0007 permits signal-disposition changes in this crate.
+        unsafe { sigaction(signal.to_nix()?, &action) }
+            .map_err(|errno| Error::from_errno(format!("watching {signal}"), errno))?;
+    }
+    Ok(())
+}
+
 /// Reports whether a child changed state since this was last called, and clears the flag.
 ///
 /// Always `false` unless [`install_child_watch`] has been called.
