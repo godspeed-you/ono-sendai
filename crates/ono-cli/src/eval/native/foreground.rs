@@ -406,10 +406,13 @@ pub(super) fn run_native_segment(
                     "a live stream cannot be handed to the program after it here: its output is \
                      being collected, so nothing feeds the program as the stream runs",
                 )
-                .with_help(
+                .with_help(if session.capturing_for_a_job() {
                     "bound it with `take`, or run the line in the foreground, where the program \
-                     is fed as the stream runs (ADR-0954, ADR-0958)",
-                ),
+                     is fed as the stream runs (ADR-0954, ADR-0958)"
+                } else {
+                    "bound it with `take`: a captured line collects the stream whole before the \
+                     program sees any of it, and this one never ends (ADR-0954, ADR-0958)"
+                }),
             ));
         }
         if last

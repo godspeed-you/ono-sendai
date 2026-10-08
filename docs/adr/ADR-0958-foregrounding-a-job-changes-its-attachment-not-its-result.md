@@ -60,7 +60,22 @@ A program's output a capture keeps is charged the same way: it is read no furthe
 ceiling leaves room for, and the pipe is then closed, so a program that writes without end gets
 `SIGPIPE` and the line the structured refusal. A live stream that the program after it would have
 to receive whole — nothing feeds it as it runs, because a capture is open around the line — is
-refused (`stream.unbounded_operation`) instead of draining without end.
+refused (`stream.unbounded_operation`) instead of draining without end; the help says why for a
+job and for a capture in the foreground alike.
+
+Every collection of a program's output into the shell — the job's or a capture's result, the
+bytes a program hands to the native stage after it (`yes | from lines | take 3`), an adapted
+program's output — is bounded the same way, in the foreground as in a job: the program is cut off
+at the command's capture ceiling and the line ends with the structured `resource.byte_limit`
+refusal. It used to be read to its end, and an endless one grew the shell until the allocator
+aborted it (review S2). A line whose program legitimately writes more than the ceiling (256 MiB by
+default) between two stages is refused where it used to succeed; `limits.command_capture_bytes`
+raises it.
+
+What this bounds, in numbers (review M7): a live job of plain records or text —
+`tail file log --follow &` — keeps what it reads up to the command capture ceiling and then ends
+with the refusal; a live job of events keeps one table row per object, so its table is bounded by
+the objects the stream reports on, not by the ceiling.
 
 A redirection names a file whatever is capturing around the line, so a streaming serializer's
 lines go to it as they come (ADR-0954) — `watch … | to jsonl > log &` writes while it runs.
@@ -129,7 +144,9 @@ and `::should_end_a_foregrounded_native_job_with_ctrl_c_and_show_what_it_had`; a
 `::should_refuse_past_the_ceiling_when_a_jobs_program_writes_without_end`,
 `::should_refuse_a_live_stream_a_job_would_hand_to_a_program_whole`,
 `::should_refuse_past_the_ceiling_when_a_live_job_keeps_plain_records`,
-`::should_report_a_failed_job_nobody_collected_before_the_shell_ends`, and the PTY proofs
+`::should_report_a_failed_job_nobody_collected_before_the_shell_ends`,
+`::should_refuse_past_the_ceiling_when_a_programs_endless_output_feeds_a_native_stage`, and the
+PTY proofs
 `::should_keep_a_live_jobs_painted_table_as_the_last_result_when_ctrl_c_ends_it`,
 `::should_return_the_jobs_own_status_when_it_ends_on_the_ctrl_c_with_one_of_its_own`,
 `::should_report_a_job_that_failed_unattended_when_the_prompt_returns`; the repaint of a

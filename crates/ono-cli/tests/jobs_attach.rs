@@ -359,7 +359,7 @@ fn should_run_a_backgrounded_native_line_inside_a_link_frame_against_the_link() 
         &home,
         "link host far --transport local\n\
          enter link far\n\
-         get process | where pid == 1 | count | to json &\n\
+         get process | where pid == 1 | inspect | select provenance | to json &\n\
          fg %1\n\
          echo \"fg-status-$?\"",
         BUDGET,
@@ -367,8 +367,8 @@ fn should_run_a_backgrounded_native_line_inside_a_link_frame_against_the_link() 
 
     assert!(run.finished, "{}", run.report());
     assert!(
-        run.stdout.contains("[1]") && run.stdout.contains("fg-status-0"),
-        "the job ran on the link and `fg` collected it. {}",
+        run.stdout.contains("\"link\":\"far\"") && run.stdout.contains("fg-status-0"),
+        "the job's records were answered by the link, and `fg` collected them. {}",
         run.report()
     );
 }
@@ -454,6 +454,40 @@ fn should_refuse_past_the_ceiling_when_a_live_job_keeps_plain_records() {
     assert!(
         run.stderr.contains("limits.command_capture_bytes") && !run.stdout.contains("fg-status-0"),
         "the refusal is structured. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_refuse_past_the_ceiling_when_a_programs_endless_output_feeds_a_native_stage() {
+    // Review S2: program output collected for the native stage after it was read to its end, and
+    // `yes | from lines | take 3` grew the shell until the allocator aborted it — in the
+    // foreground and in a job. It is bounded by the capture ceiling and refused, structured, and
+    // the shell carries on.
+    let home = scratch();
+
+    let run = run_bounded(
+        &home,
+        "set config limits.command_capture_bytes 64KiB\n\
+         yes | from lines | take 3 | to json\n\
+         echo \"foreground-$?\"\n\
+         fn many() { yes | from lines | take 3 | to json }\n\
+         many &\n\
+         fg %1\n\
+         echo \"job-$?\"",
+        Duration::from_secs(30),
+    );
+
+    assert!(run.finished, "the shell survived both. {}", run.report());
+    assert_eq!(
+        run.stderr.matches("resource.byte_limit").count(),
+        2,
+        "both were refused at the ceiling, structured. {}",
+        run.report()
+    );
+    assert!(
+        run.stdout.contains("foreground-1") && run.stdout.contains("job-1"),
+        "the refusal is the status of each. {}",
         run.report()
     );
 }

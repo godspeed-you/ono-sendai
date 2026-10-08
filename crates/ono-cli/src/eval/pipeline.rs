@@ -737,17 +737,10 @@ pub fn run_external_segment(
             command = command.stdin(ono_process::Input::Bytes(bytes));
         }
         if position + 1 == indices.len() && capture {
-            // What a capture keeps is charged to the command's ceiling (§23.4), so its program
-            // is read no further than the ceiling allows: one that writes without end is cut off
-            // there instead of growing the shell, and the charge below refuses it (review R4).
-            command = command.stdout(if captured {
-                let budget = session.capture_budget();
-                ono_process::Output::CaptureAtMost(
-                    budget.max_bytes().saturating_sub(budget.consumed_bytes()),
-                )
-            } else {
-                ono_process::Output::Capture
-            });
+            // Every byte a program's output is collected into is bounded by the command's capture
+            // ceiling (§23.4): a program that writes without end is cut off there instead of
+            // growing the shell until the allocator aborts it (reviews R4, S2).
+            command = command.stdout(ono_process::Output::CaptureAtMost(capture_room(session)));
         }
         built = built.stage(command);
     }
@@ -777,6 +770,9 @@ pub fn run_external_segment(
         session.capture_text(bytes.as_deref().unwrap_or_default())?;
         return Ok((None, outcome.status()));
     }
+    if let Some(bytes) = &bytes {
+        refuse_past_capture_room(session, bytes).map_err(Flow::Failed)?;
+    }
     Ok((bytes, outcome.status()))
 }
 
@@ -801,7 +797,7 @@ pub fn run_adapted_segment(
         source,
         input,
         plan,
-        ono_process::Output::Capture,
+        ono_process::Output::CaptureAtMost(capture_room(session)),
     )?;
     let outcome = session
         .executor()
@@ -820,7 +816,27 @@ pub fn run_adapted_segment(
         .and_then(|completed| completed.stages().last())
         .map(|stage| stage.stdout.clone())
         .unwrap_or_default();
+    refuse_past_capture_room(session, &bytes).map_err(Flow::Failed)?;
     Ok((bytes, outcome.status()))
+}
+
+/// How many bytes of a program's output the shell may still collect in this command: what the
+/// command's capture ceiling has left (§23.4).
+fn capture_room(session: &Session) -> u64 {
+    let budget = session.capture_budget();
+    budget.max_bytes().saturating_sub(budget.consumed_bytes())
+}
+
+/// The structured refusal of §21.4 for collected program output that passed [`capture_room`]:
+/// the program was cut off at the ceiling, and its truncated output is not handed on.
+fn refuse_past_capture_room(session: &Session, bytes: &[u8]) -> Result<(), ErrorValue> {
+    if (bytes.len() as u64) <= capture_room(session) {
+        return Ok(());
+    }
+    let mut budget = session.capture_budget().clone();
+    budget
+        .charge_estimate(bytes.len() as u64)
+        .map_err(ono_pipeline::Exceeded::into_error)
 }
 
 /// Starts an adapted segment whose records are decoded while it runs (ADR-0059): the last
