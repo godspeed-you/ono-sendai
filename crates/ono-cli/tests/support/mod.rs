@@ -908,3 +908,13 @@ pub fn processes_naming(needle: &str) -> Vec<u32> {
     }
     found
 }
+
+/// Kills every process whose command line names `needle` — the guard a test that starts a program
+/// at a path of its own leaves behind, so a failing test leaves no process on the machine.
+pub fn kill_processes_naming(needle: &str) {
+    for pid in processes_naming(needle) {
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .status();
+    }
+}

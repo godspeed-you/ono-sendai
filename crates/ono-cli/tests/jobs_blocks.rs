@@ -538,11 +538,7 @@ impl Stubborn {
 
 impl Drop for Stubborn {
     fn drop(&mut self) {
-        for pid in processes_naming(&self.path.display().to_string()) {
-            let _ = std::process::Command::new("kill")
-                .args(["-KILL", &pid.to_string()])
-                .status();
-        }
+        support::kill_processes_naming(&self.path.display().to_string());
     }
 }
 
