@@ -68,7 +68,7 @@ pub fn attach(session: &mut Session, number: u32) -> Eval<ExitStatus> {
     // the prompt left behind (ADR-0782), so nothing is cleared here — clearing it lost a Ctrl-C
     // typed in the instant before `fg` started waiting.
     while !job.handle.is_finished() {
-        if ono_process::take_interrupt() {
+        if ono_process::take_interrupt() || ono_process::terminating() {
             interrupted = true;
             job.handle.stop(ono_process::Signal::INT);
             job.handle

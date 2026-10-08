@@ -202,7 +202,29 @@ pub fn install_child_watch() -> Result<()> {
 /// The write end of the pipe the termination handler writes a signal's number into, or `-1`.
 static TERMINATION_PIPE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 
+/// How many termination signals have arrived; the first starts the shell's end, a second one
+/// asks it to hurry (ADR-0959).
+static TERMINATION_SIGNALS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Set once the shell has begun to end on a signal: from then on no statement starts and no
+/// program is started (ADR-0959).
+static TERMINATING: AtomicBool = AtomicBool::new(false);
+
+/// Whether the shell has begun to end on a signal.
+#[must_use]
+pub fn terminating() -> bool {
+    TERMINATING.load(Ordering::SeqCst)
+}
+
+/// How many termination signals have arrived.
+#[must_use]
+pub fn termination_signals() -> u32 {
+    TERMINATION_SIGNALS.load(Ordering::SeqCst)
+}
+
 extern "C" fn note_termination(signal: libc::c_int) {
+    TERMINATING.store(true, Ordering::SeqCst);
+    TERMINATION_SIGNALS.fetch_add(1, Ordering::SeqCst);
     let descriptor = TERMINATION_PIPE.load(Ordering::Relaxed);
     if descriptor >= 0 {
         let byte = u8::try_from(signal).unwrap_or(0);
@@ -260,6 +282,11 @@ pub fn install_termination_watch(
         })
         .map_err(|error| Error::new(ono_core::ErrorCode::IoPermissionDenied, error.to_string()))?;
     for signal in signals {
+        // POSIX: a signal the shell was started with ignored stays ignored — `nohup ono …`, a
+        // background list of a shell without job control (review B2).
+        if ignored_on_entry(*signal) {
+            continue;
+        }
         let action = SigAction::new(
             SigHandler::Handler(note_termination),
             SaFlags::SA_RESTART,
@@ -271,6 +298,34 @@ pub fn install_termination_watch(
             .map_err(|errno| Error::from_errno(format!("watching {signal}"), errno))?;
     }
     Ok(())
+}
+
+/// Whether `signal`'s disposition is "ignore" right now, without changing it.
+fn ignored_on_entry(signal: Signal) -> bool {
+    // SAFETY: querying with a null new action changes nothing; the old action is written into a
+    // zeroed struct this frame owns.
+    unsafe {
+        let mut current: libc::sigaction = std::mem::zeroed();
+        libc::sigaction(signal.number(), std::ptr::null(), &raw mut current) == 0
+            && current.sa_sigaction == libc::SIG_IGN
+    }
+}
+
+/// Ends the process by `signal`, as its default disposition would have: restored to the default,
+/// unblocked, raised. Used once the shell has ended what it owns, so whoever waits for it sees a
+/// death by that signal (ADR-0959, review S1).
+pub fn die_of(signal: Signal) -> ! {
+    // SAFETY: restoring a default disposition and raising a signal at the calling thread; the
+    // process ends there, so nothing that follows can observe a half-changed state.
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&raw mut set);
+        libc::sigaddset(&raw mut set, signal.number());
+        libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, std::ptr::null_mut());
+        libc::signal(signal.number(), libc::SIG_DFL);
+        libc::raise(signal.number());
+    }
+    std::process::exit(128 + signal.number())
 }
 
 /// Reports whether a child changed state since this was last called, and clears the flag.

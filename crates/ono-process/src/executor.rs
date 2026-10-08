@@ -105,13 +105,64 @@ impl ForegroundGroup {
 static OWNED: std::sync::Mutex<Vec<std::sync::Weak<ForegroundGroup>>> =
     std::sync::Mutex::new(Vec::new());
 
-/// Records `cell` as one of the groups this process owns.
-fn own(cell: &Arc<ForegroundGroup>) {
-    let mut owned = OWNED
+/// Records `cell` in `set`.
+fn record(
+    set: &std::sync::Mutex<Vec<std::sync::Weak<ForegroundGroup>>>,
+    cell: &Arc<ForegroundGroup>,
+) {
+    let mut owned = set
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     owned.retain(|weak| weak.strong_count() > 0);
     owned.push(Arc::downgrade(cell));
+}
+
+/// The groups one shell session owns: those of its own executor and of every executor its jobs'
+/// evaluators run, which share it (ADR-0959, review S4). A second session in the same process has
+/// a set of its own, so ending one never reaches the other's processes.
+#[derive(Debug, Clone, Default)]
+pub struct Ownership(Arc<std::sync::Mutex<Vec<std::sync::Weak<ForegroundGroup>>>>);
+
+impl Ownership {
+    /// The groups in this set that still have a member.
+    #[must_use]
+    pub fn groups(&self) -> Vec<OwnedGroup> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+            .map(OwnedGroup)
+            .filter(|group| group.group() != 0)
+            .collect()
+    }
+}
+
+/// Whether any process of group `pgid` is alive, a zombie not counting.
+fn group_runs(pgid: i32) -> bool {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        // Without `/proc`, a signal of `0` says whether anything of the group is left at all.
+        return killpg(Pid::from_raw(pgid), None).is_ok();
+    };
+    entries.flatten().any(|entry| {
+        entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.bytes().all(|byte| byte.is_ascii_digit()))
+            && std::fs::read_to_string(entry.path().join("stat"))
+                .ok()
+                .and_then(|stat| {
+                    // `pid (comm) state ppid pgrp …`: the command may hold spaces and parentheses,
+                    // so the fields are read after its last `)`.
+                    let rest = stat.rsplit_once(')')?.1;
+                    let mut fields = rest.split_whitespace();
+                    let state = fields.next()?;
+                    let _ppid = fields.next()?;
+                    let group = fields.next()?.parse::<i32>().ok()?;
+                    Some(group == pgid && state != "Z" && state != "X")
+                })
+                .unwrap_or(false)
+    })
 }
 
 /// Every process group this process still owns: a foreground group some executor is waiting on,
@@ -153,23 +204,16 @@ impl OwnedGroup {
         true
     }
 
-    /// Collects whatever members of the group have ended, without waiting; answers whether
-    /// nothing of it is left. The last collection clears the cell under the same lock.
-    pub fn collect(&self) -> bool {
-        let mut group = self.0.lock();
-        if *group == 0 {
-            return true;
-        }
-        loop {
-            match waitpid(Pid::from_raw(-*group), Some(WaitPidFlag::WNOHANG)) {
-                Ok(WaitStatus::StillAlive) => return false,
-                Ok(_) | Err(Errno::EINTR) => {}
-                Err(_) => {
-                    *group = 0;
-                    return true;
-                }
-            }
-        }
+    /// Whether nothing of the group is still running: it has no member, or every member has
+    /// exited and waits only to be collected.
+    ///
+    /// Nothing is collected here: collecting is the owner's, whose wait would otherwise find the
+    /// child gone and record a status it never saw (review M1). A member that has exited is no
+    /// longer running, whoever collects it — and when the process ends, nobody need.
+    #[must_use]
+    pub fn is_gone(&self) -> bool {
+        let group = self.0.lock();
+        *group == 0 || !group_runs(*group)
     }
 }
 
@@ -235,6 +279,8 @@ pub struct Executor {
     terminal: Terminal,
     jobs: Vec<Tracked>,
     foreground: Arc<ForegroundGroup>,
+    /// The session's set of owned groups, which this executor's groups join.
+    ownership: Ownership,
     /// Numbers handed to jobs this executor does not run — the shell's native pipelines — so
     /// one sequence covers both kinds (spec §18.4).
     reserved: std::collections::BTreeSet<u32>,
@@ -288,14 +334,39 @@ impl Executor {
     }
 
     fn with_terminal(terminal: Terminal) -> Self {
+        Self::within(terminal, Ownership::default())
+    }
+
+    /// An executor that never touches a terminal and whose groups join `ownership` — a job's
+    /// evaluator's, which the session that started the job owns (ADR-0959).
+    #[must_use]
+    pub fn detached_within(ownership: Ownership) -> Self {
+        Self::within(Terminal::detached(), ownership)
+    }
+
+    fn within(terminal: Terminal, ownership: Ownership) -> Self {
         let foreground = Arc::default();
-        own(&foreground);
-        Self {
+        let executor = Self {
             terminal,
             jobs: Vec::new(),
             foreground,
+            ownership,
             reserved: std::collections::BTreeSet::new(),
-        }
+        };
+        executor.own(&executor.foreground);
+        executor
+    }
+
+    /// Records `cell` as owned by this process and by this executor's session.
+    fn own(&self, cell: &Arc<ForegroundGroup>) {
+        record(&OWNED, cell);
+        record(&self.ownership.0, cell);
+    }
+
+    /// The set of groups this executor's session owns.
+    #[must_use]
+    pub fn ownership(&self) -> Ownership {
+        self.ownership.clone()
     }
 
     /// The process groups this executor owns: the one it waits on in the foreground, if any, and
@@ -356,6 +427,7 @@ impl Executor {
         Ok(Foreground {
             running,
             owns_terminal: true,
+            cell: None,
         })
     }
 
@@ -371,14 +443,16 @@ impl Executor {
     /// As [`Executor::run_foreground`].
     pub fn start_piped(&mut self, pipeline: &Pipeline) -> Result<Foreground> {
         let running = self.start(pipeline, false)?;
-        // Owned like any foreground group, though not given the terminal: `kill %N`, Ctrl-C under
-        // `fg` and a leaving shell reach it through the canceller (review R5).
-        if running.pgid != 0 {
-            self.foreground.set(running.pgid);
-        }
+        // Owned like any foreground group, though not given the terminal (review R5) — in a cell
+        // of its own, so a program the same line starts later cannot take its place in the
+        // executor's foreground cell (review M3). The cell is cleared in the step that collects
+        // the group's last member.
+        let cell = Arc::new(ForegroundGroup(std::sync::Mutex::new(running.pgid)));
+        self.own(&cell);
         Ok(Foreground {
             running,
             owns_terminal: false,
+            cell: Some(cell),
         })
     }
 
@@ -388,9 +462,19 @@ impl Executor {
     ///
     /// As [`Executor::run_foreground`].
     pub fn finish_foreground(&mut self, mut foreground: Foreground) -> Result<ForegroundOutcome> {
-        let outcome = wait_foreground(&mut foreground.running, &self.foreground);
-        // A pipeline that stopped keeps no claim on the cell: it becomes a job of its own.
-        self.foreground.set(0);
+        let outcome = match &foreground.cell {
+            Some(cell) => {
+                let outcome = wait_foreground(&mut foreground.running, cell);
+                cell.set(0);
+                outcome
+            }
+            None => {
+                let outcome = wait_foreground(&mut foreground.running, &self.foreground);
+                // A pipeline that stopped keeps no claim on the cell: it becomes a job.
+                self.foreground.set(0);
+                outcome
+            }
+        };
         if foreground.owns_terminal {
             let reclaimed = self.terminal.reclaim();
             outcome?;
@@ -599,6 +683,13 @@ fn refuse(count: usize, at: usize, refusal: (ExitStatus, Error)) -> Vec<RunningS
 impl Executor {
     /// Starts every stage of a pipeline in one new process group.
     fn start(&mut self, pipeline: &Pipeline, foreground: bool) -> Result<Running> {
+        // A shell that has begun to end on a signal starts nothing more (ADR-0959, review B1).
+        if crate::signals::terminating() {
+            return Err(Error::new(
+                ono_core::ErrorCode::StreamCancelled,
+                "the shell is ending, and starts no more programs",
+            ));
+        }
         let mut running = Running {
             pgid: 0,
             command: pipeline.to_string(),
@@ -785,7 +876,7 @@ impl Executor {
     fn register(&mut self, running: Running) -> JobId {
         let id = JobId::new(self.free_number());
         let group = Arc::new(ForegroundGroup(std::sync::Mutex::new(running.pgid)));
-        own(&group);
+        self.own(&group);
         self.jobs.push(Tracked { id, running, group });
         id
     }
@@ -843,6 +934,8 @@ impl Default for Executor {
 pub struct Foreground {
     running: Running,
     owns_terminal: bool,
+    /// The group's own cell, for a pipeline started without the terminal.
+    cell: Option<Arc<ForegroundGroup>>,
 }
 
 impl std::fmt::Debug for Foreground {

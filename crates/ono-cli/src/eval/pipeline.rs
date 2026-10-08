@@ -67,6 +67,10 @@ fn job_interrupt() -> Option<bool> {
 /// makes happens there too. A background job on a runtime worker has a memory of its own that
 /// nothing ever sets, so a foreground Ctrl-C cannot reach into it (spec §18.4).
 pub(crate) fn interrupt_reached() -> bool {
+    // A shell ending on a signal cancels what runs as Ctrl-C would (ADR-0959, review B1).
+    if ono_process::terminating() {
+        return true;
+    }
     if let Some(cancelled) = job_interrupt() {
         return cancelled;
     }

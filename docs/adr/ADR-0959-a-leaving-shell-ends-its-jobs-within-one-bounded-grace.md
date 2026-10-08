@@ -23,26 +23,35 @@ because they ignore `SIGTERM`, and shutdown stays globally bounded. Letting jobs
 **Every process group the shell owns ends when the shell does, however it ends, within one
 bounded grace period.** There is no `disown` and no mode in which a job survives the shell.
 
-**What is owned.** Every executor of the process registers its cells (`ono_process::owned_groups`):
-the group it waits on in the foreground — a program the line runs, a program whose records the
-shell decodes as it runs (ADR-0059, now owned like any other: review R5), a native job's current
-program — and each background job's group: a program backgrounded at the prompt (`prog &`), one a
+**What is owned.** Every executor registers its cells in its session's set
+(`ono_process::Ownership`), and every set's cells are also known process-wide
+(`ono_process::owned_groups`): the group it waits on in the foreground — a program the line runs,
+a native job's current program — a program whose records the shell decodes as it runs (ADR-0059,
+in a cell of its own so a later program of the same line cannot displace it: reviews R5, M3), and
+each background job's group: a program backgrounded at the prompt (`prog &`), one a
 function or a pipeline backgrounded, and those a job's own evaluator backgrounds. A cell names its
 group while one of its members is uncollected and is cleared under its lock in the same step that
 collects the last one (review R10 of v0.6.3), so a group that has ended, or whose id the kernel has
 handed out again, is never signalled. `fg`, `kill %N` and `wait` take a job out of the table as
-before; what is no longer in a cell is not touched.
+before; what is no longer in a cell is not touched. A job's evaluator's executor joins the set of
+the session that started the job. A session ends its own set — not every group in the process:
+another session in the same process owns its own (review S4); only a signal, which ends the whole
+process, ends everything the process owns.
 
 **How it ends**, the same escalation whichever way the shell leaves:
 
 1. **Ask once.** Each owned group gets `SIGTERM` and then `SIGCONT`, so a stopped program can act
    on it — once per group, not once per look (review R6). A native job's evaluator is cancelled.
-2. **One grace period** (2 s) shared by every group. Ended members are collected as they end; a
-   group that appears meanwhile — a job starting its next program in the instant before it saw
-   the cancellation — is asked too.
-3. **Kill** what is left with `SIGKILL`.
-4. **Collect** for a bounded moment (1 s), then leave. A job whose evaluator has not ended by then
-   is abandoned with the process; its threads end with it.
+2. **One grace period** (2 s) shared by every group. A group that appears meanwhile — a job
+   starting its next program in the instant before it saw the cancellation — is asked too. A
+   second termination signal cuts the grace period short (review M2).
+3. **Kill** what is still running with `SIGKILL`.
+4. **Wait** a bounded moment (1 s) for it to be gone, then leave. A job whose evaluator has not
+   ended by then is abandoned with the process; its threads end with it.
+
+Whether a group is still running is read from `/proc` — a member that has exited counts as gone —
+and nothing is collected by the escalation: collecting a child is its owner's, and collecting
+another thread's child would make that owner's wait record a status it never saw (review M1).
 
 Leaving takes at most the two bounds, whatever the number of jobs; jobs that end on the request
 cost only the time they take.
@@ -50,11 +59,29 @@ cost only the time they take.
 **Every way out runs it.** The end of a script or of `-c`, `exit`, and end of input run it from
 `Session::drop`. A signal that ends the shell — `SIGHUP` (its terminal went away), `SIGTERM`, and
 `SIGINT` outside an interactive session, where nothing else takes it — is noted by a handler that
-only writes the signal's number into a pipe; a thread reading it runs the same escalation over
-everything the process owns, restores the terminal's settings, and exits with `128 + N` (review
-R2). The main thread does not exit first with a status of its own. An interactive shell's `SIGINT`
-stays Ctrl-C (spec §18.5). This replaces ADR-0160's "`SIGHUP` keeps its default disposition" for
-the shell process: it still ends on a hangup, after ending its jobs.
+marks the shell as ending and writes the signal's number into a pipe, nothing else (review R2):
+
+- **From that moment no statement starts and no program is started,** and what is running is
+  cancelled as Ctrl-C cancels a native pipeline; a foreground program is one of the groups the
+  escalation ends. A script never goes on to its next statement — a `remove file` after a `sleep`
+  the signal interrupted does not run (review B1).
+- A thread reading the pipe cancels every job, runs the escalation over everything the process
+  owns, puts the terminal's settings back **only where the shell is the terminal's foreground
+  group**, with the terminal's stop signals blocked — a shell in a background group never touches
+  the terminal and is never stopped for it (review B3) — and then **dies of the signal**: the
+  default disposition is restored and the signal raised, so a parent sees a death by `SIGTERM`
+  (`WIFSIGNALED`, and `128 + N` in a shell's `$?`), not an exit (review S1).
+- The main thread, wherever it gets to, waits for that rather than exit with a status of its own
+  or take apart the session whose cells the escalation is reading; it runs no second escalation
+  (review M2).
+
+**A signal ignored on entry stays ignored** (POSIX: a non-interactive shell does not catch a
+signal it was started with ignored, and this shell applies the rule in every mode; review B2).
+`nohup ono …` keeps running on `SIGHUP`, and `ono -c …` in a background list of a shell without
+job control — which starts it with `SIGINT` ignored — keeps running on `SIGINT`; those signals then
+end nothing, honestly, and the shell's jobs end when the shell does. An interactive shell's
+`SIGINT` stays Ctrl-C (spec §18.5). This replaces ADR-0160's "`SIGHUP` keeps its default
+disposition" for the shell process: it still ends on a hangup, after ending its jobs.
 
 A job's own session, when its evaluator ends, ends its own jobs and its own executor's groups the
 same way.
@@ -82,6 +109,8 @@ Hard:
   the shell leaves.
 - A signal-driven exit skips the rest of a normal exit — history flushing, the audit write of
   spec §31.37 and hanging up links (ADR-0161) — because the main thread may be anywhere.
+- A script ended by a signal dies of it; one that wants to clean up has to be started so the
+  signal does not reach it, as with any program.
 
 Encoded by `crates/ono-cli/tests/jobs_shutdown.rs`:
 `::should_leave_no_process_of_a_job_behind_when_the_shell_exits_and_its_child_ignores_term`,
@@ -94,7 +123,13 @@ Encoded by `crates/ono-cli/tests/jobs_shutdown.rs`:
 `::should_ask_a_stubborn_program_to_stop_once_rather_than_over_and_over`,
 `::should_end_its_jobs_when_the_shell_is_sent_sigterm`,
 `::should_end_its_jobs_when_the_shells_terminal_hangs_up`,
-`::should_end_its_jobs_when_a_script_is_interrupted`; acceptance case `394`.
+`::should_end_its_jobs_when_a_script_is_interrupted` (each also proving the script stops and the
+shell dies of the signal), `::should_keep_running_on_a_hangup_it_was_started_ignoring`,
+`::should_keep_running_on_an_interrupt_it_was_started_ignoring`,
+`::should_end_promptly_on_sigterm_when_it_runs_in_a_background_group_of_a_terminal`,
+`::should_kill_at_once_when_a_second_termination_signal_arrives`; and
+`crates/ono-cli/tests/session_ownership.rs::should_leave_another_sessions_job_running_when_one_session_ends`;
+acceptance case `394`.
 
 ## Alternatives considered
 

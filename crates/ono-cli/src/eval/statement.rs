@@ -24,6 +24,10 @@ pub fn run_statement(
     statement: &Statement,
     source: &str,
 ) -> Eval<ExitStatus> {
+    // Once a signal has begun ending the shell, no statement starts (ADR-0959, review B1).
+    if ono_process::terminating() {
+        return Err(super::pipeline::interrupted_flow_now());
+    }
     match statement {
         Statement::Pipeline(pipeline) => run_pipeline(session, pipeline, source),
         Statement::Let(binding) => {

@@ -266,6 +266,21 @@ pub(crate) fn set_window_size(fd: BorrowedFd<'_>, size: WindowSize) -> Result<()
     Ok(())
 }
 
+/// Puts `saved` back on standard input's terminal, if this process's group is that terminal's
+/// foreground group — a shell in a background group does not touch the terminal at all, and is
+/// never stopped for it (ADR-0959, review B3).
+pub fn restore_if_foreground(saved: &nix::sys::termios::Termios) {
+    let stdin = std::io::stdin();
+    let ours = nix::unistd::getpgrp();
+    if tcgetpgrp(&stdin).ok() != Some(ours) {
+        return;
+    }
+    let _ = without_terminal_stops(|| {
+        tcsetattr(&stdin, SetArg::TCSANOW, saved)
+            .map_err(|errno| system("restoring the terminal attributes", errno))
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -614,6 +614,7 @@ pub(crate) fn run_evaluated_job(
     let failures: std::sync::Arc<std::sync::Mutex<Vec<ErrorValue>>> = std::sync::Arc::default();
     let status: std::sync::Arc<std::sync::Mutex<Option<ExitStatus>>> = std::sync::Arc::default();
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    crate::shutdown::register_job(&cancel);
     let canceller = snapshot.canceller();
 
     let number = session.executor().reserve_job_number();

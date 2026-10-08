@@ -386,15 +386,23 @@ fn ends_its_jobs_on(signal: &str, number: i32) {
         Stubborn::at(&home, &format!("{signal}-direct")),
         Stubborn::at(&home, &format!("{signal}-foreground")),
     ];
+    // What the script would do after the foreground program, were it allowed to go on: remove a
+    // file and write one. Neither may happen once the signal has arrived (review B1).
+    let victim = home.write("jobs/victim.txt", "keep me\n");
+    let later = home.path().join("jobs/later.txt");
     let script = format!(
         "fn stubborn() {{ {job} }}\nstubborn &\n{direct} &\n\
          sh -c 'while [ ! -e {job_started} ] || [ ! -e {direct_started} ]; do sleep 0.02; done'\n\
-         echo ready\n{foreground}\n",
+         echo ready\n{foreground}\n\
+         remove file {victim} --confirm\n\
+         sh -c ': > {later}'\n",
         job = programs[0].path.display(),
         direct = programs[1].path.display(),
         foreground = programs[2].path.display(),
         job_started = programs[0].started().display(),
         direct_started = programs[1].started().display(),
+        victim = victim.display(),
+        later = later.display(),
     );
 
     let mut shell = Streaming::start(home.path(), &script);
@@ -408,7 +416,7 @@ fn ends_its_jobs_on(signal: &str, number: i32) {
         .status()
         .expect("kill runs");
     assert!(killed.success(), "the signal was sent");
-    let code = shell.exit_code();
+    let ended_by = shell.exit_signal();
     let (finished, stdout, stderr) = shell.finish();
 
     assert!(
@@ -416,9 +424,9 @@ fn ends_its_jobs_on(signal: &str, number: i32) {
         "the shell left on SIG{signal}. {stdout}\n{stderr}"
     );
     assert_eq!(
-        code,
-        Some(128 + number),
-        "the shell's status says which signal ended it"
+        ended_by,
+        Some(number),
+        "the shell died of the signal, after ending its jobs (review S1). {stdout}\n{stderr}"
     );
     for program in &programs {
         assert!(
@@ -427,6 +435,10 @@ fn ends_its_jobs_on(signal: &str, number: i32) {
             program.path.display()
         );
     }
+    assert!(
+        victim.exists() && !later.exists(),
+        "nothing the script would have run after the signal ran. {stdout}\n{stderr}"
+    );
 }
 
 #[test]
@@ -442,4 +454,176 @@ fn should_end_its_jobs_when_the_shells_terminal_hangs_up() {
 #[test]
 fn should_end_its_jobs_when_a_script_is_interrupted() {
     ends_its_jobs_on("INT", 2);
+}
+
+/// A shell started with `signal` ignored, as `nohup` or a background list without job control
+/// starts it: the signal is ignored on entry, so it stays ignored (POSIX, review B2). The script
+/// waits on a gate; the signal is sent while it waits, and only then is the gate opened.
+fn keeps_running_on_ignored(signal: &str) {
+    let home = scratch();
+    let program = Stubborn::at(&home, &format!("{signal}-ignored"));
+    let gate = home.path().join("jobs/gate");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&gate)
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success(), "the gate exists");
+    let script = format!(
+        "{program} &\nsh -c 'while [ ! -e {started} ]; do sleep 0.02; done'\necho ready\n\
+         sh -c 'read line < {gate}'\necho after-the-signal",
+        program = program.path.display(),
+        started = program.started().display(),
+        gate = gate.display(),
+    );
+
+    let mut shell = Streaming::start_ignoring(home.path(), &script, &[signal]);
+    assert!(shell.until("ready"), "the script started");
+    let sent = std::process::Command::new("kill")
+        .args([&format!("-{signal}"), &shell.pid().to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(sent.success(), "the signal was sent");
+    let opened = std::process::Command::new("sh")
+        .args(["-c", &format!("echo go > {}", gate.display())])
+        .status()
+        .expect("sh runs");
+    assert!(opened.success(), "the gate was opened");
+    let code = shell.exit_code();
+    let (finished, stdout, stderr) = shell.finish();
+
+    assert!(finished, "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("after-the-signal") && code == Some(0),
+        "SIG{signal} ignored on entry stayed ignored: the script ran to its end. {stdout}\n{stderr}"
+    );
+    assert!(
+        program.gone_within(Duration::from_secs(10)),
+        "the shell's own end still ended its job. {stdout}\n{stderr}"
+    );
+}
+
+#[test]
+fn should_keep_running_on_a_hangup_it_was_started_ignoring() {
+    keeps_running_on_ignored("HUP");
+}
+
+#[test]
+fn should_keep_running_on_an_interrupt_it_was_started_ignoring() {
+    keeps_running_on_ignored("INT");
+}
+
+#[test]
+fn should_end_promptly_on_sigterm_when_it_runs_in_a_background_group_of_a_terminal() {
+    // Review B3: a shell in a background process group of a terminal stopped on SIGTTOU when it
+    // put the terminal's settings back on its way out. The terminal belongs to another group — a
+    // `sleep` in the foreground of the shell that started it — as when a user backgrounds `ono`
+    // and goes on working. It only touches the terminal when it is
+    // the terminal's foreground group, and then without being stopped for it.
+    let home = scratch();
+    let pid_file = home.path().join("jobs/ono.pid");
+    std::fs::create_dir_all(home.path().join("jobs")).expect("the directory");
+    let command = ono_process::Command::new("bash")
+        .args([
+            "-c",
+            &format!(
+                "set -m; \"$0\" -c 'while true {{ }}' & echo $! > {}; sleep 60",
+                pid_file.display()
+            ),
+            &ono_testkit::ono_binary().display().to_string(),
+        ])
+        .env("HOME", home.path().display().to_string())
+        .env("NO_COLOR", "1");
+    let mut executor = ono_process::Executor::detached();
+    let terminal = executor
+        .run_pty(&command, ono_process::WindowSize::new(24, 80))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
+        .expect("a pseudo-terminal");
+    let deadline = Instant::now() + BUDGET;
+    let mut pid = None;
+    while pid.is_none() && Instant::now() < deadline {
+        pid = std::fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|text| text.trim().parse::<u32>().ok());
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let pid = pid.expect("the background shell started");
+    // The shell has installed its handlers once SIGTERM shows as caught in its status.
+    let caught = |pid: u32| {
+        std::fs::read_to_string(format!("/proc/{pid}/status"))
+            .ok()
+            .and_then(|status| {
+                status
+                    .lines()
+                    .find_map(|line| line.strip_prefix("SigCgt:"))
+                    .and_then(|mask| u64::from_str_radix(mask.trim(), 16).ok())
+            })
+            .is_some_and(|mask| mask & (1 << 14) != 0)
+    };
+    while Instant::now() < deadline && !caught(pid) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let sent = std::process::Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(sent.success(), "the signal was sent");
+    let gone = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < gone && std::path::Path::new(&format!("/proc/{pid}")).exists() {
+        let state = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+        if state.contains(") Z") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let state = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+    let alive = !state.is_empty() && !state.contains(") Z");
+    if alive {
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .status();
+    }
+    drop(terminal);
+    assert!(
+        !alive,
+        "the backgrounded shell ended on SIGTERM instead of stopping; /proc stat: {state}"
+    );
+}
+
+#[test]
+fn should_kill_at_once_when_a_second_termination_signal_arrives() {
+    // Review M2: a second SIGTERM while the shell waits out its grace period means "now": what is
+    // left is killed without waiting for the rest of it.
+    let home = scratch();
+    let program = Stubborn::at(&home, "hurried");
+    let script = format!(
+        "{program} &\nsh -c 'while [ ! -e {started} ]; do sleep 0.02; done'\necho ready\n\
+         while true {{ sh -c 'sleep 0.05' }}",
+        program = program.path.display(),
+        started = program.started().display(),
+    );
+
+    let mut shell = Streaming::start(home.path(), &script);
+    assert!(shell.until("ready"), "the job started");
+    let pid = shell.pid().to_string();
+    let first = Instant::now();
+    for _ in 0..2 {
+        let sent = std::process::Command::new("kill")
+            .args(["-TERM", &pid])
+            .status()
+            .expect("kill runs");
+        assert!(sent.success(), "the signal was sent");
+    }
+    let ended_by = shell.exit_signal();
+    let took = first.elapsed();
+    let (finished, stdout, stderr) = shell.finish();
+
+    assert!(finished && ended_by == Some(15), "{stdout}\n{stderr}");
+    assert!(
+        program.gone_within(Duration::from_secs(10)),
+        "the job did not outlive the shell. {stdout}\n{stderr}"
+    );
+    assert!(
+        took < Duration::from_millis(1500),
+        "the second signal cut the two-second grace period short: {took:?}"
+    );
 }

@@ -927,15 +927,34 @@ const STREAMING_BUDGET: Duration = Duration::from_secs(60);
 pub struct Streaming {
     child: std::process::Child,
     out: std::sync::mpsc::Receiver<String>,
-    err: std::thread::JoinHandle<String>,
+    err: Option<std::thread::JoinHandle<String>>,
     seen: String,
     status: Option<std::process::ExitStatus>,
 }
 
 impl Streaming {
     pub fn start(home: &Path, script: &str) -> Self {
-        let mut child = std::process::Command::new(ono_testkit::ono_binary())
-            .args(["-c", script])
+        Self::start_ignoring(home, script, &[])
+    }
+
+    /// The same shell, started with `ignored` signals already ignored — as `nohup`, or a
+    /// non-job-control shell's background list, starts a command (POSIX: signals ignored on entry).
+    pub fn start_ignoring(home: &Path, script: &str, ignored: &[&str]) -> Self {
+        let mut command = if ignored.is_empty() {
+            let mut command = std::process::Command::new(ono_testkit::ono_binary());
+            command.args(["-c", script]);
+            command
+        } else {
+            let mut command = std::process::Command::new("sh");
+            command.args([
+                "-c",
+                &format!("trap '' {}; exec \"$0\" -c \"$1\"", ignored.join(" ")),
+                &ono_testkit::ono_binary().display().to_string(),
+                script,
+            ]);
+            command
+        };
+        let mut child = command
             .env("HOME", home)
             .env("XDG_CONFIG_HOME", home.join("xdg"))
             .env("XDG_STATE_HOME", home.join("state"))
@@ -967,7 +986,7 @@ impl Streaming {
         Self {
             child,
             out,
-            err,
+            err: Some(err),
             seen: String::new(),
             status: None,
         }
@@ -990,6 +1009,18 @@ impl Streaming {
         self.status.and_then(|status| status.code())
     }
 
+    /// Waits for the shell to exit, within the budget, and answers the signal that ended it, if
+    /// a signal did.
+    pub fn exit_signal(&mut self) -> Option<i32> {
+        let _ = self.exit_code();
+        self.status.and_then(|status| status.signal())
+    }
+
+    /// Whether the shell is still running.
+    pub fn running(&mut self) -> bool {
+        self.status.is_none() && matches!(self.child.try_wait(), Ok(None))
+    }
+
     /// Reads standard output until `needle` has appeared, within the budget.
     pub fn until(&mut self, needle: &str) -> bool {
         let deadline = Instant::now() + STREAMING_BUDGET;
@@ -1005,7 +1036,7 @@ impl Streaming {
 
     /// Waits for the shell to end, within the budget, and answers everything it wrote. A shell
     /// that overran is killed with what it started, so no test leaves one behind.
-    pub fn finish(mut self) -> (bool, String, String) {
+    pub fn finish(&mut self) -> (bool, String, String) {
         let deadline = Instant::now() + STREAMING_BUDGET;
         let mut finished = self.status.is_some();
         while !finished && Instant::now() < deadline {
@@ -1022,6 +1053,21 @@ impl Streaming {
         while let Ok(chunk) = self.out.recv_timeout(Duration::from_millis(200)) {
             self.seen.push_str(&chunk);
         }
-        (finished, self.seen, self.err.join().unwrap_or_default())
+        let errors = self
+            .err
+            .take()
+            .and_then(|err| err.join().ok())
+            .unwrap_or_default();
+        (finished, std::mem::take(&mut self.seen), errors)
+    }
+}
+
+impl Drop for Streaming {
+    /// A test that panics before it collected the shell leaves nothing running.
+    fn drop(&mut self) {
+        if matches!(self.child.try_wait(), Ok(None)) {
+            ono_testkit::kill_tree(self.child.id());
+            let _ = self.child.wait();
+        }
     }
 }

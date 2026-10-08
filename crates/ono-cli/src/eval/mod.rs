@@ -70,6 +70,10 @@ pub fn run_program(
     report: &mut dyn FnMut(&ErrorValue),
 ) -> ExitStatus {
     for statement in &program.statements {
+        // A shell ending on a signal runs no further statement (ADR-0959, review B1).
+        if ono_process::terminating() {
+            return session.status();
+        }
         // v0.4.1 §23.4: the capture ceiling is "an upper bound on the total bytes retained by
         // simultaneous evaluator captures" of *one* shell command, so the accounting starts
         // afresh here and nowhere inside (ADR-0457).

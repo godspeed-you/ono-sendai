@@ -36,6 +36,10 @@ pub(super) fn run_while(
 ) -> Eval<ExitStatus> {
     let mut status = ExitStatus::SUCCESS;
     while truthy(&eval_expr(session, &loop_.condition, source)?) {
+        // A loop is where a shell ending on a signal could otherwise spin on (review B1).
+        if ono_process::terminating() {
+            return Err(super::pipeline::interrupted_flow_now());
+        }
         match run_block(session, &loop_.body, source) {
             Ok(reached) => status = reached,
             Err(Flow::Break) => break,
@@ -60,6 +64,9 @@ pub(super) fn run_for(
 
     let mut status = ExitStatus::SUCCESS;
     for item in items {
+        if ono_process::terminating() {
+            return Err(super::pipeline::interrupted_flow_now());
+        }
         session.push_scope();
         session.bind(loop_.binding.clone(), item);
         let outcome = run_block(session, &loop_.body, source);

@@ -1000,8 +1000,9 @@ impl Session {
         });
         Ok(JobSnapshot {
             // A job's children run in process groups of their own and are never handed the
-            // terminal: a background job does not read it (spec §18.4).
-            executor: Executor::detached(),
+            // terminal: a background job does not read it (spec §18.4). They belong to this
+            // session, which ends them when it ends (ADR-0959).
+            executor: Executor::detached_within(self.execution.executor.ownership()),
             cwd: self.environment.cwd.clone(),
             env: self.environment.env.clone(),
             inherited_env: self.environment.inherited_env.clone(),
@@ -2310,7 +2311,13 @@ impl Drop for Session {
                 .store(true, std::sync::atomic::Ordering::SeqCst);
         }
         let settled = || natives.iter().all(|job| job.handle.is_finished());
-        if self.execution.background_job {
+        if ono_process::terminating() {
+            // A signal is ending the shell, and the thread it woke ends what the process owns;
+            // ending it here too would ask every group twice (review M2). The session is not
+            // taken apart meanwhile: its executors hold the cells that name the groups being
+            // ended, so this thread waits for the process to end rather than drop them.
+            crate::shutdown::yield_to_termination();
+        } else if self.execution.background_job {
             let executor = &self.execution.executor;
             crate::shutdown::end_owned(
                 || {
@@ -2323,7 +2330,10 @@ impl Drop for Session {
                 settled,
             );
         } else {
-            crate::shutdown::end_owned(ono_process::owned_groups, settled);
+            // The session's own groups and those of its jobs' evaluators, which share its set —
+            // not every group in the process: another session there owns its own (review S4).
+            let ownership = self.execution.executor.ownership();
+            crate::shutdown::end_owned(|| ownership.groups(), settled);
         }
         // Spec §31.37: the last pipeline's audit events are written before the session goes.
         #[cfg(feature = "kuang")]
