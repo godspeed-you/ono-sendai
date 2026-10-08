@@ -403,6 +403,146 @@ fn should_write_a_live_jobs_lines_to_its_redirection_as_they_come() {
     );
 }
 
+#[test]
+fn should_report_a_failed_job_nobody_collected_before_the_shell_ends() {
+    // Review R8: a script that leaves a failed job behind says so before it ends — the failure
+    // as the foreground reports it, and the job's status.
+    let home = scratch();
+    let missing = home.path().join("not-there.txt");
+
+    let run = run_bounded(
+        &home,
+        &format!(
+            "get file {} &\n\
+             while (get job | where state == running | count) > 0 {{ sh -c 'sleep 0.02' }}\n\
+             echo leaving",
+            missing.display()
+        ),
+        BUDGET,
+    );
+
+    assert!(
+        run.finished && run.stdout.contains("leaving"),
+        "{}",
+        run.report()
+    );
+    assert!(
+        run.stderr.contains("io.not_found") && run.stderr.contains("job %1"),
+        "the uncollected job's failure was reported. {}",
+        run.report()
+    );
+}
+
+#[test]
+#[cfg(feature = "remote")]
+fn should_run_a_backgrounded_native_line_inside_a_link_frame_against_the_link() {
+    // Review R3: a native line backgrounded inside a link frame ran on the link before ADR-0958
+    // and must still: the job answers from the far side.
+    let home = scratch();
+
+    let run = run_bounded(
+        &home,
+        "link host far --transport local\n\
+         enter link far\n\
+         get process | where pid == 1 | count | to json &\n\
+         fg %1\n\
+         echo \"fg-status-$?\"",
+        BUDGET,
+    );
+
+    assert!(run.finished, "{}", run.report());
+    assert!(
+        run.stdout.contains("[1]") && run.stdout.contains("fg-status-0"),
+        "the job ran on the link and `fg` collected it. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_refuse_past_the_ceiling_when_a_jobs_program_writes_without_end() {
+    // Review R4: a job's program output is its capture too, charged as it is read: a program
+    // that never stops writing ends at the ceiling instead of growing the shell.
+    let home = scratch();
+
+    let run = run_bounded(
+        &home,
+        "set config limits.command_capture_bytes 64KiB\n\
+         fn chatter() { sh -c 'while :; do echo 0123456789012345678901234567890123456789; done' }\n\
+         chatter &\n\
+         fg %1\n\
+         echo \"fg-status-$?\"",
+        Duration::from_secs(30),
+    );
+
+    assert!(
+        run.finished,
+        "the job ended at its ceiling, so `fg` returned. {}",
+        run.report()
+    );
+    assert!(
+        run.stderr.contains("limits.command_capture_bytes") && !run.stdout.contains("fg-status-0"),
+        "the refusal is structured and the job did not succeed. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_refuse_a_live_stream_a_job_would_hand_to_a_program_whole() {
+    // Review R4: a live stream that a job would collect whole for the program after it never
+    // ends; it is refused, structured, instead of draining without bound.
+    let home = scratch();
+    let log = home.write("jobs/follow.log", "x-line\n");
+
+    let run = run_bounded(
+        &home,
+        &format!(
+            "tail file {} --lines 5 --follow | to jsonl | grep x &\n\
+             fg %1\n\
+             echo \"fg-status-$?\"",
+            log.display()
+        ),
+        Duration::from_secs(30),
+    );
+
+    assert!(
+        run.finished,
+        "the job ended, so `fg` returned. {}",
+        run.report()
+    );
+    assert!(
+        run.stderr.contains("stream.unbounded_operation") && !run.stdout.contains("fg-status-0"),
+        "the refusal is structured. {}",
+        run.report()
+    );
+}
+
+#[test]
+fn should_refuse_past_the_ceiling_when_a_live_job_keeps_plain_records() {
+    // Review R7: a live stream of plain records — a projection of events — is the job's result,
+    // charged to the ceiling; it used to be cut silently to a screenful.
+    let home = scratch();
+
+    let run = run_bounded(
+        &home,
+        "set config limits.command_capture_bytes 8KiB\n\
+         watch process --every 50ms | select kind &\n\
+         fg %1\n\
+         echo \"fg-status-$?\"",
+        Duration::from_secs(30),
+    );
+
+    assert!(
+        run.finished,
+        "the job ended at its ceiling. {}",
+        run.report()
+    );
+    assert!(
+        run.stderr.contains("limits.command_capture_bytes") && !run.stdout.contains("fg-status-0"),
+        "the refusal is structured. {}",
+        run.report()
+    );
+}
+
 // --- at a terminal -----------------------------------------------------------------------------
 
 #[test]
@@ -469,30 +609,68 @@ fn should_show_every_value_of_a_running_native_job_once_when_it_is_foregrounded_
     let _ = shell.wait_timeout(Duration::from_secs(20));
 }
 
+/// Sends Ctrl-C until `done` holds, reading what the terminal says meanwhile.
+///
+/// A Ctrl-C reaches `fg` only once the line running it has begun — one typed a moment earlier
+/// belongs to nothing and is dropped by the line as it starts (ADR-0782). The test cannot see
+/// that moment, so it repeats the keystroke until the outcome it waits for has happened; a Ctrl-C
+/// that lands on the prompt afterwards only clears an empty line.
+fn interrupt_until(
+    shell: &mut ono_testkit::Guarded<ono_process::PtySession>,
+    seen: &mut String,
+    done: impl Fn(&str) -> bool,
+) -> bool {
+    let deadline = Instant::now() + BUDGET;
+    while Instant::now() < deadline {
+        shell
+            .write_all(&[0x03])
+            .expect("the terminal accepts Ctrl-C");
+        seen.push_str(&read_until(shell, "\u{0}never", Duration::from_millis(300)));
+        if done(seen) {
+            return true;
+        }
+    }
+    false
+}
+
 #[test]
 fn should_end_a_foregrounded_native_job_with_ctrl_c_and_show_what_it_had() {
     // Ctrl-C under `fg` ends the job, the shell reports the status of an interrupted job, and
     // what the job had produced so far is not thrown away.
     let home = scratch();
     let log = home.write("jobs/follow.log", "value-before\n");
+    // The job marks each line once it has kept it, so the test knows there is something to show.
+    let kept = home.path().join("jobs/kept");
     let mut shell = support::interactive_shell_in(&home);
     read_until(&mut shell, ">", Duration::from_secs(10));
 
     shell
-        .write_all(format!("tail file {} --lines 5 --follow &\n", log.display()).as_bytes())
+        .write_all(
+            format!(
+                "tail file {} --lines 5 --follow | each {{ @; sh -c ': > {}' }} &\n",
+                log.display(),
+                kept.display()
+            )
+            .as_bytes(),
+        )
         .expect("the terminal accepts input");
     read_until(&mut shell, "[%1]", Duration::from_secs(10));
-    // As in `jobs_blocks.rs`: a byte typed while the line editor holds the terminal is a
-    // keystroke, so the line announces itself and the Ctrl-C follows, with a pause for `fg` to
-    // reach its wait. The job never ends by itself.
+    let deadline = Instant::now() + BUDGET;
+    while !kept.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
     shell
-        .write_all(b"echo \"foregrounding-$?\"; fg %1\n")
+        .write_all(b"fg %1\n")
         .expect("the terminal accepts input");
-    let mut seen = read_until(&mut shell, "foregrounding-0", Duration::from_secs(20));
-    std::thread::sleep(Duration::from_millis(300));
-    shell
-        .write_all(&[0x03])
-        .expect("the terminal accepts Ctrl-C");
+    let mut seen = read_until(&mut shell, "fg %1", Duration::from_secs(20));
+    let shown = interrupt_until(&mut shell, &mut seen, |seen: &str| {
+        seen.split_once("fg %1")
+            .is_some_and(|(_, after)| after.contains("value-before"))
+    });
+    assert!(
+        shown,
+        "Ctrl-C ended the job and `fg` showed what it had; saw:\n{seen}"
+    );
     shell
         .write_all(b"echo \"after-fg-$?\"; jobs; echo \"listed-$?\"\n")
         .expect("the terminal accepts input");
@@ -504,16 +682,176 @@ fn should_end_a_foregrounded_native_job_with_ctrl_c_and_show_what_it_had() {
         "Ctrl-C ended the foregrounded job with an interrupted job's status; saw:\n{seen}"
     );
     let after = seen
-        .split_once("foregrounding-0")
+        .split_once("fg %1")
         .map(|(_, rest)| rest)
         .unwrap_or_default();
     assert!(
-        after.contains("value-before"),
-        "what the job had produced was shown; saw:\n{seen}"
-    );
-    assert!(
         !after.contains("running tail"),
         "the ended job left the table; saw:\n{seen}"
+    );
+
+    shell
+        .write_all(b"exit 0\n")
+        .expect("the terminal accepts input");
+    let _ = shell.wait_timeout(Duration::from_secs(20));
+}
+
+#[test]
+fn should_keep_a_live_jobs_painted_table_as_the_last_result_when_ctrl_c_ends_it() {
+    // Review R10: at a terminal `fg` repaints a live job's table; when Ctrl-C ends the job the
+    // table is its result, retained for `@-1` exactly as it is without a terminal. The repaint is
+    // also the proof that `fg` is waiting, so the one Ctrl-C needs no retry.
+    let home = scratch();
+    let mut shell = support::interactive_shell_in(&home);
+    read_until(&mut shell, ">", Duration::from_secs(10));
+
+    shell
+        .write_all(b"watch process --every 200ms &\n")
+        .expect("the terminal accepts input");
+    read_until(&mut shell, "[%1]", Duration::from_secs(10));
+    shell
+        .write_all(b"fg %1\n")
+        .expect("the terminal accepts input");
+    let mut seen = read_until(&mut shell, "fg %1", Duration::from_secs(20));
+    let painted = Instant::now() + BUDGET;
+    while Instant::now() < painted
+        && !seen
+            .split_once("fg %1")
+            .is_some_and(|(_, after)| after.contains("PID"))
+    {
+        seen.push_str(&read_until(&mut shell, "PID", Duration::from_millis(300)));
+    }
+    shell
+        .write_all(&[0x03])
+        .expect("the terminal accepts Ctrl-C");
+    shell
+        .write_all(b"echo \"after-fg-$?\"; @-1 | count | to json; echo \"counted-$?\"\n")
+        .expect("the terminal accepts input");
+    // The typed line holds `counted-` too; the shell's answer starts a line of its own.
+    seen.push_str(&read_until(
+        &mut shell,
+        "\ncounted-",
+        Duration::from_secs(20),
+    ));
+    seen.push_str(&read_until(&mut shell, "\n", Duration::from_secs(2)));
+
+    assert!(
+        seen.contains("after-fg-130"),
+        "Ctrl-C ended the job; saw:\n{seen}"
+    );
+    let counted = seen
+        .rsplit_once("after-fg-130")
+        .map(|(_, rest)| rest)
+        .unwrap_or_default();
+    let rows: u64 = counted
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix('[')?
+                .strip_suffix(']')?
+                .parse()
+                .ok()
+        })
+        .unwrap_or(0);
+    assert!(
+        counted.contains("counted-0") && rows > 1,
+        "the painted table — every process — is the last result `@-1` names; saw:\n{seen}"
+    );
+
+    shell
+        .write_all(b"exit 0\n")
+        .expect("the terminal accepts input");
+    let _ = shell.wait_timeout(Duration::from_secs(20));
+}
+
+#[test]
+fn should_return_the_jobs_own_status_when_it_ends_on_the_ctrl_c_with_one_of_its_own() {
+    // Review R10: a job whose program answers Ctrl-C by exiting 3 has ended with status 3, and
+    // that is what `fg` returns — 130 is for a job Ctrl-C cut short.
+    let home = scratch();
+    let started = home.path().join("jobs/started");
+    let exited = home.path().join("jobs/exited");
+    std::fs::create_dir_all(home.path().join("jobs")).expect("the directory");
+    let mut shell = support::interactive_shell_in(&home);
+    read_until(&mut shell, ">", Duration::from_secs(10));
+
+    shell
+        .write_all(
+            format!(
+                "fn polite() {{ sh -c 'trap \"echo > {exited}; exit 3\" INT; : > {started}; while :; do sleep 0.1; done' }}\n\
+                 polite &\n",
+                exited = exited.display(),
+                started = started.display()
+            )
+            .as_bytes(),
+        )
+        .expect("the terminal accepts input");
+    read_until(&mut shell, "[%1]", Duration::from_secs(10));
+    let deadline = Instant::now() + BUDGET;
+    while !started.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    shell
+        .write_all(b"fg %1\n")
+        .expect("the terminal accepts input");
+    let mut seen = read_until(&mut shell, "fg %1", Duration::from_secs(20));
+    let ended = interrupt_until(&mut shell, &mut seen, |_: &str| exited.exists());
+    assert!(ended, "the program answered Ctrl-C; saw:\n{seen}");
+    shell
+        .write_all(b"echo \"after-fg-$?\"\n")
+        .expect("the terminal accepts input");
+    seen.push_str(&read_until(
+        &mut shell,
+        "after-fg-3",
+        Duration::from_secs(20),
+    ));
+    let reported = seen
+        .rsplit_once("after-fg-")
+        .map(|(_, rest)| {
+            rest.chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+        })
+        .unwrap_or_default();
+    assert_eq!(
+        reported, "3",
+        "`fg` returned the job's own status; saw:\n{seen}"
+    );
+
+    shell
+        .write_all(b"exit 0\n")
+        .expect("the terminal accepts input");
+    let _ = shell.wait_timeout(Duration::from_secs(20));
+}
+
+#[test]
+fn should_report_a_job_that_failed_unattended_when_the_prompt_returns() {
+    // Review R8: a job's failure used to be silent until `fg`. When it has ended with one, the
+    // next prompt says so, once, and `fg` still shows why.
+    let home = scratch();
+    let missing = home.path().join("not-there.txt");
+    let mut shell = support::interactive_shell_in(&home);
+    read_until(&mut shell, ">", Duration::from_secs(10));
+
+    shell
+        .write_all(format!("get file {} &\n", missing.display()).as_bytes())
+        .expect("the terminal accepts input");
+    read_until(&mut shell, "[%1]", Duration::from_secs(10));
+    shell
+        .write_all(
+            b"while (get job | where state == running | count) > 0 { sh -c 'sleep 0.02' }; echo \"waited-$?\"\n",
+        )
+        .expect("the terminal accepts input");
+    let mut seen = read_until(&mut shell, "waited-0", Duration::from_secs(20));
+    seen.push_str(&read_until(&mut shell, "job %1", Duration::from_secs(10)));
+
+    let after = seen
+        .split_once("waited-0")
+        .map(|(_, rest)| rest)
+        .unwrap_or_default();
+    assert!(
+        after.contains("job %1") && after.contains("status 1"),
+        "the prompt reported the failed job; saw:\n{seen}"
     );
 
     shell

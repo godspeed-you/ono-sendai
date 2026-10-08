@@ -139,6 +139,28 @@ impl Collector {
         }))
     }
 
+    /// Starts a thread that reads `source` to end of file, or — with a `limit` — until it has
+    /// read one byte past it, and then closes the pipe so the writer learns nobody is reading.
+    pub(crate) fn start_bounded(source: OwnedFd, limit: Option<u64>) -> Self {
+        let Some(limit) = limit else {
+            return Self::start(source);
+        };
+        Self(std::thread::spawn(move || {
+            let mut file = std::fs::File::from(source);
+            let mut collected = Vec::new();
+            let mut buffer = [0u8; 64 * 1024];
+            while (collected.len() as u64) <= limit {
+                match std::io::Read::read(&mut file, &mut buffer) {
+                    Ok(count) if count > 0 => collected.extend_from_slice(&buffer[..count]),
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    // The end, or a read that failed: what was read is kept, as `start` keeps it.
+                    _ => break,
+                }
+            }
+            collected
+        }))
+    }
+
     /// Waits for the thread and returns the bytes.
     pub(crate) fn finish(self) -> Vec<u8> {
         self.0.join().unwrap_or_default()

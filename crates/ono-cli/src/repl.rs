@@ -574,6 +574,7 @@ pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> Exi
             return status;
         }
         let _ = session.executor().poll_jobs();
+        session.report_failed_jobs(false);
     }
 
     session.status()

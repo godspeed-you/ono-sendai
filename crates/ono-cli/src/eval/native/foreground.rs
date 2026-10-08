@@ -396,6 +396,22 @@ pub(super) fn run_native_segment(
     let mut draining = None;
     let mut fold = None;
     if let Some(stream) = stream {
+        // A live stream the program after it would receive whole — nothing feeds it as it runs,
+        // because a capture is open around the line — is never whole; collecting it would grow
+        // without end and start the program never (review R4). It is refused instead.
+        if !last && !stream.boundedness().is_bounded() && streamed.is_none() {
+            return Err(Flow::Failed(
+                ErrorValue::new(
+                    ErrorCode::StreamUnboundedOperation,
+                    "a live stream cannot be handed to the program after it here: its output is \
+                     being collected, so nothing feeds the program as the stream runs",
+                )
+                .with_help(
+                    "bound it with `take`, or run the line in the foreground, where the program \
+                     is fed as the stream runs (ADR-0954, ADR-0958)",
+                ),
+            ));
+        }
         if last
             && !stream.boundedness().is_bounded()
             && stage_has_no_redirection
@@ -412,10 +428,8 @@ pub(super) fn run_native_segment(
                 .filter(|_| session.capturing_for_a_job())
                 .cloned();
             if let Some(model) = job_model {
-                let (_, height) = live_geometry();
                 fold = Some(JobFold {
                     model,
-                    rows: height.saturating_sub(3).max(4),
                     serialised: final_contract.is_some_and(produces_bytes),
                 });
                 draining = Some(stream);

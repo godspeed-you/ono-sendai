@@ -245,27 +245,26 @@ pub(super) fn answering<T>(
 pub(super) struct JobFold {
     /// The job's table, which `fg` repaints.
     pub(super) model: crate::session::LiveModel,
-    /// How many plain records the table keeps, newest last, as the live view does.
-    pub(super) rows: usize,
     /// Whether the values are a serializer's text, kept as the bytes it wrote.
     pub(super) serialised: bool,
 }
 
 impl JobFold {
-    /// Folds one value into the job's table, or keeps it in the job's capture; answers whether
-    /// it was kept.
+    /// Folds one event into the job's table, or keeps any other value in the job's capture;
+    /// answers whether it was kept.
     ///
-    /// A record is what the live view shows — an event replaces or removes its object's row, a
-    /// plain record is a row of its own — whether or not it changed what the table shows.
+    /// An event replaces or removes its object's row, which the table holds once per object, so
+    /// the table is bounded by the objects there are. Everything else — a plain record, a
+    /// projection of events, a line of text — is the job's result like any value it produces,
+    /// charged to §23.4's ceiling as it arrives, with the structured refusal past it (review R7).
     fn keep(&self, session: &mut Session, value: Value) -> Eval<bool> {
-        if !self.serialised && value.as_record().is_ok() {
-            crate::live::absorb(
+        if !self.serialised && crate::live::is_event_record(&value) {
+            crate::live::apply(
                 &mut self
                     .model
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner),
                 &value,
-                self.rows,
             );
             return Ok(false);
         }
@@ -596,8 +595,14 @@ pub(crate) fn run_evaluated_job(
     source: &str,
 ) -> Eval<ExitStatus> {
     let model: crate::session::LiveModel = std::sync::Arc::default();
+    // A native line only asks providers, which is what lets it run inside a link frame.
+    let native_only = matches!(
+        super::segment::segments(session, list, 0, false).as_deref(),
+        Some([super::segment::Segment::Native(indices)])
+            if indices.iter().all(|index| block_of(&list.stages[*index]).is_none())
+    );
     let snapshot = session
-        .fork_for_job()
+        .fork_for_job(native_only)
         .map_err(Flow::Failed)?
         .with_live_model(std::sync::Arc::clone(&model));
     let command_text = source
@@ -649,6 +654,7 @@ pub(crate) fn run_evaluated_job(
             thread,
             status,
         },
+        reported: false,
     });
     Ok(ExitStatus::SUCCESS)
 }

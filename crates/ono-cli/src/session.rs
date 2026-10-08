@@ -58,6 +58,9 @@ pub struct JobSnapshot {
     settings: crate::settings::Settings,
     theme: std::sync::Arc<ono_render::Theme>,
     live: Option<LiveModel>,
+    /// The registry of the link frame the job was started in, for a native line (review R3).
+    #[cfg(feature = "remote")]
+    linked: Option<ProviderRegistry>,
 }
 
 impl JobSnapshot {
@@ -124,6 +127,8 @@ impl JobSnapshot {
                 adaptations: Vec::new(),
                 #[cfg(feature = "kuang")]
                 plugin_providers: self.plugin_providers,
+                #[cfg(feature = "remote")]
+                linked: self.linked,
             },
             presentation: PresentationState {
                 settings: self.settings,
@@ -337,6 +342,10 @@ struct ProviderState {
     /// (ADR-0583).
     #[cfg(feature = "kuang")]
     plugin_providers: Vec<std::sync::Arc<crate::plugin_provider::PluginProvider>>,
+    /// In a job started inside a link frame, the link's registry, which answers its pipelines
+    /// (review R3). `None` everywhere else.
+    #[cfg(feature = "remote")]
+    linked: Option<ProviderRegistry>,
 }
 
 /// How the session behaves and how it looks.
@@ -638,6 +647,8 @@ pub struct NativeJob {
     pub started: Value,
     /// The evaluator running the job.
     pub handle: JobRun,
+    /// Whether the shell has said that the job ended with a failure, so it says so once.
+    pub reported: bool,
 }
 
 /// The handles on a job's evaluator, which runs the line on a thread of its own (ADR-0952).
@@ -903,6 +914,8 @@ impl Session {
                 adaptations: Vec::new(),
                 #[cfg(feature = "kuang")]
                 plugin_providers: Vec::new(),
+                #[cfg(feature = "remote")]
+                linked: None,
             },
             presentation: PresentationState {
                 settings: crate::settings::Settings::new(),
@@ -925,8 +938,25 @@ impl Session {
     /// # Errors
     ///
     /// `type.mismatch` inside a link frame, whose connection cannot be shared with a job.
-    pub fn fork_for_job(&mut self) -> Result<JobSnapshot, ErrorValue> {
-        if let Some(host) = self.link_host() {
+    pub fn fork_for_job(&mut self, native_only: bool) -> Result<JobSnapshot, ErrorValue> {
+        // A line of native stages only asks providers and nothing else, so inside a link frame
+        // it runs on the link's registry, shared as the session's own providers are (review R3).
+        // A block, a call or a program would need the connection itself, which is not shared.
+        #[cfg(feature = "remote")]
+        let linked = match self.link_host() {
+            Some(_) if native_only => self
+                .pipeline_context()
+                .map(|(_, registry)| registry.clone()),
+            _ => None,
+        };
+        #[cfg(feature = "remote")]
+        let refused = self.link_host().filter(|_| linked.is_none());
+        #[cfg(not(feature = "remote"))]
+        let refused = {
+            let _ = native_only;
+            self.link_host()
+        };
+        if let Some(host) = refused {
             return Err(ErrorValue::new(
                 ono_core::ErrorCode::TypeMismatch,
                 format!(
@@ -981,6 +1011,8 @@ impl Session {
             settings: self.presentation.settings.clone(),
             theme: std::sync::Arc::clone(&self.presentation.theme),
             live: None,
+            #[cfg(feature = "remote")]
+            linked,
         })
     }
 
@@ -1437,6 +1469,53 @@ impl Session {
         Some(job)
     }
 
+    /// Says which jobs have ended with a failure nobody has collected yet (review R8).
+    ///
+    /// A job's failures are reported when `fg` collects it; one that fails while nobody watches
+    /// would otherwise say nothing until then, or ever. At the prompt the shell names it once —
+    /// its number, its status, the line — and `fg` still shows why. When the shell is leaving,
+    /// nobody can collect it any more, so the failures themselves are reported, as the
+    /// foreground would have reported them (spec §43).
+    pub fn report_failed_jobs(&mut self, leaving: bool) {
+        let reporter = crate::report::Reporter::new(ono_render::Presentation::choose(
+            std::io::IsTerminal::is_terminal(&std::io::stderr()),
+            &[],
+        ));
+        for job in &mut self.jobs.native_jobs {
+            let Some(status) = job.handle.status() else {
+                continue;
+            };
+            if status.is_success() || (job.reported && !leaving) {
+                continue;
+            }
+            if leaving {
+                for failure in job
+                    .failures
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .iter()
+                {
+                    reporter.error(failure);
+                }
+                ono_core::diagnostic!(
+                    "ono: job %{} ended with status {} and was not collected: {}",
+                    job.number,
+                    status.code(),
+                    job.command
+                );
+            } else {
+                ono_core::diagnostic!(
+                    "ono: job %{} ended with status {}: {} — `fg %{}` shows why",
+                    job.number,
+                    status.code(),
+                    job.command,
+                    job.number
+                );
+            }
+            job.reported = true;
+        }
+    }
+
     /// Records that external job `number` was just detached, for `ono.job/1`'s `started`.
     pub fn note_job_started(&mut self, number: u32) {
         self.jobs
@@ -1648,6 +1727,15 @@ impl Session {
             let runtime = self.execution.runtime.as_deref()?;
             let held = self.navigation.links[linked].connection.as_ref()?;
             return Some((runtime, &held.registry));
+        }
+        #[cfg(feature = "remote")]
+        if self.provider.linked.is_some() {
+            let runtime = self.execution.runtime.as_deref()?;
+            return self
+                .provider
+                .linked
+                .as_ref()
+                .map(|linked| (runtime, linked));
         }
         self.providers();
         match (
@@ -2203,6 +2291,7 @@ impl Drop for Session {
         // A job with an evaluator of its own may be waiting on a child process; a shell that
         // leaves stops it first, so the child is signalled and reaped rather than left running
         // after the shell has gone (v0.4.1 §28.4, ADR-0952).
+        self.report_failed_jobs(true);
         end_jobs(&self.jobs.native_jobs);
         // Spec §31.37: the last pipeline's audit events are written before the session goes.
         #[cfg(feature = "kuang")]

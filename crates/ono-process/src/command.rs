@@ -34,6 +34,11 @@ pub enum Output {
     Null,
     /// Collected into memory and returned on the [`StageOutcome`](crate::StageOutcome).
     Capture,
+    /// Collected like [`Output::Capture`], but no more than one byte past the given number: at
+    /// that point reading stops and the pipe is closed, so a program that goes on writing gets
+    /// `SIGPIPE` rather than growing the shell. The caller sees that the bound was passed from
+    /// the length of what was collected.
+    CaptureAtMost(u64),
     /// Handed to the caller as the read end of a pipe, to read while the command runs
     /// ([`Foreground::take_pipe`](crate::Foreground::take_pipe)). Only standard output can be
     /// handed out; on standard error it collects like [`Output::Capture`].

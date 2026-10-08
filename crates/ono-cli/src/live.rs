@@ -76,7 +76,7 @@ pub async fn show(
 ///
 /// The model keeps only the newest `limit` such rows — a tail, as a log is read — so the
 /// screen shows what just happened and a follower that never ends holds nothing it cannot show.
-pub(crate) fn absorb(rows: &mut BTreeMap<String, Value>, value: &Value, limit: usize) -> bool {
+fn absorb(rows: &mut BTreeMap<String, Value>, value: &Value, limit: usize) -> bool {
     if apply(rows, value) {
         return true;
     }
@@ -95,6 +95,14 @@ pub(crate) fn absorb(rows: &mut BTreeMap<String, Value>, value: &Value, limit: u
         rows.remove(&oldest);
     }
     changed
+}
+
+/// Whether `value` is an event record — of a `*-event` schema — rather than an object or a
+/// projection, which a job keeps as values rather than folding into its table (ADR-0958).
+pub(crate) fn is_event_record(value: &Value) -> bool {
+    value
+        .as_record()
+        .is_ok_and(|record| record.schema_id().name().ends_with("-event"))
 }
 
 /// Whether a record is an event carrying an object, rather than an object itself.

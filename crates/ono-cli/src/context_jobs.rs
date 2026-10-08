@@ -64,7 +64,9 @@ pub fn attach(session: &mut Session, number: u32) -> Eval<ExitStatus> {
     let mut next_frame = std::time::Instant::now();
     let mut interrupted = false;
 
-    let _ = ono_process::take_interrupt();
+    // An interrupt noted since this line began is this line's: the line itself dropped whatever
+    // the prompt left behind (ADR-0782), so nothing is cleared here — clearing it lost a Ctrl-C
+    // typed in the instant before `fg` started waiting.
     while !job.handle.is_finished() {
         if ono_process::take_interrupt() {
             interrupted = true;
@@ -108,9 +110,7 @@ pub fn attach(session: &mut Session, number: u32) -> Eval<ExitStatus> {
     if shown.is_none() {
         values.extend(rows);
     }
-    if !values.is_empty() {
-        show(session, &values);
-    }
+    show(session, &values, shown.as_deref().unwrap_or_default());
     // Spec §43: what a job could not do is reported as the foreground would report it — code,
     // name and help — when the job is collected (ADR-0952).
     let reporter = crate::report::Reporter::new(Presentation::choose(
@@ -125,12 +125,16 @@ pub fn attach(session: &mut Session, number: u32) -> Eval<ExitStatus> {
     {
         reporter.error(failure);
     }
-    if interrupted {
-        return Ok(ExitStatus::from_signal(2));
-    }
-    // A job that ended has a status; one whose evaluator could not record it did not finish
-    // its line, which is a failure and never a success (ADR-0958).
-    Ok(job.handle.status().unwrap_or(ExitStatus::FAILURE))
+    // A job that ended has a status, the one its line ended with — also when Ctrl-C was what
+    // made it end, and the line answered it its own way. Only a job that had not ended by the
+    // time `fg` gave up waiting is reported as interrupted (above). One whose evaluator could
+    // not record a status did not finish its line, which is a failure, never a success
+    // (ADR-0958).
+    Ok(job.handle.status().unwrap_or(if interrupted {
+        ExitStatus::from_signal(2)
+    } else {
+        ExitStatus::FAILURE
+    }))
 }
 
 /// The job's table rows, in identity order.
@@ -168,9 +172,13 @@ fn repaint(
 /// Shows what a collected job produced, as the foreground shows a result: the bytes a
 /// serializer or a program wrote are written as they were, and values are rendered — in the
 /// order the job produced them — and retained for `@-1` (spec §20.2).
-fn show(session: &mut Session, values: &[Value]) {
-    let objects: Vec<Value> = values
+///
+/// `painted` is the live table already on the screen: it is not printed again, but it is part of
+/// what the job produced, so it is retained with the rest — as it is where no terminal showed it.
+fn show(session: &mut Session, values: &[Value], painted: &[Value]) {
+    let objects: Vec<Value> = painted
         .iter()
+        .chain(values)
         .filter(|value| !matches!(value, Value::Bytes(_)))
         .cloned()
         .collect();
@@ -191,6 +199,9 @@ fn show(session: &mut Session, values: &[Value]) {
         .iter()
         .map(|(name, value)| (name.as_str(), value.as_str()))
         .collect();
+    if values.is_empty() {
+        return;
+    }
     let sink = crate::sink::Sink::for_stdout(&borrowed).with_theme(session.theme());
     let mut pending: Vec<Value> = Vec::new();
     for value in values {

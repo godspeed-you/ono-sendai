@@ -615,7 +615,9 @@ impl Executor {
             pid,
             state: JobState::Running,
             failure: None,
-            stdout: io.stdout.map(Collector::start),
+            stdout: io
+                .stdout
+                .map(|source| Collector::start_bounded(source, io.stdout_limit)),
             stderr: io.stderr.map(Collector::start),
             pipe: io.pipe,
             stdin: io.stdin,

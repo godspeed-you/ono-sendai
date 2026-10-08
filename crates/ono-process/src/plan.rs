@@ -28,6 +28,8 @@ pub(crate) struct StageIo {
     pub(crate) feed: Option<(OwnedFd, Vec<u8>)>,
     /// The read end of the pipe collecting the child's standard output.
     pub(crate) stdout: Option<OwnedFd>,
+    /// How much of standard output may be collected, for [`Output::CaptureAtMost`].
+    pub(crate) stdout_limit: Option<u64>,
     /// The read end of the pipe collecting the child's standard error.
     pub(crate) stderr: Option<OwnedFd>,
     /// The read end of the pipe the caller reads the child's standard output from.
@@ -136,7 +138,7 @@ pub(crate) fn prepare(
         match command.output() {
             Output::Inherit => {}
             Output::Null => plan.set(1, open_null_for_writing()?),
-            Output::Capture => {
+            Output::Capture | Output::CaptureAtMost(_) => {
                 let (read_end, write_end) = make_pipe()?;
                 plan.set(1, write_end);
                 stdout = Some(read_end);
@@ -152,7 +154,7 @@ pub(crate) fn prepare(
     match command.error_output() {
         Output::Inherit => {}
         Output::Null => plan.set(2, open_null_for_writing()?),
-        Output::Capture | Output::Pipe => {
+        Output::Capture | Output::CaptureAtMost(_) | Output::Pipe => {
             let (read_end, write_end) = make_pipe()?;
             plan.set(2, write_end);
             stderr = Some(read_end);
@@ -164,10 +166,15 @@ pub(crate) fn prepare(
     }
 
     plan.normalise()?;
+    let stdout_limit = match command.output() {
+        Output::CaptureAtMost(limit) => Some(limit),
+        _ => None,
+    };
     Ok(StageIo {
         plan,
         feed,
         stdout,
+        stdout_limit,
         stderr,
         pipe,
         stdin,

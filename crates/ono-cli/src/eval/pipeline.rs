@@ -737,7 +737,17 @@ pub fn run_external_segment(
             command = command.stdin(ono_process::Input::Bytes(bytes));
         }
         if position + 1 == indices.len() && capture {
-            command = command.stdout(ono_process::Output::Capture);
+            // What a capture keeps is charged to the command's ceiling (§23.4), so its program
+            // is read no further than the ceiling allows: one that writes without end is cut off
+            // there instead of growing the shell, and the charge below refuses it (review R4).
+            command = command.stdout(if captured {
+                let budget = session.capture_budget();
+                ono_process::Output::CaptureAtMost(
+                    budget.max_bytes().saturating_sub(budget.consumed_bytes()),
+                )
+            } else {
+                ono_process::Output::Capture
+            });
         }
         built = built.stage(command);
     }
