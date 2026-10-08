@@ -2205,11 +2205,7 @@ impl Drop for Session {
         // A job with an evaluator of its own may be waiting on a child process; a shell that
         // leaves stops it first, so the child is signalled and reaped rather than left running
         // after the shell has gone (v0.4.1 §28.4, ADR-0952).
-        for job in &self.jobs.native_jobs {
-            job.handle.stop(ono_process::Signal::TERM);
-            job.handle
-                .wait_until_finished(std::time::Duration::from_secs(2));
-        }
+        end_jobs(&self.jobs.native_jobs);
         // Spec §31.37: the last pipeline's audit events are written before the session goes.
         #[cfg(feature = "kuang")]
         self.with_kuang(crate::kuang_host::Host::persist_audit);
@@ -2217,6 +2213,71 @@ impl Drop for Session {
         // torn down after the runtime has gone could only abandon its agent (ADR-0161).
         #[cfg(feature = "remote")]
         self.hang_up_all();
+    }
+}
+
+/// How long the jobs a leaving shell has asked to stop get, all of them together, before the
+/// shell makes them (ADR-0959).
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// How long a leaving shell waits for the jobs it killed to collect their programs.
+const SHUTDOWN_REAP: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Ends the jobs a leaving shell still owns (issue #303, ADR-0959).
+///
+/// Every job still running is asked at once: its evaluator is cancelled, and the process group
+/// it waits on gets `SIGTERM` and then `SIGCONT`, so a stopped program can act on the request.
+/// All of them share one grace period, during which the request is repeated for a program a job
+/// started in the instant after it. What is still running then is killed — `SIGKILL` to the
+/// same groups — and the evaluators are given a bounded moment to collect what they killed. The
+/// whole exit is bounded by the two periods, however many jobs there are.
+///
+/// A group is signalled only through the job's [`ono_process::Canceller`], which holds the
+/// group while its last member is uncollected and forgets it in the same step that collects it
+/// (review R10): a group the job no longer owns — finished, or its id handed out again — is never
+/// signalled. A group that went away between two looks is no error. Jobs already collected by
+/// `fg` or `kill %N` are no longer in the table and are not touched.
+fn end_jobs(jobs: &[NativeJob]) {
+    let running: Vec<&JobRun> = jobs
+        .iter()
+        .map(|job| &job.handle)
+        .filter(|handle| !handle.is_finished())
+        .collect();
+    if running.is_empty() {
+        return;
+    }
+    for handle in &running {
+        handle.stop(ono_process::Signal::TERM);
+        let _ = handle.canceller.send(ono_process::Signal::CONT);
+    }
+    let left = wait_for_jobs(running, SHUTDOWN_GRACE, ono_process::Signal::TERM);
+    for handle in &left {
+        handle.stop(ono_process::Signal::KILL);
+    }
+    let _ = wait_for_jobs(left, SHUTDOWN_REAP, ono_process::Signal::KILL);
+}
+
+/// Waits until every one of `jobs` has ended or `budget` has passed, sending `signal` again to
+/// the groups of those still running; answers the ones still running.
+fn wait_for_jobs(
+    jobs: Vec<&JobRun>,
+    budget: std::time::Duration,
+    signal: ono_process::Signal,
+) -> Vec<&JobRun> {
+    let deadline = std::time::Instant::now() + budget;
+    let mut running = jobs;
+    loop {
+        running.retain(|handle| !handle.is_finished());
+        if running.is_empty() || std::time::Instant::now() >= deadline {
+            return running;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        for handle in &running {
+            let _ = handle.canceller.send(signal);
+            if signal == ono_process::Signal::TERM {
+                let _ = handle.canceller.send(ono_process::Signal::CONT);
+            }
+        }
     }
 }
 
