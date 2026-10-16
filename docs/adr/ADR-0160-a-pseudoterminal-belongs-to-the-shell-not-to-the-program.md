@@ -1,6 +1,6 @@
 # ADR-0160: A pseudoterminal belongs to the shell, not to the program it starts
 
-- Status: accepted
+- Status: accepted; its "`SIGHUP` keeps its default disposition" superseded by ADR-0959 (the shell ends its jobs before it ends on a hangup)
 - Date: 2026-08-28
 - Spec refs: §18.1, §29, §29.3
 - Decided by: agent (autonomous)

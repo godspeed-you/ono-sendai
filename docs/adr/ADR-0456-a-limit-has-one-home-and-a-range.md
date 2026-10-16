@@ -1,6 +1,6 @@
 # ADR-0456: A limit has one home and a range
 
-- Status: accepted
+- Status: accepted; §4 (`history.result_cache` kept declared and read by nothing) superseded by ADR-0933
 - Date: 2026-09-02
 - Spec refs: v0.4.1 §4.5, §12.4, §52.1, §52.2, §52.3, §54.3, §55.1, §55.2, §55.4, Appendix A;
   v0.2 §30; ADR-0010, ADR-0094

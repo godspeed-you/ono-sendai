@@ -1,6 +1,6 @@
 # ADR-0952: A job that runs a block has an evaluator of its own
 
-- Status: accepted
+- Status: accepted; §1's sentence keeping native-only lines on ADR-0024's task superseded by ADR-0958 (every backgrounded line has an evaluator of its own)
 - Date: 2026-10-07
 - Spec refs: spec §18.1, §18.4, §18.5, §19.4, §43; v0.4.1 §23.4, §26.3, §28.3, §28.4;
   ADR-0008 (exit statuses), ADR-0024 (a backgrounded watch is a job), ADR-0071 §4 (`kill %N`),

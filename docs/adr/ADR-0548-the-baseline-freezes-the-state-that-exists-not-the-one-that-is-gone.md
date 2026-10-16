@@ -1,6 +1,6 @@
 # ADR-0548: The baseline freezes the state that exists, not the one that is gone
 
-- Status: accepted
+- Status: accepted; the one deliberate exception its *Consequences* record (snapshots outside the registry index) superseded by ADR-0931
 - Date: 2026-09-03
 - Spec refs: v0.4.1 §2.6, §32.3, §32.4, §37.2, §50.1, §52.2, §57 (H0), Appendix F.4, Appendix H;
   ADR-0451, ADR-0489, ADR-0490, ADR-0527, ADR-0529, ADR-0544, ADR-0547; spec §35.3

@@ -1,6 +1,6 @@
 # ADR-0943: `explain` strips a prefix assignment as execution does, and states the environment
 
-- Status: accepted
+- Status: accepted — amended by ADR-0939 (in part: in a plan, a prefix-assignment value that could run code is stated as written, never evaluated)
 - Date: 2026-10-07
 - Spec refs: §54, §15.3, §42; ADR-0011, ADR-0015, ADR-0071 §2, ADR-0942
 - Decided by: agent (autonomous)
