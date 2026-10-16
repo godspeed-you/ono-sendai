@@ -11,7 +11,7 @@
 Build **Ono-Sendai**, the shell specified in `docs/specs/ono_sendai_shell_spec_v0.2.md`, to completion —
 **test-driven, autonomously, without asking the user for input.**
 
-Four rules override everything else:
+Six rules override everything else:
 
 1. **Do not block on the user.** Every decision that is not explicitly fixed in the spec
    is yours to make. Decide, record the decision (§8), continue.
@@ -99,6 +99,13 @@ ono-sendai/
     │   ├── commands/*.yaml
     │   ├── schemas/*.v1.yaml
     │   ├── providers/*.yaml
+    │   ├── adapters/             external command adapter packs and their fixtures (v0.3)
+    │   ├── spatial/              spaces, relations and landmarks (v0.4)
+    │   ├── hardening/            limits, boundaries, refusals, streaming, release (v0.4.1)
+    │   ├── temporal/             events, evidence, sources, causality, recorder (v0.5)
+    │   ├── change/               actions, effects, plans, risk, verification (v0.6)
+    │   ├── recovery/             recovery assets, policies and providers (v0.6)
+    │   ├── conformance/          the command-example conformance register (ADR-0935)
     │   └── kuang/                KUANG/11 contracts (spec §31.78)
     └── reference/                generated docs — never hand-edited
 ```
@@ -208,7 +215,8 @@ Concretely:
                                    machine-readable contracts (public API surface)
 3. docs/adr/ADR-*.md               recorded agent decisions (fill gaps in 1 & 2)
 4. docs/ACCEPTANCE.md              what "finished" means, in checkable boxes
-5. tests/ + docker/acceptance/     executable behaviour contract
+5. crates/*/tests/ + docker/acceptance/
+                                   executable behaviour contract
 6. crates/                         implementation
 7. docs/reference/, generated code derived artifacts — never hand-edited
 ```
@@ -462,18 +470,22 @@ gh issue list --label class-c              # the large ones, a tranche each
 
 Task ordering rules, applied to open issues:
 
-1. Follow the phase sequence of spec §37 (A → J). Do not start Phase C work while Phase B
-   exit criteria are unmet, unless the item is strictly independent.
-2. Within a phase, prefer the task that unblocks the most other tasks.
+1. Follow the release milestones in their build order (`docs/STATE.md`; `gh issue list
+   --milestone <name>`). Do not start a later milestone's work while an earlier one has open
+   issues, unless the item is strictly independent. Spec §37's phases A → J are complete and
+   tagged `phase-a` … `phase-j`; an issue without a milestone waits for the user's triage.
+2. Within a milestone, prefer the task that unblocks the most other tasks.
 3. Prefer the machine-readable contract (`docs/contracts/*.yaml`) before its implementation.
 4. Repairing the gate or the acceptance harness (§14) outranks features whenever either
    cannot run — a broken referee makes every later claim of progress worthless.
-5. A phase is complete only when its success criterion in spec §37 is demonstrated by an
-   automated test — write that test explicitly and name it in `docs/ACCEPTANCE.md`.
+5. A milestone is complete only when every one of its issues' exit tests runs in the gate, and a
+   release's checklist in `docs/ACCEPTANCE.md` names the automated test behind each box.
 
-The commit that closes an issue says so in its body: `Closes #NN`. Do not edit an issue to
-record progress — the commit and the ADR are the record, and an issue nobody has closed is a
-problem nobody has fixed.
+The commit that fixes an issue names it in its body (`Closes #NN` reads fine as that reference).
+GitHub closes an issue from a commit only on the default branch, which is `main`, so a commit on
+`implementation` never closes one: after pushing, close it explicitly with
+`gh issue close NN --comment <sha>`. Do not edit an issue to record progress — the commit and the
+ADR are the record, and an issue nobody has closed is a problem nobody has fixed.
 
 `docs/STATE.md` is the shared progress board for everything the tracker cannot hold. **Read it
 first, update it last, in every session.** If it does not exist, create it from this template:
@@ -520,7 +532,11 @@ which runs, in order:
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features <selection>     # the packages the increment can break (ADR-0853)
+cargo run -p xtask -- skip-check <log>    # canonical CI only: announced skips vs. the register (§38.3)
+cargo run -p ono-fuzz --all-features -- run --iterations 400 --per-input-ms 10000  # ADR-0313
+cargo deny --locked --all-features check  # advisories, licences, sources (spec §45, ADR-0449)
 cargo run -p xtask -- spec-check          # contract ↔ implementation drift (spec §36.5)
+cargo run -p xtask -- binary-size         # stripped binary vs. its budget, when built (ADR-0864)
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 ```
 
@@ -530,8 +546,8 @@ no change at all, selects the whole workspace. `ONO_TESTS=all` tests every packa
 does. The repository ships no `cargo xtask` alias: every `cargo xtask <task>` in these documents
 runs as `cargo run -p xtask -- <task>`.
 
-One target of the test step is selected rather than always run. `xtask/tests/packaging.rs` is 76
-seconds of a 264-second warm run and exercises none of the Rust the workspace ships — it drives
+One target of the test step is selected rather than always run. `xtask/tests/packaging.rs` is 114
+seconds of a 385-second workspace run and exercises none of the Rust the workspace ships — it drives
 `cargo deb` and `cargo generate-rpm` over a stand-in binary — so the gate runs it when the
 increment touched one of its inputs, and always in CI, where `ci.yml` builds and installs the real
 packages anyway. Unselected tests are reported as `filtered out` in `target/gate-test.log`; they
@@ -602,8 +618,8 @@ Test layers (spec §35):
 | Property | testkit-driven | serialization round trips, unit arithmetic, null semantics |
 | Fuzz | `fuzz/` | parser, serializers, protocol, procfs/netlink decoders (spec §35.6) |
 | Conformance | generated from `docs/contracts/providers/*.yaml` | every provider capability (spec §35.3) |
-| Integration | `tests/` | container/VM fixtures: processes, systemd, sockets, PTY, signals (spec §35.4) |
-| Snapshot | `tests/render/` | renderer output only — **never** a data contract (spec §35.5) |
+| Integration | `crates/*/tests/`, `docker/acceptance/` | container/VM fixtures: processes, systemd, sockets, PTY, signals (spec §35.4) |
+| Snapshot | `crates/ono-render/tests/` | renderer output only — **never** a data contract (spec §35.5) |
 | Plugin conformance | KUANG/11 test host (spec §31.73) | manifest/schema validation, capability denial paths, cancellation, backpressure, quotas (spec §31.74) |
 | Doc examples | via `cargo xtask` | every documented example must parse and execute |
 
@@ -770,6 +786,7 @@ ADR for anything architectural; an acceptance case for anything a user can see.
 
 **End:** gate green → acceptance green if a capability changed → `docs/STATE.md` updated
 (In progress cleared, Done accurate, anything found on the way written into *Found, not yet
-filed*, boxes ticked in `docs/ACCEPTANCE.md` only where proven) → committed, with `Closes #NN`
-in the body if an issue is done → then run `scripts/release-check.sh`. If it does not print
+filed*, boxes ticked in `docs/ACCEPTANCE.md` only where proven) → committed, naming the issue
+(`Closes #NN`) in the body if one is done → pushed, and the issue closed with
+`gh issue close NN --comment <sha>` → then run `scripts/release-check.sh`. If it does not print
 `release-check: the shell is release-ready`, take the next task and keep going (§15).
