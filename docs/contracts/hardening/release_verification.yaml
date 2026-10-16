@@ -17,7 +17,10 @@
 #
 #   id           the step's name, used by the gate and by the generated page.
 #   command      the exact command, as a reader pastes it. `$VERSION` and `$ARCH` are the two
-#                things a reader substitutes, and nothing else is a placeholder.
+#                things a reader substitutes, and nothing else is a placeholder. `@VERSION@` is
+#                the workspace version (`Cargo.toml`), filled in when the sequence is read, so the
+#                version a reader is told to download moves with the release rather than with an
+#                edit to this file.
 #   proves       what a reader knows after it succeeds.
 #   on_failure   what a reader should do when it does not — never "try again".
 #   requires     the programs the step needs. `sha256sum` is coreutils; `curl` is everywhere;
@@ -71,7 +74,7 @@ workflow: .github/workflows/release.yml
 steps:
   - id: download
     command: |
-      VERSION=0.6.3; ARCH=amd64
+      VERSION=@VERSION@; ARCH=amd64
       BASE=https://github.com/godspeed-you/ono-sendai/releases/download/v$VERSION
       curl -fLO $BASE/ono_${VERSION}_${ARCH}.deb
       curl -fLO $BASE/SHA256SUMS

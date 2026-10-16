@@ -253,3 +253,26 @@ fn should_accept_a_copy_that_wraps_a_command_with_line_continuations_or_does_not
         );
     }
 }
+
+#[test]
+fn should_name_the_workspace_version_in_the_download_step() {
+    // The version a reader is told to download was typed into the registry, so every release
+    // needed an edit nobody was reminded of. It is the workspace version now.
+    let steps = sequence().expect("the registry parses").steps;
+    let download = steps
+        .iter()
+        .find(|step| step.id == "download")
+        .expect("the sequence has a download step");
+    let expected = format!("VERSION={};", env!("CARGO_PKG_VERSION"));
+    assert!(
+        download.command.contains(&expected),
+        "the download step does not set `{expected}`:\n{}",
+        download.command
+    );
+    assert!(
+        steps.iter().all(|step| !step
+            .command
+            .contains(xtask::verification::VERSION_PLACEHOLDER)),
+        "a step still carries the unreplaced placeholder"
+    );
+}

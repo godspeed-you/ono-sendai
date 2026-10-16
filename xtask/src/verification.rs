@@ -68,10 +68,22 @@ pub struct Sequence {
     pub steps: Vec<Step>,
 }
 
+/// The placeholder in a step's command that stands for the workspace version.
+pub const VERSION_PLACEHOLDER: &str = "@VERSION@";
+
 /// The documented sequence, or `None` if the registry did not parse.
+///
+/// Every [`VERSION_PLACEHOLDER`] in a command is replaced by the workspace version, so the
+/// generated page and the copies compared against it name the release this tree builds.
 #[must_use]
 pub fn sequence() -> Option<Sequence> {
-    serde_yaml_ng::from_str::<Sequence>(REGISTRY).ok()
+    let mut sequence = serde_yaml_ng::from_str::<Sequence>(REGISTRY).ok()?;
+    for step in &mut sequence.steps {
+        step.command = step
+            .command
+            .replace(VERSION_PLACEHOLDER, env!("CARGO_PKG_VERSION"));
+    }
+    Some(sequence)
 }
 
 /// Services whose use §47.5 forbids the instructions to require.
