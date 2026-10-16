@@ -419,7 +419,8 @@ impl Executor {
         // Remembered before the spawn: the child claims the terminal before `exec` (spawn.rs),
         // so after `start` returns it may already have changed the attributes being saved.
         self.terminal.remember_attributes();
-        let running = self.start(pipeline, true)?;
+        let cell = Arc::clone(&self.foreground);
+        let running = self.start(pipeline, true, &cell)?;
         if running.pgid != 0 {
             self.terminal.give_to(running.pgid)?;
             self.foreground.set(running.pgid);
@@ -442,13 +443,13 @@ impl Executor {
     ///
     /// As [`Executor::run_foreground`].
     pub fn start_piped(&mut self, pipeline: &Pipeline) -> Result<Foreground> {
-        let running = self.start(pipeline, false)?;
         // Owned like any foreground group, though not given the terminal (review R5) — in a cell
         // of its own, so a program the same line starts later cannot take its place in the
         // executor's foreground cell (review M3). The cell is cleared in the step that collects
         // the group's last member.
-        let cell = Arc::new(ForegroundGroup(std::sync::Mutex::new(running.pgid)));
+        let cell = Arc::new(ForegroundGroup::default());
         self.own(&cell);
+        let running = self.start(pipeline, false, &cell)?;
         Ok(Foreground {
             running,
             owns_terminal: false,
@@ -491,8 +492,10 @@ impl Executor {
     ///
     /// Returns an error if the pipeline could not be started at all.
     pub fn run_background(&mut self, pipeline: &Pipeline) -> Result<JobId> {
-        let running = self.start(pipeline, false)?;
-        Ok(self.register(running))
+        let group = Arc::new(ForegroundGroup::default());
+        self.own(&group);
+        let running = self.start(pipeline, false, &group)?;
+        Ok(self.register(running, group))
     }
 
     /// Runs one command under a pseudoterminal of its own (spec §29.3).
@@ -682,7 +685,12 @@ fn refuse(count: usize, at: usize, refusal: (ExitStatus, Error)) -> Vec<RunningS
 
 impl Executor {
     /// Starts every stage of a pipeline in one new process group.
-    fn start(&mut self, pipeline: &Pipeline, foreground: bool) -> Result<Running> {
+    fn start(
+        &mut self,
+        pipeline: &Pipeline,
+        foreground: bool,
+        cell: &Arc<ForegroundGroup>,
+    ) -> Result<Running> {
         // A shell that has begun to end on a signal starts nothing more (ADR-0959, review B1).
         if crate::signals::terminating() {
             return Err(Error::new(
@@ -737,9 +745,32 @@ impl Executor {
             }
         }
 
+        // The group is owned from its first member on, not once every stage has started: a
+        // shell ending on a signal in between ends the stages already running (review X1). And
+        // a shell that has begun to end starts no further stage; the ones not started are
+        // reported as ended by the signal that stopped them.
         for ready in prepared {
+            if crate::signals::terminating() {
+                drop(ready);
+                running.stages.push(RunningStage {
+                    pid: 0,
+                    state: JobState::Exited(ExitStatus::from_signal(15)),
+                    failure: None,
+                    stdout: None,
+                    stderr: None,
+                    pipe: None,
+                    stdin: None,
+                });
+                continue;
+            }
             let stage = self.spawn_stage(ready, &mut running, foreground);
             running.stages.push(stage);
+            if running.pgid != 0 {
+                let mut group = cell.lock();
+                if *group == 0 {
+                    *group = running.pgid;
+                }
+            }
         }
         Ok(running)
     }
@@ -862,7 +893,10 @@ impl Executor {
                 JobState::Stopped(signal) => signal,
                 _ => Signal::TSTP,
             };
-            let id = self.register(running);
+            // A stopped pipeline becomes a job, owned through a cell of its own.
+            let group = Arc::new(ForegroundGroup(std::sync::Mutex::new(running.pgid)));
+            self.own(&group);
+            let id = self.register(running, group);
             return Ok(ForegroundOutcome::Stopped { job: id, signal });
         }
         let group = u32::try_from(running.pgid).unwrap_or(0);
@@ -873,10 +907,8 @@ impl Executor {
     }
 
     /// Adds a pipeline to the job table under the lowest free job number.
-    fn register(&mut self, running: Running) -> JobId {
+    fn register(&mut self, running: Running, group: Arc<ForegroundGroup>) -> JobId {
         let id = JobId::new(self.free_number());
-        let group = Arc::new(ForegroundGroup(std::sync::Mutex::new(running.pgid)));
-        self.own(&group);
         self.jobs.push(Tracked { id, running, group });
         id
     }

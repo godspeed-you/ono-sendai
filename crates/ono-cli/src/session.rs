@@ -2333,7 +2333,7 @@ impl Drop for Session {
             // The session's own groups and those of its jobs' evaluators, which share its set —
             // not every group in the process: another session there owns its own (review S4).
             let ownership = self.execution.executor.ownership();
-            crate::shutdown::end_owned(|| ownership.groups(), settled);
+            crate::shutdown::end_shell(|| ownership.groups(), settled);
         }
         // Spec §31.37: the last pipeline's audit events are written before the session goes.
         #[cfg(feature = "kuang")]

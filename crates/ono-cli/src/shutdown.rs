@@ -56,15 +56,35 @@ pub fn end_owned(owned: impl Fn() -> Vec<OwnedGroup>, settled: impl Fn() -> bool
     ) {
         let mut killed = BTreeSet::new();
         ask(&mut killed, Signal::KILL);
+        // `SIGKILL` is sent again on every look to whatever still runs: a member that joined
+        // its group after the first one — a stage forked in the instant before the shell saw it
+        // was ending — is not missed (review X1).
         let _ = wait(
             &owned,
             &settled,
             REAP,
             &|| false,
-            |killed| ask(killed, Signal::KILL),
+            |_| {
+                for group in owned() {
+                    if !group.is_gone() {
+                        group.send(Signal::KILL);
+                    }
+                }
+            },
             &mut killed,
         );
     }
+}
+
+/// [`end_owned`] for the end of the whole shell — a session's own end, or a termination signal —
+/// one at a time: a script's end racing a signal runs the two one after the other, the second
+/// finding little or nothing left to ask (review X5). A job's session, ending inside the
+/// shell's, does not take part: the shell's end waits for the job, which must not wait for it.
+pub fn end_shell(owned: impl Fn() -> Vec<OwnedGroup>, settled: impl Fn() -> bool) {
+    let _one = ESCALATION
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    end_owned(owned, settled);
 }
 
 /// Waits until nothing owned runs and `settled` holds, or `budget` has passed, or `hurry` says
@@ -90,6 +110,9 @@ fn wait(
         ask(asked);
     }
 }
+
+/// Held while an escalation runs.
+static ESCALATION: Mutex<()> = Mutex::new(());
 
 /// The cancellation flags of every job's evaluator in the process, so a signal that ends the
 /// shell stops them as `kill %N` would (review M1).
@@ -135,7 +158,7 @@ pub fn on_termination(interactive: bool) -> Result<(), ono_value::ErrorValue> {
         {
             cancel.store(true, Ordering::SeqCst);
         }
-        end_owned(ono_process::owned_groups, || true);
+        end_shell(ono_process::owned_groups, || true);
         if let Some(saved) = &saved {
             ono_process::restore_if_foreground(saved);
         }

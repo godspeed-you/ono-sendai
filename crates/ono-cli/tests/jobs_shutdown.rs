@@ -483,10 +483,12 @@ fn keeps_running_on_ignored(signal: &str) {
         .status()
         .expect("kill runs");
     assert!(sent.success(), "the signal was sent");
-    let opened = std::process::Command::new("sh")
-        .args(["-c", &format!("echo go > {}", gate.display())])
+    // Bounded: were the signal not ignored, the shell would be gone and nobody would read the
+    // gate — the writer gives up instead of hanging the test (review X3).
+    let opened = std::process::Command::new("timeout")
+        .args(["10", "sh", "-c", &format!("echo go > {}", gate.display())])
         .status()
-        .expect("sh runs");
+        .expect("timeout runs");
     assert!(opened.success(), "the gate was opened");
     let code = shell.exit_code();
     let (finished, stdout, stderr) = shell.finish();
@@ -592,38 +594,120 @@ fn should_end_promptly_on_sigterm_when_it_runs_in_a_background_group_of_a_termin
 #[test]
 fn should_kill_at_once_when_a_second_termination_signal_arrives() {
     // Review M2: a second SIGTERM while the shell waits out its grace period means "now": what is
-    // left is killed without waiting for the rest of it.
+    // left is killed without waiting for the rest of it. The second is sent only once the first
+    // is visibly being handled — the job's program notes each SIGTERM it ignores — because two
+    // standard signals sent back to back may arrive as one (review X3).
     let home = scratch();
-    let program = Stubborn::at(&home, "hurried");
+    let path = home.path().join("jobs/noting.sh");
+    let noted = home.path().join("jobs/terms");
+    std::fs::create_dir_all(home.path().join("jobs")).expect("the directory");
+    let started = path.with_extension("started");
+    support::executable(
+        &path,
+        &format!(
+            "#!/bin/sh\ntrap 'echo term >> {}' TERM\ntrap '' INT\nexec </dev/null >/dev/null 2>&1\n\
+             : > '{}'\nwhile :; do sleep 0.05; done\n",
+            noted.display(),
+            started.display()
+        ),
+    );
+    let guard = Stubborn { path: path.clone() };
     let script = format!(
         "{program} &\nsh -c 'while [ ! -e {started} ]; do sleep 0.02; done'\necho ready\n\
          while true {{ sh -c 'sleep 0.05' }}",
-        program = program.path.display(),
-        started = program.started().display(),
+        program = path.display(),
+        started = started.display(),
     );
 
     let mut shell = Streaming::start(home.path(), &script);
     assert!(shell.until("ready"), "the job started");
     let pid = shell.pid().to_string();
-    let first = Instant::now();
-    for _ in 0..2 {
+    let term = || {
         let sent = std::process::Command::new("kill")
             .args(["-TERM", &pid])
             .status()
             .expect("kill runs");
         assert!(sent.success(), "the signal was sent");
+    };
+    term();
+    let deadline = Instant::now() + BUDGET;
+    while !noted.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
     }
+    let second = Instant::now();
+    term();
     let ended_by = shell.exit_signal();
-    let took = first.elapsed();
+    let took = second.elapsed();
     let (finished, stdout, stderr) = shell.finish();
 
     assert!(finished && ended_by == Some(15), "{stdout}\n{stderr}");
     assert!(
-        program.gone_within(Duration::from_secs(10)),
+        guard.gone_within(Duration::from_secs(10)),
         "the job did not outlive the shell. {stdout}\n{stderr}"
     );
     assert!(
         took < Duration::from_millis(1500),
         "the second signal cut the two-second grace period short: {took:?}"
     );
+}
+
+#[test]
+fn should_leave_no_stage_behind_when_the_signal_arrives_while_a_pipeline_is_being_started() {
+    // Review X1: the stages of a pipeline are started one after another, and a group became
+    // owned only once all were. A signal in between ended the shell with the stages already
+    // started left behind. Hundreds of stages make the window wide; the signal is sent as soon as
+    // the first of them runs.
+    let home = scratch();
+    let stage = home.path().join("jobs/stage-sleep");
+    std::fs::create_dir_all(home.path().join("jobs")).expect("the directory");
+    let sleep = ["/usr/bin/sleep", "/bin/sleep"]
+        .into_iter()
+        .find(|candidate| Path::new(candidate).exists())
+        .expect("a sleep program");
+    std::fs::copy(sleep, &stage).expect("the stage program");
+    let guard = Stubborn {
+        path: stage.clone(),
+    };
+    // The stages themselves — processes whose program is the stage — not the shell, whose own
+    // command line names the stage too.
+    let stages = || -> usize {
+        std::fs::read_dir("/proc")
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|entry| {
+                        std::fs::read(entry.path().join("cmdline")).is_ok_and(|cmdline| {
+                            cmdline.split(|byte| *byte == 0).next()
+                                == Some(stage.as_os_str().as_encoded_bytes())
+                        })
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+    let script = vec![format!("{} 388", stage.display()); 300].join(" | ");
+
+    let mut shell = Streaming::start(home.path(), &script);
+    let deadline = Instant::now() + BUDGET;
+    while stages() == 0 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let sent = std::process::Command::new("kill")
+        .args(["-TERM", &shell.pid().to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(sent.success(), "the signal was sent");
+    let ended_by = shell.exit_signal();
+    // Counted before the shell's output is collected: a stage left behind holds the pipe the
+    // output arrives through, so it is ended first, or collecting would wait for it.
+    let gone = Instant::now() + Duration::from_secs(10);
+    while stages() > 0 && Instant::now() < gone {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let left = stages();
+    drop(guard);
+    let (finished, stdout, stderr) = shell.finish();
+
+    assert!(finished && ended_by == Some(15), "{stdout}\n{stderr}");
+    assert_eq!(left, 0, "no stage of the pipeline outlived the shell");
 }
