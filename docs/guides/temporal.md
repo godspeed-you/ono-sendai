@@ -95,22 +95,19 @@ it was, and says why:
 
 ```text
 local:// > at -3d
-
-temporal.not_recorded
-no source can reconstruct this scope at the requested time
-
-available:
-  session history      42m
-  recorder history     disabled
-  journald             2d for service events
+ono: Ono-Sendai-E1302 temporal.not_recorded nothing recorded 2026-10-13T11:08:02.843174649Z for host:workstation
+  ono.session did not answer; ono.recorder did not answer (disabled)
 ```
 
 A time in the future is refused — historical context is somewhere Ono has been. `now` returns to
 the present, keeping the place if it still exists and reporting the move if it does not.
 
-Every read-only command takes `--at <selector>` for a single question, and it is the same engine:
-`get service nginx --at -1h` and `at -1h` followed by `get service nginx` give the same answer
-with the same coverage.
+The commands that declare `--at <selector>` take it for a single question, and it is the same
+engine: `get service nginx --at -1h` and `at -1h` followed by `get service nginx` give the same
+answer with the same coverage. Most `get` commands declare it, and `find file`, `find event`,
+`timeline`, `changes` and `why`; `help <command>` and
+[`docs/reference/commands.md`](../reference/commands.md) say which. A command that does not, such
+as `inspect process`, refuses the option (`Ono-Sendai-E0202`) rather than answering about now.
 
 ## The past is read-only
 
@@ -222,7 +219,13 @@ temporal.out_of_retention
 
 Nothing that old is kept, so an empty answer would be a statement that nothing changed over an
 interval whose record was removed. Where the store has never retained anything at all, the same
-question answers `temporal.not_recorded` and lists how far back each source can see.
+question is meant to answer `temporal.not_recorded` and name the sources it asked.
+
+> **As of v0.6.3 it does not, with the recorder off.** `changes --since 3d` in a shell whose store
+> is `none — session only` prints nothing and exits 0, which reads as "nothing changed", while
+> `at -3d` in the same session refuses with `temporal.not_recorded`. With the recorder started,
+> `changes` refuses as described. The defect is recorded in `docs/STATE.md` (*Found, not yet
+> filed*); until it is fixed, read an empty `changes` with the recorder off as "not known".
 
 The change section `look` prints follows the same rule from the other direction. It reports
 `empty` — "nothing changed" — only where coverage of the window is complete. A shell with the
@@ -264,12 +267,15 @@ advances.
 This is the part most worth understanding, because it is where a systems tool is most tempted to
 lie.
 
-Ono distinguishes four relationships:
+Ono distinguishes five relationships:
 
 - **`caused_by`** — a registered rule found evidence of a direct causal link. An Ono action that
   became a systemd job; a job result naming the unit transition it produced; a kernel-sourced
   parent/child creation; a provider's own transaction identifier.
 - **`triggered_by`** — A started a mechanism that led to B through steps the source names.
+- **`resulted_in`** — the forward reading of a known effect chain, mostly for operator actions:
+  "what did my restart do". It references the same evidence as its inverse, so it and `why` are
+  two readings of one set of edges.
 - **`correlated_with`** — a registered correlation rule found a meaningful association, and no
   more.
 - **`preceded_by`** — A happened before B under the supported ordering model. Nothing else.
@@ -476,9 +482,9 @@ never a hidden prerequisite.
 
 ## Troubleshooting
 
-**`temporal.not_recorded`** — nothing covered that time and scope. The message lists every source
-and how far back each reaches. `start recorder` begins retaining history; it does not create
-history that was never observed.
+**`temporal.not_recorded`** — nothing covered that time and scope. The message names every source
+it asked and why each did not answer (`ono.recorder did not answer (disabled)`). `start recorder`
+begins retaining history; it does not create history that was never observed.
 
 **`temporal.out_of_retention`** — it was there and retention removed it. The message names the
 earliest instant still held.
