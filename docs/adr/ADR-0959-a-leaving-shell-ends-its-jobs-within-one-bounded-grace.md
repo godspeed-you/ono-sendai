@@ -60,7 +60,37 @@ command goes through), accounted for one by one:
   `runner.rs`, `ono-recovery-zfs` `process.rs`), `systemctl` for the recorder service
   (`ono-recorder` `service.rs`), the per-command far side of an agentless link (`ono-remote`
   `agentless.rs`, both its spellings), the plugin build tool (`kuang_install.rs`) and the version
-  probe (`session.rs`). None of them reads the terminal.
+  probe (`session.rs`). None of them reads the terminal; each is given a null stdin (review W3).
+
+  **Ctrl-C reaches them as it did when they shared the shell's group** (review W1). A group of
+  its own is not the terminal's foreground group: while the shell waits for such a child itself,
+  the terminal's foreground group is the shell's, so the terminal's `SIGINT` reaches the shell
+  alone, and the shell's interactive handler only notes it — a command blocked in a synchronous
+  wait (an agentless `ssh` to a host dropping packets, the build tool, the probe, `systemctl`)
+  would never see the note. So a group recorded by a foreground command also takes one of a
+  fixed set of slots (`ono_core::children`, 32 of them; a group past them is ended at a
+  termination exit but not interrupted), and the shell's `SIGINT` handler sends `SIGINT` to each
+  slot's group with `kill(2)` — atomics and an async-signal-safe call, no lock, no allocation.
+  The child dies of it, or handles it, exactly as it would have from the terminal, and the
+  command reports its failure. A group recorded on a background job's evaluator thread
+  (`ono-job-N`, marked when the thread starts) takes no slot: a Ctrl-C meant for the foreground
+  leaves a job's children running. A record made on a runtime worker thread rather than on the
+  evaluating thread cannot tell whose it is and counts as the foreground's — which is where every
+  such child was before this decision. The slot is freed in the step the record is cleared, with
+  the same one-statement window.
+
+  **A cancelled command's group.** A model provider program is held by a guard that, dropped
+  before the provider was collected — the inference cancelled by Ctrl-C or out of its budget —
+  sends `SIGKILL` to the provider's whole group, so a helper it started goes with it (review W2).
+  The leader is still uncollected then, so the group id is still its own; a provider whose leader
+  has already exited while a helper still holds its output open is past that point, and the
+  helper is left to the pipe's end. The package manager deliberately does not do this: cancelling
+  it kills only the package manager itself (`kill_on_drop`), and the package tools it started —
+  `dpkg` in the middle of a transaction — are left to finish, because killing them half-way can
+  leave the package database broken. A Ctrl-C still reaches the whole group as `SIGINT`, as from
+  the terminal before, and lets `dpkg` act on it. A termination exit while the package manager runs
+  ends the whole group through the escalation below; once a cancel has let it go, what it left is
+  no longer recorded, and a later termination exit does not reach it either.
 - *Recorded by process id alone* — the child may be interactive or may need the terminal's
   signals, so it stays in the shell's process group and only it is signalled; what it starts on
   its own is not reached: `open file`'s handler (`file_mutations.rs`; `xdg-open` and the
@@ -191,7 +221,10 @@ shell dies of the signal), `::should_keep_running_on_a_hangup_it_was_started_ign
 `::should_end_a_program_a_command_started_itself_when_the_shell_is_sent_sigterm`,
 `::should_kill_a_stubborn_program_a_command_started_itself_together_with_the_jobs`;
 `crates/ono-cli/tests/models.rs::should_end_a_model_provider_and_what_it_started_when_the_shell_is_sent_sigterm`;
-`crates/ono-core/tests/children.rs::should_end_a_child_recorded_once_the_shell_has_begun_to_end_and_only_then`; and
+`crates/ono-core/tests/children.rs::should_end_a_child_recorded_once_the_shell_has_begun_to_end_and_only_then`;
+`crates/ono-cli/tests/signals.rs::should_interrupt_a_program_a_foreground_command_started_itself`,
+`::should_leave_a_background_jobs_own_program_running_on_a_foreground_ctrl_c`;
+`crates/ono-model-broker/src/lib.rs::tests::should_end_what_a_provider_started_when_its_budget_runs_out`; and
 `crates/ono-cli/tests/session_ownership.rs::should_leave_another_sessions_job_running_when_one_session_ends`;
 acceptance case `394`.
 

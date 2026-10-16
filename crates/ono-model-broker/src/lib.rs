@@ -820,7 +820,7 @@ impl ModelBroker for CommandBroker {
         let run = async {
             // In a process group of its own, recorded while it runs, so a shell ending on a
             // signal ends it and what it started (ADR-0959).
-            let mut child = tokio::process::Command::new(&program)
+            let child = tokio::process::Command::new(&program)
                 .args(provider.command.iter().skip(1))
                 .env("ONO_MODEL_PROTOCOL", PROTOCOL)
                 .stdin(Stdio::piped())
@@ -836,15 +836,15 @@ impl ModelBroker for CommandBroker {
                     ))
                 })?;
             let recorded = ono_core::children::Recorded::group_of(child.id());
-            if let Some(mut stdin) = child.stdin.take() {
+            let mut provider = Provider { child, recorded };
+            if let Some(mut stdin) = provider.child.stdin.take() {
                 use tokio::io::AsyncWriteExt;
                 // A provider that exits before reading is reported by its status, not by the
                 // write that its exit refused.
                 let _ = stdin.write_all(&document).await;
                 let _ = stdin.shutdown().await;
             }
-            let output = child.wait_with_output().await;
-            drop(recorded);
+            let output = provider.collect().await;
             output.map_err(|error| {
                 InferenceError::Unavailable(format!(
                     "`{}` did not finish: {error}",
@@ -876,6 +876,58 @@ impl ModelBroker for CommandBroker {
             return Err(InferenceError::Failed(failure.message));
         }
         Ok(response.parts)
+    }
+}
+
+/// A model provider program while it runs, in a process group of its own.
+///
+/// Dropped before it was collected — the inference cancelled by Ctrl-C or out of its budget — it
+/// kills the provider's whole group, so what the provider started (a `curl` a script provider
+/// runs) goes with it (review W2, ADR-0959). The leader is uncollected then, so the group's id is
+/// still its own. A provider whose leader has already exited while a helper still holds its
+/// output open is past that point: the helper is left to the pipe's end.
+struct Provider {
+    child: tokio::process::Child,
+    recorded: Option<ono_core::children::Recorded>,
+}
+
+impl Provider {
+    /// Waits for the provider and reads what it wrote; the record is cleared as it is collected.
+    async fn collect(&mut self) -> std::io::Result<std::process::Output> {
+        let stdout = self.child.stdout.take();
+        let stderr = self.child.stderr.take();
+        let (status, out, err) =
+            tokio::join!(self.child.wait(), read_all(stdout), read_all(stderr));
+        let status = status?;
+        self.recorded = None;
+        Ok(std::process::Output {
+            status,
+            stdout: out?,
+            stderr: err?,
+        })
+    }
+}
+
+/// Everything `pipe` yields until its end; nothing for no pipe.
+async fn read_all(pipe: Option<impl tokio::io::AsyncRead + Unpin>) -> std::io::Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let mut bytes = Vec::new();
+    if let Some(mut pipe) = pipe {
+        pipe.read_to_end(&mut bytes).await?;
+    }
+    Ok(bytes)
+}
+
+impl Drop for Provider {
+    fn drop(&mut self) {
+        if matches!(self.child.try_wait(), Ok(None))
+            && let Some(leader) = self.child.id().and_then(|pid| i32::try_from(pid).ok())
+        {
+            let _ = nix::sys::signal::killpg(
+                nix::unistd::Pid::from_raw(leader),
+                nix::sys::signal::Signal::SIGKILL,
+            );
+        }
     }
 }
 
@@ -1185,5 +1237,65 @@ mod tests {
             .expect_err("too slow");
         assert_eq!(error, InferenceError::Timeout(Duration::from_secs(1)));
         assert!(started.elapsed() < Duration::from_secs(4));
+    }
+
+    #[tokio::test]
+    async fn should_end_what_a_provider_started_when_its_budget_runs_out() {
+        // Review W2 of issue #303: an inference out of its budget is dropped, and with it the
+        // provider; a helper the provider started — a `curl` a script provider runs — went on.
+        let directory = ono_testkit::scratch();
+        let script = directory.path().join("helped");
+        let noted = directory.path().join("helper.pid");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nsleep 600 &\necho $! > '{}'\nwait\n",
+                noted.display()
+            ),
+        )
+        .expect("write");
+        let mut provider = provider(DataPolicy::LocalOnly);
+        // `/bin/sh <script>` for the reason the tests above give (ADR-0578).
+        provider.command = vec!["/bin/sh".to_owned(), script.to_string_lossy().into_owned()];
+        let broker = CommandBroker::new(
+            Catalogue {
+                providers: vec![provider.clone()],
+            },
+            None,
+        );
+        let request = ModelRequest {
+            deadline: Some(Json::from(1)),
+            ..ModelRequest::default()
+        };
+        let error = broker
+            .infer(&provider, &request)
+            .await
+            .expect_err("too slow");
+        assert_eq!(error, InferenceError::Timeout(Duration::from_secs(1)));
+        let helper: i32 = std::fs::read_to_string(&noted)
+            .expect("the helper started")
+            .trim()
+            .parse()
+            .expect("a process id");
+        let runs = || {
+            std::fs::read_to_string(format!("/proc/{helper}/stat"))
+                .ok()
+                .and_then(|stat| {
+                    stat.rsplit_once(')')
+                        .and_then(|(_, rest)| rest.split_whitespace().next().map(str::to_owned))
+                })
+                .is_some_and(|state| state != "Z" && state != "X")
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while runs() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let left = runs();
+        if left {
+            let _ = std::process::Command::new("kill")
+                .args(["-KILL", &helper.to_string()])
+                .status();
+        }
+        assert!(!left, "the provider's helper went with it");
     }
 }

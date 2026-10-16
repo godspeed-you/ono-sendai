@@ -629,8 +629,12 @@ pub(crate) fn run_evaluated_job(
     };
     let thread = match std::thread::Builder::new()
         .name(format!("ono-job-{number}"))
-        .spawn(move || job.run())
-    {
+        .spawn(move || {
+            // What the job's commands start is not interrupted by a Ctrl-C meant for the
+            // foreground (review W1, ADR-0959).
+            ono_core::children::mark_background_thread();
+            job.run()
+        }) {
         Ok(thread) => thread,
         Err(error) => {
             session.executor().release_job_number(number);

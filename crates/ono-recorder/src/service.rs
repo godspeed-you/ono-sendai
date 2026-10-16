@@ -159,6 +159,8 @@ impl ServiceRunner for Systemctl {
         let output = std::os::unix::process::CommandExt::process_group(
             std::process::Command::new("systemctl")
                 .args(arguments)
+                // It never reads the terminal; `.output()` gave it a null stdin too.
+                .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped()),
             0,

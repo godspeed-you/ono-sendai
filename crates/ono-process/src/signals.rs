@@ -114,6 +114,15 @@ static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn note_interrupt(_signal: libc::c_int) {
     INTERRUPTED.store(true, Ordering::Relaxed);
+    // A foreground command's own children run in groups of their own, which the terminal's
+    // Ctrl-C does not reach; it is handed on to them as the terminal would have delivered it
+    // (review W1, ADR-0959). The walk reads atomics only.
+    ono_core::children::for_each_foreground_group(|group| {
+        // SAFETY: `kill(2)` is async-signal-safe; the target is a recorded process group.
+        unsafe {
+            libc::kill(group, libc::SIGINT);
+        }
+    });
 }
 
 /// Whether `SIGINT` arrived since the last call, clearing the note.

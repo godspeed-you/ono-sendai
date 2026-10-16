@@ -213,3 +213,166 @@ fn should_make_an_elevated_prompt_impossible_to_miss() {
     shell.write_all(b"exit\n").expect("input");
     let _ = shell.wait();
 }
+
+/// A `uname` that notes its process id and then blocks, on a `PATH` of its own: what
+/// `link host … --transport local --agentless` asks first, run as a recorded child of the shell.
+fn blocking_uname(home: &ono_testkit::Scratch) -> (std::path::PathBuf, String) {
+    let bin = home.path().join("bin");
+    std::fs::create_dir_all(&bin).expect("bin");
+    let noted = home.path().join("uname.pids");
+    support::executable(
+        &bin.join("uname"),
+        &format!(
+            "#!/bin/sh\necho $$ >> '{}'\nexec sleep 600\n",
+            noted.display()
+        ),
+    );
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    (noted, path)
+}
+
+/// `ono` on a pseudo-terminal, in `home`, with `path`.
+fn interactive_shell_in(
+    home: &ono_testkit::Scratch,
+    path: &str,
+) -> ono_testkit::Guarded<ono_process::PtySession> {
+    let mut executor = Executor::detached();
+    let at = |name: &str| home.path().join(name).display().to_string();
+    let command = Command::new(ono_testkit::ono_binary())
+        .env("TERM", "xterm")
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("HOME", home.path().display().to_string())
+        .env("XDG_CONFIG_HOME", at("xdg"))
+        .env("XDG_STATE_HOME", at("state"))
+        .env("XDG_DATA_HOME", at("data"))
+        .env("XDG_CACHE_HOME", at("cache"))
+        .env("ONO_CONFIG_DIR", at("ono"));
+    executor
+        .run_pty(&command, WindowSize::new(24, 80))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
+        .expect("a pseudo-terminal must be available")
+}
+
+/// The process ids `noted` holds once it holds `count` of them, within the budget.
+fn noted_pids(noted: &std::path::Path, count: usize) -> Vec<i32> {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let pids: Vec<i32> = std::fs::read_to_string(noted)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.trim().parse().ok())
+            .collect();
+        if pids.len() >= count || Instant::now() >= deadline {
+            return pids;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn runs(pid: i32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|stat| {
+            stat.rsplit_once(')')
+                .and_then(|(_, rest)| rest.split_whitespace().next().map(str::to_owned))
+        })
+        .is_some_and(|state| state != "Z" && state != "X")
+}
+
+/// Kills what the stubs left, whatever the test concluded.
+struct Reaper(Vec<i32>);
+
+impl Drop for Reaper {
+    fn drop(&mut self) {
+        for pid in &self.0 {
+            let _ = std::process::Command::new("kill")
+                .args(["-KILL", &pid.to_string()])
+                .status();
+        }
+    }
+}
+
+#[test]
+fn should_interrupt_a_program_a_foreground_command_started_itself() {
+    // Review W1 of issue #303: a command's own child — here the far side of an agentless link,
+    // which a host that drops packets keeps waiting — runs in a process group of its own so a
+    // shell ending on a signal can end what it started, and so the terminal's Ctrl-C no longer
+    // reached it. The shell hands the interrupt on to a foreground command's recorded children.
+    let home = ono_testkit::scratch();
+    let (noted, path) = blocking_uname(&home);
+    let mut shell = interactive_shell_in(&home, &path);
+    read_until(&mut shell, ">", Duration::from_secs(10));
+
+    shell
+        .write_all(b"link host testbox --transport local --agentless\n")
+        .expect("input");
+    let pids = noted_pids(&noted, 1);
+    let _reaper = Reaper(pids.clone());
+    assert_eq!(pids.len(), 1, "the far side ran");
+    shell.write_all(&[0x03]).expect("Ctrl-C");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while runs(pids[0]) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let interrupted = !runs(pids[0]);
+    shell.write_all(b"echo alive-$?\n").expect("input");
+    let seen = read_until(&mut shell, "alive-", Duration::from_secs(20));
+    shell.write_all(b"exit 0\n").expect("input");
+    let _ = shell.wait_timeout(Duration::from_secs(20));
+
+    assert!(interrupted, "Ctrl-C reached the far side; saw:\n{seen}");
+    assert!(
+        seen.contains("alive-"),
+        "the prompt came back; saw:\n{seen}"
+    );
+}
+
+#[test]
+fn should_leave_a_background_jobs_own_program_running_on_a_foreground_ctrl_c() {
+    // The other half of review W1: a job's recorded child is not the foreground's, and a Ctrl-C
+    // meant for the foreground command leaves it running. The foreground command is one whose
+    // own child the shell waits for, so the shell keeps the terminal and receives the Ctrl-C.
+    let home = ono_testkit::scratch();
+    let (noted, path) = blocking_uname(&home);
+    let mut shell = interactive_shell_in(&home, &path);
+    read_until(&mut shell, ">", Duration::from_secs(10));
+
+    shell
+        .write_all(b"fn far() { link host testbox --transport local --agentless }\nfar &\n")
+        .expect("input");
+    let background = noted_pids(&noted, 1);
+    let _background = Reaper(background.clone());
+    assert_eq!(background.len(), 1, "the job's far side ran");
+    shell
+        .write_all(b"link host nearbox --transport local --agentless\n")
+        .expect("input");
+    let both = noted_pids(&noted, 2);
+    let _foreground = Reaper(both.clone());
+    assert_eq!(both.len(), 2, "the foreground far side ran");
+    shell.write_all(&[0x03]).expect("Ctrl-C");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while runs(both[1]) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let foreground_interrupted = !runs(both[1]);
+    // Past the moment the interrupt reached the foreground: the job's far side would have died
+    // of the same signal by now.
+    std::thread::sleep(Duration::from_millis(300));
+    let left_running = runs(background[0]);
+    shell.write_all(b"exit 0\n").expect("input");
+    let _ = shell.wait_timeout(Duration::from_secs(20));
+
+    assert!(
+        foreground_interrupted,
+        "Ctrl-C reached the foreground far side"
+    );
+    assert!(
+        left_running,
+        "the background job's far side was not interrupted"
+    );
+}

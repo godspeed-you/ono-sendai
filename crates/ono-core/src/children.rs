@@ -8,7 +8,16 @@
 //! so the programs it starts in turn are reached too, and by its process id otherwise. A shell that
 //! ends on a signal sends every recorded child the signals it sends its jobs, and once it has begun
 //! to end, a child recorded after that is ended as soon as it is recorded.
+//!
+//! A child in a group of its own no longer hears the terminal's Ctrl-C, which goes to the
+//! terminal's foreground group — the shell's, while the shell waits for such a child itself. So a
+//! group recorded by a foreground command also takes one of a fixed set of slots that the shell's
+//! interrupt handler reads without a lock or an allocation, and the handler hands the interrupt on
+//! to each (review W1). A group recorded on a background job's evaluator thread takes none: a
+//! Ctrl-C meant for the foreground leaves it running.
 
+use std::cell::Cell;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 /// What a record names: a process group (negative, as `kill(2)` takes one) or a process.
@@ -25,10 +34,45 @@ static RECORDED: Mutex<Records> = Mutex::new(Records {
     closing: None,
 });
 
+/// How many foreground groups the interrupt reaches at once. A foreground command waits for its
+/// children one after another; this many at a time is never reached in practice, and a group past
+/// it is still ended at a termination exit, only not interrupted.
+const FOREGROUND_SLOTS: usize = 32;
+
+/// The groups a foreground command recorded, negative as `kill(2)` takes them; 0 is free.
+static FOREGROUND: [AtomicI32; FOREGROUND_SLOTS] = [const { AtomicI32::new(0) }; FOREGROUND_SLOTS];
+
+thread_local! {
+    /// Whether this thread evaluates a background job.
+    static BACKGROUND: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Marks the calling thread as a background job's evaluator: what it records from now on is not
+/// interrupted by the terminal's Ctrl-C (review W1).
+pub fn mark_background_thread() {
+    BACKGROUND.with(|background| background.set(true));
+}
+
+/// Calls `interrupt` with every group a foreground command has recorded and not yet waited for.
+///
+/// Async-signal-safe: it reads a fixed array of atomics, takes no lock and allocates nothing, so
+/// the shell's `SIGINT` handler calls it (review W1).
+pub fn for_each_foreground_group(mut interrupt: impl FnMut(i32)) {
+    for slot in &FOREGROUND {
+        let target = slot.load(Ordering::SeqCst);
+        if target != 0 {
+            interrupt(target);
+        }
+    }
+}
+
 /// A child recorded for as long as this guard lives. Drop it — or call [`Recorded::reaped`] — in
 /// the step right after the child has been waited for.
 #[derive(Debug)]
-pub struct Recorded(Arc<Mutex<Target>>);
+pub struct Recorded {
+    cell: Arc<Mutex<Target>>,
+    foreground: Option<usize>,
+}
 
 impl Recorded {
     /// Records the child with process id `pid`, signalled alone.
@@ -68,12 +112,26 @@ impl Recorded {
         {
             end(target);
         }
-        Self(cell)
+        drop(records);
+        let foreground = if target < 0 && !BACKGROUND.with(Cell::get) {
+            FOREGROUND.iter().position(|slot| {
+                slot.compare_exchange(0, target, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+            })
+        } else {
+            None
+        };
+        Self { cell, foreground }
     }
 
     /// Clears the record: the child has been waited for, and its id may be another's soon.
     pub fn reaped(&self) {
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = 0;
+        let mut target = self.cell.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(slot) = self.foreground {
+            let _ =
+                FOREGROUND[slot].compare_exchange(*target, 0, Ordering::SeqCst, Ordering::SeqCst);
+        }
+        *target = 0;
     }
 }
 
