@@ -77,7 +77,9 @@ runs an inner one — share the one ceiling; the same line run three times in a 
 While a hand-over is held, the command's captures count beside it — `let c = (seq 1 7000 | from
 csv)` holds the bytes and the values made of them at once, for the moment both exist — and the
 captures stay charged afterwards, as captures always are (ADR-0457). A hand-over is not an item
-against the item ceiling; it is bytes.
+against the item ceiling; it is bytes, and only bytes are checked (review Z9). A hold is a guard
+released however its command ends — read, failed, interrupted — so a loop of failing adapted
+commands piles nothing up (review Z1).
 
 What the bound does not do (review X5): a program that ignores `SIGPIPE` and goes on running
 after its output was cut off holds the line until it ends, as `prog | head` does in any shell;
@@ -159,7 +161,9 @@ and `::should_end_a_foregrounded_native_job_with_ctrl_c_and_show_what_it_had`; a
 `::should_report_a_failed_job_nobody_collected_before_the_shell_ends`,
 `::should_refuse_past_the_ceiling_when_a_programs_endless_output_feeds_a_native_stage`,
 `::should_hold_hand_overs_held_at_the_same_time_under_one_ceiling`,
-`::should_release_a_hand_over_once_its_native_stage_has_read_it`, and the
+`::should_release_a_hand_over_once_its_native_stage_has_read_it`,
+`crates/ono-cli/tests/adapters.rs::should_release_what_a_failed_adapted_command_held_for_its_decoder`,
+and the
 PTY proofs
 `::should_keep_a_live_jobs_painted_table_as_the_last_result_when_ctrl_c_ends_it`,
 `::should_return_the_jobs_own_status_when_it_ends_on_the_ctrl_c_with_one_of_its_own`,

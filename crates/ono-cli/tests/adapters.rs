@@ -906,3 +906,28 @@ fn should_write_one_field_s_bytes_verbatim_when_to_bytes_names_it() {
         run.output()
     );
 }
+
+#[test]
+fn should_release_what_a_failed_adapted_command_held_for_its_decoder() {
+    // Review Z1 of issue #301: the bytes an adapted program writes are held against the command's
+    // capture ceiling until they are decoded. A program that failed returned before the hold was
+    // released, so a loop of failures piled holds up and a later hand-over was refused. Every hold
+    // is released however its command ends.
+    let dir = shadow("head -c 20000 /dev/zero | tr '\\0' x; exit 1");
+    let run = shadowed(
+        &dir,
+        // One statement — the holds of one command are what the ceiling bounds together.
+        "set config limits.command_capture_bytes 64KiB\n\
+         fn f() {\n\
+           let i = 0\n\
+           while $i < 6 { try { lsblk | count } catch e { }; let i = $i + 1 }\n\
+           seq 1 7000 | from csv | count | to json\n\
+         }\n\
+         f",
+    );
+    assert!(
+        run.stdout().contains("[6999]") && !run.stderr().contains("resource.byte_limit"),
+        "the failures held nothing once they had failed; got {:?}",
+        run.output()
+    );
+}

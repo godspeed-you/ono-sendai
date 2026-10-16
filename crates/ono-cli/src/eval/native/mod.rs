@@ -380,8 +380,8 @@ fn run_from(
     })?;
 
     let mut carried: Option<Vec<u8>> = None;
-    // How many bytes of `carried` are held against the capture ceiling (review Y1).
-    let mut held: u64 = 0;
+    // The hold `carried` keeps against the capture ceiling, released when dropped (reviews Y1, Z1).
+    let mut held: Option<crate::session::HandOver> = None;
     let mut seed = seed;
     let mut status = ExitStatus::SUCCESS;
 
@@ -538,7 +538,7 @@ fn run_from(
                         position += if consumed_next { 2 } else { 1 };
                         continue;
                     }
-                    let (bytes, external_status) = crate::eval::run_adapted_segment(
+                    let (bytes, external_status, adapted_hold) = crate::eval::run_adapted_segment(
                         session,
                         list,
                         indices,
@@ -569,8 +569,9 @@ fn run_from(
                         ));
                     }
                     let decoded = decode_adapted(session, &plan, &argv, &bytes);
-                    // The bytes are read: they are no longer held (review Y1).
-                    session.release_hand_over(bytes.len() as u64);
+                    // The bytes are read: they are no longer held (review Y1). Every other path
+                    // out of here drops the hold as well (review Z1).
+                    drop(adapted_hold);
                     match decoded {
                         Ok(values) => {
                             // v0.4 §37: a typed object an adapter decoded may contribute to the
@@ -620,10 +621,10 @@ fn run_from(
                         list, indices, source, consumer,
                     )));
                 }
-                let (bytes, external_status) = crate::eval::run_external_segment(
+                let (bytes, external_status, hold) = crate::eval::run_external_segment(
                     session, list, indices, source, carried, last,
                 )?;
-                held = bytes.as_ref().map_or(0, |bytes| bytes.len() as u64);
+                held = hold;
                 carried = bytes;
                 status = external_status;
             }
@@ -666,7 +667,7 @@ fn run_from(
                 );
                 // What a program handed this segment has been read: it is no longer held
                 // (review Y1).
-                session.release_hand_over(std::mem::take(&mut held));
+                drop(held.take());
                 let ended = ended?;
                 status = ended.status;
                 if ended.fed_program {

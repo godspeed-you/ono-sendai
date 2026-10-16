@@ -106,7 +106,7 @@ impl JobSnapshot {
                 captures: Vec::new(),
                 capture_budget: Budget::command_captures(),
                 job_model: self.live,
-                handed_over: 0,
+                handed_over: std::sync::Arc::default(),
             },
             navigation: NavigationState {
                 frames: self.frames,
@@ -278,7 +278,7 @@ struct ExecutionState {
     job_model: Option<LiveModel>,
     /// Bytes of programs' output held right now for the native stages that read them — counted
     /// against the command's capture ceiling while held, released once read (ADR-0958, review Y1).
-    handed_over: u64,
+    handed_over: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Where the session has gone: the context stack, the links it stands on, what it selected.
@@ -628,6 +628,24 @@ impl std::fmt::Debug for LinkConnection {
     }
 }
 
+/// Bytes of a program's output held for the native stage that reads them; released when dropped
+/// (ADR-0958, review Z1).
+#[derive(Debug)]
+pub struct HandOver {
+    held: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    bytes: u64,
+}
+
+impl Drop for HandOver {
+    fn drop(&mut self) {
+        let _ = self.held.fetch_update(
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+            |held| Some(held.saturating_sub(self.bytes)),
+        );
+    }
+}
+
 /// The rows a live job folds its events into, keyed by identity — what `fg` repaints at a
 /// terminal (ADR-0024).
 pub type LiveModel = std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, Value>>>;
@@ -780,7 +798,6 @@ impl ExecutionState {
             bytes,
         )
         .for_settings("limits.materialize_items", "limits.command_capture_bytes");
-        self.handed_over = 0;
     }
 
     /// Hands finished values to the innermost capture, charging every one of them.
@@ -907,7 +924,7 @@ impl Session {
                 captures: Vec::new(),
                 capture_budget: Budget::command_captures(),
                 job_model: None,
-                handed_over: 0,
+                handed_over: std::sync::Arc::default(),
             },
             navigation: NavigationState {
                 frames: Vec::new(),
@@ -2171,31 +2188,47 @@ impl Session {
 
     /// Holds `bytes` collected from a program for the native stage that will read them, against
     /// this command's capture ceiling (v0.4.1 §23.4): what is held at once — these, every other
-    /// hand-over not yet read, and what the command's captures keep — stays under it. Nothing is
-    /// charged for good; [`Session::release_hand_over`] gives it back (ADR-0958, review Y1).
+    /// hand-over not yet read, and what the command's captures keep — stays under it. Only bytes
+    /// count: a hand-over is not an item (review Z9). The hold is released when the returned guard
+    /// is dropped, on every path — read, failed, cancelled (ADR-0958, reviews Y1, Z1).
     ///
     /// # Errors
     ///
     /// The structured refusal of §21.4 when the ceiling is passed.
-    pub fn hold_hand_over(&mut self, bytes: u64) -> Result<(), ErrorValue> {
-        let held = self.execution.handed_over.saturating_add(bytes);
-        let mut probe = self.execution.capture_budget.clone();
-        probe
-            .charge_estimate(held)
-            .map_err(ono_pipeline::Exceeded::into_error)?;
-        self.execution.handed_over = held;
-        Ok(())
-    }
-
-    /// Releases `bytes` held by [`Session::hold_hand_over`], once the stage that read them is done.
-    pub fn release_hand_over(&mut self, bytes: u64) {
-        self.execution.handed_over = self.execution.handed_over.saturating_sub(bytes);
+    pub fn hold_hand_over(&mut self, bytes: u64) -> Result<HandOver, ErrorValue> {
+        let held = self.handed_over().saturating_add(bytes);
+        let budget = &self.execution.capture_budget;
+        let room = budget.max_bytes().saturating_sub(budget.consumed_bytes());
+        if held > room {
+            // The same refusal a capture past the ceiling raises, counted in bytes alone.
+            let mut probe = Budget::of("this command's captures", u64::MAX, budget.max_bytes())
+                .for_settings("limits.materialize_items", "limits.command_capture_bytes");
+            return Err(probe
+                .charge_estimate(budget.consumed_bytes().saturating_add(held))
+                .map_err(ono_pipeline::Exceeded::into_error)
+                .err()
+                .unwrap_or_else(|| {
+                    ErrorValue::new(
+                        ono_core::ErrorCode::ResourceByteLimit,
+                        "this command's captures reached their budget",
+                    )
+                }));
+        }
+        self.execution
+            .handed_over
+            .fetch_add(bytes, std::sync::atomic::Ordering::SeqCst);
+        Ok(HandOver {
+            held: std::sync::Arc::clone(&self.execution.handed_over),
+            bytes,
+        })
     }
 
     /// How many bytes of programs' output are held right now for native stages.
     #[must_use]
-    pub const fn handed_over(&self) -> u64 {
-        self.execution.handed_over
+    pub fn handed_over(&self) -> u64 {
+        self.execution
+            .handed_over
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Hands the text a serializer or a program wrote to the innermost capture.

@@ -18,7 +18,7 @@ use ono_value::{ErrorValue, Value};
 use crate::builtin;
 use crate::expand;
 use crate::resolve::{self, Namespace, Resolution};
-use crate::session::{Mode, Session};
+use crate::session::{HandOver, Mode, Session};
 
 use super::block::each_block_stage;
 use super::expression::{eval_expr, text_of};
@@ -668,7 +668,7 @@ pub(super) fn run_stage_list(
     // text is the value of `(echo hi)` (ADR-0069).
     if !background && session.capturing() {
         let indices: Vec<usize> = (0..list.stages.len()).collect();
-        let (_, status) = run_external_segment(session, list, &indices, source, None, true)?;
+        let (_, status, _) = run_external_segment(session, list, &indices, source, None, true)?;
         return Ok(status);
     }
 
@@ -722,7 +722,7 @@ pub fn run_external_segment(
     source: &str,
     input: Option<Vec<u8>>,
     last: bool,
-) -> Eval<(Option<Vec<u8>>, ExitStatus)> {
+) -> Eval<(Option<Vec<u8>>, ExitStatus, Option<HandOver>)> {
     if session.mode() == Mode::Config {
         return Err(Flow::Failed(config_refusal("this command")));
     }
@@ -772,12 +772,13 @@ pub fn run_external_segment(
     });
     if captured {
         session.capture_text(bytes.as_deref().unwrap_or_default())?;
-        return Ok((None, outcome.status()));
+        return Ok((None, outcome.status(), None));
     }
-    if let Some(bytes) = &bytes {
-        refuse_past_capture_room(session, bytes).map_err(Flow::Failed)?;
-    }
-    Ok((bytes, outcome.status()))
+    let held = match &bytes {
+        Some(bytes) => Some(refuse_past_capture_room(session, bytes).map_err(Flow::Failed)?),
+        None => None,
+    };
+    Ok((bytes, outcome.status(), held))
 }
 
 /// Runs an external segment whose last stage is adapted: the same pipeline, with the last
@@ -793,7 +794,7 @@ pub fn run_adapted_segment(
     source: &str,
     input: Option<Vec<u8>>,
     plan: &ono_adapter::AdapterPlan,
-) -> Eval<(Vec<u8>, ExitStatus)> {
+) -> Eval<(Vec<u8>, ExitStatus, HandOver)> {
     let built = adapted_pipeline(
         session,
         list,
@@ -820,8 +821,8 @@ pub fn run_adapted_segment(
         .and_then(|completed| completed.stages().last())
         .map(|stage| stage.stdout.clone())
         .unwrap_or_default();
-    refuse_past_capture_room(session, &bytes).map_err(Flow::Failed)?;
-    Ok((bytes, outcome.status()))
+    let held = refuse_past_capture_room(session, &bytes).map_err(Flow::Failed)?;
+    Ok((bytes, outcome.status(), held))
 }
 
 /// How many bytes of a program's output the shell may still collect in this command: what the
@@ -840,7 +841,7 @@ fn capture_room(session: &Session) -> u64 {
 /// What passes is held against the command's ceiling until the native stage after it has read it
 /// (the caller releases it then): hand-overs held at the same time stay under one ceiling
 /// together, and one already read no longer counts (reviews X4, Y1).
-fn refuse_past_capture_room(session: &mut Session, bytes: &[u8]) -> Result<(), ErrorValue> {
+fn refuse_past_capture_room(session: &mut Session, bytes: &[u8]) -> Result<HandOver, ErrorValue> {
     session.hold_hand_over(bytes.len() as u64)
 }
 
