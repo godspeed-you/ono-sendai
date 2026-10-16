@@ -102,9 +102,18 @@ operations:
       forwarding, so its state is the count it has skipped.
   - command: ono.data.count
     class: incremental_aggregate
+    note: >-
+      Its state is one counter, which is what places it here. Its answer is that counter once the
+      input has ended, so over a declared-unbounded upstream with no window it refuses before it
+      reads, with `stream.unbounded_operation` (Ono-Sendai-E0801), as its transform's input
+      requirement says: the class states what the stage holds, and the refusal is about when it
+      can answer. `take <n>` before it, or a window, gives it an end.
   - command: ono.data.reduce
     class: incremental_aggregate
-    note: The accumulator is one value; a folder that grew it per input would be a collector.
+    note: >-
+      The accumulator is one value; a folder that grew it per input would be a collector. Like
+      `count` it answers at the end, so an unbounded upstream without a window is refused with
+      Ono-Sendai-E0801.
   - command: ono.data.tail
     class: incremental_aggregate
     note: >-
