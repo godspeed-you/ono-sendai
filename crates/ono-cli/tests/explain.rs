@@ -181,6 +181,7 @@ fn should_neutralise_control_characters_in_an_environment_value_when_rendering_t
 
 // --- unavoidable global acquisition (v0.4.1 §34.4, issue #177, ADR-0947) -----------------------
 
+#[cfg(feature = "spatial")]
 #[test]
 fn should_show_a_global_acquisition_and_its_cost_class_when_explaining_map() {
     let run = ono("explain map");
@@ -192,6 +193,7 @@ fn should_show_a_global_acquisition_and_its_cost_class_when_explaining_map() {
     );
 }
 
+#[cfg(feature = "graph")]
 #[test]
 fn should_carry_the_acquisition_of_a_trace_in_the_plan_value() {
     let run = ono(r#"explain "trace socket 22" | to json"#);

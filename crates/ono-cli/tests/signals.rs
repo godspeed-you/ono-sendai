@@ -216,6 +216,7 @@ fn should_make_an_elevated_prompt_impossible_to_miss() {
 
 /// A `uname` that notes its process id and then blocks, on a `PATH` of its own: what
 /// `link host … --transport local --agentless` asks first, run as a recorded child of the shell.
+#[cfg(feature = "remote")]
 fn blocking_uname(home: &ono_testkit::Scratch) -> (std::path::PathBuf, String) {
     let bin = home.path().join("bin");
     std::fs::create_dir_all(&bin).expect("bin");
@@ -236,6 +237,7 @@ fn blocking_uname(home: &ono_testkit::Scratch) -> (std::path::PathBuf, String) {
 }
 
 /// `ono` on a pseudo-terminal, in `home`, with `path`.
+#[cfg(feature = "remote")]
 fn interactive_shell_in(
     home: &ono_testkit::Scratch,
     path: &str,
@@ -259,6 +261,7 @@ fn interactive_shell_in(
 }
 
 /// The process ids `noted` holds once it holds `count` of them, within the budget.
+#[cfg(feature = "remote")]
 fn noted_pids(noted: &std::path::Path, count: usize) -> Vec<i32> {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
@@ -274,6 +277,7 @@ fn noted_pids(noted: &std::path::Path, count: usize) -> Vec<i32> {
     }
 }
 
+#[cfg(feature = "remote")]
 fn runs(pid: i32) -> bool {
     std::fs::read_to_string(format!("/proc/{pid}/stat"))
         .ok()
@@ -285,8 +289,10 @@ fn runs(pid: i32) -> bool {
 }
 
 /// Kills what the stubs left, whatever the test concluded.
+#[cfg(feature = "remote")]
 struct Reaper(Vec<i32>);
 
+#[cfg(feature = "remote")]
 impl Drop for Reaper {
     fn drop(&mut self) {
         for pid in &self.0 {
@@ -297,6 +303,7 @@ impl Drop for Reaper {
     }
 }
 
+#[cfg(feature = "remote")]
 #[test]
 fn should_interrupt_a_program_a_foreground_command_started_itself() {
     // Review W1 of issue #303: a command's own child — here the far side of an agentless link,
@@ -332,6 +339,7 @@ fn should_interrupt_a_program_a_foreground_command_started_itself() {
     );
 }
 
+#[cfg(feature = "remote")]
 #[test]
 fn should_leave_a_background_jobs_own_program_running_on_a_foreground_ctrl_c() {
     // The other half of review W1: a job's recorded child is not the foreground's, and a Ctrl-C

@@ -376,6 +376,7 @@ fn should_run_a_jobs_programs_in_the_jobs_directory_and_leave_the_foregrounds_pa
     );
 }
 
+#[cfg(feature = "change")]
 #[test]
 fn should_plan_a_jobs_relative_target_in_the_jobs_directory() {
     // `plan` resolves its operation's target to the absolute path it freezes (change spec §4.3).
@@ -450,6 +451,7 @@ fn should_remove_the_jobs_file_when_records_captured_before_launch_are_piped_int
     );
 }
 
+#[cfg(feature = "change")]
 #[test]
 fn should_run_an_opaque_plan_action_applied_in_a_job_in_the_jobs_directory() {
     // Review H2: an opaque action's program is a child the job starts, so it runs where the job
@@ -484,6 +486,7 @@ fn should_run_an_opaque_plan_action_applied_in_a_job_in_the_jobs_directory() {
     );
 }
 
+#[cfg(feature = "kuang")]
 #[test]
 fn should_read_a_plugin_package_named_relatively_in_a_job_from_the_jobs_directory() {
     // Review H3: `path:./pkg` is a relative path like any other.
@@ -646,6 +649,7 @@ fn should_keep_a_trailing_slash_when_a_job_anchors_a_path() {
 
 // --- second review of #302 -------------------------------------------------------------------
 
+#[cfg(feature = "change")]
 #[test]
 fn should_apply_a_plan_made_where_the_job_started_to_that_file_after_the_foreground_moved() {
     // Review N1: a plan freezes the absolute path of its target; applying it — here in a job,
@@ -681,6 +685,7 @@ fn should_apply_a_plan_made_where_the_job_started_to_that_file_after_the_foregro
     );
 }
 
+#[cfg(feature = "change")]
 #[test]
 fn should_apply_a_plan_to_the_file_it_froze_when_the_foreground_moved_before_applying() {
     // Review N1, the foreground half of the same defect: plan in one directory, `cd`, apply.

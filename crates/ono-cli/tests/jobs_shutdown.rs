@@ -279,6 +279,7 @@ fn should_leave_a_program_detached_with_setsid_fork_running_after_the_shell_exit
     );
 }
 
+#[cfg(feature = "adapter")]
 #[test]
 fn should_end_an_adapted_program_a_job_runs_when_the_shell_exits() {
     // Review R5: a program whose records the shell decodes as it runs (ADR-0059) is started
