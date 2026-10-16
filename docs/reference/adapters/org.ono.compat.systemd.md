@@ -4,6 +4,8 @@
 
 Version `0.1.0`; process.exec executables: `journalctl`, `systemctl`. Everything below is the pack's contract; an invocation not listed under an adapter runs raw, and the limits state what the adapted form does not carry.
 
+<a id="journalctl"></a>
+
 ## journalctl — `org.ono.compat.systemd.journalctl`
 
 Journal entries as `ono.journal-event/1` records, streamed from `journalctl -o json`.
@@ -60,6 +62,8 @@ Journal entries as `ono.journal-event/1` records, streamed from `journalctl -o j
 | asked through | `query` |
 | bounds | `--since=@{seconds}` … `--until=@{seconds}` |
 
+<a id="systemctl-list-units"></a>
+
 ## systemctl-list-units — `org.ono.compat.systemd.systemctl-list-units`
 
 Units as `ono.service/1` records, from `systemctl list-units --output=json`.
@@ -94,6 +98,8 @@ Units as `ono.service/1` records, from `systemctl list-units --output=json`.
 
 - `pid`, `enabled`, `since` and `unit_file` are not reported by the list; `systemctl show <unit>` answers them.
 - `list-unit-files`, `list-timers`, `list-sockets` and every mutation are not adapted (spec v0.3 §1.36).
+
+<a id="systemctl-show"></a>
 
 ## systemctl-show — `org.ono.compat.systemd.systemctl-show`
 

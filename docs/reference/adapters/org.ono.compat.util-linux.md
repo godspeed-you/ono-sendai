@@ -4,6 +4,8 @@
 
 Version `0.1.0`; process.exec executables: `lsblk`, `findmnt`, `lsns`. Everything below is the pack's contract; an invocation not listed under an adapter runs raw, and the limits state what the adapted form does not carry.
 
+<a id="lsblk"></a>
+
 ## lsblk — `org.ono.compat.util-linux.lsblk`
 
 Block devices as `ono.block-device/1` records, from `lsblk --json --list --bytes`.
@@ -47,6 +49,8 @@ Block devices as `ono.block-device/1` records, from `lsblk --json --list --bytes
 - Flags that change what a row means — `-p/--paths`, `-e/--exclude`, `-x/--sort`, `-o/--output`, `-f`, `-m`, `-t` — are not adapted; the invocation runs raw.
 - The tree lsblk draws is carried as `parent`, never as indentation.
 
+<a id="findmnt"></a>
+
 ## findmnt — `org.ono.compat.util-linux.findmnt`
 
 Mounted filesystems as `ono.mount/1` records, from `findmnt --json --list --bytes`.
@@ -82,6 +86,8 @@ Mounted filesystems as `ono.mount/1` records, from `findmnt --json --list --byte
 
 - `--fstab`, `--kernel`, `--mtab`, `--poll`, `--evaluate` and output selection are not adapted; the invocation runs raw.
 - `device` is null: findmnt names the source, not the device object.
+
+<a id="lsns"></a>
 
 ## lsns — `org.ono.compat.util-linux.lsns`
 

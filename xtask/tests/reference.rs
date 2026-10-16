@@ -710,3 +710,114 @@ fn should_report_a_security_page_that_carries_no_generated_boundary_table() {
         "a SECURITY.md without the generated table is reported: {problems:?}"
     );
 }
+
+/// The anchor GitHub gives a heading: lowercased, punctuation dropped, spaces turned into `-`.
+fn heading_slug(heading: &str) -> String {
+    heading
+        .trim()
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | ' '))
+        .map(|c| if c == ' ' { '-' } else { c })
+        .collect()
+}
+
+/// Every anchor a page offers: its headings' slugs, numbered as GitHub numbers repeats, and the
+/// `<a id="…">` anchors it states. Fenced code is not markdown and offers none.
+fn anchors_of(contents: &str) -> std::collections::BTreeSet<String> {
+    let mut anchors = std::collections::BTreeSet::new();
+    let mut seen = std::collections::BTreeMap::<String, usize>::new();
+    let mut fenced = false;
+    for line in contents.lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        if let Some(heading) = line.strip_prefix('#') {
+            let heading = heading.trim_start_matches('#');
+            if heading.starts_with(' ') {
+                let base = heading_slug(heading);
+                let count = seen.entry(base.clone()).or_insert(0);
+                anchors.insert(if *count == 0 {
+                    base.clone()
+                } else {
+                    format!("{base}-{count}")
+                });
+                *count += 1;
+            }
+        }
+        let mut rest = line;
+        while let Some(at) = rest.find("<a id=\"") {
+            rest = &rest[at + 7..];
+            if let Some(end) = rest.find('"') {
+                anchors.insert(rest[..end].to_owned());
+            }
+        }
+    }
+    anchors
+}
+
+#[test]
+fn should_resolve_every_anchor_a_generated_page_links_to() {
+    // The adapter matrix linked 22 adapters as `<pack>.md#<id>` while each heading's slug carried
+    // the full adapter id as well, so every one of those links landed at the top of the page. A
+    // generator that writes both ends of a link can check that the two meet.
+    let root = repo();
+    let pages = generate(&root).expect("this repository's reference generates");
+    let by_path: std::collections::BTreeMap<
+        std::path::PathBuf,
+        std::collections::BTreeSet<String>,
+    > = pages
+        .iter()
+        .map(|page| (root.join(&page.path), anchors_of(&page.contents)))
+        .collect();
+    let mut broken = Vec::new();
+    for page in &pages {
+        let here = root.join(&page.path);
+        let directory = here.parent().expect("a page lives in a directory");
+        let mut rest = page.contents.as_str();
+        while let Some(at) = rest.find("](") {
+            rest = &rest[at + 2..];
+            let Some(end) = rest.find(')') else { break };
+            let link = &rest[..end];
+            rest = &rest[end..];
+            if link.contains("://") || link.starts_with("mailto:") {
+                continue;
+            }
+            let (file, anchor) = link.split_once('#').unwrap_or((link, ""));
+            if anchor.is_empty() {
+                continue;
+            }
+            let target = if file.is_empty() {
+                here.clone()
+            } else {
+                let joined = directory.join(file);
+                joined
+                    .components()
+                    .fold(std::path::PathBuf::new(), |mut path, part| {
+                        match part {
+                            std::path::Component::ParentDir => {
+                                path.pop();
+                            }
+                            std::path::Component::CurDir => {}
+                            other => path.push(other),
+                        }
+                        path
+                    })
+            };
+            if let Some(anchors) = by_path.get(&target)
+                && !anchors.contains(anchor)
+            {
+                broken.push(format!("{}: {link}", page.path));
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "generated pages link to anchors their targets do not have:\n  {}",
+        broken.join("\n  ")
+    );
+}

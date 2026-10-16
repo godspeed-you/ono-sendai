@@ -1135,9 +1135,12 @@ fn adapter_pack_page(pack: &ono_adapter::AdapterPack) -> String {
         ),
     );
     for adapter in pack.adapters() {
+        // The matrix links each adapter as `<pack>.md#<id>`. The heading's own slug carries the
+        // full id too, and a slug is the renderer's to compute, so the anchor is stated.
         let _ = write!(
             page,
-            "\n## {} — `{}`\n\n{}\n\n",
+            "\n<a id=\"{}\"></a>\n\n## {} — `{}`\n\n{}\n\n",
+            adapter.id(),
             adapter.id(),
             adapter.full_id(),
             adapter.summary()

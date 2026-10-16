@@ -4,6 +4,8 @@
 
 Version `0.1.0`; process.exec executables: `ps`. Everything below is the pack's contract; an invocation not listed under an adapter runs raw, and the limits state what the adapted form does not carry.
 
+<a id="ps"></a>
+
 ## ps — `org.ono.compat.procps.ps`
 
 Processes as `ono.process/1` records, from `ps -o` with an explicit field list.

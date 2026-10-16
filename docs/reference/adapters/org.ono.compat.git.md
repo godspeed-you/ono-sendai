@@ -4,6 +4,8 @@
 
 Version `0.1.0`; process.exec executables: `git`. Everything below is the pack's contract; an invocation not listed under an adapter runs raw, and the limits state what the adapted form does not carry.
 
+<a id="git-status"></a>
+
 ## git-status — `org.ono.compat.git.git-status`
 
 Working-tree status as `ono.git-status-entry/1` records, from `git status --porcelain=v2 -z`.
@@ -40,6 +42,8 @@ Working-tree status as `ono.git-status-entry/1` records, from `git status --porc
 
 - `-s`, `--short`, `-b`, `--branch`, `--long`, `--porcelain` and `-v` choose a human format and run raw; the branch header of porcelain v2 is not a record.
 - Unmerged paths are reported with `index`/`worktree` as git's conflict letters and `state: unmerged`.
+
+<a id="git-log"></a>
 
 ## git-log — `org.ono.compat.git.git-log`
 

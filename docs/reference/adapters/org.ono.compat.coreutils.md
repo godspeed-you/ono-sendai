@@ -4,6 +4,8 @@
 
 Version `0.1.0`; process.exec executables: `stat`, `df`. Everything below is the pack's contract; an invocation not listed under an adapter runs raw, and the limits state what the adapted form does not carry.
 
+<a id="stat"></a>
+
 ## stat — `org.ono.compat.coreutils.stat`
 
 Files as `ono.file/1` records, from `stat --printf` with NUL-terminated records.
@@ -47,6 +49,8 @@ Files as `ono.file/1` records, from `stat --printf` with NUL-terminated records.
 - `-f/--file-system`, `-c/--format`, `--printf` and `-t/--terse` change what a row is and run raw.
 - `target` is not reported: `stat`'s `%N` quotes the link target in a locale-dependent way; `find -printf %l` answers it.
 - A `kind` stat spells differently from the eight it knows is a schema violation, never `other`.
+
+<a id="df"></a>
 
 ## df — `org.ono.compat.coreutils.df`
 

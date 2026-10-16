@@ -4,6 +4,8 @@
 
 Version `0.1.0`; process.exec executables: `curl`. Everything below is the pack's contract; an invocation not listed under an adapter runs raw, and the limits state what the adapted form does not carry.
 
+<a id="curl"></a>
+
 ## curl — `org.ono.compat.curl.curl`
 
 An HTTP exchange as one `ono.http-exchange/1` record — metadata from curl's write-out, the body as bytes.

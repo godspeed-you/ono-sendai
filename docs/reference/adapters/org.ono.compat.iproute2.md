@@ -4,6 +4,8 @@
 
 Version `0.1.0`; process.exec executables: `ip`, `ss`. Everything below is the pack's contract; an invocation not listed under an adapter runs raw, and the limits state what the adapted form does not carry.
 
+<a id="ip-address"></a>
+
 ## ip-address — `org.ono.compat.iproute2.ip-address`
 
 Addresses as `ono.interface-address/1` records, one per address, from `ip -j address`.
@@ -42,6 +44,8 @@ Addresses as `ono.interface-address/1` records, one per address, from `ip -j add
 - `-s/-statistics`, `-d/-details`, `-br/-brief` and `-o/-oneline` change the shape of the answer and are not adapted; the invocation runs raw.
 - Lifetimes and the `noprefixroute`/`mngtmpaddr` flags are kept in the extension map, not as canonical fields.
 
+<a id="ip-link"></a>
+
 ## ip-link — `org.ono.compat.iproute2.ip-link`
 
 Interfaces as `ono.interface/1` records, from `ip -j address` so the addresses come along.
@@ -78,6 +82,8 @@ Interfaces as `ono.interface/1` records, from `ip -j address` so the addresses c
 
 - `rx_bytes` and `tx_bytes` are not reported: they need `-s`, which is not adapted.
 - `ip link set …` and every other mutation stay ordinary external commands (spec v0.3 §1.36).
+
+<a id="ip-route"></a>
 
 ## ip-route — `org.ono.compat.iproute2.ip-route`
 
@@ -118,6 +124,8 @@ Routes as `ono.route/1` records, from `ip -j route`.
 
 - `ip -6 route` is the `ip-route6` adapter; `ip route get`, `add`, `del`, `change` and `replace` are not adapted.
 
+<a id="ip-route6"></a>
+
 ## ip-route6 — `org.ono.compat.iproute2.ip-route6`
 
 IPv6 routes as `ono.route/1` records, from `ip -j -6 route`.
@@ -157,6 +165,8 @@ IPv6 routes as `ono.route/1` records, from `ip -j -6 route`.
 
 - User positionals are not forwarded: the plan already pins the family.
 
+<a id="ip-neigh"></a>
+
 ## ip-neigh — `org.ono.compat.iproute2.ip-neigh`
 
 ARP and NDP entries as `ono.neighbor/1` records, from `ip -j neigh`.
@@ -192,6 +202,8 @@ ARP and NDP entries as `ono.neighbor/1` records, from `ip -j neigh`.
 ### Limits
 
 - `updated` is not reported: the kernel's timestamps need `-s`, which is not adapted.
+
+<a id="ss-tcp"></a>
 
 ## ss-tcp — `org.ono.compat.iproute2.ss-tcp`
 
@@ -233,6 +245,8 @@ TCP sockets as `ono.socket/1` records, from `ss -t` (tier C parser).
 - `process` is the owning pid where `-p` and permissions allow, else null with the name in the extension map (spec v0.3 §1.32); queues, timers and cgroups are extensions.
 - The parser is pinned to iproute2 5.x–6.x and refuses other versions rather than guessing (spec v0.3 §1.9 tier C).
 
+<a id="ss-udp"></a>
+
 ## ss-udp — `org.ono.compat.iproute2.ss-udp`
 
 UDP sockets as `ono.socket/1` records, from `ss -u` (tier C parser).
@@ -272,6 +286,8 @@ UDP sockets as `ono.socket/1` records, from `ss -u` (tier C parser).
 - Unix, raw, packet and netlink sockets (`-x`, `-w`, `-0`, `-A`) and filters (`state …`, `dport …`) are not adapted; the invocation runs raw.
 - `process` is the owning pid where `-p` and permissions allow, else null with the name in the extension map (spec v0.3 §1.32); queues, timers and cgroups are extensions.
 - The parser is pinned to iproute2 5.x–6.x and refuses other versions rather than guessing (spec v0.3 §1.9 tier C).
+
+<a id="ss"></a>
 
 ## ss — `org.ono.compat.iproute2.ss`
 
