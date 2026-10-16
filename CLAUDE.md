@@ -42,15 +42,18 @@ duplicate rules here — if a rule needs to change, change it in `AGENTS.md`.
   stays disposable. Promoting it to `main` happens only when the user asks for it in that request,
   never on your own reading of a green gate. `scripts/gate.sh` refuses to run on `main`
   (AGENTS.md §12.1).
-- **Backlog:** the GitHub issue tracker — `gh issue list`. One problem is one issue, and the
-  commit that closes it says `Closes #NN` (AGENTS.md §9, ADR-0425).
+- **Backlog:** the GitHub issue tracker — `gh issue list`. One problem is one issue. The commit
+  that fixes it names it (`Closes #NN`), and after the push the issue is closed with
+  `gh issue close NN --comment <sha>`, because GitHub closes from a commit only on `main`
+  (AGENTS.md §9, ADR-0425).
 - **State board:** `docs/STATE.md` — read first, update last, every session (AGENTS.md §9). It
-  holds claims in flight, *Found, not yet filed*, deferred work, session records and history —
-  not the backlog. A problem you find on the way goes there; you do not file the issue yourself.
+  holds claims in flight, the release status, *Found, not yet filed*, accepted risks, deferred
+  work and the way to the history — not the backlog, and no session records since 2026-09-13.
+  A problem you find on the way goes there; you do not file the issue yourself.
 - **Repo language is English** (code, tests, docs, commits). Talk to the user in their language.
 
 ```bash
-scripts/gate.sh            # fmt, clippy -D warnings, tests, spec-check, docs
+scripts/gate.sh            # fmt, clippy -D warnings, tests, fuzz, cargo deny, spec-check, binary size, docs
 scripts/acceptance.sh      # build the container, run docker/acceptance/cases/ against `ono`
 scripts/release-check.sh   # both of the above + the checklist in docs/ACCEPTANCE.md
 ```
@@ -81,8 +84,9 @@ AGENTS.md rules plus its exclusive file scope.
 sections as `§N` in ADRs, tests and commit messages.
 
 **Commits.** Conventional Commits, one kind of change per commit, green tree only, trailer:
-`Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`.
-Never push or open a PR unless asked.
+`Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+Push `implementation` and its `implementation-*` sub-branches freely, as AGENTS.md §12.2 asks;
+push `main` or open a PR only when the user asks for it in that request.
 
 **Reporting.** End a session with: what was proven, by which tests, and the next task from
 `docs/STATE.md` — not a narration of the steps taken.
