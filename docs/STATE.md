@@ -23,7 +23,7 @@ git switch --detach phase-a   # the tree exactly as that phase left it
 ```
 
 Tags so far: `phase-a` … `phase-j` (H, I and J share `63a23ece`); the releases after them are tagged
-by version, `v0.2.0` … `v0.6.2`.
+by version, `v0.2.0` … `v0.6.3`.
 
 **Push after every commit.** AGENTS.md §12.1 leaves `main` alone until the user asks for it, and
 §12.2 asks that `implementation` be pushed freely so work is not lost; the branch and its phase
@@ -35,25 +35,38 @@ git push origin implementation && git push origin --tags
 ```
 
 **The workspace declares `0.6.3`.** `v0.6.3`, Language and Contract Stabilization over `v0.6.2`, is
-implemented on `implementation` and qualified by `scripts/release-check.sh`; it is **not tagged,
-published or on `main`** — promotion is the user's (AGENTS.md §12.1). Its note, with the traceability
-of all 21 issues (the milestone's 20 and #280, ADR-0929), is `docs/releases/v0.6.3.md`, and its run
-record `docs/runs/v0.6.3-2026-10-07.md`. `v0.6.2`, the Verification Foundation, is tagged, published
-(2026-09-25) and on `main`; every earlier release has its note beside it in
-`docs/releases/`, and `gh release list` shows what is published.
+**tagged, published (2026-10-08) and on `main`** (`b55ff186`). Its note, with the traceability of all
+21 issues (the milestone's 20 and #280, ADR-0929), is `docs/releases/v0.6.3.md`, and its run record
+`docs/runs/v0.6.3-2026-10-07.md`. Every earlier release has its note beside it in `docs/releases/`,
+and `gh release list` shows what is published.
+
+**`implementation` past v0.6.3.** Thirty-one commits up to `cd125fd7` (2026-10-16), then the
+documentation pass that brings the repository's documents to v0.6.3:
+
+- `80499901` moves wasmtime to 48.0.6 and rustls to 0.23.46 for **sixteen RUSTSEC advisories**
+  published after the tag (RUSTSEC-2026-0346 … -0349, -0352 … -0359, -0361 … -0364). v0.6.3 ships the
+  affected 48.0.5 and 0.23.45, and `SECURITY.md` promises fixes in the latest 0.6 patch release only,
+  so **a v0.6.4 release is urgent** for the advisories alone. The wasmtime step changes the compiled
+  artifact key again (ADR-0916): every compiled KUANG/11 component needs `kuang-compile` once more after
+  upgrading, as it did from v0.6.2 to v0.6.3.
+- The maintenance prelude #301–#303 (native background jobs and `fg`, a job's relative paths, a job's
+  child ignoring `SIGTERM`), closed 2026-10-16 without a milestone, with ADR-0957 (a job's relative
+  paths mean its start directory; a plan freezes absolute paths), ADR-0958 (every backgrounded line is
+  an evaluator job; `fg` changes the attachment, not the result) and ADR-0959 (a leaving shell ends
+  its jobs within one bounded grace). `docs/MIGRATION.md` §14 drafts what they change for v0.6.4.
 
 ---
 
 ## The specification set
 
-`docs/specs/ono_sendai_shell_spec_v0.2.md` is the **base**. `docs/specs/ono_sendai_shell_spec_v0.3_external_command_adapters.md`
-is an **enhancement layered on it** — the External Command Adaptation Layer — and both are
-immutable (AGENTS.md §5.2, ADR-0026). `spec-check` fails if either is missing a checksum line in
-`docs/specs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
+`docs/specs/ono_sendai_shell_spec_v0.2.md` is the **base**, and ten enhancements are layered on it —
+v0.3, v0.4, v0.4.1, v0.5, v0.6, v0.6.1, v0.7, v0.8, v0.9 and v0.10, enumerated in AGENTS.md §5.2. All
+eleven are immutable (AGENTS.md §5.2, ADR-0026). `spec-check` fails if one is missing its checksum
+line in `docs/specs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
 
 **Build order for what remains: v0.6.4, then v0.6.5, then v0.6.6, then v0.7, v0.8, v0.9 and v0.10.**
-v0.4.1, v0.5, v0.6, v0.6.1 and v0.6.2 are implemented and released (`v0.4.1` … `v0.6.2`), and v0.6.3
-is implemented and release-checked on `implementation`. Three stabilization tranches come first,
+v0.4.1, v0.5, v0.6, v0.6.1, v0.6.2 and v0.6.3 are implemented and released (`v0.4.1` … `v0.6.3`).
+Three stabilization tranches come first,
 each a GitHub milestone that is its authoritative inventory, as v0.6.2's and v0.6.3's were
 (ADR-0862, ADR-0929): `v0.6.4` — System and Spatial Model Stabilization (providers, adapters and
 process execution; spatial navigation and the map), `v0.6.5` — KUANG/11 Ecosystem Stabilization
@@ -118,12 +131,27 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 ## What is left, and why
 
 **v0.6.4 — System and Spatial Model Stabilization — is the next tranche**, then `v0.6.5` and
-`v0.6.6`, then v0.7 (above); nothing of them is started. The known problems are in the tracker, by
-release milestone (`v0.6.4` … `v0.10.0`), and those three milestones are the inventories of the
-stabilization tranches; `v0.6.2` — the test suite, the harness, CI,
-packaging, release tooling and binary size — and `v0.6.3` — command contracts, errors and
-diagnostics, the shell language, pipelines and completion — are implemented. Promoting `implementation` to `main` is the user's
+`v0.6.6`, then v0.7 (above); nothing of them is started beyond the prelude above. The known problems
+are in the tracker, and most of them by release milestone (`v0.6.4` … `v0.10.0`); those three
+milestones are the inventories of the stabilization tranches. `v0.6.2` — the test suite, the harness,
+CI, packaging, release tooling and binary size — and `v0.6.3` — command contracts, errors and
+diagnostics, the shell language, pipelines and completion — are implemented and released.
+
+**Unassigned until the user triages them** (AGENTS.md §9): fourteen open issues carry no milestone —
+#282–#289, #293, #294, #297–#299 and #305, the v0.6.3 run's findings filed on 2026-10-08 — and the
+closed prelude issues #301–#303 carry none either. Promoting `implementation` to `main` is the user's
 decision; an agent carries it out only when told to, in that request (AGENTS.md §12.1).
+
+## Done
+
+The tracker and `git log` are the record of finished work (*History*, below); this section names
+only what finished since the last release and has no issue of its own.
+
+- [x] The repository's documents brought to the released v0.6.3 (documentation audit of 2026-10-16):
+  this board, README, HISTORY, AGENTS, CLAUDE, CONTRIBUTING, SECURITY, ACCEPTANCE, the runbook,
+  MIGRATION (with a §14 draft for the next release), the temporal guide, the fuzz and demo READMEs,
+  five ADR status lines, the contract sources of the generated reference, and the generator itself
+  (`docs/reference/language.md`, ADR-0960) — branch `implementation-docs-063`.
 
 ---
 
@@ -159,6 +187,37 @@ issues, so not fixed in them; each re-checked against the tracker (no existing i
 - `crates/ono-cli/tests/identity.rs::should_trace_a_user_to_its_processes_and_groups` needs fewer than ~255 root processes: `trace user root` fills its 256-node limit with processes before any group node. Reproduced 2026-10-08 while another project's 17-container stack ran (263 root processes). Same family as the `trace interface` entry below.
 - `crates/ono-cli/tests/spatial_interactive.rs::should_repaint_a_focus_move_far_inside_the_frame_budget_when_the_map_is_open` failed once at load ~9 (other project's containers running); a wall-clock budget test, passed on a quiet host.
 - A signal exit (SIGHUP, SIGTERM, non-interactive SIGINT) now ends the shell's jobs and recorded children (ADR-0959) but still skips the history flush, the audit write and the link hang-up, and a link's transport process (`--transport local` agent, `ssh`) is not ended by it. Before ADR-0959 the signal killed the shell outright, so nothing regressed; the cleanup is what is missing.
+
+**Found during the v0.6.3 documentation pass (2026-10-16).** Checked with the release binary 0.6.3
+and a build of `implementation` in a scratch `XDG_*` environment; neither is in the tracker:
+
+- `to json` writes a record's extensions before its declared fields: `get process --tree | take 1 |
+  to json` begins every record with `children`, then `pid`, `ppid`, … (0.6.3 and `cd125fd7` alike).
+  The contract of `to` (`docs/contracts/commands/data.yaml`, its `note`) promises "a plain object of
+  its fields (declared fields first, then the extensions a provider attached)". Either the serializer
+  or the sentence is wrong; a script reading the first key sees an extension.
+- A bare `cd /etc &` is no job: it runs in the foreground, moves the shell (`pwd` then prints `/etc`)
+  and `jobs` lists nothing. ADR-0955's refusal fires only for a `cd` inside a backgrounded function
+  or block; a backgrounded line whose only stage is `cd` (or `enter <dir>`) never reaches a job's
+  evaluator. Reproduce: a script `cd /etc &` / `pwd` / `jobs`. Same on 0.6.3 and `cd125fd7`
+  (ADR-0957–0959 do not touch it). Found by the Wiki agent in a PTY session, re-run here as a script.
+- After `fn f() { sleep 2 }; f &`, a bare `fg` answers `Ono-Sendai-E0102 resolve.target_not_found
+  there are no jobs` while `jobs` lists `[%1] running f`; `fg %1` works. Reproduce: a script
+  `fn f() { sleep 2 }` / `f &` / `fg` / `jobs`. Same on 0.6.3 and `cd125fd7`. The current-job
+  default of a bare `fg` finds no job here; the `bg %N` entry above may share the cause.
+  Found by the Wiki agent, re-run here.
+- The refusal of objects reaching a program, `Ono-Sendai-E0201 … produces objects, and the next stage
+  is a program that reads bytes`, still says ``choose the representation: `… | to json | …` ``, also
+  for a live stream (`watch process | cat`, `tail file x --follow | cat`), where `to json` never
+  writes anything; ADR-0954 made `to jsonl` the answer there. The help is code, in four places:
+  `crates/ono-cli/src/eval/native/{mod.rs:449,external.rs:189,foreground.rs:126}` and
+  `crates/ono-command/src/impls/mutate.rs:550`. Same on 0.6.3 and `cd125fd7`.
+- Two entries of the 2026-10-05 audit below are unchanged in the released 0.6.3 and are the ones the
+  documentation now works around rather than repeats: `changes --since 3d` with the recorder off
+  still prints nothing and exits 0 while `at -3d` refuses with E1302 (`docs/guides/temporal.md` now
+  says so and points here), and the bootstrap catalog still pins the Kubernetes provider at `v0.2.0`
+  (`docs/contracts/kuang/bootstrap-catalog.yaml:31`), which is why the README's `install plugin
+  kubernetes` transcript still shows 0.2.0; the transcript changes with the pin.
 
 **Filed on 2026-10-08.** The thirty problems the v0.6.3 run recorded here (2026-10-07) were
 triaged against the tracker at `v0.6.3` = `b55ff186`, each re-checked: twenty-six went in as the
