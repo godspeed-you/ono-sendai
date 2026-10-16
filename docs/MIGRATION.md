@@ -1,9 +1,11 @@
 # Migrating
 
 One page per thing that could surprise somebody upgrading, added to as tranches land, newest
-section last. **Exactly one migration on it is required**, and only for people running a directly
-listening agent over TCP (§2). Everything else here is either automatic or a description of a
-refusal you may now meet.
+section last. **Two migrations on it are required, each for some people only**: a directly
+listening agent over TCP needs one step (§2), and every compiled KUANG/11 component needs one
+`kuang-compile` after an upgrade that changes the WebAssembly engine (§10) — v0.6.2 to v0.6.3 is
+such an upgrade, and so is v0.6.3 to the release after it. Everything else here is either
+automatic or a description of a refusal you may now meet.
 
 Sections 1–5 are v0.4.1's, and they are v0.4.1 §63's five in its order: a hardening release that
 adds no language and changes no schema you can see, and changes what the shell refuses. Sections
@@ -14,7 +16,9 @@ default to the specification's reference configuration, and nothing a v0.6.0 con
 script or plugin relies on changed in v0.6.1 (`docs/releases/v0.6.0.md`, `v0.6.1.md`, under
 *Compatibility*). Section 10 is v0.6.2, the KUANG/11 compiler leaving the shell. Sections 11–13 are
 v0.6.3: one setting name retired, `measure`'s median behind an option, and what a script can now
-see differently.
+see differently; v0.6.3 also moves wasmtime from 47 to 48, so §10's recompile is due once per
+component. Section 14 is a draft for the release after v0.6.3, written as its changes land on
+`implementation`.
 
 ## 1. Ordinary local use — nothing to do
 
@@ -318,8 +322,10 @@ compiled form of it, written by the SDK's `kuang-compile` into `~/.cache/ono/kua
 - An artifact is keyed on the exact wasmtime release (ADR-0916): every wasmtime upgrade, patch
   releases included, refuses existing artifacts as `incompatible` once, naming the command. An
   Ono upgrade that keeps wasmtime keeps them. Artifacts written before this change carry only
-  the major version and are refused once. The release after v0.6.2 moves to wasmtime 48
-  (8327c34f), so upgrading to it asks for this once per component.
+  the major version and are refused once. **v0.6.3 moved from wasmtime 47.0.4 to 48.0.5**
+  (8327c34f), so after upgrading from v0.6.2 each compiled component is refused once with
+  `Ono-Sendai-K11105`, naming the `kuang-compile` command that fixes it. The release after v0.6.3
+  moves to 48.0.6 (80499901) and asks once more (§14).
 - The store follows the shell session's environment (ADR-0917): after
   `set env XDG_CACHE_HOME = …`, `load plugin`, `inspect plugin` and `install plugin` use the
   store it names, and `install plugin` runs `kuang-compile` with the session's environment and
@@ -350,7 +356,7 @@ ceiling, and the old name is read as that key:
   lists only that key.
 - The first time a session meets the old name the shell says so once, on standard error:
   `` `history.result_cache` is a retired name for `limits.history_bytes_total`, which holds its value
-  now; write `limits.history_bytes_total` instead ``. Rewriting the line silences it. The notice is
+  now; write `limits.history_bytes_total` instead (ADR-0933) ``. Rewriting the line silences it. The notice is
   not a configuration problem: `get config --problems` does not list it.
 
 ## 12. `measure` reports the median when it is asked for
@@ -364,7 +370,7 @@ From v0.6.3 a plain `measure` keeps constant state — `count`, `sum`, `mean`, `
 `percentiles` fields are `null` unless you ask:
 
 - `… | measure memory --median` reports the median;
-- `… | measure memory --percentiles [90, 99]` reports those percentiles.
+- `… | measure memory --percentiles [90, 99]` reports those percentiles, and the median with them.
 
 Asking holds the distribution again, under the same materialization budget as before. A script
 that read `median` from a plain `measure` reads `null` now; add `--median`.
@@ -407,6 +413,41 @@ Each item below is a contract the release made true; check a script that parses 
   on; the shell itself exits with 141 only when its own standard output is gone.
 - **`ono --complete '<line>' [--cursor N]`** is new (#176, ADR-0945): one `ono.completion/1` JSON
   document of what Tab would offer, with `complete: false` when the set was cut short.
+
+## 14. Draft for the release after v0.6.3
+
+*(on `implementation` past `v0.6.3`; issues #301–#303; ADR-0957, ADR-0958, ADR-0959; 80499901)*
+
+**Not released yet.** What the next release changes for someone upgrading from v0.6.3, as far as
+it has landed:
+
+- **Recompile compiled KUANG/11 components once more.** wasmtime moves from 48.0.5 to 48.0.6 for
+  twelve advisories against it and wasmtime-wasi (RUSTSEC-2026-0352 … -0359, -0361 … -0364), and rustls to 0.23.46 for four more.
+  An artifact is keyed on the exact wasmtime release (§10, ADR-0916), so each compiled component is
+  refused once with `Ono-Sendai-K11105`, naming the `kuang-compile` command. Native-process
+  packages are unaffected.
+- **A job's relative paths mean the directory it was started in** (#302, ADR-0957). Inside `… &`
+  every relative path — an argument, a glob, a redirection, a piped record's path, a program's
+  working directory, a plugin reference — is anchored on the job's start directory, whatever the
+  foreground does with `cd` afterwards.
+- **A plan acts on the absolute path it froze** (ADR-0957). `plan remove file a.o` in one
+  directory, `cd` elsewhere, `apply` removes the planned file, where it used to remove the namesake
+  in the new directory. A plan stored by v0.6.3 with a relative operand is applied only where that
+  operand still resolves to the target the plan froze; elsewhere `apply` refuses with
+  `change.target_unresolved` and changes nothing.
+- **Every backgrounded line is a job with an evaluator of its own** (#301, ADR-0958), native-only
+  lines included: its scope, redirections, failures and status are the foreground's. `fg %N` waits
+  for the job and shows its values once, with the status the line ended with, with or without a
+  terminal; a native job's binding errors are reported when it is collected rather than before
+  `[%N]` is printed.
+- **What a job keeps, and every collection of a program's output, is bounded by
+  `limits.command_capture_bytes`** (ADR-0958, 256 MiB by default). A line whose program writes more
+  than that between two stages, or into a capture, is now refused with `resource.byte_limit`
+  where it used to grow the shell; raise the setting deliberately for such a line.
+- **Every job ends with the shell** (#303, ADR-0959). Leaving the shell — `exit`, end of input,
+  `SIGHUP`, `SIGTERM` — sends each owned process group `SIGTERM`, then `SIGKILL` after one bounded
+  grace period; there is no `disown`. A program meant to outlive the shell belongs to a service
+  manager (`systemd-run --user …`).
 
 ## What to read next
 
