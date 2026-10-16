@@ -251,29 +251,26 @@ Context may be compacted or lost.
 
 The repository must contain enough persistent state that another agent could resume implementation without needing the previous conversation.
 
-Maintain the repository's existing state/work tracking mechanism.
-
-If the repository defines files such as:
+Maintain the repository's existing state/work tracking mechanism. In this repository it has two
+surfaces, and a problem lives on exactly one of them (ADR-0425):
 
 ```text
-docs/STATE.md
-docs/adr/
-docs/contracts/
+GitHub issue tracker   the backlog: one problem per issue, by release milestone (`gh issue list`)
+docs/STATE.md          the board: claims in flight, release status, *Found, not yet filed*,
+                       accepted risks, deferred work
+docs/adr/              the decisions
+docs/contracts/        the contracts
 ```
 
-use them consistently.
+Use them consistently. Together they should make clear:
 
-Persistent state should make clear:
-
-- completed work;
-- current phase;
-- current work packages;
-- known failures;
-- unresolved implementation issues;
-- relevant ADRs;
-- contracts created;
-- tests still missing;
-- next executable tasks.
+- completed work — closed issues, commits and ADRs;
+- the current milestone and the work claimed in it — the tracker and the board's *In progress*;
+- known failures and unresolved problems — open issues, and the board's *Found, not yet filed*
+  until the user files them;
+- relevant ADRs and the contracts created;
+- tests still missing — the exit tests of open issues;
+- next executable tasks — the earliest milestone's open issues.
 
 Do not place transient reasoning dumps into the repository.
 
