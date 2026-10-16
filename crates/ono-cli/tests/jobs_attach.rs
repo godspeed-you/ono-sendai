@@ -812,7 +812,9 @@ fn should_report_a_job_that_failed_unattended_when_the_prompt_returns() {
         )
         .expect("the terminal accepts input");
     let mut seen = read_until(&mut shell, "waited-0", Duration::from_secs(20));
-    seen.push_str(&read_until(&mut shell, "job %1", Duration::from_secs(10)));
+    // The report is one line, and under load it can reach the terminal in pieces: read until the
+    // part the assertion needs has arrived, not merely its first words.
+    seen.push_str(&read_until(&mut shell, "status 1", Duration::from_secs(10)));
 
     let after = seen
         .split_once("waited-0")
