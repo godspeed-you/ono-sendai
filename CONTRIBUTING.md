@@ -12,17 +12,21 @@ You need Rust 1.95 or newer; `rust-toolchain.toml` pins it and Cargo picks it up
 ```bash
 cargo build --release -p ono-cli
 
-scripts/gate.sh            # format, lint, test, contract check, docs — the definition of done
+scripts/gate.sh            # format, lint, test, fuzz, cargo deny, contract check, binary size, docs — the definition of done
 scripts/acceptance.sh      # build a container, run every case against the real `ono` binary
 scripts/release-check.sh   # both, plus the release checklist in docs/ACCEPTANCE.md
 ```
 
-`scripts/gate.sh` is what every commit must pass: `cargo fmt --check`, `clippy -D warnings`, the
-tests, `cargo run -p xtask -- spec-check` (contract-to-implementation drift, including the
-checksums over the immutable specifications and the `ono` examples in `README.md`), and
-`cargo doc` with warnings denied. Locally the tests cover the packages the change can break — the
-ones it touched, every package that depends on them, and `xtask` — and `ONO_TESTS=all` covers
-every package; CI always tests all of them (ADR-0853). When a current release build is there, the
+`scripts/gate.sh` is what every commit must pass, in this order: `cargo fmt --check`,
+`clippy -D warnings`, the tests, the fuzz targets over their seed corpora (a fixed number of
+iterations, ADR-0313), `cargo deny check` against `deny.toml` (it needs `cargo-deny@0.20.2`
+installed, ADR-0449), `cargo run -p xtask -- spec-check` (contract-to-implementation drift,
+including the checksums over the immutable specifications and the `ono` examples in `README.md`),
+the binary size check, and `cargo doc` with warnings denied. In the canonical CI environment the
+tests are followed by `cargo run -p xtask -- skip-check`, which holds the skips a run announced to
+the register in `docs/contracts/hardening/expected_test_skips.yaml`; locally the gate only counts
+them. Locally the tests cover the packages the change can break — the ones it touched, every
+package that depends on them, and `xtask` — and `ONO_TESTS=all` covers every package; CI always tests all of them (ADR-0853). When a current release build is there, the
 gate also holds the stripped binaries to their size budgets in
 `docs/contracts/hardening/limits.yaml` (`cargo run -p xtask -- binary-size`, ADR-0864). The budgets are enforced where the bytes that ship are
 made: `scripts/package.sh` checks every packaged binary against the budget of its target triple on
