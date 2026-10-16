@@ -106,6 +106,7 @@ impl JobSnapshot {
                 captures: Vec::new(),
                 capture_budget: Budget::command_captures(),
                 job_model: self.live,
+                handed_over: 0,
             },
             navigation: NavigationState {
                 frames: self.frames,
@@ -275,6 +276,9 @@ struct ExecutionState {
     /// A background job's live model: where a live stream at the end of the job's own line folds
     /// its events, for `fg` to repaint (ADR-0024, ADR-0958). `None` outside a job.
     job_model: Option<LiveModel>,
+    /// Bytes of programs' output held right now for the native stages that read them — counted
+    /// against the command's capture ceiling while held, released once read (ADR-0958, review Y1).
+    handed_over: u64,
 }
 
 /// Where the session has gone: the context stack, the links it stands on, what it selected.
@@ -776,6 +780,7 @@ impl ExecutionState {
             bytes,
         )
         .for_settings("limits.materialize_items", "limits.command_capture_bytes");
+        self.handed_over = 0;
     }
 
     /// Hands finished values to the innermost capture, charging every one of them.
@@ -902,6 +907,7 @@ impl Session {
                 captures: Vec::new(),
                 capture_budget: Budget::command_captures(),
                 job_model: None,
+                handed_over: 0,
             },
             navigation: NavigationState {
                 frames: Vec::new(),
@@ -2163,17 +2169,33 @@ impl Session {
         self.execution.job_model.as_ref()
     }
 
-    /// Charges `bytes` collected from a program to this command's capture ceiling (v0.4.1
-    /// §23.4), whether or not a capture keeps them.
+    /// Holds `bytes` collected from a program for the native stage that will read them, against
+    /// this command's capture ceiling (v0.4.1 §23.4): what is held at once — these, every other
+    /// hand-over not yet read, and what the command's captures keep — stays under it. Nothing is
+    /// charged for good; [`Session::release_hand_over`] gives it back (ADR-0958, review Y1).
     ///
     /// # Errors
     ///
     /// The structured refusal of §21.4 when the ceiling is passed.
-    pub fn charge_capture_bytes(&mut self, bytes: u64) -> Result<(), ErrorValue> {
-        self.execution
-            .capture_budget
-            .charge_estimate(bytes)
-            .map_err(ono_pipeline::Exceeded::into_error)
+    pub fn hold_hand_over(&mut self, bytes: u64) -> Result<(), ErrorValue> {
+        let held = self.execution.handed_over.saturating_add(bytes);
+        let mut probe = self.execution.capture_budget.clone();
+        probe
+            .charge_estimate(held)
+            .map_err(ono_pipeline::Exceeded::into_error)?;
+        self.execution.handed_over = held;
+        Ok(())
+    }
+
+    /// Releases `bytes` held by [`Session::hold_hand_over`], once the stage that read them is done.
+    pub fn release_hand_over(&mut self, bytes: u64) {
+        self.execution.handed_over = self.execution.handed_over.saturating_sub(bytes);
+    }
+
+    /// How many bytes of programs' output are held right now for native stages.
+    #[must_use]
+    pub const fn handed_over(&self) -> u64 {
+        self.execution.handed_over
     }
 
     /// Hands the text a serializer or a program wrote to the innermost capture.

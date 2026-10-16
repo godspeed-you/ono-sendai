@@ -70,9 +70,14 @@ at the command's capture ceiling and the line ends with the structured `resource
 refusal. It used to be read to its end, and an endless one grew the shell until the allocator
 aborted it (review S2). A line whose program legitimately writes more than the ceiling (256 MiB by
 default) between two stages is refused where it used to succeed; `limits.command_capture_bytes`
-raises it. The bytes handed from programs to native stages are charged to that one ceiling
-together, as a command's captures are, so a line with several hand-overs holds no more than one
-ceiling between them (review X4).
+raises it. The ceiling bounds what is **held at once**: bytes a program hands to the native
+stage after it count against it from when they are collected until that stage has read them, and
+then no longer (reviews X4, Y1). Hand-overs held at the same time — the outer one while a block
+runs an inner one — share the one ceiling; the same line run three times in a row does not add up.
+While a hand-over is held, the command's captures count beside it — `let c = (seq 1 7000 | from
+csv)` holds the bytes and the values made of them at once, for the moment both exist — and the
+captures stay charged afterwards, as captures always are (ADR-0457). A hand-over is not an item
+against the item ceiling; it is bytes.
 
 What the bound does not do (review X5): a program that ignores `SIGPIPE` and goes on running
 after its output was cut off holds the line until it ends, as `prog | head` does in any shell;
@@ -152,7 +157,9 @@ and `::should_end_a_foregrounded_native_job_with_ctrl_c_and_show_what_it_had`; a
 `::should_refuse_a_live_stream_a_job_would_hand_to_a_program_whole`,
 `::should_refuse_past_the_ceiling_when_a_live_job_keeps_plain_records`,
 `::should_report_a_failed_job_nobody_collected_before_the_shell_ends`,
-`::should_refuse_past_the_ceiling_when_a_programs_endless_output_feeds_a_native_stage`, and the
+`::should_refuse_past_the_ceiling_when_a_programs_endless_output_feeds_a_native_stage`,
+`::should_hold_hand_overs_held_at_the_same_time_under_one_ceiling`,
+`::should_release_a_hand_over_once_its_native_stage_has_read_it`, and the
 PTY proofs
 `::should_keep_a_live_jobs_painted_table_as_the_last_result_when_ctrl_c_ends_it`,
 `::should_return_the_jobs_own_status_when_it_ends_on_the_ctrl_c_with_one_of_its_own`,

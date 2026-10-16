@@ -828,17 +828,20 @@ pub fn run_adapted_segment(
 /// command's capture ceiling has left (§23.4).
 fn capture_room(session: &Session) -> u64 {
     let budget = session.capture_budget();
-    budget.max_bytes().saturating_sub(budget.consumed_bytes())
+    budget
+        .max_bytes()
+        .saturating_sub(budget.consumed_bytes())
+        .saturating_sub(session.handed_over())
 }
 
 /// The structured refusal of §21.4 for collected program output that passed [`capture_room`]:
 /// the program was cut off at the ceiling, and its truncated output is not handed on.
 ///
-/// What passes is charged to the command's ceiling: the bytes are held until the native stage
-/// after them has read them, so a line with several such hand-overs holds them together, and
-/// together they stay under one ceiling (review X4).
+/// What passes is held against the command's ceiling until the native stage after it has read it
+/// (the caller releases it then): hand-overs held at the same time stay under one ceiling
+/// together, and one already read no longer counts (reviews X4, Y1).
 fn refuse_past_capture_room(session: &mut Session, bytes: &[u8]) -> Result<(), ErrorValue> {
-    session.charge_capture_bytes(bytes.len() as u64)
+    session.hold_hand_over(bytes.len() as u64)
 }
 
 /// Starts an adapted segment whose records are decoded while it runs (ADR-0059): the last

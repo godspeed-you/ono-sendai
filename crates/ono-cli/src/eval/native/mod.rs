@@ -380,6 +380,8 @@ fn run_from(
     })?;
 
     let mut carried: Option<Vec<u8>> = None;
+    // How many bytes of `carried` are held against the capture ceiling (review Y1).
+    let mut held: u64 = 0;
     let mut seed = seed;
     let mut status = ExitStatus::SUCCESS;
 
@@ -566,7 +568,10 @@ fn run_from(
                             external_status,
                         ));
                     }
-                    match decode_adapted(session, &plan, &argv, &bytes) {
+                    let decoded = decode_adapted(session, &plan, &argv, &bytes);
+                    // The bytes are read: they are no longer held (review Y1).
+                    session.release_hand_over(bytes.len() as u64);
+                    match decoded {
                         Ok(values) => {
                             // v0.4 §37: a typed object an adapter decoded may contribute to the
                             // spatial model. The batch is in hand here and nowhere else, so this
@@ -618,6 +623,7 @@ fn run_from(
                 let (bytes, external_status) = crate::eval::run_external_segment(
                     session, list, indices, source, carried, last,
                 )?;
+                held = bytes.as_ref().map_or(0, |bytes| bytes.len() as u64);
                 carried = bytes;
                 status = external_status;
             }
@@ -657,7 +663,11 @@ fn run_from(
                     position == 0,
                     last,
                     feeds,
-                )?;
+                );
+                // What a program handed this segment has been read: it is no longer held
+                // (review Y1).
+                session.release_hand_over(std::mem::take(&mut held));
+                let ended = ended?;
                 status = ended.status;
                 if ended.fed_program {
                     carried = None;

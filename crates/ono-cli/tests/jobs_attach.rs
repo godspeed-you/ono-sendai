@@ -493,15 +493,15 @@ fn should_refuse_past_the_ceiling_when_a_programs_endless_output_feeds_a_native_
 }
 
 #[test]
-fn should_hold_every_hand_over_from_a_program_to_a_native_stage_under_one_ceiling() {
-    // Review X4: each hand-over was measured against the ceiling alone, so a line with two of them
-    // could hold twice as much. They are charged together, as the captures of one command are.
+fn should_hold_hand_overs_held_at_the_same_time_under_one_ceiling() {
+    // Review X4: two hand-overs of a program's output to a native stage that are held at the same
+    // time — the outer one while a block runs the inner — share one ceiling.
     let home = scratch();
 
     let run = run_bounded(
         &home,
         "set config limits.command_capture_bytes 64KiB\n\
-         seq 1 7000 | from csv | to csv | cat | from csv | count | to json\n\
+         seq 1 7000 | from csv | take 1 | each { seq 1 7000 | from csv | count } | to json\n\
          echo \"line-$?\"",
         Duration::from_secs(30),
     );
@@ -509,9 +509,34 @@ fn should_hold_every_hand_over_from_a_program_to_a_native_stage_under_one_ceilin
     assert!(run.finished, "{}", run.report());
     assert!(
         run.stderr.contains("resource.byte_limit") && run.stdout.contains("line-1"),
-        "two hand-overs of about 34 KiB each pass a 64 KiB ceiling together. {}",
+        "two hand-overs of about 34 KiB held at once pass a 64 KiB ceiling together. {}",
         run.report()
     );
+}
+
+#[test]
+fn should_release_a_hand_over_once_its_native_stage_has_read_it() {
+    // Review Y1: the ceiling bounds what is held at once. A hand-over the native stage has read is
+    // no longer held, so the same line run three times in one command does not add up.
+    let home = scratch();
+
+    let run = run_bounded(
+        &home,
+        "set config limits.command_capture_bytes 64KiB\n\
+         fn g() { seq 1 7000 | from csv | count | to json }\n\
+         fn h() { g; g; g }\n\
+         h\n\
+         echo \"line-$?\"",
+        Duration::from_secs(30),
+    );
+
+    assert!(run.finished, "{}", run.report());
+    assert!(
+        !run.stderr.contains("resource.byte_limit") && run.stdout.contains("line-0"),
+        "three hand-overs of about 34 KiB, one after another, each fit. {}",
+        run.report()
+    );
+    assert_eq!(run.stdout.matches("[6999]").count(), 3, "{}", run.report());
 }
 
 #[test]
