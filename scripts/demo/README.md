@@ -52,7 +52,7 @@ a GIF: dead air longer than `--max-idle` is collapsed, identical screens become 
 longer duration, and the palette is quantised once for the whole animation.
 
 ```bash
-python3 scripts/demo/record.py tapes/spatial.tape -o /tmp/spatial.cast --shell target/release/ono
+python3 scripts/demo/record.py scripts/demo/tapes/spatial.tape -o /tmp/spatial.cast --shell target/release/ono
 python3 scripts/demo/render.py /tmp/spatial.cast -o docs/assets/spatial.gif --title "ono"
 ```
 
