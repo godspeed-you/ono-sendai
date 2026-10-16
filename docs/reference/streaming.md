@@ -52,6 +52,22 @@ What each pipeline operation may do to a stream, and what a consumer may conclud
 | `ono.data.diff` | `explicit_collect` |
 | `ono.place.map` | `live_view` |
 
+**`ono.data.skip`** — Drops a prefix rather than keeping one, and reads no further ahead than the value it is forwarding, so its state is the count it has skipped.
+
+**`ono.data.count`** — Its state is one counter, which is what places it here. Its answer is that counter once the input has ended, so over a declared-unbounded upstream with no window it refuses before it reads, with `stream.unbounded_operation` (Ono-Sendai-E0801), as its transform's input requirement says: the class states what the stage holds, and the refusal is about when it can answer. `take <n>` before it, or a window, gives it an end.
+
+**`ono.data.reduce`** — The accumulator is one value; a folder that grew it per input would be a collector. Like `count` it answers at the end, so an unbounded upstream without a window is refused with Ono-Sendai-E0801.
+
+**`ono.data.tail`** — Keeps the last `n` values in a ring of the declared length — bounded state, not a materialization, which is why it does not require finite input the way `sort` does.
+
+**`ono.data.measure`** — `count`, `skipped`, `sum`, `mean`, `min`, `max` and `stddev` are constant-state, and by default that is all `measure` computes: it holds no sample, refuses no unbounded upstream and answers after every value of one (ADR-0953). An exact median or percentile is defined over the whole distribution and holds a sample per value (§22.1), so an invocation with `--median` or `--percentiles` is `explicit_collect` — the contract declares that on the two options, and `explain` reports the class of the invocation, not of the command.
+
+**`ono.data.join`** — The left side streams past; the right side is held for the whole run and is what the budget is charged for (ADR-0454).
+
+**`ono.data.diff`** — The earlier snapshot is held; the new state streams past it.
+
+**`ono.place.map`** — Appendix E's own example of the class. `--live` repaints a bounded projection of the current graph and keeps no history of it (§35.2, §35.3).
+
 ## Event ordering
 
 **Within one channel.** Total. Every event of one channel is delivered in the order it was produced, and no stage reorders its own channel: values keep value-channel order and partial failures keep error-channel order, however many stages they pass through (§27.1).

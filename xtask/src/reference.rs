@@ -316,6 +316,30 @@ fn commands_page(families: &BTreeMap<String, Yaml>) -> String {
                 "| arguments | parsed in {} mode (ADR-0009) |",
                 string_at(command, "argument_mode").unwrap_or_else(|| "words".to_owned())
             );
+            if let Some(streaming) = command.get("streaming").and_then(Yaml::as_bool) {
+                let _ = writeln!(
+                    page,
+                    "| streaming | {} |",
+                    if streaming { "yes" } else { "no" }
+                );
+            }
+            if let Some(execution) = string_at(command, "execution") {
+                let _ = writeln!(
+                    page,
+                    "| execution | [`{execution}`](streaming.md#classes) (v0.4.1 Appendix E) |"
+                );
+            }
+            if let Some(acquisition) = command.get("acquisition") {
+                let _ = writeln!(
+                    page,
+                    "| acquisition | scope `{}`, cost `{}` (ADR-0947) |",
+                    string_at(acquisition, "scope").unwrap_or_default(),
+                    string_at(acquisition, "cost").unwrap_or_default()
+                );
+            }
+            if let Some(confirmation) = string_at(command, "confirmation") {
+                let _ = writeln!(page, "| confirmation | {confirmation} |");
+            }
 
             let selectors = sequence(command, "selectors");
             if !selectors.is_empty() {
@@ -329,7 +353,7 @@ fn commands_page(families: &BTreeMap<String, Yaml>) -> String {
                         "| `{}` | `{}` | {} |",
                         string_at(selector, "name").unwrap_or_default(),
                         string_at(selector, "type").unwrap_or_default(),
-                        string_at(selector, "doc").unwrap_or_default()
+                        parameter_meaning(selector)
                     );
                 }
             }
@@ -346,9 +370,13 @@ fn commands_page(families: &BTreeMap<String, Yaml>) -> String {
                         "| `--{}` | `{}` | {} |",
                         string_at(option, "name").unwrap_or_default(),
                         string_at(option, "type").unwrap_or_default(),
-                        string_at(option, "doc").unwrap_or_default()
+                        parameter_meaning(option)
                     );
                 }
+            }
+
+            if let Some(note) = string_at(command, "note") {
+                let _ = write!(page, "\n**Note.** {}\n", note.trim());
             }
 
             let examples = string_sequence(command, "examples");
@@ -362,6 +390,51 @@ fn commands_page(families: &BTreeMap<String, Yaml>) -> String {
         }
     }
     page
+}
+
+/// A selector's or option's `doc`, followed by what else its contract declares about it: the
+/// values it accepts, whether it repeats, its default, whether its value may be left out, and
+/// the execution class an invocation that names it runs in.
+fn parameter_meaning(parameter: &Yaml) -> String {
+    let mut meaning = string_at(parameter, "doc").unwrap_or_default();
+    let mut details = Vec::new();
+    let values = string_sequence(parameter, "values");
+    if !values.is_empty() {
+        details.push(format!(
+            "values {}",
+            values
+                .iter()
+                .map(|value| format!("`{value}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if parameter.get("repeatable").and_then(Yaml::as_bool) == Some(true) {
+        details.push("repeatable".to_owned());
+    }
+    if let Some(default) = parameter.get("default").and_then(scalar_text) {
+        details.push(format!("default `{default}`"));
+    }
+    if parameter.get("optional_value").and_then(Yaml::as_bool) == Some(true) {
+        details.push("the value may be left out".to_owned());
+    }
+    if let Some(execution) = string_at(parameter, "execution") {
+        details.push(format!("makes the invocation `{execution}`"));
+    }
+    if !details.is_empty() {
+        let _ = write!(meaning, " *({})*", details.join("; "));
+    }
+    meaning
+}
+
+/// A scalar as its YAML source would spell it.
+fn scalar_text(value: &Yaml) -> Option<String> {
+    match value {
+        Yaml::String(text) => Some(text.clone()),
+        Yaml::Bool(flag) => Some(flag.to_string()),
+        Yaml::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
 }
 
 fn verbs_page(document: Option<&Yaml>) -> String {
@@ -539,6 +612,15 @@ fn streaming_page(document: Option<&Yaml>) -> String {
             string_at(operation, "command").unwrap_or_default(),
             string_at(operation, "class").unwrap_or_default(),
         ));
+    }
+    for operation in sequence(document, "operations") {
+        if let Some(note) = string_at(operation, "note") {
+            page.push_str(&format!(
+                "\n**`{}`** — {}\n",
+                string_at(operation, "command").unwrap_or_default(),
+                note.trim()
+            ));
+        }
     }
 
     let Some(ordering) = document.get("ordering") else {

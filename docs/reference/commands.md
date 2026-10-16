@@ -19,12 +19,15 @@ Describe a proposed change as an inspectable object, and change nothing.
 | output | `ono.change-plan/1` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| execution | [`explicit_collect`](streaming.md#classes) (v0.4.1 Appendix E) |
+| confirmation | bulk |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
-| `action` | `value` | The change to plan. Either a mutation written as words — `plan restart service nginx` (§5.1) — or a `{ ... }` block of them (§5.2). The block describes actions; §5.2 forbids it becoming a workflow language with loops, functions or background jobs. |
+| `action` | `value` | The change to plan. Either a mutation written as words — `plan restart service nginx` (§5.1) — or a `{ ... }` block of them (§5.2). The block describes actions; §5.2 forbids it becoming a workflow language with loops, functions or background jobs. *(repeatable)* |
 
 **Options**
 
@@ -38,6 +41,8 @@ Describe a proposed change as an inspectable object, and change nothing.
 | `--expires` | `duration` | How long the sealed plan stays appliable (§4.1's `EXPIRED`). After it, `apply` refuses and `rebase` resolves the plan again. |
 | `--one-per-object` | `bool` | Produce one plan per input object rather than one plan over the frozen set (§5.3). The default is one plan, because §2.6 freezes membership and a single plan is what carries that. |
 | `--auto-recover` | `bool` | Declare §26.3 automatic recovery after verification failure. Rejected at seal unless all six of §26.3's conditions hold — which, in this build, they cannot: no recovery plan can be built before the plan's protection exists, and no policy enables it (§26.1: off by default). |
+
+**Note.** §2.1: creating or inspecting a plan MUST NOT mutate the target system. §6.4: a plan intended for application is resolved against present state, so from a historical coordinate this answers `change.historical_context_read_only` and `now` is the way back. §29.1 and §7.1: inside an entered link the targets are frozen through the link's providers and record the link as their host; the plan then applies, protects, verifies, rebases and resumes only inside that link, and a file or a directory there is `change.action_not_plannable` because its path would be resolved against this machine (ADR-0848). §34.2: a plan that stops the interface a connected network link leaves by is CRITICAL (ADR-0850).
 
 **Examples**
 
@@ -61,6 +66,7 @@ The plans this shell holds, with their state, protection and risk.
 | output | `stream<ono.change-plan/1>` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -72,7 +78,7 @@ The plans this shell holds, with their state, protection and risk.
 
 | name | type | meaning |
 |---|---|---|
-| `--state` | `string` | Restrict to plans in these lifecycle states (§4.1), such as `failed` or `verified`. |
+| `--state` | `string` | Restrict to plans in these lifecycle states (§4.1), such as `failed` or `verified`. *(repeatable)* |
 | `--all` | `bool` | Include closed and expired plans, which are hidden by default. |
 | `--since` | `duration` | Restrict to plans created within this window. |
 | `--revision` | `int` | One earlier revision of a named plan (§7.5). A rebase leaves the revision it came from exactly as it was, and this is how it is read: the plan that was refused is the evidence for why it was. |
@@ -99,6 +105,7 @@ Everything one plan knows — its actions, impact, coverage, resolution and veri
 | output | `ono.change-plan/1` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -138,12 +145,15 @@ Resolve a sealed plan again against the world as it is now, as a new revision.
 | output | `ono.change-plan/1` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
 | `reference` | `ref<ono.change-plan/1>` | The plan to rebase (§7.5). |
+
+**Note.** §7.5: rebase MUST NOT mutate the sealed original. It creates the next revision and leaves the one it came from exactly as it was, so the plan that was refused for drift stays inspectable.
 
 **Examples**
 
@@ -164,6 +174,8 @@ Continue an interrupted plan, for the actions whose recorded state permits it.
 | output | `stream<ono.action-result/1>` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
+| confirmation | always |
 
 **Selectors**
 
@@ -177,6 +189,8 @@ Continue an interrupted plan, for the actions whose recorded state permits it.
 |---|---|---|
 | `--accept-newer-state-loss` | `bool` | For a recovery plan: acknowledge the newer state and provider-native history the resumed recovery would destroy (§24.5, §13.6). A resumed recovery passes the same gate as its first run. |
 | `--confirm` | `bool` | Required outside an interactive session, because resuming is a commitment like `apply` (§40.3). |
+
+**Note.** §41.2: Ono MUST NOT blindly rerun unknown or non-idempotent actions. An action whose outcome could not be established is an uncertainty boundary (Appendix F.2), and resume leaves it alone; what remains is a recovery or rebase decision.
 
 **Examples**
 
@@ -197,6 +211,7 @@ What a plan could touch, directly and indirectly, and where Ono stops knowing.
 | output | `ono.impact-graph/1` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -210,6 +225,8 @@ What a plan could touch, directly and indirectly, and where Ono stops knowing.
 |---|---|---|
 | `--depth` | `int` | How many relations out to follow. Beyond the interactive budget the answer is bounded and says so (§9.5, §52.2). |
 | `--all` | `bool` | Follow every relation, including the expensive classes, rather than the bounded default. |
+
+**Note.** §9.1: impact answers what could be touched, and is not failure prediction. §9.6: where the graph ends at an opaque boundary, the boundary is part of the answer.
 
 **Examples**
 
@@ -231,6 +248,8 @@ Create the recovery points a plan describes, before the change window.
 | output | `stream<ono.recovery-asset/1>` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
+| confirmation | always |
 
 **Selectors**
 
@@ -243,6 +262,8 @@ Create the recovery points a plan describes, before the change window.
 | name | type | meaning |
 |---|---|---|
 | `--confirm` | `bool` | Required outside an interactive session. §5.5: protection is a real mutation of the storage or control plane, and it is visible in history. |
+
+**Note.** §18.1 makes just-in-time protection the normal path — `apply` performs the required PREPARE actions itself. This command exists for an operator who wants the recovery point established earlier and inspected before the window, and §18.2 then makes `apply` reassess whether it is still appropriate.
 
 **Examples**
 
@@ -263,6 +284,8 @@ Carry out a sealed plan, with its protection created first.
 | output | `stream<ono.action-result/1>` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
+| confirmation | gated |
 
 **Selectors**
 
@@ -280,6 +303,8 @@ Carry out a sealed plan, with its protection created first.
 | `--accept-newer-state-loss` | `bool` | For a recovery plan: acknowledge the newer state and the provider-native history the recovery would destroy (§24.5, §13.6). Nothing destructive runs without it. |
 | `--accept-stale-protection` | `bool` | Accept a recovery asset captured before the state drifted, rather than creating a fresh one (§18.3). |
 | `--confirm` | `bool` | Required outside an interactive session for a plan carrying any gate (§40.3). |
+
+**Note.** §5.6: apply refuses drafts and expired plans, and revalidates a sealed plan before mutation. §2.3: if a required recovery asset cannot be created, mutation MUST NOT begin. §40.1 keeps the normal path usable — for a LOW or MODERATE plan with no irreversible action, invoking `apply` is sufficient intent.
 
 **Examples**
 
@@ -301,6 +326,7 @@ Whether a plan achieved what it intended, asked of the world rather than of an e
 | output | `stream<ono.change-verification/1>` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -313,6 +339,8 @@ Whether a plan achieved what it intended, asked of the world rather than of an e
 | name | type | meaning |
 |---|---|---|
 | `--timeout` | `duration` | Bound every check of this run: each waits at most this long, or its own contract's timeout where that is shorter. §23.5 forbids infinite waiting either way, and a check that runs out is TIMED_OUT, never a pass. |
+
+**Note.** §2.14: verification is separate from execution success. `apply` runs this automatically; it can be run again later while the evidence it needs is still available (§5.7). For a recovery plan it reports per equivalence domain, and §25.3 forbids a claim wider than the domain. Every result is emitted; when a required check failed or could not be answered, the stream then ends with `change.verification_failed` (§23.3, ADR-0842).
 
 **Examples**
 
@@ -333,6 +361,7 @@ Plan the way back from a change. Nothing is restored until the recovery plan is 
 | output | `ono.recovery-plan/1` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -347,6 +376,8 @@ Plan the way back from a change. Nothing is restored until the recovery plan is 
 | `--to` | `string` | Recover toward a specific recovery asset rather than the one the plan created. |
 | `--goal` | `string` | What recovery should achieve: `restore-changed-objects` (the default), `restore-domain`, `compensate-semantics` or `restore-service-health` (Appendix C.2). |
 | `--method` | `string` | Force a restore method rather than taking the least destructive one that meets the goal (Appendix C.1). Refused when the method cannot meet the goal. |
+
+**Note.** §5.8 and §24.1: this plans recovery and does not perform it. The extra step is deliberate, because recovery may destroy newer state (§24.2). Inspect the result, then `apply` it.
 
 **Examples**
 
@@ -368,6 +399,7 @@ The recovery assets this shell knows about, with their scope, cost and retention
 | output | `stream<ono.recovery-asset/1>` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -380,8 +412,10 @@ The recovery assets this shell knows about, with their scope, cost and retention
 | name | type | meaning |
 |---|---|---|
 | `--plan` | `string` | Restrict to the assets one plan created. |
-| `--state` | `string` | Restrict to assets in these states (§11.1), such as `ready` or `invalid`. |
+| `--state` | `string` | Restrict to assets in these states (§11.1), such as `ready` or `invalid`. *(repeatable)* |
 | `--all` | `bool` | Include removed and expired assets, which are hidden by default. |
+
+**Note.** §37.5: cost figures are labelled estimated wherever filesystem accounting is not exact, and §38.2 forbids reporting a copy-on-write snapshot as free.
 
 **Examples**
 
@@ -403,12 +437,15 @@ What one recovery asset holds, what it excludes, and what restoring from it woul
 | output | `ono.recovery-asset/1` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
 | `reference` | `ref<ono.recovery-asset/1>` | The asset to inspect. |
+
+**Note.** §11.5: a local copy-on-write snapshot is a recovery point and not a backup, and this view says so. §43.4: recovery may need stronger privilege than the mutation did, and this is where that is discovered rather than at the moment it is needed.
 
 **Examples**
 
@@ -429,6 +466,8 @@ Delete a recovery asset, once nothing still depends on it.
 | output | `stream<ono.action-result/1>` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
+| confirmation | always |
 
 **Selectors**
 
@@ -443,6 +482,8 @@ Delete a recovery asset, once nothing still depends on it.
 | `--confirm` | `bool` | Required: removal is irreversible and a script never waits for a prompt (§40.3). Without it nothing is removed. |
 | `--dry-run` | `bool` | Report which plans would become unrecoverable, and remove nothing (§37.3). |
 | `--force` | `bool` | Remove an asset a retained plan still depends on. §2.15 blocks that by default, and this is the explicit override. |
+
+**Note.** §2.15: cleanup never outruns recovery policy. An asset a retained plan requires is refused with `recovery.cleanup_blocked` naming the plans, and §37.2 keeps the assets of a failed plan out of ordinary success retention entirely.
 
 **Examples**
 
@@ -467,6 +508,7 @@ Enumerate containers through the installed provider or providers.
 | provider capability | `container.list` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -480,6 +522,8 @@ Enumerate containers through the installed provider or providers.
 |---|---|---|
 | `--provider` | `string` | Query one named container provider. |
 | `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
+
+**Note.** Every container the engine knows is listed, running or not: the pipeline filters, as the example shows, and a listing that hid stopped containers would be a `docker ps` habit, not an enumeration (spec §5, ADR-0112).
 
 **Examples**
 
@@ -502,6 +546,7 @@ Start a container.
 | provider capability | `container.manage` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -529,6 +574,7 @@ Stop a container.
 | provider capability | `container.manage` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -562,6 +608,7 @@ Restart a container.
 | provider capability | `container.manage` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -589,6 +636,7 @@ Push a container's context onto the context stack.
 | provider capability | `container.exec` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -616,6 +664,8 @@ Show a container's namespaces, cgroups, mounts, processes, sockets and image.
 | provider capability | `container.trace` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| acquisition | scope `global`, cost `external` (ADR-0947) |
 
 **Selectors**
 
@@ -649,6 +699,7 @@ Enumerate container images.
 | provider capability | `image.list` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -682,6 +733,7 @@ Emit container lifecycle events as a live stream.
 | provider capability | `container.list` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -709,6 +761,7 @@ Remove a container.
 | provider capability | `container.manage` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -743,6 +796,7 @@ Change a container's mutable configuration, such as its resource limits.
 | provider capability | `container.manage` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -778,6 +832,8 @@ Filter a stream by a predicate.
 | output | `stream<any>` |
 | privilege | none |
 | arguments | parsed in expression mode (ADR-0009) |
+| streaming | yes |
+| execution | [`predicate`](streaming.md#classes) (v0.4.1 Appendix E) |
 
 **Selectors**
 
@@ -806,6 +862,8 @@ Project fields and expressions into records.
 | output | `stream<record>` |
 | privilege | none |
 | arguments | parsed in expression mode (ADR-0009) |
+| streaming | yes |
+| execution | [`item_transform`](streaming.md#classes) (v0.4.1 Appendix E) |
 
 **Selectors**
 
@@ -833,13 +891,17 @@ Order a finite input by an expression.
 | output | `stream<any>` |
 | privilege | none |
 | arguments | parsed in expression mode (ADR-0009) |
+| streaming | no |
+| execution | [`global_reorder`](streaming.md#classes) (v0.4.1 Appendix E) |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
 | `key` | `value` | The expression to order by. |
-| `direction` | `string` | `asc` or `desc`. |
+| `direction` | `string` | `asc` or `desc`. *(default `asc`)* |
+
+**Note.** Finite input by default. A truly unbounded stream without a window is rejected with `stream.unbounded_operation` (Ono-Sendai-E0801), as §53 requires.
 
 **Examples**
 
@@ -861,12 +923,16 @@ Group a finite or windowed stream by an expression.
 | output | `stream<record>` |
 | privilege | none |
 | arguments | parsed in expression mode (ADR-0009) |
+| streaming | no |
+| execution | [`global_grouping`](streaming.md#classes) (v0.4.1 Appendix E) |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
 | `key` | `value` | The expression to group by. |
+
+**Note.** Returns Group records rather than preformatted headings (spec §53).
 
 **Examples**
 
@@ -888,12 +954,16 @@ Take the first N values.
 | output | `stream<any>` |
 | privilege | none |
 | arguments | parsed in expression mode (ADR-0009) |
+| streaming | yes |
+| execution | [`prefix`](streaming.md#classes) (v0.4.1 Appendix E) |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
 | `count` | `int` | How many values to take. |
+
+**Note.** Streaming and lazy; also the way to bound an unbounded stream for `sort` or `count`.
 
 **Examples**
 
@@ -914,6 +984,8 @@ Skip the first N values.
 | output | `stream<any>` |
 | privilege | none |
 | arguments | parsed in expression mode (ADR-0009) |
+| streaming | yes |
+| execution | [`prefix`](streaming.md#classes) (v0.4.1 Appendix E) |
 
 **Selectors**
 
@@ -940,12 +1012,16 @@ Map each value through an expression or block.
 | output | `stream<any>` |
 | privilege | none |
 | arguments | parsed in expression mode (ADR-0009) |
+| streaming | yes |
+| execution | [`item_transform`](streaming.md#classes) (v0.4.1 Appendix E) |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
 | `body` | `value` | The expression or block to evaluate per value, with `@` bound to it (spec §19.4). |
+
+**Note.** Maps one input value to zero, one or many outputs depending on the block. Spec §53 warns that this must be specified carefully to avoid accidental nested streams.
 
 **Examples**
 
@@ -966,6 +1042,8 @@ Fold a stream into a single value.
 | output | `value` |
 | privilege | none |
 | arguments | parsed in expression mode (ADR-0009) |
+| streaming | no |
+| execution | [`incremental_aggregate`](streaming.md#classes) (v0.4.1 Appendix E) |
 
 **Selectors**
 
@@ -998,6 +1076,8 @@ Count the values of a finite input.
 | output | `int` |
 | privilege | none |
 | arguments | parsed in expression mode (ADR-0009) |
+| streaming | no |
+| execution | [`incremental_aggregate`](streaming.md#classes) (v0.4.1 Appendix E) |
 
 **Examples**
 
@@ -1019,6 +1099,8 @@ Compute statistics over a numeric stream.
 | output | `ono.measure/1` |
 | privilege | none |
 | arguments | parsed in expression mode (ADR-0009) |
+| streaming | no |
+| execution | [`incremental_aggregate`](streaming.md#classes) (v0.4.1 Appendix E) |
 
 **Selectors**
 
@@ -1030,8 +1112,10 @@ Compute statistics over a numeric stream.
 
 | name | type | meaning |
 |---|---|---|
-| `--median` | `bool` | Also report the median. A median is defined over the whole distribution, so asking for one holds every sample: the stage then requires finite input and materializes within `limits.materialize_items` and `limits.materialize_bytes` (ADR-0953). |
-| `--percentiles` | `list<float>` | Also report these nearest-rank percentiles, each between 0 and 100, as the `p<N>` fields of `percentiles`. Like `--median`, this holds every sample and requires finite input (ADR-0953). |
+| `--median` | `bool` | Also report the median. A median is defined over the whole distribution, so asking for one holds every sample: the stage then requires finite input and materializes within `limits.materialize_items` and `limits.materialize_bytes` (ADR-0953). *(makes the invocation `explicit_collect`)* |
+| `--percentiles` | `list<float>` | Also report these nearest-rank percentiles, each between 0 and 100, as the `p<N>` fields of `percentiles`. Like `--median`, this holds every sample and requires finite input (ADR-0953). *(makes the invocation `explicit_collect`)* |
+
+**Note.** Yields count, skipped, sum, mean, min, max and stddev as typed values, not as formatted strings (spec §53), in constant state: nothing is held per value, so no materialization limit applies. Over a stream that ends it answers once, at the end. Over a stream declared unbounded it answers after every value with the statistics so far, so `… | measure x | take 3` is answered while the source is still open (ADR-0953). `median` and `percentiles` are null unless `--median` or `--percentiles` asks for them, and asking holds the distribution.
 
 **Examples**
 
@@ -1053,12 +1137,13 @@ Serialize a value or stream into text or bytes.
 | output | `string | bytes | stream<string>` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
-| `format` | `string` | One of `json`, `jsonl`, `yaml`, `csv`, `text`, `bytes`. `jsonl` is JSON Lines: one compact JSON document per value, each on a line of its own, written as the value arrives (ADR-0954). |
+| `format` | `string` | One of `json`, `jsonl`, `yaml`, `csv`, `text`, `bytes`. `jsonl` is JSON Lines: one compact JSON document per value, each on a line of its own, written as the value arrives (ADR-0954). *(values `json`, `jsonl`, `yaml`, `csv`, `text`, `bytes`)* |
 
 **Options**
 
@@ -1067,6 +1152,8 @@ Serialize a value or stream into text or bytes.
 | `--pretty` | `bool` | Indent the output for a human reader (spec §33.5). Not for `jsonl`, whose documents are one line each. |
 | `--human` | `bool` | Emit display forms such as `1.2 GiB` instead of canonical values. Off by default: §33.5 requires canonical values unless a human format is explicitly requested. |
 | `--field` | `string` | For `text`, emit this one field per line — the bridge spec §29.1 writes for feeding an ordinary Unix tool. Unnecessary once `select` has left exactly one field: a one-field record is already one line. For `bytes`, write this one field's bytes verbatim, which is how an adapted program's body reaches a file (`adapt curl url | to bytes --field body > page.html`, ADR-0223). |
+
+**Note.** Serialization emits canonical data values with no Ono envelope: a record is a plain object of its fields (declared fields first, then the extensions a provider attached), a byte size is its number of bytes, and a semantic scalar is its canonical form (spec §33.5). No schema id and no provenance block reach the wire — spec §12.3 sends this document to a process that has never heard of Ono, and provenance stays reachable through `inspect` (spec §10.7). A value JSON has no form for — an integer beyond `i64`, a non-finite float, bytes that are not text — is written as its canonical string rather than as a rounded number, so nothing is silently lost (spec §12.2). The consequence is that `to` is one-way: `from json` reads the document back as plain maps, which is what making the boundary explicit costs. Every format but one is a single document for the whole stream, written when the stream ends — `to json` is one array — so it needs input that ends. `jsonl` is the streaming serializer: each value becomes one compact JSON document on a line of its own, in the same encoding `to json` gives that value inside its array, and the line is written and flushed as the value arrives. It accepts a stream declared unbounded, holds nothing between values, waits for a slow reader rather than buffering for it, and ends without a message when the reader goes away, with status 141 as a program killed by `SIGPIPE` reports it: a redirected line whose reader leaves ends with 141 and the shell carries on, and the shell itself exits 141 when its own standard output is gone (ADR-0954, ADR-0220).
 
 **Examples**
 
@@ -1091,6 +1178,7 @@ Parse an explicit representation into values.
 | output | `value | stream<record>` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -1123,6 +1211,7 @@ Render a value explicitly for a human.
 | output | `string` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -1136,6 +1225,8 @@ Render a value explicitly for a human.
 |---|---|---|
 | `--columns` | `list<string>` | Override the schema's default column set. |
 | `--max-rows` | `int` | Truncate after this many rows (spec §13.3). |
+
+**Note.** Rendering is a view over values, never a data contract (spec §10.7, §35.5). `format` makes the rendering explicit so it can be piped to a byte sink; it never changes the values.
 
 **Examples**
 
@@ -1157,12 +1248,15 @@ Browse the stream interactively — a cursor over the rows, a pane over one obje
 | output | `null` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
 | `name` | `string` | `table` or `tree`. A KUANG/11 package may register more (spec §31.53). |
+
+**Note.** Selection never changes pipeline data (spec §13.5); leaving the view keeps the selected row as the `@` reference (spec §6.4, ADR-0033), so the next command can act on what was picked. Where output is not a terminal the view falls back to the plain rendering of the same values (spec §31.55), deterministically.
 
 **Examples**
 
@@ -1184,6 +1278,8 @@ Emit the last N values of a finite stream, or follow an unbounded one.
 | output | `stream<any>` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
+| execution | [`incremental_aggregate`](streaming.md#classes) (v0.4.1 Appendix E) |
 
 **Selectors**
 
@@ -1196,6 +1292,8 @@ Emit the last N values of a finite stream, or follow an unbounded one.
 | name | type | meaning |
 |---|---|---|
 | `--follow` | `bool` | Keep the stream open and emit values as they arrive. |
+
+**Note.** Distinct from `tail file` and `tail journal`, which take a target word and follow a source. This is the transform spelling, disambiguated by the absence of a target (ADR-0012).
 
 **Examples**
 
@@ -1216,6 +1314,8 @@ Join two record streams on a key.
 | output | `stream<record>` |
 | privilege | none |
 | arguments | parsed in expression mode (ADR-0009) |
+| streaming | no |
+| execution | [`explicit_collect`](streaming.md#classes) (v0.4.1 Appendix E) |
 
 **Selectors**
 
@@ -1228,7 +1328,9 @@ Join two record streams on a key.
 | name | type | meaning |
 |---|---|---|
 | `--on` | `value` | The key expression, as `--on pid`. |
-| `--kind` | `string` | `inner`, `left`, `right` or `outer`. |
+| `--kind` | `string` | `inner`, `left`, `right` or `outer`. *(default `inner`)* |
+
+**Note.** Spec §53: "Relational joins are powerful but complex. Syntax should not be frozen until common shell use cases justify it." Delivered experimental (ADR-0072): the right side is a `$variable` or a parenthesised pipeline, one `--on` key reads both sides, and each row is an `ono.join/1` record — `key`, `left`, `right` — rather than a flat merge, so no field-collision rule is frozen before a use case justifies one.
 
 **Examples**
 
@@ -1249,6 +1351,8 @@ Compare two structured snapshots by identity and schema.
 | output | `stream<record>` |
 | privilege | none |
 | arguments | parsed in expression mode (ADR-0009) |
+| streaming | no |
+| execution | [`explicit_collect`](streaming.md#classes) (v0.4.1 Appendix E) |
 
 **Selectors**
 
@@ -1261,6 +1365,8 @@ Compare two structured snapshots by identity and schema.
 | name | type | meaning |
 |---|---|---|
 | `--identity` | `list<string>` | Override the schema's identity fields for the comparison. |
+
+**Note.** Spec §53 gives the semantics but not a frozen syntax; see `ono.data.join`. Delivered experimental (ADR-0072): the input is the current state and `right` the snapshot it is compared against, identity is the schema's (spec §28.1) unless `--identity` overrides it, and each row is an `ono.diff/1` record — `change` (`added`, `removed`, `changed`), `key`, `left` (the current value) and `right` (the previous one) — so a changed row carries both values. Unchanged objects produce no row.
 
 **Examples**
 
@@ -1284,12 +1390,13 @@ Return file metadata records for the given paths.
 | provider capability | `file.list` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
-| `path` | `path` | The path or glob to describe. Globs resolve to exact objects before anything acts on them (spec §17.3). |
+| `path` | `path` | The path or glob to describe. Globs resolve to exact objects before anything acts on them (spec §17.3). *(repeatable)* |
 
 **Options**
 
@@ -1320,6 +1427,7 @@ Discover files by walking a root, or through a provider index.
 | provider capability | `file.find` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -1358,6 +1466,7 @@ Return file content as bytes or text, according to an explicit detection policy.
 | provider capability | `file.read` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -1392,6 +1501,7 @@ Consume pipeline content and write it with an explicit overwrite policy.
 | provider capability | `file.write` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -1405,7 +1515,7 @@ Consume pipeline content and write it with an explicit overwrite policy.
 |---|---|---|
 | `--append` | `bool` | Append rather than replace. |
 | `--overwrite` | `bool` | Permit replacing an existing file. Without it an existing target is `io.already_exists` (Ono-Sendai-E0303). |
-| `--create` | `bool` | Create the file when it does not exist. |
+| `--create` | `bool` | Create the file when it does not exist. *(default `true`)* |
 
 **Examples**
 
@@ -1427,6 +1537,7 @@ Copy file resources.
 | provider capability | `file.copy` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -1463,6 +1574,7 @@ Relocate a file resource.
 | provider capability | `file.move` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -1497,12 +1609,13 @@ Delete file resources, with a destructive preview for broad selections.
 | provider capability | `file.remove` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
-| `path` | `path` | What to delete; omitted when files arrive through the pipeline. A glob resolves to exact targets first (spec §17.3). |
+| `path` | `path` | What to delete; omitted when files arrive through the pipeline. A glob resolves to exact targets first (spec §17.3). *(repeatable)* |
 
 **Options**
 
@@ -1532,12 +1645,13 @@ Change file metadata — mode, ownership or timestamps.
 | provider capability | `file.set` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
-| `path` | `path` | The file to modify. |
+| `path` | `path` | The file to modify. *(repeatable)* |
 
 **Options**
 
@@ -1568,6 +1682,8 @@ Show which processes, services and users hold or use a file.
 | provider capability | `process.trace` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| acquisition | scope `global`, cost `expensive` (ADR-0947) |
 
 **Selectors**
 
@@ -1601,6 +1717,7 @@ Follow a file's appended content.
 | provider capability | `file.watch` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -1613,7 +1730,7 @@ Follow a file's appended content.
 | name | type | meaning |
 |---|---|---|
 | `--lines` | `int` | How many existing lines to emit before following. |
-| `--follow` | `bool` | Keep the stream open as the file grows. |
+| `--follow` | `bool` | Keep the stream open as the file grows. *(default `true`)* |
 
 **Examples**
 
@@ -1635,6 +1752,7 @@ Open a file in its associated handler.
 | provider capability | `file.open` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -1668,6 +1786,7 @@ Emit filesystem change events for a path or tree.
 | provider capability | `file.watch` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -1701,6 +1820,7 @@ Push a file onto the context stack as the active object.
 | provider capability | `file.list` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -1728,6 +1848,7 @@ List directory entries as File records.
 | provider capability | `dir.list` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -1764,6 +1885,7 @@ Change the filesystem context — the shell's working directory.
 | provider capability | `dir.list` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -1791,12 +1913,13 @@ Delete a directory.
 | provider capability | `file.remove` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
-| `path` | `path` | The directory to delete. |
+| `path` | `path` | The directory to delete. *(repeatable)* |
 
 **Options**
 
@@ -1804,6 +1927,8 @@ Delete a directory.
 |---|---|---|
 | `--recursive` | `bool` | Delete the contents as well. Without it a non-empty directory is refused. |
 | `--confirm` | `bool` | Confirm a bulk deletion non-interactively (spec §11.6, §17.4). |
+
+**Note.** Overlaps `remove file --recursive`; kept because `remove dir` is what a user types.
 
 **Examples**
 
@@ -1825,12 +1950,13 @@ Change directory metadata — mode, ownership or timestamps.
 | provider capability | `file.set` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
-| `path` | `path` | The directory to modify. |
+| `path` | `path` | The directory to modify. *(repeatable)* |
 
 **Options**
 
@@ -1840,6 +1966,8 @@ Change directory metadata — mode, ownership or timestamps.
 | `--owner` | `ref<ono.user/1>` | New owning user. |
 | `--group` | `ref<ono.group/1>` | New owning group. |
 | `--recursive` | `bool` | Apply to the contents as well. |
+
+**Note.** Overlaps `set file`, which accepts directories; kept for the same reason as `remove dir`.
 
 **Examples**
 
@@ -1863,6 +1991,7 @@ Enumerate or resolve user accounts.
 | provider capability | `user.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -1898,6 +2027,7 @@ Enumerate or resolve group accounts.
 | provider capability | `group.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -1933,6 +2063,7 @@ Enumerate local, login and seat sessions.
 | provider capability | `session.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Options**
 
@@ -1961,6 +2092,7 @@ Return environment values as records.
 | provider capability | `env.read` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -1995,6 +2127,7 @@ Set an environment variable in the current scope.
 | provider capability | `env.set` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -2007,7 +2140,7 @@ Set an environment variable in the current scope.
 
 | name | type | meaning |
 |---|---|---|
-| `--exported` | `bool` | Whether child processes inherit it. A non-exported binding is what `let` produces (ADR-0009). |
+| `--exported` | `bool` | Whether child processes inherit it. A non-exported binding is what `let` produces (ADR-0009). *(default `true`)* |
 
 **Examples**
 
@@ -2029,6 +2162,7 @@ Create a user account.
 | provider capability | `user.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -2065,6 +2199,7 @@ Remove a user account.
 | provider capability | `user.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -2098,6 +2233,7 @@ Modify a user account.
 | provider capability | `user.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -2133,6 +2269,7 @@ Create a group, or add a member to one.
 | provider capability | `group.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -2145,7 +2282,7 @@ Create a group, or add a member to one.
 | name | type | meaning |
 |---|---|---|
 | `--gid` | `int` | Numeric id to assign. |
-| `--member` | `ref<ono.user/1>` | Add this user as a member instead of creating the group. |
+| `--member` | `ref<ono.user/1>` | Add this user as a member instead of creating the group. *(repeatable)* |
 
 **Examples**
 
@@ -2167,6 +2304,7 @@ Remove a group, or remove a member from one.
 | provider capability | `group.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -2178,7 +2316,7 @@ Remove a group, or remove a member from one.
 
 | name | type | meaning |
 |---|---|---|
-| `--member` | `ref<ono.user/1>` | Remove this member instead of the group. |
+| `--member` | `ref<ono.user/1>` | Remove this member instead of the group. *(repeatable)* |
 
 **Examples**
 
@@ -2200,6 +2338,7 @@ Modify a group.
 | provider capability | `group.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -2233,6 +2372,7 @@ Emit account database changes as a live stream.
 | provider capability | `user.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Examples**
 
@@ -2254,6 +2394,8 @@ Show a user's processes, sessions, groups and owned files.
 | provider capability | `user.list` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| acquisition | scope `global`, cost `moderate` (ADR-0947) |
 
 **Selectors**
 
@@ -2281,12 +2423,15 @@ Push a user onto the context stack.
 | provider capability | `user.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
 | `name` | `string` | The account to enter. |
+
+**Note.** Not a privilege change. Spec §17.2's elevated context is a separate mechanism and must stay unmistakably distinct from entering a user object.
 
 **Examples**
 
@@ -2308,6 +2453,7 @@ Emit group database changes as a live stream.
 | provider capability | `group.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Examples**
 
@@ -2329,6 +2475,7 @@ Push a group onto the context stack.
 | provider capability | `group.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -2358,6 +2505,7 @@ Enumerate installed and loaded KUANG/11 packages and their runtime health.
 | provider capability | `plugin.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -2392,6 +2540,7 @@ Search the configured extension sources without executing any package.
 | provider capability | `plugin.search` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -2425,6 +2574,7 @@ Show a package's manifest, origin, contributions, permissions, capabilities, res
 | provider capability | `plugin.inspect` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -2453,6 +2603,7 @@ Resolve, verify and install a package with its recommended access, so it is read
 | provider capability | `plugin.install` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -2491,6 +2642,7 @@ Remove a package with its permissions; state and policy retention is explicit.
 | provider capability | `plugin.remove` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -2526,6 +2678,7 @@ Negotiate capabilities and instantiate a package's runtime — explicitly; an in
 | provider capability | `plugin.load` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -2553,6 +2706,7 @@ Drain or cancel a package's jobs and withdraw its runtime contributions.
 | provider capability | `plugin.unload` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -2586,6 +2740,7 @@ Change a package's management settings — enablement and background policy.
 | provider capability | `plugin.set` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -2621,6 +2776,7 @@ Validate a package's integrity, signature and compatibility.
 | provider capability | `plugin.verify` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -2648,6 +2804,7 @@ Show what a package is permitted to do, in human terms, with the capabilities un
 | provider capability | `permission.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -2683,6 +2840,7 @@ Apply an access profile, or decide one permission of a package.
 | provider capability | `permission.set` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -2723,6 +2881,7 @@ Show capability definitions, requests, grants and leases.
 | provider capability | `capability.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -2757,6 +2916,7 @@ Create a scoped capability grant or lease, subject to policy — the exact admin
 | provider capability | `capability.grant` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -2792,6 +2952,7 @@ Revoke a capability grant or lease.
 | provider capability | `capability.revoke` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -2825,6 +2986,7 @@ Enumerate loaded assistant extensions.
 | provider capability | `assistant.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -2852,6 +3014,7 @@ Run one assistant turn under an explicit context and model policy.
 | provider capability | `assistant.ask` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -2887,6 +3050,7 @@ Enumerate configured model providers and their policy characteristics.
 | provider capability | `model.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -2914,6 +3078,7 @@ Query the findings emitted by analyses and assistants.
 | provider capability | `finding.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Options**
 
@@ -2943,6 +3108,7 @@ Query the record of capability-sensitive KUANG/11 actions.
 | provider capability | `audit.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Options**
 
@@ -2974,12 +3140,15 @@ Show structured help for a command, target or topic.
 | provider capability | `command.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
-| `topic` | `string` | The command, target or topic to explain. Without one, help browses the registry. |
+| `topic` | `string` | The command, target or topic to explain. Without one, help browses the registry. *(repeatable)* |
+
+**Note.** Generated from the registries in this directory, never hand-written: synopsis, description, selectors, options, input and output types, privileges and capabilities, examples, related commands, provider source and stability level (spec §15.2).
 
 **Examples**
 
@@ -3001,12 +3170,13 @@ Show the type or schema of a value or a command's output.
 | output | `ono.type-info/1` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
-| `subject` | `string` | The command or expression to describe, written as words or quoted; omitted when a value arrives through the pipeline. |
+| `subject` | `string` | The command or expression to describe, written as words or quoted; omitted when a value arrives through the pipeline. *(repeatable)* |
 
 **Examples**
 
@@ -3028,12 +3198,15 @@ Show a detailed field, value and provenance view of any value.
 | output | `stream<ono.inspection/1>` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
 | `subject` | `value` | The value to inspect; omitted when one arrives through the pipeline or is selected interactively. |
+
+**Note.** The generic inspect. Every `inspect` cell of the §52 matrix is served by this command except `inspect process` and `inspect plugin`, which spec §9.1 defines with their own detailed outputs.
 
 **Examples**
 
@@ -3055,12 +3228,15 @@ Show the resolution, provider, coercions, privilege and planned effects without 
 | output | `ono.execution-plan/1` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
-| `subject` | `string` | The command or pipeline to plan. Written as bare words it is the rest of the pipeline, pipes included (spec §11.3); written as one quoted string or one `{ … }` block it is delimited, and the plan flows into the stages after it (ADR-0942). |
+| `subject` | `string` | The command or pipeline to plan. Written as bare words it is the rest of the pipeline, pipes included (spec §11.3); written as one quoted string or one `{ … }` block it is delimited, and the plan flows into the stages after it (ADR-0942). *(repeatable)* |
+
+**Note.** Reports which resolution step matched, what was skipped and why (ADR-0011), which is what makes spec §6.5's order "explicit and inspectable" — reported by the code rather than described beside it. Adapters must be visible here and must never rewrite a user's command opaquely (spec §12.4). The answer is one `ono.execution-plan/1` record; a delimited subject makes `explain` an ordinary producer, so `explain "get process | sort pid" | to json` serialises the plan and `explain { get process } | select stages` reads it (ADR-0942).
 
 **Examples**
 
@@ -3085,6 +3261,7 @@ Discover native and external commands and their metadata.
 | provider capability | `command.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -3121,6 +3298,7 @@ Discover commands by fuzzy search over names, summaries and targets.
 | provider capability | `command.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -3148,12 +3326,15 @@ Report what a head word resolves to, without running it.
 | provider capability | `command.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
 | `name` | `string` | The head word to resolve. |
+
+**Note.** Narrower than `explain`, which plans a whole pipeline. Answers only "which one is this".
 
 **Examples**
 
@@ -3175,6 +3356,7 @@ Return resolved configuration settings with the layer and file that set each one
 | provider capability | `config.read` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -3212,6 +3394,7 @@ Change a configuration setting in the current scope.
 | provider capability | `config.set` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -3243,12 +3426,15 @@ Show the effective non-secret runtime resource limits and the range each may tak
 | provider capability | `config.read` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
 | `key` | `string` | Show one limit, or a dotted prefix such as `limits.history`. |
+
+**Note.** The figures come from the same catalogue the shell enforces, so a test and a user read one thing (v0.4.1 §12.4, §52.2). Nothing here is a secret: a limit is a ceiling, and §53.3 keeps fingerprints and keys out of diagnostics by keeping them out of the values.
 
 **Examples**
 
@@ -3270,6 +3456,7 @@ Pop the active context.
 | output | `ono.context/1` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Options**
 
@@ -3297,6 +3484,7 @@ Show the context stack — the working directory, active object and active link.
 | output | `stream<ono.context/1>` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Examples**
 
@@ -3320,6 +3508,7 @@ Enumerate sockets as structured records.
 | provider capability | `socket.list` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -3358,6 +3547,7 @@ Enumerate connection-oriented socket views.
 | provider capability | `connection.list` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Options**
 
@@ -3389,6 +3579,7 @@ Enumerate interfaces, their addresses and their state.
 | provider capability | `interface.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -3423,6 +3614,7 @@ Enumerate routing table entries.
 | provider capability | `route.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Options**
 
@@ -3454,6 +3646,7 @@ Enumerate ARP and NDP neighbours.
 | provider capability | `neighbor.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Options**
 
@@ -3483,6 +3676,7 @@ Perform an explicit DNS resolution.
 | provider capability | `dns.resolve` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -3520,6 +3714,7 @@ Probe a host and port for reachability, with timing and error detail.
 | provider capability | `port.probe` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -3556,6 +3751,8 @@ Resolve a connection's process, service and remote endpoint relationships.
 | provider capability | `socket.trace` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| acquisition | scope `global`, cost `expensive` (ADR-0947) |
 
 **Options**
 
@@ -3583,6 +3780,8 @@ Resolve a socket to its owning process, service and peer.
 | provider capability | `socket.trace` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| acquisition | scope `global`, cost `expensive` (ADR-0947) |
 
 **Options**
 
@@ -3610,6 +3809,7 @@ Emit socket lifecycle and state changes as a live stream.
 | provider capability | `socket.watch` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -3643,6 +3843,7 @@ Emit interface and address changes as a live stream.
 | provider capability | `interface.watch` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -3670,6 +3871,7 @@ Emit routing table changes as a live stream.
 | provider capability | `route.watch` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Options**
 
@@ -3697,6 +3899,8 @@ Show which interface, gateway and neighbour a route depends on.
 | provider capability | `route.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| acquisition | scope `global`, cost `moderate` (ADR-0947) |
 
 **Selectors**
 
@@ -3724,6 +3928,7 @@ Add a routing table entry.
 | provider capability | `route.set` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -3761,6 +3966,7 @@ Remove a routing table entry.
 | provider capability | `route.set` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -3795,6 +4001,7 @@ Modify an existing routing table entry.
 | provider capability | `route.set` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -3830,6 +4037,7 @@ Change an interface's configuration or administrative state.
 | provider capability | `interface.set` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -3865,6 +4073,7 @@ Bring an interface up.
 | provider capability | `interface.set` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -3877,6 +4086,8 @@ Bring an interface up.
 | name | type | meaning |
 |---|---|---|
 | `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
+
+**Note.** Overlaps `set interface --up true`; one spelling should be withdrawn before either is stable.
 
 **Examples**
 
@@ -3898,6 +4109,7 @@ Bring an interface down.
 | provider capability | `interface.set` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -3910,6 +4122,8 @@ Bring an interface down.
 | name | type | meaning |
 |---|---|---|
 | `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
+
+**Note.** Overlaps `set interface --up false`.
 
 **Examples**
 
@@ -3931,6 +4145,7 @@ Create a virtual interface, or add an address to an existing one.
 | provider capability | `interface.set` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -3966,6 +4181,7 @@ Delete a virtual interface, or remove an address from one.
 | provider capability | `interface.set` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -4000,6 +4216,8 @@ Show the routes, addresses, neighbours and sockets bound to an interface.
 | provider capability | `interface.list` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| acquisition | scope `global`, cost `moderate` (ADR-0947) |
 
 **Selectors**
 
@@ -4027,6 +4245,7 @@ Push an interface onto the context stack.
 | provider capability | `interface.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -4054,6 +4273,8 @@ Force a socket closed.
 | provider capability | `socket.close` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
+| confirmation | always |
 
 **Options**
 
@@ -4082,6 +4303,7 @@ Push a socket onto the context stack.
 | provider capability | `socket.list` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -4112,6 +4334,7 @@ Enumerate installed and known packages through the active provider.
 | provider capability | `package.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -4147,6 +4370,7 @@ Search the provider's repositories.
 | provider capability | `package.search` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -4180,6 +4404,7 @@ Install a package.
 | provider capability | `package.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -4213,6 +4438,7 @@ Remove a package.
 | provider capability | `package.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -4246,6 +4472,7 @@ Request a version transition where the provider supports it.
 | provider capability | `package.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -4280,6 +4507,7 @@ Enumerate the repositories the package manager reads its index from.
 | provider capability | `package-source.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -4307,6 +4535,7 @@ Bring the local package index up to date from a repository.
 | provider capability | `package-source.refresh` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -4342,6 +4571,7 @@ Enumerate or resolve processes.
 | provider capability | `process.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -4383,6 +4613,7 @@ Return detailed process properties and provenance.
 | provider capability | `process.inspect` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -4411,6 +4642,7 @@ Emit process snapshots and updates as a live stream.
 | provider capability | `process.watch` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -4446,6 +4678,7 @@ Request graceful termination using default TERM semantics.
 | provider capability | `process.signal` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -4481,6 +4714,7 @@ Send an explicit signal; the forceful semantics must stay visible.
 | provider capability | `process.signal` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -4492,7 +4726,7 @@ Send an explicit signal; the forceful semantics must stay visible.
 
 | name | type | meaning |
 |---|---|---|
-| `--signal` | `string` | The signal to deliver. Defaults to SIGKILL, which is what distinguishes `kill` from `stop` (spec §9.1). |
+| `--signal` | `string` | The signal to deliver. Defaults to SIGKILL, which is what distinguishes `kill` from `stop` (spec §9.1). *(default `SIGKILL`)* |
 
 **Examples**
 
@@ -4515,6 +4749,8 @@ Show known process relationships — parent, children, files, sockets, cgroup, s
 | provider capability | `process.trace` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| acquisition | scope `global`, cost `moderate` (ADR-0947) |
 
 **Selectors**
 
@@ -4550,6 +4786,7 @@ Enumerate the session's jobs — backgrounded pipelines and detached live views.
 | provider capability | `job.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -4584,6 +4821,7 @@ Push a process onto the context stack so later commands need no selector.
 | provider capability | `process.inspect` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -4611,6 +4849,7 @@ Adjust mutable process attributes such as scheduling priority.
 | provider capability | `process.set` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -4644,12 +4883,15 @@ Deliver a signal to the processes arriving through the pipeline.
 | provider capability | `process.signal` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
 | `signal` | `string` | The signal to deliver, named as in signal(7): SIGHUP, TERM, 15. |
+
+**Note.** The pipeline spelling of a signal: `kill process` names a process and takes the signal as an option, `send signal` names the signal and takes the processes from the pipeline (ADR-0092 §2).
 
 **Examples**
 
@@ -4673,6 +4915,7 @@ Enumerate known hosts from the configured providers and sources.
 | provider capability | `host.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -4707,6 +4950,7 @@ Create a reusable remote Ono link.
 | provider capability | `link.create` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -4742,6 +4986,7 @@ List active links.
 | provider capability | `link.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -4769,6 +5014,7 @@ Detach from an active link without tearing it down.
 | provider capability | `link.manage` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -4796,6 +5042,7 @@ Switch the active execution context to a link.
 | provider capability | `link.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -4823,6 +5070,7 @@ Check a host's reachability and its advertised capabilities.
 | provider capability | `host.probe` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -4856,6 +5104,7 @@ Open a protocol connection to a host without persisting a link.
 | provider capability | `link.create` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -4868,6 +5117,8 @@ Open a protocol connection to a host without persisting a link.
 | name | type | meaning |
 |---|---|---|
 | `--transport` | `string` | Force one transport rather than negotiating. |
+
+**Note.** Distinct from `link host`, which persists a reusable Ono execution link (§7.1). One-shot versus persistent is the whole difference, and it should be validated before either is declared stable.
 
 **Examples**
 
@@ -4889,6 +5140,8 @@ Show a host's links, sessions, addresses and reachable services.
 | provider capability | `host.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| acquisition | scope `global`, cost `external` (ADR-0947) |
 
 **Selectors**
 
@@ -4916,6 +5169,7 @@ Emit link state and health changes as a live stream.
 | provider capability | `link.watch` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -4943,6 +5197,7 @@ Record a link definition without establishing it.
 | provider capability | `link.manage` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -4977,6 +5232,7 @@ Remove a link definition, tearing the link down if it is established.
 | provider capability | `link.manage` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -5004,6 +5260,7 @@ Modify a link definition.
 | provider capability | `link.manage` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -5038,6 +5295,7 @@ Change a link's name.
 | provider capability | `link.manage` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -5066,6 +5324,7 @@ Emit host reachability changes as a live stream.
 | provider capability | `host.probe` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -5099,6 +5358,7 @@ Record a host in a configured host source.
 | provider capability | `host.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -5132,6 +5392,7 @@ Remove a host from a configured host source.
 | provider capability | `host.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -5159,6 +5420,7 @@ Modify a recorded host.
 | provider capability | `host.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -5192,6 +5454,8 @@ Show a link's transport, agent, negotiated providers and multiplexed streams.
 | provider capability | `link.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| acquisition | scope `global`, cost `external` (ADR-0947) |
 
 **Selectors**
 
@@ -5219,6 +5483,7 @@ List the host keys this shell has pinned.
 | provider capability | `host.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -5246,6 +5511,7 @@ Pin a host key, having checked its fingerprint by some other means.
 | provider capability | `host.trust` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -5280,6 +5546,7 @@ Replace a pinned host key — the deliberate re-trust after a key really changed
 | provider capability | `host.trust` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -5314,6 +5581,7 @@ Forget a pinned host key, so the host must be trusted again deliberately.
 | provider capability | `host.trust` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -5341,6 +5609,7 @@ List the client keys this machine authorizes, and what each may do.
 | provider capability | `host.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -5368,6 +5637,7 @@ Authorize a client key to observe this machine, and nothing else.
 | provider capability | `host.trust` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -5401,6 +5671,7 @@ Change what an authorized client key may do, by exact capability id.
 | provider capability | `host.trust` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -5437,6 +5708,7 @@ Revoke a client key, so its next connection is refused.
 | provider capability | `host.trust` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -5466,6 +5738,7 @@ List or resolve service-manager units through the active provider.
 | provider capability | `service.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -5502,6 +5775,7 @@ Start a service.
 | provider capability | `service.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -5529,6 +5803,7 @@ Stop a service.
 | provider capability | `service.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -5556,6 +5831,7 @@ Restart a service.
 | provider capability | `service.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -5584,6 +5860,7 @@ Emit service state transitions as a live stream.
 | provider capability | `service.watch` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -5618,6 +5895,8 @@ Show a unit's dependency, process, socket and file relationships.
 | provider capability | `service.trace` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| acquisition | scope `global`, cost `moderate` (ADR-0947) |
 
 **Selectors**
 
@@ -5652,6 +5931,7 @@ Push a service object onto the context stack.
 | provider capability | `service.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -5679,6 +5959,7 @@ Change a unit's persistent properties, such as whether it starts at boot.
 | provider capability | `service.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -5712,6 +5993,7 @@ Query log records as structured values rather than as parsed text.
 | provider capability | `log.read` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Options**
 
@@ -5744,6 +6026,7 @@ Query the structured system journal directly.
 | provider capability | `log.read` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Options**
 
@@ -5751,6 +6034,8 @@ Query the structured system journal directly.
 |---|---|---|
 | `--since` | `timestamp` | Only records at or after this time. |
 | `--boot` | `int` | Restrict to one boot: 0 is the running one, -1 the one before, as the journal counts them. |
+
+**Note.** Overlaps `ono.log.get`, which the spec's own examples use; ADR-0085 keeps both — the journal is the raw record, the log is the severity-levelled view over it — until one is withdrawn before either is stable.
 
 **Examples**
 
@@ -5773,6 +6058,7 @@ Follow the journal as records are appended.
 | provider capability | `log.read` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Options**
 
@@ -5802,6 +6088,8 @@ Search the spatial index for places, by name, type, predicate or anchor.
 | output | `stream<ono.spatial-place/1>` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
+| acquisition | scope `global`, cost `moderate` (ADR-0947) |
 
 **Selectors**
 
@@ -5842,6 +6130,8 @@ Describe the current place, its exits, its landmarks and what changed around it.
 | output | `ono.place-view/1 | string` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| acquisition | scope `global`, cost `moderate` (ADR-0947) |
 
 **Options**
 
@@ -5849,7 +6139,9 @@ Describe the current place, its exits, its landmarks and what changed around it.
 |---|---|---|
 | `--json` | `bool` | Write the `PlaceView` as one JSON document rather than rendering it (v0.4 §6.1, §29.1). |
 | `--all` | `bool` | Widen the exits: every group lists the places behind it instead of counting them (v0.4 §6.1, §24.1). |
-| `--changes` | `duration` | Report what changed in this window, or in `spatial.look.change_window` when the duration is left out (v0.4 §6.1, §24.3). |
+| `--changes` | `duration` | Report what changed in this window, or in `spatial.look.change_window` when the duration is left out (v0.4 §6.1, §24.3). *(the value may be left out)* |
+
+**Note.** `look` shadows util-linux `look(1)` on hosts that have it; ADR-0124 keeps the bare name for the spatial command and leaves the program reachable as `exec:look`, exactly as v0.2 §6.5 resolves every other collision.
 
 **Examples**
 
@@ -5872,6 +6164,8 @@ Stream the ranked, bounded neighbourhood of the current place.
 | output | `stream<ono.spatial-neighbor/1>` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
+| acquisition | scope `global`, cost `moderate` (ADR-0947) |
 
 **Selectors**
 
@@ -5884,7 +6178,7 @@ Stream the ranked, bounded neighbourhood of the current place.
 | name | type | meaning |
 |---|---|---|
 | `--type` | `string` | Restrict to one spatial type — `process`, `listener`, `mount` (v0.4 §6.2, §3.3). |
-| `--changed` | `duration` | Only neighbours observed to change inside this window, or inside `spatial.look.change_window` when the duration is left out (v0.4 §6.2). |
+| `--changed` | `duration` | Only neighbours observed to change inside this window, or inside `spatial.look.change_window` when the duration is left out (v0.4 §6.2). *(the value may be left out)* |
 | `--limit` | `int` | How many neighbours to answer with. The neighbourhood is bounded by default (v0.4 §6.2, §34.2). |
 | `--all` | `bool` | The complete currently known one-hop neighbourhood. May be expensive (v0.4 §6.2). |
 
@@ -5909,12 +6203,16 @@ Move into a hierarchical child or an explicitly selected place.
 | output | `null` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| acquisition | scope `global`, cost `moderate` (ADR-0947) |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
 | `selector` | `string` | The place to move into: a visible child, a visible neighbour, a canonical id or a spatial id (v0.4 §6.3, §27.1). |
+
+**Note.** The target-less form of `enter`. `enter dir`, `enter process`, `enter user` and the other target forms keep the v0.2 context-stack meaning of ADR-0075; a word that names no target is a place selector, which is what makes `enter compute` and `enter processes` work without a second vocabulary.
 
 **Examples**
 
@@ -5937,6 +6235,7 @@ Traverse a relationship edge of the current place — never a hierarchy edge.
 | output | `null` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -5950,6 +6249,8 @@ Traverse a relationship edge of the current place — never a hierarchy edge.
 | name | type | meaning |
 |---|---|---|
 | `--resolve` | `bool` | Pay for the relation even when it is classified `expensive` or `external`. v0.4.1 §34.3: a relation described as "available on request" must have a request path, and this is it (§34.2). |
+
+**Note.** §6.4: "`follow` MUST traverse a relationship edge, not a canonical hierarchy edge." A word that names a canonical space is refused with `spatial.no_relation` and reached with `enter` instead; a relation this place has but no edge along is the same refusal; a relation the registry declares for another kind of place is `spatial.not_found`, because the name was understood (v0.4 §11.1, §40).
 
 **Examples**
 
@@ -5972,6 +6273,9 @@ Project the bounded, ranked graph around a place — as text, or as a `SpatialMa
 | output | `ono.spatial-map/1 | string` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
+| execution | [`live_view`](streaming.md#classes) (v0.4.1 Appendix E) |
+| acquisition | scope `global`, cost `moderate` (ADR-0947) |
 
 **Selectors**
 
@@ -5993,6 +6297,8 @@ Project the bounded, ranked graph around a place — as text, or as a `SpatialMa
 | `--all` | `bool` | The explicit larger bound the default is not, still inside `spatial.map.node_budget` (v0.4 §6.9, §34.2, §47). |
 | `--live` | `bool` | Keep the map current. At an interactive terminal it is the full-screen view of §23.3, redrawn from a polling source and saying so in §25.3's vocabulary; where the values are consumed instead, it is a stream that subscribes to the change events of everything this place is drawn from — the first value is the current state, every value after it is something that moved (v0.4 §25.1, §25.2, §25.3, §29.1). |
 | `--plan` | `string` | Overlay a v0.6 change plan on the map: which drawn objects it would touch, and which of them a recovery asset covers (v0.6 §21.2, §21.3). The overlay names the objects the plan resolved and fabricates no future identity — a restarted service shows that a replacement worker is expected, never a PID that does not exist yet (v0.6 §21.4). |
+
+**Note.** §22 fixes the answer of `map --json` field for field and forbids screen coordinates in it: layout belongs to the renderer. What does not fit the view budget is clustered and counted in `hidden` rather than dropped (§8.2, §23.6). At an interactive terminal `map` opens the full-screen view of §23.3; `--json`, a consumer downstream, a redirection or `spatial.map.mode = "text"` all keep it textual (§29.1). `--live` keeps that view current from a polling source; where the values are consumed rather than shown, it is a stream instead, subscribing through the v0.2 watch runtime rather than a second one (§2.16, ADR-0024): nothing is emitted while nothing changes, which is §25.2, and every value says how fresh it is and what it was observed through (§25.3, §25.4). Shown with no terminal to draw into, it is refused rather than faked (§29.1).
 
 **Examples**
 
@@ -6017,6 +6323,8 @@ Draw the federated map — this host beside the hosts this session holds links t
 | output | `ono.spatial-map/1 | string` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| acquisition | scope `local`, cost `cheap` (ADR-0947) |
 
 **Options**
 
@@ -6024,6 +6332,8 @@ Draw the federated map — this host beside the hosts this session holds links t
 |---|---|---|
 | `--json` | `bool` | Write the `SpatialMap` as one JSON document rather than rendering it (v0.4 §22, §29.4). |
 | `--all` | `bool` | The explicit larger bound the default is not, still inside `spatial.map.node_budget` (v0.4 §6.9, §34.2). |
+
+**Note.** §19.3: "A map MAY show multiple linked hosts when explicitly requested" — `map links` is that request, and its counterpart is the rule beside it: "The default root map SHOULD NOT automatically expand all remote graphs." So this map draws host roots and the links between them and stops there; walking a linked host is what `jump` is for (§35.4). The edges carry the §11.5 confidence of the evidence they rest on: a link this session negotiated is `exact`, a definition nobody has connected is `user_declared` (§19.4).
 
 **Examples**
 
@@ -6045,6 +6355,7 @@ Return to the root system place of the active host.
 | output | `null` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Examples**
 
@@ -6066,6 +6377,9 @@ Return to the previous place in the actual navigation history.
 | output | `null` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+
+**Note.** §53: "`back` follows history; `up` follows canonical hierarchy." The two never collapse into one message either: an empty trail is `spatial.history_empty` and a place with no canonical parent is `spatial.no_parent` (v0.4 §40). Where a place on the way back no longer exists, §20.3 makes the shell say so before it skips past it, and the trail record is retained.
 
 **Examples**
 
@@ -6087,6 +6401,9 @@ Move to the canonical hierarchical parent of the current place.
 | output | `null` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+
+**Note.** §6.6 and §43.2: `up` follows the canonical hierarchy and never a relationship edge, so from a socket it reaches the socket's network collection rather than the process that owns it — that one is `follow owner`. The parent is the `canonical_parent` the place view already declares (v0.4 §11.3, §33.1). At the root of a host there is none: `spatial.no_parent`.
 
 **Examples**
 
@@ -6108,12 +6425,16 @@ Move directly to a resolved place, without adjacency and across scopes.
 | output | `null` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| acquisition | scope `global`, cost `moderate` (ADR-0947) |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
 | `selector` | `string` | The place to move to: a name, a `<type>/<key>` or `<domain>:<key>` spelling, a spatial id, or `@<pin>` for a bookmark (v0.4 §6.5, §20.4, §27.1). |
+
+**Note.** §6.5: `jump` "performs global or cross-scope place resolution without requiring adjacency" and "MUST visibly record the source and destination in the trail" — so its step carries both ends and, where the move crossed one, the scope boundary (v0.4 §20.1, §3.2).
 
 **Examples**
 
@@ -6136,6 +6457,7 @@ Show the navigation trail of this session, movement by movement.
 | output | `stream<ono.navigation-step/1> | string` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Options**
 
@@ -6143,6 +6465,8 @@ Show the navigation trail of this session, movement by movement.
 |---|---|---|
 | `--json` | `bool` | Write the steps as one JSON document rather than rendering them (v0.4 §6.7, §29.1). |
 | `--compact` | `bool` | Write the breadcrumb of the current place — `local > compute > processes > 1842` — instead of the steps (v0.4 §6.7, §20.2). |
+
+**Note.** §6.7: "The trail is session state, not command history", and §46.1 keeps it session-local — `spatial.trail.persist` is `false` by default, so a new session starts with an empty trail while pins survive. Every step preserves what §20.1 lists: both ends, the movement kind, the relation where there was one, the scope crossing where there was one, and the timestamp.
 
 **Examples**
 
@@ -6165,12 +6489,15 @@ Mark the current place as a persistent user landmark.
 | output | `ono.spatial-place/1` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Options**
 
 | name | type | meaning |
 |---|---|---|
 | `--name` | `string` | What to call the pin; `jump @<name>` reaches it. Without one the place's own name is used (v0.4 §20.4). |
+
+**Note.** §20.4: a pin stores "a resilient selector and identity metadata rather than only a rendered path", so it keeps the place's identity, the name it answers to and its spatial type. §46.1 lets pins persist where the trail may not; they live in the session's state directory.
 
 **Examples**
 
@@ -6192,6 +6519,7 @@ Remove a user landmark.
 | output | `null` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -6222,6 +6550,7 @@ Enumerate mounted filesystems.
 | provider capability | `mount.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -6256,6 +6585,7 @@ Enumerate filesystems and their capacity, mounted or not.
 | provider capability | `filesystem.list` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Options**
 
@@ -6285,6 +6615,7 @@ Enumerate block and character devices.
 | provider capability | `device.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Options**
 
@@ -6313,6 +6644,7 @@ Mount a filesystem with validated options.
 | provider capability | `mount.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -6326,7 +6658,7 @@ Mount a filesystem with validated options.
 | name | type | meaning |
 |---|---|---|
 | `--type` | `string` | Filesystem type; detected when omitted. |
-| `--option` | `string` | One mount option per occurrence, never one joined string (spec §23.5). |
+| `--option` | `string` | One mount option per occurrence, never one joined string (spec §23.5). *(repeatable)* |
 | `--read-only` | `bool` | Mount read-only. |
 
 **Examples**
@@ -6349,6 +6681,7 @@ Unmount or detach a filesystem.
 | provider capability | `mount.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -6383,6 +6716,7 @@ Remount a filesystem with different options.
 | provider capability | `mount.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -6394,7 +6728,7 @@ Remount a filesystem with different options.
 
 | name | type | meaning |
 |---|---|---|
-| `--option` | `string` | One mount option per occurrence. |
+| `--option` | `string` | One mount option per occurrence. *(repeatable)* |
 | `--read-only` | `bool` | Switch the mount between read-only and read-write. |
 
 **Examples**
@@ -6417,6 +6751,7 @@ Add a persistent mount definition.
 | provider capability | `mount.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -6430,7 +6765,7 @@ Add a persistent mount definition.
 | name | type | meaning |
 |---|---|---|
 | `--type` | `string` | Filesystem type. |
-| `--option` | `string` | One mount option per occurrence. |
+| `--option` | `string` | One mount option per occurrence. *(repeatable)* |
 
 **Examples**
 
@@ -6452,6 +6787,7 @@ Remove a persistent mount definition.
 | provider capability | `mount.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -6479,12 +6815,15 @@ Activate a mount definition.
 | provider capability | `mount.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
 | `target` | `path` | The mount point to activate. |
+
+**Note.** Duplicates `mount filesystem`. §7.1 assigns this operation to the `mount` verb, so one of the two spellings should be withdrawn before either is stable — the mechanical symmetry §52 itself warns against.
 
 **Examples**
 
@@ -6506,12 +6845,15 @@ Deactivate a mount.
 | provider capability | `mount.manage` |
 | privilege | elevated |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
 | `target` | `path` | The mount point to deactivate. |
+
+**Note.** Duplicates `unmount filesystem`; see `ono.mount.start`.
 
 **Examples**
 
@@ -6533,6 +6875,7 @@ Emit mount and unmount events as a live stream.
 | provider capability | `mount.watch` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Examples**
 
@@ -6554,6 +6897,8 @@ Show a mount's device, filesystem, propagation peers and the processes using it.
 | provider capability | `mount.list` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| acquisition | scope `global`, cost `expensive` (ADR-0947) |
 
 **Selectors**
 
@@ -6581,12 +6926,15 @@ Push a mount onto the context stack.
 | provider capability | `mount.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
 | `target` | `path` | The mount point to enter. |
+
+**Note.** Overlaps `enter dir <mount point>`, which changes the working directory instead.
 
 **Examples**
 
@@ -6609,12 +6957,15 @@ Resolve a time selector and evaluate everything that follows at that instant.
 | output | `ono.temporal-context/1` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
-| `selector` | `string` | The instant to stand at: an RFC 3339 timestamp, a local date and time, a local time today, a negative relative duration, or `event @e42` (v0.5 §4.4). Written as words so `at event @e42` and `at 2026-08-31 12:17:00` both read as themselves. |
+| `selector` | `string` | The instant to stand at: an RFC 3339 timestamp, a local date and time, a local time today, a negative relative duration, or `event @e42` (v0.5 §4.4). Written as words so `at event @e42` and `at 2026-08-31 12:17:00` both read as themselves. *(repeatable)* |
+
+**Note.** §12.1: the selector and its coverage are resolved before the session moves, so an unresolvable selector leaves the coordinate exactly where it was. §4.2: only the temporal coordinate changes — the spatial place is untouched.
 
 **Examples**
 
@@ -6638,6 +6989,9 @@ Return the session to the present, keeping the place where it still exists.
 | output | `ono.temporal-context/1` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+
+**Note.** §4.3: available from anywhere, always. Where the historical place has no live counterpart the session returns to the nearest live canonical parent and says so, and a tombstone is never revived as a current object.
 
 **Examples**
 
@@ -6658,12 +7012,15 @@ Run one external command in the real present without leaving historical context.
 | output | `stream<ono.action-result/1>` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
-| `command` | `string` | The external program and its arguments, run in the current environment exactly as they would be in the present (v0.5 §4.8). |
+| `command` | `string` | The external program and its arguments, run in the current environment exactly as they would be in the present (v0.5 §4.8). *(repeatable)* |
+
+**Note.** §4.8: the temporal coordinate is preserved across the run, and the result metadata says the execution was present-bound at least once, so nothing about the past is implied by what the program printed.
 
 **Examples**
 
@@ -6685,6 +7042,7 @@ The ordered event view over a scope and a window.
 | output | `stream<ono.temporal-event/1>` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -6699,11 +7057,13 @@ The ordered event view over a scope and a window.
 |---|---|---|
 | `--since` | `string` | The start of the window, as a duration (`30m`) or a time selector. Defaults to `temporal.timeline.default_window` before the coordinate (v0.5 §11.2, §33). |
 | `--until` | `string` | The end of the window. Defaults to the active temporal coordinate, normally now. |
-| `--kind` | `string` | Restrict to one canonical event kind — `object.changed`, `relation.added`, `action.failed` (v0.5 §6.1, §11.2). |
+| `--kind` | `string` | Restrict to one canonical event kind — `object.changed`, `relation.added`, `action.failed` (v0.5 §6.1, §11.2). *(repeatable)* |
 | `--all` | `bool` | Widen to the whole visible scope rather than the current place, subject to retention and permission (v0.5 §11.3). |
 | `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 | `--view` | `bool` | Open the full-screen timeline over the same window (v0.5 §19.1). It is a presentation of the values `timeline` already answers with; where no terminal can be taken — a script, a pipe, a redirected stream, `TERM=dumb` — the ordinary text timeline answers instead, so the option never writes escape sequences into a pipe (v0.2 §50, ADR-0781). |
 | `--plan` | `string` | Restrict the window to one v0.6 change plan's own events (v0.6 §22.4). The plan identity is the causal anchor: the executor writes it into the payload of every `ono.plan.*` event it records, and this filters on it rather than opening a second history (v0.6 §22.1). |
+
+**Note.** §11.4: the value is a stream of `ono.temporal-event/1`, and the renderer is presentation over it. §11.8: in historical context the default window centres on the coordinate rather than on now. §19.1: `--view` and `T` in the map open the same full-screen presentation of that stream, and neither builds a timeline of its own.
 
 **Examples**
 
@@ -6729,6 +7089,7 @@ What is different between two instants, classified and with per-field certainty.
 | output | `stream<ono.temporal-change/1>` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -6744,6 +7105,8 @@ What is different between two instants, classified and with per-field certainty.
 | `--since` | `string` | The earlier instant, as a duration or a time selector. Required: a comparison needs two ends (v0.5 §13.1). |
 | `--until` | `string` | The later instant. Defaults to the active temporal coordinate, normally now. |
 | `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
+
+**Note.** §13.4: where one side lacks evidence the field is reported as unknown with the coverage that explains it, never as a zero or an empty string.
 
 **Examples**
 
@@ -6767,12 +7130,13 @@ Explain a state, an event or a field from registered causal rules and their evid
 | output | `ono.causal-explanation/1` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
 | name | type | meaning |
 |---|---|---|
-| `subject` | `string` | One of §16.2's three forms: a target and a selector (`service nginx`), `event @e42`, or `field state` about the current place. |
+| `subject` | `string` | One of §16.2's three forms: a target and a selector (`service nginx`), `event @e42`, or `field state` about the current place. *(repeatable)* |
 
 **Options**
 
@@ -6780,6 +7144,8 @@ Explain a state, an event or a field from registered causal rules and their evid
 |---|---|---|
 | `--depth` | `int` | How many causal hops the explanation follows. Defaults to `temporal.timeline.default_depth` (v0.5 §16.7, §33). |
 | `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
+
+**Note.** §16.1: it needs no model. Only links a registered rule of `causality.yaml` produced appear as causes; a correlation stays a correlation however plausible it reads (§15.6, §16.6).
 
 **Examples**
 
@@ -6802,6 +7168,7 @@ Search across events when the time something happened is not known.
 | output | `stream<ono.temporal-event/1>` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
 
 **Selectors**
 
@@ -6817,6 +7184,8 @@ Search across events when the time something happened is not known.
 | `--until` | `string` | The end of the window searched. Defaults to the active temporal coordinate. |
 | `--limit` | `int` | How many events to answer with. The search is bounded by default, because §32.3 budgets it. |
 | `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
+
+**Note.** §20.3: this reuses the existing `find` verb and Ono expression semantics rather than inventing a second search language.
 
 **Examples**
 
@@ -6839,6 +7208,7 @@ One event with its times, its subject and the evidence it rests on.
 | output | `ono.temporal-event/1` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Selectors**
 
@@ -6865,6 +7235,7 @@ The recorder's state, what it is collecting and what it has retained.
 | output | `ono.recorder-status/1` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
 
 **Examples**
 
@@ -6885,6 +7256,9 @@ Start persistent temporal recording for this user.
 | output | `ono.recorder-status/1` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+
+**Note.** §10.2: persistent recording is off until this is run, and §10.8 makes starting idempotent — a recorder already running answers `temporal.recorder_already_running` rather than opening a second store.
 
 **Examples**
 
@@ -6905,6 +7279,9 @@ Flush the temporal ledger and stop recording cleanly.
 | output | `ono.recorder-status/1` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+
+**Note.** §10.8: the stop is clean — what was buffered is written, and the interval the recorder was not running is a declared coverage gap rather than silence (§44.1).
 
 **Examples**
 
@@ -6925,6 +7302,8 @@ Destroy the local retained temporal history.
 | output | `stream<ono.action-result/1>` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
+| streaming | no |
+| confirmation | always |
 
 **Options**
 
@@ -6932,6 +7311,8 @@ Destroy the local retained temporal history.
 |---|---|---|
 | `--confirm` | `bool` | Required: the deletion is irreversible and a script never waits for a prompt (spec §17.4). Without it nothing is removed and the run fails with `safety.confirmation_required`. |
 | `--dry-run` | `bool` | Report what would be destroyed without destroying it: the store, its size and the interval it covers. |
+
+**Note.** §30.8: the target name `temporal-history` is canonical for v0.5, and the operation takes the existing destructive-operation confirmation path rather than a temporal-specific one. §30.9: v0.5 removes the whole local ledger, never single events, because selective editing destroys causal and evidence integrity.
 
 **Examples**
 

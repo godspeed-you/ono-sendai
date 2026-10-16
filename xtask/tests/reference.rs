@@ -111,6 +111,40 @@ fn should_carry_every_commands_contract_onto_its_page_when_generated() {
 }
 
 #[test]
+fn should_carry_how_a_command_runs_onto_its_page_when_generated() {
+    // `measure`'s constant state, `to jsonl`'s flush and the global acquisition of `trace` live in
+    // the contract's `note`, `execution` and `acquisition`, and a page that leaves them out leaves
+    // the reader with the summary line alone.
+    let repo = registries();
+    repo.write(
+        "docs/contracts/commands/data.yaml",
+        "version: 1\nfamily: data\ncommands:\n  - id: ono.data.measure\n    verb: measure\n    target: null\n    summary: Compute statistics.\n    stability: stable\n    argument_mode: expression\n    input: \"stream<any>\"\n    output: ono.measure/1\n    provider_capability: null\n    selectors:\n      - {name: format, type: string, values: [json, jsonl], repeatable: true, doc: The format.}\n    options:\n      - {name: median, type: bool, execution: explicit_collect, doc: Also the median.}\n      - {name: follow, type: bool, default: true, doc: Keep following.}\n      - {name: changes, type: duration, optional_value: true, doc: A window.}\n    privilege: none\n    streaming: false\n    execution: incremental_aggregate\n    acquisition: {scope: global, cost: moderate}\n    confirmation: always\n    note: Holds constant state unless asked for the distribution.\n    phase: B\n    examples: [\"get process | measure memory\"]\n",
+    );
+    let pages = generate(repo.path()).expect("generation");
+    let commands = pages
+        .iter()
+        .find(|page| page.path.ends_with("commands.md"))
+        .expect("a command reference");
+    for expected in [
+        "| streaming | no |",
+        "| execution | [`incremental_aggregate`](streaming.md#classes)",
+        "| acquisition | scope `global`, cost `moderate`",
+        "| confirmation | always |",
+        "**Note.** Holds constant state unless asked for the distribution.",
+        "values `json`, `jsonl`; repeatable",
+        "makes the invocation `explicit_collect`",
+        "default `true`",
+        "the value may be left out",
+    ] {
+        assert!(
+            commands.contents.contains(expected),
+            "{expected:?} missing from the command reference:\n{}",
+            commands.contents
+        );
+    }
+}
+
+#[test]
 fn should_carry_every_schema_field_and_its_documentation_onto_its_page_when_generated() {
     let pages = generate(registries().path()).expect("generation");
     let schemas = pages
