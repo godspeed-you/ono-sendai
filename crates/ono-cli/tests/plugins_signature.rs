@@ -517,3 +517,48 @@ fn should_report_a_package_with_no_signature_of_either_kind_as_absent() {
         "an unsigned package is local, which is a statement rather than a failure"
     );
 }
+
+#[test]
+fn should_install_a_package_named_relatively_in_a_job_from_the_jobs_directory_and_record_it_absolute()
+ {
+    // Review H3/X6 of issue #302: `install plugin ./pkg` in a job reads the package where the job
+    // was started, whatever the foreground has done since, and records where it came from as an
+    // absolute path — a relative one would name another directory the moment anybody reads it.
+    let home = scratch();
+    let start = home.path().join("start");
+    let moved = home.path().join("moved");
+    std::fs::create_dir_all(&moved).expect("the moved-to directory");
+    lay_out(&start, PACKAGE);
+    let gate = home.path().join("gate");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&gate)
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success(), "the gate exists");
+
+    let run = ono_with_plugins(
+        &home,
+        &format!(
+            "cd {start}\n\
+             fn inst() {{ sh -c 'read line < {gate}'; install plugin ./{PACKAGE} --confirm | select status | to json }}\n\
+             inst &\n\
+             cd {moved}\n\
+             sh -c 'echo go > {gate}'\n\
+             fg %1\n\
+             get plugin | select source | to json",
+            start = start.display(),
+            moved = moved.display(),
+            gate = gate.display(),
+        ),
+    );
+
+    run.assert_success();
+    let source = str_field(only(&last_json(&run)), "source").to_owned();
+    assert_eq!(
+        source,
+        // The join keeps the text it joins (ADR-0957): `./pkg` becomes `<start>/./pkg`.
+        format!("path:{}/./{PACKAGE}", start.display()),
+        "the package came from the job's directory, recorded absolute; got {}",
+        run.output()
+    );
+}
