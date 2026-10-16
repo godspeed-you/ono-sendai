@@ -48,7 +48,6 @@ Default view: `target`, `operation`, `status`, `changed`, `duration`
 
 One step an assistant proposed, with what it would cost and whether it has been taken.
 
-Identity: 
 
 Default view: `index`, `summary`, `mutating`, `risk`, `status`
 
@@ -180,7 +179,6 @@ Default view: `plugin`, `capability`, `scope`, `duration`, `decision`, `expires_
 
 Why a state or a change came about — the cause where evidence supports one, and the correlations and gaps where it does not.
 
-Identity: 
 
 Default view: `state_or_change`, `cause`, `coverage`
 
@@ -378,7 +376,6 @@ Default view: `short_hash`, `authored`, `author`, `subject`
 
 What the word under the cursor could become — the candidates, the span they replace, and whether the set is whole. `ono --complete <line> [--cursor N]` writes one as JSON, from the completer Tab uses, without a terminal (ADR-0945).
 
-Identity: 
 
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
@@ -412,7 +409,6 @@ Default view: `key`, `value`, `layer`, `source`
 
 One change to one container, as a live stream emits it.
 
-Identity: 
 
 Default view: `kind`, `at`, `container`, `changed`
 
@@ -494,7 +490,6 @@ Default view: `name`, `type`, `address`
 
 One end of a socket: an address and port, or a filesystem path for a Unix socket.
 
-Identity: 
 
 Default view: `address`, `port`
 
@@ -524,7 +519,6 @@ Default view: `name`, `value`, `exported`
 
 A structured error, carrying a stable code rather than a message to grep.
 
-Identity: 
 
 Default view: `code`, `name`, `message`, `target`
 
@@ -545,7 +539,6 @@ Default view: `code`, `name`, `message`, `target`
 
 One inspectable observation supporting a finding, an annotation or an assistant claim.
 
-Identity: 
 
 Default view: `kind`, `reference`, `source`, `samples`, `observed_at`
 
@@ -567,7 +560,6 @@ Default view: `kind`, `reference`, `source`, `samples`, `observed_at`
 
 What a pipeline would do — resolution, provider, types, privilege, risk and effects of every stage — without running it.
 
-Identity: 
 
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
@@ -585,7 +577,6 @@ Identity:
 
 One change to one file or directory entry, as a live stream emits it.
 
-Identity: 
 
 Default view: `kind`, `at`, `file`, `changed`
 
@@ -689,7 +680,6 @@ Default view: `state`, `index`, `worktree`, `path`
 
 One relationship between two objects in a graph.
 
-Identity: 
 
 Default view: `from`, `relation`, `to`, `confidence`, `provider`
 
@@ -707,7 +697,6 @@ Default view: `from`, `relation`, `to`, `confidence`, `provider`
 
 One object in a relationship graph.
 
-Identity: 
 
 Default view: `id`, `kind`
 
@@ -721,7 +710,6 @@ Default view: `id`, `kind`
 
 A relationship graph over system objects, as produced by `trace`.
 
-Identity: 
 
 Default view: `root`, `nodes`, `edges`
 
@@ -735,7 +723,6 @@ Default view: `root`, `nodes`, `edges`
 
 One change to one group, as a live stream emits it.
 
-Identity: 
 
 Default view: `kind`, `at`, `group`, `changed`
 
@@ -779,7 +766,6 @@ Default view: `count`, `clustered`, `aggregated`
 
 One change to one known host, as a live stream emits it.
 
-Identity: 
 
 Default view: `kind`, `at`, `host`, `changed`
 
@@ -889,7 +875,6 @@ Default view: `plan_id`, `direct_targets`, `dependents`, `transitive`, `boundary
 
 The detailed view of one value — its type, a record's schema, identity, fields with their access, and provenance.
 
-Identity: 
 
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
@@ -923,7 +908,6 @@ Default view: `interface`, `family`, `address`, `scope`
 
 One change to one network interface, as a live stream emits it.
 
-Identity: 
 
 Default view: `kind`, `at`, `interface`, `changed`
 
@@ -1034,7 +1018,6 @@ Default view: `key`, `value`, `layer`, `min`, `max`
 
 One change to one link this session holds, as a live stream emits it.
 
-Identity: 
 
 Default view: `kind`, `at`, `link`, `changed`
 
@@ -1181,7 +1164,6 @@ Default view: `label`, `type`, `state`, `landmark_reasons`
 
 The statistics `measure` reports over the values its key expression read.
 
-Identity: 
 
 Default view: `count`, `sum`, `mean`, `min`, `max`
 
@@ -1244,7 +1226,6 @@ Default view: `local_path`, `filesystem`, `source`, `remote`
 
 One mount, unmount or remount, as a live stream emits it.
 
-Identity: 
 
 Default view: `kind`, `at`, `mount`, `changed`
 
@@ -1696,7 +1677,6 @@ Default view: `id`, `version`, `state`, `trust`, `jobs`, `memory`
 
 What one reachability probe found — whether the peer answered, how long it took, and why not.
 
-Identity: 
 
 Default view: `host`, `port`, `protocol`, `reachable`, `duration`, `error`
 
@@ -1749,7 +1729,6 @@ Default view: `pid`, `name`, `parent`, `user`, `cpu`, `memory`, `started`, `serv
 
 One change to one process, as a live stream emits it.
 
-Identity: 
 
 Default view: `kind`, `at`, `process`, `changed`
 
@@ -1789,6 +1768,12 @@ Default view: `pid`, `name`, `cpu`, `memory`, `user`
 | `service` | `ref<ono.service/1>` | — | nullable | The service unit the process belongs to; null when it belongs to none. |
 | `container` | `ref<ono.container/1>` | — | nullable | The container the process runs in; null outside a container or without a provider. |
 | `pid_namespace` | `int` | — | nullable | The inode of the pid namespace the `pid` was read in, from `/proc/<pid>/ns/pid`. Two processes in different namespaces can carry the same pid number, so the spatial layer needs this to tell a container's pid 1 from the host's (spec v0.4 §10.2). Never the root namespace, which would be a guess: null on a kernel that has no namespace to name, and an error value when the kernel will not name the one it has — a refusal is not an absence (spec v0.4 §35.2). |
+
+**Extensions** — keys a provider attaches beside the fields (spec §10.4); a record that was not asked for one carries no such key.
+
+| key | type | present | meaning |
+|---|---|---|---|
+| `children` | `list<ono.process/1>` | `get process --tree` | The process's children, each a `ono.process/1` record carrying its own `children`. With `--tree` the stream holds only the roots — processes whose parent is not in the stream — and every other process is nested under its parent (ADR-0091 §3). `to json` carries it; a terminal draws the forest (ADR-0948). |
 
 ## ProposedEffect — `ono.proposed-effect/1`
 
@@ -1856,7 +1841,6 @@ Default view: `id`, `targets`, `available`
 
 One suggested next step attached to a finding, with what it would cost to take it.
 
-Identity: 
 
 Default view: `title`, `horizon`, `mutating`, `risk`, `command`
 
@@ -1876,7 +1860,6 @@ Default view: `title`, `horizon`, `mutating`, `risk`, `command`
 
 Whether Ono is retaining system history, under which limits, and how much it currently holds.
 
-Identity: 
 
 Default view: `running`, `events`, `earliest`, `latest`, `health`
 
@@ -2003,7 +1986,6 @@ Default view: `id`, `source_plan`, `method`, `requires_acceptance`, `risk`
 
 One routing table change, as a live stream emits it.
 
-Identity: 
 
 Default view: `kind`, `at`, `route`, `changed`
 
@@ -2040,7 +2022,6 @@ Default view: `destination`, `gateway`, `interface`, `metric`, `protocol`
 
 One change to one service, as a live stream emits it.
 
-Identity: 
 
 Default view: `kind`, `at`, `service`, `changed`
 
@@ -2102,7 +2083,6 @@ Default view: `id`, `user`, `seat`, `tty`, `type`, `state`, `since`
 
 One change to one socket, as a live stream emits it.
 
-Identity: 
 
 Default view: `kind`, `at`, `socket`, `changed`
 
@@ -2312,7 +2292,6 @@ Default view: `kind`, `subject`, `from_time`, `to_time`
 
 The session's temporal coordinate — the present, or a resolved historical instant with the coverage that backs it.
 
-Identity: 
 
 Default view: `mode`, `requested`, `resolved_at`, `marker`
 
@@ -2329,7 +2308,6 @@ Default view: `mode`, `requested`, `resolved_at`, `marker`
 
 What one source was capable of observing, for one capability, over one interval.
 
-Identity: 
 
 Default view: `capability`, `from`, `until`, `completeness`, `source`
 
@@ -2405,7 +2383,6 @@ Default view: `evidence_id`, `source`, `claim_kind`, `strength`, `observed_at`
 
 An interval in which a capability was not covered, and why.
 
-Identity: 
 
 Default view: `from`, `until`, `capability`, `reason`, `source`
 
@@ -2423,7 +2400,6 @@ Default view: `from`, `until`, `capability`, `reason`, `source`
 
 The retained local temporal ledger — where it is, how large it is, what it spans and under which policy.
 
-Identity: 
 
 Default view: `store`, `size`, `events`, `earliest`, `latest`
 
@@ -2483,7 +2459,6 @@ Default view: `source`, `live_events`, `historical_query`, `exhaustive_events`, 
 
 A window of events for a place, with the coverage that backs it and the gaps inside it.
 
-Identity: 
 
 Default view: `place_label`, `from`, `until`, `truncated`
 
@@ -2506,7 +2481,6 @@ Default view: `place_label`, `from`, `until`, `truncated`
 
 The type of a value, or of what a pipeline declares it produces, with a record's schema and fields.
 
-Identity: 
 
 Default view: `type`, `schema`, `fields`
 
@@ -2522,7 +2496,6 @@ Default view: `type`, `schema`, `fields`
 
 One change to one user account, as a live stream emits it.
 
-Identity: 
 
 Default view: `kind`, `at`, `user`, `changed`
 
@@ -2555,7 +2528,6 @@ Default view: `uid`, `name`, `home`, `shell`
 
 What integrity, signature, publisher trust and compatibility say about one package.
 
-Identity: 
 
 Default view: `package`, `integrity`, `signature`, `trust`, `compatibility`, `runtime`
 

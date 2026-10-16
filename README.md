@@ -536,7 +536,7 @@ built.
 ```text
 crates=48
 workspace_members=50
-tests=7505
+tests=7506
 tests_that_can_skip=121
 expected_ci_skips=16
 acceptance_cases=281

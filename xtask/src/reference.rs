@@ -506,15 +506,20 @@ fn schemas_page(files: &BTreeMap<String, Yaml>) -> String {
             "{}\n",
             string_at(document, "summary").unwrap_or_default()
         );
-        let _ = writeln!(
-            page,
-            "Identity: {}",
-            string_sequence(document, "identity")
-                .iter()
-                .map(|field| format!("`{field}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
+        // A schema without an identity is a value rather than an object; a bare `Identity:` line
+        // would read as an identity nobody filled in.
+        let identity = string_sequence(document, "identity");
+        if !identity.is_empty() {
+            let _ = writeln!(
+                page,
+                "Identity: {}",
+                identity
+                    .iter()
+                    .map(|field| format!("`{field}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
         let fallback = string_sequence(document, "identity_fallback");
         if !fallback.is_empty() {
             let _ = writeln!(
@@ -559,6 +564,26 @@ fn schemas_page(files: &BTreeMap<String, Yaml>) -> String {
                 string_at(definition, "unit").unwrap_or_else(|| "—".to_owned()),
                 string_at(definition, "doc").unwrap_or_default()
             );
+        }
+
+        // Extensions are keys a provider attaches beside the fields (spec §10.4): not fields,
+        // absent unless asked for, so they get a table of their own.
+        let extensions = mapping_entries(document, "extensions");
+        if !extensions.is_empty() {
+            page.push_str(
+                "\n**Extensions** — keys a provider attaches beside the fields (spec §10.4); a \
+                 record that was not asked for one carries no such key.\n\n\
+                 | key | type | present | meaning |\n|---|---|---|---|\n",
+            );
+            for (key, definition) in extensions {
+                let _ = writeln!(
+                    page,
+                    "| `{key}` | `{}` | {} | {} |",
+                    string_at(definition, "type").unwrap_or_default(),
+                    string_at(definition, "present_when").unwrap_or_else(|| "—".to_owned()),
+                    string_at(definition, "doc").unwrap_or_default().trim()
+                );
+            }
         }
     }
     page

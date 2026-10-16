@@ -168,6 +168,37 @@ fn should_carry_every_schema_field_and_its_documentation_onto_its_page_when_gene
 }
 
 #[test]
+fn should_list_a_schemas_extensions_and_omit_an_identity_it_does_not_have_when_generated() {
+    let repo = registries();
+    repo.write(
+        "docs/contracts/schemas/tree.v1.yaml",
+        "id: ono.tree/1\nname: Tree\nsummary: A value with no identity.\nfields:\n  name:\n    type: string\n    required: true\n    doc: The name.\nextensions:\n  children:\n    type: list<ono.tree/1>\n    present_when: \"`--tree`\"\n    doc: The nested trees.\n",
+    );
+    let pages = generate(repo.path()).expect("generation");
+    let schemas = &pages
+        .iter()
+        .find(|page| page.path.ends_with("schemas.md"))
+        .expect("a schema reference")
+        .contents;
+    let tree = &schemas[schemas
+        .find("`ono.tree/1`")
+        .expect("the tree schema is listed")..];
+    let tree = &tree[..tree[1..].find("\n## ").map_or(tree.len(), |end| end + 1)];
+    assert!(
+        !tree.contains("Identity:"),
+        "a schema without an identity shows an empty `Identity:` line:\n{tree}"
+    );
+    assert!(
+        tree.contains("| `children` | `list<ono.tree/1>` | `--tree` | The nested trees. |"),
+        "the extension is not listed:\n{tree}"
+    );
+    assert!(
+        schemas.contains("Identity: `pid`"),
+        "a schema with an identity still shows it:\n{schemas}"
+    );
+}
+
+#[test]
 fn should_say_which_field_may_be_unknown_so_null_stays_meaningful_when_generated() {
     // Spec §10.5: a nullable field is a promise that absence is information. A reference that
     // did not say which fields are nullable would hide the shell's most distinctive property.
