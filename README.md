@@ -518,9 +518,11 @@ blocks that stream inside functions and run as background jobs, `to jsonl`, an `
 is data, completion outside a terminal, and command examples run against the schemas their commands
 declare (`docs/releases/v0.6.3.md`). Every ticked box of
 `docs/ACCEPTANCE.md` names an automated proof, and no box is open. Primary platform is Linux (x86_64
-and aarch64). Four further enhancement specifications — Presentation Consolidation & Rich TTY
-(v0.7), Deck Workspace Composition (v0.8), Live View Integration (v0.9) and Native AI Assistance
-(v0.10) — are specified but not yet implemented.
+and aarch64). Three stabilization releases come next, each a milestone in the tracker: v0.6.4
+(system and spatial model), v0.6.5 (KUANG/11 ecosystem) and v0.6.6 (remote links and change). Four
+further enhancement specifications follow them — Presentation Consolidation & Rich TTY (v0.7), Deck
+Workspace Composition (v0.8), Live View Integration (v0.9) and Native AI Assistance (v0.10) — and
+are specified but not yet implemented.
 
 **By the numbers.** These are measured, not typed: `cargo run -p xtask -- metrics` reads them out of
 the tree and the quality gate fails when this block and the repository disagree. `tests` counts test
@@ -566,7 +568,7 @@ as an ADR in [`docs/adr/`](docs/adr/). A capability without a passing acceptance
 is not delivered.
 
 ```bash
-scripts/gate.sh            # format, lint, test, contract check, docs
+scripts/gate.sh            # format, lint, test, fuzz, cargo deny, contract check, binary size, docs
 scripts/acceptance.sh      # every case against the real `ono` binary, in a container
 scripts/release-check.sh   # both, plus the release checklist
 ```
