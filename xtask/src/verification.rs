@@ -219,19 +219,10 @@ pub fn check_document(location: &str, text: &str) -> Vec<Problem> {
     let Some(sequence) = sequence() else {
         return Vec::new();
     };
-    let normalised = text
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase();
+    let normalised = shell_words(text);
     let mut problems = Vec::new();
     for step in &sequence.steps {
-        let command = step
-            .command
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .to_lowercase();
+        let command = shell_words(&step.command);
         if !normalised.contains(&command) {
             problems.push(Problem::new(
                 location.to_owned(),
@@ -246,4 +237,16 @@ pub fn check_document(location: &str, text: &str) -> Vec<Problem> {
         }
     }
     problems
+}
+
+/// The text as the shell would split it into words, lowercased: a backslash before a line break
+/// continues the line, so it is whitespace like the break itself. A copy that wraps a long
+/// command and one that does not print the same command.
+fn shell_words(text: &str) -> String {
+    text.replace("\\\r\n", " ")
+        .replace("\\\n", " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }

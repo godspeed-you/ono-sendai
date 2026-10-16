@@ -224,3 +224,32 @@ fn should_refuse_to_release_under_a_tag_that_names_another_version() {
         "the tag is checked after it has been published under:\n{publish}"
     );
 }
+
+#[test]
+fn should_accept_a_copy_that_wraps_a_command_with_line_continuations_or_does_not() {
+    // A backslash before a line break is whitespace to the shell, so a copy that wraps a long
+    // `cosign` line and one that prints it on one line print the same command. Comparing them
+    // as different would force every copy into one layout for no reader's benefit.
+    let steps = sequence().expect("the registry parses").steps;
+    let fenced = |command: &str| format!("```bash\n{command}\n```\n");
+    let one_line: String = steps
+        .iter()
+        .map(|step| fenced(&step.command.replace("\\\n", " ")))
+        .collect();
+    let wrapped: String = steps
+        .iter()
+        .map(|step| fenced(&step.command.replace(" --", " \\\n  --")))
+        .collect();
+    for (layout, text) in [("one line", one_line), ("wrapped", wrapped)] {
+        let problems = check_document("copy.md", &text);
+        assert!(
+            problems.is_empty(),
+            "a copy printing every command {layout} was reported:\n{}",
+            problems
+                .iter()
+                .map(|p| p.detail.clone())
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+}
