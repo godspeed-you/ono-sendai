@@ -106,7 +106,9 @@ errors:
     summary: A value did not have the type the operation requires.
     help: >-
       `type <expression>` shows what the value actually is. Convert it explicitly rather than
-      relying on coercion.
+      relying on coercion. An evaluated argument is held to the type its option or selector
+      declares (ADR-0937), and a background job refuses `cd`, `enter <dir>` and a restoring
+      `leave` with this code, because a job shares the shell's working directory (ADR-0955).
   - code: Ono-Sendai-E0202
     name: type.unknown_field
     kind: type
@@ -289,8 +291,10 @@ errors:
     kind: stream
     summary: The operation requires bounded input but the stream is unbounded.
     help: >-
-      `sort`, `group`, `count` and `measure` need a finite input. Bound the stream first with
-      `take <n>` or a window.
+      `sort`, `group`, `count` and `reduce` answer once their input has ended, so they need a
+      finite one, and so does `measure` with `--median` or `--percentiles` (ADR-0953). Bound the
+      stream first with `take <n>` or a window. To write a live stream as it arrives, `to jsonl`
+      emits one line per value (ADR-0954).
   - code: Ono-Sendai-E0802
     name: stream.cancelled
     kind: cancelled
@@ -537,9 +541,10 @@ errors:
     kind: resource
     summary: An operation that must see its whole input may not materialize this input.
     help: >-
-      The refusal is about the input as a whole rather than about a count that was reached: the
-      stage requires finite input, or its budget admits nothing at all (v0.4.1 §22.2, §22.3).
-      Bound the upstream before the stage that needs it whole.
+      The stage must hold its whole input and its budget admits nothing at all: a
+      `limits.materialize_items` or `limits.materialize_bytes` of 0 means no values permitted,
+      not unlimited (v0.4.1 §22.2, ADR-0934). Raise the setting deliberately, or leave the
+      stage out. An unbounded upstream is `stream.unbounded_operation` (Ono-Sendai-E0801).
 
   # --- server-side client authorization (v0.4.1 §9, §10.4, §53.1, ADR-0466) ----------------
   - code: Ono-Sendai-E1201
