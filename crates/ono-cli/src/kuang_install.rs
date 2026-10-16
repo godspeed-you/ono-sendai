@@ -1139,16 +1139,19 @@ fn compile_component(
     if let Some(store) = &store {
         run.arg("--store").arg(store);
     }
-    // Recorded while it runs, so a shell ending on a signal ends it too (ADR-0959).
-    let output = run
-        .arg(directory.join(entry))
+    run.arg(directory.join(entry))
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    // Recorded while it runs, in a group of its own so what the tool starts is reached as well,
+    // so a shell ending on a signal ends it too (ADR-0959).
+    let output = std::os::unix::process::CommandExt::process_group(&mut run, 0)
         .spawn()
         .and_then(|child| {
-            let _recorded = ono_core::children::Recorded::new(child.id());
-            child.wait_with_output()
+            let recorded = ono_core::children::Recorded::group(child.id());
+            let output = child.wait_with_output();
+            drop(recorded);
+            output
         })
         .map_err(|error| unavailable(format!("`{}` could not be run: {error}", tool.display())))?;
     if output.status.success() {

@@ -9,6 +9,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+ono-core.workspace = true
 async-trait.workspace = true
 jiff.workspace = true
 serde.workspace = true

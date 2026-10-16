@@ -161,12 +161,16 @@ impl AccountCommand {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
+            .process_group(0)
             .spawn();
-        // Recorded while it runs, so a shell ending on a signal ends it too (ADR-0959).
+        // Recorded while it runs, in a group of its own, so a shell ending on a signal ends it
+        // and what it started (ADR-0959).
         let output = async {
             let child = child?;
-            let _recorded = ono_core::children::Recorded::of(child.id());
-            child.wait_with_output().await
+            let recorded = ono_core::children::Recorded::group_of(child.id());
+            let output = child.wait_with_output().await;
+            drop(recorded);
+            output
         }
         .await
         .map_err(|error| {

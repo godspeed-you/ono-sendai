@@ -795,8 +795,11 @@ impl Runtime {
 
     async fn kill(&mut self) {
         match self {
-            Runtime::Native(child, _) => {
+            Runtime::Native(child, recorded) => {
+                // `kill` collects the child too; the record goes in the step right after
+                // (review Z4).
                 let _ = child.kill().await;
+                *recorded = None;
             }
             Runtime::Wasm(instance) => instance.kill(),
         }

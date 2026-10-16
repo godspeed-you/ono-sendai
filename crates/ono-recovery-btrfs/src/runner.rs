@@ -19,6 +19,7 @@
 //! Appendix B.9's question, and swallowing it as a failure would lose it.
 
 use std::io::Read;
+use std::os::unix::process::CommandExt as _;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
@@ -115,6 +116,9 @@ impl ToolRunner for ProcessRunner {
         };
         let mut child = Command::new(&resolved)
             .args(argv)
+            // In a process group of its own, recorded while it runs, so a shell ending on a
+            // signal ends it and what it started (ADR-0959).
+            .process_group(0)
             .env_clear()
             .env("PATH", self.path.as_ref())
             .env("LC_ALL", "C")
@@ -128,17 +132,22 @@ impl ToolRunner for ProcessRunner {
 
         // The streams are drained on threads of their own: a child that fills a pipe buffer blocks
         // in `write`, and a parent that waits for exit before reading would deadlock with it.
+        let recorded = ono_core::children::Recorded::group(child.id());
         let stdout = drain(child.stdout.take());
         let stderr = drain(child.stderr.take());
 
         let deadline = Instant::now() + self.timeout;
         let status = loop {
             match child.try_wait() {
-                Ok(Some(status)) => break status,
+                Ok(Some(status)) => {
+                    recorded.reaped();
+                    break status;
+                }
                 Ok(None) => {
                     if Instant::now() >= deadline {
                         let _ = child.kill();
                         let _ = child.wait();
+                        recorded.reaped();
                         return Err(error::tool_failed(
                             program,
                             &format!(

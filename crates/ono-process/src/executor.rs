@@ -139,7 +139,8 @@ impl Ownership {
 }
 
 /// Whether any process of group `pgid` is alive, a zombie not counting.
-fn group_runs(pgid: i32) -> bool {
+#[must_use]
+pub fn group_runs(pgid: i32) -> bool {
     let Ok(entries) = std::fs::read_dir("/proc") else {
         // Without `/proc`, a signal of `0` says whether anything of the group is left at all.
         return killpg(Pid::from_raw(pgid), None).is_ok();
@@ -450,9 +451,19 @@ impl Executor {
         let running = self.start(pipeline, true, &cell)?;
         if running.pgid != 0 {
             if let Err(error) = self.terminal.give_to(running.pgid) {
-                // Nobody will wait on this group in the foreground: the cell must not keep
-                // naming it, or the next pipeline could not be owned while it starts (review Y5).
-                self.foreground.set(0);
+                // The pipeline cannot be run in the foreground, and nothing else will wait for
+                // it: it is killed and collected here, and the cell is cleared in the step that
+                // collects its last member, as everywhere (reviews Y5, Z2).
+                let mut running = running;
+                let mut group = self.foreground.lock();
+                let _ = signal_group(running.pgid, Signal::KILL);
+                let _ = reap(&mut running, true);
+                while !running.is_finished() {
+                    if reap(&mut running, true).is_err() {
+                        break;
+                    }
+                }
+                *group = 0;
                 return Err(error);
             }
             self.foreground.set(running.pgid);

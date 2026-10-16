@@ -818,6 +818,8 @@ impl ModelBroker for CommandBroker {
         })?;
         let budget = request.budget();
         let run = async {
+            // In a process group of its own, recorded while it runs, so a shell ending on a
+            // signal ends it and what it started (ADR-0959).
             let mut child = tokio::process::Command::new(&program)
                 .args(provider.command.iter().skip(1))
                 .env("ONO_MODEL_PROTOCOL", PROTOCOL)
@@ -825,6 +827,7 @@ impl ModelBroker for CommandBroker {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .kill_on_drop(true)
+                .process_group(0)
                 .spawn()
                 .map_err(|error| {
                     InferenceError::Unavailable(format!(
@@ -832,6 +835,7 @@ impl ModelBroker for CommandBroker {
                         program.display()
                     ))
                 })?;
+            let recorded = ono_core::children::Recorded::group_of(child.id());
             if let Some(mut stdin) = child.stdin.take() {
                 use tokio::io::AsyncWriteExt;
                 // A provider that exits before reading is reported by its status, not by the
@@ -839,7 +843,9 @@ impl ModelBroker for CommandBroker {
                 let _ = stdin.write_all(&document).await;
                 let _ = stdin.shutdown().await;
             }
-            child.wait_with_output().await.map_err(|error| {
+            let output = child.wait_with_output().await;
+            drop(recorded);
+            output.map_err(|error| {
                 InferenceError::Unavailable(format!(
                     "`{}` did not finish: {error}",
                     program.display()

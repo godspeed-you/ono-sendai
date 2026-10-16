@@ -2396,12 +2396,13 @@ impl Drop for Session {
                         .collect()
                 },
                 settled,
+                false,
             );
         } else {
             // The session's own groups and those of its jobs' evaluators, which share its set —
             // not every group in the process: another session there owns its own (review S4).
             let ownership = self.execution.executor.ownership();
-            crate::shutdown::end_shell(|| ownership.groups(), settled);
+            crate::shutdown::end_shell(|| ownership.groups(), settled, false);
         }
         // Spec §31.37: the last pipeline's audit events are written before the session goes.
         #[cfg(feature = "kuang")]
@@ -2433,16 +2434,20 @@ fn adapter_registry() -> ono_adapter::Registry {
 /// standard library's process API is the right tool rather than the executor of spec §18.
 pub fn probe_version(executable: &std::path::Path, argv: &[String]) -> Option<String> {
     // Recorded while it runs, so a shell ending on a signal ends it too (ADR-0959).
-    let output = std::process::Command::new(executable)
+    let mut command = std::process::Command::new(executable);
+    command
         .args(argv)
         .env("LC_ALL", "C")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let output = std::os::unix::process::CommandExt::process_group(&mut command, 0)
         .spawn()
         .and_then(|child| {
-            let _recorded = ono_core::children::Recorded::new(child.id());
-            child.wait_with_output()
+            let recorded = ono_core::children::Recorded::group(child.id());
+            let output = child.wait_with_output();
+            drop(recorded);
+            output
         })
         .ok()?;
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();

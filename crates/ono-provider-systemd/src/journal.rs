@@ -274,7 +274,15 @@ async fn run(
     };
     // Recorded for as long as it follows the journal, so a shell ending on a signal ends it too
     // (ADR-0959).
-    let _recorded = ono_core::children::Recorded::of(child.id());
+    // The child was started in a process group of its own, which is what is recorded.
+    let recorded = ono_core::children::Recorded::group_of(child.id());
+    // Cleared in the step right after the child is collected: its id may be another's then
+    // (review Z4).
+    let reaped = || {
+        if let Some(recorded) = &recorded {
+            recorded.reaped();
+        }
+    };
     let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
         let _ = sink
             .fail(ErrorValue::new(
@@ -315,16 +323,19 @@ async fn run(
     if consumer_gone {
         let _ = child.start_kill();
         let _ = child.wait().await;
+        reaped();
         return;
     }
     for outcome in decoding.finish() {
         if !deliver(&sink, outcome, &query, &schema).await {
             let _ = child.start_kill();
             let _ = child.wait().await;
+            reaped();
             return;
         }
     }
     let status = child.wait().await;
+    reaped();
     let said = stderr.await.unwrap_or_default();
     let said = String::from_utf8_lossy(&said);
     let said = said.trim();

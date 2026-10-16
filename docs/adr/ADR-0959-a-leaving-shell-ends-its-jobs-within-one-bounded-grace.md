@@ -32,7 +32,10 @@ each background job's group: a program backgrounded at the prompt (`prog &`), on
 function or a pipeline backgrounded, and those a job's own evaluator backgrounds. A cell names its
 group while one of its members is uncollected and is cleared under its lock in the same step that
 collects the last one (review R10 of v0.6.3), so a group that has ended, or whose id the kernel has
-handed out again, is never signalled. `fg`, `kill %N` and `wait` take a job out of the table as
+handed out again, is never signalled. A foreground start whose hand-over of the terminal fails (`tcsetpgrp`)
+kills the group it started and collects every member before it clears the cell and reports the
+failure, so the cell rule holds on that path too and nothing is left running unowned (review Z2).
+`fg`, `kill %N` and `wait` take a job out of the table as
 before; what is no longer in a cell is not touched. A pipeline's group is owned from its first member on: its cell names the group as soon as the
 first stage's `spawn` has returned, not once every stage has; a shell that has begun to end starts
 no further stage, and reports those it did not start as ended by the signal it is ending on
@@ -44,31 +47,60 @@ stays until its owner has collected the last member, so no intermediate look can
 `SIGKILL` is repeated while a group still runs.
 
 **Children a command starts itself**, outside the executor, are recorded for as long as they run
-(`ono_core::children`): `open file`'s handler, a package manager, the account tools, `journalctl`
-following the journal, an opaque plan action's program, the plugin build tool, a version probe,
-a plugin's service program and a plugin's runtime process. Each is recorded by its process id
-from just after it started until just after it was waited for. A shell ending on a signal sends
-them `SIGTERM` with its jobs, waits for them within the same grace period, and sends what still
-runs `SIGKILL` (review Y3). On a normal exit the command that started each one is waiting for it,
-and ends with it. One kind is not recorded, and a shell ended by a signal does not end it:
-a link's transport process (`--transport local`'s agent, `ssh`), whose end belongs to the link's
-hang-up (ADR-0161), which a signal exit skips; recording it by process id would outlive the
-process whenever the agent exits while the link is still held, and a signal sent then could reach
-a reused id. Between a recorded child being collected and its record being cleared lies one
-statement of the code that waited for it; a signal sent in that instant reaches the id the child
-had. A job's evaluator's executor joins the set of
+(`ono_core::children`), and a shell ending on a signal ends them with its jobs (reviews Y3, Z3).
+Every product spawn site outside the executor (`ono-process`'s `spawn.rs`, which every executor
+command goes through), accounted for one by one:
+
+- *Recorded by process group* — the child is started in a process group of its own
+  (`process_group(0)`) and the group is signalled, so what it starts in turn (`dpkg` under the
+  package manager, a model program's helpers) is reached too: the package manager
+  (`ono-provider-linux` `packages.rs`), the account tools (`account_tools.rs`), `journalctl`
+  following the journal (`ono-provider-systemd` `journal.rs`), a model provider program
+  (`ono-model-broker`), the snapshot tools of a recovery apply or restore (`ono-recovery-btrfs`
+  `runner.rs`, `ono-recovery-zfs` `process.rs`), `systemctl` for the recorder service
+  (`ono-recorder` `service.rs`), the per-command far side of an agentless link (`ono-remote`
+  `agentless.rs`, both its spellings), the plugin build tool (`kuang_install.rs`) and the version
+  probe (`session.rs`). None of them reads the terminal.
+- *Recorded by process id alone* — the child may be interactive or may need the terminal's
+  signals, so it stays in the shell's process group and only it is signalled; what it starts on
+  its own is not reached: `open file`'s handler (`file_mutations.rs`; `xdg-open` and the
+  application it launches), an opaque plan action's program (`change/world.rs`), a plugin's
+  service program (`kuang_services.rs`) and a plugin's runtime process (`ono-kuang-supervisor`
+  `supervisor.rs`, which confines it itself and kills it on its own unload).
+- *Not recorded*, and a shell ended by a signal does not end them: a link's transport process —
+  `--transport local`'s agent (`context.rs`) and `ssh` (`ono-remote` `transport.rs`) — whose end
+  belongs to the link's hang-up (ADR-0161), which a signal exit skips; recording it would outlive
+  the process whenever the agent exits while the link is still held, and a signal sent then could
+  reach a reused id. The remote agent's own children (`ono-remote` `agent.rs`) run in the agent
+  process on the far side, not in this shell.
+
+Each record is made just after its child started and cleared in the step right after the child
+was waited for (or killed and waited for), before anything that can block — a channel send, a
+second stream, a report — so a record never names an id the kernel may have handed out again,
+and the escalation does not wait on a child that is gone (review Z4). Between the wait returning
+and that step lies one statement; a signal sent in that instant reaches the id the child had.
+Once the shell has begun to end on a signal, a child recorded after that is killed as it is
+recorded, under the lock the escalation's last sweep took, so none slips past it (review Z7).
+A job's evaluator's executor joins the set of
 the session that started the job. A session ends its own set — not every group in the process:
 another session in the same process owns its own (review S4); only a signal, which ends the whole
 process, ends everything the process owns.
 
 **How it ends**, the same escalation whichever way the shell leaves:
 
-1. **Ask once.** Each owned group gets `SIGTERM` and then `SIGCONT`, so a stopped program can act
-   on it — once per group, not once per look (review R6). A native job's evaluator is cancelled.
-2. **One grace period** (2 s) shared by every group. A group that appears meanwhile — a job
-   starting its next program in the instant before it saw the cancellation — is asked too. A
-   second termination signal cuts the grace period short (review M2).
-3. **Kill** what is still running with `SIGKILL`.
+0. **Settle the starts.** The grace period begins at once. Within it — and cut short by a second
+   termination signal — the escalation waits while a pipeline start is in progress, so a stage
+   forked in the instant the signal arrived is owned by the time anything is asked (reviews X1,
+   Y2, Z5). Should the wait be cut short, every later look asks again, so a stage published late
+   is still asked and killed.
+1. **Ask once.** Each owned group and each recorded child gets `SIGTERM` and then `SIGCONT`, so a
+   stopped program can act on it — once per group, not once per look (review R6). A native job's
+   evaluator is cancelled.
+2. **The rest of the one grace period** (2 s from the start) shared by every group. A group that
+   appears meanwhile — a job starting its next program in the instant before it saw the
+   cancellation — is asked too. A second termination signal cuts it short (review M2).
+3. **Kill** what is still running with `SIGKILL` — owned groups and recorded children together,
+   again on every look while any of them runs (review Z6).
 4. **Wait** a bounded moment (1 s) for it to be gone, then leave. A job whose evaluator has not
    ended by then is abandoned with the process; its threads end with it.
 
@@ -78,8 +110,9 @@ full grace period is waited out —
 and nothing is collected by the escalation: collecting a child is its owner's, and collecting
 another thread's child would make that owner's wait record a status it never saw (review M1).
 
-Leaving takes at most the two bounds, whatever the number of jobs; jobs that end on the request
-cost only the time they take.
+Leaving takes at most one grace period and one reap moment — 3 s — whatever the number of jobs
+and recorded children and however long a start is in progress; jobs that end on the request cost
+only the time they take, and a second signal leaves at most the reap moment.
 
 **Every way out runs it.** The end of a script or of `-c`, `exit`, and end of input run it from
 `Session::drop`. A signal that ends the shell — `SIGHUP` (its terminal went away), `SIGTERM`, and
@@ -155,7 +188,10 @@ shell dies of the signal), `::should_keep_running_on_a_hangup_it_was_started_ign
 `::should_end_promptly_on_sigterm_when_it_runs_in_a_background_group_of_a_terminal`,
 `::should_kill_at_once_when_a_second_termination_signal_arrives`,
 `::should_leave_no_stage_behind_when_the_signal_arrives_while_a_pipeline_is_being_started`,
-`::should_end_a_program_a_command_started_itself_when_the_shell_is_sent_sigterm`; and
+`::should_end_a_program_a_command_started_itself_when_the_shell_is_sent_sigterm`,
+`::should_kill_a_stubborn_program_a_command_started_itself_together_with_the_jobs`;
+`crates/ono-cli/tests/models.rs::should_end_a_model_provider_and_what_it_started_when_the_shell_is_sent_sigterm`;
+`crates/ono-core/tests/children.rs::should_end_a_child_recorded_once_the_shell_has_begun_to_end_and_only_then`; and
 `crates/ono-cli/tests/session_ownership.rs::should_leave_another_sessions_job_running_when_one_session_ends`;
 acceptance case `394`.
 

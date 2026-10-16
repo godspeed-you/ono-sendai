@@ -205,3 +205,75 @@ fn should_refuse_a_provider_outside_the_grants_scope_and_record_it_in_the_trail(
         run.stderr()
     );
 }
+
+#[test]
+fn should_end_a_model_provider_and_what_it_started_when_the_shell_is_sent_sigterm() {
+    // Review Z3 of issue #303: a model provider program the broker starts for one inference is no
+    // job of the executor's; a shell ending on a signal left it, and whatever it started, running.
+    // It runs in a process group of its own, recorded while it runs, and the group is ended.
+    let home = scratch();
+    plugin_home(&home);
+    let started = home.path().join("bin/grandchild.pid");
+    let model = home.path().join("bin/stuck-model");
+    std::fs::create_dir_all(model.parent().expect("a parent")).expect("bin");
+    executable(
+        &model,
+        &format!(
+            "#!/bin/sh\ntrap '' TERM\nsh -c 'trap \"\" TERM; echo $$ > {started}; exec sleep 600' &\n\
+             while :; do sleep 1; done\n",
+            started = started.display()
+        ),
+    );
+    home.write(
+        "ono/kuang/models.yaml",
+        format!(
+            "providers:\n  - id: stuck\n    name: Stuck\n    kind: local\n    location: workstation\n    command: [{model}]\n    data_policy: local-only\n",
+            model = model.display()
+        ),
+    );
+
+    let mut shell = support::Streaming::start(
+        home.path(),
+        r#"grant capability model.infer --plugin dev.example.echo --scope "providers=stuck" | count | to json; load plugin dev.example.echo; echo:infer --prompt hello | to json"#,
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !started.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let grandchild: Option<u32> = std::fs::read_to_string(&started)
+        .ok()
+        .and_then(|text| text.trim().parse().ok());
+    let sent = std::process::Command::new("kill")
+        .args(["-TERM", &shell.pid().to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(sent.success(), "the signal was sent");
+    let _ = shell.exit_signal();
+    let alive = |pid: u32| {
+        std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .ok()
+            .is_some_and(|stat| !stat.contains(") Z"))
+    };
+    let gone = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let needle = model.display().to_string();
+    while std::time::Instant::now() < gone
+        && (grandchild.is_some_and(alive) || !support::processes_naming(&needle).is_empty())
+    {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let left_grandchild = grandchild.is_some_and(alive);
+    let left_model = !support::processes_naming(&needle).is_empty();
+    if let Some(pid) = grandchild {
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .status();
+    }
+    support::kill_processes_naming(&needle);
+    let (_, stdout, stderr) = shell.finish();
+
+    assert!(grandchild.is_some(), "the model ran. {stdout}\n{stderr}");
+    assert!(
+        !left_model && !left_grandchild,
+        "neither the model ({left_model}) nor what it started ({left_grandchild}) outlived the shell. {stdout}\n{stderr}"
+    );
+}

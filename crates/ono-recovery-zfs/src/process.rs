@@ -14,6 +14,7 @@
 //! rather than a hang an operator has to diagnose.
 
 use std::io::Read;
+use std::os::unix::process::CommandExt as _;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -71,6 +72,9 @@ impl ToolRunner for ProcessRunner {
     fn run(&self, program: &str, argv: &[&str]) -> Result<ToolOutput, ErrorValue> {
         let mut child = Command::new(program)
             .args(argv)
+            // In a process group of its own, recorded while it runs, so a shell ending on a
+            // signal ends it and what it started (ADR-0959).
+            .process_group(0)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -88,17 +92,22 @@ impl ToolRunner for ProcessRunner {
         // The streams are drained on threads of their own. A child that fills a pipe buffer
         // blocks in `write`, and a parent that waits for exit before reading deadlocks with it —
         // which would defeat the bounded wait rather than enforce it.
+        let recorded = ono_core::children::Recorded::group(child.id());
         let stdout = drain(child.stdout.take());
         let stderr = drain(child.stderr.take());
 
         let deadline = Instant::now() + self.timeout;
         let status = loop {
             match child.try_wait() {
-                Ok(Some(status)) => break status,
+                Ok(Some(status)) => {
+                    recorded.reaped();
+                    break status;
+                }
                 Ok(None) => {
                     if Instant::now() >= deadline {
                         let _ = child.kill();
                         let _ = child.wait();
+                        recorded.reaped();
                         return Err(tool_failed(
                             program,
                             &format!(

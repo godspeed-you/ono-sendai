@@ -183,13 +183,25 @@ fn capture(
 ) -> Result<Vec<u8>, ErrorValue> {
     command
         .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let output = command.output().map_err(|error| {
-        ErrorValue::new(
-            ErrorCode::RemoteUnreachable,
-            format!("cannot run `{program}`: {error}"),
-        )
-    })?;
+    // In a process group of its own, recorded while it runs, so a shell ending on a signal ends
+    // it and what it started (ADR-0959).
+    std::os::unix::process::CommandExt::process_group(command, 0);
+    let output = command
+        .spawn()
+        .and_then(|child| {
+            let recorded = ono_core::children::Recorded::group(child.id());
+            let output = child.wait_with_output();
+            drop(recorded);
+            output
+        })
+        .map_err(|error| {
+            ErrorValue::new(
+                ErrorCode::RemoteUnreachable,
+                format!("cannot run `{program}`: {error}"),
+            )
+        })?;
     if output.status.success() {
         return Ok(output.stdout);
     }

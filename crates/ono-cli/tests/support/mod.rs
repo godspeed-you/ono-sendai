@@ -959,6 +959,7 @@ impl Streaming {
             .env("XDG_CONFIG_HOME", home.join("xdg"))
             .env("XDG_STATE_HOME", home.join("state"))
             .env("ONO_CONFIG_DIR", home.join("ono"))
+            .env("ONO_PLUGIN_PATH", home.join("plugins"))
             .env("NO_COLOR", "1")
             .env_remove("ONO_CONFIG")
             .stdin(std::process::Stdio::null())

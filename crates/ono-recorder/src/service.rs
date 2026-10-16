@@ -154,15 +154,28 @@ pub struct Systemctl;
 
 impl ServiceRunner for Systemctl {
     fn run(&self, arguments: &[&str]) -> Result<ServiceRun, ErrorValue> {
-        let output = std::process::Command::new("systemctl")
-            .args(arguments)
-            .output()
-            .map_err(|error| {
-                ono_temporal_core::error::store_unavailable(&format!(
-                    "`systemctl {}` could not be run: {error}",
-                    arguments.join(" ")
-                ))
-            })?;
+        // In a process group of its own, recorded while it runs, so a shell ending on a signal
+        // ends it (ADR-0959).
+        let output = std::os::unix::process::CommandExt::process_group(
+            std::process::Command::new("systemctl")
+                .args(arguments)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped()),
+            0,
+        )
+        .spawn()
+        .and_then(|child| {
+            let recorded = ono_core::children::Recorded::group(child.id());
+            let output = child.wait_with_output();
+            drop(recorded);
+            output
+        })
+        .map_err(|error| {
+            ono_temporal_core::error::store_unavailable(&format!(
+                "`systemctl {}` could not be run: {error}",
+                arguments.join(" ")
+            ))
+        })?;
         Ok(ServiceRun {
             status: output.status.code().unwrap_or(-1),
             output: String::from_utf8_lossy(&output.stdout).trim().to_owned(),

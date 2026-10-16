@@ -744,3 +744,61 @@ fn should_end_a_program_a_command_started_itself_when_the_shell_is_sent_sigterm(
     assert!(finished && ended_by == Some(15), "{stdout}\n{stderr}");
     assert!(gone, "the handler outlived the shell. {stdout}\n{stderr}");
 }
+
+#[test]
+fn should_kill_a_stubborn_program_a_command_started_itself_together_with_the_jobs() {
+    // Review Z6: a program a command started itself — here `open file`'s handler, ignoring
+    // SIGTERM — was sent SIGKILL only after the escalation had waited out its whole REAP moment
+    // for it, a second it could not use. It is killed with the jobs, so once a second signal
+    // has cut the grace period short the shell is gone at once.
+    let home = scratch();
+    let path = home.path().join("jobs/noting-handler.sh");
+    let noted = home.path().join("jobs/handler-terms");
+    std::fs::create_dir_all(home.path().join("jobs")).expect("the directory");
+    let started = path.with_extension("started");
+    support::executable(
+        &path,
+        &format!(
+            "#!/bin/sh\ntrap 'echo term >> {}' TERM\ntrap '' INT\nexec </dev/null >/dev/null 2>&1\n\
+             : > '{}'\nwhile :; do sleep 0.05; done\n",
+            noted.display(),
+            started.display()
+        ),
+    );
+    let guard = Stubborn { path: path.clone() };
+    let file = home.write("jobs/opened.txt", "");
+    let script = format!("open file {} --with {}", file.display(), path.display());
+
+    let mut shell = Streaming::start(home.path(), &script);
+    let deadline = Instant::now() + BUDGET;
+    while !started.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let pid = shell.pid().to_string();
+    let term = || {
+        let sent = std::process::Command::new("kill")
+            .args(["-TERM", &pid])
+            .status()
+            .expect("kill runs");
+        assert!(sent.success(), "the signal was sent");
+    };
+    term();
+    while !noted.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let second = Instant::now();
+    term();
+    let ended_by = shell.exit_signal();
+    let took = second.elapsed();
+    let (finished, stdout, stderr) = shell.finish();
+
+    assert!(finished && ended_by == Some(15), "{stdout}\n{stderr}");
+    assert!(
+        guard.gone_within(Duration::from_secs(10)),
+        "the handler did not outlive the shell. {stdout}\n{stderr}"
+    );
+    assert!(
+        took < Duration::from_millis(900),
+        "the handler was killed with the jobs rather than after a one-second wait: {took:?}"
+    );
+}

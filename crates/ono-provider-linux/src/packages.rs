@@ -459,12 +459,16 @@ pub(crate) async fn run_in(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
+        // A group of its own, so the package tools it starts are reached as well.
+        .process_group(0)
         .spawn();
     // Recorded while it runs, so a shell ending on a signal ends it too (ADR-0959).
     let output = async {
         let child = child?;
-        let _recorded = ono_core::children::Recorded::of(child.id());
-        child.wait_with_output().await
+        let recorded = ono_core::children::Recorded::group_of(child.id());
+        let output = child.wait_with_output().await;
+        drop(recorded);
+        output
     }
     .await
     .map_err(|error| {

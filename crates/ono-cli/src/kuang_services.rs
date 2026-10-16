@@ -541,7 +541,7 @@ impl HostServices for ShellHost {
         // (ADR-0959).
         let recorded = ono_core::children::Recorded::of(child.id());
         tokio::spawn(async move {
-            let _recorded = recorded;
+            let recorded = recorded;
             use tokio::io::AsyncBufReadExt;
             let out_tx = tx.clone();
             let out = tokio::spawn(async move {
@@ -576,6 +576,8 @@ impl HostServices for ShellHost {
             let _ = out.await;
             let _ = err.await;
             let exited = child.wait().await.ok().and_then(|status| status.code());
+            // Cleared in the step right after the child is collected (review Z4).
+            drop(recorded);
             let _ = tx.send(Ok(json!({"exited": exited}))).await;
         });
         Ok(rx)
