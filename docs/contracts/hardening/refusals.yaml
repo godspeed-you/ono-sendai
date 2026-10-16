@@ -24,7 +24,9 @@
 #                each key is attached somewhere in `decided_by`'s own sources, so a row cannot
 #                claim a field nobody sets.
 #   says         a fragment the rendered message contains, which is the human half. §54.2 is about
-#                the ordinary error, and metadata is not rendered by the default path.
+#                the ordinary error. Since ADR-0938 the default path also renders each `explains`
+#                key the error carries, as a `key: value` line between the message and the help,
+#                in this file's order; `says` stays the check on the sentence itself.
 #   example      §54.1's own sentence, for the four refusals the specification writes out.
 #   raised       false for a code that is declared and not yet constructed anywhere. Stated rather
 #                than omitted: a declared code nobody raises is a contract with no behaviour behind
