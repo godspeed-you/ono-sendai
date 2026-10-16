@@ -741,7 +741,11 @@ fn planned_path(
     directory: Option<&Path>,
 ) -> Result<String, ErrorValue> {
     let path = Path::new(object);
-    if path.is_absolute() {
+    // The rule is the filesystem's: a file or directory is frozen by its canonical path. Any
+    // other identity — `mount:/srv`, `<namespace>:<unit>` — is acted on as before, the recorded
+    // object reaching its provider as it stands (review Y4).
+    let a_path = frozen.is_none_or(|frozen| frozen.starts_with('/'));
+    if path.is_absolute() || !a_path {
         return Ok(object.to_owned());
     }
     let base = match directory {
@@ -1422,6 +1426,20 @@ mod tests {
             absolute,
             "an absolute path is acted on as recorded"
         );
+    }
+
+    #[test]
+    fn should_hand_on_a_relative_object_whose_frozen_identity_is_not_a_file_as_recorded() {
+        // Review Y4: the rule is the filesystem's. A mount or a service is frozen by an identity
+        // of its own, and its recorded object reaches its provider as it stands.
+        let root = ono_testkit::scratch();
+        for frozen in ["mount:/srv/data", "systemd:nginx.service"] {
+            assert_eq!(
+                planned_path("srv/data", Some(frozen), Some(root.path())).ok(),
+                Some("srv/data".to_owned()),
+                "{frozen}: acted on as recorded"
+            );
+        }
     }
 
     #[test]

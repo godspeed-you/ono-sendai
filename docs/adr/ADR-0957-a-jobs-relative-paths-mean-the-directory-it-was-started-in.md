@@ -71,7 +71,9 @@ by these mechanisms, each at a seam rather than in a command:
    the same class, fixed by the same change (review N1). A plan stored before this — its operand
    recorded as written — is applied only where that operand, resolved from the applying
    directory, is the very target the plan froze; otherwise `apply` refuses with
-   `change.target_unresolved` and changes nothing. The freeze itself never resolves a relative
+   `change.target_unresolved` and changes nothing. The rule is for files and directories, whose
+   frozen identity is a canonical path; a plan whose target is frozen by an identity of another
+   kind (`mount:/srv`, `<namespace>:<unit>`) hands its recorded object on as before (review Y4). The freeze itself never resolves a relative
    path through the process directory: it refuses one (review X2).
 7. **Links.** Inside a link frame a link's remote answers what the stages ask, and a directory of
    this machine means nothing there: those paths travel to it as written, with no directory on
