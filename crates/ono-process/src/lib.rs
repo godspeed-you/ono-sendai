@@ -71,6 +71,7 @@ pub use command::{Command, Input, Output, Redirect};
 pub use error::{Error, Result};
 pub use executor::{
     Canceller, Executor, Foreground, ForegroundOutcome, OwnedGroup, Ownership, owned_groups,
+    starts_in_flight,
 };
 pub use fd::Fd;
 pub use job::{Job, JobChange, JobId, JobProcess, JobState};

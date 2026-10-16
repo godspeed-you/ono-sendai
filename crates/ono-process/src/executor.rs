@@ -165,6 +165,33 @@ fn group_runs(pgid: i32) -> bool {
     })
 }
 
+/// How many `Executor::start`s are running right now, in every executor of the process.
+static STARTS_IN_FLIGHT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// How many pipelines are being started right now. A shell ending on a signal waits for them
+/// before it looks at what it owns: a stage mid-spawn is owned only once its start publishes the
+/// group (ADR-0959, review Y2).
+#[must_use]
+pub fn starts_in_flight() -> usize {
+    STARTS_IN_FLIGHT.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// One start in progress, counted for as long as it lives.
+struct InFlight;
+
+impl InFlight {
+    fn begin() -> Self {
+        STARTS_IN_FLIGHT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        STARTS_IN_FLIGHT.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// Every process group this process still owns: a foreground group some executor is waiting on,
 /// or a background job's that has a member left to collect (ADR-0959).
 #[must_use]
@@ -422,7 +449,12 @@ impl Executor {
         let cell = Arc::clone(&self.foreground);
         let running = self.start(pipeline, true, &cell)?;
         if running.pgid != 0 {
-            self.terminal.give_to(running.pgid)?;
+            if let Err(error) = self.terminal.give_to(running.pgid) {
+                // Nobody will wait on this group in the foreground: the cell must not keep
+                // naming it, or the next pipeline could not be owned while it starts (review Y5).
+                self.foreground.set(0);
+                return Err(error);
+            }
             self.foreground.set(running.pgid);
         }
         Ok(Foreground {
@@ -691,6 +723,10 @@ impl Executor {
         foreground: bool,
         cell: &Arc<ForegroundGroup>,
     ) -> Result<Running> {
+        // Counted while it runs, so a shell ending on a signal waits for a start in progress
+        // before it looks at what it owns (review Y2). Counted before the check below: a start
+        // that has not seen the end begin has been counted by the time the end looks.
+        let _in_flight = InFlight::begin();
         // A shell that has begun to end on a signal starts nothing more (ADR-0959, review B1).
         if crate::signals::terminating() {
             return Err(Error::new(
@@ -752,9 +788,13 @@ impl Executor {
         for ready in prepared {
             if crate::signals::terminating() {
                 drop(ready);
+                // Reported as ended by the signal the shell is ending on (review Y6).
+                let signal = crate::signals::termination_signal()
+                    .and_then(|signal| u8::try_from(signal.number()).ok())
+                    .unwrap_or(15);
                 running.stages.push(RunningStage {
                     pid: 0,
-                    state: JobState::Exited(ExitStatus::from_signal(15)),
+                    state: JobState::Exited(ExitStatus::from_signal(signal)),
                     failure: None,
                     stdout: None,
                     stderr: None,

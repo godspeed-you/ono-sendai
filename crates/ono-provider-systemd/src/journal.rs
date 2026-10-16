@@ -272,6 +272,9 @@ async fn run(
             return;
         }
     };
+    // Recorded for as long as it follows the journal, so a shell ending on a signal ends it too
+    // (ADR-0959).
+    let _recorded = ono_core::children::Recorded::of(child.id());
     let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
         let _ = sink
             .fail(ErrorValue::new(

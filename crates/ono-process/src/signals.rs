@@ -222,7 +222,20 @@ pub fn termination_signals() -> u32 {
     TERMINATION_SIGNALS.load(Ordering::SeqCst)
 }
 
+/// The first termination signal's number, or `0`.
+static TERMINATION_SIGNAL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// The signal the shell is ending on, once it has begun to end on one.
+#[must_use]
+pub fn termination_signal() -> Option<Signal> {
+    match TERMINATION_SIGNAL.load(Ordering::SeqCst) {
+        0 => None,
+        number => Signal::from_number(number),
+    }
+}
+
 extern "C" fn note_termination(signal: libc::c_int) {
+    let _ = TERMINATION_SIGNAL.compare_exchange(0, signal, Ordering::SeqCst, Ordering::SeqCst);
     TERMINATING.store(true, Ordering::SeqCst);
     TERMINATION_SIGNALS.fetch_add(1, Ordering::SeqCst);
     let descriptor = TERMINATION_PIPE.load(Ordering::Relaxed);

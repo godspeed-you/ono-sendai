@@ -33,15 +33,30 @@ function or a pipeline backgrounded, and those a job's own evaluator backgrounds
 group while one of its members is uncollected and is cleared under its lock in the same step that
 collects the last one (review R10 of v0.6.3), so a group that has ended, or whose id the kernel has
 handed out again, is never signalled. `fg`, `kill %N` and `wait` take a job out of the table as
-before; what is no longer in a cell is not touched. A pipeline's group is owned from its first
-member on: its cell names the group as soon as the first stage has started, not once every stage
-has, and a shell that has begun to end starts no further stage — so a signal arriving while a
-long pipeline is being started leaves none of its started stages behind; `SIGKILL` is repeated
-while a group still runs, for a member that joined it after the first (review X1).
+before; what is no longer in a cell is not touched. A pipeline's group is owned from its first member on: its cell names the group as soon as the
+first stage's `spawn` has returned, not once every stage has; a shell that has begun to end starts
+no further stage, and reports those it did not start as ended by the signal it is ending on
+(review Y6). Starts in progress are counted, and the escalation waits — within the grace period —
+until none is in progress before it looks at what is owned, so a stage forked in the instant the
+signal arrived is owned by the time anything is asked (reviews X1, Y2). From then on a group is
+followed from `SIGTERM` to `SIGKILL` for as long as its cell names it and a member runs; its cell
+stays until its owner has collected the last member, so no intermediate look can lose it.
+`SIGKILL` is repeated while a group still runs.
 
-Children a provider starts itself for one command — an `open file` handler, the account tools, a
-plugin's build tool — are outside this model: they are not jobs, the command waits for each of
-them and ends with it, and they last no longer than the command that started them. A job's evaluator's executor joins the set of
+**Children a command starts itself**, outside the executor, are recorded for as long as they run
+(`ono_core::children`): `open file`'s handler, a package manager, the account tools, `journalctl`
+following the journal, an opaque plan action's program, the plugin build tool, a version probe,
+a plugin's service program and a plugin's runtime process. Each is recorded by its process id
+from just after it started until just after it was waited for. A shell ending on a signal sends
+them `SIGTERM` with its jobs, waits for them within the same grace period, and sends what still
+runs `SIGKILL` (review Y3). On a normal exit the command that started each one is waiting for it,
+and ends with it. One kind is not recorded, and a shell ended by a signal does not end it:
+a link's transport process (`--transport local`'s agent, `ssh`), whose end belongs to the link's
+hang-up (ADR-0161), which a signal exit skips; recording it by process id would outlive the
+process whenever the agent exits while the link is still held, and a signal sent then could reach
+a reused id. Between a recorded child being collected and its record being cleared lies one
+statement of the code that waited for it; a signal sent in that instant reaches the id the child
+had. A job's evaluator's executor joins the set of
 the session that started the job. A session ends its own set — not every group in the process:
 another session in the same process owns its own (review S4); only a signal, which ends the whole
 process, ends everything the process owns.
@@ -139,7 +154,8 @@ shell dies of the signal), `::should_keep_running_on_a_hangup_it_was_started_ign
 `::should_keep_running_on_an_interrupt_it_was_started_ignoring`,
 `::should_end_promptly_on_sigterm_when_it_runs_in_a_background_group_of_a_terminal`,
 `::should_kill_at_once_when_a_second_termination_signal_arrives`,
-`::should_leave_no_stage_behind_when_the_signal_arrives_while_a_pipeline_is_being_started`; and
+`::should_leave_no_stage_behind_when_the_signal_arrives_while_a_pipeline_is_being_started`,
+`::should_end_a_program_a_command_started_itself_when_the_shell_is_sent_sigterm`; and
 `crates/ono-cli/tests/session_ownership.rs::should_leave_another_sessions_job_running_when_one_session_ends`;
 acceptance case `394`.
 

@@ -345,13 +345,18 @@ fn open(action: &Action, path: &Path) -> ActionOutcome {
     if let Some(directory) = action.working_directory() {
         command.current_dir(directory);
     }
-    match command
+    // Recorded while it runs, so a shell ending on a signal ends it too (ADR-0959).
+    let ran = command
         .arg(path)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
-    {
+        .spawn()
+        .and_then(|mut child| {
+            let _recorded = ono_core::children::Recorded::new(child.id());
+            child.wait()
+        });
+    match ran {
         Ok(status) if status.success() => ActionOutcome::succeeded(action, true),
         Ok(status) => ActionOutcome::failed(
             action,

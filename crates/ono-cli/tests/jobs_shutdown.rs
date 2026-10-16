@@ -711,3 +711,36 @@ fn should_leave_no_stage_behind_when_the_signal_arrives_while_a_pipeline_is_bein
     assert!(finished && ended_by == Some(15), "{stdout}\n{stderr}");
     assert_eq!(left, 0, "no stage of the pipeline outlived the shell");
 }
+
+#[test]
+fn should_end_a_program_a_command_started_itself_when_the_shell_is_sent_sigterm() {
+    // Review Y3: a program a provider starts for one command — here `open file`'s handler — is
+    // no job of the executor's, and a shell ending on a signal left it running. It is recorded
+    // while the command waits for it, and ended with everything else.
+    let home = scratch();
+    let handler = Stubborn::at(&home, "handler");
+    let file = home.write("jobs/opened.txt", "");
+    let script = format!(
+        "open file {} --with {}",
+        file.display(),
+        handler.path.display()
+    );
+
+    let mut shell = Streaming::start(home.path(), &script);
+    let deadline = Instant::now() + BUDGET;
+    while !handler.started().exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let sent = std::process::Command::new("kill")
+        .args(["-TERM", &shell.pid().to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(sent.success(), "the signal was sent");
+    let ended_by = shell.exit_signal();
+    let gone = handler.gone_within(Duration::from_secs(10));
+    drop(handler);
+    let (finished, stdout, stderr) = shell.finish();
+
+    assert!(finished && ended_by == Some(15), "{stdout}\n{stderr}");
+    assert!(gone, "the handler outlived the shell. {stdout}\n{stderr}");
+}

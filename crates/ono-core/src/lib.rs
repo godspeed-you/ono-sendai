@@ -11,6 +11,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod children;
 mod diagnostic;
 mod error;
 mod exit;

@@ -537,7 +537,11 @@ impl HostServices for ShellHost {
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         let (tx, rx) = tokio::sync::mpsc::channel(64);
+        // Recorded until it has been waited for, so a shell ending on a signal ends it too
+        // (ADR-0959).
+        let recorded = ono_core::children::Recorded::of(child.id());
         tokio::spawn(async move {
+            let _recorded = recorded;
             use tokio::io::AsyncBufReadExt;
             let out_tx = tx.clone();
             let out = tokio::spawn(async move {

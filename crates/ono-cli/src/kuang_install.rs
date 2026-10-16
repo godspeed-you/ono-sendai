@@ -1139,10 +1139,17 @@ fn compile_component(
     if let Some(store) = &store {
         run.arg("--store").arg(store);
     }
+    // Recorded while it runs, so a shell ending on a signal ends it too (ADR-0959).
     let output = run
         .arg(directory.join(entry))
         .stdin(std::process::Stdio::null())
-        .output()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|child| {
+            let _recorded = ono_core::children::Recorded::new(child.id());
+            child.wait_with_output()
+        })
         .map_err(|error| unavailable(format!("`{}` could not be run: {error}", tool.display())))?;
     if output.status.success() {
         return Ok(());

@@ -451,7 +451,7 @@ pub(crate) async fn run_in(
     if let Some(directory) = directory {
         command.current_dir(directory);
     }
-    let output = command
+    let child = command
         .args(arguments)
         .env("LC_ALL", "C")
         .env("DEBIAN_FRONTEND", "noninteractive")
@@ -459,14 +459,20 @@ pub(crate) async fn run_in(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .output()
-        .await
-        .map_err(|error| {
-            ErrorValue::new(
-                ErrorCode::ProviderUnavailable,
-                format!("`{}` could not be run: {error}", program.display()),
-            )
-        })?;
+        .spawn();
+    // Recorded while it runs, so a shell ending on a signal ends it too (ADR-0959).
+    let output = async {
+        let child = child?;
+        let _recorded = ono_core::children::Recorded::of(child.id());
+        child.wait_with_output().await
+    }
+    .await
+    .map_err(|error| {
+        ErrorValue::new(
+            ErrorCode::ProviderUnavailable,
+            format!("`{}` could not be run: {error}", program.display()),
+        )
+    })?;
     Ok(Answer {
         status: output.status.code(),
         stdout: output.stdout,

@@ -2399,13 +2399,18 @@ fn adapter_registry() -> ono_adapter::Registry {
 /// The probe is not a job: it has no terminal, no stdin and no place in the job table, so the
 /// standard library's process API is the right tool rather than the executor of spec §18.
 pub fn probe_version(executable: &std::path::Path, argv: &[String]) -> Option<String> {
+    // Recorded while it runs, so a shell ending on a signal ends it too (ADR-0959).
     let output = std::process::Command::new(executable)
         .args(argv)
         .env("LC_ALL", "C")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .output()
+        .spawn()
+        .and_then(|child| {
+            let _recorded = ono_core::children::Recorded::new(child.id());
+            child.wait_with_output()
+        })
         .ok()?;
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));

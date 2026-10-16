@@ -312,8 +312,9 @@ impl Supervisor {
                 let stdin = child.stdin.take().ok_or_else(broken_pipes)?;
                 let stdout = child.stdout.take().ok_or_else(broken_pipes)?;
                 tokio::spawn(read_frames(stdout, frame_limits, frame_tx));
+                let recorded = ono_core::children::Recorded::of(child.id());
                 (
-                    Runtime::Native(child),
+                    Runtime::Native(child, recorded),
                     Box::new(stdin),
                     confinement,
                     sandbox,
@@ -761,7 +762,9 @@ fn validate_command_contribution(
 /// runtime Ono embeds (spec §31.10, ADR-0569). The actor treats both alike: a writer for its
 /// standard input, frames from its standard output, and a way to end it and learn how it ended.
 enum Runtime {
-    Native(Child),
+    /// A native process, recorded until it has been waited for, so a shell ending on a signal
+    /// ends it too (ADR-0959).
+    Native(Child, Option<ono_core::children::Recorded>),
     Wasm(crate::wasm::WasmInstance),
 }
 
@@ -777,7 +780,7 @@ impl Runtime {
     /// itself, and whenever the kernel has nothing to say.
     async fn resident_peak(&mut self) -> Option<u64> {
         match self {
-            Runtime::Native(child) => {
+            Runtime::Native(child, _) => {
                 let pid = child.id()?;
                 // The call blocks until the instance has ended — exactly as long as the `wait`
                 // that follows it would have — so it belongs on a blocking thread.
@@ -792,7 +795,7 @@ impl Runtime {
 
     async fn kill(&mut self) {
         match self {
-            Runtime::Native(child) => {
+            Runtime::Native(child, _) => {
                 let _ = child.kill().await;
             }
             Runtime::Wasm(instance) => instance.kill(),
@@ -801,7 +804,12 @@ impl Runtime {
 
     async fn wait(&mut self) -> Ended {
         match self {
-            Runtime::Native(child) => Ended::Native(child.wait().await.ok()),
+            Runtime::Native(child, recorded) => {
+                let ended = child.wait().await.ok();
+                // Waited for: no longer a child to end, and its id may be another's soon.
+                *recorded = None;
+                Ended::Native(ended)
+            }
             Runtime::Wasm(instance) => Ended::Wasm(instance.wait().await),
         }
     }
@@ -1774,7 +1782,7 @@ impl Actor {
     /// and the CPU time it has used (spec §31.33).
     fn sample_memory(&mut self) {
         let (allocated, cpu) = match &self.child {
-            Runtime::Native(child) => {
+            Runtime::Native(child, _) => {
                 let Some(pid) = child.id() else {
                     return;
                 };

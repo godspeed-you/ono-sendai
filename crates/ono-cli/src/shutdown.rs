@@ -31,6 +31,13 @@ pub const REAP: Duration = Duration::from_secs(1);
 /// owner of each group collects it (review M1). `settled` says whether the caller's own work — its
 /// jobs' evaluators — has finished, so the shell does not wait out a grace period nothing needs.
 pub fn end_owned(owned: impl Fn() -> Vec<OwnedGroup>, settled: impl Fn() -> bool) {
+    // A pipeline being started publishes its group only once its first stage exists; a start in
+    // progress — none begins once the shell is ending — is waited for, within the grace period,
+    // so every group it started is owned before anything is looked at (review Y2).
+    let started = Instant::now();
+    while ono_process::starts_in_flight() > 0 && started.elapsed() < GRACE {
+        std::thread::sleep(Duration::from_millis(2));
+    }
     let mut asked: BTreeSet<i32> = BTreeSet::new();
     let ask = |asked: &mut BTreeSet<i32>, signal: Signal| {
         for group in owned() {
@@ -158,7 +165,11 @@ pub fn on_termination(interactive: bool) -> Result<(), ono_value::ErrorValue> {
         {
             cancel.store(true, Ordering::SeqCst);
         }
-        end_shell(ono_process::owned_groups, || true);
+        // The children commands started themselves are asked with the jobs, and killed after
+        // the grace period with what is left of them (review Y3).
+        signal_recorded(nix::sys::signal::Signal::SIGTERM);
+        end_shell(ono_process::owned_groups, || !recorded_running());
+        signal_recorded(nix::sys::signal::Signal::SIGKILL);
         if let Some(saved) = &saved {
             ono_process::restore_if_foreground(saved);
         }
@@ -176,4 +187,27 @@ pub fn yield_to_termination() {
     while ono_process::terminating() {
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// Sends `signal` to every child a command started itself and is still waiting for.
+fn signal_recorded(signal: nix::sys::signal::Signal) {
+    ono_core::children::for_each(|pid| {
+        let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), signal);
+    });
+}
+
+/// Whether a child a command started itself is still running (an exited one waits only to be
+/// collected by its command, and counts as gone).
+fn recorded_running() -> bool {
+    let mut running = false;
+    ono_core::children::for_each(|pid| {
+        let state = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok();
+        let alive = state
+            .as_deref()
+            .and_then(|stat| stat.rsplit_once(')'))
+            .and_then(|(_, rest)| rest.split_whitespace().next())
+            .is_some_and(|state| state != "Z" && state != "X");
+        running |= alive;
+    });
+    running
 }

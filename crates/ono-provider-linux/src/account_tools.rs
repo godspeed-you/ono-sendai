@@ -156,19 +156,25 @@ impl AccountCommand {
             )
             .with_help("the shadow-utils package provides it on every major distribution")
         })?;
-        let output = tokio::process::Command::new(program)
+        let child = tokio::process::Command::new(program)
             .args(&self.arguments)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
-            .output()
-            .await
-            .map_err(|error| {
-                ErrorValue::new(
-                    ErrorCode::ProviderUnavailable,
-                    format!("`{}` could not be started: {error}", self.program),
-                )
-            })?;
+            .spawn();
+        // Recorded while it runs, so a shell ending on a signal ends it too (ADR-0959).
+        let output = async {
+            let child = child?;
+            let _recorded = ono_core::children::Recorded::of(child.id());
+            child.wait_with_output().await
+        }
+        .await
+        .map_err(|error| {
+            ErrorValue::new(
+                ErrorCode::ProviderUnavailable,
+                format!("`{}` could not be started: {error}", self.program),
+            )
+        })?;
         let outcome = match output.status.code() {
             Some(0) => return Ok(()),
             Some(status) => outcome_of(self.program, status),
