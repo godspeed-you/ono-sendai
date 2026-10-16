@@ -3,8 +3,13 @@
 > Fuzz parser, serializers, remote protocol, plugin protocol and procfs/netlink decoders. A shell
 > consumes adversarial filenames and external output by nature. — spec §35.6
 
-Five targets, one per area, and a small mutation engine around them. The decision, its limits and
-what would lift them: **ADR-0313**.
+Nineteen targets and a small mutation engine around them: the parser, the serializers, the remote
+protocol and handshake, the plugin protocol, the system and adapter decoders, and the formats v0.5
+and v0.6 added — the temporal store, events, time selectors and causal candidates, change records,
+plan grammar, persistence domains, storage-tool output, snapshot paths, provider messages, the
+impact graph and recovery metadata. `cargo run -p ono-fuzz -- list` prints them. The decision,
+its limits and what would lift them: **ADR-0313**; the coverage-guided tier beside it:
+**ADR-0521**.
 
 ```sh
 cargo run -p ono-fuzz -- list                     # the targets and how many seeds each has
@@ -43,18 +48,36 @@ the mutator has somewhere to start.
 
 Add a seed by dropping a file in. Nothing indexes them; the directory is the index.
 
+## The coverage-guided tier
+
+`fuzz/coverage-guided/` is a second driver for the same nineteen target bodies
+(`fuzz/src/targets.rs`): `cargo-fuzz` with libFuzzer, which needs a nightly toolchain and is
+therefore a workspace of its own, outside the gate's (v0.4.1 §41.2, ADR-0521).
+`.github/workflows/fuzz.yml` runs every target daily on `main`, five minutes each by default
+(§41.3), and a finding reproduces on the pinned toolchain with `repro`:
+
+```sh
+cargo +nightly fuzz run --fuzz-dir fuzz/coverage-guided parser
+```
+
+`fuzz/tests/corpus.rs` holds the workflow's target list against the targets themselves, so a
+target added in one place and forgotten in the other fails the gate.
+
 ## What this does not do
 
-There is no coverage feedback (ADR-0313 §2). The engine cannot tell that an input reached a new
-branch, so it cannot keep it and build on it, and a bounded run that finds nothing has found
-nothing — it has not shown there is nothing to find. A true hang is not detected either: the
-runner measures how long an input took after it returns.
+The engine of `ono-fuzz` has no coverage feedback (ADR-0313 §2): it cannot tell that an input
+reached a new branch, so it cannot keep it and build on it, and a bounded gate run that finds
+nothing has found nothing — it has not shown there is nothing to find. The coverage-guided tier
+above is what explores; the gate's run is a regression suite. A true hang is not detected by
+`ono-fuzz` either: the runner measures how long an input took after it returns.
 
 The gate's own run passes a loose per-input ceiling, because it may run on a machine several
 other things are compiling on, and a red gate that means "the machine was busy" teaches people to
 ignore it. Slow inputs are for a campaign on a quiet machine, at the default two seconds. Crashes
 are what the gate is for.
 
-`ono-fuzz` writes nothing outside `fuzz/artifacts/` and reads nothing outside `fuzz/corpus/`. It
-is not a sandbox: a target calls the real decoder, and a decoder that shells out or opens a file
-would do so here too. None of these five do.
+`ono-fuzz` writes nothing outside `fuzz/artifacts/` and a `--journal` you name, and reads nothing
+outside `fuzz/corpus/` — except `temporal-store`, which writes each input to a file in a fresh
+temporary directory, because the decoder it exercises opens a ledger database by path. It is not a
+sandbox: a target calls the real decoder, and a decoder that shells out or opens a file would do
+so here too. None of the nineteen shells out.
