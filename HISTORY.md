@@ -108,9 +108,14 @@ made things the shell already did in two ways behave as one design — completio
 predicate first among them. v0.6.2 changed what the shell is built from and how it is proven: a
 binary half the size held to a budget, KUANG/11 components compiled once at install, a static core
 build, and a test suite and release tooling that give the same answer on a loaded machine as on a
-quiet one.
+quiet one. v0.6.3 stabilized the language and the contracts: a function is a pipeline stage wherever
+it stands, a block streams inside a function and runs as a background job, `to jsonl` writes a live
+stream as it arrives, `explain`'s plan is data, completion answers outside a terminal, and every
+command example runs against the schema its command declares.
 
-Four further enhancements — v0.7 to v0.10, from rich terminal presentation to native AI
+Three stabilization releases come next, each a milestone cut by subsystem: v0.6.4 for the system
+and spatial model, v0.6.5 for the KUANG/11 ecosystem, v0.6.6 for remote links and change. After
+them, four further enhancements — v0.7 to v0.10, from rich terminal presentation to native AI
 assistance — are specified and not yet built.
 
 ## How it was built
