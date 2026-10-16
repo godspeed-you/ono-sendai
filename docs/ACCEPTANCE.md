@@ -10,7 +10,7 @@ decides whether that has been reached.
 
 ---
 
-## 1. The three referees
+## 1. The four referees
 
 | Referee | Command | Answers |
 |---|---|---|
@@ -3691,7 +3691,8 @@ Conventions this subsection relies on:
 ## 5. Stopping rule
 
 An agent stops when `scripts/release-check.sh` prints `release-check: the shell is
-release-ready`. Any other outcome means there is a next task in `docs/STATE.md`.
+release-ready`. Any other outcome means there is a next task: in the issue tracker, which holds
+the backlog by release milestone (ADR-0425), or on the board in `docs/STATE.md`.
 
 Running out of easy work is not a stopping condition. Neither is a green quality gate, a passing
 acceptance suite on its own, a completed phase, or a tidy-looking repository. If a box in
