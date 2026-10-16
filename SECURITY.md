@@ -130,7 +130,9 @@ Two further things are deliberately out of scope, and are not vulnerabilities:
   is a boundary; what you deliberately put in it is your decision, not an escalation.
 - **Commands you ran.** The shell executes what it is asked to execute. `explain` shows what a
   mutation would do before it does it, and that is the protection offered — not a refusal to obey
-  its user.
+  its user. `explain` itself runs nothing: it evaluates only what reads the session — literals and
+  variables — states any other prefix-assignment value as written, and refuses a quoted subject
+  that would have to run code to be explained (`Ono-Sendai-E0702`, ADR-0939).
 
 ## Cryptographic material on disk
 
