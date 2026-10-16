@@ -7,6 +7,7 @@ Derived from the machine-readable contracts in `docs/contracts/`, which are the 
 | Page | Contract |
 |---|---|
 | [Commands](commands.md) | `docs/contracts/commands/*.yaml` — every command, its schemas, selectors, options and examples |
+| [Language](language.md) | `docs/contracts/language.yaml` — keywords, operators, argument modes, literals, resolution order and statements: functions as stages, blocks and `&` jobs (spec §6, §19, §46.3) |
 | [Verbs](verbs.md) | `docs/contracts/verbs.yaml` — the controlled vocabulary of spec §7 |
 | [Targets](targets.md) | `docs/contracts/targets.yaml` — the nouns of spec §8 |
 | [Schemas](schemas.md) | `docs/contracts/schemas/*.v1.yaml` — the object contracts of spec §28 |

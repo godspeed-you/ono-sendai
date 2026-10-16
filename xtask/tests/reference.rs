@@ -852,3 +852,44 @@ fn should_resolve_every_anchor_a_generated_page_links_to() {
         broken.join("\n  ")
     );
 }
+
+#[test]
+fn should_render_the_language_surface_into_its_own_reference_page() {
+    // Spec §46.3 lists "language reference sections" among what the grammar's registries produce,
+    // and `language.yaml` said so of itself; until ADR-0960 no page rendered it, so functions as
+    // stages and `&` jobs were in no reference at all.
+    let repo = registries();
+    repo.write(
+        "docs/contracts/language.yaml",
+        "version: 1\nkeywords:\n  statement: [let, fn]\n  expression: [and]\n  literal: [true, false, null]\noperators:\n  expression:\n    - {symbol: \"or\", precedence: 1, associativity: left, arity: binary, production: logical_or, doc: \"Disjunction.\"}\n  pipeline:\n    - {symbol: \"|\", production: stage_list, doc: \"Connect two stages.\"}\n    - {symbol: \"&\", production: pipeline, doc: \"Detach the line into a job.\"}\nstatements:\n  - {form: \"fn name() { … }\", doc: \"A call stands in any stage of a pipeline.\"}\nresolution_order:\n  doc: First match wins.\n  steps:\n    - {step: 2, kind: function, doc: \"A user function, in every stage.\"}\nliterals:\n  null: {forms: [\"null\"], doc: \"Unknown data.\"}\n",
+    );
+    let pages = generate(repo.path()).expect("generation");
+    let language = &pages
+        .iter()
+        .find(|page| page.path == "docs/reference/language.md")
+        .expect("a language reference")
+        .contents;
+    for expected in [
+        "| literal | `true`, `false`, `null` |",
+        "| `or` | 1 | left | binary | Disjunction. |",
+        "| `\\|` | Connect two stages. |",
+        "| `&` | Detach the line into a job. |",
+        "| `fn name() { … }` | A call stands in any stage of a pipeline. |",
+        "| 2 | function | A user function, in every stage. |",
+        "| null | `null` | Unknown data. |",
+    ] {
+        assert!(
+            language.contains(expected),
+            "{expected:?} missing from the language reference:\n{language}"
+        );
+    }
+    let index = &pages
+        .iter()
+        .find(|page| page.path == "docs/reference/README.md")
+        .expect("an index")
+        .contents;
+    assert!(
+        index.contains("[Language](language.md)"),
+        "the index does not link the language page:\n{index}"
+    );
+}

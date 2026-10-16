@@ -71,6 +71,7 @@ pub fn generate(root: &Path) -> Result<Vec<Page>, GenerateError> {
     let packs = load_packs(&spec.join("adapters").join("first-party"))?;
     let streaming = load(&spec.join("hardening").join("streaming_classification.yaml"))?;
     let boundaries = load(&spec.join("hardening").join("security_boundaries.yaml"))?;
+    let language = load(&spec.join("language.yaml"))?;
 
     let mut pages = vec![
         Page {
@@ -80,6 +81,10 @@ pub fn generate(root: &Path) -> Result<Vec<Page>, GenerateError> {
         Page {
             path: "docs/reference/commands.md".to_owned(),
             contents: commands_page(&commands),
+        },
+        Page {
+            path: "docs/reference/language.md".to_owned(),
+            contents: language_page(language.as_ref()),
         },
         Page {
             path: "docs/reference/verbs.md".to_owned(),
@@ -225,6 +230,9 @@ fn index_page() -> String {
          |---|---|\n\
          | [Commands](commands.md) | `docs/contracts/commands/*.yaml` — every command, its schemas, \
          selectors, options and examples |\n\
+         | [Language](language.md) | `docs/contracts/language.yaml` — keywords, operators, argument \
+         modes, literals, resolution order and statements: functions as stages, blocks and `&` \
+         jobs (spec §6, §19, §46.3) |\n\
          | [Verbs](verbs.md) | `docs/contracts/verbs.yaml` — the controlled vocabulary of spec §7 |\n\
          | [Targets](targets.md) | `docs/contracts/targets.yaml` — the nouns of spec §8 |\n\
          | [Schemas](schemas.md) | `docs/contracts/schemas/*.v1.yaml` — the object contracts of spec §28 |\n\
@@ -392,6 +400,361 @@ fn commands_page(families: &BTreeMap<String, Yaml>) -> String {
     page
 }
 
+/// The language surface of `docs/contracts/language.yaml`, as spec §46.3's "language reference
+/// sections" (ADR-0960).
+///
+/// The file restates the lexical and resolution surface `grammar.ebnf` implies, and `ono-command`
+/// embeds it for operator help; this page is the same data for a reader. Every section is one
+/// key of the file, in the file's order, so a key added there and not here is visible as a gap.
+fn language_page(document: Option<&Yaml>) -> String {
+    let mut page = header(
+        "Language",
+        "The lexical and resolution surface of the Ono language: keywords, operators, argument \
+         modes, literals, types, names and statements. Rendered from \
+         `docs/contracts/language.yaml`, which restates what `docs/contracts/grammar.ebnf` implies \
+         and is what help and completion read (spec §46.3); where the two could disagree, the \
+         grammar wins.",
+    );
+    let Some(document) = document else {
+        page.push_str("\nNo language surface is declared.\n");
+        return page;
+    };
+    let code_list = |items: &[String]| {
+        items
+            .iter()
+            .map(|item| format!("`{}`", cell(item)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let doc_of = |item: &Yaml| {
+        string_at(item, "doc").map_or_else(|| "—".to_owned(), |doc| doc.trim().to_owned())
+    };
+
+    if let Some(keywords) = document.get("keywords") {
+        page.push_str("\n## Keywords\n\nA word is a keyword only where the grammar asks for one; in a words-mode argument `let` is the word \"let\" (ADR-0009).\n\n| kind | keywords |\n|---|---|\n");
+        for kind in ["statement", "expression", "literal"] {
+            let _ = writeln!(
+                page,
+                "| {kind} | {} |",
+                code_list(&word_sequence(keywords, kind))
+            );
+        }
+        if let Some(reserved) = keywords.get("reserved") {
+            let _ = writeln!(
+                page,
+                "| reserved | {} — {} |",
+                code_list(&word_sequence(reserved, "words")),
+                cell(&doc_of(reserved))
+            );
+        }
+    }
+
+    if let Some(operators) = document.get("operators") {
+        page.push_str("\n## Operators\n\n### In expressions\n\nLowest precedence first; a higher rank binds tighter.\n\n| operator | precedence | associativity | arity | meaning |\n|---|---|---|---|---|\n");
+        for operator in sequence(operators, "expression") {
+            let _ = writeln!(
+                page,
+                "| `{}` | {} | {} | {} | {} |",
+                cell(&string_at(operator, "symbol").unwrap_or_default()),
+                operator
+                    .get("precedence")
+                    .and_then(scalar_text)
+                    .unwrap_or_default(),
+                string_at(operator, "associativity").unwrap_or_default(),
+                string_at(operator, "arity").unwrap_or_default(),
+                cell(&doc_of(operator))
+            );
+        }
+        page.push_str("\n### Between pipelines and stages\n\n| operator | meaning |\n|---|---|\n");
+        for operator in sequence(operators, "pipeline") {
+            let _ = writeln!(
+                page,
+                "| `{}` | {} |",
+                cell(&string_at(operator, "symbol").unwrap_or_default()),
+                cell(&doc_of(operator))
+            );
+        }
+        if let Some(redirection) = operators.get("redirection") {
+            let _ = write!(
+                page,
+                "\n### Redirection\n\n{}\n\n| form | meaning |\n|---|---|\n",
+                doc_of(redirection)
+            );
+            for form in sequence(redirection, "forms") {
+                let _ = writeln!(
+                    page,
+                    "| `{}` | {} |",
+                    cell(&string_at(form, "symbol").unwrap_or_default()),
+                    cell(&doc_of(form))
+                );
+            }
+            if let Some(prefix) = redirection.get("fd_prefix") {
+                let _ = writeln!(page, "\n{}", doc_of(prefix));
+            }
+        }
+    }
+
+    let modes = sequence(document, "argument_modes");
+    if !modes.is_empty() {
+        page.push_str("\n## Argument modes\n\nThe mode is a property of the head word, known before any registry is loaded, so the editor parses a line as it is typed (ADR-0009).\n");
+        for mode in modes {
+            let name = string_at(mode, "name").unwrap_or_default();
+            let default = if mode.get("default").and_then(Yaml::as_bool) == Some(true) {
+                " (the default)"
+            } else {
+                ""
+            };
+            let _ = write!(page, "\n**`{name}`**{default} — {}\n", doc_of(mode));
+            let heads = string_sequence(mode, "heads");
+            if !heads.is_empty() {
+                let _ = write!(page, "\nHeads: {}.\n", code_list(&heads));
+            }
+            let option_values = sequence(mode, "option_values");
+            if !option_values.is_empty() {
+                page.push_str("\nOptions read in this mode on a head of the other one:\n\n| head | option | meaning |\n|---|---|---|\n");
+                for option in option_values {
+                    let _ = writeln!(
+                        page,
+                        "| `{}` | `--{}` | {} |",
+                        string_at(option, "head").unwrap_or_default(),
+                        string_at(option, "option").unwrap_or_default(),
+                        cell(&doc_of(option))
+                    );
+                }
+            }
+        }
+    }
+
+    if let Some(escapes) = document.get("escapes") {
+        page.push_str("\n## Escapes between the modes\n\n");
+        if let Some(into) = escapes.get("words_into_expression") {
+            let _ = writeln!(
+                page,
+                "- **Words into an expression**, `{}`: {}",
+                string_at(into, "syntax").unwrap_or_default(),
+                doc_of(into)
+            );
+        }
+        if let Some(into) = escapes.get("expression_into_words") {
+            let _ = writeln!(page, "- **An expression into words**: {}", doc_of(into));
+        }
+    }
+
+    let dimensions = sequence(document, "unit_dimensions");
+    if !dimensions.is_empty() {
+        page.push_str("\n## Unit suffixes\n\nA numeric literal immediately followed by a suffix is a semantic scalar: `512MiB` is one token, `512 MiB` two (spec §10.6). Comparisons convert compatible units and refuse incompatible dimensions with `type.invalid_unit` (Ono-Sendai-E0203).\n");
+        for dimension in dimensions {
+            let _ = write!(
+                page,
+                "\n### `{}`\n\n{}\n\n| suffix | factor | unit |\n|---|---|---|\n",
+                string_at(dimension, "name").unwrap_or_default(),
+                doc_of(dimension)
+            );
+            for unit in sequence(dimension, "units") {
+                let _ = writeln!(
+                    page,
+                    "| `{}` | {} | {} |",
+                    cell(&string_at(unit, "suffix").unwrap_or_default()),
+                    unit.get("factor").and_then(scalar_text).unwrap_or_default(),
+                    doc_of(unit)
+                );
+            }
+        }
+    }
+
+    if let Some(literals) = document.get("literals") {
+        page.push_str("\n## Literals\n\n| literal | forms | meaning |\n|---|---|---|\n");
+        for (name, literal) in literals.as_mapping().into_iter().flatten() {
+            let Some(name) = word(name) else { continue };
+            let name = name.as_str();
+            if name == "string" {
+                for (variant, label) in [
+                    ("double_quoted", "string, double-quoted"),
+                    ("single_quoted", "string, single-quoted"),
+                    ("incomplete", "string, unterminated"),
+                ] {
+                    let Some(form) = literal.get(variant) else {
+                        continue;
+                    };
+                    let mut forms = Vec::new();
+                    let escapes = string_sequence(form, "escapes");
+                    if !escapes.is_empty() {
+                        forms.push(format!("escapes {}", code_list(&escapes)));
+                    }
+                    let interpolation = string_sequence(form, "interpolation");
+                    if !interpolation.is_empty() {
+                        forms.push(format!("interpolation {}", code_list(&interpolation)));
+                    }
+                    let _ = writeln!(
+                        page,
+                        "| {label} | {} | {} |",
+                        if forms.is_empty() {
+                            "—".to_owned()
+                        } else {
+                            forms.join("; ")
+                        },
+                        cell(&doc_of(form))
+                    );
+                }
+                continue;
+            }
+            let mut forms = string_sequence(literal, "forms");
+            if let Some(form) = string_at(literal, "form") {
+                forms.push(form);
+            }
+            let flags = string_sequence(literal, "flags");
+            let mut shown = code_list(&forms);
+            if !flags.is_empty() {
+                let _ = write!(shown, "; flags {}", code_list(&flags));
+            }
+            let _ = writeln!(
+                page,
+                "| {name} | {} | {} |",
+                if shown.is_empty() {
+                    "—".to_owned()
+                } else {
+                    shown
+                },
+                cell(&doc_of(literal))
+            );
+        }
+    }
+
+    if let Some(types) = document.get("types") {
+        let _ = write!(
+            page,
+            "\n## Types\n\nThe value types of spec §10.2, as schemas and `let`/`fn` annotations name them (ADR-0012).\n\nScalars: {}.\n\n| type | meaning |\n|---|---|\n",
+            code_list(&word_sequence(types, "scalar"))
+        );
+        for kind in ["composite", "references", "extensions"] {
+            for entry in sequence(types, kind) {
+                let _ = writeln!(
+                    page,
+                    "| `{}` | {} |",
+                    cell(&string_at(entry, "name").unwrap_or_default()),
+                    cell(&doc_of(entry))
+                );
+            }
+        }
+    }
+
+    page.push_str("\n## Names\n");
+    if let Some(variables) = document.get("variables") {
+        let _ = write!(
+            page,
+            "\n**Variables** are `{}`, with field access `{}`.",
+            string_at(variables, "form").unwrap_or_default(),
+            string_at(variables, "field_access").unwrap_or_default()
+        );
+        if let Some(environment) = variables.get("environment") {
+            let _ = write!(
+                page,
+                " `{}`: {}",
+                string_at(environment, "form").unwrap_or_default(),
+                doc_of(environment)
+            );
+        }
+        page.push('\n');
+    }
+    let current = sequence(document, "current_value");
+    if !current.is_empty() {
+        page.push_str("\n| token | meaning |\n|---|---|\n");
+        for entry in current {
+            let _ = writeln!(
+                page,
+                "| `{}` | {} |",
+                string_at(entry, "token").unwrap_or_default(),
+                cell(&doc_of(entry))
+            );
+        }
+    }
+    if let Some(namespaces) = document.get("namespaces") {
+        let _ = write!(
+            page,
+            "\n**Namespaces**, `{}`: {}\n\n| prefix | resolves in | meaning |\n|---|---|---|\n",
+            string_at(namespaces, "syntax").unwrap_or_default(),
+            doc_of(namespaces)
+        );
+        for entry in sequence(namespaces, "entries") {
+            let _ = writeln!(
+                page,
+                "| `{}:` | {} | {} |",
+                string_at(entry, "prefix").unwrap_or_default(),
+                string_at(entry, "resolves_in").unwrap_or_default(),
+                cell(&doc_of(entry))
+            );
+        }
+    }
+
+    if let Some(order) = document.get("resolution_order") {
+        let _ = write!(
+            page,
+            "\n## Resolution order\n\n{}\n\n| step | kind | meaning |\n|---|---|---|\n",
+            doc_of(order)
+        );
+        for step in sequence(order, "steps") {
+            let _ = writeln!(
+                page,
+                "| {} | {} | {} |",
+                step.get("step").and_then(scalar_text).unwrap_or_default(),
+                string_at(step, "kind").unwrap_or_default(),
+                cell(&doc_of(step))
+            );
+        }
+        if let Some(ambiguity) = order.get("ambiguity") {
+            let _ = writeln!(page, "\n{}", doc_of(ambiguity));
+        }
+    }
+
+    let statements = sequence(document, "statements");
+    if !statements.is_empty() {
+        page.push_str("\n## Statements\n\n| form | meaning |\n|---|---|\n");
+        for statement in statements {
+            let _ = writeln!(
+                page,
+                "| `{}` | {} |",
+                cell(&string_at(statement, "form").unwrap_or_default()),
+                cell(&doc_of(statement))
+            );
+        }
+    }
+
+    if let Some(braces) = document.get("brace_disambiguation") {
+        let _ = write!(
+            page,
+            "\n## Blocks and records\n\n{}\n\n```text\n{}\n{}\n```\n",
+            doc_of(braces),
+            string_at(braces, "record_example").unwrap_or_default(),
+            string_at(braces, "block_example").unwrap_or_default()
+        );
+    }
+    if let Some(comment) = document.get("comment") {
+        let _ = write!(
+            page,
+            "\n## Comments\n\n`{}` — {}\n",
+            string_at(comment, "syntax").unwrap_or_default(),
+            doc_of(comment)
+        );
+    }
+
+    let functions = sequence(document, "builtin_functions");
+    if !functions.is_empty() {
+        page.push_str(
+            "\n## Built-in functions\n\n| function | returns | meaning |\n|---|---|---|\n",
+        );
+        for function in functions {
+            let _ = writeln!(
+                page,
+                "| `{}` | `{}` | {} |",
+                string_at(function, "name").unwrap_or_default(),
+                string_at(function, "returns").unwrap_or_default(),
+                cell(&doc_of(function))
+            );
+        }
+    }
+    page
+}
+
 /// A selector's or option's `doc`, followed by what else its contract declares about it: the
 /// values it accepts, whether it repeats, its default, whether its value may be left out, and
 /// the execution class an invocation that names it runs in.
@@ -425,6 +788,22 @@ fn parameter_meaning(parameter: &Yaml) -> String {
         let _ = write!(meaning, " *({})*", details.join("; "));
     }
     meaning
+}
+
+/// A word of the language as the YAML source spells it, where YAML would read `true` or `null`
+/// as something other than a string.
+fn word(value: &Yaml) -> Option<String> {
+    match value {
+        Yaml::Null => Some("null".to_owned()),
+        other => scalar_text(other),
+    }
+}
+
+fn word_sequence(document: &Yaml, key: &str) -> Vec<String> {
+    sequence(document, key)
+        .into_iter()
+        .filter_map(word)
+        .collect()
 }
 
 /// A scalar as its YAML source would spell it.
