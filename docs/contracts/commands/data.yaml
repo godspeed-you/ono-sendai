@@ -262,8 +262,10 @@ commands:
       serializer: each value becomes one compact JSON document on a line of its own, in the same
       encoding `to json` gives that value inside its array, and the line is written and flushed
       as the value arrives. It accepts a stream declared unbounded, holds nothing between values,
-      waits for a slow reader rather than buffering for it, and ends quietly when the reader goes
-      away (ADR-0954).
+      waits for a slow reader rather than buffering for it, and ends without a message when the
+      reader goes away, with status 141 as a program killed by `SIGPIPE` reports it: a redirected
+      line whose reader leaves ends with 141 and the shell carries on, and the shell itself exits
+      141 when its own standard output is gone (ADR-0954, ADR-0220).
     examples:
       - get process | to json
       - get process | to json --pretty
