@@ -430,18 +430,17 @@ fn canonical(path: &Path) -> Result<PathBuf, ErrorValue> {
     if let Ok(resolved) = path.canonicalize() {
         return Ok(resolved);
     }
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map_err(|failure| {
-                error::target_unresolved(
-                    &path.display().to_string(),
-                    &format!("the working directory could not be read: {failure}"),
-                )
-            })?
-            .join(path)
-    };
+    // A plan's paths are anchored on the directory it is made in before they reach here
+    // (ADR-0957); a relative one is never resolved through whatever directory the process
+    // happens to stand in (review X2).
+    if path.is_relative() {
+        return Err(error::target_unresolved(
+            &path.display().to_string(),
+            "§7.1 asks for a canonical path, and a relative path names no file until the \
+             directory it is relative to is known.",
+        ));
+    }
+    let absolute = path.to_path_buf();
     let (parent, name) = match (absolute.parent(), absolute.file_name()) {
         (Some(parent), Some(name)) => (parent.to_path_buf(), name.to_owned()),
         _ => {
@@ -641,6 +640,17 @@ pub fn execute(
                     .map(|(_, value)| value),
                 Some(Value::Bool(true))
             );
+            // A path is acted on as the plan froze it. A plan made before plans anchored their
+            // operands may still carry one as written; it is acted on only where, resolved here,
+            // it is the target the plan froze (review X2).
+            let object = if is_path {
+                match planned_path(&object, action.target(), directory) {
+                    Ok(object) => object,
+                    Err(refusal) => return ExecutionOutcome::Failed(refusal),
+                }
+            } else {
+                object
+            };
             let mut request = match block_on(
                 handle,
                 identify(providers, &target, &selector, &object, is_path),
@@ -718,6 +728,50 @@ fn digest_observation(path: &str, expected: &str) -> Observation {
         },
         observed: Some(Value::string(&found)),
     }
+}
+
+/// The path an action on a filesystem object acts on: `object` as the plan recorded it when it is
+/// absolute; when it is relative — a plan made before operands were anchored — the path it names
+/// from `directory` (the applying job's, or the process's for the foreground, which is the
+/// session's), but only if that is the very target the plan froze. Anything else is refused: a
+/// relative name resolved elsewhere would act on a namesake (review X2, ADR-0957).
+fn planned_path(
+    object: &str,
+    frozen: Option<&str>,
+    directory: Option<&Path>,
+) -> Result<String, ErrorValue> {
+    let path = Path::new(object);
+    if path.is_absolute() {
+        return Ok(object.to_owned());
+    }
+    let base = match directory {
+        Some(directory) => directory.to_path_buf(),
+        None => std::env::current_dir().map_err(|failure| {
+            error::target_unresolved(
+                object,
+                &format!("the working directory could not be read: {failure}"),
+            )
+        })?,
+    };
+    let candidate = base.join(path);
+    let resolved = canonical(&candidate)?;
+    let resolved_text = resolved.display().to_string();
+    let matches = frozen.is_some_and(|frozen| {
+        frozen
+            .strip_prefix(resolved_text.as_str())
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(['@', '#']))
+    });
+    if !matches {
+        return Err(error::target_unresolved(
+            object,
+            &format!(
+                "the plan names `{object}` relative to the directory it was made in, and from \
+                 here it is `{resolved_text}`, which is not the target the plan froze; nothing \
+                 was changed. Apply it from the directory it was made in, or `rebase plan` it."
+            ),
+        ));
+    }
+    Ok(candidate.display().to_string())
 }
 
 /// Runs a resolved program with its argument vector and no shell (§2.17, §12.3, §43.6), in
@@ -1337,6 +1391,38 @@ mod tests {
     )]
 
     use super::*;
+
+    #[test]
+    fn should_refuse_a_relative_planned_path_that_resolves_to_a_namesake() {
+        // Review X2: a plan recorded `a.o` and froze `<start>/a.o`; applied from `<moved>`, which
+        // has its own `a.o`, it is refused rather than acting on the namesake.
+        let root = ono_testkit::scratch();
+        let start = root.write("start/a.o", "start");
+        let moved = root.write("moved/a.o", "moved");
+        let frozen = start
+            .canonicalize()
+            .expect("the frozen target")
+            .display()
+            .to_string();
+        let moved_dir = moved.parent().expect("a directory");
+        let start_dir = start.parent().expect("a directory");
+
+        let refused = planned_path("a.o", Some(&format!("{frozen}#inode=1")), Some(moved_dir));
+        assert!(refused.is_err(), "the namesake is not the frozen target");
+
+        let acted = planned_path("a.o", Some(&frozen), Some(start_dir)).expect("the same file");
+        assert_eq!(
+            Path::new(&acted).canonicalize().ok(),
+            start.canonicalize().ok()
+        );
+
+        let absolute = start.display().to_string();
+        assert_eq!(
+            planned_path(&absolute, Some(&frozen), Some(moved_dir)).expect("as recorded"),
+            absolute,
+            "an absolute path is acted on as recorded"
+        );
+    }
 
     #[test]
     fn should_give_up_on_a_check_that_does_not_answer_within_its_timeout() {

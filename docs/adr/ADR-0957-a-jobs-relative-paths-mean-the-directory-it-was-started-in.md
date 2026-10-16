@@ -68,7 +68,11 @@ by these mechanisms, each at a seam rather than in a command:
    job's — and the action that applies it names that absolute path. Applying a plan later,
    after a `cd` or from a job, acts on what was planned. Before this, `plan remove file a.o` in
    one directory, `cd`, `apply` removed the namesake in the new directory — a foreground defect of
-   the same class, fixed by the same change (review N1).
+   the same class, fixed by the same change (review N1). A plan stored before this — its operand
+   recorded as written — is applied only where that operand, resolved from the applying
+   directory, is the very target the plan froze; otherwise `apply` refuses with
+   `change.target_unresolved` and changes nothing. The freeze itself never resolves a relative
+   path through the process directory: it refuses one (review X2).
 7. **Links.** Inside a link frame a link's remote answers what the stages ask, and a directory of
    this machine means nothing there: those paths travel to it as written, with no directory on
    the query. What stays on this side — a redirection, a plugin reference, a program — is still
