@@ -4356,7 +4356,7 @@ Enumerate or resolve processes.
 |---|---|---|
 | `--user` | `ref<ono.user/1>` | Restrict to processes of one user. |
 | `--group` | `ref<ono.group/1>` | Restrict to processes whose effective group is this one. |
-| `--tree` | `bool` | Emit the parent/child structure rather than a flat stream. |
+| `--tree` | `bool` | Emit the parent/child structure rather than a flat stream: the roots only, each nesting its descendants as `ono.process/1` records under the extension key `children` (ADR-0091 §3). At a terminal the forest is drawn with ASCII guides; a pipe, a file or a script gets the table of the roots, and `to json` carries `children` (ADR-0948). |
 | `--sample` | `duration` | Measure `cpu` over this interval instead of over each process's lifetime: the provider reads the CPU counters, waits, and answers the rate over exactly that window (ADR-0232). The invocation takes at least this long. |
 | `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 

@@ -95,5 +95,17 @@ fields:
       namespace, which would be a guess: null on a kernel that has no namespace to name, and an
       error value when the kernel will not name the one it has — a refusal is not an absence
       (spec v0.4 §35.2).
+# Extensions a provider attaches beside the fields (spec §10.4). They are not fields: a record
+# that was not asked for one carries no such key at all, which is the difference between "not
+# asked for" and "unknown" (null). A typed field would be a schema version (ADR-0091 §3).
+extensions:
+  children:
+    type: list<ono.process/1>
+    present_when: "`get process --tree`"
+    doc: >-
+      The process's children, each a `ono.process/1` record carrying its own `children`. With
+      `--tree` the stream holds only the roots — processes whose parent is not in the stream —
+      and every other process is nested under its parent (ADR-0091 §3). `to json` carries it; a
+      terminal draws the forest (ADR-0948).
 default_view:
   columns: [pid, name, cpu, memory, user]
