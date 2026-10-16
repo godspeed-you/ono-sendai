@@ -70,7 +70,14 @@ at the command's capture ceiling and the line ends with the structured `resource
 refusal. It used to be read to its end, and an endless one grew the shell until the allocator
 aborted it (review S2). A line whose program legitimately writes more than the ceiling (256 MiB by
 default) between two stages is refused where it used to succeed; `limits.command_capture_bytes`
-raises it.
+raises it. The bytes handed from programs to native stages are charged to that one ceiling
+together, as a command's captures are, so a line with several hand-overs holds no more than one
+ceiling between them (review X4).
+
+What the bound does not do (review X5): a program that ignores `SIGPIPE` and goes on running
+after its output was cut off holds the line until it ends, as `prog | head` does in any shell;
+and the cut-off falls on a read boundary, so up to one 64 KiB read past the ceiling is held
+before the refusal.
 
 What this bounds, in numbers (review M7): a live job of plain records or text —
 `tail file log --follow &` — keeps what it reads up to the command capture ceiling and then ends

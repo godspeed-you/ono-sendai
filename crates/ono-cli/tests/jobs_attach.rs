@@ -461,7 +461,7 @@ fn should_refuse_past_the_ceiling_when_a_live_job_keeps_plain_records() {
 #[test]
 fn should_refuse_past_the_ceiling_when_a_programs_endless_output_feeds_a_native_stage() {
     // Review S2: program output collected for the native stage after it was read to its end, and
-    // `yes | from lines | take 3` grew the shell until the allocator aborted it — in the
+    // a program that never stops writing grew the shell until the allocator aborted it — in the
     // foreground and in a job. It is bounded by the capture ceiling and refused, structured, and
     // the shell carries on.
     let home = scratch();
@@ -469,9 +469,9 @@ fn should_refuse_past_the_ceiling_when_a_programs_endless_output_feeds_a_native_
     let run = run_bounded(
         &home,
         "set config limits.command_capture_bytes 64KiB\n\
-         yes | from lines | take 3 | to json\n\
+         yes 'a,b' | from csv | take 3 | to json\n\
          echo \"foreground-$?\"\n\
-         fn many() { yes | from lines | take 3 | to json }\n\
+         fn many() { yes 'a,b' | from csv | take 3 | to json }\n\
          many &\n\
          fg %1\n\
          echo \"job-$?\"",
@@ -492,7 +492,27 @@ fn should_refuse_past_the_ceiling_when_a_programs_endless_output_feeds_a_native_
     );
 }
 
-// --- at a terminal -----------------------------------------------------------------------------
+#[test]
+fn should_hold_every_hand_over_from_a_program_to_a_native_stage_under_one_ceiling() {
+    // Review X4: each hand-over was measured against the ceiling alone, so a line with two of them
+    // could hold twice as much. They are charged together, as the captures of one command are.
+    let home = scratch();
+
+    let run = run_bounded(
+        &home,
+        "set config limits.command_capture_bytes 64KiB\n\
+         seq 1 7000 | from csv | to csv | cat | from csv | count | to json\n\
+         echo \"line-$?\"",
+        Duration::from_secs(30),
+    );
+
+    assert!(run.finished, "{}", run.report());
+    assert!(
+        run.stderr.contains("resource.byte_limit") && run.stdout.contains("line-1"),
+        "two hand-overs of about 34 KiB each pass a 64 KiB ceiling together. {}",
+        run.report()
+    );
+}
 
 #[test]
 fn should_show_every_value_of_a_running_native_job_once_when_it_is_foregrounded_at_a_terminal() {

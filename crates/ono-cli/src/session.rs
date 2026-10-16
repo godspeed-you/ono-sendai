@@ -2163,6 +2163,19 @@ impl Session {
         self.execution.job_model.as_ref()
     }
 
+    /// Charges `bytes` collected from a program to this command's capture ceiling (v0.4.1
+    /// §23.4), whether or not a capture keeps them.
+    ///
+    /// # Errors
+    ///
+    /// The structured refusal of §21.4 when the ceiling is passed.
+    pub fn charge_capture_bytes(&mut self, bytes: u64) -> Result<(), ErrorValue> {
+        self.execution
+            .capture_budget
+            .charge_estimate(bytes)
+            .map_err(ono_pipeline::Exceeded::into_error)
+    }
+
     /// Hands the text a serializer or a program wrote to the innermost capture.
     ///
     /// A capture inside a line is a value, so the text becomes one string with its trailing
