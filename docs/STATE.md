@@ -146,6 +146,20 @@ gh issue view <NN>               # the evidence for one problem
 gh issue list --label class-c    # the large ones, a tranche each
 ```
 
+**Found during the maintenance prelude #301–#303 (2026-10-08 … 2026-10-16).** Outside those three
+issues, so not fixed in them; each re-checked against the tracker (no existing issue):
+
+- `bg %N` on a native job answers `resolve.target_not_found … there is no job %1`, although the job is listed. Found by the implementation agent.
+- `tail file x --lines 5 | take 5` hangs on a two-line file: `follow` defaults to `true` (`docs/contracts/commands/file.yaml`), so the stream never ends — the hang is #283's case, the surprising default is not.
+- `ono-process`'s `finish_unheard` (crates/ono-process/src/executor.rs) records a child the kernel no longer knows (ECHILD) as exit 0 — a status that is not known reads as success.
+- Ctrl-Z does nothing to a native job under `fg`; Ctrl-C ends it. Job control for native jobs has no stop.
+- A sealed opaque plan records no working directory: `plan --opaque rm a.o` in A, `cd B`, `apply` runs the program in B (foreground; a job runs it in the job's directory since ADR-0957).
+- In the foreground, `remove file link/ --recursive` on a symlink to a directory empties the link's target and then reports "failed"; without `--recursive` on a symlink to a file it is refused (ENOTDIR).
+- In the foreground, `install plugin ./pkg` records its source as the relative `path:./pkg` (a job records it absolute since ADR-0957), so a later reinstall from elsewhere resolves differently.
+- `crates/ono-cli/tests/identity.rs::should_trace_a_user_to_its_processes_and_groups` needs fewer than ~255 root processes: `trace user root` fills its 256-node limit with processes before any group node. Reproduced 2026-10-08 while another project's 17-container stack ran (263 root processes). Same family as the `trace interface` entry below.
+- `crates/ono-cli/tests/spatial_interactive.rs::should_repaint_a_focus_move_far_inside_the_frame_budget_when_the_map_is_open` failed once at load ~9 (other project's containers running); a wall-clock budget test, passed on a quiet host.
+- A signal exit (SIGHUP, SIGTERM, non-interactive SIGINT) now ends the shell's jobs and recorded children (ADR-0959) but still skips the history flush, the audit write and the link hang-up, and a link's transport process (`--transport local` agent, `ssh`) is not ended by it. Before ADR-0959 the signal killed the shell outright, so nothing regressed; the cleanup is what is missing.
+
 **Filed on 2026-10-08.** The thirty problems the v0.6.3 run recorded here (2026-10-07) were
 triaged against the tracker at `v0.6.3` = `b55ff186`, each re-checked: twenty-six went in as the
 twenty-four issues #282–#305 (#293 and #297 carry two entries each), one was already #182, and three
