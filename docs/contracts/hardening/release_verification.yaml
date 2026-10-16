@@ -86,7 +86,11 @@ steps:
 
   - id: verify_signature
     command: |
-      cosign verify-blob         --bundle SHA256SUMS.sigstore.json         --certificate-oidc-issuer https://token.actions.githubusercontent.com         --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v'         SHA256SUMS
+      cosign verify-blob \
+        --bundle SHA256SUMS.sigstore.json \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v' \
+        SHA256SUMS
     requires: [cosign]
     executable: false
     executable_because: cosign is not a build dependency of this repository, and verifying a real signature needs Fulcio and Rekor over the network
@@ -116,7 +120,11 @@ steps:
 
   - id: verify_provenance
     command: |
-      cosign verify-blob         --bundle build-provenance.json.sigstore.json         --certificate-oidc-issuer https://token.actions.githubusercontent.com         --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v'         build-provenance.json
+      cosign verify-blob \
+        --bundle build-provenance.json.sigstore.json \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v' \
+        build-provenance.json
       grep -o "$(sha256sum ono_${VERSION}_${ARCH}.deb | cut -d' ' -f1)" build-provenance.json
     requires: [cosign, sha256sum, grep]
     executable: false

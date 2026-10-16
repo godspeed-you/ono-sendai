@@ -41,7 +41,11 @@ Needs `curl`.
 ### 2. `verify_signature`
 
 ```bash
-cosign verify-blob         --bundle SHA256SUMS.sigstore.json         --certificate-oidc-issuer https://token.actions.githubusercontent.com         --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v'         SHA256SUMS
+cosign verify-blob \
+  --bundle SHA256SUMS.sigstore.json \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v' \
+  SHA256SUMS
 ```
 
 **Proves.** the checksum manifest was signed by this repository's release workflow, running on a version tag, and by nobody else. The identity regexp is the whole of the check: without it a verification accepts a signature from anyone Fulcio has ever issued a certificate to. The bundle carries the signature, the short-lived certificate and the log entry together, so there is no public key to fetch and no key for the project to keep.
@@ -67,7 +71,11 @@ Needs `sha256sum`.
 ### 4. `verify_provenance`
 
 ```bash
-cosign verify-blob         --bundle build-provenance.json.sigstore.json         --certificate-oidc-issuer https://token.actions.githubusercontent.com         --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v'         build-provenance.json
+cosign verify-blob \
+  --bundle build-provenance.json.sigstore.json \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v' \
+  build-provenance.json
 grep -o "$(sha256sum ono_${VERSION}_${ARCH}.deb | cut -d' ' -f1)" build-provenance.json
 ```
 
