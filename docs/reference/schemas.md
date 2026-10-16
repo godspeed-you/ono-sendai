@@ -376,7 +376,7 @@ Default view: `short_hash`, `authored`, `author`, `subject`
 
 ## Completion — `ono.completion/1`
 
-What the word under the cursor could become — the candidates, the span they replace, and whether the set is whole.
+What the word under the cursor could become — the candidates, the span they replace, and whether the set is whole. `ono --complete <line> [--cursor N]` writes one as JSON, from the completer Tab uses, without a terminal (ADR-0945).
 
 Identity: 
 

@@ -5,7 +5,7 @@
 # would offer.
 id: ono.completion/1
 name: Completion
-summary: What the word under the cursor could become — the candidates, the span they replace, and whether the set is whole.
+summary: What the word under the cursor could become — the candidates, the span they replace, and whether the set is whole. `ono --complete <line> [--cursor N]` writes one as JSON, from the completer Tab uses, without a terminal (ADR-0945).
 fields:
   line:
     type: string
