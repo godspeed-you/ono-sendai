@@ -345,7 +345,13 @@ impl CommandImpl for Apply {
                 None => super::world::over_link(
                     &plan,
                     action,
-                    super::world::execute(&handle, &providers, action, directory.as_deref()),
+                    super::world::execute(
+                        &handle,
+                        &providers,
+                        action,
+                        directory.as_deref(),
+                        super::world::on_host(&plan, action),
+                    ),
                 ),
             };
             let clock = Timestamp::now;

@@ -406,7 +406,13 @@ impl CommandImpl for ResumePlan {
                 None => super::world::over_link(
                     &plan,
                     action,
-                    super::world::execute(&handle, &providers, action, directory.as_deref()),
+                    super::world::execute(
+                        &handle,
+                        &providers,
+                        action,
+                        directory.as_deref(),
+                        super::world::on_host(&plan, action),
+                    ),
                 ),
             };
             let observe = |contract: &_| super::world::observe(&handle, &providers, contract);

@@ -564,6 +564,20 @@ pub fn route(
     }
 }
 
+/// Whether the target `action` acts on was frozen on a linked host (§29.1).
+#[must_use]
+pub fn on_host(plan: &ono_change_core::ChangePlan, action: &PlanAction) -> bool {
+    action
+        .target()
+        .and_then(|identity| {
+            plan.targets()
+                .iter()
+                .find(|target| target.identity() == identity)
+        })
+        .and_then(FrozenTarget::host)
+        .is_some()
+}
+
 /// `outcome`, read for an action on a linked host (§29.3, Appendix F.2, ADR-0848).
 ///
 /// A link that failed under an action leaves the host's side of it unestablished: the request may
@@ -617,6 +631,7 @@ pub fn execute(
     providers: &ProviderRegistry,
     action: &PlanAction,
     directory: Option<&Path>,
+    on_host: bool,
 ) -> ExecutionOutcome {
     match action.execution() {
         Execution::ProviderAction {
@@ -644,7 +659,7 @@ pub fn execute(
             // operands may still carry one as written; it is acted on only where, resolved here,
             // it is the target the plan froze (review X2).
             let object = if is_path {
-                match planned_path(&object, action.target(), directory) {
+                match planned_path(&object, action.target(), directory, on_host) {
                     Ok(object) => object,
                     Err(refusal) => return ExecutionOutcome::Failed(refusal),
                 }
@@ -739,8 +754,14 @@ fn planned_path(
     object: &str,
     frozen: Option<&str>,
     directory: Option<&Path>,
+    on_host: bool,
 ) -> Result<String, ErrorValue> {
     let path = Path::new(object);
+    // A target frozen on a linked host is resolved by that host, where a directory of this
+    // machine means nothing: its object travels as recorded (review Z8).
+    if on_host {
+        return Ok(object.to_owned());
+    }
     // The rule is the filesystem's: a file or directory is frozen by its canonical path. Any
     // other identity — `mount:/srv`, `<namespace>:<unit>` — is acted on as before, the recorded
     // object reaching its provider as it stands (review Y4).
@@ -1416,10 +1437,16 @@ mod tests {
         let moved_dir = moved.parent().expect("a directory");
         let start_dir = start.parent().expect("a directory");
 
-        let refused = planned_path("a.o", Some(&format!("{frozen}#inode=1")), Some(moved_dir));
+        let refused = planned_path(
+            "a.o",
+            Some(&format!("{frozen}#inode=1")),
+            Some(moved_dir),
+            false,
+        );
         assert!(refused.is_err(), "the namesake is not the frozen target");
 
-        let acted = planned_path("a.o", Some(&frozen), Some(start_dir)).expect("the same file");
+        let acted =
+            planned_path("a.o", Some(&frozen), Some(start_dir), false).expect("the same file");
         assert_eq!(
             Path::new(&acted).canonicalize().ok(),
             start.canonicalize().ok()
@@ -1427,9 +1454,24 @@ mod tests {
 
         let absolute = start.display().to_string();
         assert_eq!(
-            planned_path(&absolute, Some(&frozen), Some(moved_dir)).expect("as recorded"),
+            planned_path(&absolute, Some(&frozen), Some(moved_dir), false).expect("as recorded"),
             absolute,
             "an absolute path is acted on as recorded"
+        );
+    }
+
+    #[test]
+    fn should_hand_on_a_relative_object_of_a_plan_frozen_on_a_linked_host_as_recorded() {
+        // Review Z8: a file frozen on a linked host has a `/…` identity too, with the host kept
+        // apart; its relative object is the far side's to resolve, never this directory's.
+        let root = ono_testkit::scratch();
+        let here = root.write("a.o", "");
+        let frozen = format!("{}/elsewhere/a.o", root.path().display());
+        assert!(here.exists());
+        assert_eq!(
+            planned_path("a.o", Some(&frozen), Some(root.path()), true).ok(),
+            Some("a.o".to_owned()),
+            "acted on as recorded, on the host"
         );
     }
 
@@ -1440,7 +1482,7 @@ mod tests {
         let root = ono_testkit::scratch();
         for frozen in ["mount:/srv/data", "systemd:nginx.service"] {
             assert_eq!(
-                planned_path("srv/data", Some(frozen), Some(root.path())).ok(),
+                planned_path("srv/data", Some(frozen), Some(root.path()), false).ok(),
                 Some("srv/data".to_owned()),
                 "{frozen}: acted on as recorded"
             );
