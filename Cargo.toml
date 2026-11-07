@@ -121,7 +121,7 @@ rustls-webpki = { version = "0.103", default-features = false, features = ["ring
 x509-parser = "0.18"
 rustls-pemfile = "2"
 serde = { version = "1", features = ["derive", "rc"] }
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 serde_yaml_ng = "0.10"
 sha2 = "0.11"
 # A plugin artifact reaches the host over HTTPS (K11A §6.2) and is a plain tar (§7); both are
