@@ -49,6 +49,12 @@ documentation pass that brings the repository's documents to v0.6.3:
   so **a v0.6.4 release is urgent** for the advisories alone. The wasmtime step changes the compiled
   artifact key again (ADR-0916): every compiled KUANG/11 component needs `kuang-compile` once more after
   upgrading, as it did from v0.6.2 to v0.6.3.
+- `5b920caf` moves wasmtime on to 48.0.8, tokio to 1.54.1, rustls-webpki to 0.103.16 and webpki-roots
+  to 1.0.11 for **nine more advisories** (RUSTSEC-2026-0378, -0379, -0381, -0382, -0386, -0420,
+  -0422 … -0424) that kept the scheduled audit on `main` red from 2026-10-20; the compiled artifact
+  key moves with it, still one `kuang-compile` from v0.6.3.
+- `6a9a163b` enables serde_json's `float_roundtrip` (ADR-0961): the scheduled fuzz campaign of
+  2026-11-07 found a provider message whose number drifted by one ulp across a re-encode.
 - The maintenance prelude #301–#303 (native background jobs and `fg`, a job's relative paths, a job's
   child ignoring `SIGTERM`), closed 2026-10-16 without a milestone, with ADR-0957 (a job's relative
   paths mean its start directory; a plan freezes absolute paths), ADR-0958 (every backgrounded line is

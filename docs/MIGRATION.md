@@ -325,7 +325,7 @@ compiled form of it, written by the SDK's `kuang-compile` into `~/.cache/ono/kua
   the major version and are refused once. **v0.6.3 moved from wasmtime 47.0.4 to 48.0.5**
   (8327c34f), so after upgrading from v0.6.2 each compiled component is refused once with
   `Ono-Sendai-K11105`, naming the `kuang-compile` command that fixes it. The release after v0.6.3
-  moves to 48.0.6 (80499901) and asks once more (§14).
+  moves to 48.0.8 (80499901, 5b920caf) and asks once more (§14).
 - The store follows the shell session's environment (ADR-0917): after
   `set env XDG_CACHE_HOME = …`, `load plugin`, `inspect plugin` and `install plugin` use the
   store it names, and `install plugin` runs `kuang-compile` with the session's environment and
@@ -416,13 +416,15 @@ Each item below is a contract the release made true; check a script that parses 
 
 ## 14. Draft for the release after v0.6.3
 
-*(on `implementation` past `v0.6.3`; issues #301–#303; ADR-0957, ADR-0958, ADR-0959; 80499901)*
+*(on `implementation` past `v0.6.3`; issues #301–#303; ADR-0957, ADR-0958, ADR-0959, ADR-0961; 80499901, 5b920caf, 6a9a163b)*
 
 **Not released yet.** What the next release changes for someone upgrading from v0.6.3, as far as
 it has landed:
 
-- **Recompile compiled KUANG/11 components once more.** wasmtime moves from 48.0.5 to 48.0.6 for
-  twelve advisories against it and wasmtime-wasi (RUSTSEC-2026-0352 … -0359, -0361 … -0364), and rustls to 0.23.46 for four more.
+- **Recompile compiled KUANG/11 components once more.** wasmtime moves from 48.0.5 to 48.0.8 for
+  eighteen advisories against it and wasmtime-wasi (RUSTSEC-2026-0352 … -0359, -0361 … -0364,
+  -0378, -0379, -0420, -0422 … -0424), rustls to 0.23.46 for four more, and tokio, rustls-webpki
+  and webpki-roots for three (RUSTSEC-2026-0381, -0382, -0386).
   An artifact is keyed on the exact wasmtime release (§10, ADR-0916), so each compiled component is
   refused once with `Ono-Sendai-K11105`, naming the `kuang-compile` command. Native-process
   packages are unaffected.
@@ -448,6 +450,9 @@ it has landed:
   `SIGHUP`, `SIGTERM` — sends each owned process group `SIGTERM`, then `SIGKILL` after one bounded
   grace period; there is no `disown`. A program meant to outlive the shell belongs to a service
   manager (`systemd-run --user …`).
+- **A decimal number in JSON reads as the nearest `f64`** (ADR-0961). Where a provider, a remote
+  peer or `from json` sent a number such as `1.04858e132`, v0.6.3 could hold it one unit in the
+  last place away (`1.0485799999999999e132`) and log and forward that; it now holds the number sent.
 
 ## What to read next
 
