@@ -574,11 +574,13 @@ async fn stream_filesystems(
     sink: StreamSink,
 ) {
     // One filesystem can be mounted at several points — a bind mount is the everyday case — and
-    // `get filesystem` should answer once per filesystem, not once per mount.
-    let mut seen: HashSet<(String, String)> = HashSet::new();
+    // `get filesystem` should answer once per filesystem, not once per mount. The filesystem is
+    // the superblock, and `mountinfo(5)`'s device number names it: two mounts of one superblock
+    // share the number, two anonymous `tmpfs tmpfs` mounts do not (#167).
+    let mut seen: HashSet<&str> = HashSet::new();
     let records = mounts
         .iter()
-        .filter(|mount| seen.insert((mount.source.clone(), mount.filesystem.clone())))
+        .filter(|mount| seen.insert(mount.device_number.as_str()))
         .map(|mount| StorageProvider::filesystem_record(mount, &schema, &uuids, &labels))
         .chain(unmounted.iter().map(|filesystem| {
             StorageProvider::unmounted_record(filesystem, &schema, &uuids, &labels)

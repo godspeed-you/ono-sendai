@@ -346,6 +346,55 @@ async fn should_tell_two_pseudo_filesystems_apart_when_they_share_a_source() {
 }
 
 #[tokio::test]
+async fn should_answer_once_per_superblock_when_two_anonymous_mounts_share_source_and_type() {
+    // `/run` and `/dev/shm` are both `tmpfs tmpfs`, and they are two filesystems: the kernel
+    // gave each its own superblock (`0:29`, `0:69`). Only a mount of the *same* superblock — a
+    // bind mount — is the same filesystem seen twice (#167).
+    let fixture = StorageFixture::new("");
+    let run = fixture.mount_point("run");
+    let shm = fixture.mount_point("shm");
+    let bound = fixture.mount_point("bound");
+    fs::write(
+        fixture.path().join("proc/self/mountinfo"),
+        format!(
+            "28 24 0:29 / {} rw,nosuid - tmpfs tmpfs rw\n\
+             36 24 0:69 / {} rw,nosuid - tmpfs tmpfs rw\n\
+             41 24 0:69 / {} rw,nosuid - tmpfs tmpfs rw\n",
+            run.display(),
+            shm.display(),
+            bound.display()
+        ),
+    )
+    .expect("the mount table");
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("filesystem"))
+            .expect("a snapshot"),
+    )
+    .await;
+    let filesystems = records(&collected);
+    assert_eq!(
+        filesystems.len(),
+        2,
+        "two superblocks are two filesystems, however alike their source and type; the third \
+         mount binds the second superblock again and adds nothing"
+    );
+    let mut numbers: Vec<String> = filesystems
+        .iter()
+        .map(|record| {
+            record
+                .get("device_number")
+                .and_then(|value| value.as_str().ok())
+                .expect("a filesystem names its superblock")
+                .to_owned()
+        })
+        .collect();
+    numbers.sort();
+    assert_eq!(numbers, ["0:29", "0:69"]);
+}
+
+#[tokio::test]
 async fn should_answer_for_one_mount_point_when_a_selector_names_it() {
     let fixture = StorageFixture::new("");
     let wanted = fixture.mount_point("wanted");

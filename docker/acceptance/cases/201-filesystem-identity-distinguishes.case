@@ -24,12 +24,22 @@ run: |
     echo "no-uuid-less-filesystem-here"
   fi
 
+  echo "== one filesystem per superblock, not per (source, type) (#167) =="
+  # The kernel's mount table is the referee: every distinct superblock number among the tmpfs
+  # mounts is one filesystem, however many of them call themselves `tmpfs tmpfs`, and a bind
+  # mount of the same superblock adds none.
+  superblocks=$(awk '{ for (i = 7; i <= NF; i++) if ($i == "-") { if ($(i+1) == "tmpfs") print $3; break } }' /proc/self/mountinfo | sort -u | wc -l)
+  reported=$(ono --no-config -c 'get filesystem | where type == "tmpfs" | count | to json' | tr -d '[] ')
+  echo "tmpfs-superblocks=$superblocks tmpfs-filesystems=$reported"
+  if [ "$superblocks" = "$reported" ]; then echo "one-filesystem-per-superblock"; else echo "WRONG $superblocks tmpfs superblocks answered as $reported filesystems"; fi
+
   echo "== the declared identity is still what the reference page says =="
   ono --no-config -c 'get filesystem | take 1 | inspect | to json' | grep -q '"source"' && echo "identity-still-names-the-source"
   echo done=ok
 exit: 0
 stdout-contains: more-than-one-filesystem
 stdout-contains: every-filesystem-is-its-own-object
+stdout-contains: one-filesystem-per-superblock
 stdout-contains: identity-still-names-the-source
 stdout-contains: done=ok
 stdout-not-contains: WRONG
