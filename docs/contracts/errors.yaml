@@ -147,6 +147,13 @@ errors:
     kind: io
     summary: A path component is not a directory.
     help: One of the leading components of the path is a file; check the path spelling.
+  - code: Ono-Sendai-E0305                # ADR-0962: ETXTBSY and EBUSY are not a refusal of access
+    name: io.busy
+    kind: io
+    summary: The resource is in use by another process and cannot be used this way right now.
+    help: >-
+      Nothing refused you; something else holds the resource. A program still open for writing
+      cannot run until its writer closes it — wait for it, or `get process` to find who holds it.
 
   # --- provider ---------------------------------------------------------------------------
   - code: Ono-Sendai-E0401

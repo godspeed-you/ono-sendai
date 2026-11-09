@@ -79,6 +79,10 @@ fn code_for_io(error: &io::Error) -> ErrorCode {
         io::ErrorKind::NotFound => ErrorCode::IoNotFound,
         io::ErrorKind::AlreadyExists => ErrorCode::IoAlreadyExists,
         io::ErrorKind::NotADirectory => ErrorCode::IoNotDirectory,
+        // ETXTBSY and EBUSY: nothing refused access, something else holds the resource. Telling
+        // a user "permission denied" about a script somebody is still writing sends them to
+        // `chmod` for a file that is executable (#186, ADR-0962).
+        io::ErrorKind::ExecutableFileBusy | io::ErrorKind::ResourceBusy => ErrorCode::IoBusy,
         _ => ErrorCode::IoPermissionDenied,
     }
 }
@@ -101,6 +105,16 @@ mod tests {
     fn should_report_not_a_directory_when_a_path_component_is_a_file() {
         let error = Error::from_io("opening /etc/hosts/x", &io::Error::from_raw_os_error(20));
         assert_eq!(error.code(), ErrorCode::IoNotDirectory);
+    }
+
+    #[test]
+    fn should_report_busy_when_the_system_says_the_resource_is_held() {
+        // ETXTBSY (26): a program still open for writing. EBUSY (16): a mount point or device
+        // in use. Neither is a refusal of access (#186, ADR-0962).
+        for errno in [26, 16] {
+            let error = Error::from_io("running /tmp/script", &io::Error::from_raw_os_error(errno));
+            assert_eq!(error.code(), ErrorCode::IoBusy, "errno {errno}");
+        }
     }
 
     #[test]

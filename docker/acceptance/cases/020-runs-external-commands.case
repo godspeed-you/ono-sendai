@@ -9,10 +9,24 @@ run: |
   ono -c 'sh -c "kill -TERM \$\$"'; echo "signalled=$?"
   ono -c '/bin/echo absolute-path'
   ono -c 'exec:echo forced-namespace'
+  # A script somebody is still writing: the writer's descriptor makes execve answer ETXTBSY. The
+  # status is POSIX's 126, and the error says the file is busy — not that access was refused
+  # (#186, ADR-0962).
+  printf '#!/bin/sh\nexit 0\n' > /tmp/being-written.sh; chmod +x /tmp/being-written.sh
+  exec 3>>/tmp/being-written.sh
+  ono -c '/tmp/being-written.sh' 2>/tmp/busy.err; echo "busy=$?"
+  exec 3>&-
+  grep -q 'io.busy' /tmp/busy.err && echo "busy-is-named"
+  grep -q 'permission_denied' /tmp/busy.err && echo "WRONG a busy file was called a refusal"
+  ono -c '/tmp/being-written.sh'; echo "released=$?"
 exit: 0
 stdout-contains: hello from ono
 stdout-contains: status=42
 stdout-contains: notfound=127
 stdout-contains: signalled=143
+stdout-contains: busy=126
+stdout-contains: busy-is-named
+stdout-contains: released=0
+stdout-not-contains: WRONG
 stdout-contains: absolute-path
 stdout-contains: forced-namespace

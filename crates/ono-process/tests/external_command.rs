@@ -102,6 +102,37 @@ fn should_report_126_when_the_file_is_found_but_not_executable() {
 }
 
 #[test]
+fn should_name_the_busy_file_rather_than_a_refusal_when_a_writer_still_holds_the_script() {
+    // Someone is still writing the script: `execve` answers ETXTBSY. The status is POSIX's 126,
+    // because the shell found a program it could not run — but nothing refused access, and
+    // "permission denied" sends the user to `chmod` for a file that is executable (#186).
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let script = write_script(dir.path(), "being-written", "#!/bin/sh\nexit 0\n", 0o755);
+    let writer = fs::OpenOptions::new()
+        .write(true)
+        .open(&script)
+        .expect("the script this test wrote is writable");
+    let outcome = run(Command::new(&script));
+    drop(writer);
+    assert_eq!(outcome.status().code(), 126, "found, and not runnable right now");
+    let failure = outcome.stages()[0]
+        .failure
+        .as_ref()
+        .expect("a busy file must carry a structured error");
+    assert_eq!(
+        failure.code(),
+        ErrorCode::IoBusy,
+        "the file is busy, not forbidden: {}",
+        failure.message()
+    );
+    assert!(
+        failure.message().to_lowercase().contains("busy"),
+        "the message says what happened, got {:?}",
+        failure.message()
+    );
+}
+
+#[test]
 fn should_report_126_when_the_program_is_a_directory() {
     let dir = tempfile::tempdir().expect("a scratch directory");
     let outcome = run(Command::new(dir.path()));

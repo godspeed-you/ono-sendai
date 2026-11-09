@@ -168,6 +168,8 @@ error_codes! {
         "The resource already exists and would have been overwritten.";
     IoNotDirectory => "Ono-Sendai-E0304", "io.not_directory", Io,
         "A path component is not a directory.";
+    IoBusy => "Ono-Sendai-E0305", "io.busy", Io,
+        "The resource is in use by another process and cannot be used this way right now.";
     ProviderUnavailable => "Ono-Sendai-E0401", "provider.unavailable", Provider,
         "The provider cannot answer on this system right now.";
     ProviderUnsupported => "Ono-Sendai-E0402", "provider.unsupported", Provider,
