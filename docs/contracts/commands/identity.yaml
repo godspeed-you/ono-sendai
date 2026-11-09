@@ -265,6 +265,9 @@ commands:
     phase: G
     examples:
       - trace user postgres
+      - trace user root
+    unprivileged_examples:            # ADR-0967: an account every system has; what this user may not read of it is denied, not invented
+      - trace user root
 
   - id: ono.user.enter
     verb: enter

@@ -45,6 +45,10 @@ struct Command {
     privilege: String,
     capability: Option<String>,
     examples: Vec<String>,
+    /// The examples the contract vouches for as needing no privilege (`unprivileged_examples`):
+    /// a `conditional` command's invocation shape that reads what every user may read, so the
+    /// suite runs it and holds the provider's answer to the schema (ADR-0967, #295).
+    unprivileged: BTreeSet<String>,
 }
 
 /// What `capabilities.yaml` says about one provider capability.
@@ -101,7 +105,7 @@ pub fn generate(root: &Path) -> Result<Page, GenerateError> {
         let mut last_reason = String::new();
         for (index, example) in command.examples.iter().enumerate() {
             let key = (command.id.clone(), example.clone());
-            let verdict = match contract_reason(&contracts, example) {
+            let verdict = match contract_reason(&contracts, command, example) {
                 Some(reason) => {
                     if exemptions.contains_key(&key) {
                         return Err(GenerateError {
@@ -281,7 +285,7 @@ fn write_case(
 }
 
 /// Why the contracts say `example` cannot run hermetically, or `None` when they let it run.
-fn contract_reason(contracts: &Contracts, example: &str) -> Option<String> {
+fn contract_reason(contracts: &Contracts, command: &Command, example: &str) -> Option<String> {
     let parsed = ono_parser::parse(example);
     if parsed.has_errors() || !parsed.is_complete() {
         return Some("does not parse, which `spec-check` reports on its own".to_owned());
@@ -290,7 +294,24 @@ fn contract_reason(contracts: &Contracts, example: &str) -> Option<String> {
     for statement in &parsed.program().statements {
         statement_reasons(contracts, statement, &mut reasons);
     }
-    reasons.into_iter().next()
+    // A `conditional` command's contract may vouch for one of its own examples as needing no
+    // privilege (`unprivileged_examples`, ADR-0967): that one reason falls away for that one
+    // example, and every other reason — another command in the pipeline, a mutating verb, a
+    // redirection — still stands. `spec-check` holds the marker to a documented example of a
+    // `conditional` command, and the suite proves the claim by running unprivileged.
+    let vouched = command.unprivileged.contains(example);
+    let own_privilege = privilege_reason(command);
+    reasons
+        .into_iter()
+        .find(|reason| !(vouched && *reason == own_privilege))
+}
+
+/// The one reason a command's own `privilege` gives for not running hermetically.
+fn privilege_reason(command: &Command) -> String {
+    format!(
+        "runs `{}`, which declares privilege `{}`",
+        command.id, command.privilege
+    )
 }
 
 fn statement_reasons(contracts: &Contracts, statement: &Statement, reasons: &mut Vec<String>) {
@@ -454,10 +475,7 @@ fn command_reasons(contracts: &Contracts, command: &Command, reasons: &mut Vec<S
         Some(_) => {}
     }
     if command.privilege != "none" {
-        reasons.push(format!(
-            "runs `{}`, which declares privilege `{}`",
-            command.id, command.privilege
-        ));
+        reasons.push(privilege_reason(command));
     }
     if let Some(id) = &command.capability {
         match contracts.capabilities.get(id) {
@@ -517,6 +535,9 @@ fn read_contracts(spec: &Path) -> Result<Contracts, GenerateError> {
                     capability: string_at(command, "provider_capability")
                         .filter(|capability| capability != "null"),
                     examples: string_sequence(command, "examples"),
+                    unprivileged: string_sequence(command, "unprivileged_examples")
+                        .into_iter()
+                        .collect(),
                 });
             }
         }

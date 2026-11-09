@@ -1411,6 +1411,7 @@ Return file metadata records for the given paths.
 ```text
 get file ./src
 get file /tmp --recursive | where modified < now()-30d
+get file /etc/hostname
 ```
 
 ### `find file`
@@ -1701,6 +1702,7 @@ Show which processes, services and users hold or use a file.
 
 ```text
 trace file /var/lib/postgresql/data --users
+trace file /etc/hostname
 ```
 
 ### `tail file`
@@ -1832,6 +1834,7 @@ Push a file onto the context stack as the active object.
 
 ```text
 enter file ./Cargo.toml
+enter file /etc/hostname
 ```
 
 ### `get dir`
@@ -1869,6 +1872,7 @@ List directory entries as File records.
 ```text
 get dir
 get dir ./src --recursive | where size > 1MiB
+get dir /etc
 ```
 
 ### `enter dir`
@@ -1897,6 +1901,7 @@ Change the filesystem context — the shell's working directory.
 
 ```text
 enter dir ./src
+enter dir /etc
 ```
 
 ### `remove dir`
@@ -2407,6 +2412,7 @@ Show a user's processes, sessions, groups and owned files.
 
 ```text
 trace user postgres
+trace user root
 ```
 
 ### `enter user`
@@ -4229,6 +4235,7 @@ Show the routes, addresses, neighbours and sockets bound to an interface.
 
 ```text
 trace interface eth0
+trace interface lo
 ```
 
 ### `enter interface`

@@ -8,10 +8,10 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 116 examples run; 242 are not run, each for the reason listed at the end of this file.
+//! 126 examples run; 239 are not run, each for the reason listed at the end of this file.
 //! 51 of the examples that run may produce no value in a fresh environment, each with the reason it carries; every other one must produce at least one.
 //!
-//! Commands no example of which runs (154):
+//! Commands no example of which runs (144):
 //!
 //! - `ono.change.plan` — exempt: plans to replace `/etc/nginx/nginx.conf` from `./nginx.conf`; a scratch directory has neither file.
 //! - `ono.change-plan.inspect` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.
@@ -30,7 +30,7 @@
 //! - `ono.container.restart` — runs `ono.container.restart`, whose verb `restart` changes the system (verbs.yaml)
 //! - `ono.container.enter` — runs `ono.container.enter`, which declares privilege `conditional`
 //! - `ono.container.trace` — runs `ono.container.trace`, which declares privilege `conditional`
-//! - `ono.image.get` — runs `ono.image.get`, which declares privilege `conditional`
+//! - `ono.image.get` — exempt: needs a container engine, and a fresh environment runs none.
 //! - `ono.container.watch` — runs `ono.container.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
 //! - `ono.container.remove` — runs `ono.container.remove`, whose verb `remove` changes the system (verbs.yaml)
 //! - `ono.container.set` — runs `ono.container.set`, whose verb `set` changes the system (verbs.yaml)
@@ -38,21 +38,15 @@
 //! - `ono.data.from` — runs `curl`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
 //! - `ono.data.tail` — runs `ono.log.get`, which declares privilege `conditional`
 //! - `ono.data.diff` — refers to an earlier result, which the scratch shell does not have
-//! - `ono.file.get` — runs `ono.file.get`, which declares privilege `conditional`
 //! - `ono.file.find` — runs `ono.file.find`, which declares privilege `conditional`
-//! - `ono.file.read` — runs `ono.file.read`, which declares privilege `conditional`
 //! - `ono.file.write` — runs `ono.file.write`, whose verb `write` changes the system (verbs.yaml)
 //! - `ono.file.copy` — runs `ono.file.copy`, whose verb `copy` changes the system (verbs.yaml)
 //! - `ono.file.move` — runs `ono.file.move`, whose verb `move` changes the system (verbs.yaml)
 //! - `ono.file.remove` — runs `ono.file.find`, which declares privilege `conditional`
 //! - `ono.file.set` — runs `ono.file.set`, whose verb `set` changes the system (verbs.yaml)
-//! - `ono.file.trace` — runs `ono.file.trace`, which declares privilege `conditional`
 //! - `ono.file.tail` — runs `ono.file.tail`, which declares privilege `conditional`
 //! - `ono.file.open` — runs `ono.file.open`, whose verb `open` changes the system (verbs.yaml)
 //! - `ono.file.watch` — runs `ono.file.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
-//! - `ono.file.enter` — runs `ono.file.enter`, which declares privilege `conditional`
-//! - `ono.dir.get` — runs `ono.dir.get`, which declares privilege `conditional`
-//! - `ono.dir.enter` — runs `ono.dir.enter`, which declares privilege `conditional`
 //! - `ono.dir.remove` — runs `ono.dir.remove`, whose verb `remove` changes the system (verbs.yaml)
 //! - `ono.dir.set` — runs `ono.dir.set`, whose verb `set` changes the system (verbs.yaml)
 //! - `ono.env.set` — runs `ono.env.set`, whose verb `set` changes the system (verbs.yaml)
@@ -63,7 +57,6 @@
 //! - `ono.group.remove` — runs `ono.group.remove`, whose verb `remove` changes the system (verbs.yaml)
 //! - `ono.group.set` — runs `ono.group.set`, whose verb `set` changes the system (verbs.yaml)
 //! - `ono.user.watch` — runs `ono.user.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
-//! - `ono.user.trace` — runs `ono.user.trace`, which declares privilege `conditional`
 //! - `ono.group.watch` — runs `ono.group.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
 //! - `ono.plugin.inspect` — exempt: names the package `dev.example.packet-eye`, and a fresh plugin path has none installed.
 //! - `ono.plugin.install` — runs `ono.plugin.install`, whose verb `install` changes the system (verbs.yaml)
@@ -79,8 +72,6 @@
 //! - `ono.meta.help` — runs `ono.meta.help`, which declares `ono.help-page/1` — a schema schemas/deferred.yaml says a later phase writes
 //! - `ono.config.set` — runs `ono.config.set`, whose verb `set` changes the system (verbs.yaml)
 //! - `ono.context.leave` — runs `leave`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
-//! - `ono.socket.get` — runs `ono.socket.get`, which declares privilege `conditional`
-//! - `ono.connection.get` — runs `ono.connection.get`, which declares privilege `conditional`
 //! - `ono.dns.resolve` — runs `ono.dns.resolve`, whose capability `dns.resolve` reaches the network
 //! - `ono.port.test` — runs `ono.port.test`, whose capability `port.probe` is `observe` rather than `read`
 //! - `ono.connection.trace` — runs `ono.connection.trace`, which declares privilege `conditional`
@@ -96,7 +87,6 @@
 //! - `ono.interface.stop` — runs `ono.interface.stop`, whose verb `stop` changes the system (verbs.yaml)
 //! - `ono.interface.add` — runs `ono.interface.add`, whose verb `add` changes the system (verbs.yaml)
 //! - `ono.interface.remove` — runs `ono.interface.remove`, whose verb `remove` changes the system (verbs.yaml)
-//! - `ono.interface.trace` — runs `ono.interface.trace`, which declares privilege `conditional`
 //! - `ono.socket.stop` — runs `ono.socket.get`, which declares privilege `conditional`
 //! - `ono.socket.enter` — runs `ono.socket.enter`, which declares privilege `conditional`
 //! - `ono.package.add` — runs `ono.package.add`, whose verb `add` changes the system (verbs.yaml)
@@ -470,6 +460,78 @@ fn should_produce_what_ono_data_join_declares_when_example_1_runs() {
     });
 }
 
+/// `get file /etc/hostname`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_file_get_declares_when_example_3_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.file.get",
+        example: "get file /etc/hostname",
+        output: "stream<ono.file/1>",
+        may_be_empty: None,
+    });
+}
+
+/// `read file /etc/hostname --encoding utf-8`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_file_read_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.file.read",
+        example: "read file /etc/hostname --encoding utf-8",
+        output: "bytes | string",
+        may_be_empty: None,
+    });
+}
+
+/// `trace file /etc/hostname`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_file_trace_declares_when_example_2_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.file.trace",
+        example: "trace file /etc/hostname",
+        output: "ono.graph/1",
+        may_be_empty: None,
+    });
+}
+
+/// `enter file /etc/hostname`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_file_enter_declares_when_example_2_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.file.enter",
+        example: "enter file /etc/hostname",
+        output: "ono.context/1",
+        may_be_empty: None,
+    });
+}
+
+/// `get dir /etc`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_dir_get_declares_when_example_3_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.dir.get",
+        example: "get dir /etc",
+        output: "stream<ono.file/1>",
+        may_be_empty: None,
+    });
+}
+
+/// `enter dir /etc`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_dir_enter_declares_when_example_2_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.dir.enter",
+        example: "enter dir /etc",
+        output: "ono.context/1",
+        may_be_empty: None,
+    });
+}
+
 /// `get user`
 #[rustfmt::skip]
 #[test]
@@ -550,6 +612,18 @@ fn should_produce_what_ono_env_get_declares_when_example_2_runs() {
         command: "ono.env.get",
         example: "get env PATH",
         output: "stream<ono.env-var/1>",
+        may_be_empty: None,
+    });
+}
+
+/// `trace user root`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_user_trace_declares_when_example_2_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.user.trace",
+        example: "trace user root",
+        output: "ono.graph/1",
         may_be_empty: None,
     });
 }
@@ -878,6 +952,30 @@ fn should_produce_what_ono_context_get_declares_when_example_1_runs() {
     });
 }
 
+/// `get socket`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_socket_get_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.socket.get",
+        example: "get socket",
+        output: "stream<ono.socket/1>",
+        may_be_empty: None,
+    });
+}
+
+/// `get connection`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_connection_get_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.connection.get",
+        example: "get connection",
+        output: "stream<ono.socket/1>",
+        may_be_empty: None,
+    });
+}
+
 /// `get interface`
 #[rustfmt::skip]
 #[test]
@@ -959,6 +1057,18 @@ fn should_produce_what_ono_route_trace_declares_when_example_1_runs() {
         example: "trace route 0.0.0.0/0",
         output: "ono.graph/1",
         may_be_empty: Some("a host without networking has no default route to trace."),
+    });
+}
+
+/// `trace interface lo`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_interface_trace_declares_when_example_2_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.interface.trace",
+        example: "trace interface lo",
+        output: "ono.graph/1",
+        may_be_empty: None,
     });
 }
 
@@ -1599,14 +1709,14 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.recovery.inspect` `inspect recovery r-a82f` — exempt: names the recovery asset `r-a82f`, and a fresh state directory holds none.
 // - `ono.recovery.remove` `remove recovery r-a82f --dry-run` — runs `ono.recovery.remove`, whose verb `remove` changes the system (verbs.yaml)
 // - `ono.recovery.remove` `remove recovery r-a82f --confirm` — runs `ono.recovery.remove`, whose verb `remove` changes the system (verbs.yaml)
-// - `ono.container.get` `get container` — runs `ono.container.get`, which declares privilege `conditional`
+// - `ono.container.get` `get container` — exempt: needs a container engine, and a fresh environment runs none.
 // - `ono.container.get` `get container | where state == running` — runs `ono.container.get`, which declares privilege `conditional`
 // - `ono.container.start` `start container web-1` — runs `ono.container.start`, whose verb `start` changes the system (verbs.yaml)
 // - `ono.container.stop` `stop container web-1` — runs `ono.container.stop`, whose verb `stop` changes the system (verbs.yaml)
 // - `ono.container.restart` `restart container web-1` — runs `ono.container.restart`, whose verb `restart` changes the system (verbs.yaml)
 // - `ono.container.enter` `enter container web-1` — runs `ono.container.enter`, which declares privilege `conditional`
 // - `ono.container.trace` `trace container web-1` — runs `ono.container.trace`, which declares privilege `conditional`
-// - `ono.image.get` `get image` — runs `ono.image.get`, which declares privilege `conditional`
+// - `ono.image.get` `get image` — exempt: needs a container engine, and a fresh environment runs none.
 // - `ono.container.watch` `watch container` — runs `ono.container.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
 // - `ono.container.remove` `remove container web-1` — runs `ono.container.remove`, whose verb `remove` changes the system (verbs.yaml)
 // - `ono.container.set` `set container web-1 --memory 2GiB` — runs `ono.container.set`, whose verb `set` changes the system (verbs.yaml)
@@ -1623,7 +1733,6 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.file.get` `get file /tmp --recursive | where modified < now()-30d` — runs `ono.file.get`, which declares privilege `conditional`
 // - `ono.file.find` `find file /var/log` — runs `ono.file.find`, which declares privilege `conditional`
 // - `ono.file.find` `find file /var/log | where size > 100MiB and modified < now()-30d` — runs `ono.file.find`, which declares privilege `conditional`
-// - `ono.file.read` `read file /etc/hostname --encoding utf-8` — runs `ono.file.read`, which declares privilege `conditional`
 // - `ono.file.read` `read file ./data.bin | to json` — runs `ono.file.read`, which declares privilege `conditional`
 // - `ono.file.write` `get process | to json | write file ./processes.json --overwrite` — runs `ono.file.write`, whose verb `write` changes the system (verbs.yaml)
 // - `ono.file.copy` `copy file ./a.txt ./b.txt` — runs `ono.file.copy`, whose verb `copy` changes the system (verbs.yaml)
@@ -1683,10 +1792,8 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.config.set` `set config safety.confirm.bulk_threshold = 100` — runs `ono.config.set`, whose verb `set` changes the system (verbs.yaml)
 // - `ono.context.leave` `leave` — runs `leave`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
 // - `ono.context.leave` `leave --all` — runs `leave`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
-// - `ono.socket.get` `get socket` — runs `ono.socket.get`, which declares privilege `conditional`
 // - `ono.socket.get` `get socket | where state == established | group process.name` — runs `ono.socket.get`, which declares privilege `conditional`
 // - `ono.socket.get` `get socket | where state == listen | where local.address not in [127.0.0.1, ::1]` — runs `ono.socket.get`, which declares privilege `conditional`
-// - `ono.connection.get` `get connection` — runs `ono.connection.get`, which declares privilege `conditional`
 // - `ono.connection.get` `get connection --remote 10.4.2.11` — runs `ono.connection.get`, which declares privilege `conditional`
 // - `ono.dns.resolve` `resolve dns example.com` — runs `ono.dns.resolve`, whose capability `dns.resolve` reaches the network
 // - `ono.dns.resolve` `resolve dns 10.4.2.11` — runs `ono.dns.resolve`, whose capability `dns.resolve` reaches the network

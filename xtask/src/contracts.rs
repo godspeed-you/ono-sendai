@@ -876,7 +876,35 @@ pub fn check_examples(root: &Path) -> Vec<Problem> {
 
         for command in sequence(&document, "commands") {
             let id = string_at(command, "id").unwrap_or_default();
-            for example in string_sequence(command, "examples") {
+            // `unprivileged_examples` vouches that an example of a `conditional` command needs no
+            // privilege, so the conformance suite runs it (ADR-0967). The marker names a
+            // documented example, and only a `conditional` command has anything to vouch for: a
+            // command whose privilege is `none` runs anyway, one whose privilege is `required`
+            // cannot be vouched out of it.
+            let examples = string_sequence(command, "examples");
+            let privilege = string_at(command, "privilege").unwrap_or_default();
+            for vouched in string_sequence(command, "unprivileged_examples") {
+                if !examples.contains(&vouched) {
+                    problems.push(Problem {
+                        location: location.clone(),
+                        detail: format!(
+                            "`{id}` vouches for `{vouched}` under `unprivileged_examples`, and \
+                             documents no such example"
+                        ),
+                    });
+                }
+                if privilege != "conditional" {
+                    problems.push(Problem {
+                        location: location.clone(),
+                        detail: format!(
+                            "`{id}` vouches for `{vouched}` under `unprivileged_examples`, and its \
+                             privilege is `{privilege}` rather than `conditional`; the marker is \
+                             for a command whose need for privilege depends on the invocation"
+                        ),
+                    });
+                }
+            }
+            for example in examples {
                 let parsed = ono_parser::parse(&example);
                 if !parsed.has_errors() && parsed.is_complete() {
                     continue;

@@ -31,6 +31,8 @@ commands:
     examples:
       - get container
       - get container | where state == running
+    unprivileged_examples:            # ADR-0967: listing needs the engine socket, not root; exempt where no engine runs
+      - get container
 
   - id: ono.container.start
     verb: start
@@ -142,6 +144,8 @@ commands:
     streaming: true
     phase: C
     examples:
+      - get image
+    unprivileged_examples:            # ADR-0967: listing needs the engine socket, not root; exempt where no engine runs
       - get image
 
   - id: ono.container.watch

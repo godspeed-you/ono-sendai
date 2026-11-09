@@ -33,6 +33,9 @@ commands:
     examples:
       - get file ./src
       - get file /tmp --recursive | where modified < now()-30d
+      - get file /etc/hostname
+    unprivileged_examples:            # ADR-0967: a file every user may stat, so the suite runs it
+      - get file /etc/hostname
 
   - id: ono.file.find
     verb: find
@@ -77,6 +80,8 @@ commands:
     examples:
       - read file /etc/hostname --encoding utf-8
       - read file ./data.bin | to json
+    unprivileged_examples:            # ADR-0967: a file every user may read
+      - read file /etc/hostname --encoding utf-8
 
   - id: ono.file.write
     verb: write
@@ -203,6 +208,9 @@ commands:
     phase: G
     examples:
       - trace file /var/lib/postgresql/data --users
+      - trace file /etc/hostname
+    unprivileged_examples:            # ADR-0967: the edges of a file every user may stat
+      - trace file /etc/hostname
 
   - id: ono.file.tail
     verb: tail
@@ -279,6 +287,9 @@ commands:
     phase: E
     examples:
       - enter file ./Cargo.toml
+      - enter file /etc/hostname
+    unprivileged_examples:            # ADR-0967: a file every user may stand on
+      - enter file /etc/hostname
 
   # --- dir ----------------------------------------------------------------------------------
   - id: ono.dir.get
@@ -302,6 +313,9 @@ commands:
     examples:
       - get dir
       - get dir ./src --recursive | where size > 1MiB
+      - get dir /etc
+    unprivileged_examples:            # ADR-0967: a directory every user may list
+      - get dir /etc
 
   - id: ono.dir.enter
     verb: enter
@@ -320,6 +334,9 @@ commands:
     phase: A
     examples:
       - enter dir ./src
+      - enter dir /etc
+    unprivileged_examples:            # ADR-0967: a directory every user may enter
+      - enter dir /etc
 
   - id: ono.dir.remove
     verb: remove

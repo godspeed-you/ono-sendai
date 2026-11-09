@@ -38,6 +38,8 @@ commands:
       - get socket
       - get socket | where state == established | group process.name
       - get socket | where state == listen | where local.address not in [127.0.0.1, ::1]
+    unprivileged_examples:            # ADR-0967: sock_diag answers every user for its own view
+      - get socket
 
   - id: ono.connection.get
     verb: get
@@ -64,6 +66,8 @@ commands:
     examples:
       - get connection
       - get connection --remote 10.4.2.11
+    unprivileged_examples:            # ADR-0967: sock_diag answers every user for its own view
+      - get connection
 
   - id: ono.interface.get
     verb: get
@@ -476,6 +480,9 @@ commands:
     phase: G
     examples:
       - trace interface eth0
+      - trace interface lo
+    unprivileged_examples:            # ADR-0967: the loopback's edges, readable by every user
+      - trace interface lo
 
   - id: ono.interface.enter
     verb: enter

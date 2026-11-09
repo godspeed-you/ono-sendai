@@ -24,6 +24,15 @@ version: 1
 
 exemptions:
   # --- objects a fresh environment does not have ---------------------------------------------
+  # The container reads are vouched unprivileged (`unprivileged_examples`, ADR-0967) — listing
+  # needs the engine's socket, not root — and a fresh environment runs no engine, so what the
+  # provider answers here is its unavailability, not a record to hold to the schema.
+  - command: ono.container.get
+    example: get container
+    reason: needs a container engine, and a fresh environment runs none.
+  - command: ono.image.get
+    example: get image
+    reason: needs a container engine, and a fresh environment runs none.
   - command: ono.change-plan.get
     example: get plan a82f
     reason: names the plan `a82f`, and a fresh state directory holds no plan.
