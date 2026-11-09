@@ -51,6 +51,75 @@ fn should_show_the_stack_when_asked_for_the_context() {
 }
 
 #[test]
+fn should_yield_the_frame_it_pushed_when_entering_an_object_feeds_a_pipeline() {
+    // Every `enter <target>` contract declares `output: ono.context/1`: the frame it pushed,
+    // as a value a script can read — `enter user root | to json`, `$f = (enter user root)`.
+    // The head form changed the frame and the consumed form answered "declared but this build
+    // implements nothing" (#290). One frame, the one just pushed, is the honest value.
+    let run = ono("enter user root | to json");
+    run.assert_success();
+    let text = run.stdout();
+    for expected in [
+        "\"depth\":1",
+        "\"kind\":\"object\"",
+        "\"target\":\"user\"",
+        "\"identity\":\"root\"",
+        "\"selector\":\"--user root\"",
+    ] {
+        assert!(
+            text.contains(expected),
+            "the value is the `ono.context/1` frame `get context` would show on top, missing \
+             {expected} in {text:?}"
+        );
+    }
+    assert!(
+        !text.contains("\"depth\":0"),
+        "the ground frame is the stack's, not this command's, got {text:?}"
+    );
+}
+
+#[test]
+fn should_yield_the_frame_when_the_object_to_enter_arrives_through_the_pipe() {
+    // Spec §14.3's other spelling: the object comes in, the frame goes out, and the stages
+    // after `enter` read it like any other value.
+    let run = ono("get user root | enter user | select kind identity | to json");
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        r#"[{"kind":"object","identity":"root"}]"#,
+        "got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_yield_a_filesystem_frame_when_entering_a_directory_feeds_a_pipeline() {
+    // `enter dir` is the same contract shape (`ono.dir.enter`, `output: ono.context/1`), and
+    // its frame is the filesystem kind whose selector is the `cd` that would do the same.
+    let run = ono("enter dir /etc | select kind identity selector | to json");
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        r#"[{"kind":"filesystem","identity":"/etc","selector":"cd /etc"}]"#,
+        "got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_still_change_the_frame_when_the_value_is_consumed() {
+    // Yielding the frame does not make `enter` a query: the stack moved, and `get context` on
+    // the next line stands on it.
+    let run = ono("enter user root | count; get context | select depth target | to json");
+    run.assert_success();
+    assert!(
+        run.stdout().contains(r#"{"depth":1,"target":"user"}"#),
+        "the frame stayed pushed after its value was read, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
 fn should_refuse_to_enter_an_object_that_does_not_exist() {
     // Entering is a statement about a real object; a name nothing answers to is refused with a
     // structured error rather than pushing a frame that would narrow every later query to

@@ -285,7 +285,7 @@ commands:
     streaming: false
     phase: E
     examples:
-      - enter user postgres
+      - enter user root
 
   - id: ono.group.watch
     verb: watch
@@ -320,4 +320,4 @@ commands:
     streaming: false
     phase: E
     examples:
-      - enter group docker
+      - enter group root

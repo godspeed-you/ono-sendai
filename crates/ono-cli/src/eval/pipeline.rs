@@ -425,30 +425,57 @@ pub(super) fn run_stage_list(
         }
     }
 
-    // `… | enter socket`: the object to enter arrives through the pipeline (spec §14.3). The
-    // stages before it run as the native pipeline they are, with their result kept for the
-    // frame instead of shown, and the last stage pushes the frame (ADR-0075).
+    // `enter` inside a pipeline, in either of spec §14.3's spellings. `… | enter socket`: the
+    // object to enter arrives through the pipeline, so the stages before it run as the native
+    // pipeline they are, with their result kept for the frame instead of shown (ADR-0075).
+    // `enter user root | to json`: every `enter <target>` contract declares `output:
+    // ono.context/1`, so the stages after it read the frame it pushed, as `get context` would
+    // show it on top of the stack (#290). Both change the session either way: the frame stays.
     if list.stages.len() > 1
-        && let Some(last) = list.stages.last()
-        && matches!(
-            crate::context::claims(last),
-            Some(crate::context::Request::Enter)
-        )
+        && let Some((index, stage)) = list.stages.iter().enumerate().find(|(_, stage)| {
+            matches!(
+                crate::context::claims(stage),
+                Some(crate::context::Request::Enter)
+            )
+        })
     {
         if session.mode() == Mode::Config {
             return Err(Flow::Failed(config_refusal("this command")));
         }
-        let head = &list.stages[..list.stages.len() - 1];
-        let prefix = StageList {
-            stages: head.to_vec(),
-            span: Span::new(
-                list.span.start(),
-                head.last()
-                    .map_or(list.span.end(), |stage| stage.span.end()),
-            ),
-        };
-        let values = super::native::run_collecting(session, &prefix, source)?;
-        return crate::context::enter_piped(session, last, source, &values);
+        let depth_before = session.frames().len();
+        if index == 0 {
+            crate::context::enter(session, stage, source)?;
+        } else {
+            let head = &list.stages[..index];
+            let prefix = StageList {
+                stages: head.to_vec(),
+                span: Span::new(
+                    list.span.start(),
+                    head.last()
+                        .map_or(list.span.end(), |stage| stage.span.end()),
+                ),
+            };
+            let values = super::native::run_collecting(session, &prefix, source)?;
+            crate::context::enter_piped(session, stage, source, &values)?;
+        }
+        if index + 1 == list.stages.len() {
+            return Ok(ExitStatus::SUCCESS);
+        }
+        // The value is the frame this `enter` pushed. A spatial move that pushed none — `enter
+        // /etc/hostname` stands on the file without narrowing anything — yields nothing, which
+        // is what `ono.place.enter` declares.
+        let frames = session.frames();
+        let pushed = (frames.len() > depth_before)
+            .then(|| frames.last())
+            .flatten()
+            .map(|top| ono_command::context_frame_record(frames.len() as i128, &top.frame));
+        return super::native::run_seeded_from(
+            session,
+            list,
+            source,
+            index + 1,
+            pushed.into_iter().collect(),
+        );
     }
 
     // `get link | remove link`, `get plugin | verify plugin`: a shell-answered command reached

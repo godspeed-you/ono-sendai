@@ -264,4 +264,4 @@ commands:
     streaming: false
     phase: E
     examples:
-      - enter mount /mnt/data
+      - enter mount /

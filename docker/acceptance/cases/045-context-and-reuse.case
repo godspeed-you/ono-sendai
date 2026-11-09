@@ -17,6 +17,13 @@ run: |
   echo "== entering nothing is refused, structurally =="
   ono -c 'enter service ono-definitely-not-a-unit' 2>&1 | head -1
 
+  echo "== enter yields the frame it pushed when a pipeline reads it (#290) =="
+  # Every `enter <target>` declares `output: ono.context/1`: consumed, it is the frame `get
+  # context` shows on top; the frame stays pushed. Both spellings of spec 14.3 yield it.
+  ono -c 'enter user root | select kind target identity selector | to json'
+  ono -c 'get process | where pid == 1 | enter process | select kind identity | to json'
+  ono -c 'enter dir /etc | count; get context | where depth == 1 | select kind identity | to json'
+
   echo "== the shown result is reused without re-running (spec 20.2) =="
   ono -c 'get process | where pid == 1 | select pid name; @-1 | count | to json'
 
@@ -28,6 +35,9 @@ stdout-contains: filesystem
 stdout-contains: nothing to leave
 stdout-contains: cd /etc
 stdout-contains: Ono-Sendai-E
+stdout-contains: [{"kind":"object","target":"user","identity":"root","selector":"--user root"}]
+stdout-contains: [{"kind":"object","identity":"1"}]
+stdout-contains: [{"kind":"filesystem","identity":"/etc"}]
 stdout-contains: [1]
 stdout-not-contains: panicked
 profile: full

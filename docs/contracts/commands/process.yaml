@@ -185,7 +185,7 @@ commands:
     streaming: false
     phase: E
     examples:
-      - enter process 4419
+      - enter process 1
 
   - id: ono.process.set
     verb: set

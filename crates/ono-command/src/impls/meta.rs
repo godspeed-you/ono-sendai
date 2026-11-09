@@ -625,17 +625,22 @@ fn schema_record(name: &str, provider: &str, fields: Vec<(&str, Value)>) -> Valu
 }
 
 fn context_records(ctx: &Invocation<'_>) -> Vec<Value> {
-    let kind_name = |frame: &crate::ContextFrame| match frame.kind() {
-        // context.v1 names a container frame by its own kind (spec §14.1: "execution/container
-        // context"); every other entered object is `object` (ADR-0114).
-        crate::FrameKind::Object if frame.target() == "container" => "container",
-        crate::FrameKind::Object => "object",
-        crate::FrameKind::Filesystem => "filesystem",
-        crate::FrameKind::Link => "link",
-    };
-
     let mut records = Vec::with_capacity(ctx.context().len() + 1);
-    records.push(schema_record(
+    records.push(ground_frame_record());
+    records.extend(
+        ctx.context()
+            .iter()
+            .enumerate()
+            .map(|(index, frame)| context_frame_record(index as i128 + 1, frame)),
+    );
+    records
+}
+
+/// The ground frame of spec §14.1 as an `ono.context/1` record: depth 0, kind `local`, narrowing
+/// nothing.
+#[must_use]
+pub fn ground_frame_record() -> Value {
+    schema_record(
         "ono.context",
         "ono.context",
         vec![
@@ -645,30 +650,41 @@ fn context_records(ctx: &Invocation<'_>) -> Vec<Value> {
             ("identity", Value::Null),
             ("selector", Value::Null),
         ],
-    ));
+    )
+}
 
-    for (index, frame) in ctx.context().iter().enumerate() {
-        // Everything a frame contributes can be written out explicitly (spec §14.5, ADR-0023).
-        let selector = match frame.kind() {
-            crate::FrameKind::Object => {
-                Value::string(&format!("--{} {}", frame.target(), frame.identity()))
-            }
-            crate::FrameKind::Filesystem => Value::string(&format!("cd {}", frame.identity())),
-            crate::FrameKind::Link => Value::string(&format!("enter link {}", frame.identity())),
-        };
-        records.push(schema_record(
-            "ono.context",
-            "ono.context",
-            vec![
-                ("depth", Value::Int(index as i128 + 1)),
-                ("kind", Value::string(kind_name(frame))),
-                ("target", Value::string(frame.target())),
-                // context.v1 renders the identity the way the prompt shows it: as text, whatever
-                // the object's own identity type is.
-                ("identity", Value::string(&frame.identity().to_string())),
-                ("selector", selector),
-            ],
-        ));
-    }
-    records
+/// One pushed frame as the `ono.context/1` record `get context` shows at `depth` — and the value
+/// an `enter <target>` yields for the frame it pushed, since every such contract declares that
+/// output (#290).
+#[must_use]
+pub fn context_frame_record(depth: i128, frame: &crate::ContextFrame) -> Value {
+    // context.v1 names a container frame by its own kind (spec §14.1: "execution/container
+    // context"); every other entered object is `object` (ADR-0114).
+    let kind = match frame.kind() {
+        crate::FrameKind::Object if frame.target() == "container" => "container",
+        crate::FrameKind::Object => "object",
+        crate::FrameKind::Filesystem => "filesystem",
+        crate::FrameKind::Link => "link",
+    };
+    // Everything a frame contributes can be written out explicitly (spec §14.5, ADR-0023).
+    let selector = match frame.kind() {
+        crate::FrameKind::Object => {
+            Value::string(&format!("--{} {}", frame.target(), frame.identity()))
+        }
+        crate::FrameKind::Filesystem => Value::string(&format!("cd {}", frame.identity())),
+        crate::FrameKind::Link => Value::string(&format!("enter link {}", frame.identity())),
+    };
+    schema_record(
+        "ono.context",
+        "ono.context",
+        vec![
+            ("depth", Value::Int(depth)),
+            ("kind", Value::string(kind)),
+            ("target", Value::string(frame.target())),
+            // context.v1 renders the identity the way the prompt shows it: as text, whatever
+            // the object's own identity type is.
+            ("identity", Value::string(&frame.identity().to_string())),
+            ("selector", selector),
+        ],
+    )
 }

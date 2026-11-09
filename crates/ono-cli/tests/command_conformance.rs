@@ -8,10 +8,10 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 110 examples run; 247 are not run, each for the reason listed at the end of this file.
+//! 115 examples run; 242 are not run, each for the reason listed at the end of this file.
 //! 51 of the examples that run may produce no value in a fresh environment, each with the reason it carries; every other one must produce at least one.
 //!
-//! Commands no example of which runs (159):
+//! Commands no example of which runs (154):
 //!
 //! - `ono.change.plan` — exempt: plans to replace `/etc/nginx/nginx.conf` from `./nginx.conf`; a scratch directory has neither file.
 //! - `ono.change-plan.inspect` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.
@@ -64,9 +64,7 @@
 //! - `ono.group.set` — runs `ono.group.set`, whose verb `set` changes the system (verbs.yaml)
 //! - `ono.user.watch` — runs `ono.user.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
 //! - `ono.user.trace` — runs `ono.user.trace`, which declares privilege `conditional`
-//! - `ono.user.enter` — exempt: runs only as a statement of its own; in a pipeline this build implements nothing for it.
 //! - `ono.group.watch` — runs `ono.group.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
-//! - `ono.group.enter` — exempt: runs only as a statement of its own; in a pipeline this build implements nothing for it.
 //! - `ono.plugin.inspect` — exempt: names the package `dev.example.packet-eye`, and a fresh plugin path has none installed.
 //! - `ono.plugin.install` — runs `ono.plugin.install`, whose verb `install` changes the system (verbs.yaml)
 //! - `ono.plugin.remove` — runs `ono.plugin.remove`, whose verb `remove` changes the system (verbs.yaml)
@@ -99,7 +97,6 @@
 //! - `ono.interface.add` — runs `ono.interface.add`, whose verb `add` changes the system (verbs.yaml)
 //! - `ono.interface.remove` — runs `ono.interface.remove`, whose verb `remove` changes the system (verbs.yaml)
 //! - `ono.interface.trace` — runs `ono.interface.trace`, which declares privilege `conditional`
-//! - `ono.interface.enter` — exempt: runs only as a statement of its own; in a pipeline this build implements nothing for it.
 //! - `ono.socket.stop` — runs `ono.socket.get`, which declares privilege `conditional`
 //! - `ono.socket.enter` — runs `ono.socket.enter`, which declares privilege `conditional`
 //! - `ono.package.add` — runs `ono.package.add`, whose verb `add` changes the system (verbs.yaml)
@@ -111,12 +108,11 @@
 //! - `ono.process.stop` — runs `ono.process.stop`, whose verb `stop` changes the system (verbs.yaml)
 //! - `ono.process.kill` — runs `ono.process.kill`, whose verb `kill` changes the system (verbs.yaml)
 //! - `ono.process.trace` — runs `trace`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
-//! - `ono.process.enter` — exempt: runs only as a statement of its own; in a pipeline this build implements nothing for it.
 //! - `ono.process.set` — runs `ono.process.set`, whose verb `set` changes the system (verbs.yaml)
 //! - `ono.signal.send` — runs `ono.signal.send`, whose verb `send` changes the system (verbs.yaml)
 //! - `ono.host.link` — runs `ono.host.link`, whose verb `link` changes the system (verbs.yaml)
 //! - `ono.link.detach` — runs `ono.link.detach`, whose capability `link.manage` is `mutate` rather than `read`
-//! - `ono.link.enter` — exempt: runs only as a statement of its own; in a pipeline this build implements nothing for it.
+//! - `ono.link.enter` — exempt: names the link `prod-db`, and a fresh state directory holds no link.
 //! - `ono.host.test` — runs `ono.host.test`, whose capability `host.probe` is `observe` rather than `read`
 //! - `ono.host.connect` — runs `ono.host.connect`, whose verb `connect` changes the system (verbs.yaml)
 //! - `ono.host.trace` — exempt: names the host `prod-db`, which a fresh configuration does not know.
@@ -141,7 +137,7 @@
 //! - `ono.service.restart` — runs `ono.service.restart`, whose verb `restart` changes the system (verbs.yaml)
 //! - `ono.service.watch` — runs `ono.service.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
 //! - `ono.service.trace` — runs `ono.service.trace`, which declares privilege `conditional`
-//! - `ono.service.enter` — exempt: runs only as a statement of its own; in a pipeline this build implements nothing for it.
+//! - `ono.service.enter` — exempt: names the unit `nginx`, which the host running the suite need not have.
 //! - `ono.service.set` — runs `ono.service.set`, whose verb `set` changes the system (verbs.yaml)
 //! - `ono.log.get` — runs `ono.log.get`, which declares privilege `conditional`
 //! - `ono.journal.get` — runs `ono.journal.get`, which declares privilege `conditional`
@@ -165,7 +161,6 @@
 //! - `ono.mount.stop` — runs `ono.mount.stop`, whose verb `stop` changes the system (verbs.yaml)
 //! - `ono.mount.watch` — runs `ono.mount.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
 //! - `ono.mount.trace` — runs `ono.mount.trace`, which declares privilege `conditional`
-//! - `ono.mount.enter` — exempt: runs only as a statement of its own; in a pipeline this build implements nothing for it.
 //! - `ono.temporal.at` — refers to `@e42`, a result or event of a session the scratch shell does not have
 //! - `ono.temporal.present` — exempt: runs `printf`, an external program that writes to the terminal before the action result, so its output is not one inspectable document.
 //! - `ono.event.inspect` — refers to `@e42`, a result or event of a session the scratch shell does not have
@@ -559,6 +554,30 @@ fn should_produce_what_ono_env_get_declares_when_example_2_runs() {
     });
 }
 
+/// `enter user root`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_user_enter_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.user.enter",
+        example: "enter user root",
+        output: "ono.context/1",
+        may_be_empty: None,
+    });
+}
+
+/// `enter group root`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_group_enter_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.group.enter",
+        example: "enter group root",
+        output: "ono.context/1",
+        may_be_empty: None,
+    });
+}
+
 /// `get plugin`
 #[rustfmt::skip]
 #[test]
@@ -943,6 +962,18 @@ fn should_produce_what_ono_route_trace_declares_when_example_1_runs() {
     });
 }
 
+/// `enter interface lo`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_interface_enter_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.interface.enter",
+        example: "enter interface lo",
+        output: "ono.context/1",
+        may_be_empty: None,
+    });
+}
+
 /// `get package`
 #[rustfmt::skip]
 #[test]
@@ -1048,6 +1079,18 @@ fn should_produce_what_ono_job_get_declares_when_example_2_runs() {
         example: "get job | where state == running",
         output: "stream<ono.job/1>",
         may_be_empty: Some("a fresh session has started no job."),
+    });
+}
+
+/// `enter process 1`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_process_enter_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.process.enter",
+        example: "enter process 1",
+        output: "ono.context/1",
+        may_be_empty: None,
     });
 }
 
@@ -1311,6 +1354,18 @@ fn should_produce_what_ono_device_get_declares_when_example_1_runs() {
         command: "ono.device.get",
         example: "get device",
         output: "stream<ono.device/1>",
+        may_be_empty: None,
+    });
+}
+
+/// `enter mount /`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_mount_enter_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.mount.enter",
+        example: "enter mount /",
+        output: "ono.context/1",
         may_be_empty: None,
     });
 }
@@ -1583,9 +1638,7 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.group.set` `set group docker --gid 999` — runs `ono.group.set`, whose verb `set` changes the system (verbs.yaml)
 // - `ono.user.watch` `watch user` — runs `ono.user.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
 // - `ono.user.trace` `trace user postgres` — runs `ono.user.trace`, which declares privilege `conditional`
-// - `ono.user.enter` `enter user postgres` — exempt: runs only as a statement of its own; in a pipeline this build implements nothing for it.
 // - `ono.group.watch` `watch group` — runs `ono.group.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
-// - `ono.group.enter` `enter group docker` — exempt: runs only as a statement of its own; in a pipeline this build implements nothing for it.
 // - `ono.plugin.inspect` `inspect plugin kubernetes` — exempt: names the package `kubernetes`, and a fresh plugin path has none installed.
 // - `ono.plugin.inspect` `inspect plugin dev.example.packet-eye` — exempt: names the package `dev.example.packet-eye`, and a fresh plugin path has none installed.
 // - `ono.plugin.install` `install plugin kubernetes` — runs `ono.plugin.install`, whose verb `install` changes the system (verbs.yaml)
@@ -1642,7 +1695,6 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.interface.add` `add interface eth0 --address 192.168.1.5/24` — runs `ono.interface.add`, whose verb `add` changes the system (verbs.yaml)
 // - `ono.interface.remove` `remove interface eth0 --address 192.168.1.5/24` — runs `ono.interface.remove`, whose verb `remove` changes the system (verbs.yaml)
 // - `ono.interface.trace` `trace interface eth0` — runs `ono.interface.trace`, which declares privilege `conditional`
-// - `ono.interface.enter` `enter interface eth0` — exempt: runs only as a statement of its own; in a pipeline this build implements nothing for it.
 // - `ono.socket.stop` `get socket | where remote.address == 10.4.2.11 | stop socket` — runs `ono.socket.get`, which declares privilege `conditional`
 // - `ono.socket.enter` `get socket | take 1 | enter socket` — runs `ono.socket.get`, which declares privilege `conditional`
 // - `ono.socket.enter` `enter socket 443` — runs `ono.socket.enter`, which declares privilege `conditional`
@@ -1661,13 +1713,12 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.process.kill` `kill process 4419 --signal SIGHUP` — runs `ono.process.kill`, whose verb `kill` changes the system (verbs.yaml)
 // - `ono.process.trace` `trace process 812` — runs `ono.process.trace`, which declares privilege `conditional`
 // - `ono.process.trace` `trace @1` — runs `trace`, which no command contract declares — an external program or a shell keyword, whose effects nothing states
-// - `ono.process.enter` `enter process 4419` — exempt: runs only as a statement of its own; in a pipeline this build implements nothing for it.
 // - `ono.process.set` `set process 4419 --priority 10` — runs `ono.process.set`, whose verb `set` changes the system (verbs.yaml)
 // - `ono.signal.send` `get process 4419 | send signal SIGHUP` — runs `ono.signal.send`, whose verb `send` changes the system (verbs.yaml)
 // - `ono.host.link` `link host prod-db` — runs `ono.host.link`, whose verb `link` changes the system (verbs.yaml)
 // - `ono.host.link` `link host prod-web-3` — runs `ono.host.link`, whose verb `link` changes the system (verbs.yaml)
 // - `ono.link.detach` `detach link prod-db` — runs `ono.link.detach`, whose capability `link.manage` is `mutate` rather than `read`
-// - `ono.link.enter` `enter link prod-db` — exempt: runs only as a statement of its own; in a pipeline this build implements nothing for it.
+// - `ono.link.enter` `enter link prod-db` — exempt: names the link `prod-db`, and a fresh state directory holds no link.
 // - `ono.host.test` `test host prod-db` — runs `ono.host.test`, whose capability `host.probe` is `observe` rather than `read`
 // - `ono.host.connect` `connect host prod-db` — runs `ono.host.connect`, whose verb `connect` changes the system (verbs.yaml)
 // - `ono.host.trace` `trace host prod-db` — exempt: names the host `prod-db`, which a fresh configuration does not know.
@@ -1695,7 +1746,7 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.service.watch` `watch service nginx` — runs `ono.service.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
 // - `ono.service.watch` `watch service nginx &` — runs `ono.service.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
 // - `ono.service.trace` `trace service nginx` — runs `ono.service.trace`, which declares privilege `conditional`
-// - `ono.service.enter` `enter service nginx` — exempt: runs only as a statement of its own; in a pipeline this build implements nothing for it.
+// - `ono.service.enter` `enter service nginx` — exempt: names the unit `nginx`, which the host running the suite need not have.
 // - `ono.service.set` `set service nginx --enabled true` — runs `ono.service.set`, whose verb `set` changes the system (verbs.yaml)
 // - `ono.log.get` `get log --service nginx | tail 30` — runs `ono.log.get`, which declares privilege `conditional`
 // - `ono.log.get` `get log --service @1 | where level >= error | take 20` — runs `ono.log.get`, which declares privilege `conditional`
@@ -1742,7 +1793,6 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.mount.stop` `stop mount /mnt/data` — runs `ono.mount.stop`, whose verb `stop` changes the system (verbs.yaml)
 // - `ono.mount.watch` `watch mount` — runs `ono.mount.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
 // - `ono.mount.trace` `trace mount /mnt/data` — runs `ono.mount.trace`, which declares privilege `conditional`
-// - `ono.mount.enter` `enter mount /mnt/data` — exempt: runs only as a statement of its own; in a pipeline this build implements nothing for it.
 // - `ono.temporal.at` `at -10m` — exempt: asks for recorded history, and a fresh shell has recorded nothing: recording is off until `start recorder` (v0.5 §10.2), which mutates.
 // - `ono.temporal.at` `at 12:17` — exempt: asks for recorded history, and a fresh shell has recorded nothing: recording is off until `start recorder` (v0.5 §10.2), which mutates.
 // - `ono.temporal.at` `at 2026-08-31T12:17:00+02:00` — exempt: asks for recorded history, and a fresh shell has recorded nothing: recording is off until `start recorder` (v0.5 §10.2), which mutates.

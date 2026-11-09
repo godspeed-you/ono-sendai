@@ -149,31 +149,15 @@ exemptions:
       runs `printf`, an external program that writes to the terminal before the action result,
       so its output is not one inspectable document.
 
-  # --- commands whose value a pipeline cannot observe ---------------------------------------
-  # `enter <target>` changes the session's context frame and runs only as a statement of its own:
-  # placed in a pipeline it is refused as declared-but-not-implemented, so its declared
-  # `ono.context/1` cannot reach `inspect` (found by the suite; see ADR-0935).
-  - command: ono.user.enter
-    example: enter user postgres
-    reason: runs only as a statement of its own; in a pipeline this build implements nothing for it.
-  - command: ono.group.enter
-    example: enter group docker
-    reason: runs only as a statement of its own; in a pipeline this build implements nothing for it.
-  - command: ono.interface.enter
-    example: enter interface eth0
-    reason: runs only as a statement of its own; in a pipeline this build implements nothing for it.
-  - command: ono.process.enter
-    example: enter process 4419
-    reason: runs only as a statement of its own; in a pipeline this build implements nothing for it.
+  # `enter <target>` yields the `ono.context/1` frame it pushed when a pipeline consumes it
+  # (#290), so its examples run like any other's where they name an object every environment
+  # has — `root`, `lo`, pid 1, `/`. These two name objects a fresh environment does not have.
   - command: ono.link.enter
     example: enter link prod-db
-    reason: runs only as a statement of its own; in a pipeline this build implements nothing for it.
+    reason: names the link `prod-db`, and a fresh state directory holds no link.
   - command: ono.service.enter
     example: enter service nginx
-    reason: runs only as a statement of its own; in a pipeline this build implements nothing for it.
-  - command: ono.mount.enter
-    example: enter mount /mnt/data
-    reason: runs only as a statement of its own; in a pipeline this build implements nothing for it.
+    reason: names the unit `nginx`, which the host running the suite need not have.
   # `explain` written with bare words takes the rest of its pipeline as its subject (spec §11.3,
   # ADR-0942), so `| inspect | to json` appended to it is explained rather than run. The same
   # record is observed through the delimited examples `explain "…"` and `explain { … }`.

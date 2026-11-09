@@ -493,7 +493,7 @@ commands:
     streaming: false
     phase: E
     examples:
-      - enter interface eth0
+      - enter interface lo
 
   - id: ono.socket.stop
     verb: stop

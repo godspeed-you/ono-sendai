@@ -85,7 +85,7 @@ pub use expr::{
 pub use help::{
     CommandHelp, HelpPage, ParameterHelp, TargetHelp, TopicHelp, VerbHelp, help, topics,
 };
-pub use impls::meta::provenance_value;
+pub use impls::meta::{context_frame_record, ground_frame_record, provenance_value};
 pub use impls::watch::{is_watchable, watch_events};
 pub use impls::{builtin_commands, builtin_commands_for};
 pub use invoke::{

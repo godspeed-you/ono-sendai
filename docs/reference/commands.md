@@ -2436,7 +2436,7 @@ Push a user onto the context stack.
 **Examples**
 
 ```text
-enter user postgres
+enter user root
 ```
 
 ### `watch group`
@@ -2486,7 +2486,7 @@ Push a group onto the context stack.
 **Examples**
 
 ```text
-enter group docker
+enter group root
 ```
 
 ## kuang
@@ -4256,7 +4256,7 @@ Push an interface onto the context stack.
 **Examples**
 
 ```text
-enter interface eth0
+enter interface lo
 ```
 
 ### `stop socket`
@@ -4832,7 +4832,7 @@ Push a process onto the context stack so later commands need no selector.
 **Examples**
 
 ```text
-enter process 4419
+enter process 1
 ```
 
 ### `set process`
@@ -6939,7 +6939,7 @@ Push a mount onto the context stack.
 **Examples**
 
 ```text
-enter mount /mnt/data
+enter mount /
 ```
 
 ## temporal
