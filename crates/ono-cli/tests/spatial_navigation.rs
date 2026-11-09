@@ -1358,3 +1358,40 @@ fn should_answer_an_empty_stream_when_the_type_asked_for_is_not_what_a_refused_e
         run.output()
     );
 }
+
+#[test]
+fn should_name_a_file_in_the_trail_by_its_path_rather_than_by_its_device() {
+    // §20.1's `to_ref` is the `<type>/<key>` spelling a person types back (§11.2), and §28.2's
+    // file identity is `[device, inode]` — so a file step read `file/8:2`, which names the device
+    // of every file on the disk and nothing anyone would type (#208). The path is the reference
+    // a file is reached by, and `file/<path>` resolves back to the same place.
+    let run = ono("enter /etc/hostname; trail --json");
+    run.assert_success();
+    let steps = rows(&run);
+    let step = steps.last().expect("entering the file is a movement");
+    assert_eq!(
+        text(step, "to_ref"),
+        "file//etc/hostname",
+        "§11.2: the step names the file by its path, got {step:?}"
+    );
+
+    let round_trip = ono("enter /etc/hostname; home; jump file//etc/hostname; look --json");
+    round_trip.assert_success();
+    assert!(
+        round_trip.stdout().contains("\"name\":\"/etc/hostname\""),
+        "the spelling the trail prints is one `jump` takes back, got {:?}",
+        round_trip.output()
+    );
+
+    let directory = ono("enter /etc; trail --json");
+    directory.assert_success();
+    let steps = rows(&directory);
+    assert_eq!(
+        text(
+            steps.last().expect("entering the directory is a movement"),
+            "to_ref"
+        ),
+        "directory//etc",
+        "a directory is named the same way"
+    );
+}

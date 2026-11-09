@@ -609,6 +609,17 @@ fn canonical_ref(session: &SpatialSessionState, id: &SpatialId) -> Option<String
     }
     let entry = session.index().get(id)?;
     let kind = entry.object().object_type().as_str().to_ascii_lowercase();
+    // A file or a directory is identified by `[device, inode]` (§28.2) and reached by its path:
+    // `file/8:2` names the device of every file on the disk, `file//etc/hostname` is what a
+    // person types and what `jump` resolves back through the path alias (#208).
+    let object_type = entry.object().object_type();
+    if matches!(
+        object_type,
+        ono_spatial_core::SpatialType::File | ono_spatial_core::SpatialType::Directory
+    ) && entry.object().display_name().starts_with('/')
+    {
+        return Some(format!("{kind}/{}", entry.object().display_name()));
+    }
     // The first identity field is the key a person types: a process's pid, a socket's inode, a
     // mount's target. The rest of the identity is what makes the id unique and lives in `from`
     // and `to`, which is where a reader who needs certainty looks (§3.1, §10.2).

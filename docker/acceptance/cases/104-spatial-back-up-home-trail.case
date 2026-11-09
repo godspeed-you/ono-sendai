@@ -69,6 +69,11 @@ run: |
     "ono -c 'enter process $holder; up; trail --json' | grep -q '\"movement\":\"up\"'"
   prove s4c-p "the trail names the process by the spelling a user can type back" \
     "ono -c 'enter process $holder; trail --json' | grep -qF '\"to_ref\":\"process/$holder\"'"
+  # A file's identity is [device, inode] and its reference is its path (§28.2); the trail used
+  # to print the device, which names every file on the disk (#208). The path spelling is one
+  # `jump` takes back.
+  prove s4c-p2 "the trail names a file by its path, and \`jump\` takes that spelling back" \
+    "ono -c 'enter process $holder; follow file /tmp/s4c/held.conf; trail --json' | grep -qF '\"to_ref\":\"file//tmp/s4c/held.conf\"' && ono -c 'enter process $holder; follow file /tmp/s4c/held.conf; home; jump file//tmp/s4c/held.conf; look --json' | grep -qF '\"name\":\"/tmp/s4c/held.conf\"'"
   prove s4c-q "\`trail --compact\` writes the breadcrumb of §20.2" \
     'ono -c "home; enter compute; enter processes; trail --compact" | grep -q "local > compute > processes"'
 
@@ -113,6 +118,7 @@ stdout-contains: PROVED s4c-m
 stdout-contains: PROVED s4c-n
 stdout-contains: PROVED s4c-o
 stdout-contains: PROVED s4c-p
+stdout-contains: PROVED s4c-p2
 stdout-contains: PROVED s4c-q
 stdout-contains: PROVED s4c-r
 stdout-contains: PROVED s4c-s
