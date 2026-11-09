@@ -533,6 +533,78 @@ fn should_reach_the_accepted_connection_when_following_it_from_the_listening_soc
 }
 
 #[test]
+fn should_name_the_acceptance_edge_between_a_real_listener_and_the_connection_it_accepted() {
+    // §14.4: the kernel states a listening socket and an established socket sharing its local
+    // endpoint, and never states the acceptance itself, so the bridge composes
+    // `socket.accepts_connection` between the two with the shared endpoint as its evidence
+    // (ADR-0147). Until here the only test naming the relation was a synthetic fixture (#202);
+    // this one opens a real loopback connection and reads the edge back from the real bridge.
+    let (listening, port) = listener();
+    let client = TcpStream::connect(("127.0.0.1", port)).expect("connect to the test's listener");
+    let (_accepted, peer) = listening
+        .accept()
+        .expect("accept the test's own connection");
+    let client_port = peer.port().to_string();
+
+    let run = ono(&format!(
+        "enter socket {port}; near --type connection | to json"
+    ));
+    let neighbors = rows(&run, "near --type connection");
+    let accepted = neighbors
+        .iter()
+        .find(|neighbor| rendered(neighbor).contains(&client_port))
+        .unwrap_or_else(|| {
+            panic!(
+                "spec §14.4: the listener's connection neighbors contain the connection this test \
+                 opened (client port {client_port}), got {neighbors:?}"
+            )
+        });
+    // A neighbour names its relation by the word `follow` takes and the exit it appeared under
+    // (`ono.spatial-neighbor/1`); `connection` under `connections` is `socket.accepts_connection`'s
+    // canonical label and group, and no other relation leaving a socket uses them.
+    assert_eq!(
+        accepted.get("relation").and_then(Value::as_str),
+        Some("connection"),
+        "the edge between a listener and its accepted connection is the acceptance, got {accepted:?}"
+    );
+    assert_eq!(
+        accepted.get("group").and_then(Value::as_str),
+        Some("connections"),
+        "got {accepted:?}"
+    );
+    assert_eq!(
+        accepted.get("confidence").and_then(Value::as_str),
+        Some("strong"),
+        "§11.5: nobody observed the accept(2); the shared endpoint makes it strong, not exact, \
+         got {accepted:?}"
+    );
+    let evidence = accepted
+        .get("evidence")
+        .map(rendered)
+        .unwrap_or_default();
+    assert!(
+        evidence.contains(&format!(":{port}")),
+        "the edge's evidence is the shared local endpoint (:{port}), got {evidence}"
+    );
+
+    // The map's edges carry the declared relation id (`ono.map-edge/1`).
+    let run = ono(&format!("enter socket {port}; map --json"));
+    let edges = map_edges(&run);
+    let acceptance = edges
+        .iter()
+        .find(|edge| {
+            edge.get("relation").and_then(Value::as_str) == Some("socket.accepts_connection")
+                && rendered(edge).contains(&client_port)
+        });
+    assert!(
+        acceptance.is_some(),
+        "the map of the listener draws `socket.accepts_connection` to the connection on client \
+         port {client_port}, got {edges:?}"
+    );
+    drop(client);
+}
+
+#[test]
 fn should_refuse_the_traversal_with_no_relation_when_the_process_owns_no_socket() {
     // §6.4: `follow` traverses a real relationship edge. Where no such edge exists the answer is
     // the structured `spatial.no_relation` of §40, never an empty place and never a silent
