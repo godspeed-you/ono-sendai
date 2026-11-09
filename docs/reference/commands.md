@@ -6942,6 +6942,31 @@ Push a mount onto the context stack.
 enter mount /
 ```
 
+## system
+
+### `get kernel`
+
+The running kernel, the operating system it boots, and how long it has been up.
+
+| | |
+|---|---|
+| id | `ono.kernel.get` |
+| stability | stable |
+| phase | C |
+| input | `null` |
+| output | `stream<ono.kernel/1>` |
+| provider capability | `kernel.read` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
+| acquisition | scope `local`, cost `cheap` (ADR-0947) |
+
+**Examples**
+
+```text
+get kernel
+```
+
 ## temporal
 
 ### `at`

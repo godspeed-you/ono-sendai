@@ -305,3 +305,24 @@ providers:
       permissions: [available, empty, unknown]
       cost_class: cheap
       landmark_metrics: [size, subsystem, kind]
+
+  - id: linux.kernel
+    doc: >-
+      The running kernel and the operating system it boots, one record from /proc/sys/kernel,
+      /proc/stat, /proc/uptime and os-release(5) (ADR-0964). The record the root place's `os`,
+      `kernel` and `uptime` are filled from, so the spatial layer reads nothing itself (v0.4 §2.16).
+    targets: [kernel]
+    capabilities: [kernel.read]
+    schemas: [ono.kernel/1]
+    conformance:
+      kernel: enumerable
+    temporal:
+      # The kernel as it is now. A reboot is a new boot id, not an event this provider observes.
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+      coverage: snapshot

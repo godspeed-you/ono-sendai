@@ -1,0 +1,25 @@
+# The system family: the running kernel and the operating system it boots (spec §8.1's `kernel`
+# target; ADR-0964). One record per host, from the provider `linux.kernel`, so that v0.4 §7.1's
+# `SystemPlace` has a source for `os`, `kernel` and `uptime` and the spatial layer reads nothing
+# behind the providers' backs (§2.16).
+version: 1
+family: system
+
+commands:
+  - id: ono.kernel.get
+    verb: get
+    target: kernel
+    summary: The running kernel, the operating system it boots, and how long it has been up.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.kernel/1>
+    provider_capability: kernel.read
+    selectors: []
+    options: []
+    privilege: none
+    streaming: true
+    acquisition: {scope: local, cost: cheap}
+    phase: C
+    examples:
+      - get kernel

@@ -1192,3 +1192,51 @@ fn should_not_call_a_map_complete_when_a_place_it_drew_could_not_be_read() {
     );
     readable.expect("the directory is readable again so the scratch can be cleaned up");
 }
+
+#[test]
+fn should_describe_the_system_from_the_kernel_provider_at_the_root() {
+    // v0.4 §7.1's `SystemPlace` carries `os`, `kernel` and `uptime`; §2.16 forbids the spatial
+    // layer reading them itself, so they were null until a provider answered for them. The
+    // kernel provider does now (ADR-0964, #207): the root's `kernel` is `uname -r`, its `uptime`
+    // is a duration, and its `os` is what os-release(5) says where there is one.
+    let run = ono("look --all --json");
+    run.assert_success();
+    let view = one_doc(&run, "look --all --json");
+    let system = view
+        .get("system")
+        .filter(|system| !system.is_null())
+        .unwrap_or_else(|| {
+            panic!("§7.1: `look --all` at the root carries the system, got {view:?}")
+        });
+
+    let release = std::fs::read_to_string("/proc/sys/kernel/osrelease")
+        .expect("this is Linux")
+        .trim()
+        .to_owned();
+    assert_eq!(
+        system.get("kernel").map(as_text).as_deref(),
+        Some(release.as_str()),
+        "the root's kernel is the running kernel's release, got {system:?}"
+    );
+    assert!(
+        system.get("uptime").is_some_and(|uptime| !uptime.is_null()),
+        "the root's uptime is the kernel's, got {system:?}"
+    );
+    let os = system.get("os").map(as_text).unwrap_or_default();
+    if Path::new("/etc/os-release").exists() || Path::new("/usr/lib/os-release").exists() {
+        assert!(
+            !os.is_empty(),
+            "os-release(5) is readable, so the root names its operating system, got {system:?}"
+        );
+    }
+
+    let kernel = ono("get kernel | select release | to json");
+    kernel.assert_success();
+    assert!(
+        kernel
+            .stdout()
+            .contains(&format!("\"release\":\"{release}\"")),
+        "`get kernel` is the provider the root asked, got {:?}",
+        kernel.output()
+    );
+}

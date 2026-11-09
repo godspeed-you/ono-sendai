@@ -238,6 +238,10 @@ provider_capabilities:
     summary: Read environment and shell variables.
     risk: read
     elevation: none
+  - id: kernel.read
+    summary: Read the running kernel's release, the operating system it boots and the uptime.
+    risk: read
+    elevation: none
   - id: env.set
     summary: Set an environment or shell variable in the current scope.
     risk: mutate

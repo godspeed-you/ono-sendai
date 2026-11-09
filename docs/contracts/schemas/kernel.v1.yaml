@@ -1,0 +1,58 @@
+# The running kernel and the operating system it boots. Source: spec §8.1 lists `kernel` among
+# the system targets ("the running kernel, its version and its parameters"); v0.4 §7.1's
+# `SystemPlace` carries `os`, `kernel` and `uptime` and §2.16 forbids the spatial layer reading
+# them itself, so this is the provider record those fields are filled from (ADR-0964).
+#
+# One record per host: there is one running kernel. Identity is the boot id the kernel mints once
+# per boot, which separates one boot from the next without the wall clock (v0.5 §25.5); where a
+# restricted `/proc` publishes none, the release names the kernel instead (ADR-0553's fallback).
+id: ono.kernel/1
+name: Kernel
+summary: The running kernel, the operating system it boots, and how long it has been up.
+identity: [boot_id]
+identity_fallback: [release]
+fields:
+  release:
+    type: string
+    required: true
+    doc: The kernel release, `uname -r` — `6.8.0-45-generic`. From `/proc/sys/kernel/osrelease`.
+  version:
+    type: string
+    nullable: true
+    doc: The kernel's build string, `uname -v`. From `/proc/sys/kernel/version`.
+  architecture:
+    type: string
+    nullable: true
+    doc: The machine architecture the kernel runs on, `uname -m` — `x86_64`, `aarch64`.
+  hostname:
+    type: string
+    nullable: true
+    doc: The kernel's node name, `uname -n`. From `/proc/sys/kernel/hostname`.
+  os:
+    type: string
+    nullable: true
+    doc: >-
+      The operating system as it names itself — `PRETTY_NAME` of `os-release(5)`, `Ubuntu 26.04
+      LTS`. Null where no os-release file is readable.
+  os_id:
+    type: string
+    nullable: true
+    doc: The machine-readable `ID` of `os-release(5)` — `ubuntu`, `debian`, `fedora`.
+  boot_id:
+    type: string
+    nullable: true
+    doc: >-
+      The identity of this boot, from `/proc/sys/kernel/random/boot_id`. Null where `/proc`
+      withholds it, as a restricted container may; the release then identifies the record.
+  booted:
+    type: timestamp
+    nullable: true
+    doc: >-
+      When the system booted, from `/proc/stat`'s `btime`. A wall-clock instant the kernel
+      recomputes when the clock is stepped, so it is a rendered fact and not the identity.
+  uptime:
+    type: duration
+    nullable: true
+    doc: How long the system has been up, from `/proc/uptime`.
+default_view:
+  columns: [release, os, architecture, uptime]

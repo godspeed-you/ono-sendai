@@ -979,6 +979,28 @@ Default view: `timestamp`, `priority`, `identifier`, `message`
 | `host` | `string` | — | required | The hostname the entry was recorded on. |
 | `cursor` | `string` | — | required | The journal cursor, a stable continuation and provenance token (spec v0.3 §1.37). |
 
+## Kernel — `ono.kernel/1`
+
+The running kernel, the operating system it boots, and how long it has been up.
+
+Identity: `boot_id`
+
+When that identity is incomplete, it is joined by: `release`
+
+Default view: `release`, `os`, `architecture`, `uptime`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `release` | `string` | — | required | The kernel release, `uname -r` — `6.8.0-45-generic`. From `/proc/sys/kernel/osrelease`. |
+| `version` | `string` | — | nullable | The kernel's build string, `uname -v`. From `/proc/sys/kernel/version`. |
+| `architecture` | `string` | — | nullable | The machine architecture the kernel runs on, `uname -m` — `x86_64`, `aarch64`. |
+| `hostname` | `string` | — | nullable | The kernel's node name, `uname -n`. From `/proc/sys/kernel/hostname`. |
+| `os` | `string` | — | nullable | The operating system as it names itself — `PRETTY_NAME` of `os-release(5)`, `Ubuntu 26.04 LTS`. Null where no os-release file is readable. |
+| `os_id` | `string` | — | nullable | The machine-readable `ID` of `os-release(5)` — `ubuntu`, `debian`, `fedora`. |
+| `boot_id` | `string` | — | nullable | The identity of this boot, from `/proc/sys/kernel/random/boot_id`. Null where `/proc` withholds it, as a restricted container may; the release then identifies the record. |
+| `booted` | `timestamp` | — | nullable | When the system booted, from `/proc/stat`'s `btime`. A wall-clock instant the kernel recomputes when the clock is stepped, so it is a rendered fact and not the identity. |
+| `uptime` | `duration` | — | nullable | How long the system has been up, from `/proc/uptime`. |
+
 ## Landmark — `ono.landmark/1`
 
 An object or condition promoted because it helps orientation or deserves attention.

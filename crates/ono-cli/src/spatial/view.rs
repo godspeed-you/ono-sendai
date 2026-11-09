@@ -1202,25 +1202,34 @@ pub fn neighbor_record(
 /// The `ono.system/1` record of §7.1, for the root place of this host.
 ///
 /// §7.1's conceptual schema names `os`, `kernel` and `uptime` beside the host's identity. No
-/// installed provider answers for them — there is no `get system` — so they are null rather than
-/// read behind the providers' backs (§2.16) or invented (§2.17, §35.3). The phase that adds a
-/// system producer fills them; until then the field says "not known", which is a real answer.
+/// provider answers for them through `get kernel` (`ono.kernel/1`, ADR-0964): `kernel` is its
+/// release, `os` the system it boots, `uptime` how long it has been up. Where no kernel record was
+/// obtained — the provider is unavailable, or the view is a reconstruction of the past — they are
+/// null rather than read behind the providers' backs (§2.16) or invented (§2.17, §35.3): the field
+/// says "not known", which is a real answer.
 pub fn system_record(
     scope: &ono_spatial_core::SpatialScope,
     domains: Vec<Value>,
     landmarks: Vec<Value>,
     now: Timestamp,
+    kernel: Option<&RecordValue>,
 ) -> Result<RecordValue, ErrorValue> {
     let schema = schema("ono.system", 1)?;
+    let fact = |field: &str| {
+        kernel
+            .and_then(|record| record.get(field))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
     Ok(RecordValue::builder(
         schema,
         Provenance::local(COMPOSER, SchemaId::new("ono.system", 1)),
     )
     .set("host", Value::string(&scope.host_scope().to_string()))?
     .set("hostname", Value::string(scope.host_scope().id()))?
-    .set("os", Value::Null)?
-    .set("kernel", Value::Null)?
-    .set("uptime", Value::Null)?
+    .set("os", fact("os"))?
+    .set("kernel", fact("release"))?
+    .set("uptime", fact("uptime"))?
     .set("domains", Value::list(domains))?
     .set("landmarks", Value::list(landmarks))?
     .set("links", Value::Null)?

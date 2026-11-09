@@ -186,8 +186,8 @@ targets:
     name: kernel
     category: system
     summary: The running kernel, its version and its parameters.
-    schema: null
-    phase: planned
+    schema: ono.kernel/1
+    phase: C                   # delivered in v0.6.4 (#207, ADR-0964): `get kernel`, one record
   - id: ono.target.module
     name: module
     category: system

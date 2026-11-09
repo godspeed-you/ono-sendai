@@ -8,7 +8,7 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 115 examples run; 242 are not run, each for the reason listed at the end of this file.
+//! 116 examples run; 242 are not run, each for the reason listed at the end of this file.
 //! 51 of the examples that run may produce no value in a fresh environment, each with the reason it carries; every other one must produce at least one.
 //!
 //! Commands no example of which runs (154):
@@ -1366,6 +1366,18 @@ fn should_produce_what_ono_mount_enter_declares_when_example_1_runs() {
         command: "ono.mount.enter",
         example: "enter mount /",
         output: "ono.context/1",
+        may_be_empty: None,
+    });
+}
+
+/// `get kernel`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_kernel_get_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.kernel.get",
+        example: "get kernel",
+        output: "stream<ono.kernel/1>",
         may_be_empty: None,
     });
 }

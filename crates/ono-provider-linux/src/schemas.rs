@@ -69,6 +69,12 @@ pub fn env_var_id() -> SchemaId {
     SchemaId::new("ono.env-var", 1)
 }
 
+/// `ono.kernel/1` — `docs/contracts/schemas/kernel.v1.yaml`.
+#[must_use]
+pub fn kernel_id() -> SchemaId {
+    SchemaId::new("ono.kernel", 1)
+}
+
 /// Every id the Linux providers produce records of.
 #[must_use]
 pub fn ids() -> Vec<SchemaId> {
@@ -82,6 +88,7 @@ pub fn ids() -> Vec<SchemaId> {
         filesystem_id(),
         device_id(),
         env_var_id(),
+        kernel_id(),
     ]
 }
 

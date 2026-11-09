@@ -36,6 +36,13 @@ run: |
      done'
   prove 44.1b "look --json names the host it is describing (§7.1 SystemPlace.hostname)" \
     'ono -c "look --json" | grep -qF "$(cat /proc/sys/kernel/hostname)"'
+  # §7.1's `kernel` and `uptime` are the kernel provider's facts (ADR-0964, #207): the root says
+  # which kernel it runs and how long it has been up, and `get kernel` is where it learned it.
+  prove 44.1b2 "look --all --json describes the system from the kernel provider (§7.1, §2.16)" \
+    'ono -c "look --all --json" > /tmp/root-all.json;
+     grep -qF "\"kernel\":\"$(cat /proc/sys/kernel/osrelease)\"" /tmp/root-all.json || { echo "kernel missing"; cat /tmp/root-all.json; exit 1; };
+     grep -q "\"uptime\":null" /tmp/root-all.json && { echo "uptime null"; exit 1; };
+     ono -c "get kernel | select release | to json" | grep -qF "$(cat /proc/sys/kernel/osrelease)"'
   prove 44.1c "trail --json answers off a TTY and starts at the root place (§6.7, §29.1)" \
     'ono -c "trail --json" | grep -q .'
 
@@ -103,6 +110,7 @@ run: |
 exit: 0
 stdout-contains: PROVED 44.1a
 stdout-contains: PROVED 44.1b
+stdout-contains: PROVED 44.1b2
 stdout-contains: PROVED 44.1c
 stdout-contains: PROVED 44.1d
 stdout-contains: PROVED 44.1e

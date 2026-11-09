@@ -121,6 +121,13 @@ impl CommandImpl for Look {
                     Some(window) => Some((window, recent_changes(&session, window, now)?)),
                     None => None,
                 };
+                // §7.1's `os`, `kernel` and `uptime` are the kernel provider's facts, asked for
+                // only where the system record is drawn — `--all` at the root (ADR-0964).
+                let kernel = if all {
+                    kernel_record(ctx.providers()).await
+                } else {
+                    None
+                };
                 place_view(
                     &PlaceWorld::Present(&session),
                     &neighborhood,
@@ -129,6 +136,7 @@ impl CommandImpl for Look {
                     changed,
                     cached,
                     now,
+                    kernel.as_ref(),
                 )?
             };
 
@@ -264,6 +272,20 @@ impl PlaceWorld<'_> {
 }
 
 /// The `ono.place-view/1` record of the current place (§6.1, §24.1, v0.5 §14.1).
+/// The `ono.kernel/1` record the root place's `os`, `kernel` and `uptime` are filled from
+/// (ADR-0964), or `None` where no provider answered — the fields then say "not known".
+async fn kernel_record(providers: &ProviderRegistry) -> Option<RecordValue> {
+    let collected = providers
+        .snapshot(&ono_provider_api::Query::target("kernel"))
+        .ok()?
+        .collect()
+        .await;
+    collected
+        .values()
+        .iter()
+        .find_map(|value| value.as_record().ok().cloned())
+}
+
 fn place_view(
     world: &PlaceWorld<'_>,
     neighborhood: &ono_spatial_core::Neighborhood,
@@ -272,6 +294,7 @@ fn place_view(
     changes: Option<(ono_value::Duration, RecentChanges)>,
     cached: bool,
     clock: Timestamp,
+    kernel: Option<&RecordValue>,
 ) -> Result<RecordValue, ErrorValue> {
     let here = world.here();
     let index = world.index();
@@ -325,6 +348,7 @@ fn place_view(
             groups.clone(),
             landmarks.clone(),
             now,
+            kernel,
         )?))
     } else {
         Value::Null
@@ -624,6 +648,8 @@ fn historical_look(
         }
         None => None,
     };
+    // A reconstruction has no kernel to ask: what the kernel was at the coordinate is not among
+    // the evidence, so the system record says so with nulls rather than reading today's.
     place_view(
         &PlaceWorld::Past(&world, session),
         &neighborhood,
@@ -632,6 +658,7 @@ fn historical_look(
         changed,
         false,
         world.at(),
+        None,
     )
 }
 

@@ -37,6 +37,7 @@ async fn should_register_exactly_the_providers_the_declarations_name() {
         ("ono.shell", &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "permission", "audit", "assistant", "model", "finding"]),
         ("linux.mountinfo", &["mount", "filesystem"]),
         ("linux.sysfs", &["device"]),
+        ("linux.kernel", &["kernel"]),
         ("linux.resolver", &["dns"]),
         ("ono.probe", &["port"]),
         ("systemd", &["service"]),
@@ -1726,6 +1727,66 @@ async fn should_answer_for_device_within_its_contract_when_linux_sysfs_is_asked(
     }).await;
 }
 
+/// The running kernel and the operating system it boots, one record from /proc/sys/kernel, /proc/stat, /proc/uptime and os-release(5) (ADR-0964). The record the root place's `os`, `kernel` and `uptime` are filled from, so the spatial layer reads nothing itself (v0.4 §2.16).
+#[rustfmt::skip]
+#[tokio::test]
+async fn should_advertise_exactly_what_linux_kernel_declares() {
+    harness::assert_surface(&harness::Surface {
+        provider: "linux.kernel",
+        targets: &["kernel"],
+        capabilities: &[
+            harness::CapabilityClaim { id: "kernel.read", risk: "read", elevation: "none" },
+        ],
+        schemas: &["ono.kernel/1"],
+        identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
+    }).await;
+}
+
+#[rustfmt::skip]
+#[tokio::test]
+async fn should_shape_ono_kernel_1_the_way_linux_kernel_declares_it() {
+    harness::assert_schema_contract(&harness::SchemaContract {
+        provider: "linux.kernel",
+        targets: &["kernel"],
+        schema: "ono.kernel/1",
+        identity: &["boot_id"],
+        identity_fallback: &["release"],
+        default_view: &["release", "os", "architecture", "uptime"],
+        fields: &[
+            harness::FieldContract { name: "release", ty: "string", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "version", ty: "string", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "architecture", ty: "string", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "hostname", ty: "string", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "os", ty: "string", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "os_id", ty: "string", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "boot_id", ty: "string", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "booted", ty: "timestamp", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "uptime", ty: "duration", required: false, nullable: true, unit: None },
+        ],
+    }).await;
+}
+
+#[rustfmt::skip]
+#[tokio::test]
+async fn should_answer_for_kernel_within_its_contract_when_linux_kernel_is_asked() {
+    harness::assert_target_conforms(&harness::TargetCase {
+        provider: "linux.kernel",
+        targets: &["kernel"],
+        target: "kernel",
+        exercise: harness::Exercise::Enumerable,
+        schemas: &["ono.kernel/1"],
+        identity_strategy: None,
+    }).await;
+}
+
 /// Names and addresses, through the C library's resolver (getaddrinfo / getnameinfo) — NSS, so /etc/hosts, DNS, mDNS and LDAP all answer, exactly as they do for every other program.
 #[rustfmt::skip]
 #[tokio::test]
@@ -2134,6 +2195,7 @@ async fn should_account_for_every_capability_the_declarations_name() {
         harness::Account { provider: "linux.mountinfo", targets: &["mount", "filesystem"], capability: "filesystem.list", risk: "read", through: harness::Through::Snapshot("filesystem") },
         harness::Account { provider: "linux.mountinfo", targets: &["mount", "filesystem"], capability: "mount.manage", risk: "mutate", through: harness::Through::Command(&["ono.filesystem.mount", "ono.filesystem.unmount", "ono.mount.add", "ono.mount.remove", "ono.mount.set", "ono.mount.start", "ono.mount.stop"]) },
         harness::Account { provider: "linux.sysfs", targets: &["device"], capability: "device.list", risk: "read", through: harness::Through::Snapshot("device") },
+        harness::Account { provider: "linux.kernel", targets: &["kernel"], capability: "kernel.read", risk: "read", through: harness::Through::Snapshot("kernel") },
         harness::Account { provider: "linux.resolver", targets: &["dns"], capability: "dns.resolve", risk: "read", through: harness::Through::Snapshot("dns") },
         harness::Account { provider: "ono.probe", targets: &["port"], capability: "port.probe", risk: "observe", through: harness::Through::Command(&["ono.port.test"]) },
         harness::Account { provider: "systemd", targets: &["service"], capability: "service.list", risk: "read", through: harness::Through::Snapshot("service") },

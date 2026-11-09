@@ -8,10 +8,12 @@
 # table's entry for a host Ono can reach (v0.2 §14). Identity is the host scope, because one host
 # is one system: two sessions on the same host stand in the same place (§3.1, §42.1).
 #
-# `os`, `kernel` and `uptime` are nullable because no installed provider answers for them yet: a
-# `get system` producer is a later phase, and §2.17 and §35.3 require the unknown to be visible as
-# null rather than fabricated or read behind the providers' backs (§2.16). `links` is nullable for
-# the same reason — the remote federation of §19 is phase S8.
+# `os`, `kernel` and `uptime` come from the kernel provider's `ono.kernel/1` record (`get kernel`,
+# ADR-0964) — the spatial layer asks for it where the system record is drawn and reads nothing
+# itself (§2.16). They are nullable because the answer can be missing: the provider unavailable, or
+# the view a reconstruction of the past, and §2.17 and §35.3 require the unknown to be visible as
+# null rather than fabricated. `links` is nullable for the same reason — the remote federation of
+# §19 is phase S8.
 id: ono.system/1
 name: SystemPlace
 summary: The root place of one host — what a session stands in before it has moved anywhere.

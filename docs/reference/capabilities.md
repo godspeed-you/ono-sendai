@@ -51,6 +51,7 @@ Two vocabularies that are not the same thing. A **provider capability** is what 
 | `group.manage` | mutate | required | Create, remove or modify group accounts and their membership. |
 | `session.list` | read | none | Enumerate login and seat sessions. |
 | `env.read` | read | none | Read environment and shell variables. |
+| `kernel.read` | read | none | Read the running kernel's release, the operating system it boots and the uptime. |
 | `env.set` | mutate | none | Set an environment or shell variable in the current scope. |
 | `mount.list` | read | none | Enumerate mounted filesystems with their structured options. |
 | `mount.watch` | observe | none | Subscribe to mount and unmount events. |
