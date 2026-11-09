@@ -15,8 +15,18 @@ run: |
   echo "== forced adaptation fails rather than downgrades =="
   ono -c 'adapt grep x /etc/hostname' 2>&1 | grep -c 'Ono-Sendai-E0911'
   ono -c 'adapt curl http://127.0.0.1:9/' 2>&1 | grep -c 'Ono-Sendai-E0501'
+  echo "== a consumer over objects fed by bytes nothing decodes is refused at plan time (#217) =="
+  # `yes` never ends. The question — can this program give `take` the objects it is declared
+  # over? — is answered from the contracts before anything is spawned, so the shell answers at
+  # once and `yes` is never started; a shell that read first would never answer at all.
+  timeout 10 ono -c 'yes | take 1' 2>/tmp/e0911.err; echo "plan-time-refusal-exit=$?"
+  grep -c 'Ono-Sendai-E0911' /tmp/e0911.err
+  if pgrep -x yes >/dev/null; then echo "WRONG yes was started before the refusal"; else echo "producer-never-started"; fi
   ono -c 'explain adapt curl file:///etc/hostname' | grep -F 'adapted by org.ono.compat.curl.curl'
   ono -c 'help adapt' | grep -c adapt
   echo done=ok
 exit: 0
+stdout-contains: plan-time-refusal-exit=1
+stdout-contains: producer-never-started
+stdout-not-contains: WRONG
 stdout-contains: done=ok
