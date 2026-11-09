@@ -20,7 +20,8 @@
 //!   read from the kernel or the account database; [`HostLinks`] and [`LinkProviders`] — the
 //!   links of spec §21 and what they negotiated, read from the shell's own tables.
 //!   [`ContainerImage`] — the container-to-image relationship of spec §9.1, read from the
-//!   container engine.
+//!   container engine; [`ContainerProcesses`] — the processes a container holds, read from the
+//!   cgroup the engine put them in (ADR-0968).
 //! - [`RemoteHosts`] with [`Resolver`] — the derived one, marked as derived.
 //! - [`Tracer`] with [`TraceOptions`] — the bounded walk of spec §22.3.
 //! - [`Graph::trees`] — the ASCII shape of spec §22.4, through `ono-render`'s tree renderer.
@@ -78,10 +79,11 @@ pub use graph::{
     Direction, Edge, Graph, GraphFailure, Node, TRACE_PROVIDER, Truncation, confidence_name,
 };
 pub use kernel::{
-    ContainerImage, FileHolders, HostLinks, InterfaceRoutes, InterfaceSockets, LinkProviders,
-    MountDevices, MountFilesystems, MountPeers, MountUsers, OpenFiles, ProcessSockets, ProcessTree,
-    ProcessUsers, RemoteHosts, Resolver, RouteInterfaces, ServiceDependencies, ServiceProcesses,
-    SocketOwners, UserGroups, UserProcesses, kernel_relationships, rooted_relationships,
+    ContainerImage, ContainerProcesses, FileHolders, HostLinks, InterfaceRoutes, InterfaceSockets,
+    LinkProviders, MountDevices, MountFilesystems, MountPeers, MountUsers, OpenFiles,
+    ProcessSockets, ProcessTree, ProcessUsers, RemoteHosts, Resolver, RouteInterfaces,
+    ServiceDependencies, ServiceProcesses, SocketOwners, UserGroups, UserProcesses,
+    kernel_relationships, rooted_relationships,
 };
 pub use ono_provider_api::label_of;
 pub use provider::{Relationship, RelationshipProvider, Relationships};

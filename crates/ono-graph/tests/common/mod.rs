@@ -612,3 +612,14 @@ pub fn neighbor(address: &str, mac: &str, interface: &str) -> RecordValue {
         .expect("the fixture neighbor record")
         .build()
 }
+
+/// A container record as the engine lists it: the full id and a state, which is all
+/// `ono.container/1` requires (#221).
+pub fn container(id: &str, name: &str) -> RecordValue {
+    RecordValue::builder(schema("ono.container"), provenance("ono.container"))
+        .set("id", Value::String(id.into()))
+        .and_then(|builder| builder.set("name", Value::String(name.into())))
+        .and_then(|builder| builder.set("state", Value::String("running".into())))
+        .map(ono_value::RecordBuilder::build)
+        .expect("the fixture container fits ono.container/1")
+}

@@ -6,15 +6,16 @@ mod common;
 use std::sync::Arc;
 
 use common::{
-    FixtureProvider, ProcFixture, TableResolver, edges, endpoint, file, filesystem, group,
-    interface, make_readable, mount, mount_in_group, neighbor, node, owned_process, process,
+    FixtureProvider, ProcFixture, TableResolver, container, edges, endpoint, file, filesystem,
+    group, interface, make_readable, mount, mount_in_group, neighbor, node, owned_process, process,
     registry, route, service, service_requiring, socket, trace_with, user,
 };
 use ono_core::ErrorCode;
 use ono_graph::{
-    Confidence, FileHolders, InterfaceSockets, MountDevices, MountFilesystems, MountPeers,
-    MountUsers, OpenFiles, ProcessSockets, ProcessTree, ProcessUsers, RemoteHosts, RouteInterfaces,
-    ServiceDependencies, ServiceProcesses, SocketOwners, TraceOptions, UserGroups, UserProcesses,
+    Confidence, ContainerProcesses, FileHolders, InterfaceSockets, MountDevices, MountFilesystems,
+    MountPeers, MountUsers, OpenFiles, ProcessSockets, ProcessTree, ProcessUsers, RemoteHosts,
+    RouteInterfaces, ServiceDependencies, ServiceProcesses, SocketOwners, TraceOptions, UserGroups,
+    UserProcesses,
 };
 use ono_provider_api::Provider;
 use ono_testkit::SkipReason;
@@ -938,5 +939,48 @@ async fn should_draw_no_dependency_edge_to_a_unit_the_manager_does_not_hold() {
         graph.failures().is_empty(),
         "and it is not a failure either, got {:?}",
         graph.failures()
+    );
+}
+
+#[tokio::test]
+async fn should_link_a_container_to_the_processes_in_its_cgroup() {
+    // The engine's record carries no pid, and the shell reads no engine socket for this: the
+    // processes of a container are the ones whose cgroup names the container's id — the way
+    // docker and podman put them there (ADR-0968, #221).
+    let id = "4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c";
+    let proc = ProcFixture::new();
+    proc.process(5001)
+        .cgroup(&format!("0::/system.slice/docker-{id}.scope"));
+    proc.process(5002)
+        .cgroup(&format!("0::/system.slice/docker-{id}.scope"));
+    proc.process(4419).cgroup("0::/user.slice/user-1000.slice");
+    let processes: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.process",
+        &["process"],
+        vec![
+            process(5001, Some(1), "nginx"),
+            process(5002, Some(5001), "nginx"),
+            process(4419, Some(1), "rustc"),
+        ],
+    ))];
+    let registry = registry(processes);
+    let subject = container(id, "web-1");
+
+    let graph = trace_with(
+        vec![Arc::new(
+            ContainerProcesses::new(Arc::clone(&registry)).rooted(proc.root()),
+        )],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        [
+            "process -> process/5001 nginx",
+            "process -> process/5002 nginx"
+        ],
+        "the processes in the container's cgroup, and nobody else's"
     );
 }
