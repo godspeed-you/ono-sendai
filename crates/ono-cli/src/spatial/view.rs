@@ -360,6 +360,7 @@ async fn observe(
     let mut observed = Observed::default();
     let mut asked = false;
     let mut answerable = false;
+    let mut questions: Vec<(&'static str, Option<usize>, Query)> = Vec::new();
     for target in targets {
         if providers.for_target(target).is_empty() {
             continue;
@@ -376,14 +377,6 @@ async fn observe(
             continue;
         }
         asked = true;
-        let mut fresh = crate::spatial::session::TargetObservation {
-            at: now,
-            places: BTreeMap::new(),
-            refusal: None,
-            served: false,
-            population: None,
-            bounded: false,
-        };
         // §34.4: an orientation asks for a bounded view of a collection it is going to count and
         // rank, not for every object in it. What makes the bound honest rather than merely fast is
         // the population the provider states beside the answer, which is the count a reader is
@@ -408,15 +401,42 @@ async fn observe(
             Some(bound) => Query::target(*target).limit(bound),
             None => Query::target(*target),
         };
-        match providers.snapshot(&question) {
+        questions.push((*target, bound, question));
+    }
+
+    // Every target is asked at once and absorbed in order (#179, ADR-0970): the providers read
+    // different parts of the system and none of them waits for another, so a sweep costs about
+    // its slowest provider rather than the sum of them — which is what made a selector miss at
+    // Profile M cost 900 ms (#187). Absorbing stays sequential, because the index is one
+    // structure and the order the targets fold in is the order the exits are built in (§29.3).
+    let answers = futures::future::join_all(questions.iter().map(
+        |(target, bound, question)| async move {
+            let answer = match providers.snapshot(question) {
+                Err(error) => Err(error),
+                Ok(stream) => Ok(stream.collect().await),
+            };
+            (*target, *bound, answer)
+        },
+    ))
+    .await;
+
+    for (target, bound, answer) in answers {
+        let mut fresh = crate::spatial::session::TargetObservation {
+            at: now,
+            places: BTreeMap::new(),
+            refusal: None,
+            served: false,
+            population: None,
+            bounded: false,
+        };
+        match answer {
             Err(error) => {
                 fresh.refusal = Some((
                     PermissionState::of_refusal(&error),
                     error.message().to_owned(),
                 ));
             }
-            Ok(stream) => {
-                let collected = stream.collect().await;
+            Ok(collected) => {
                 fresh.population = collected.diagnostics().population();
                 fresh.bounded = bound.is_some_and(|bound| collected.values().len() >= bound);
                 if let Some(error) = collected.errors().first() {
@@ -451,7 +471,7 @@ async fn observe(
             }
         }
         fold(&mut observed, target, &fresh);
-        session.remember(*target, fresh);
+        session.remember(target, fresh);
     }
     // "Cached" is a claim about this view, so it is only made when there was something to ask
     // and nothing was asked (§25.3, §2.17).
@@ -1412,4 +1432,100 @@ fn schema(name: &str, version: u32) -> Result<std::sync::Arc<ono_value::Schema>,
             format!("the `{id}` contract is not in this build"),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use jiff::Timestamp;
+    use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
+    use ono_provider_api::{Capability, Provider, ProviderRegistry, Query, Risk};
+    use ono_value::{ErrorValue, Schema};
+
+    use crate::spatial::session::SpatialSessionState;
+
+    /// A provider that takes `delay` to answer a target with nothing at all.
+    #[derive(Debug)]
+    struct Slow {
+        id: &'static str,
+        target: &'static str,
+        delay: Duration,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for Slow {
+        fn id(&self) -> &str {
+            self.id
+        }
+
+        fn targets(&self) -> &[&str] {
+            std::slice::from_ref(&self.target)
+        }
+
+        fn schemas(&self) -> Vec<Arc<Schema>> {
+            Vec::new()
+        }
+
+        fn capabilities(&self) -> Vec<Capability> {
+            vec![Capability::new("process.list", Risk::Read)]
+        }
+
+        fn snapshot(&self, _query: &Query) -> Result<ValueStream, ErrorValue> {
+            let delay = self.delay;
+            Ok(ValueStream::spawn(
+                PipelineConfig::new(),
+                Boundedness::Bounded,
+                move |sink| async move {
+                    tokio::time::sleep(delay).await;
+                    // The stream ends when the sink goes: not before the delay has passed.
+                    drop(sink);
+                },
+            ))
+        }
+
+        async fn resolve(
+            &self,
+            _selector: &ono_provider_api::Selector,
+        ) -> Result<Vec<ono_provider_api::ObjectRef>, ErrorValue> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn should_ask_every_target_at_once_so_a_sweep_costs_its_slowest_provider() {
+        // #179: a selector miss asked the targets one after another, so the sweep cost the sum
+        // of the providers' latencies; asking them at once and absorbing in order costs about the
+        // slowest (ADR-0970).
+        let delay = Duration::from_millis(300);
+        let mut registry = ProviderRegistry::new();
+        for (id, target) in [
+            ("slow.process", "process"),
+            ("slow.service", "service"),
+            ("slow.socket", "socket"),
+            ("slow.mount", "mount"),
+        ] {
+            registry.register(Arc::new(Slow { id, target, delay }));
+        }
+        let now = Timestamp::now();
+        let mut session = SpatialSessionState::new(crate::spatial::local_scope(), now);
+        let targets: BTreeSet<&'static str> = ["process", "service", "socket", "mount"]
+            .into_iter()
+            .collect();
+
+        let started = Instant::now();
+        super::observe_targets(&registry, &mut session, &targets, now).await;
+        let elapsed = started.elapsed();
+
+        // Four providers of 300 ms each: 1.2 s one after another, about 300 ms at once. The bound
+        // is the sum less one provider, so a loaded machine has room and a sequential sweep has
+        // none.
+        assert!(
+            elapsed < delay * 3,
+            "the sweep took {elapsed:?}, which is the sum of the providers' latencies rather than \
+             the slowest of them"
+        );
+    }
 }
