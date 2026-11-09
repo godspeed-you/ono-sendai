@@ -1,0 +1,51 @@
+# The account mutations of the identity family (spec §9.1, §52 `user`/`group` rows; ADR-0100–0102)
+# were proved only as refusals: the workspace tests never change the developer's accounts, and
+# `043-identity-sessions-and-accounts` runs unprivileged, so every `add`/`set`/`remove` there is one
+# `failed` row with E0302 (#220). What had never been proved is the success path — that the
+# shadow-utils invocations the provider composes are ones the tools accept, and that the account
+# database afterwards says what the row said. So this case runs as root, creates a user and a
+# group of its own, changes and removes them, and leaves the database as it found it.
+case: the account mutations change the account database when privileged
+user: root
+timeout: 180
+run: |
+  echo "== add user: one success row, and the account exists =="
+  ono -c 'add user onocase --shell /usr/sbin/nologin --uid 4242 | select operation status changed | to json'; echo "add-user-exit=$?"
+  getent passwd onocase | cut -d: -f1,3,7
+  ono -c 'get user onocase | select name uid shell | to json'
+
+  echo "== add group, then the user as a member =="
+  ono -c 'add group onogroup --gid 4243 | select operation status changed | to json'
+  getent group onogroup | cut -d: -f1,3
+  ono -c 'add group onogroup --member onocase | select operation status changed | to json'
+  getent group onogroup | cut -d: -f4
+
+  echo "== set user: the shell changes, and nothing else does =="
+  ono -c 'set user onocase --shell /bin/sh | select operation status changed | to json'
+  getent passwd onocase | cut -d: -f3,7
+
+  echo "== remove the member, then the group, then the user =="
+  ono -c 'remove group onogroup --member onocase | select operation status changed | to json'
+  getent group onogroup | cut -d: -f4 | grep -q onocase && echo "WRONG member still there" || echo "member-removed"
+  ono -c 'remove group onogroup | select operation status changed | to json'
+  getent group onogroup >/dev/null && echo "WRONG group still there" || echo "group-removed"
+  ono -c 'remove user onocase | select operation status changed | to json'
+  getent passwd onocase >/dev/null && echo "WRONG user still there" || echo "user-removed"
+
+  echo "== removing what is no longer there is the structured not-found, not a crash =="
+  ono -c 'remove user onocase | to json' > /tmp/absent.out 2>&1; echo "absent-exit=$?"
+  grep -q 'Ono-Sendai-E0301\|io.not_found\|"status":"failed"' /tmp/absent.out && echo "absent-is-structured"
+  echo done=ok
+exit: 0
+stdout-contains: add-user-exit=0
+stdout-contains: onocase:4242:/usr/sbin/nologin
+stdout-contains: [{"name":"onocase","uid":4242,"shell":"/usr/sbin/nologin"}]
+stdout-contains: onogroup:4243
+stdout-contains: onocase
+stdout-contains: 4242:/bin/sh
+stdout-contains: member-removed
+stdout-contains: group-removed
+stdout-contains: user-removed
+stdout-contains: absent-is-structured
+stdout-contains: done=ok
+stdout-not-contains: WRONG
