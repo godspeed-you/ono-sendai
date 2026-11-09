@@ -578,10 +578,7 @@ fn should_name_the_acceptance_edge_between_a_real_listener_and_the_connection_it
         "§11.5: nobody observed the accept(2); the shared endpoint makes it strong, not exact, \
          got {accepted:?}"
     );
-    let evidence = accepted
-        .get("evidence")
-        .map(rendered)
-        .unwrap_or_default();
+    let evidence = accepted.get("evidence").map(rendered).unwrap_or_default();
     assert!(
         evidence.contains(&format!(":{port}")),
         "the edge's evidence is the shared local endpoint (:{port}), got {evidence}"
@@ -590,12 +587,10 @@ fn should_name_the_acceptance_edge_between_a_real_listener_and_the_connection_it
     // The map's edges carry the declared relation id (`ono.map-edge/1`).
     let run = ono(&format!("enter socket {port}; map --json"));
     let edges = map_edges(&run);
-    let acceptance = edges
-        .iter()
-        .find(|edge| {
-            edge.get("relation").and_then(Value::as_str) == Some("socket.accepts_connection")
-                && rendered(edge).contains(&client_port)
-        });
+    let acceptance = edges.iter().find(|edge| {
+        edge.get("relation").and_then(Value::as_str) == Some("socket.accepts_connection")
+            && rendered(edge).contains(&client_port)
+    });
     assert!(
         acceptance.is_some(),
         "the map of the listener draws `socket.accepts_connection` to the connection on client \

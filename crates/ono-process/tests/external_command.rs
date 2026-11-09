@@ -114,7 +114,11 @@ fn should_name_the_busy_file_rather_than_a_refusal_when_a_writer_still_holds_the
         .expect("the script this test wrote is writable");
     let outcome = run(Command::new(&script));
     drop(writer);
-    assert_eq!(outcome.status().code(), 126, "found, and not runnable right now");
+    assert_eq!(
+        outcome.status().code(),
+        126,
+        "found, and not runnable right now"
+    );
     let failure = outcome.stages()[0]
         .failure
         .as_ref()
