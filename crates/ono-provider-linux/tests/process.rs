@@ -1023,3 +1023,40 @@ async fn should_give_one_process_one_identity_across_two_observations_of_one_boo
         "reading the same process twice must not make it two objects"
     );
 }
+
+#[tokio::test]
+async fn should_carry_the_kernels_start_ticks_beside_the_instant() {
+    // `started` is `btime` plus the tick count turned into seconds, and `btime` moves when the
+    // wall clock is stepped. The tick count is the kernel's own start time and moves for nothing,
+    // so the record carries it as well, and the spatial identity is keyed on it (ADR-0969, #152).
+    let fixture = ProcFixture::new();
+    fixture.process(4419).stat(
+        "nginx",
+        StatFields {
+            starttime: 12_345 * USER_HZ,
+            ..StatFields::default()
+        },
+    );
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("process"))
+            .expect("the fixture proc tree can be enumerated"),
+    )
+    .await;
+    let records = records(&collected);
+    let process = records.first().expect("the fixture holds one process");
+    assert_eq!(
+        process.get("start_ticks"),
+        Some(&Value::Int(i128::from(12_345 * USER_HZ))),
+        "field 22 of /proc/<pid>/stat, as the kernel wrote it"
+    );
+    assert_eq!(
+        process
+            .get("started")
+            .and_then(|value| value.as_timestamp().ok())
+            .map(|instant| instant.as_second()),
+        Some(common::FIXTURE_BOOT_TIME + 12_345),
+        "and the instant is still the same count read through btime"
+    );
+}

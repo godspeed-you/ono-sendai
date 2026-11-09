@@ -67,6 +67,12 @@ fields:
     type: timestamp
     nullable: true
     doc: Wall-clock start time; half of the identity, as for `ono.process/1`.
+  start_ticks:
+    type: int
+    nullable: true
+    doc: >-
+      The kernel's start time in clock ticks since boot, as for `ono.process/1` — carried here so
+      that the detail and the listing of one process project to one spatial identity (ADR-0969).
   cwd:
     type: path
     nullable: true

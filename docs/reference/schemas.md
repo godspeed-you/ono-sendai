@@ -1739,6 +1739,7 @@ Default view: `pid`, `name`, `parent`, `user`, `cpu`, `memory`, `started`, `serv
 | `virtual_mem` | `bytesize` | — | nullable | Virtual memory size. |
 | `threads` | `int` | — | nullable | Number of threads in the process. |
 | `started` | `timestamp` | — | nullable | Wall-clock start time; half of the identity, as for `ono.process/1`. |
+| `start_ticks` | `int` | — | nullable | The kernel's start time in clock ticks since boot, as for `ono.process/1` — carried here so that the detail and the listing of one process project to one spatial identity (ADR-0969). |
 | `cwd` | `path` | — | nullable | Current working directory; null when not readable by this user. |
 | `service` | `ref<ono.service/1>` | — | nullable | The service unit the process belongs to; null when it belongs to none. |
 | `container` | `ref<ono.container/1>` | — | nullable | The container the process runs in; null outside a container or without a provider. |
@@ -1786,6 +1787,7 @@ Default view: `pid`, `name`, `cpu`, `memory`, `user`
 | `virtual_mem` | `bytesize` | — | nullable | Virtual memory size. |
 | `threads` | `int` | — | nullable | Number of threads in the process. |
 | `started` | `timestamp` | — | nullable | Wall-clock start time. Part of the identity, so a provider that cannot answer it yields a process whose identity is pid alone and is therefore vulnerable to pid reuse. |
+| `start_ticks` | `int` | — | nullable | The kernel's own start time: clock ticks since boot, field 22 of `/proc/<pid>/stat`. It is what `started` is computed from, and unlike `started` it does not move when the wall clock is stepped, so the spatial identity of a process is keyed on it where a provider supplies it (v0.4 §10.2, v0.5 §25.4, ADR-0969). Null for an adapted record that knows only the instant. |
 | `cwd` | `path` | — | nullable | Current working directory; null when not readable by this user. |
 | `service` | `ref<ono.service/1>` | — | nullable | The service unit the process belongs to; null when it belongs to none. |
 | `container` | `ref<ono.container/1>` | — | nullable | The container the process runs in; null outside a container or without a provider. |

@@ -545,6 +545,9 @@ impl Reader {
         )?
         .set("threads", Value::Int(i128::from(stat.threads)))?
         .set("started", started.map_or(Value::Null, Value::Timestamp))?
+        // The kernel's own start time, which `started` is computed from and which no clock step
+        // moves: what the spatial identity is keyed on (ADR-0969, #152).
+        .set("start_ticks", Value::Int(i128::from(stat.starttime)))?
         .set("cwd", cwd)?
         .set("service", service)?
         // No container provider claims this process; unknown is null, never a guess (spec §35.3).

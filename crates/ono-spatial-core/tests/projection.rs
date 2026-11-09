@@ -267,3 +267,59 @@ fn should_refuse_to_guess_the_type_when_one_schema_serves_two_kinds_of_place() {
         vec![SpatialType::Process]
     );
 }
+
+/// A process record as the procfs provider builds it: the wall-clock `started` and the kernel's
+/// own `start_ticks` it was computed from.
+fn process_started_at(pid: i64, started: &str, start_ticks: i128) -> RecordValue {
+    let schema = builtin_schemas()
+        .get(&SchemaId::new("ono.process", 1))
+        .expect("the process contract");
+    RecordValue::builder(
+        schema,
+        Provenance::local("linux.procfs", SchemaId::new("ono.process", 1)),
+    )
+    .set("pid", Value::Int(i128::from(pid)))
+    .expect("pid")
+    .set("name", Value::string("nginx"))
+    .expect("name")
+    .set("started", Value::string(started))
+    .expect("started")
+    .set("start_ticks", Value::Int(start_ticks))
+    .expect("start_ticks")
+    .build()
+}
+
+#[test]
+fn should_keep_one_identity_for_a_process_when_the_wall_clock_is_stepped() {
+    // v0.5 §25.4: a clock jump must not disturb what the ledger knows. `started` is `btime` plus
+    // an offset, and `btime` moves when the clock is corrected, so the same running process read
+    // before and after a one-minute step carried two `started` values and became two identities
+    // (#152). The kernel's start time is the tick count, which no clock step moves.
+    let projection = projection();
+    let before = projection
+        .project_as(
+            &process_started_at(1842, "2026-08-10T06:12:00Z", 184_200),
+            SpatialType::Process,
+        )
+        .expect("a process projects");
+    let after_the_step = projection
+        .project_as(
+            &process_started_at(1842, "2026-08-10T06:11:00Z", 184_200),
+            SpatialType::Process,
+        )
+        .expect("a process projects");
+    assert_eq!(
+        before.spatial_id(),
+        after_the_step.spatial_id(),
+        "the same process, the same identity, whatever the wall clock did in between"
+    );
+
+    // And a reused pid still has its own identity: a later process has later ticks.
+    let reused = projection
+        .project_as(
+            &process_started_at(1842, "2026-08-11T09:03:00Z", 9_950_400),
+            SpatialType::Process,
+        )
+        .expect("a process projects");
+    assert_ne!(before.spatial_id(), reused.spatial_id());
+}

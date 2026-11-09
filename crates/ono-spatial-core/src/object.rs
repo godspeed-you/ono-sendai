@@ -419,10 +419,21 @@ impl Projection {
             && let Some(started) = record.get("started")
         {
             // §10.2: "A local Linux process identity SHOULD include host boot identity, pid,
-            // process start time, pid namespace identity." The start time is carried as the
-            // provider's own text for it: what matters is that it is the same for the same
-            // process and different for one that merely reused the pid (§42.2).
-            let start_time = ono_value::canonical_text(started).unwrap_or_default();
+            // process start time, pid namespace identity." The kernel's start time is the tick
+            // count since boot (`start_ticks`), which no clock step moves; `started` is that count
+            // turned into a wall-clock instant through `btime`, and `btime` moves when the clock
+            // is corrected, so a process read on either side of a step carried two instants and
+            // became two identities (#152, ADR-0969). The ticks come first; a record that knows
+            // only the instant — an adapted `ps` — is keyed on the provider's own text for it,
+            // and what matters there is that it is the same for the same process and different
+            // for one that merely reused the pid (§42.2).
+            let start_time = record
+                .get("start_ticks")
+                .and_then(|ticks| ticks.as_int().ok())
+                .map_or_else(
+                    || ono_value::canonical_text(started).unwrap_or_default(),
+                    |ticks| format!("ticks:{ticks}"),
+                );
             let namespace = record
                 .get("pid_namespace")
                 .map(ono_value::Value::as_int)
