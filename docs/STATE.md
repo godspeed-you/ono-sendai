@@ -141,6 +141,13 @@ showcase: a live view of the machine should feel like instrumentation, not like 
   another build), and acceptance cases are written with their increments and run then. Nothing of
   this branch merges to `implementation` before that pass is green. Files: the crates each issue
   names, `docs/contracts/`, `docs/adr/ADR-0962` onwards.
+  **Status at the end of the first session (2026-11-09 night):** closed #167, #186 (ADR-0962),
+  #217, #202, #158, #290 (ADR-0963), #207 (ADR-0964, `get kernel`), #208, #205 (ADR-0965), #138
+  (ADR-0966), #295 (ADR-0967), #220 (case 130), #152 (ADR-0969), #179 (ADR-0970); #221 partly
+  (ADR-0968, case 131; namespace/cgroup/mount edges and `container.exec` left open). Not started:
+  #187 (needs the Profile M release measurement), #206, #209–#213, #216, #281, #296. New acceptance
+  cases 130 and 131 run as root. **The gate, the acceptance suite and `release-check` have not run
+  on this branch yet**; the version is still 0.6.3.
 
 ## What is left, and why
 
