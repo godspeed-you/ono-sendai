@@ -1,0 +1,34 @@
+# The package mutations (spec §9.1, §52 `package` row; ADR-0115, ADR-0422) were proved only as
+# refusals: `046-containers-and-packages` runs unprivileged, so every `set package` there is one
+# `failed` row with E0302 (#221). The container has no network, so an install cannot succeed here
+# — but a hold is a package mutation the database answers offline: `apt-mark hold` pins the
+# package, `apt-mark showhold` says so, and the unhold leaves the database as it was found. That
+# is the success path this case proves, as root, on a package every Debian image has.
+case: a package hold is applied and released when privileged
+user: root
+timeout: 180
+run: |
+  echo "== before: coreutils is not held =="
+  apt-mark showhold | grep -q '^coreutils$' && echo "WRONG coreutils was held before the case" || echo "not-held-before"
+
+  echo "== set package --hold: one success row, and apt-mark agrees =="
+  ono -c 'set package coreutils --hold | select operation status changed | to json'; echo "hold-exit=$?"
+  apt-mark showhold | grep -q '^coreutils$' && echo "held-after-set" || echo "WRONG the hold was reported and not applied"
+
+  echo "== set package --hold false: released, and apt-mark agrees =="
+  ono -c 'set package coreutils --hold false | select operation status changed | to json'; echo "unhold-exit=$?"
+  apt-mark showhold | grep -q '^coreutils$' && echo "WRONG the release was reported and not applied" || echo "released-after-set"
+
+  echo "== the read side sees the same package =="
+  ono -c 'get package coreutils | select name | to json'
+  echo done=ok
+exit: 0
+stdout-contains: not-held-before
+stdout-contains: hold-exit=0
+stdout-contains: {"operation":"ono.package.set","status":"success","changed":true}
+stdout-contains: held-after-set
+stdout-contains: unhold-exit=0
+stdout-contains: released-after-set
+stdout-contains: [{"name":"coreutils"}]
+stdout-contains: done=ok
+stdout-not-contains: WRONG
