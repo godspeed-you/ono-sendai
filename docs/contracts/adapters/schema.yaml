@@ -145,6 +145,7 @@ plan:
     stdin:             {type: "enum[null, inherit]", required: true, doc: "Whether the child sees the pipeline's stdin."}
     trailing_argv:     {type: list<string>, nullable: true, doc: "Words appended after the user's own — `find`'s `-printf` action, which must come last. Default none."}
     unbounded:         {type: bool, nullable: true, doc: "Whether the invocation may never end on its own (`journalctl -f`); its records are a live stream that renders in place at the terminal and needs a representation elsewhere (spec §18.3). Default false."}
+    stderr_filter:     {type: list<string>, nullable: true, doc: "The adapter's declared machine error protocol for the program's stderr (spec v0.3 §1.20, ADR-0966): regular expressions naming the lines that are diagnostics about something the invocation did not ask about — `ss` complaining about a socket family this kernel cannot enumerate. The runtime captures the child's stderr, drops the matching lines when the child succeeded, and writes every other line out after it ends; a failing child's stderr is passed through whole. Not allowed with `unbounded`. Default none: stderr is untouched."}
 
 # ---------------------------------------------------------------------------------------------
 # Fixtures (spec v0.3 §1.47): `<name>.out` holds the bytes the tool produced, `<name>.yaml`

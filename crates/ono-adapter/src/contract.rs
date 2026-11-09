@@ -484,6 +484,8 @@ pub struct Plan {
     unbounded: bool,
     #[serde(default)]
     trailing_argv: Vec<String>,
+    #[serde(default)]
+    stderr_filter: Vec<String>,
 }
 
 /// A fixture's sidecar: where the bytes came from and what they must decode to.
@@ -958,6 +960,25 @@ impl Plan {
     pub fn trailing_argv(&self) -> &[String] {
         &self.trailing_argv
     }
+
+    /// The declared machine error protocol of the program's stderr (spec v0.3 §1.20, ADR-0966):
+    /// patterns naming the lines that are diagnostics about something the invocation did not
+    /// ask about. Empty for an adapter that declares none, whose child's stderr is untouched.
+    #[must_use]
+    pub fn stderr_filter(&self) -> &[String] {
+        &self.stderr_filter
+    }
+
+    /// Whether `line` of the program's stderr is one of the declared diagnostics the runtime
+    /// holds back when the program succeeded (ADR-0966). A pattern that does not compile — which
+    /// the contract validation refuses — matches nothing, so nothing is lost by mistake.
+    #[must_use]
+    pub fn holds_back_stderr_line(&self, line: &str) -> bool {
+        self.stderr_filter
+            .iter()
+            .filter_map(|pattern| regex::Regex::new(pattern).ok())
+            .any(|filter| filter.is_match(line))
+    }
 }
 
 impl Fixture {
@@ -1363,6 +1384,24 @@ fn validate_adapter(
                 ));
             }
             Some(_) => {}
+        }
+        // A declared stderr protocol is a set of patterns the runtime matches lines against; a
+        // pattern that does not compile would make the declaration a silent no-op (ADR-0966).
+        for pattern in invocation.plan().stderr_filter() {
+            if let Err(error) = regex::Regex::new(pattern) {
+                report(format!(
+                    "invocation `{}` has a `plan.stderr_filter` pattern that does not compile: \
+                     {error}",
+                    invocation.id()
+                ));
+            }
+        }
+        if !invocation.plan().stderr_filter().is_empty() && invocation.plan().is_unbounded() {
+            report(format!(
+                "invocation `{}` declares `plan.stderr_filter` and is `unbounded`; a live stream's \
+                 stderr cannot be held back until the program ends (ADR-0966)",
+                invocation.id()
+            ));
         }
     }
 

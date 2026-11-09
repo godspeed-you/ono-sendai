@@ -11,6 +11,15 @@ run: |
   ono -c 'ss -txn | where state == "listen"' 2>&1 | grep -c 'Ono-Sendai-E0903'
   ono -c 'ss -tln | grep -c LISTEN' > /tmp/a; ono -c 'raw ss -tln | grep -c LISTEN' > /tmp/b; cmp /tmp/a /tmp/b && echo bytes=identical
   ono -c 'explain ss -tunap | where state == "established"' | grep -F 'adapted by org.ono.compat.iproute2.ss'
+  # Bare ss asks for every socket family; a kernel without one family's diag module says
+  # `RTNETLINK answers: Invalid argument` on stderr above a complete table. The adapter declares
+  # that line as its stderr protocol (spec v0.3 §1.20, ADR-0966, #138), so a succeeding ss shows
+  # the table and nothing else, whatever this kernel has.
+  ono -c 'ss | count | to json' 2>/tmp/ss.err; echo "bare-ss-exit=$?"
+  if grep -q 'RTNETLINK answers' /tmp/ss.err; then echo "WRONG the declared diagnostic reached the terminal"; else echo "rtnetlink-held-back"; fi
   echo done=ok
 exit: 0
+stdout-contains: bare-ss-exit=0
+stdout-contains: rtnetlink-held-back
+stdout-not-contains: WRONG
 stdout-contains: done=ok

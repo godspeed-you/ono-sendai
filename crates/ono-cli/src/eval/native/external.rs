@@ -144,6 +144,7 @@ pub(super) fn run_streamed_segment(
     let _ = reader.join();
     consumed?;
     let outcome = outcome.map_err(process_error_flow)?;
+    crate::eval::pipeline::relay_filtered_stderr(plan, &outcome);
     let status = outcome.status();
     if status != ExitStatus::SUCCESS && !cancelled {
         let program = plan

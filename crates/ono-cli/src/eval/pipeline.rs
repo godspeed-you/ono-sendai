@@ -835,6 +835,7 @@ pub fn run_adapted_segment(
         .executor()
         .run_foreground(&built)
         .map_err(process_error)?;
+    relay_filtered_stderr(plan, &outcome);
     if let ono_process::ForegroundOutcome::Completed(completed) = &outcome
         && let Some(failure) = completed.failure()
     {
@@ -940,10 +941,49 @@ pub(super) fn adapted_pipeline(
         }
         if adapted {
             command = command.stdout(stdout);
+            // An adapter that declares a stderr protocol gets the child's stderr collected, so
+            // the declared diagnostics can be held back and the rest written out once the child
+            // has ended (ADR-0966). A live stream keeps its stderr live; the contract refuses
+            // the combination, and this guards the same line.
+            let contract = plan.invocation().plan();
+            if !contract.stderr_filter().is_empty() && !contract.is_unbounded() {
+                command = command.stderr(ono_process::Output::Capture);
+            }
         }
         built = built.stage(command);
     }
     Ok(built)
+}
+
+/// Writes out what an adapted child said on stderr, less the lines its adapter declared as
+/// diagnostics about something the invocation did not ask about (spec v0.3 §1.20, ADR-0966).
+///
+/// Only a child that succeeded has anything held back: a failing child's stderr says why it
+/// failed, and every line of it is passed through. Nothing is written for a child whose stderr
+/// was inherited, because nothing was collected.
+pub fn relay_filtered_stderr(
+    plan: &ono_adapter::AdapterPlan,
+    outcome: &ono_process::ForegroundOutcome,
+) {
+    let Some(completed) = outcome.completed() else {
+        return;
+    };
+    let Some(stage) = completed.stages().last() else {
+        return;
+    };
+    if stage.stderr.is_empty() {
+        return;
+    }
+    let succeeded = completed.status() == ExitStatus::SUCCESS;
+    let contract = plan.invocation().plan();
+    let text = String::from_utf8_lossy(&stage.stderr);
+    let mut err = std::io::stderr().lock();
+    for line in text.lines() {
+        if succeeded && contract.holds_back_stderr_line(line) {
+            continue;
+        }
+        let _ = std::io::Write::write_all(&mut err, format!("{line}\n").as_bytes());
+    }
 }
 
 /// The command an adapter's plan describes: the pinned executable, the plan's argv, the plan's

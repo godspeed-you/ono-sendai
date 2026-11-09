@@ -931,3 +931,75 @@ fn should_release_what_a_failed_adapted_command_held_for_its_decoder() {
         run.output()
     );
 }
+
+/// An `ss` shim answering the version probe, printing `rows` as `ss -H -O -n -e` would, writing
+/// `stderr` to its stderr and exiting with `status`.
+fn ss_shim(rows: &str, stderr: &str, status: i32) -> Scratch {
+    let dir = scratch();
+    ono_testkit::executable_script(
+        dir.path(),
+        "ss",
+        &format!(
+            "#!/bin/sh\nif [ \"$1\" = -V ]; then echo 'ss utility, iproute2-6.1.0'; exit 0; fi\n\
+             printf '%s\\n' '{stderr}' >&2\nprintf '%s\\n' '{rows}'\nexit {status}\n"
+        ),
+    );
+    dir
+}
+
+const SS_ROW: &str = "tcp   LISTEN 0      5                                       0.0.0.0:8082                      0.0.0.0:*     users:((\"python3\",pid=1702354,fd=3))      uid:1000 ino:71065084 sk:3007 cgroup:/user.slice/user-1000.slice/session-158.scope <->";
+
+#[test]
+fn should_hold_back_the_diagnostic_an_adapter_declares_when_the_program_succeeds() {
+    // Bare `ss` on a kernel that refuses one netlink family prints `RTNETLINK answers: Invalid
+    // argument` above a table that is complete for every family it has. The adapter declares
+    // that line as its stderr protocol (spec v0.3 §1.20, ADR-0966, #138), so it does not reach
+    // the terminal; the records do.
+    let dir = ss_shim(SS_ROW, "RTNETLINK answers: Invalid argument", 0);
+    let run = shimmed(&dir, "ss | select protocol state | to json");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("\"protocol\":\"tcp\""),
+        "the table is decoded, got {:?}",
+        run.output()
+    );
+    assert!(
+        !run.stderr().contains("RTNETLINK"),
+        "the declared diagnostic is held back, got {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_pass_through_stderr_the_adapter_did_not_declare_when_the_program_succeeds() {
+    // §1.20: stderr bytes are preserved unless the adapter declares a protocol for them. A
+    // line the declaration does not name is the program's to say.
+    let dir = ss_shim(SS_ROW, "ss: something the kernel said", 0);
+    let run = shimmed(&dir, "ss | count | to json");
+    run.assert_success();
+    assert!(
+        run.stderr().contains("ss: something the kernel said"),
+        "an undeclared line reaches the terminal, got {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_pass_every_stderr_line_through_when_the_program_fails() {
+    // A failing program's stderr says why it failed; nothing of it is held back, the declared
+    // line included, and the status stands (§1.20).
+    let dir = ss_shim(SS_ROW, "RTNETLINK answers: Operation not permitted", 2);
+    let run = shimmed(&dir, "ss | count | to json");
+    assert!(!run.status().is_success(), "got {:?}", run.output());
+    assert!(
+        run.stderr()
+            .contains("RTNETLINK answers: Operation not permitted"),
+        "a failing child's stderr is passed through whole, got {:?}",
+        run.stderr()
+    );
+    assert!(
+        run.stderr().contains("Ono-Sendai-E0501"),
+        "got {:?}",
+        run.stderr()
+    );
+}

@@ -373,6 +373,13 @@ adapters:
           append_user_flags: true
           env: {LC_ALL: C}
           stdin: "null"
+          # Bare `ss` asks the kernel for every socket family, and a kernel with no diag module
+          # for one of them — tipc, vsock — answers `RTNETLINK answers: Invalid argument` on
+          # stderr above a table that is complete for every family it has. That line is about a
+          # family nobody asked about: it is this adapter's declared stderr protocol, held back
+          # when ss succeeds and passed through whole when it fails (spec v0.3 §1.20, ADR-0966,
+          # #138).
+          stderr_filter: ["^RTNETLINK answers: "]
     limits:
       - "Unix, raw, packet and netlink sockets (`-x`, `-w`, `-0`, `-A`) and filters (`state …`, `dport …`) are not adapted; the invocation runs raw."
       - "`process` is the owning pid where `-p` and permissions allow, else null with the name in the extension map (spec v0.3 §1.32); queues, timers and cgroups are extensions."
