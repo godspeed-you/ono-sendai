@@ -5,6 +5,8 @@
 //! contract, not a guess about the program.
 
 use std::io::Write;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use ono_adapter::{AdapterPlan, Consumer, OutputDemand};
 use ono_command::CommandRegistry;
@@ -74,34 +76,44 @@ pub(super) fn run_streamed_segment(
     };
 
     let (sender, receiver) = tokio::sync::mpsc::channel::<StreamEvent>(256);
-    let reader = std::thread::spawn(move || {
-        let mut file = std::fs::File::from(pipe);
-        let mut buffer = vec![0u8; 64 * 1024];
-        let deliver = |outcome: Result<Value, ErrorValue>| {
-            let event = match outcome {
-                Ok(value) => StreamEvent::Value(value),
-                Err(error) => StreamEvent::Failure(error),
+    // Set by the reader the moment the child's output ends, before it lets go of the sender: the
+    // consumer can only see the stream close after that, so when it does, the flag already says
+    // whether the stream ended or was abandoned. `JoinHandle::is_finished` said the same thing a
+    // few instructions later, and a loaded machine fitted the consumer's return into that gap —
+    // the child's own failure then read as a cancellation and its status became 0 (#158).
+    let output_ended = Arc::new(AtomicBool::new(false));
+    let reader = {
+        let output_ended = Arc::clone(&output_ended);
+        std::thread::spawn(move || {
+            let mut file = std::fs::File::from(pipe);
+            let mut buffer = vec![0u8; 64 * 1024];
+            let deliver = |outcome: Result<Value, ErrorValue>| {
+                let event = match outcome {
+                    Ok(value) => StreamEvent::Value(value),
+                    Err(error) => StreamEvent::Failure(error),
+                };
+                sender.blocking_send(event).is_ok()
             };
-            sender.blocking_send(event).is_ok()
-        };
-        loop {
-            match std::io::Read::read(&mut file, &mut buffer) {
-                Ok(0) | Err(_) => break,
-                Ok(count) => {
-                    for outcome in decoding.feed(&buffer[..count]) {
-                        if !deliver(outcome) {
-                            return;
+            loop {
+                match std::io::Read::read(&mut file, &mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(count) => {
+                        for outcome in decoding.feed(&buffer[..count]) {
+                            if !deliver(outcome) {
+                                return;
+                            }
                         }
                     }
                 }
             }
-        }
-        for outcome in decoding.finish() {
-            if !deliver(outcome) {
-                return;
+            output_ended.store(true, Ordering::SeqCst);
+            for outcome in decoding.finish() {
+                if !deliver(outcome) {
+                    return;
+                }
             }
-        }
-    });
+        })
+    };
 
     let consumed = run_native_segment(
         session,
@@ -119,12 +131,12 @@ pub(super) fn run_streamed_segment(
         None,
     )
     .map(|_| ());
-    // A reader still running means the consumer stopped before the child's output ended —
+    // Output that has not ended means the consumer stopped before the child's output did —
     // `take 1`, an error, Ctrl-C. Cancellation propagates to the producer (spec §18.5,
     // ADR-0059): the child is told to stop, and a status it exits with because of that is not
-    // a failure of the pipeline. A reader that finished saw end of file, and the child's own
-    // status stands.
-    let cancelled = !reader.is_finished();
+    // a failure of the pipeline. Output that ended means the reader saw end of file, and the
+    // child's own status stands (spec v0.3 §1.20).
+    let cancelled = !output_ended.load(Ordering::SeqCst);
     if cancelled {
         started.terminate();
     }
