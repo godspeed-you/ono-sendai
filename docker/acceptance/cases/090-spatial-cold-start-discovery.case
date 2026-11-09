@@ -55,6 +55,11 @@ run: |
     'ono -c "near | select relation display_name | to json" | grep -q "relation"'
   prove 44.1f "find place discovers a real object from a property, with no name typed (§6.8)" \
     'ono -c "find place --type process --where pid > 1 | take 1 | select name | to json" | grep -qE "^\[\{\"name\":\"[^\"]+\"\}\]$"'
+  # The declared geography answers a named search too (ADR-0965, #205): a user who types
+  # `find place compute` means the domain, and what is found is a place `enter` takes.
+  prove 44.1f2 "find place answers a canonical space by name, and the space can be entered (§6.8, §27.1)" \
+    'ono -c "find place compute | select place_path | to json" | grep -qF "\"place_path\":\"local/compute\"" &&
+     ono -c "find place compute | take 1 | enter; look --json" | grep -qF "\"place_path\":\"local/compute\""'
   prove 44.1g "entering a domain the horizon showed changes the place (§6.3, §7.2)" \
     'ono -c "enter compute; look --json" | tr "A-Z" "a-z" | grep -qE "process|service"'
   prove 44.1h "home returns to the root system place from anywhere (§6.6)" \
@@ -115,6 +120,7 @@ stdout-contains: PROVED 44.1c
 stdout-contains: PROVED 44.1d
 stdout-contains: PROVED 44.1e
 stdout-contains: PROVED 44.1f
+stdout-contains: PROVED 44.1f2
 stdout-contains: PROVED 44.1g
 stdout-contains: PROVED 44.1h
 stdout-contains: PROVED 44.1i

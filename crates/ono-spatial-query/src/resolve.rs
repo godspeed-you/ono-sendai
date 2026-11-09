@@ -744,7 +744,10 @@ fn path_above(index: &SpatialIndex, id: &SpatialId, walked: &mut BTreeSet<Spatia
 }
 
 /// The path of a canonical space, from the host down: `local/compute/processes`.
-fn space_path_in(space_id: &str, scope: Option<&ono_spatial_core::SpatialScope>) -> String {
+pub(crate) fn space_path_in(
+    space_id: &str,
+    scope: Option<&ono_spatial_core::SpatialScope>,
+) -> String {
     let mut parts = vec![locality(scope).to_owned()];
     parts.extend(
         ono_spatial_core::path_to_space(space_id)

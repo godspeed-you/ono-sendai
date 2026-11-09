@@ -1395,3 +1395,60 @@ fn should_name_a_file_in_the_trail_by_its_path_rather_than_by_its_device() {
         "a directory is named the same way"
     );
 }
+
+#[test]
+fn should_answer_a_canonical_space_when_find_place_names_it() {
+    // §6.8's discovery is as much about where things are kept as about the things, and a user
+    // who types `find place compute` means the domain. The search used to read the index of
+    // observed objects only, so declared geography was never found (#205, ADR-0965).
+    let run = ono("find place compute | select display_name place_path type | to json");
+    run.assert_success();
+    let found = rows(&run);
+    let domain = found
+        .iter()
+        .find(|row| text(row, "place_path") == "local/compute")
+        .unwrap_or_else(|| panic!("the compute domain answers its own name, got {found:?}"));
+    assert_eq!(text(domain, "display_name"), "COMPUTE");
+
+    // A nested space answers by its label and by its dotted id.
+    let nested = ono("find place services | select place_path | to json");
+    nested.assert_success();
+    assert!(
+        rows(&nested)
+            .iter()
+            .any(|row| text(row, "place_path") == "local/compute/services"),
+        "`services` finds compute.services, got {:?}",
+        nested.output()
+    );
+    let dotted = ono("find place compute.services | select place_path | to json");
+    dotted.assert_success();
+    assert!(
+        rows(&dotted)
+            .iter()
+            .any(|row| text(row, "place_path") == "local/compute/services"),
+        "the dotted id finds the space too, got {:?}",
+        dotted.output()
+    );
+
+    // `--type` keeps its meaning: the compute domain is not a process.
+    let typed = ono("find place --type process compute | select place_path | to json");
+    typed.assert_success();
+    assert!(
+        !rows(&typed)
+            .iter()
+            .any(|row| text(row, "place_path") == "local/compute"),
+        "a search for processes does not answer a domain, got {:?}",
+        typed.output()
+    );
+
+    // What was found is a place `enter` takes.
+    let entered = ono("find place compute | take 1 | enter; look --json");
+    entered.assert_success();
+    assert!(
+        entered
+            .stdout()
+            .contains("\"place_path\":\"local/compute\""),
+        "the found domain can be entered, got {:?}",
+        entered.output()
+    );
+}

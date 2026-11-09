@@ -59,7 +59,10 @@ impl CommandImpl for FindPlace {
                 Some(role) => Some(semantic_role(&role)?),
                 None => None,
             };
-            let mut request = FindRequest::new().all(arguments.flag("all"));
+            // The declared geography of this host answers a named search too (ADR-0965).
+            let mut request = FindRequest::new()
+                .all(arguments.flag("all"))
+                .in_scope(local_scope());
             if let Some(text) = arguments.selector("name").and_then(text_of) {
                 request = request.matching(text);
             }

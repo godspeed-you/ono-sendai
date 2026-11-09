@@ -14,7 +14,7 @@
 //! selection rather than a coin flip (§28.2).
 
 use jiff::Timestamp;
-use ono_spatial_core::{Freshness, SpatialId, SpatialScope, SpatialType};
+use ono_spatial_core::{Freshness, SpatialId, SpatialScope, SpatialType, space};
 use ono_spatial_index::{PinRegistry, SpatialIndex};
 use ono_value::Provenance;
 
@@ -38,6 +38,7 @@ pub struct FindRequest {
     subjects: Option<std::collections::BTreeMap<SpatialId, usize>>,
     here: Option<SpatialId>,
     role: Option<String>,
+    scope: Option<SpatialScope>,
 }
 
 impl FindRequest {
@@ -45,6 +46,15 @@ impl FindRequest {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The host whose declared geography a named search also answers from (ADR-0965). A
+    /// canonical space is a place of some host (§19.2): without a scope here, or the one a remote
+    /// session stands in (`space::standing_in`), the search answers observed objects only.
+    #[must_use]
+    pub fn in_scope(mut self, scope: SpatialScope) -> Self {
+        self.scope = Some(scope);
+        self
     }
 
     /// `find place <query>` — the name or alias to look for (§6.8).
@@ -333,6 +343,83 @@ pub fn find_places(
             id: id.to_string(),
         };
         found.push((rank, place));
+    }
+
+    // The declared geography answers a *named* search too (ADR-0965, #205): a user who types
+    // `find place compute` means the domain, and §6.8's discovery without prior names is as
+    // much about where things are kept as about the things. A space is matched by its id, its
+    // label and its last segment; it is never among `--where`'s subjects, carries no role, and
+    // `--type` keeps its meaning — the compute domain is not a process. Without a name there is
+    // nothing to match, and the search stays what it was: the observed objects.
+    let space_scope = space::standing_in().or_else(|| request.scope.clone());
+    if let (Some(needle), Some(scope), None, None) = (
+        needle.as_deref(),
+        space_scope.as_ref(),
+        &request.subjects,
+        &request.role,
+    ) {
+        let standing = space::standing_in();
+        for space in space::spaces() {
+            if let Some(wanted) = request.object_type
+                && !space.object_type.is_a(wanted)
+            {
+                continue;
+            }
+            let aliases: std::collections::BTreeSet<String> = [
+                space.id.to_ascii_lowercase(),
+                space.label.to_ascii_lowercase(),
+                space
+                    .id
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or(space.id)
+                    .to_ascii_lowercase(),
+            ]
+            .into_iter()
+            .collect();
+            let Some(matched) = name_match(&aliases, needle) else {
+                continue;
+            };
+            let id = space.spatial_id_in(standing.as_ref());
+            let place_path = crate::resolve::space_path_in(space.id, standing.as_ref());
+            if let Some(anchor) = &anchor_path
+                && !place_path.starts_with(anchor.as_str())
+                && !anchor.starts_with(place_path.as_str())
+            {
+                continue;
+            }
+            let place = FoundPlace {
+                spatial_id: id.clone(),
+                name: space.label_in(standing.as_ref()),
+                object_type: space.object_type,
+                schema: space.place_schema().to_owned(),
+                place_path,
+                scope: scope.clone(),
+                // The geography is not observed; it is declared, and it is as current as the
+                // build (§4.1).
+                freshness: Freshness::Live,
+                provenance: Provenance::local(
+                    "ono.spatial",
+                    ono_value::SchemaId::new("ono.spatial-place", 1),
+                ),
+                observed_at: now,
+                pinned: pinned.contains(&&id),
+            };
+            let rank = Rank {
+                unpinned: u8::from(!place.pinned),
+                distant: u8::from(
+                    !here
+                        .as_ref()
+                        .is_none_or(|here| place.place_path.starts_with(here.as_str())),
+                ),
+                match_quality: matched,
+                plain: 1,
+                order: usize::MAX,
+                name: place.name.to_ascii_lowercase(),
+                id: id.to_string(),
+            };
+            found.push((rank, place));
+        }
     }
 
     found.sort_by(|a, b| a.0.cmp(&b.0));
