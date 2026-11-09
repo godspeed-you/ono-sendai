@@ -134,6 +134,14 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [v0.6.4 run | 2026-11-09 | branch `implementation-v064`] **Milestone `v0.6.4` — System and Spatial
+  Model Stabilization**, 25 open issues, from `41cc0f31`. Increments are proven by targeted
+  `cargo test -p <crate> <name>` runs only; `scripts/gate.sh`, `scripts/acceptance.sh` and
+  `scripts/release-check.sh` are deferred to one pass at the end of the run (the host is shared with
+  another build), and acceptance cases are written with their increments and run then. Nothing of
+  this branch merges to `implementation` before that pass is green. Files: the crates each issue
+  names, `docs/contracts/`, `docs/adr/ADR-0962` onwards.
+
 ## What is left, and why
 
 **v0.6.4 — System and Spatial Model Stabilization — is the next tranche**, then `v0.6.5` and
