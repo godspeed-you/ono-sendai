@@ -140,8 +140,6 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-Nothing is claimed.
-
 ## What is left, and why
 
 **v0.6.4 waits for the user's promotion and tag; `v0.6.5` — KUANG/11 Ecosystem Stabilization — is
