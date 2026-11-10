@@ -1,0 +1,64 @@
+# Spec §31.12 and §31.7 (`history.write: {scope: plugin}`), issue #203, ADR-1015: a package may
+# append to history, and the host — never the package — says who wrote the entry. The entry is
+# redacted before it is written (§17.5), kept apart from the operator's own history so the prompt
+# never offers it as a command to run again, read back attributed by a package holding
+# `history.read`, and refused whole when it tries to name its own author.
+case: a package's history entry is attributed by the host and kept out of the operator's recall
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - history.read
+      - history.write
+  network:
+    outbound: none
+  MANIFEST
+  grants='grant capability history.read --plugin dev.example.echo | count; load plugin dev.example.echo'
+
+  echo "== an entry is appended, and a reader sees whose it is =="
+  ono -c "$grants; echo:history-append --command \"login --token=hunter2 prod\" | count; echo:history --full true | to json" > "$home/read.out"
+  grep -q '\\"package\\":\\"dev.example.echo\\"' "$home/read.out" && grep -q 'prod' "$home/read.out" && echo "entry-attributed-to-the-package"
+  grep -q 'hunter2' "$home/read.out" || echo "secret-redacted-for-the-reader"
+  grep -rq 'hunter2' "$home/state" || echo "secret-never-written"
+
+  echo "== the operator's history, which the prompt recalls from, holds none of it =="
+  grep -sq 'prod' "$home/state/ono/history.jsonl" || echo "kept-out-of-the-operators-recall"
+
+  echo "== an entry naming its own author is refused, and nothing of it is kept =="
+  ono -c "$grants; try { echo:history-append --entry '{\"command\": \"sudo reboot\", \"package\": \"dev.other.pkg\"}' } catch e { \$e | select name | to json }; echo:history --full true | to json" > "$home/forged.out"
+  grep -q 'runtime.schema_violation' "$home/forged.out" && echo "forged-author-refused"
+  grep -q 'sudo reboot' "$home/forged.out" || echo "forged-entry-not-kept"
+exit: 0
+stdout-contains: entry-attributed-to-the-package
+stdout-contains: secret-redacted-for-the-reader
+stdout-contains: secret-never-written
+stdout-contains: kept-out-of-the-operators-recall
+stdout-contains: forged-author-refused
+stdout-contains: forged-entry-not-kept
+stdout-not-contains: panicked

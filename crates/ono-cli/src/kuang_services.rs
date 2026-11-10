@@ -20,12 +20,20 @@ const PACKAGE_REDACTIONS: &[&str] = &[
     r"(?i)\b(sk|pk|ghp|gho|xox[abp])[-_][A-Za-z0-9_-]{8,}",
 ];
 
+/// The most entries one package keeps in its own history; the oldest go first (ADR-1015).
+const PACKAGE_HISTORY_ENTRIES: usize = 1000;
+
+/// The longest text a package's history entry may carry, in bytes (ADR-1015).
+const PACKAGE_ENTRY_BYTES: usize = 4096;
+
 /// What a loaded package's domain calls reach: the registry as it stood when the package was
 /// loaded, and where the session's history file is.
 #[derive(Clone)]
 pub struct ShellHost {
     registry: ProviderRegistry,
     history: Option<PathBuf>,
+    /// The package's own history, opened at its first `history.append` (ADR-1015).
+    appended: Arc<std::sync::Mutex<Option<ono_history::History>>>,
 }
 
 impl std::fmt::Debug for ShellHost {
@@ -40,7 +48,11 @@ impl ShellHost {
     /// The services over `registry`, with the history at `history` when the session keeps one.
     #[must_use]
     pub fn new(registry: ProviderRegistry, history: Option<PathBuf>) -> Self {
-        Self { registry, history }
+        Self {
+            registry,
+            history,
+            appended: Arc::default(),
+        }
     }
 
     /// The target a schema's objects are asked for: the provider that advertises the schema
@@ -89,6 +101,100 @@ impl ShellHost {
                 )
             })
     }
+}
+
+/// A call whose argument is outside the record the contract declares (`runtime.schema_violation`).
+fn schema_violation(message: impl Into<String>) -> HostError {
+    HostError {
+        code: ono_core::ErrorCode::KuangRuntimeSchemaViolation,
+        message: message.into(),
+    }
+}
+
+/// Where the packages' own histories are kept: beside the operator's, never in it (ADR-1015).
+fn package_histories(history: &std::path::Path) -> PathBuf {
+    history.with_file_name("history-packages")
+}
+
+/// What the host keeps of a package's entry, or why it keeps nothing (ADR-1015).
+fn package_entry(
+    entry: &Json,
+) -> Result<
+    (
+        String,
+        Option<ono_core::ExitStatus>,
+        Option<std::time::Duration>,
+    ),
+    HostError,
+> {
+    let Some(fields) = entry.as_object() else {
+        return Err(schema_violation(
+            "a history entry is a record `{command, status?, duration_ms?}`",
+        ));
+    };
+    for name in fields.keys() {
+        match name.as_str() {
+            "command" | "status" | "duration_ms" => {}
+            "package" => {
+                return Err(schema_violation(
+                    "a history entry's `package` is set by the host to the package that appends \
+                     it, and cannot be supplied (spec §31.7, ADR-1015)",
+                ));
+            }
+            "id" | "at" | "cwd" | "session" => {
+                return Err(schema_violation(format!(
+                    "a history entry's `{name}` is set by the host and cannot be supplied"
+                )));
+            }
+            other => {
+                return Err(schema_violation(format!(
+                    "`{other}` is not a field of a history entry; it has `command`, `status` and \
+                     `duration_ms`"
+                )));
+            }
+        }
+    }
+    let command = fields
+        .get("command")
+        .and_then(Json::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .ok_or_else(|| schema_violation("a history entry names what was done in `command`"))?;
+    if command.len() > PACKAGE_ENTRY_BYTES {
+        return Err(schema_violation(format!(
+            "a history entry's `command` is at most {PACKAGE_ENTRY_BYTES} bytes"
+        )));
+    }
+    let status = match fields.get("status") {
+        None | Some(Json::Null) => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .and_then(|code| u8::try_from(code).ok())
+                .map(ono_core::ExitStatus::from_code)
+                .ok_or_else(|| schema_violation("a history entry's `status` is 0–255"))?,
+        ),
+    };
+    let duration = match fields.get("duration_ms") {
+        None | Some(Json::Null) => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .map(std::time::Duration::from_millis)
+                .ok_or_else(|| {
+                    schema_violation("a history entry's `duration_ms` is a count of milliseconds")
+                })?,
+        ),
+    };
+    Ok((command.to_owned(), status, duration))
+}
+
+/// The policy a package's own history is kept under: the operator's redaction and the package
+/// boundary's wider net, nothing hidden, and a bound of its own (ADR-1015, ADR-0015 T8).
+fn package_history_policy() -> ono_history::Policy {
+    ono_history::Policy::default()
+        .redacting(PACKAGE_REDACTIONS)
+        .hide_leading_space(false)
+        .max_entries(PACKAGE_HISTORY_ENTRIES)
 }
 
 /// An `ErrorValue` as the wire carries it.
@@ -428,7 +534,7 @@ impl HostServices for ShellHost {
         // the net is wider (ADR-0015 T8, ADR-0568): a credential in a header is as much a secret
         // as one in a flag.
         let policy = ono_history::Policy::default().redacting(PACKAGE_REDACTIONS);
-        let entries = match ono_history::History::open(path, ono_history::Policy::default()) {
+        let mut entries = match ono_history::History::open(path, ono_history::Policy::default()) {
             Ok(history) => history.entries().to_vec(),
             Err(_) if !path.exists() => Vec::new(),
             Err(error) => {
@@ -441,6 +547,23 @@ impl HostServices for ShellHost {
                 });
             }
         };
+        // The packages' own entries are read beside the operator's, each carrying its author
+        // (ADR-1015); one that cannot be read costs that package's entries, not the answer.
+        for file in std::fs::read_dir(package_histories(path))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|file| {
+                file.extension()
+                    .is_some_and(|extension| extension == "jsonl")
+            })
+        {
+            if let Ok(history) = ono_history::History::open(&file, package_history_policy()) {
+                entries.extend(history.entries().iter().cloned());
+            }
+        }
+        entries.sort_by_key(ono_history::Entry::at);
         let since = window
             .as_deref()
             .and_then(|window| window.parse::<jiff::SignedDuration>().ok())
@@ -463,20 +586,54 @@ impl HostServices for ShellHost {
                     "id": entry.id(),
                     "at": entry.at().to_string(),
                     "command": policy.redact(entry.command_text()),
-                    "cwd": entry.cwd().display().to_string(),
+                    "cwd": entry.cwd().map(|cwd| cwd.display().to_string()),
                     "status": entry.exit_status().map(|status| status.code()),
                     "duration_ms": entry.duration().map(|duration| duration.as_millis()),
                     "session": entry.session(),
+                    "package": entry.package(),
                 })
             })
             .collect();
         Ok(ready_stream(shown))
     }
 
-    async fn history_append(&self, _package: &str, _entry: Json) -> Result<(), HostError> {
-        Err(HostError::unavailable(
-            "attributed history entries: the history record has no field for a package's authorship yet",
-        ))
+    async fn history_append(&self, package: &str, entry: Json) -> Result<(), HostError> {
+        let Some(path) = self.history.as_ref() else {
+            return Err(HostError::unavailable("history: the session keeps none"));
+        };
+        let (text, status, duration) = package_entry(&entry)?;
+        // The id names a file, so it must be one: the supervisor hands over the id the manifest
+        // declared, and a name that could leave the directory is refused rather than trusted.
+        if package.is_empty()
+            || package.starts_with('.')
+            || !package
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+        {
+            return Err(HostError::unavailable(&format!(
+                "history for `{package}`: its id cannot name a file"
+            )));
+        }
+        let unwritable = |error: &dyn std::fmt::Display| HostError {
+            code: ono_core::ErrorCode::ProviderUnavailable,
+            message: format!("the history of `{package}` could not be written: {error}"),
+        };
+        let mut appended = self
+            .appended
+            .lock()
+            .map_err(|_| unwritable(&"an earlier append failed part-way"))?;
+        if appended.is_none() {
+            let file = package_histories(path).join(format!("{package}.jsonl"));
+            *appended = Some(
+                ono_history::History::open(&file, package_history_policy())
+                    .map_err(|error| unwritable(&error))?,
+            );
+        }
+        let Some(history) = appended.as_mut() else {
+            return Err(unwritable(&"it was not opened"));
+        };
+        history.record_for(package, &text, status, duration);
+        history.flush().map_err(|error| unwritable(&error))
     }
 
     async fn process_signal(&self, object: Json, signal: String) -> Result<Json, HostError> {

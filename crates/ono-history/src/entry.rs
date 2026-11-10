@@ -19,7 +19,10 @@ pub struct Entry {
     id: String,
     at: Timestamp,
     command: String,
-    cwd: PathBuf,
+    /// Where the command ran. Absent for an entry a package wrote, which ran in no directory of
+    /// the session's (ADR-1015); every entry the shell records itself has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cwd: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     status: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -31,6 +34,11 @@ pub struct Entry {
     /// The argv each adapter actually ran, in the same order as `adapters`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     plans: Vec<String>,
+    /// The KUANG/11 package that wrote the entry, set by the host and never by the package
+    /// (spec §31.7 `history.write: {scope: plugin}`, ADR-1015). Absent means the operator's own
+    /// entry, which is what every line written before attribution existed is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    package: Option<String>,
 }
 
 impl Entry {
@@ -45,7 +53,7 @@ impl Entry {
             id,
             at: Timestamp::now(),
             command,
-            cwd,
+            cwd: Some(cwd),
             status: outcome.as_ref().map(|outcome| outcome.status.code()),
             duration_ms: outcome
                 .as_ref()
@@ -56,6 +64,31 @@ impl Entry {
                 .map(|outcome| outcome.adapters.clone())
                 .unwrap_or_default(),
             plans: outcome.map(|outcome| outcome.plans).unwrap_or_default(),
+            package: None,
+        }
+    }
+
+    /// An entry `package` wrote through the host, attributed by the host (ADR-1015).
+    pub(crate) fn attributed(
+        id: String,
+        session: String,
+        package: &str,
+        command: String,
+        status: Option<ExitStatus>,
+        duration: Option<Duration>,
+    ) -> Self {
+        Self {
+            id,
+            at: Timestamp::now(),
+            command,
+            cwd: None,
+            status: status.map(|status| status.code()),
+            duration_ms: duration
+                .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)),
+            session,
+            adapters: Vec::new(),
+            plans: Vec::new(),
+            package: Some(package.to_owned()),
         }
     }
 
@@ -77,10 +110,16 @@ impl Entry {
         &self.command
     }
 
-    /// The working directory the command ran in.
+    /// The working directory the command ran in; `None` for an entry a package wrote.
     #[must_use]
-    pub fn cwd(&self) -> &Path {
-        &self.cwd
+    pub fn cwd(&self) -> Option<&Path> {
+        self.cwd.as_deref()
+    }
+
+    /// The package that wrote the entry, or `None` for the operator's own (ADR-1015).
+    #[must_use]
+    pub fn package(&self) -> Option<&str> {
+        self.package.as_deref()
     }
 
     /// How the command ended, if the shell waited for it.

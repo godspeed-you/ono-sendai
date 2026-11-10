@@ -977,6 +977,12 @@ fn honest_at_most(at_once: u32) -> Plugin {
             "stream<string>",
             &["history.read"],
         ))
+        .contribute_command(command(
+            "history-append",
+            "Append one entry to the session's history, attributed by the host.",
+            "stream<string>",
+            &["history.write"],
+        ))
         .contribute_temporal_source(ono_kuang_protocol::TemporalSourceContribution {
             id: format!("{PACKAGE}.temporal-source.echoes"),
             summary: "The echoes this package has been asked for, as canonical events."
@@ -1501,15 +1507,43 @@ fn honest_at_most(at_once: u32) -> Plugin {
         .command(&format!("{PACKAGE}.command.history"), |ctx| {
             match ctx.host_call(method::HISTORY_QUERY, json!({"window": null, "filter": null})) {
                 Ok(opened) => match opened.get("handle").and_then(serde_json::Value::as_u64) {
-                    Some(handle) => pull_all(ctx, handle, |entry| {
-                        entry
-                            .get("command")
-                            .and_then(serde_json::Value::as_str)
-                            .map(str::to_owned)
-                            .unwrap_or_else(|| entry.to_string())
-                    }),
+                    Some(handle) => {
+                        // `--full` reports each entry whole, attribution included (ADR-1015).
+                        let full = ctx.arguments().get("full").is_some();
+                        pull_all(ctx, handle, |entry| {
+                            if full {
+                                return entry.to_string();
+                            }
+                            entry
+                                .get("command")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| entry.to_string())
+                        })
+                    }
                     None => Outcome::Completed,
                 },
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        .command(&format!("{PACKAGE}.command.history-append"), |ctx| {
+            // `--entry` sends a whole entry as given, which is how a case proves what the host
+            // refuses — an entry naming another author among it; `--command` is the honest one.
+            let entry = match ctx.arguments().get("entry") {
+                Some(_) => json_argument(ctx, "entry"),
+                None => json!({
+                    "command": ctx
+                        .arguments()
+                        .get("command")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("echoed an item"),
+                }),
+            };
+            match ctx.host_call(method::HISTORY_APPEND, json!({"entry": entry})) {
+                Ok(_) => {
+                    let _ = ctx.emit(&Value::String("appended".into()));
+                    Outcome::Completed
+                }
                 Err(error) => Outcome::Failed(error),
             }
         })

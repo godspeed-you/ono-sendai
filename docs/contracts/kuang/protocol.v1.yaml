@@ -439,7 +439,7 @@ host_calls:
     params:
       window: {type: string, nullable: true, doc: "No wider than the granted scope. Null means the granted window."}
       filter: {type: record, nullable: true, doc: "A predicate over history entries."}
-    returns: {type: handle<stream>, doc: "A stream of history entries, secret-bearing values already redacted (spec §17.5, ADR-0015 T8)."}
+    returns: {type: handle<stream>, doc: "A stream of history entries, secret-bearing values already redacted (spec §17.5, ADR-0015 T8). Each is `{id, at, command, cwd, status, duration_ms, session, package}`, oldest first; `package` is the package that wrote the entry through `history.append`, or null for the operator's own, and `cwd` is null for a package's entry (ADR-1015)."}
     errors: []
     doc: Redaction happens before delivery, not at the plugin's discretion.
 
@@ -448,10 +448,16 @@ host_calls:
     direction: plugin->host
     capability: history.write
     params:
-      entry: {type: record, required: true, doc: "The entry to add. Attribution to the package is set by the host and cannot be supplied."}
+      entry: {type: record, required: true, doc: "`{command: string, status: int?, duration_ms: int?}` — what the package did, how it ended and how long it took. `command` is non-empty and at most 4096 bytes; `status` is 0–255. Attribution (`package`) and every field the host sets (`id`, `at`, `cwd`, `session`) cannot be supplied, and any other field is refused too (ADR-1015)."}
     returns: {type: "null"}
-    errors: []
-    doc: A package cannot write an entry attributed to the operator or to another package.
+    errors: [runtime.schema_violation, provider.unavailable]
+    doc: >-
+      A package cannot write an entry attributed to the operator or to another package: the host
+      sets `package` to the caller and refuses an entry that names one itself. The text is redacted
+      before it is written (spec §17.5). A package's entries are kept apart from the operator's, so
+      they are never offered for recall at the prompt and cannot crowd the operator's history out;
+      each package keeps its newest 1000, and `history.query` reads them beside the operator's
+      (ADR-1015). A session that keeps no history answers `provider.unavailable`.
 
   # --- temporal, v0.5 §30.7 and §37 -----------------------------------------------------------
   #
