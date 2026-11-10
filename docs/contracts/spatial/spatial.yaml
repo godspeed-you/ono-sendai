@@ -119,6 +119,14 @@ contributed_types:
     one, because a role names the targets as precisely as `--type` does — and every place of
     the kind carries `roles` on its record. A role nobody declares is refused with the ones that
     exist. A declared type carries no roles yet.
+  search_bound: >-
+    `find place` reads at most 1024 objects from one contributed target (ADR-0584), because no
+    declaration says how many a package has or whether its answer ends. A target that answered
+    with that many was not searched to its end, and the search says so on the diagnostic stream —
+    `find place read `<target>` as far as its search bound of 1024 objects` — with the population
+    the package stated, or that it stated none (never a count of what happened to be read). A
+    target that ended before the bound was searched completely and nothing is said (#224 (5),
+    ADR-1007; the orientation's rule of ADR-0576).
   before_load: >-
     An installed package is lazy (KUANG/11 §31.68), and its kinds of place are registered by its
     handshake. `jump @<pin>`, `jump <kind>/<key>` and `find place --type <kind>` naming a kind

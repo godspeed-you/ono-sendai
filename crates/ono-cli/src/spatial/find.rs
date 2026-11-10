@@ -580,13 +580,20 @@ async fn observe(
     // Nothing a package declares says whether its target's answer ends (§36.1, ADR-0584), so a
     // search asks it for a bounded view. A declared target is asked as it always was: its end is
     // known to the build, and `find place` is a question about all of them.
-    if ono_spatial_core::types::contributed_target(target).is_some() {
-        query = query.limit(ono_spatial_query::discovery::CONTRIBUTED_SEARCH_OBJECTS);
+    let bound = ono_spatial_core::types::contributed_target(target)
+        .map(|_| ono_spatial_query::discovery::CONTRIBUTED_SEARCH_OBJECTS);
+    if let Some(bound) = bound {
+        query = query.limit(bound);
     }
     let Ok(stream) = providers.snapshot(&query) else {
         return Ok(Vec::new());
     };
     let collected = stream.collect().await;
+    if let Some(bound) = bound
+        && collected.values().len() >= bound
+    {
+        state_the_bound(target, bound, collected.diagnostics().population());
+    }
     let mut records = Vec::new();
     for value in collected.into_values() {
         let Value::Record(record) = value else {
@@ -617,6 +624,30 @@ async fn observe(
         records.push(RecordValue::clone(&record));
     }
     Ok(records)
+}
+
+/// Says that a search read a contributed target only as far as its bound (#224 (5), ADR-1007).
+///
+/// ADR-0576 holds an orientation that read a bounded view to stating the bound and the population
+/// the provider gave; a search that stopped short owes the reader the same, or an answer drawn from
+/// the first `bound` objects reads as an answer about all of them (§2.17). It goes to the
+/// diagnostic stream, because the answer itself is the places and a script reading them must
+/// keep reading places (§29.4). A package that stated no population is said to have stated none:
+/// the count is unknown, never the number that happened to be read (§42.4).
+fn state_the_bound(target: &str, bound: usize, population: Option<u64>) {
+    let beyond = match population {
+        Some(population) => format!(
+            "the package states {population} in all, so the places beyond the bound were not \
+             searched"
+        ),
+        None => "the package states no total, so places beyond the bound, if any, were not \
+                 searched"
+            .to_owned(),
+    };
+    ono_core::diagnostic!(
+        "{}: find place read `{target}` as far as its search bound of {bound} objects; {beyond}",
+        ono_core::SHORT_NAME
+    );
 }
 
 /// The scope every local observation belongs to (§3.2, §10.2).
