@@ -69,6 +69,21 @@ pub fn place_view(view: &RecordValue, width: usize) -> Vec<String> {
         }
     }
 
+    // §19.1: at the local root the links are part of the view — the name, the state, and the
+    // round trip of a connected link or when a disconnected one was last seen.
+    let links = list(view, "links");
+    if !links.is_empty() {
+        let at = match view.get("generated_at") {
+            Some(Value::Timestamp(at)) => Some(at.as_nanosecond()),
+            _ => None,
+        };
+        lines.push(String::new());
+        lines.push(" links".to_owned());
+        for link in &links {
+            lines.push(fit(&link_line(link, at), width));
+        }
+    }
+
     let landmarks = list(view, "landmarks");
     if !landmarks.is_empty() {
         lines.push(String::new());
@@ -170,6 +185,57 @@ fn exit_line(group: &RecordValue) -> String {
         }
     };
     format!("   {label:<LABEL_WIDTH$} {right}")
+}
+
+/// One link of §19.1's link map: `prod/web01  connected  12ms`, `home/nas01  disconnected  last
+/// seen 3h ago`.
+///
+/// `at` is when the view was made, in nanoseconds since the epoch, which is what "ago" is
+/// measured from — this crate has no clock. A link that was never connected says so rather than showing an age (§35.3).
+fn link_line(link: &RecordValue, at: Option<i128>) -> String {
+    let name = text(link, "name").unwrap_or_default();
+    let state = text(link, "state").unwrap_or_default();
+    let detail = match (link.get("round_trip"), link.get("last_seen")) {
+        (Some(Value::Duration(taken)), _) if state == "connected" => brief(taken.nanoseconds()),
+        (_, Some(Value::Timestamp(seen))) if state != "connected" => match at {
+            Some(at) => format!(
+                "last seen {} ago",
+                brief(at.saturating_sub(seen.as_nanosecond()))
+            ),
+            None => format!("last seen {seen}"),
+        },
+        _ if state != "connected" => "never connected".to_owned(),
+        _ => String::new(),
+    };
+    let same = match link.get("same_host_as") {
+        Some(Value::List(others)) if !others.is_empty() => format!(
+            "  same host as {}",
+            others
+                .iter()
+                .filter_map(|other| other.as_str().ok())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => String::new(),
+    };
+    format!("   {name:<LABEL_WIDTH$} {state:<13} {detail}{same}")
+}
+
+/// A span of nanoseconds in the one unit a reader takes in at a glance: `12ms`, `3h`.
+fn brief(nanoseconds: i128) -> String {
+    const UNITS: [(i128, &str); 6] = [
+        (86_400_000_000_000, "d"),
+        (3_600_000_000_000, "h"),
+        (60_000_000_000, "m"),
+        (1_000_000_000, "s"),
+        (1_000_000, "ms"),
+        (1_000, "us"),
+    ];
+    let span = nanoseconds.max(0);
+    UNITS.iter().find(|(size, _)| span >= *size).map_or_else(
+        || format!("{span}ns"),
+        |(size, unit)| format!("{}{unit}", span / size),
+    )
 }
 
 /// The mount boundary, in the four lines §15.3 writes it in.

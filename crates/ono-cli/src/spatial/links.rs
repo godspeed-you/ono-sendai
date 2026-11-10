@@ -16,7 +16,7 @@
 //!   from `connected` and from `disconnected` alike (§53: "Unknown/denied data? Distinct from
 //!   empty").
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::RwLock;
 
 use crate::session_provider::LinkRow;
@@ -34,6 +34,14 @@ pub struct LinkFacts {
     pub connected: bool,
     /// Whether this session still follows the link's space (§19.1, §35.2).
     pub following: bool,
+    /// How long the handshake's exchange took, where one was made — §19.1's `12ms`, with the
+    /// meaning this build can give it (ADR-0985).
+    pub round_trip: Option<std::time::Duration>,
+    /// When this session last held the link connected and followed it — §19.1's "last seen".
+    /// `None` for a link that never was.
+    pub last_seen: Option<jiff::Timestamp>,
+    /// The boot of the kernel the far side runs, as its `kernel` target answered.
+    pub boot_id: Option<String>,
 }
 
 impl LinkFacts {
@@ -68,8 +76,8 @@ fn links() -> &'static RwLock<BTreeMap<String, LinkFacts>> {
 /// Kept apart from the table above because the two are written at different times: the table is
 /// republished from the session whenever a pipeline starts, and a `detach link` may well be the
 /// first statement that ever mentions the link. The intent outlives the republish.
-fn detached() -> &'static RwLock<BTreeSet<String>> {
-    static DETACHED: RwLock<BTreeSet<String>> = RwLock::new(BTreeSet::new());
+fn detached() -> &'static RwLock<BTreeMap<String, jiff::Timestamp>> {
+    static DETACHED: RwLock<BTreeMap<String, jiff::Timestamp>> = RwLock::new(BTreeMap::new());
     &DETACHED
 }
 
@@ -82,19 +90,36 @@ pub fn publish(rows: &[LinkRow]) {
         return;
     };
     let left = detached().read().ok();
+    let now = jiff::Timestamp::now();
     let mut next = BTreeMap::new();
     for row in rows {
-        let following = left
+        let left_at = left
             .as_ref()
-            .is_none_or(|left| !left.contains(row.name.as_str()));
+            .and_then(|left| left.get(row.name.as_str()).copied());
+        let following = left_at.is_none();
+        let connected = row.state == "connected";
+        // A link held and followed was seen just now; one that is not keeps the last moment it
+        // was, which is what §19.1's "last seen" reports — the moment the session stopped
+        // following it, where it was connected until then.
+        let last_seen = if connected && following {
+            Some(now)
+        } else {
+            links
+                .get(&row.name)
+                .and_then(|known| known.last_seen)
+                .or(left_at.filter(|_| connected))
+        };
         next.insert(
             row.name.clone(),
             LinkFacts {
                 name: row.name.clone(),
                 host: row.host.clone(),
                 transport: row.transport.clone(),
-                connected: row.state == "connected",
+                connected,
                 following,
+                round_trip: row.round_trip,
+                last_seen,
+                boot_id: row.boot_id.clone(),
             },
         );
     }
@@ -104,7 +129,8 @@ pub fn publish(rows: &[LinkRow]) {
 /// Records that this session has stopped following `name`'s space (v0.2 §9.1, §19.1, §35.2).
 pub fn detach(name: &str) {
     if let Ok(mut left) = detached().write() {
-        left.insert(name.to_owned());
+        left.entry(name.to_owned())
+            .or_insert_with(jiff::Timestamp::now);
     }
     if let Ok(mut links) = links().write()
         && let Some(facts) = links.get_mut(name)

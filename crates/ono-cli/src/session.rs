@@ -416,6 +416,8 @@ impl SessionLink {
             clock_id: connection.and_then(LinkConnection::peer_clock_id),
             clock_offset: connection.and_then(LinkConnection::peer_clock_offset),
             clock_uncertainty: connection.and_then(LinkConnection::peer_clock_uncertainty),
+            boot_id: connection.and_then(|connection| connection.boot_id.clone()),
+            round_trip: connection.and_then(LinkConnection::handshake_round_trip),
         }
     }
 }
@@ -446,6 +448,9 @@ pub struct LinkConnection {
     /// (spec §21.4), so the session that started it is the one that ends it — see
     /// [`Session::hang_up`].
     pub agent: Option<ono_remote::ChildProcess>,
+    /// The boot of the kernel the far side runs, as its `kernel` target answered when the link
+    /// was made: what two links to one machine have in common (v0.4 §19.1, ADR-0985).
+    pub boot_id: Option<String>,
 }
 
 #[cfg(feature = "remote")]
@@ -572,6 +577,13 @@ impl LinkConnection {
         self.agent_link()
             .and_then(|link| link.negotiated().peer().clock())
             .and_then(|clock| clock.offset_from(jiff::Timestamp::now()))
+    }
+
+    /// How long the handshake's exchange took, where a handshake was made (v0.4 §19.1).
+    #[must_use]
+    pub fn handshake_round_trip(&self) -> Option<std::time::Duration> {
+        self.agent_link()
+            .map(|link| link.protocol().handshake_round_trip())
     }
 
     /// The bound the peer stated on its own reading, where it stated one (§24.4).

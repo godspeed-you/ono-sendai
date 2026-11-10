@@ -946,7 +946,16 @@ pub fn place_record_of(
 pub fn link_records() -> Result<Vec<Value>, ErrorValue> {
     let schema = schema("ono.link-place", 1)?;
     let mut rows = Vec::new();
-    for link in crate::spatial::links::all() {
+    let links = crate::spatial::links::all();
+    for link in &links {
+        // Two links whose far sides name the same boot of the same kernel reach one machine.
+        // They stay two scopes (§2.17 prefers the false distinction); the map says so.
+        let same_host: Vec<Value> = links
+            .iter()
+            .filter(|other| other.name != link.name)
+            .filter(|other| link.boot_id.is_some() && other.boot_id == link.boot_id)
+            .map(|other| Value::string(&other.name))
+            .collect();
         let scope = ono_spatial_core::SpatialScope::remote_host(
             &link.name,
             ono_spatial_core::BootIdentity::unknown_boot(&link.name),
@@ -969,6 +978,22 @@ pub fn link_records() -> Result<Vec<Value>, ErrorValue> {
             .set("reachable", Value::Bool(link.reachable()))?
             .set("scope", Value::string(&scope.to_string()))?
             .set("spatial_id", root)?
+            .set(
+                "round_trip",
+                // Only while the link is held and followed: a handshake made once says
+                // nothing about a link this session no longer keeps current.
+                link.round_trip
+                    .filter(|_| link.reachable())
+                    .and_then(|taken| i128::try_from(taken.as_nanos()).ok())
+                    .map_or(Value::Null, |nanos| {
+                        Value::Duration(ono_value::Duration::from_nanoseconds(nanos))
+                    }),
+            )?
+            .set(
+                "last_seen",
+                link.last_seen.map_or(Value::Null, Value::Timestamp),
+            )?
+            .set("same_host_as", Value::list(same_host))?
             .build(),
         )));
     }

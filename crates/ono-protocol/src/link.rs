@@ -351,6 +351,8 @@ struct Opened {
 pub struct Link {
     inner: Arc<LinkInner>,
     negotiated: Negotiated,
+    /// How long the handshake's one exchange took: the offer out, the answer back.
+    round_trip: std::time::Duration,
 }
 
 impl Link {
@@ -393,6 +395,7 @@ impl Link {
         )
         .announcing(config.clock.clone());
         let payload = encode_message(&Message::Hello(offer), &limits).map_err(ErrorValue::from)?;
+        let offered = std::time::Instant::now();
         frames
             .send(Frame::new(FrameKind::Hello, 0, payload))
             .map_err(|_| unreachable("the link closed before the handshake was sent"))?;
@@ -401,6 +404,7 @@ impl Link {
             .next()
             .await?
             .ok_or_else(|| unreachable("the peer closed the link without answering"))?;
+        let round_trip = offered.elapsed();
         let message = decode_message(answer.kind(), answer.payload(), &config.schemas, &limits)
             .map_err(ErrorValue::from)?;
         let accept = match message {
@@ -448,7 +452,21 @@ impl Link {
             Arc::clone(&config.schemas),
             limits,
         );
-        Ok(Self { inner, negotiated })
+        Ok(Self {
+            inner,
+            negotiated,
+            round_trip,
+        })
+    }
+
+    /// How long the handshake's exchange took — the offer written, the answer read.
+    ///
+    /// The one round trip this side times. It bounds the link's latency from above at the
+    /// moment the link was made: it includes the far side beginning to answer, so a link to an
+    /// agent that was still starting reads longer than the wire alone would.
+    #[must_use]
+    pub const fn handshake_round_trip(&self) -> std::time::Duration {
+        self.round_trip
     }
 
     /// Everything the handshake settled (spec §21.2).

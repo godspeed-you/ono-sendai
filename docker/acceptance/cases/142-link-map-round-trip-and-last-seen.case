@@ -1,0 +1,56 @@
+# v0.4 §19.1's link map reads `prod/web01 connected 12ms` and `home/nas01 disconnected last seen
+# 3h ago`. The local root carried the links as data with a state and nothing else, and `look` did
+# not print them (#213). ADR-0985: a connected link states the round trip its handshake took, a
+# link the session no longer follows states when it last did, two links that reach one machine
+# say so, and `look` at the local root prints the link map.
+#
+# Both links are made over the `local` transport, so the far side is this container.
+case: the link map says how far a link is, when it was last seen, and what it shares a host with
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  made='link host one --transport local; link host two --transport local; add link nas01 --host nas01.invalid --transport local'
+  ono -c "$made; look" > /tmp/links.txt 2>/dev/null
+  ono -c "$made; look --json" 2>/dev/null | tail -1 > /tmp/links.json
+  ono -c "$made; detach link two; look" > /tmp/detached.txt 2>/dev/null
+
+  echo "== look at the local root prints the link map (§19.1) =="
+  prove l1 "a connected link is listed with the round trip of its handshake" \
+    "grep -qE '^ +one +connected +[0-9]+(us|ms|s)' /tmp/links.txt"
+  prove l2 "a definition nobody connected stays on the map and says so (§35.2)" \
+    "grep -qE '^ +nas01 +disconnected +never connected' /tmp/links.txt"
+  prove l3 "a link the session stopped following says when it last did" \
+    "grep -qE '^ +two +stale +last seen [0-9]+(ns|us|ms|s) ago' /tmp/detached.txt"
+
+  echo "== the same facts are data (§29.1, §35.3) =="
+  prove d1 "round_trip is a duration on the connected link" \
+    "grep -qE '\"name\":\"one\".*\"round_trip\":\"[0-9]+ns\"' /tmp/links.json"
+  prove d2 "and null — never zero — on the link nobody connected" \
+    "grep -qE '\"name\":\"nas01\"[^}]*\"round_trip\":null,\"last_seen\":null' /tmp/links.json"
+
+  echo "== two links to one machine say so (ADR-0985) =="
+  prove s1 "each of the two links names the other" \
+    "grep -qE '^ +one +connected .*same host as two' /tmp/links.txt && grep -qE '^ +two +connected .*same host as one' /tmp/links.txt"
+  prove s2 "the link that reaches nothing shares a host with nobody" \
+    "! grep -E '^ +nas01 ' /tmp/links.txt | grep -q 'same host'"
+  echo done=ok
+exit: 0
+stdout-contains: PROVED l1
+stdout-contains: PROVED l2
+stdout-contains: PROVED l3
+stdout-contains: PROVED d1
+stdout-contains: PROVED d2
+stdout-contains: PROVED s1
+stdout-contains: PROVED s2
+stdout-contains: done=ok
+stdout-not-contains: FAILED

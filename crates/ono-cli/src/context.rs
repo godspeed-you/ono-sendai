@@ -806,6 +806,8 @@ fn connect_agentless(
         far_end: crate::session::FarEnd::Agentless(link),
         registry: std::sync::Arc::new(registry),
         agent: None,
+        // The reduced set serves no `kernel` target, so which machine this is stays unstated.
+        boot_id: None,
     })
 }
 
@@ -899,12 +901,16 @@ fn connect_over_tcp(
         ),
     ));
     link.register_into(&mut registry);
+    let boot_id = session
+        .runtime()
+        .and_then(|runtime| runtime.block_on(far_boot(&registry)));
     Ok(crate::session::LinkConnection {
         far_end: crate::session::FarEnd::Agent(link),
         registry: std::sync::Arc::new(registry),
         // Nothing was started to serve this link: the agent over there is a process somebody
         // else runs, and a shell must never end a process it did not start (spec §18.1).
         agent: None,
+        boot_id,
     })
 }
 
@@ -1018,11 +1024,38 @@ fn connect_agent(
         ),
     ));
     link.register_into(&mut registry);
+    let boot_id = session
+        .runtime()
+        .and_then(|runtime| runtime.block_on(far_boot(&registry)));
     Ok(crate::session::LinkConnection {
         far_end: crate::session::FarEnd::Agent(link),
         registry: std::sync::Arc::new(registry),
         agent,
+        boot_id,
     })
+}
+
+/// Which boot of which kernel the far side of a link runs, as its own `kernel` target answers
+/// (v0.4 §19.1, ADR-0985).
+///
+/// Two links that answer with the same boot reach one machine, which the link map says. One
+/// read of one record, when the link is made; a far side that serves no `kernel` target, or
+/// whose kernel publishes no boot id, leaves it unstated.
+#[cfg(feature = "remote")]
+async fn far_boot(registry: &ono_provider_api::ProviderRegistry) -> Option<String> {
+    let stream = registry
+        .snapshot(&ono_provider_api::Query::target("kernel"))
+        .ok()?;
+    stream
+        .collect()
+        .await
+        .values()
+        .iter()
+        .filter_map(|value| value.as_record().ok())
+        .find_map(|kernel| match kernel.get("boot_id") {
+            Some(Value::String(boot)) => Some(boot.to_string()),
+            _ => None,
+        })
 }
 
 /// The user this side identifies as, for the handshake.

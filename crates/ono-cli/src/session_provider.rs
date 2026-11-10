@@ -137,6 +137,12 @@ pub struct LinkRow {
     pub clock_offset: Option<ono_value::Duration>,
     /// The bound the peer stated on its own reading, where it stated one (§24.4).
     pub clock_uncertainty: Option<ono_value::Duration>,
+    /// The boot of the kernel the far side runs, as its `kernel` target answered: what two
+    /// links to one machine have in common. Not a field of `ono.link/1`; the spatial link map
+    /// reads it.
+    pub boot_id: Option<String>,
+    /// How long the handshake's exchange took (v0.4 §19.1). Not a field of `ono.link/1`.
+    pub round_trip: Option<std::time::Duration>,
 }
 
 /// What the session has published for the provider to answer from.

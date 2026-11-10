@@ -1071,6 +1071,9 @@ Default view: `name`, `host`, `transport`, `state`
 | `reachable` | `bool` | — | required | Whether a spatial command may cross the link right now (§35.4). False is not an error: the link stays a place, and `jump` refuses it with `spatial.remote_unavailable` rather than dialling anything. |
 | `scope` | `string` | — | required | The §3.2 scope the host's places belong to, rendered as `<kind>:<id>` — `remote_host:web01`. |
 | `spatial_id` | `string` | — | required | The root `SystemPlace` of the linked host — the place `jump <name>` arrives at (§19.2). It exists as soon as the link does: §4 gives every host the canonical root space, and the id is derived from the link's scope rather than from anything the far side was asked (§35.4). |
+| `round_trip` | `duration` | — | nullable | How long the handshake's exchange took — the offer out, the answer back — measured once, when the link was made (§19.1's `12ms`, ADR-0985). It bounds the link's latency from above at that moment: it includes the far side beginning to answer. Null for a link that is not connected and for one made without a handshake. |
+| `last_seen` | `timestamp` | — | nullable | When this session last held the link connected and followed it (§19.1's "last seen"). Null for a link that never was. For a connected link it is the moment the view was made. |
+| `same_host_as` | `list<string>` | — | required | The other links whose far side runs the same boot of the same kernel, as each one's own `kernel` target answered when the link was made: they reach one machine. The places behind them stay two scopes; this is context, never identity (ADR-0985). |
 
 ## Link — `ono.link/1`
 

@@ -59,5 +59,26 @@ fields:
       The root `SystemPlace` of the linked host — the place `jump <name>` arrives at (§19.2). It
       exists as soon as the link does: §4 gives every host the canonical root space, and the id
       is derived from the link's scope rather than from anything the far side was asked (§35.4).
+  round_trip:
+    type: duration
+    nullable: true
+    doc: >-
+      How long the handshake's exchange took — the offer out, the answer back — measured once,
+      when the link was made (§19.1's `12ms`, ADR-0985). It bounds the link's latency from
+      above at that moment: it includes the far side beginning to answer. Null for a link that
+      is not connected and for one made without a handshake.
+  last_seen:
+    type: timestamp
+    nullable: true
+    doc: >-
+      When this session last held the link connected and followed it (§19.1's "last seen").
+      Null for a link that never was. For a connected link it is the moment the view was made.
+  same_host_as:
+    type: list<string>
+    required: true
+    doc: >-
+      The other links whose far side runs the same boot of the same kernel, as each one's own
+      `kernel` target answered when the link was made: they reach one machine. The places behind
+      them stay two scopes; this is context, never identity (ADR-0985).
 default_view:
   columns: [name, host, transport, state]

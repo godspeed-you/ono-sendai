@@ -682,3 +682,100 @@ fn should_show_the_linked_hosts_when_the_federated_map_is_asked_for() {
          one-sided observation can never be dressed up as exact, got {confidence:?}"
     );
 }
+
+/// The link named `name` in a `look --json` view of the local root.
+fn link_named(view: &Value, name: &str) -> Value {
+    list_at(
+        view,
+        "links",
+        "§19.1: the local root exposes a `links` group",
+    )
+    .iter()
+    .find(|link| {
+        search(link, "name")
+            .and_then(|n| n.as_str().map(str::to_owned))
+            .as_deref()
+            == Some(name)
+    })
+    .cloned()
+    .unwrap_or_else(|| panic!("§19.1: `{name}` is one of the links, got {view:?}"))
+}
+
+#[test]
+fn should_say_how_long_the_handshake_took_and_when_a_link_was_last_followed() {
+    // §19.1's own link map: `prod/web01 connected 12ms`, `home/nas01 disconnected last seen 3h
+    // ago`. A connected link states the round trip its handshake took — the one exchange this
+    // build times — and a link the session stopped following states when it last did. Neither
+    // is ever a zero standing in for "not measured" (§35.3, ADR-0985).
+    let connected = ono(&format!("{LINK}; look --json"));
+    let view = document(&connected, "§29.1: `look --json` at the local root");
+    let link = &link_named(&view, "testbox");
+    assert!(
+        search(link, "round_trip").is_some_and(|value| !value.is_null()),
+        "§19.1: a link that just negotiated states its round trip, got {link:?}"
+    );
+
+    let detached = ono(&format!("{LINK}; detach link testbox; look --json"));
+    let view = document(&detached, "§29.1: `look --json` at the local root");
+    let link = &link_named(&view, "testbox");
+    assert!(
+        search(link, "last_seen").is_some_and(|value| !value.is_null()),
+        "§19.1: a link the session no longer follows says when it last did, got {link:?}"
+    );
+
+    let defined = ono("add link nas01 --host nas01.invalid --transport local; look --json");
+    let view = document(&defined, "§29.1: `look --json` at the local root");
+    let link = &link_named(&view, "nas01");
+    assert!(
+        search(link, "round_trip").is_none_or(|value| value.is_null())
+            && search(link, "last_seen").is_none_or(|value| value.is_null()),
+        "§35.3: a definition nobody connected has no round trip and was never seen, got {link:?}"
+    );
+}
+
+#[test]
+fn should_say_when_two_links_reach_one_machine() {
+    // Two links to one machine are two scopes, so its places appear under both names — a false
+    // distinction §2.17 prefers to a false merge. What the link map can do is say so: both far
+    // sides report the same boot of the same kernel, and each link names the other
+    // (ADR-0985). The report is the peer's own and is shown as context, never as identity.
+    let run = ono("link host one --transport local; link host two --transport local; look --json");
+    let view = document(&run, "§29.1: `look --json` at the local root");
+    for (name, other) in [("one", "two"), ("two", "one")] {
+        let link = &link_named(&view, name);
+        let same = rendered(&search(link, "same_host_as").unwrap_or(Value::Null));
+        assert!(
+            same.contains(other),
+            "`{name}` reaches the machine `{other}` reaches, and says so; got {link:?}"
+        );
+    }
+}
+
+#[test]
+fn should_print_the_link_map_when_look_draws_the_local_root() {
+    // §19.1: "At local `SYSTEM`, `look` SHOULD expose available links", and shows them as a
+    // section of the view: the name, the state, and the round trip or when it was last seen.
+    let run = ono_colorless(&format!(
+        "{LINK}; add link nas01 --host nas01.invalid --transport local; look"
+    ));
+    run.assert_success();
+    let shown = run.stdout();
+    let section: Vec<&str> = shown
+        .lines()
+        .skip_while(|line| line.trim() != "links")
+        .skip(1)
+        .take_while(|line| !line.trim().is_empty())
+        .collect();
+    assert!(
+        section
+            .iter()
+            .any(|line| line.contains("testbox") && line.contains("connected")),
+        "§19.1: the connected link is listed with its state, got {shown}"
+    );
+    assert!(
+        section
+            .iter()
+            .any(|line| line.contains("nas01") && line.contains("disconnected")),
+        "§19.1/§35.2: a link nobody connected stays on the map as disconnected, got {shown}"
+    );
+}
