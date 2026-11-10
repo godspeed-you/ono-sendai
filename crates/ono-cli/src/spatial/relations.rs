@@ -589,6 +589,11 @@ async fn expand(
     let mut answered: BTreeSet<&'static str> = contributed_exits;
     // What the adjacent targets said about the exits they fill: an answer, or why there is none.
     for (target, label) in adjacent_labels(object_type) {
+        // Only what this place asked for: a refusal the session holds from somebody else's
+        // question about the same target is not an answer about this exit (§35.2).
+        if !adjacent.contains(target) {
+            continue;
+        }
         let Some(seen) = session.recall(target, now) else {
             continue;
         };

@@ -1499,3 +1499,30 @@ fn should_measure_a_process_against_the_memory_the_host_states() {
         default.stdout()
     );
 }
+
+#[test]
+fn should_report_no_container_for_a_process_that_names_none_whatever_the_engine_said() {
+    // §35.2: a refusal belongs to the exit it was about. A process whose record names no
+    // container has none — an empty group — and that stays true when the container engine
+    // cannot be reached: the engine was never asked about this process, so its refusal is not
+    // this exit's (ADR-0983). The engine here is a socket that does not exist.
+    let child = SleepChild::spawn();
+    let run = Shell::new()
+        .env("DOCKER_HOST", "unix:///nonexistent/ono-test.sock")
+        .env_remove("CONTAINER_HOST")
+        .args([
+            "-c",
+            &format!(
+                "enter process/{}; look --json | from json | select exits.container.state \
+                 | to text --field state",
+                child.pid()
+            ),
+        ])
+        .run();
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "empty",
+        "§35.2: no container is named, so the exit is empty and nothing was refused"
+    );
+}
