@@ -138,6 +138,23 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+The milestone `v0.6.5` (KUANG/11 Ecosystem Stabilization, 13 issues), coordinated from
+`implementation` (orchestrator, 2026-11-10). Sub-branches `implementation-<slug>` in worktrees
+`../ono-sendai-<slug>`, merged back by the orchestrator only. Reserved numbers so parallel branches
+never collide: ADR-0990 … 0994 and cases 145–149 for `supervisor`; ADR-0995 … 0999 and cases
+155–159 for `instances`; ADR-1000 … 1004 and cases 160–164 for `contributions`; ADR-1005 … 1009 and
+cases 165–169 for `spatial`; ADR-1010 … 1014 and cases 172–179 for the orchestrator.
+
+- [orchestrator | 2026-11-10] #198, #184 — done on `implementation` (8a8b9dd6, a4214f84).
+- [supervisor | 2026-11-10] #157, #154, #197 — files: `crates/ono-kuang-supervisor/`,
+  `crates/ono-kuang-protocol/`, `crates/ono-kuang-testhost/`, `crates/ono-kuang-sdk/`,
+  `crates/ono-cli/src/plugin_provider.rs` (`stream_of` only), `docs/contracts/kuang/protocol.v1.yaml`.
+- [instances | 2026-11-10] #304, #222, #199 — files: `crates/ono-cli/src/session.rs`,
+  `crates/ono-cli/src/kuang_host.rs`, `crates/ono-cli/src/plugins.rs` (instance lookup),
+  `docs/contracts/schemas/plugin.v1.yaml`.
+- [orchestrator | 2026-11-10] next: #156 and #224/#129 (after `supervisor`/`instances`), then
+  #203 and #153.
+
 ## What is left, and why
 
 **`v0.6.5` — KUANG/11 Ecosystem Stabilization — is the next tranche**, then `v0.6.6`, then v0.7
