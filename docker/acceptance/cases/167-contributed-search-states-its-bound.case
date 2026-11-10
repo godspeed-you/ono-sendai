@@ -1,0 +1,82 @@
+# #224 part (5) in the container: a search that reads a contributed target only as far as its
+# bound says so, with the bound and the population the package stated. v0.4 §6.8, §29.4, §42.4;
+# ADR-0576's orientation rule; ADR-1007.
+#
+# The package is the conformance fixture the container ships. Its `echo-tick` target answers until
+# it is cancelled, so a search over the kind it answers with always reaches the bound; `echo-place`
+# answers with three resources and never does.
+case: a search over a contributed target states the bound it stopped at
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  package="$home/plugins/dev.example.echo"
+  mkdir -p "$package/runtime" "$package/contributions"
+  cp /usr/local/bin/kuang-example-plugin "$package/runtime/echo"
+  cat > "$package/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Answers for a few resources, and ticks for ever.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  contributions:
+    targets: [contributions/targets.yaml]
+  network:
+    outbound: none
+  MANIFEST
+  cat > "$package/contributions/targets.yaml" <<'TARGETS'
+  targets:
+    - name: echo-place
+      schema: dev.example.echo.place/1
+      summary: Resources the example package answers for.
+      identity_doc: Two observations are the same resource when their `uid` matches.
+  TARGETS
+
+  echo "== §6.8, §42.4: a search that stopped at the bound says where and why =="
+  prove 167-a "the search names the target and the bound it read to" \
+    'ono -c "load plugin dev.example.echo; find place --type EchoItem --limit 2 | count" 2>&1 >/dev/null |
+       grep -q "read \`echo-tick\` as far as its search bound of 1024 objects"'
+  prove 167-b "a package that stated no total is said to have stated none" \
+    'ono -c "load plugin dev.example.echo; find place --type EchoItem --limit 2 | count" 2>&1 >/dev/null |
+       grep -q "the package states no total"'
+  prove 167-c "the answer on stdout is still places, counted" \
+    'test "$(ono -c "load plugin dev.example.echo; find place --type EchoItem --limit 2 | count | to text" 2>/dev/null | tail -1)" = "2"'
+  prove 167-d "a target that ended before the bound draws no statement" \
+    '! ono -c "load plugin dev.example.echo; find place --type EchoPlace | count" 2>&1 >/dev/null | grep -q "search bound"'
+
+  echo "contributed search bound checks done"
+exit: 0
+stdout-contains: PROVED 167-a
+stdout-contains: PROVED 167-b
+stdout-contains: PROVED 167-c
+stdout-contains: PROVED 167-d
+stdout-contains: contributed search bound checks done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

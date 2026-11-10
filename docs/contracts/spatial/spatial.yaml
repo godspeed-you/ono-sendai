@@ -103,6 +103,14 @@ contributed_types:
     Composed from the fields the contributed schema calls its `identity`, exactly as a core
     schema's is (§3.1). The display name is never part of it, so two resources of one name are two
     places and a renamed resource is one place (external-system-provider §11.1, §11.2).
+  scope: >-
+    The host the place is reached from, then one `plugin` scope (§3.2's `PluginScope`) per scope
+    dimension the package declared for the schema (`contributions.v1.yaml` → `schema.scope`)
+    that the record names, outermost first, each scope's id carrying the dimensions above it —
+    `plugin:cluster=kind-ono`, `plugin:cluster=kind-ono/namespace=shop` (external-system-provider
+    §9.2). A dimension the record leaves null is no boundary; a schema that declares none sits in
+    the host's scope, as before. The place record's `scope` and the trail's `scope_crossing` show
+    it; the identity never depends on it (§42.1; ADR-1009).
   identity_tier: >-
     Always `lifetime`. §10.1 lets a tier be weakened and never strengthened, and the strongest
     thing a host can prove about a resource it did not observe is that the identity lasts as long
@@ -119,6 +127,31 @@ contributed_types:
     one, because a role names the targets as precisely as `--type` does — and every place of
     the kind carries `roles` on its record. A role nobody declares is refused with the ones that
     exist. A declared type carries no roles yet.
+  search_bound: >-
+    `find place` reads at most 1024 objects from one contributed target (ADR-0584), because no
+    declaration says how many a package has or whether its answer ends. A target that answered
+    with that many was not searched to its end, and the search says so on the diagnostic stream —
+    `find place read `<target>` as far as its search bound of 1024 objects` — with the population
+    the package stated, or that it stated none (never a count of what happened to be read). A
+    target that ended before the bound was searched completely and nothing is said (#224 (5),
+    ADR-1007; the orientation's rule of ADR-0576).
+  before_load: >-
+    An installed package is lazy (KUANG/11 §31.68), and its kinds of place are registered by its
+    handshake. `jump @<pin>`, `jump <kind>/<key>` and `find place --type <kind>` naming a kind
+    this session does not know, and `find place --role <role>` naming a role no loaded package
+    declares, load the installed packages that can answer for it before the command runs: a role
+    names the packages whose on-disk `contributions.targets` declare it; a kind names the packages
+    whose on-disk `contributions.schemas` call one of their targets' schemas by it, and every
+    package that declares targets but no schema document. A package that will not load leaves the
+    command to refuse as it would have (#129, ADR-1005).
+  pins: >-
+    A pin stores the type name of the place it marks (§20.4). A pin whose type no loaded or
+    installed package contributes costs that pin and nothing else: the pin store still reads,
+    every other pin resolves, `find place` answers, the pin stays on disk through every later
+    write, `jump @<pin>` refuses it with `spatial.unsupported` naming the pin and the type, and
+    `unpin <name>` removes it (#129, ADR-1005). A pin whose kind is known but whose place this
+    session has not observed is read again from the kind's canonical target before `jump`
+    resolves it.
   hierarchy: >-
     The kind of place the target declares as its `parent` (`contributions.v1.yaml` →
     `target.parent`), where it declares one: the schema of another of the package's own targets,

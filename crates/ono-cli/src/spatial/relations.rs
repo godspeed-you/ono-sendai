@@ -500,23 +500,44 @@ async fn expand(
     // of place (§35.5's filter has already run: a package without `relation.write` contributed
     // no relation, so there is nothing here to leave out).
     let mut contributed_exits: BTreeSet<&'static str> = BTreeSet::new();
+    let mut contributed_declined: BTreeSet<&'static str> = BTreeSet::new();
     if let Some(kind) = session
         .index()
         .get(id)
         .map(|entry| entry.object().object_type())
         && crate::spatial::contributions::relates(kind)
     {
-        for (edge, _, _) in crate::spatial::contributions::merge(providers, session, now).await {
-            let (index, _) = session.absorb_with();
-            index.record_edge(edge);
+        // §32.1: "Default `look` and `map` MUST avoid expensive relationships unless cached or
+        // already available." A package declares what its relation costs (ADR-1006), and one it
+        // declared beyond `normal` is asked for only when the caller asked for it — by `--all`,
+        // or by naming it — and is otherwise left as an exit available on request.
+        let (wanted, declined): (Vec<&'static RelationSpec>, Vec<&'static RelationSpec>) =
+            relation::contributed_relations()
+                .into_iter()
+                .map(|entry| entry.spec)
+                .filter(|spec| spec.groups_from(kind).next().is_some())
+                .partition(|spec| {
+                    let groups: Vec<&'static str> = spec.groups_from(kind).collect();
+                    spec.cost_class.is_eager()
+                        || interest.wants(&groups, spec.target_from(kind).unwrap_or(kind), kind)
+                });
+        for spec in declined {
+            contributed_declined.extend(spec.groups_from(kind));
+        }
+        if !wanted.is_empty() {
+            for (edge, _, _) in crate::spatial::contributions::merge(providers, session, now).await
+            {
+                let (index, _) = session.absorb_with();
+                index.record_edge(edge);
+            }
         }
         // The packages *were* asked, so these exits have been answered — with whatever they
         // answered, an empty group included. Leaving them out would let the sweep at the end of
         // this function call them `unsupported`, which is §35.2's word for an exit nothing in
         // this build can fill, and would be a false statement about a relation that was just read
         // (§42.4).
-        for entry in relation::contributed_relations() {
-            contributed_exits.extend(entry.spec.groups_from(kind));
+        for spec in wanted {
+            contributed_exits.extend(spec.groups_from(kind));
         }
     }
     let Some(node) = Node::of(&record) else {
@@ -606,7 +627,7 @@ async fn expand(
         }
     }
     // The relations a provider serves that §32.1 kept this view from spending its budget on.
-    let mut declined: BTreeSet<&'static str> = BTreeSet::new();
+    let mut declined: BTreeSet<&'static str> = contributed_declined;
     let providers = Arc::new(providers.clone());
     // §12 lists `user` among the exits of a process place, so the people behind the processes
     // are part of the neighborhood rather than an option of `trace` (v0.2 §22.3).

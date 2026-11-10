@@ -350,7 +350,12 @@ contributed_relations:
     lets a package relate the kinds of place it contributes itself. It is a schema id rather than
     the contributed type's display name because a display name may collide — with a declared type
     or with another package's schema — and because a schema id is readable from disk, which is
-    what makes the endpoint checkable before the package runs.
+    what makes the endpoint checkable before the package runs. A third spelling is the id of a
+    schema in **another package's namespace**: it cannot be checked at load, because that package
+    is its own and may not be installed, so the shape is accepted and the relation waits for it —
+    registered the moment a loaded package contributes the kind, refused at traversal as
+    `spatial.unsupported` naming the schema until then (ADR-1008). A schema in the package's own
+    namespace that none of its targets declares is still refused at load.
   ordering: >-
     A shape is read from the manifest at load and a contributed *type* is registered from the
     handshake, so the two are known at different moments. The refusal is settled at the earlier
@@ -365,9 +370,10 @@ contributed_relations:
     with a core relation or another package's. Two schemas of one package sharing a local name
     would collide with each other; the first shape adopted keeps the id.
   labels: >-
-    The id is the `canonical_label` and the `canonical_group`; `<id>.inverse` is the other end.
-    `contributions.v1.yaml`'s relation declaration carries a `name`, a `summary` and a direction
-    the shape does not, so the host does not invent a friendlier word than the one it was given.
+    The shape's declared `name` (`contributions.v1.yaml` → `relation.manifest_shape.attributes`),
+    or the id where it declares none, is the `canonical_label` and the `canonical_group`; the id
+    stays a word `follow` takes from the source end either way, and `<id>.inverse` is the other
+    end (ADR-1006).
   direction: >-
     `outbound`. A shape is written from one end to the other and says nothing else about how the
     edge is drawn.
@@ -377,8 +383,10 @@ contributed_relations:
     at most (§22.2, §36.2 — a contributed relationship must not "appear exact without
     provenance").
   cost_class: >-
-    `normal`. Asking a package for its edges is one invocation, and it is made only for a place a
-    contributed relation could actually reach — so a `look` at a process costs what it always did.
+    The shape's declared `cost`, or `normal` where it declares none. Asking a package for its
+    edges is one invocation, made only for a place a contributed relation could actually reach —
+    so a `look` at a process costs what it always did — and a relation declared beyond `normal`
+    is asked for only when the caller asks for it (§32.1; ADR-1006).
   origin: >-
     Every contributed edge carries the package as its `provider`, the package in its provenance,
     and the package under `origin` in the evidence `inspect relation` and `near` show (§11.4,

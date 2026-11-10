@@ -181,6 +181,10 @@ schema:
     - "Unknown data is null, never fabricated and never zero (spec §35.3). A provider that cannot answer says so."
     - "A breaking change takes the next major and a new id; `spec-check` and the conformance suite refuse a break without a version bump (spec §36.5, §10.4)."
     - "A package SHOULD prefer annotating a core record over forking a core schema to add fields (spec §31.23)."
+  # Read from the package's `contributions.schemas` document on disk when the package is loaded;
+  # the handshake's schema contribution carries no such field, and needs none (ADR-1009).
+  fields:
+    scope: {type: list<string>, nullable: true, doc: "The fields of this schema that name the provider-native scope an object sits in, outermost first — `[cluster, namespace]` (external-system-provider §9.2). Each one the record names nests a `plugin` scope of the place (spec v0.4 §3.2) inside the host it is reached from; one the record leaves null is no boundary. Absent: the place sits in the host's scope. A place's identity never depends on it (ADR-1009)."}
 
 annotation:
   doc: >-
@@ -259,10 +263,18 @@ relation:
   # the rest of the rule: the id, the labels, the confidence, the cost and the origin.
   manifest_shape:
     manifest_field: contributions.relations
-    document: "[\"<from>-><to>\", …]"
+    document: "[\"<from>-><to>[; name=<word>][; cost=<class>]\", …]"
     read_without_running: true
-    endpoint: "a declared spatial type, in any case, or a schema id one of `contributions.targets` declares"
-    registered_as: "`<package.id>.<from>_to_<to>`, a schema id contributing its local name"
+    endpoint: "a declared spatial type, in any case; a schema id one of `contributions.targets` declares; or a schema id in another package's namespace (`<publisher>.<package>.<name>/<version>`), which the relation waits for (ADR-1008)"
+    awaiting: "a shape whose end is another package's schema is accepted at load and registered the moment a loaded package contributes that kind of place; until then `follow <name|id>` from the known end is `spatial.unsupported` naming the schema it waits for, and `follow` loads an installed package whose `contributions.targets` declare it first (ADR-1008)"
+    registered_as: "`<package.id>.<from>_to_<to>`, a schema id contributing its local name; the attributes never change the id"
+    # §31.26 gives a relation a `name`, and v0.4 §32.1 a cost class. Both are written into the
+    # shape string after its ends, `;`-separated, so a shape without them means what it always
+    # meant and the manifest field keeps the one shape v0.2 §31.7 gives it (ADR-1006).
+    attributes:
+      name: {type: string, nullable: true, doc: "The relation's own word, one kebab-case word such as `sits-in` or `scheduled-on` (spec §31.26's `name`). `follow` takes it and `look`/`near` print it at the shape's source end; the id stays typeable beside it. Absent: the id is the word, as before."}
+      cost: {type: "enum<cheap|normal|expensive|privileged|remote>", nullable: true, doc: "What answering the relation costs (v0.4 §32.1, `docs/contracts/spatial/spatial.yaml` → `cost_classes`). A default `look` or `map` asks the package for a relation beyond `normal` only when the caller asks for it — `--all`, `near --type`, or `follow` by name — and shows it as `available on request` otherwise. Absent: `normal`."}
+    attribute_refused_at: "load, as `package.invalid` naming the shape: an attribute that is not `name` or `cost`, one declared twice, a name that is not a kebab-case word, or a cost that is not a class"
     refused_at: "load, as `package.invalid` (spec §31.22's registration checks, §31.7)"
     capability: "relation.write, never granted by default (v0.4 §35.5)"
   declaration:

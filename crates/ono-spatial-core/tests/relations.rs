@@ -328,3 +328,75 @@ fn should_declare_every_relation_with_a_readable_end_at_both_sides() {
         );
     }
 }
+
+#[test]
+fn should_register_a_relation_waiting_for_another_packages_kind_once_that_kind_is_contributed() {
+    // #224 (1), ADR-1008: a shape may name a schema in another package's namespace. Until a
+    // package contributes that kind of place the relation waits, and `follow` refuses it for what
+    // it waits for; the moment the kind exists, the relation is registered with the name and the
+    // cost the shape declared.
+    let waiting = relation::Awaiting {
+        package: "dev.example.waiter".to_owned(),
+        from: "process".to_owned(),
+        to: "dev.example.racks.rack/1".to_owned(),
+        attributes: relation::ShapeAttributes {
+            name: Some("racked-in".to_owned()),
+            cost: Some(CostClass::Expensive),
+        },
+    };
+    relation::await_shape(waiting.clone());
+    relation::settle();
+    assert!(
+        relation::spec("dev.example.waiter.process_to_rack").is_none(),
+        "nothing contributes the rack yet, so no relation exists"
+    );
+    assert_eq!(
+        relation::awaiting_from(SpatialType::Process, "racked-in"),
+        Some(waiting.clone()),
+        "the declared word is understood from the end that exists"
+    );
+    assert_eq!(
+        relation::awaited_by("racked-in"),
+        vec!["dev.example.racks.rack/1".to_owned()],
+        "and it says which kind of place it waits for"
+    );
+
+    let rack = ono_spatial_core::types::contribute(
+        "dev.example.racks.rack/1",
+        "Rack",
+        "rack",
+        &["serial"],
+        "dev.example.racks",
+        &[],
+        None,
+    );
+    relation::settle();
+    let spec = relation::spec("dev.example.waiter.process_to_rack")
+        .expect("the relation is registered once the rack is a kind of place");
+    assert_eq!((spec.source, spec.target), (SpatialType::Process, rack));
+    assert_eq!(spec.canonical_label, "racked-in");
+    assert_eq!(spec.cost_class, CostClass::Expensive);
+    assert!(
+        relation::awaiting_from(SpatialType::Process, "racked-in").is_none(),
+        "a registered relation no longer waits"
+    );
+}
+
+#[test]
+fn should_tell_another_packages_schema_from_one_of_its_own_and_from_a_type_name() {
+    // A schema in another namespace cannot be checked at load and is accepted; a schema in the
+    // package's own namespace is its own to declare, and a bare word is a type or nothing.
+    assert!(relation::is_foreign_schema(
+        "io.github.example.kubernetes.node/1",
+        "dev.example.echo"
+    ));
+    assert!(!relation::is_foreign_schema(
+        "dev.example.echo.nowhere/1",
+        "dev.example.echo"
+    ));
+    assert!(!relation::is_foreign_schema("Pod", "dev.example.echo"));
+    assert!(!relation::is_foreign_schema(
+        "dev.example.rack/v1",
+        "dev.example.echo"
+    ));
+}

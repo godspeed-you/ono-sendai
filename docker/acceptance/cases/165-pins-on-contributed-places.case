@@ -1,0 +1,100 @@
+# #129 in the container: pins, `jump` and `find place` over the kinds of place an installed, lazy
+# KUANG/11 package contributes. Spec v0.4 §20.4 (a pin that cannot be resolved remains and reports
+# its own state), §6.5 (`jump`), §6.8 (`find place`), §11.2 (`<type>/<key>`), §36.1; spec §31.68
+# (an installed package is loaded by its first use). ADR-1005.
+#
+# The package is the conformance fixture the container ships, declaring one kind of place with a
+# role on disk and nothing else. It is never loaded by hand: every command below that needs it
+# loads it, exactly as `get echo-place` would.
+case: pins and searches reach the places a lazy package contributes, and a stale pin costs only itself
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  package="$home/plugins/dev.example.echo"
+  mkdir -p "$package/runtime" "$package/contributions"
+  cp /usr/local/bin/kuang-example-plugin "$package/runtime/echo"
+  cat > "$package/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Answers for a few resources.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  contributions:
+    targets: [contributions/targets.yaml]
+  network:
+    outbound: none
+  MANIFEST
+  cat > "$package/contributions/targets.yaml" <<'TARGETS'
+  targets:
+    - name: echo-place
+      schema: dev.example.echo.place/1
+      summary: Resources the example package answers for.
+      identity_doc: Two observations are the same resource when their `uid` matches.
+      roles: [workload]
+  TARGETS
+
+  echo "== §6.8, §31.68: a lazy package's kinds and roles are searchable before anything loads it =="
+  prove 165-a "\`find place --type\` names a kind the installed package contributes" \
+    'ono -c "find place ledger --type EchoPlace | to json" | tail -1 | grep -q "\"uid\":\"u-3\""'
+  prove 165-b "\`find place --role\` reaches the kinds that declare the role on disk" \
+    'test "$(ono -c "find place --role workload | count | to text" | tail -1)" = "3"'
+  prove 165-c "\`jump <kind>/<name>\` arrives at the contributed place" \
+    'ono -c "jump echoplace/ledger; look --json" | tail -1 | grep -q "\"uid\":\"u-3\""'
+  prove 165-d "\`jump <kind>/<name>\` nothing answers to is \`spatial.not_found\`" \
+    'ono -c "jump echoplace/nowhere" 2>&1 | grep -q "spatial.not_found"'
+
+  echo "== §20.4: a pin on a contributed place is reached from a later session =="
+  ono -c 'get echo-place | where uid == "u-3" | enter; pin --name ledger' >/dev/null
+  prove 165-e "\`jump @ledger\` in a new session loads the package and arrives" \
+    'ono -c "jump @ledger; look --json" | tail -1 | grep -q "\"uid\":\"u-3\""'
+
+  echo "== §20.4: a pin on a kind nobody contributes costs itself and nothing else =="
+  rm -rf "$package"
+  prove 165-f "\`find place\` answers while the store holds that pin" \
+    'test "$(ono -c "find place compute | count | to text" | tail -1)" != "0"'
+  prove 165-g "\`jump @ledger\` reports the pin and the kind nobody contributes" \
+    'ono -c "jump @ledger" 2>&1 | grep -q "the pin \`ledger\` names the type \`EchoPlace\`"'
+  prove 165-h "\`unpin ledger\` removes it" \
+    'ono -c "unpin ledger" && ! grep -q "\"ledger\"" "$home/state/ono/pins.json"'
+
+  echo "contributed pin checks done"
+exit: 0
+stdout-contains: PROVED 165-a
+stdout-contains: PROVED 165-b
+stdout-contains: PROVED 165-c
+stdout-contains: PROVED 165-d
+stdout-contains: PROVED 165-e
+stdout-contains: PROVED 165-f
+stdout-contains: PROVED 165-g
+stdout-contains: PROVED 165-h
+stdout-contains: contributed pin checks done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

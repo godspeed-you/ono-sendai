@@ -424,3 +424,153 @@ fn should_say_that_no_domain_holds_a_contributed_place_when_up_has_nowhere_to_go
         run.output()
     );
 }
+
+#[test]
+fn should_state_the_search_bound_when_a_contributed_target_reaches_it() {
+    // #224 (5): a search reads at most a bounded number of objects from a contributed target,
+    // because nothing a package declares says how many it has (ADR-0584). ADR-0576 holds an
+    // orientation that stopped short to saying so — the bound, and the population where the
+    // provider states one — and a search that stopped short owes the reader the same, or its
+    // answer reads as complete. `echo-tick` never ends, so it always reaches the bound.
+    let home = echo_plugin_home(ECHO, TARGETS);
+    let run = ono_with_plugins(
+        &home,
+        &format!("load plugin {ECHO}; find place --type EchoItem --limit 2 | count"),
+    );
+    run.assert_success();
+    let said = run.stderr();
+    assert!(
+        said.contains("`echo-tick`") && said.contains("search bound of 1024 objects"),
+        "the diagnostic names the target and the bound it was read to, got {:?}",
+        run.output()
+    );
+    assert!(
+        said.contains("states no total"),
+        "a package that stated no population is said to have stated none, never a count, got \
+         {said:?}"
+    );
+}
+
+#[test]
+fn should_say_nothing_about_the_search_bound_when_a_contributed_target_ends_before_it() {
+    // A target that answered with all it has was searched completely; a note about a bound it
+    // never reached would be noise about nothing (§29.4).
+    let home = echo_plugin_home(ECHO, TARGETS);
+    let run = ono_with_plugins(
+        &home,
+        &format!("load plugin {ECHO}; find place --type EchoPlace | count"),
+    );
+    run.assert_success();
+    assert!(
+        !run.stderr().contains("search bound"),
+        "no bound was reached, got {:?}",
+        run.output()
+    );
+}
+
+/// Adds a `contributions.schemas` document to the laid-out package, declaring the scope of the
+/// resource kind: the schema's `state` field stands in for a cluster or a namespace (ADR-1009).
+fn declare_scope(home: &ono_testkit::Scratch, dimensions: &str) {
+    let package = home.path().join("plugins").join(ECHO);
+    let manifest = std::fs::read_to_string(package.join("manifest.yaml")).expect("the manifest");
+    std::fs::write(
+        package.join("manifest.yaml"),
+        manifest.replace(
+            "  targets: [contributions/targets.yaml]",
+            "  targets: [contributions/targets.yaml]\n  schemas: [contributions/schemas.yaml]",
+        ),
+    )
+    .expect("the manifest");
+    std::fs::write(
+        package.join("contributions/schemas.yaml"),
+        format!(
+            "schemas:\n  - id: dev.example.echo.place/1\n    name: EchoPlace\n    scope: {dimensions}\n"
+        ),
+    )
+    .expect("the schema document");
+}
+
+#[test]
+fn should_place_a_contributed_place_in_the_scope_its_schema_declares() {
+    // #224 (4): a contributed place's scope was always the local host, which is true of nowhere
+    // for a resource in a cluster (external-system-provider §9). The package names the fields that
+    // are its scope dimensions, and the place sits in a `plugin` scope (v0.4 §3.2) built from them.
+    let home = echo_plugin_home(ECHO, TARGETS);
+    declare_scope(&home, "[state]");
+    let run = ono_with_plugins(
+        &home,
+        "get echo-place | where uid == \"u-3\" | enter; look | to json",
+    );
+    run.assert_success();
+    assert_eq!(
+        rows(&run)[0]["place"]["scope"].as_str(),
+        Some("plugin:state=degraded"),
+        "the place's scope is the one its record names, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_record_the_crossing_between_two_scopes_a_package_declares() {
+    // v0.4 §3.2: "Crossing a scope boundary MUST be observable in the navigation trail." Two
+    // resources in two scopes of the package are two sides of a boundary.
+    let home = echo_plugin_home(ECHO, TARGETS);
+    declare_scope(&home, "[state]");
+    let run = ono_with_plugins(
+        &home,
+        "get echo-place | where uid == \"u-3\" | enter; get echo-place | where uid == \"u-1\" | \
+         enter; trail | to json",
+    );
+    run.assert_success();
+    let trail = rows(&run);
+    let crossing = &trail.last().expect("a step")["scope_crossing"];
+    assert_eq!(
+        crossing["kind"].as_str(),
+        Some("plugin"),
+        "got {crossing:?}"
+    );
+    assert_eq!(crossing["from"].as_str(), Some("plugin:state=degraded"));
+    assert_eq!(crossing["to"].as_str(), Some("plugin:state=ready"));
+}
+
+#[test]
+fn should_keep_the_identity_of_a_contributed_place_whatever_scope_it_is_declared_in() {
+    // The scope says where the place is; it does not make it another place (§42.1, as a
+    // process's container does not). A pin or a trail made before the package declared its
+    // scope still names the same place.
+    let id_of = |home: &ono_testkit::Scratch| {
+        let run = ono_with_plugins(
+            home,
+            "get echo-place | where uid == \"u-3\" | enter; look | to json",
+        );
+        run.assert_success();
+        rows(&run)[0]["place"]["spatial_id"]
+            .as_str()
+            .expect("an id")
+            .to_owned()
+    };
+    let plain = echo_plugin_home(ECHO, TARGETS);
+    let scoped = echo_plugin_home(ECHO, TARGETS);
+    declare_scope(&scoped, "[state]");
+    assert_eq!(id_of(&plain), id_of(&scoped));
+}
+
+#[test]
+fn should_leave_a_dimension_the_record_does_not_name_out_of_the_scope() {
+    // External-system-provider §9.2: `namespace?` — a cluster-scoped resource has none. A
+    // dimension the record does not carry is not a boundary (§2.17), and the ones it does carry
+    // still are.
+    let home = echo_plugin_home(ECHO, TARGETS);
+    declare_scope(&home, "[absent, state]");
+    let run = ono_with_plugins(
+        &home,
+        "get echo-place | where uid == \"u-3\" | enter; look | to json",
+    );
+    run.assert_success();
+    assert_eq!(
+        rows(&run)[0]["place"]["scope"].as_str(),
+        Some("plugin:state=degraded"),
+        "got {:?}",
+        run.output()
+    );
+}
