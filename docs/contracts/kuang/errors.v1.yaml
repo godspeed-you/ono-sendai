@@ -17,7 +17,10 @@
 # Numbering follows §31.79's own families: 001 package, 101 load, 201 runtime, 301 capability,
 # 401 state, 501 view, 601 model and assistant, 701 remote.
 #
-# Nothing here is implemented. These are the contracts spec §37 Phase I is built against.
+# Every code here is implemented: `KuangErrorCode` in `crates/ono-kuang-protocol/src/error.rs` carries
+# each one, `ono_core::ErrorCode` folds the family into the one taxonomy (ADR-0108), and
+# `spec-check` reads this file against both. Phase I of spec §37 was built against it, and the
+# 8xx block (confinement, ADR-0444) followed with v0.4.1's H4.
 
 version: 1
 kinds_from: ../errors.yaml
