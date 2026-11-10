@@ -1,0 +1,94 @@
+# Spec §31.8, §31.37, §18.4; ADR-0952, ADR-0959, ADR-0995 (issue #304): a package command in a
+# background job runs in the instance the session knows. `get plugin` lists an instance a job
+# loaded; a job and the shell use one instance of one package; the trail holds one load and one
+# unload for it; and a shell that leaves while a job still streams from the instance unloads it
+# rather than leaving it behind.
+case: a background job runs a package in the session's one instance, which the shell unloads
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/plugins/dev.example.echo/contributions"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  network:
+    outbound: none
+  contributions:
+    commands: [contributions/commands.yaml]
+  MANIFEST
+  cat > "$home/plugins/dev.example.echo/contributions/commands.yaml" <<'COMMANDS'
+  commands:
+    - id: dev.example.echo.command.emit
+      verb: get
+      target: echo-item
+      summary: Emit a counted stream of integers.
+      output: stream<int>
+      argument_mode: expression
+      capabilities: []
+      options:
+        - name: count
+          type: int
+          doc: How many integers to emit.
+          default: 2
+  COMMANDS
+  trail='get audit --plugin dev.example.echo | where invocation == "host" | where action == "lifecycle.load" or action == "lifecycle.unload" | select action | to json'
+
+  echo "== a job loads the package, and the shell lists the instance it runs (§31.8) =="
+  ono -c 'get echo-item --count 3 | to json &
+  fg %1
+  get plugin | where id == "dev.example.echo" | select state | to json'
+  echo "trail-after-a-job-loaded: $(ono -c "$trail")"
+  rm -rf "$home/state"
+
+  echo "== a job and the shell share one instance: one load, one unload (§31.37) =="
+  ono -c 'load plugin dev.example.echo
+  get echo-item --count 2 | to json &
+  fg %1
+  get echo-item --count 1 | to json'
+  echo "trail-after-sharing: $(ono -c "$trail")"
+  rm -rf "$home/state"
+
+  echo "== a shell that leaves while a job streams from the instance unloads it (ADR-0959) =="
+  ono -c 'load plugin dev.example.echo
+  echo:count-forever | count &
+  while (get plugin | where id == "dev.example.echo" and state == "active" | count) == 0 { sleep 0.05 }
+  echo:emit --count 4 | to json'
+  echo "trail-after-leaving: $(ono -c "$trail")"
+  if pgrep -f "$home/plugins/dev.example.echo/runtime/echo" >/dev/null; then
+    echo "an-instance-outlived-the-shell"
+  else
+    echo "no-instance-left-behind"
+  fi
+exit: 0
+stdout-contains: [1,2,3]
+stdout-contains: [{"state":"loaded"}]
+stdout-contains: trail-after-a-job-loaded: [{"action":"lifecycle.load"},{"action":"lifecycle.unload"}]
+stdout-contains: [1,2]
+stdout-contains: [1]
+stdout-contains: trail-after-sharing: [{"action":"lifecycle.load"},{"action":"lifecycle.unload"}]
+stdout-contains: [1,2,3,4]
+stdout-contains: trail-after-leaving: [{"action":"lifecycle.load"},{"action":"lifecycle.unload"}]
+stdout-contains: no-instance-left-behind
+stdout-not-contains: an-instance-outlived-the-shell
+stdout-not-contains: panicked

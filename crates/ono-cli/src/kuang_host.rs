@@ -757,12 +757,28 @@ impl Host {
     }
 
     /// Takes the instance of `id` out of the host, so the caller can shut it down.
+    ///
+    /// The host lets the instance go here, so this is where its end enters the trail: what the
+    /// instance recorded is kept, and the unload is recorded beside the load that started it
+    /// (spec §31.37, ADR-0995).
     pub fn remove_instance(&mut self, id: &str) -> Option<Instance> {
         let index = self
             .instances
             .iter()
             .position(|instance| instance.id == id)?;
-        Some(self.instances.remove(index))
+        let instance = self.instances.remove(index);
+        self.retain_audit(instance.plugin.audit());
+        self.record_host_event(id, "plugin.unload", "lifecycle.unload", true);
+        Some(instance)
+    }
+
+    /// Takes every instance out of the host, each as [`Self::remove_instance`] does, so the
+    /// session can shut them down as it ends.
+    pub fn take_instances(&mut self) -> Vec<Instance> {
+        let ids: Vec<String> = self.plugin_ids().map(str::to_owned).collect();
+        ids.iter()
+            .filter_map(|id| self.remove_instance(id))
+            .collect()
     }
 
     /// A fresh identity for a grant or a host event: in order within the session, and unlike

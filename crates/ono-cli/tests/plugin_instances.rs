@@ -1,0 +1,216 @@
+//! A KUANG/11 instance is the session's, whichever of its evaluators runs the package (spec §31.8,
+//! §31.10, §31.37; ADR-0952, ADR-0959, ADR-0995).
+//!
+//! A background job has an evaluator of its own (ADR-0952). Issue #304: a package command in a job
+//! found no loaded package in the job's own host and started a second, unlisted instance, which
+//! the job's end then tore down without an unload. These tests hold the shell to one host that
+//! knows every instance: what a job runs is what `get plugin` lists, and the audit trail records
+//! one load and one unload for every instance that ran.
+//!
+//! No test here asserts a duration; the shell's watchdog bounds every run.
+
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0913).
+#![cfg(feature = "kuang")]
+#![allow(
+    clippy::expect_used,
+    reason = "a test states its preconditions directly (AGENTS.md section 16)"
+)]
+
+mod support;
+
+use std::time::Duration;
+
+use ono_testkit::{Scratch, Shell};
+
+/// The example package, laid out as installed, declaring `emit` as `get echo-item` so that a
+/// job can reach it before anything has loaded it (spec §31.68).
+fn plugin_home() -> Scratch {
+    let scratch = ono_testkit::scratch();
+    let manifest = r#"
+format: kuang-package/1
+package:
+  id: dev.example.echo
+  name: echo
+  version: 0.1.0
+  description: Emits what it is asked to emit.
+  publisher: dev.example
+  license: MIT
+compatibility:
+  kuang_api: ">=11.1 <12"
+  ono_language: ">=0.2"
+  platforms: [linux-amd64, linux-arm64]
+runtime:
+  kind: native-process
+  entry: runtime/echo
+  memory_max: 64MiB
+  cpu_budget: interactive
+  startup: lazy
+roles: [provider]
+capabilities:
+  optional:
+    - clock.read
+network:
+  outbound: none
+contributions:
+  commands: [contributions/commands.yaml]
+"#;
+    scratch.write("plugins/dev.example.echo/manifest.yaml", manifest);
+    scratch.write(
+        "plugins/dev.example.echo/contributions/commands.yaml",
+        r#"
+commands:
+  - id: dev.example.echo.command.emit
+    verb: get
+    target: echo-item
+    summary: Emit a counted stream of integers.
+    output: stream<int>
+    argument_mode: expression
+    capabilities: []
+    options:
+      - name: count
+        type: int
+        doc: How many integers to emit.
+        default: 2
+    examples:
+      - get echo-item --count 3
+"#,
+    );
+    let binary = ono_testkit::ono_binary()
+        .parent()
+        .expect("the target directory")
+        .join("kuang-example-plugin");
+    let entry = scratch.path().join("plugins/dev.example.echo/runtime/echo");
+    std::fs::create_dir_all(entry.parent().expect("a parent")).expect("the runtime directory");
+    ono_testkit::executable_copy(&binary, &entry);
+    scratch
+}
+
+/// `ono -c script` with the plugin home and a state root of its own, so the audit trail outlives
+/// the run (spec §31.37).
+fn ono(home: &Scratch, script: &str) -> ono_testkit::Run {
+    let root = home.path();
+    Shell::new()
+        .args(["-c", script])
+        .env(
+            "ONO_PLUGIN_PATH",
+            root.join("plugins").display().to_string(),
+        )
+        .env("HOME", root.join("home").display().to_string())
+        .env("XDG_STATE_HOME", root.join("state").display().to_string())
+        .env("XDG_CONFIG_HOME", root.join("config").display().to_string())
+        .env("XDG_CACHE_HOME", root.join("cache").display().to_string())
+        .env(
+            "ONO_CONFIG_DIR",
+            root.join("config/ono").display().to_string(),
+        )
+        .timeout(Duration::from_secs(60))
+        .run()
+}
+
+/// The lifecycle actions the host recorded for the package, in the order the trail holds them,
+/// as a later session reads them back from disk.
+fn lifecycle_trail(home: &Scratch) -> Vec<String> {
+    let run = ono(
+        home,
+        r#"get audit --plugin dev.example.echo | where invocation == "host" | where action == "lifecycle.load" or action == "lifecycle.unload" | select action | to json"#,
+    );
+    run.assert_success();
+    support::last_json_rows(&run)
+        .iter()
+        .map(|row| support::text(row, "action"))
+        .collect()
+}
+
+#[test]
+fn should_list_the_instance_a_background_job_loaded_in_get_plugin() {
+    // Issue #304: a job that loads a package lazily loads it into the session's host, so the
+    // shell's own `get plugin` lists it as the running instance — not as a package no code of
+    // which has run.
+    let home = plugin_home();
+    let run = ono(
+        &home,
+        "get echo-item --count 3 | to json &\nfg %1\n\
+         get plugin | where id == \"dev.example.echo\" | select state | to json",
+    );
+
+    run.assert_success();
+    assert!(
+        run.stdout().contains("[1,2,3]"),
+        "the job ran the package's command and `fg` collected it: {:?}",
+        run.output()
+    );
+    assert!(
+        run.stdout().contains(r#"{"state":"loaded"}"#),
+        "spec §31.8: an instance a job started is the session's, visible through `get plugin`: {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_record_one_load_and_one_unload_when_a_job_and_the_shell_use_one_package() {
+    // Issue #304's exit test: `get plugin` and the audit log account for every instance that ran,
+    // and each instance that ends records its unload. The shell loads the package, a job and the
+    // shell both run its command — one instance, so one load and, when the shell leaves, one
+    // unload.
+    let home = plugin_home();
+    let run = ono(
+        &home,
+        "load plugin dev.example.echo\n\
+         get echo-item --count 2 | to json &\nfg %1\n\
+         get echo-item --count 1 | to json",
+    );
+    run.assert_success();
+    assert!(
+        run.stdout().contains("[1,2]") && run.stdout().contains("[1]"),
+        "the job and the shell each got their own answer: {:?}",
+        run.output()
+    );
+
+    assert_eq!(
+        lifecycle_trail(&home),
+        ["lifecycle.load", "lifecycle.unload"],
+        "spec §31.37: one instance ran, so the trail holds one load and the unload that ended it"
+    );
+}
+
+#[test]
+fn should_unload_the_instance_in_order_when_the_shell_leaves_with_a_job_still_running_it() {
+    // ADR-0959: a leaving shell ends its jobs within one bounded grace period, and the instance
+    // a job is still streaming from ends with them — through its unload, not by being dropped.
+    // Meanwhile the shell's own invocation of the same instance is answered correctly.
+    let home = plugin_home();
+    let runtime = home
+        .path()
+        .join("plugins/dev.example.echo/runtime/echo")
+        .display()
+        .to_string();
+    let run = ono(
+        &home,
+        // The shell waits until the job's invocation has made the instance active — spec §31.8's
+        // state, read through `get plugin` — so the shell's own invocation below runs while the
+        // job's is still streaming. A job running a second instance never gets there, and the
+        // watchdog ends the run.
+        "load plugin dev.example.echo\n\
+         echo:count-forever | count &\n\
+         while (get plugin | where id == \"dev.example.echo\" and state == \"active\" | count) == 0 { sleep 0.05 }\n\
+         echo:emit --count 3 | to json",
+    );
+
+    run.assert_success();
+    assert!(
+        run.stdout().contains("[1,2,3]"),
+        "the shell's invocation is answered while a job streams from the same instance: {:?}",
+        run.output()
+    );
+    let left: Vec<u32> = support::processes_naming(&runtime);
+    support::kill_processes_naming(&runtime);
+    assert!(
+        left.is_empty(),
+        "no instance outlives the shell that ran it: {left:?}"
+    );
+    assert_eq!(
+        lifecycle_trail(&home),
+        ["lifecycle.load", "lifecycle.unload"],
+        "spec §31.37: the instance the job was still using ended with its unload"
+    );
+}

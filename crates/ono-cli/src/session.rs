@@ -55,6 +55,9 @@ pub struct JobSnapshot {
     adapters: Option<std::sync::Arc<ono_adapter::Registry>>,
     #[cfg(feature = "kuang")]
     plugin_providers: Vec<std::sync::Arc<crate::plugin_provider::PluginProvider>>,
+    /// The session's tables, the KUANG/11 host among them: a job runs packages in the instances
+    /// the session knows, and publishes nothing into them (ADR-0995).
+    tables: std::sync::Arc<std::sync::Mutex<crate::session_provider::SessionTables>>,
     settings: crate::settings::Settings,
     theme: std::sync::Arc<ono_render::Theme>,
     live: Option<LiveModel>,
@@ -120,7 +123,7 @@ impl JobSnapshot {
             jobs: JobState {
                 native_jobs: Vec::new(),
                 job_started: BTreeMap::new(),
-                tables: std::sync::Arc::default(),
+                tables: self.tables,
             },
             provider: ProviderState {
                 providers: self.providers,
@@ -975,7 +978,9 @@ impl Session {
     /// frames, the retained results and the settings — so a job reads what its line could read
     /// when it was started, and what its blocks bind or rebind stays in the job. Shared: the
     /// runtime, the providers, the adapters and the theme, which are resources rather than state —
-    /// except the `env` provider, which answers from the environment and is the job's own.
+    /// except the `env` provider, which answers from the environment and is the job's own — and
+    /// the session's tables, so a package the job runs is an instance the session's KUANG/11 host
+    /// knows, lists and unloads (ADR-0995); the job publishes nothing into them.
     /// Not carried: links (a job inside a link frame is refused), the job table, captures, and the
     /// terminal — the job's executor never touches one.
     ///
@@ -1013,6 +1018,10 @@ impl Session {
         let _ = self.runtime();
         let _ = self.providers();
         let _ = self.shared_adapters();
+        // The job runs packages in the session's host and never configures it, so the session
+        // does, as it would before a pipeline of its own (ADR-0995).
+        #[cfg(feature = "kuang")]
+        self.publish_host();
         // The environment is state, so the job answers `get env` from a provider of its own: the
         // session's is published before each of its pipelines, and a job publishing into the same
         // one would be what the shell's next `get env` read (review R7). Every other provider is
@@ -1053,6 +1062,7 @@ impl Session {
             adapters: self.provider.adapters.clone(),
             #[cfg(feature = "kuang")]
             plugin_providers: self.provider.plugin_providers.clone(),
+            tables: std::sync::Arc::clone(&self.jobs.tables),
             settings: self.presentation.settings.clone(),
             theme: std::sync::Arc::clone(&self.presentation.theme),
             live: None,
@@ -1220,6 +1230,13 @@ impl Session {
     /// it answers from follow the environment (spec §31.9, §31.31).
     #[cfg(feature = "kuang")]
     pub fn publish_host(&mut self) {
+        // A job runs packages in the session's host, which the session configures and whose
+        // context the session publishes; the job only adds what it recorded to the trail
+        // (ADR-0995).
+        if self.execution.background_job {
+            self.with_kuang(crate::kuang_host::Host::persist_audit);
+            return;
+        }
         let plugin_path = crate::plugins::plugin_path(self);
         let state_dir = crate::config::state_dir(self);
         let config_dir = crate::config::user_config_dir(self);
@@ -1309,6 +1326,40 @@ impl Session {
         plugin: ono_kuang_supervisor::LoadedPlugin,
     ) -> Option<crate::kuang_host::Instance> {
         self.with_kuang(|host| host.add_instance(id, plugin))
+    }
+
+    /// Unloads every instance the host knows as the session ends (spec §31.8's `unload`,
+    /// lifecycle.v1 `HostExit`), all of them at once and within one grace period (ADR-0959,
+    /// ADR-0995). An instance that has not acknowledged its shutdown by then is ended when its
+    /// handle goes.
+    #[cfg(feature = "kuang")]
+    fn unload_instances(&self) {
+        let instances = self.with_kuang(crate::kuang_host::Host::take_instances);
+        if instances.is_empty() {
+            return;
+        }
+        let Some(runtime) = self.execution.runtime.as_ref() else {
+            return;
+        };
+        runtime.block_on(async {
+            let shutdowns: Vec<_> = instances
+                .iter()
+                .map(|instance| {
+                    let plugin = std::sync::Arc::clone(&instance.plugin);
+                    tokio::spawn(async move {
+                        plugin
+                            .shutdown(ono_kuang_protocol::ShutdownReason::HostExit)
+                            .await;
+                    })
+                })
+                .collect();
+            let _ = tokio::time::timeout(crate::shutdown::GRACE, async {
+                for shutdown in shutdowns {
+                    let _ = shutdown.await;
+                }
+            })
+            .await;
+        });
     }
 
     /// A loaded package by its manifest id.
@@ -1464,6 +1515,10 @@ impl Session {
         // §19.1: the same table is what the local root's link map is built from, and it must
         // never quietly drop a link that is no longer connected (§35.2).
         crate::spatial::links::publish(&rows);
+        // A job's tables are the session's, and so is the link table in them (ADR-0995).
+        if self.execution.background_job {
+            return;
+        }
         self.jobs
             .tables
             .lock()
@@ -1639,6 +1694,11 @@ impl Session {
         self.jobs
             .job_started
             .retain(|number, _| rows.iter().any(|row| row.number == *number));
+        // A job's tables are the session's, and the session's job table is the session's to
+        // publish (ADR-0995).
+        if self.execution.background_job {
+            return;
+        }
         self.jobs
             .tables
             .lock()
@@ -2415,6 +2475,12 @@ impl Drop for Session {
             // not every group in the process: another session there owns its own (review S4).
             let ownership = self.execution.executor.ownership();
             crate::shutdown::end_shell(|| ownership.groups(), settled, false);
+        }
+        // The instances are the session's, not a job's: once the jobs have ended, every one of
+        // them is unloaded in order, and its unload is in the trail written next (ADR-0995).
+        #[cfg(feature = "kuang")]
+        if !self.execution.background_job {
+            self.unload_instances();
         }
         // Spec §31.37: the last pipeline's audit events are written before the session goes.
         #[cfg(feature = "kuang")]
