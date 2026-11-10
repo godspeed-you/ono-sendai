@@ -175,7 +175,32 @@ requires, and nothing in the evaluator changes.
 
 ## Consequences
 
-- A selective `where` on a declared field costs what the matching records cost.
+- A selective `where` on a declared field costs what the matching records cost. Measured over a
+  generated journal served by a `journalctl` shim, with three matches and the first at 90 % of the
+  journal (`get journal | where priority <= 3 | select cursor | to json`, median of 5 rounds,
+  debug build, AMD Ryzen 9 3900X, load average between 2 and 4.6):
+
+  | entries | `providers.pushdown = false` | `providers.pushdown = true` | ratio |
+  |---|---|---|---|
+  | 5,000 (the test's default) | 565.4 ms, 5,000 entries read | 71.2 ms, 3 entries read | 7.9x |
+  | 20,000 | 1,910.8 ms, 20,000 entries read | 81.2 ms, 3 entries read | 23.5x |
+  | 200,000 | 18,827.9 ms, 200,000 entries read | 141.7 ms, 3 entries read | 132.9x |
+
+  Reproduce with
+
+  ```text
+  ONO_PUSHDOWN_BENCHMARK_ENTRIES=200000 cargo test -p ono-cli --features systemd \
+      --test predicate_pushdown_benchmark -- --nocapture
+  ```
+
+  The figures are a property of that machine and that build. None of them is a threshold: the
+  test asserts that both runs answer the same and that `journalctl` hands Ono the whole journal
+  without the handover and the three matching entries with it, and it prints the timings. The
+  shim scans its file with `awk` either way, where journald answers `--priority` from an index,
+  so the figures show what Ono saves on its side of the boundary. The release-build baseline of
+  `xtask perf` (`docs/contracts/hardening/performance_baseline.json`) is taken on its named
+  reference environment and is untouched; a scenario there is a follow-up for whoever runs that
+  environment.
 - **The equivalence has one stated bound.** A source that excludes records also excludes what
   reading them would have reported. For the journal: an entry that carries no `PRIORITY`, or one
   outside the canonical digits, violates `ono.journal-event/1` and is reported as
@@ -203,6 +228,7 @@ requires, and nothing in the evaluator changes.
     that records its arguments: supported predicates, unsupported ones, mixed conjunctions,
     `--level` folded with a `where`, thirty pipelines answered identically with the handover on
     and off, the `explain` note, and the stated bound;
+  - `crates/ono-cli/tests/predicate_pushdown_benchmark.rs` — the benchmark above;
   - `xtask/tests/contracts.rs` (`…pushdown…`) and the generated
     `crates/ono-cli/tests/provider_conformance.rs` — the declaration held to the schemas and the
     code held to the declaration;
