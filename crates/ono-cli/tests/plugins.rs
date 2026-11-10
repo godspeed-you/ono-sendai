@@ -1169,3 +1169,37 @@ fn should_refuse_a_contributed_command_whose_risk_is_not_a_risk_level() {
         listed.output()
     );
 }
+
+#[test]
+fn should_refuse_and_report_a_mutating_contributed_command_that_declares_no_risk() {
+    // #156: `network.connect` is a `mutate` capability. A command needing it that said nothing
+    // about its risk used to register, and `help` showed no risk at all. It is refused now, and
+    // `get plugin` says which package, which command and what is missing (ADR-1000).
+    let home = risk_declaring_home("destructive");
+    let text = std::fs::read_to_string(
+        home.path()
+            .join("dev.example.echo/contributions/commands.yaml"),
+    )
+    .expect("the declaration");
+    home.write(
+        "dev.example.echo/contributions/commands.yaml",
+        text.replace("    risk: destructive\n", ""),
+    );
+    let run = ono(&home, "get plugin");
+    assert!(
+        run.stderr().contains("dev.example.echo.command.emit")
+            && run.stderr().contains("network.connect")
+            && run.stderr().contains("risk:"),
+        "the refusal names the command, the capability and the missing `risk:`, got {:?}",
+        run.stderr()
+    );
+    let listed = ono(
+        &home,
+        r#"get command | where id == "dev.example.echo.command.emit" | count"#,
+    );
+    assert!(
+        listed.stdout().contains('0'),
+        "a refused declaration does not reach the registry, got {:?}",
+        listed.output()
+    );
+}

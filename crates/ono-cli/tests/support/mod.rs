@@ -766,6 +766,7 @@ pub const COMMANDS: &str = r#"commands:
     output: stream<string>
     argument_mode: expression
     capabilities: [process.exec]
+    risk: mutate
     examples:
       - get echo-exec --program /bin/true
   - id: dev.example.echo.command.signal
@@ -775,6 +776,7 @@ pub const COMMANDS: &str = r#"commands:
     output: stream<string>
     argument_mode: expression
     capabilities: [process.signal]
+    risk: mutate
     examples:
       - get echo-signal --pid 1 --signal TERM
 "#;

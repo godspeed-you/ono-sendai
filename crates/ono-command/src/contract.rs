@@ -1510,6 +1510,49 @@ impl ContributedCommand {
                 )
             })?),
         };
+        // What the package said is held against what it asked for. A capability's risk is the
+        // least the host knows the command can do with it, so a command needing a `mutate` or
+        // `destructive` capability must say its risk, and may raise that risk but never lower it
+        // (`registration_checks.risk-metadata`, K11P §6.6, ADR-1000). The declaration is the one
+        // the host's confirmation policy reads, which is why silence is refused rather than read
+        // as `read`.
+        if let Some((capability, floor)) = strongest_capability(&self.capabilities) {
+            match declared_risk {
+                None if floor >= ono_provider_api::Risk::Mutate => {
+                    return Err(contributed_error(
+                        &id,
+                        format!(
+                            "package `{package}` declares no `risk:` for it, and it needs \
+                             `{capability}`, whose risk is `{}`",
+                            floor.as_str()
+                        ),
+                    )
+                    .with_help(format!(
+                        "a mutating command declares its risk: add `risk: {}` (or higher) to \
+                         its contribution (spec §31.22, §31.75; contributions.v1.yaml → \
+                         registration_checks.risk-metadata)",
+                        floor.as_str()
+                    )));
+                }
+                Some(declared) if declared < floor => {
+                    return Err(contributed_error(
+                        &id,
+                        format!(
+                            "package `{package}` declares `risk: {}`, and it needs \
+                             `{capability}`, whose risk is `{}`",
+                            declared.as_str(),
+                            floor.as_str()
+                        ),
+                    )
+                    .with_help(format!(
+                        "a package may raise the risk its capabilities carry, never lower it: \
+                         declare `risk: {}` or higher (K11P §6.6, ADR-1000)",
+                        floor.as_str()
+                    )));
+                }
+                _ => {}
+            }
+        }
         let output = IoType { text: self.output };
         Ok(CommandContract {
             id: self.id,
@@ -1575,6 +1618,26 @@ fn risk_level(word: &str) -> Option<ono_provider_api::Risk> {
         "destructive" => Some(ono_provider_api::Risk::Destructive),
         _ => None,
     }
+}
+
+/// The capability among `capabilities` whose risk is highest, with that risk, as
+/// `kuang_capabilities` in `docs/contracts/capabilities.yaml` classes it.
+///
+/// An id that is no capability is passed over here: the load refuses it (`capabilities-exist`),
+/// and a floor computed from a word nobody defined would be a guess.
+fn strongest_capability(capabilities: &[String]) -> Option<(&str, ono_provider_api::Risk)> {
+    capabilities
+        .iter()
+        .filter_map(|id| {
+            let risk = match ono_kuang_protocol::Capability::from_id(id)?.risk() {
+                ono_kuang_protocol::Risk::Read => ono_provider_api::Risk::Read,
+                ono_kuang_protocol::Risk::Observe => ono_provider_api::Risk::Observe,
+                ono_kuang_protocol::Risk::Mutate => ono_provider_api::Risk::Mutate,
+                ono_kuang_protocol::Risk::Destructive => ono_provider_api::Risk::Destructive,
+            };
+            Some((id.as_str(), risk))
+        })
+        .max_by_key(|(_, risk)| *risk)
 }
 
 fn contributed_error(id: &str, detail: impl fmt::Display) -> ErrorValue {

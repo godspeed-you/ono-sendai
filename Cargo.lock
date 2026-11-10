@@ -1794,6 +1794,7 @@ dependencies = [
  "ono-adapter",
  "ono-core",
  "ono-graph",
+ "ono-kuang-protocol",
  "ono-parser",
  "ono-pipeline",
  "ono-provider-api",
