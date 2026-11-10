@@ -162,6 +162,9 @@ fn should_define_the_service_schema_exactly_as_the_spec_does() {
             ("pid", true),
             ("enabled", true),
             ("since", true),
+            // ADR-0978: how often the service manager restarted the unit — the evidence of
+            // v0.4 §26.2's restart loop, which had a reason and a threshold and no count.
+            ("restarts", true),
             ("provider", false),
             ("unit_file", true),
             // ADR-0239: the units the service manager says this one requires. v0.4 §13 puts

@@ -37,7 +37,10 @@ landmarks:
 
   - reason: high_memory
     domain: compute
-    evidence: The object's resident memory as a share of the host or cgroup budget.
+    evidence: >-
+      The object's resident memory as a share of the host's memory — `memory` of the object's
+      record over `memory_total` of `ono.kernel/1` (ADR-0978). Where no provider states the
+      budget there is no share and no landmark.
     threshold:
       metric: memory_share
       comparison: at_or_above
@@ -56,7 +59,9 @@ landmarks:
 
   - reason: restarting
     domain: compute
-    evidence: The unit's restart count within the change window.
+    evidence: >-
+      The service manager's restart count for the unit (`restarts` of `ono.service/1`), on a
+      unit whose state changed within the change window (ADR-0978).
     threshold:
       metric: restarts_in_window
       comparison: at_or_above
@@ -110,7 +115,13 @@ landmarks:
       unit: count
       setting: spatial.landmarks.connection_spike
     severity: notice
-    doc: §26.2 "connection spike".
+    doc: >-
+      §26.2 "connection spike". §26.2 also names an interface going down, a route change and a
+      new remote peer; those are changes of state and surface as `recently_changed`,
+      `new_object` or `removed_object` on the interface, the route or the endpoint, as the
+      storage transitions below do — §3.7's list of reasons is what a Landmark may carry
+      (ADR-0978). "Unusually high traffic" has no rule: no provider states a rate, and a
+      counter read once is no evidence of one.
 
   # --- storage (§26.2) -------------------------------------------------------------------------
   - reason: storage_pressure

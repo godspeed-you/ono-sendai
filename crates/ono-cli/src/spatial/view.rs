@@ -343,6 +343,35 @@ enum Purpose {
     Resolution,
 }
 
+/// Asks the host for its memory budget, once per host per session (§26.2, ADR-0978).
+///
+/// §26.2 measures a process's memory "relative to host/cgroup budget", and §2.16 keeps the
+/// spatial layer from reading the kernel itself: the budget is `memory_total` of the kernel
+/// record. A host whose provider states none is remembered as such, and no share is computed
+/// for it (§2.17).
+pub(crate) async fn learn_memory_budget(
+    providers: &ProviderRegistry,
+    session: &mut SpatialSessionState,
+) {
+    if session.knows_memory_budget() || providers.for_target("kernel").is_empty() {
+        return;
+    }
+    let budget = match providers.snapshot(&Query::target("kernel")) {
+        Ok(stream) => stream
+            .collect()
+            .await
+            .values()
+            .iter()
+            .filter_map(|value| value.as_record().ok())
+            .find_map(|kernel| match kernel.get("memory_total") {
+                Some(Value::ByteSize(size)) => u64::try_from(size.bytes()).ok(),
+                _ => None,
+            }),
+        Err(_) => None,
+    };
+    session.set_memory_budget(budget);
+}
+
 /// Asks every target once and registers what came back (§33.1, §42.1, §34).
 ///
 /// "Once" is per *observation lifetime*, not per command: a target the session asked inside its
@@ -357,6 +386,9 @@ async fn observe(
     now: Timestamp,
     purpose: Purpose,
 ) -> Observed {
+    if targets.contains("process") {
+        learn_memory_budget(providers, session).await;
+    }
     let mut observed = Observed::default();
     let mut asked = false;
     let mut answerable = false;

@@ -85,6 +85,15 @@ pub fn configure_from(settings: &crate::settings::Settings) {
             clippy::cast_precision_loss,
             reason = "a percentage threshold is a small integer in the settings catalogue"
         )]
+        high_memory_percent: integer("spatial.landmarks.high_memory", 25) as f64,
+        // The budget is the host's to state, and the session asks for it when it observes
+        // processes (ADR-0978).
+        memory_budget: None,
+        restart_loop: integer("spatial.landmarks.restart_loop", 3),
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "a percentage threshold is a small integer in the settings catalogue"
+        )]
         storage_pressure_percent: integer("spatial.landmarks.storage_pressure", 90) as f64,
         change_window: jiff::Span::new().seconds(seconds),
     };

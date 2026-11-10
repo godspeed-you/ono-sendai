@@ -170,3 +170,45 @@ async fn should_find_the_running_kernel_on_the_real_system() {
         Some(&Value::string(expected.trim()))
     );
 }
+
+#[tokio::test]
+async fn should_state_the_memory_the_kernel_manages_and_leave_it_unknown_where_it_is_not_published()
+{
+    // v0.4 §26.2 measures a process's memory "relative to host/cgroup budget", and §2.16 keeps
+    // the spatial layer from reading `/proc/meminfo` itself: the host's budget is a fact of the
+    // kernel record, `MemTotal` in bytes (ADR-0978). A `/proc` that publishes no `meminfo`
+    // states nothing, and nothing is null — never zero (§35.3).
+    let fixture = ProcFixture::new();
+    kernel_files(&fixture, "6.8.0-45-generic", None);
+    let read = |fixture: &ProcFixture| {
+        let root = fixture.root().to_path_buf();
+        async move {
+            let collected = drain(
+                KernelProvider::rooted(&root)
+                    .snapshot(&Query::target("kernel"))
+                    .expect("a snapshot"),
+            )
+            .await;
+            records(&collected)[0].get("memory_total").cloned()
+        }
+    };
+
+    assert_eq!(
+        read(&fixture).await,
+        Some(Value::Null),
+        "no meminfo, no claim"
+    );
+
+    fs::write(
+        fixture.proc().join("meminfo"),
+        "MemTotal:       16303428 kB\nMemFree:         1203428 kB\nMemAvailable:    9203428 kB\n",
+    )
+    .expect("meminfo");
+    assert_eq!(
+        read(&fixture).await,
+        Some(Value::ByteSize(ono_value::ByteSize::from_bytes(
+            16_303_428 * 1024
+        ))),
+        "MemTotal is printed in kibibytes and stated in bytes"
+    );
+}

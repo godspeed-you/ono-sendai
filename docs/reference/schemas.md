@@ -1001,6 +1001,7 @@ Default view: `release`, `os`, `architecture`, `uptime`
 | `boot_id` | `string` | — | nullable | The identity of this boot, from `/proc/sys/kernel/random/boot_id`. Null where `/proc` withholds it, as a restricted container may; the release then identifies the record. |
 | `booted` | `timestamp` | — | nullable | When the system booted, from `/proc/stat`'s `btime`. A wall-clock instant the kernel recomputes when the clock is stepped, so it is a rendered fact and not the identity. |
 | `uptime` | `duration` | — | nullable | How long the system has been up, from `/proc/uptime`. |
+| `memory_total` | `bytesize` | bytes | nullable | The memory the kernel manages, `MemTotal` of `/proc/meminfo`, in bytes — the host budget v0.4 §26.2 measures a process's memory against (ADR-0978). Null where `/proc` publishes no `meminfo`. |
 
 ## Landmark — `ono.landmark/1`
 
@@ -2075,6 +2076,7 @@ Default view: `name`, `state`, `substate`, `enabled`, `description`
 | `pid` | `int` | — | nullable | The main process id; null when the unit runs no process or it is not visible. |
 | `enabled` | `bool` | — | nullable | Whether the unit starts at boot; null when the provider has no such concept. |
 | `since` | `timestamp` | — | nullable | When the unit entered its current state. |
+| `restarts` | `int` | — | nullable | How often the service manager restarted the service since it loaded the unit — systemd's `NRestarts`. Null where the provider keeps no such count, and for a unit that is not a service. The evidence of v0.4 §26.2's restart loop (ADR-0978). |
 | `provider` | `string` | — | required | The service provider that produced this record; part of the identity. |
 | `unit_file` | `path` | — | nullable | The unit file backing the service; null for transient or generated units. |
 | `dependencies` | `list<string>` | — | nullable | The units this one requires, named as the service manager names them. For systemd that is `Requires`, `Requisite`, `BindsTo` and `Wants` merged; ordering (`After`, `Before`) is not among them, because ordering says when and not whether (ADR-0239). Null where the provider has no notion of a dependency at all; an empty list where it has one and there are none. |

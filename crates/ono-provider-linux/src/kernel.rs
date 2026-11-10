@@ -118,7 +118,7 @@ impl KernelProvider {
             provenance(
                 PROVIDER_ID,
                 schema.id(),
-                "/proc/sys/kernel + /proc/stat + /proc/uptime + os-release(5)",
+                "/proc/sys/kernel + /proc/stat + /proc/uptime + /proc/meminfo + os-release(5)",
             ),
         )
         .set("release", Value::string(&release))?
@@ -130,6 +130,12 @@ impl KernelProvider {
         .set("boot_id", text(procfs::boot_id(&proc_root)))?
         .set("booted", booted)?
         .set("uptime", uptime)?
+        .set(
+            "memory_total",
+            procfs::memory_total_bytes(&proc_root).map_or(Value::Null, |bytes| {
+                Value::ByteSize(ono_value::ByteSize::from_bytes(bytes))
+            }),
+        )?
         .build())
     }
 }

@@ -331,6 +331,9 @@ async fn refresh(
     let object_type = session.index().get(id)?.object().object_type();
     let (target, field) = target_of(object_type)?;
     let key = reference_value(session, id, field)?;
+    if object_type == SpatialType::Process {
+        crate::spatial::view::learn_memory_budget(providers, session).await;
+    }
 
     if providers.for_target(target).is_empty() {
         return session.record_of(id).cloned();

@@ -37,6 +37,13 @@ fields:
     type: timestamp
     nullable: true
     doc: When the unit entered its current state.
+  restarts:
+    type: int
+    nullable: true
+    doc: >-
+      How often the service manager restarted the service since it loaded the unit — systemd's
+      `NRestarts`. Null where the provider keeps no such count, and for a unit that is not a
+      service. The evidence of v0.4 §26.2's restart loop (ADR-0978).
   provider:
     type: string
     required: true

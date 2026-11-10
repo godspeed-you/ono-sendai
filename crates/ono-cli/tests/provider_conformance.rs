@@ -1834,6 +1834,7 @@ async fn should_shape_ono_kernel_1_the_way_linux_kernel_declares_it() {
             harness::FieldContract { name: "boot_id", ty: "string", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "booted", ty: "timestamp", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "uptime", ty: "duration", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "memory_total", ty: "bytesize", required: false, nullable: true, unit: Some("bytes") },
         ],
     }).await;
 }
@@ -2121,6 +2122,7 @@ async fn should_shape_ono_service_1_the_way_systemd_declares_it() {
             harness::FieldContract { name: "pid", ty: "int", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "enabled", ty: "bool", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "since", ty: "timestamp", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "restarts", ty: "int", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "provider", ty: "string", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "unit_file", ty: "path", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "dependencies", ty: "list<string>", required: false, nullable: true, unit: None },

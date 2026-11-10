@@ -1,0 +1,43 @@
+# v0.4 §26.2 "high memory relative to host/cgroup budget" had a reason, a threshold and a setting
+# and could never fire: nothing stated a budget (#209). ADR-0978 makes the host's memory a fact of
+# the kernel record, and the rule measures a process's resident memory against it.
+#
+# No process in the container holds a quarter of the host, so the threshold is lowered through
+# its setting to make the rule observable — which is also the proof that the setting is read
+# (§26.3).
+case: a process is measured against the memory the host states
+timeout: 90
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  sleep 60 &
+  idle=$!
+
+  echo "== the kernel record states the host's memory (v0.2 §8.1, ADR-0978) =="
+  prove k1 "get kernel carries memory_total, the kernel's MemTotal in bytes" \
+    "test \"\$(ono -c 'get kernel | select memory_total | to json' | grep -oE '[0-9]+')\" = \"\$(awk '/^MemTotal:/ {printf \"%d\", \$2 * 1024}' /proc/meminfo)\""
+
+  echo "== the share decides, and the threshold is the configured one (§26.2, §26.3) =="
+  prove h1 "at the default a sleeping process is no high_memory landmark" \
+    "! ono -c 'enter process/$idle; look --json' | grep -qF '\"reason\":\"high_memory\"'"
+  prove h2 "with the threshold at zero it is, and the evidence names the share and the budget" \
+    "ONO_SPATIAL_LANDMARKS_HIGH_MEMORY=0 ono -c 'enter process/$idle; look' | grep -qE 'sleep +high memory — memory [0-9.]+ [KMG]iB, [0-9]+% of [0-9.]+ [KMGT]iB'"
+
+  kill "$idle" 2>/dev/null || true
+  wait 2>/dev/null || true
+  echo done=ok
+exit: 0
+stdout-contains: PROVED k1
+stdout-contains: PROVED h1
+stdout-contains: PROVED h2
+stdout-contains: done=ok
+stdout-not-contains: FAILED

@@ -154,6 +154,14 @@ pub(crate) fn uptime_seconds(proc_root: &Path) -> Option<f64> {
     text.split_whitespace().next()?.parse().ok()
 }
 
+/// The memory the kernel manages, in bytes: `MemTotal` of `/proc/meminfo`, which prints kibibytes.
+pub(crate) fn memory_total_bytes(proc_root: &Path) -> Option<u128> {
+    let text = fs::read_to_string(proc_root.join("meminfo")).ok()?;
+    let line = text.lines().find(|line| line.starts_with("MemTotal:"))?;
+    let kibibytes: u128 = line.split_whitespace().nth(1)?.parse().ok()?;
+    kibibytes.checked_mul(1024)
+}
+
 /// The frequency of the statistics clock, in ticks per second.
 pub(crate) fn clock_ticks() -> u64 {
     sysconf(SysconfVar::CLK_TCK)

@@ -1238,3 +1238,17 @@ fn should_recover_a_unit_name_from_the_object_path_a_signal_arrived_on() {
         "a path that names no unit yields no name, rather than an empty one"
     );
 }
+
+#[tokio::test]
+async fn should_report_how_often_systemd_restarted_a_service_and_null_where_it_keeps_no_count() {
+    // v0.4 §26.2's restart loop needs a count, and systemd keeps one: `NRestarts`. A unit that
+    // is not a service has no such property, and what systemd did not say is null, never zero
+    // (spec §35.3, ADR-0978).
+    let provider = provider_over(RecordedSystemd::running()).await;
+
+    let restarted = unit(&provider, "postgresql.service").await;
+    assert_eq!(restarted.get("restarts"), Some(&Value::Int(4)));
+
+    let timer = unit(&provider, "logrotate.timer").await;
+    assert_eq!(timer.get("restarts"), Some(&Value::Null));
+}

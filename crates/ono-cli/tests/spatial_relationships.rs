@@ -1468,3 +1468,34 @@ fn should_ask_again_when_a_later_view_wants_more_than_the_earlier_one_read() {
         run.stdout()
     );
 }
+
+#[test]
+fn should_measure_a_process_against_the_memory_the_host_states() {
+    // §26.2 "high memory relative to host/cgroup budget": the budget is the host's memory as the
+    // kernel record states it, and the threshold is `spatial.landmarks.high_memory` (§26.3).
+    // With the threshold at zero every process that holds memory qualifies, which makes the
+    // rule observable on any host; at the default a `sleep` is nowhere near a quarter of it
+    // (ADR-0978).
+    let child = SleepChild::spawn();
+    let script = format!("enter process {}; look --json", child.pid());
+
+    let eager = Shell::new()
+        .env("ONO_SPATIAL_LANDMARKS_HIGH_MEMORY", "0")
+        .args(["-c", &script])
+        .run();
+    eager.assert_success();
+    let shown = eager.stdout();
+    assert!(
+        shown.contains("\"reason\":\"high_memory\"") && shown.contains("% of "),
+        "§3.7: the landmark names its reason and its evidence — the share and the budget it is \
+         a share of; got {shown:?}"
+    );
+
+    let default = ono(&script);
+    default.assert_success();
+    assert!(
+        !default.stdout().contains("\"reason\":\"high_memory\""),
+        "§26.3: a sleeping process holds no quarter of the host's memory; got {:?}",
+        default.stdout()
+    );
+}

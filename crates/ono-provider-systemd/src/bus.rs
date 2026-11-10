@@ -66,6 +66,9 @@ pub struct UnitProperties {
     pub fragment_path: Option<String>,
     /// `StateChangeTimestamp`, in microseconds since the Unix epoch: when the unit last moved.
     pub state_change_usec: Option<u64>,
+    /// `NRestarts` — how often systemd restarted the service since it loaded the unit. Only a
+    /// `.service` has the property.
+    pub restarts: Option<u32>,
     /// `MainPID`. Zero is systemd's way of saying there is no main process.
     pub main_pid: Option<u32>,
     /// `MemoryCurrent`, in bytes. `u64::MAX` is systemd's way of saying it does not know.

@@ -76,6 +76,10 @@ pub struct SpatialSessionState {
     /// "known relationship summary" §33.1 makes part of the index. Keyed like `targets`, in the
     /// scope it was read in (ADR-0977).
     expansions: BTreeMap<String, Expansion>,
+    /// The memory budget of each host this session has asked about, in bytes, by scope: what a
+    /// process's memory is a share of (§26.2). `None` inside is a host whose provider stated no
+    /// budget; a scope that is not here has not been asked (ADR-0978).
+    memory_budgets: BTreeMap<String, Option<u64>>,
 }
 
 /// One expansion of a place's relationship providers: when it was made, how much it asked for,
@@ -289,6 +293,7 @@ impl SpatialSessionState {
             last_map: None,
             targets: BTreeMap::new(),
             expansions: BTreeMap::new(),
+            memory_budgets: BTreeMap::new(),
         }
     }
 
@@ -461,11 +466,34 @@ impl SpatialSessionState {
         self.records.retain(|id, _| index.contains(id));
     }
 
+    /// Whether the host this session stands on has been asked for its memory budget (§26.2).
+    #[must_use]
+    pub fn knows_memory_budget(&self) -> bool {
+        self.memory_budgets
+            .contains_key(&self.current_scope().to_string())
+    }
+
+    /// Records what the host's provider stated as its memory budget, or that it stated none.
+    pub fn set_memory_budget(&mut self, budget: Option<u64>) {
+        let scope = self.current_scope().to_string();
+        self.memory_budgets.insert(scope, budget);
+    }
+
     /// Runs the built-in landmark rules over what was just observed (§26.2).
     fn promote(&mut self, records: &[RecordValue], at: Timestamp) {
         if !self.thresholds.enabled {
             return;
         }
+        // The thresholds are the user's; the budget a share is measured against is the host's,
+        // and it is the one this observation was made on.
+        let thresholds = ono_spatial_query::LandmarkThresholds {
+            memory_budget: self
+                .memory_budgets
+                .get(&self.current_scope().to_string())
+                .copied()
+                .flatten(),
+            ..self.thresholds.clone()
+        };
         for record in records {
             let Ok(object) = self.bridge().project(record) else {
                 continue;
@@ -473,7 +501,7 @@ impl SpatialSessionState {
             let landmarks = ono_spatial_query::landmarks_of_object(
                 &object,
                 Some(record),
-                &self.thresholds,
+                &thresholds,
                 self.current_scope(),
                 at,
             );

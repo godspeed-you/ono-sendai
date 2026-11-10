@@ -224,3 +224,58 @@ fn should_carry_the_freshness_of_the_source_the_changes_were_found_through() {
         "spec §25.3: a polled view says so, in the vocabulary the section fixes"
     );
 }
+
+#[test]
+fn should_report_the_network_changes_of_the_landmark_rules_with_the_reasons_the_vocabulary_has() {
+    // §26.2 lists "interface down", "route change" and "new remote peer" among the network
+    // rules, and §3.7's reason vocabulary has no word of their own for them. Each is a change of
+    // state, and the vocabulary has the words for a change: an interface whose state moved is
+    // `recently_changed`, a route or a peer that was not there is `new_object`, and one that has
+    // gone is `removed_object` (ADR-0978 — the reading `landmarks.yaml` already gives the
+    // storage rules).
+    let mut up = node("eth0", "eth0");
+    up.state = Some("up".to_owned());
+    let mut down = node("eth0", "eth0");
+    down.state = Some("down".to_owned());
+    let before = MapSnapshot::of(&map(
+        vec![up, node("route-old", "10.0.0.0/8 via 192.168.0.1")],
+        Vec::new(),
+    ));
+    let after = MapSnapshot::of(&map(
+        vec![
+            down,
+            node("route-new", "10.0.0.0/8 via 192.168.0.254"),
+            node("peer", "203.0.113.7:443"),
+        ],
+        Vec::new(),
+    ));
+
+    let changes = compare(&before, &after, Freshness::Polled);
+
+    let reason_of = |label: &str| {
+        changes
+            .changes()
+            .find(|change| change.label() == label)
+            .and_then(|change| change.kind().reason())
+    };
+    assert_eq!(
+        reason_of("eth0"),
+        Some(LandmarkReason::RecentlyChanged),
+        "interface down"
+    );
+    assert_eq!(
+        reason_of("10.0.0.0/8 via 192.168.0.254"),
+        Some(LandmarkReason::NewObject),
+        "route change: the route that replaced the old one"
+    );
+    assert_eq!(
+        reason_of("10.0.0.0/8 via 192.168.0.1"),
+        Some(LandmarkReason::RemovedObject),
+        "route change: the route that went"
+    );
+    assert_eq!(
+        reason_of("203.0.113.7:443"),
+        Some(LandmarkReason::NewObject),
+        "new remote peer"
+    );
+}

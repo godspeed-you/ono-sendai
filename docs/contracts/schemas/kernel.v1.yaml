@@ -54,5 +54,13 @@ fields:
     type: duration
     nullable: true
     doc: How long the system has been up, from `/proc/uptime`.
+  memory_total:
+    type: bytesize
+    nullable: true
+    unit: bytes
+    doc: >-
+      The memory the kernel manages, `MemTotal` of `/proc/meminfo`, in bytes — the host budget
+      v0.4 §26.2 measures a process's memory against (ADR-0978). Null where `/proc` publishes
+      no `meminfo`.
 default_view:
   columns: [release, os, architecture, uptime]

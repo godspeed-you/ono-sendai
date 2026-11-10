@@ -178,6 +178,7 @@ impl SystemBus {
             unit_file_state: text(&properties, "UnitFileState"),
             fragment_path: text(&properties, "FragmentPath"),
             state_change_usec: number::<u64>(&properties, "StateChangeTimestamp"),
+            restarts: number::<u32>(&properties, "NRestarts"),
             main_pid: number::<u32>(&properties, "MainPID"),
             memory_current: number::<u64>(&properties, "MemoryCurrent"),
             tasks_current: number::<u64>(&properties, "TasksCurrent"),

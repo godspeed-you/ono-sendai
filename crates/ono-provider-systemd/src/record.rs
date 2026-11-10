@@ -90,6 +90,12 @@ pub fn unit_record(properties: &UnitProperties) -> Result<RecordValue, ErrorValu
         .set("pid", main_pid(properties.main_pid))?
         .set("enabled", enabled(properties.unit_file_state.as_deref()))?
         .set("since", since(properties.state_change_usec))?
+        .set(
+            "restarts",
+            properties
+                .restarts
+                .map_or(Value::Null, |count| Value::Int(i128::from(count))),
+        )?
         .set("unit_file", unit_file(properties.fragment_path.as_deref()))?
         // An empty list is what a unit with no requirements looks like; systemd has the notion,
         // so `null` here would say something else (spec §35.3, ADR-0239).

@@ -334,6 +334,8 @@ pub fn nginx() -> UnitProperties {
         unit_file_state: Some("enabled".to_owned()),
         fragment_path: Some("/lib/systemd/system/nginx.service".to_owned()),
         state_change_usec: Some(NGINX_STATE_CHANGE_USEC),
+        // `NRestarts`: this unit has run since it was started.
+        restarts: Some(0),
         main_pid: Some(812),
         memory_current: Some(NGINX_MEMORY_BYTES),
         tasks_current: Some(5),
@@ -362,6 +364,8 @@ pub fn postgresql() -> UnitProperties {
         unit_file_state: Some("enabled".to_owned()),
         fragment_path: Some("/lib/systemd/system/postgresql.service".to_owned()),
         state_change_usec: Some(POSTGRES_STATE_CHANGE_USEC),
+        // `NRestarts`: systemd has restarted this unit four times since it loaded it.
+        restarts: Some(4),
         main_pid: Some(0),
         // systemd's "I do not know" for a cgroup accounting value, which must not become a zero.
         memory_current: Some(u64::MAX),
@@ -386,6 +390,7 @@ pub fn masked() -> UnitProperties {
         unit_file_state: Some("masked".to_owned()),
         fragment_path: Some("/dev/null".to_owned()),
         state_change_usec: Some(0),
+        restarts: None,
         main_pid: Some(0),
         memory_current: None,
         tasks_current: None,
@@ -408,6 +413,7 @@ pub fn timer_without_main_process() -> UnitProperties {
         unit_file_state: Some("static".to_owned()),
         fragment_path: Some(String::new()),
         state_change_usec: Some(0),
+        restarts: None,
         main_pid: None,
         memory_current: None,
         tasks_current: None,
@@ -432,6 +438,7 @@ pub fn on_disk_only() -> UnitProperties {
         unit_file_state: Some("disabled".to_owned()),
         fragment_path: Some("/lib/systemd/system/certbot.service".to_owned()),
         state_change_usec: Some(0),
+        restarts: None,
         main_pid: Some(0),
         memory_current: None,
         tasks_current: None,
@@ -452,6 +459,7 @@ pub fn not_found(name: &str) -> UnitProperties {
         sub_state: Some("dead".to_owned()),
         main_pid: Some(0),
         state_change_usec: Some(0),
+        restarts: None,
         ..UnitProperties::default()
     }
 }

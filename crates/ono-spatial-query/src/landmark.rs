@@ -39,6 +39,14 @@ pub struct LandmarkThresholds {
     pub enabled: bool,
     /// CPU percent at or above which an object is a `high_cpu` landmark.
     pub high_cpu_percent: f64,
+    /// Share of the memory budget, in percent, that makes a `high_memory` landmark.
+    pub high_memory_percent: f64,
+    /// The budget a memory share is measured against, in bytes: the host's memory as a provider
+    /// stated it. `None` until one has, and then no share can be computed (§2.17).
+    pub memory_budget: Option<u64>,
+    /// Restarts at or above which a service that changed state inside the change window is a
+    /// `restarting` landmark (`spatial.landmarks.restart_loop`).
+    pub restart_loop: i128,
     /// Used share of a filesystem, in percent, that makes a `storage_pressure` landmark.
     pub storage_pressure_percent: f64,
     /// How far back "recent" reaches (`spatial.look.change_window`).
@@ -50,6 +58,9 @@ impl Default for LandmarkThresholds {
         Self {
             enabled: true,
             high_cpu_percent: 80.0,
+            high_memory_percent: 25.0,
+            memory_budget: None,
+            restart_loop: 3,
             storage_pressure_percent: 90.0,
             change_window: Span::new().minutes(5),
         }
@@ -102,6 +113,28 @@ pub fn landmarks_of(
             format!("cpu {cpu:.0}%"),
         ));
     }
+    // §26.2 "high memory relative to host/cgroup budget": resident memory over the budget a
+    // provider stated. No budget, no share, no landmark (§2.17).
+    if let Some(budget) = thresholds.memory_budget.filter(|budget| *budget > 0)
+        && let Some(held) = bytes(record, "memory")
+    {
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "a share in percent needs no more precision than a float carries"
+        )]
+        let share = held as f64 / budget as f64 * 100.0;
+        if share >= thresholds.high_memory_percent {
+            found.push(Landmark::built_in(
+                id.clone(),
+                LandmarkReason::HighMemory,
+                format!(
+                    "memory {}, {share:.0}% of {}",
+                    ono_value::ByteSize::from_bytes(held),
+                    ono_value::ByteSize::from_bytes(u128::from(budget)),
+                ),
+            ));
+        }
+    }
     if state_of(record).is_some_and(|state| state == "failed") {
         found.push(Landmark::built_in(
             id.clone(),
@@ -116,11 +149,23 @@ pub fn landmarks_of(
         && at >= edge
         && at <= now
     {
-        found.push(Landmark::built_in(
-            id.clone(),
-            LandmarkReason::RecentlyChanged,
-            format!("{field} {at}"),
-        ));
+        // §26.2 "restart loop": the service manager has restarted the unit at least the
+        // configured number of times, and the last change of its state is inside the window —
+        // it is still at it. Below the threshold a restart is a recent change and nothing more.
+        match record.get("restarts") {
+            Some(Value::Int(restarts)) if *restarts >= thresholds.restart_loop => {
+                found.push(Landmark::built_in(
+                    id.clone(),
+                    LandmarkReason::Restarting,
+                    format!("{restarts} restarts, {field} {at}"),
+                ));
+            }
+            _ => found.push(Landmark::built_in(
+                id.clone(),
+                LandmarkReason::RecentlyChanged,
+                format!("{field} {at}"),
+            )),
+        }
     }
 
     // --- network (§26.2) -----------------------------------------------------------------------

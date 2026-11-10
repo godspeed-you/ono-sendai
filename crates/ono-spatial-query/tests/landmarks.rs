@@ -347,3 +347,110 @@ fn should_promote_a_file_that_was_modified_inside_the_change_window() {
         "spec §26.3: outside the change window a modification is history, not a landmark"
     );
 }
+
+/// A process record holding `memory` bytes resident.
+fn process_holding(pid: i64, memory: u64) -> RecordValue {
+    record(
+        "ono.process/1",
+        &[
+            ("pid", Value::Int(i128::from(pid))),
+            ("name", Value::string("postgres")),
+            ("state", Value::string("running")),
+            ("started", Value::Timestamp(Timestamp::UNIX_EPOCH)),
+            (
+                "memory",
+                Value::ByteSize(ono_value::ByteSize::from_bytes(u128::from(memory))),
+            ),
+        ],
+    )
+}
+
+#[test]
+fn should_promote_a_process_holding_a_large_share_of_the_hosts_memory() {
+    // §26.2 "high memory relative to host/cgroup budget", §3.7 `high_memory`. The share is the
+    // process's resident memory over the budget a provider stated for the host; the threshold
+    // is `spatial.landmarks.high_memory`, 25 percent unless configured (§26.3, ADR-0978).
+    const GIB: u64 = 1 << 30;
+    let host = LandmarkThresholds {
+        memory_budget: Some(16 * GIB),
+        ..LandmarkThresholds::default()
+    };
+    let heavy = process_holding(201, 6 * GIB);
+    let light = process_holding(202, GIB);
+
+    assert!(reasons_with(&heavy, &host, LATER).contains(&LandmarkReason::HighMemory));
+    assert!(
+        !reasons_with(&light, &host, LATER).contains(&LandmarkReason::HighMemory),
+        "one sixteenth of the host's memory is below the conservative default"
+    );
+    let eager = LandmarkThresholds {
+        high_memory_percent: 5.0,
+        ..host.clone()
+    };
+    assert!(
+        reasons_with(&light, &eager, LATER).contains(&LandmarkReason::HighMemory),
+        "spec §26.3: the threshold the user configured is the threshold the rule uses"
+    );
+}
+
+#[test]
+fn should_not_call_memory_high_when_nobody_stated_a_budget_to_measure_it_against() {
+    // §2.17: a landmark whose evidence is unavailable is an unknown, not a landmark. Without a
+    // budget there is no share, however many bytes the process holds.
+    let heavy = process_holding(203, 64 << 30);
+
+    assert!(!reasons_at(&heavy, LATER).contains(&LandmarkReason::HighMemory));
+}
+
+/// A service record that entered its state at `since` after `restarts` restarts.
+fn service_restarted(name: &str, restarts: Option<i64>, since: Timestamp) -> RecordValue {
+    record(
+        "ono.service/1",
+        &[
+            ("name", Value::string(name)),
+            ("state", Value::string("active")),
+            ("provider", Value::string("systemd")),
+            ("since", Value::Timestamp(since)),
+            (
+                "restarts",
+                restarts.map_or(Value::Null, |count| Value::Int(i128::from(count))),
+            ),
+        ],
+    )
+}
+
+#[test]
+fn should_call_a_service_restarting_when_it_was_restarted_often_and_changed_state_just_now() {
+    // §26.2 "restart loop", §3.7 `restarting`: the service manager's own restart count, at or
+    // above `spatial.landmarks.restart_loop`, on a unit whose state changed inside the change
+    // window. The landmarks contract says what happens below it: "a restart is
+    // `recently_changed`, not a loop" (ADR-0978).
+    let now = Timestamp::UNIX_EPOCH
+        .checked_add(Span::new().hours(10))
+        .expect("a fixture instant");
+    let just_now = now.checked_sub(Span::new().seconds(20)).expect("just now");
+    let long_ago = now.checked_sub(Span::new().hours(8)).expect("long ago");
+
+    let looping = reasons_at(&service_restarted("api.service", Some(7), just_now), now);
+    assert!(looping.contains(&LandmarkReason::Restarting));
+    assert!(
+        !looping.contains(&LandmarkReason::RecentlyChanged),
+        "a loop is reported as a loop, once"
+    );
+
+    let once = reasons_at(&service_restarted("api.service", Some(1), just_now), now);
+    assert!(once.contains(&LandmarkReason::RecentlyChanged));
+    assert!(!once.contains(&LandmarkReason::Restarting));
+
+    let settled = reasons_at(&service_restarted("api.service", Some(7), long_ago), now);
+    assert!(
+        !settled.contains(&LandmarkReason::Restarting),
+        "spec §26.3: seven restarts that ended hours ago are history, not a loop"
+    );
+
+    let uncounted = reasons_at(&service_restarted("api.service", None, just_now), now);
+    assert!(
+        !uncounted.contains(&LandmarkReason::Restarting),
+        "spec §2.17: a provider that keeps no count has not said the unit is looping"
+    );
+}
