@@ -4,7 +4,8 @@
 # for with `find place`, and the collection the session stands in is read behind the prompt
 # (§34.1), so its members are there to complete.
 #
-# The session is driven through a pseudo-terminal by a keystroke script, as case 107 is. The
+# The session is driven through a pseudo-terminal by a keystroke script, as case 107 is, and like
+# it the session first gives its terminal a size: `script` reading a fifo opens one of 0x0. The
 # fixture is a process with a name nothing else in the container has.
 case: the map searches beyond what it drew, and completion knows a collection nobody looked at
 pty: true
@@ -49,6 +50,7 @@ run: |
   echo '== the map searches beyond what it drew (§23.3, ADR-0984) =='
   drive /tmp/keys1 /tmp/session1 "
     sleep 3
+    printf 'stty rows 30 cols 100\n'; sleep 2
     printf 'map\n';                  sleep 5
     printf '/zz-lone-141';          sleep 1
     printf '%s' '${ENTER}';          sleep 5
@@ -67,6 +69,7 @@ run: |
   echo '== completion offers the members of a collection nobody looked at (§9.4, §34.1) =='
   drive /tmp/keys2 /tmp/session2 "
     sleep 3
+    printf 'stty rows 30 cols 100\n'; sleep 2
     printf 'enter compute\n';        sleep 2
     printf 'enter processes\n';      sleep 6
     printf 'enter zz-lone';         sleep 1
