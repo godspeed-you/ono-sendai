@@ -856,6 +856,30 @@ impl CommandContract {
         self.confirmation
     }
 
+    /// The refusal a run of this command gets when its confirmation policy asks for `--confirm`
+    /// on every run and `confirmed` says it was not written, or `None` when the run may go on.
+    ///
+    /// A destructive command needs `--confirm` every time (spec §17.4): a script never waits for
+    /// a prompt, so without the flag it acts on nothing and says so (ADR-0088 §3). One refusal
+    /// for every command that carries the policy, so the code, the wording and the remedy cannot
+    /// drift between them.
+    #[must_use]
+    pub fn unconfirmed(&self, confirmed: bool) -> Option<ErrorValue> {
+        if self.confirmation != Confirmation::Always || confirmed {
+            return None;
+        }
+        let spelling = self.spelling();
+        Some(
+            ErrorValue::new(
+                ErrorCode::SafetyConfirmationRequired,
+                format!("`{spelling}` is destructive and was not confirmed"),
+            )
+            .with_help(format!(
+                "nothing was changed. Write `{spelling} --confirm` to act (spec §17.4)"
+            )),
+        )
+    }
+
     /// Whether the entry records a `?` cell of the §52 matrix whose usefulness must be validated
     /// before it is implemented.
     #[must_use]
