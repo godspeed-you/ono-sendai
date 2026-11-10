@@ -547,9 +547,12 @@ fn display_name(
 ) -> String {
     // §15.4 and §15.5 make a filesystem place its path, and §27.2's own picker prints
     // `/etc/nginx`: a base name cannot tell two files of the same name apart. Everywhere else the
-    // schema's own name field is what a person says — a device is `sda`, not `/dev/sda`.
+    // schema's own name field is what a person says — a device is `sda`, not `/dev/sda`. A
+    // control group is its path for the same reason a file is, and for one more: its last
+    // component is the name of the unit it was made for, which is the service's to answer to
+    // (§16.3, §27.2).
     let fields: &[&str] = match object_type {
-        SpatialType::File | SpatialType::Directory => {
+        SpatialType::File | SpatialType::Directory | SpatialType::Cgroup => {
             &["path", "name", "target", "address", "destination", "id"]
         }
         _ => &["name", "path", "target", "address", "destination", "id"],
@@ -605,7 +608,11 @@ fn endpoint_name(record: &RecordValue, field: &str) -> Option<String> {
 pub fn aliases_of(object: &SpatialObject) -> BTreeSet<String> {
     let mut aliases = BTreeSet::new();
     aliases.insert(object.display_name().to_ascii_lowercase());
-    aliases.insert(object.canonical_ref().label().to_ascii_lowercase());
+    // A control group's label is the last component of its path — the name of the unit it was
+    // made for. That word is the service's; the group answers to its path (§16.3, §27.2).
+    if object.object_type() != SpatialType::Cgroup {
+        aliases.insert(object.canonical_ref().label().to_ascii_lowercase());
+    }
     for (field, value) in object.identity().components() {
         // The scope is a boundary, not a name: a user does not navigate to `host:testbox` by
         // typing it at a place selector, and indexing it would make every object on the host

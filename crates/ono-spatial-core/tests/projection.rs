@@ -426,3 +426,45 @@ fn should_place_a_process_in_its_pid_namespace_when_that_is_not_the_observers_ow
         "without the observer's own namespace there is nothing to compare with"
     );
 }
+
+#[test]
+fn should_call_a_control_group_by_its_path_so_it_never_answers_to_a_units_name() {
+    // §16.3 writes a control group as `cgroup:/system.slice`, and the kernel identifies it by
+    // its path. Its last component is the name of whatever it was made for — `ssh.service` —
+    // and a place that answered to that would make every unit's name ambiguous between the
+    // service and its control group (§27.2). So a cgroup is called by its path, as a file is
+    // (ADR-0971).
+    let schema = builtin_schemas()
+        .get(&SchemaId::new("ono.cgroup", 1))
+        .expect("the cgroup contract");
+    let record = RecordValue::builder(
+        schema,
+        Provenance::local("linux.cgroups", SchemaId::new("ono.cgroup", 1)),
+    )
+    .set(
+        "path",
+        Value::Path(std::sync::Arc::from(std::path::Path::new(
+            "/system.slice/ssh.service",
+        ))),
+    )
+    .and_then(|builder| builder.set("name", Value::string("ssh.service")))
+    .and_then(|builder| {
+        builder.set(
+            "parent",
+            Value::Path(std::sync::Arc::from(std::path::Path::new("/system.slice"))),
+        )
+    })
+    .expect("the fixture's own fields")
+    .build();
+
+    let object = projection()
+        .project_as(&record, SpatialType::Cgroup)
+        .expect("projects");
+
+    assert_eq!(object.display_name(), "/system.slice/ssh.service");
+    assert!(
+        !ono_spatial_core::aliases_of(&object).contains("ssh.service"),
+        "§27.2: the unit's name is the service's to answer to, got {:?}",
+        ono_spatial_core::aliases_of(&object)
+    );
+}
