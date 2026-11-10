@@ -254,6 +254,16 @@ pub(crate) fn declared_target_names(package: &Installed) -> Vec<String> {
     targets.into_iter().map(|target| target.name).collect()
 }
 
+/// The semantic roles the targets a package declares on disk carry (ADR-0596), so a search by
+/// role can name the package that answers for it before the package runs (ADR-1005).
+pub(crate) fn declared_target_roles(package: &Installed) -> Vec<String> {
+    let (targets, _) = declared_targets(package);
+    targets
+        .into_iter()
+        .flat_map(|target| target.roles)
+        .collect()
+}
+
 /// The `(schema, parent)` pairs of every on-disk target that declares a spatial parent, for the
 /// load-time check of ADR-0597.
 pub(crate) fn declared_target_parents(package: &Installed) -> Vec<(String, String, String)> {

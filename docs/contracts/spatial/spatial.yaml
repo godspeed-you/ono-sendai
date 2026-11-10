@@ -119,6 +119,23 @@ contributed_types:
     one, because a role names the targets as precisely as `--type` does — and every place of
     the kind carries `roles` on its record. A role nobody declares is refused with the ones that
     exist. A declared type carries no roles yet.
+  before_load: >-
+    An installed package is lazy (KUANG/11 §31.68), and its kinds of place are registered by its
+    handshake. `jump @<pin>`, `jump <kind>/<key>` and `find place --type <kind>` naming a kind
+    this session does not know, and `find place --role <role>` naming a role no loaded package
+    declares, load the installed packages that can answer for it before the command runs: a role
+    names the packages whose on-disk `contributions.targets` declare it; a kind names the packages
+    whose on-disk `contributions.schemas` call one of their targets' schemas by it, and every
+    package that declares targets but no schema document. A package that will not load leaves the
+    command to refuse as it would have (#129, ADR-1005).
+  pins: >-
+    A pin stores the type name of the place it marks (§20.4). A pin whose type no loaded or
+    installed package contributes costs that pin and nothing else: the pin store still reads,
+    every other pin resolves, `find place` answers, the pin stays on disk through every later
+    write, `jump @<pin>` refuses it with `spatial.unsupported` naming the pin and the type, and
+    `unpin <name>` removes it (#129, ADR-1005). A pin whose kind is known but whose place this
+    session has not observed is read again from the kind's canonical target before `jump`
+    resolves it.
   hierarchy: >-
     The kind of place the target declares as its `parent` (`contributions.v1.yaml` →
     `target.parent`), where it declares one: the schema of another of the package's own targets,

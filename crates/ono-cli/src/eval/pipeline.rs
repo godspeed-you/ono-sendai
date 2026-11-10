@@ -645,6 +645,14 @@ pub(super) fn run_stage_list(
         return super::native::run_seeded(session, list, source, seed);
     }
 
+    // `jump @pin`, `jump <kind>/<key>` and `find place --type/--role` may name a kind of place an
+    // installed, lazy KUANG/11 package contributes; the package is loaded before they run, as
+    // its own contributed command would load it (spec §31.68, #129, ADR-1005).
+    #[cfg(all(feature = "spatial", feature = "kuang"))]
+    if !background {
+        crate::spatial::lazy::load_contributors(session, list, source);
+    }
+
     // A pipeline with a native command in it runs through the object pipeline of spec §5, which
     // threads bytes across the boundary of spec §12.3 where a child process sits on one side.
     // So does an all-external pipeline whose last stage an adapter renders at the terminal

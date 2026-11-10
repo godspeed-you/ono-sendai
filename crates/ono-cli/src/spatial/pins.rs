@@ -95,11 +95,92 @@ impl PinStore {
     ///   than silently replaced, because replacing it would delete what the user chose.
     /// - `io.read_failed` when the file exists and cannot be read.
     pub fn load(&self) -> Result<PinRegistry, ErrorValue> {
+        let Some(document) = self.document()? else {
+            return Ok(PinRegistry::new());
+        };
+        let mut registry = PinRegistry::new();
+        for stored in document.pins {
+            let Some(spatial_id) = SpatialId::parse(&stored.spatial_id) else {
+                return Err(ErrorValue::new(
+                    ErrorCode::SpatialIdentityConflict,
+                    format!(
+                        "the pin `{}` carries `{}`, which is not an identity this shell produced",
+                        stored.name, stored.spatial_id
+                    ),
+                ));
+            };
+            // A kind of place a KUANG/11 package contributes is known only once the package has
+            // been loaded (ADR-0584), so a pin on one may name a type this session does not know
+            // yet — or that no installed package contributes any more. That costs the one pin and
+            // never the store: it stays on disk, `unplaced` reports it, and every other pin and
+            // every command that reads them go on working (#129, ADR-1005).
+            let Some(object_type) = SpatialType::from_name(&stored.object_type) else {
+                continue;
+            };
+            let pinned_at = stored
+                .pinned_at
+                .parse::<Timestamp>()
+                .unwrap_or(Timestamp::UNIX_EPOCH);
+            registry.insert(Pin::new(
+                stored.name,
+                spatial_id,
+                stored.selector,
+                object_type,
+                stored.scope,
+                pinned_at,
+            ));
+        }
+        Ok(registry)
+    }
+
+    /// The pins whose kind of place this session does not know, as `(name, type)` pairs.
+    ///
+    /// They are the pins [`PinStore::load`] leaves out: kept on disk, reported for themselves
+    /// when they are asked for, and removable by name (§20.4, ADR-1005).
+    ///
+    /// # Errors
+    ///
+    /// The same refusals as [`PinStore::load`] for a file that is not a pin store.
+    pub fn unplaced(&self) -> Result<Vec<(String, String)>, ErrorValue> {
+        Ok(self
+            .document()?
+            .map(|document| {
+                document
+                    .pins
+                    .into_iter()
+                    .filter(|stored| SpatialType::from_name(&stored.object_type).is_none())
+                    .map(|stored| (stored.name, stored.object_type))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// Removes the pin called `name` whose kind of place this session does not know, and says
+    /// whether there was one (§20.4, ADR-1005).
+    ///
+    /// # Errors
+    ///
+    /// The store's own refusals to be read or written.
+    pub fn remove_unplaced(&self, name: &str) -> Result<bool, ErrorValue> {
+        let Some(mut document) = self.document()? else {
+            return Ok(false);
+        };
+        let before = document.pins.len();
+        document.pins.retain(|stored| {
+            stored.name != name || SpatialType::from_name(&stored.object_type).is_some()
+        });
+        if document.pins.len() == before {
+            return Ok(false);
+        }
+        self.write(&document)?;
+        Ok(true)
+    }
+
+    /// The stored document, or `None` where there is no file yet.
+    fn document(&self) -> Result<Option<Document>, ErrorValue> {
         let text = match std::fs::read_to_string(&self.path) {
             Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(PinRegistry::new());
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(crate::builtin::io_error(&self.path, &error)),
         };
         let document: Document = serde_json::from_str(&text).map_err(|error| {
@@ -122,41 +203,7 @@ impl PinStore {
                 ),
             ));
         }
-
-        let mut registry = PinRegistry::new();
-        for stored in document.pins {
-            let Some(spatial_id) = SpatialId::parse(&stored.spatial_id) else {
-                return Err(ErrorValue::new(
-                    ErrorCode::SpatialIdentityConflict,
-                    format!(
-                        "the pin `{}` carries `{}`, which is not an identity this shell produced",
-                        stored.name, stored.spatial_id
-                    ),
-                ));
-            };
-            let Some(object_type) = SpatialType::from_name(&stored.object_type) else {
-                return Err(ErrorValue::new(
-                    ErrorCode::SpatialUnsupported,
-                    format!(
-                        "the pin `{}` names the type `{}`, which the geography does not have",
-                        stored.name, stored.object_type
-                    ),
-                ));
-            };
-            let pinned_at = stored
-                .pinned_at
-                .parse::<Timestamp>()
-                .unwrap_or(Timestamp::UNIX_EPOCH);
-            registry.insert(Pin::new(
-                stored.name,
-                spatial_id,
-                stored.selector,
-                object_type,
-                stored.scope,
-                pinned_at,
-            ));
-        }
-        Ok(registry)
+        Ok(Some(document))
     }
 
     /// Writes `registry` out, creating the state directory if it is not there.
@@ -165,26 +212,39 @@ impl PinStore {
     ///
     /// `io.write_failed` naming the path.
     pub fn save(&self, registry: &PinRegistry) -> Result<(), ErrorValue> {
+        let mut pins: Vec<StoredPin> = registry
+            .pins()
+            .map(|pin| StoredPin {
+                name: pin.name().to_owned(),
+                spatial_id: pin.spatial_id().to_string(),
+                selector: pin.selector().to_owned(),
+                object_type: pin.object_type().as_str().to_owned(),
+                scope: pin.scope().to_owned(),
+                pinned_at: pin.pinned_at().to_string(),
+            })
+            .collect();
+        // A pin this session could not read is still the user's: the registry never held it, so
+        // it is carried over from the file rather than dropped by rewriting it (§20.4, ADR-1005).
+        // A store that does not read is not rewritten at all — `document` refuses it first.
+        if let Some(document) = self.document()? {
+            pins.extend(document.pins.into_iter().filter(|stored| {
+                SpatialType::from_name(&stored.object_type).is_none()
+                    && registry.get(&stored.name).is_none()
+            }));
+        }
+        self.write(&Document {
+            version: VERSION,
+            pins,
+        })
+    }
+
+    fn write(&self, document: &Document) -> Result<(), ErrorValue> {
         if let Some(parent) = self.path.parent()
             && let Err(error) = std::fs::create_dir_all(parent)
         {
             return Err(crate::builtin::io_error(parent, &error));
         }
-        let document = Document {
-            version: VERSION,
-            pins: registry
-                .pins()
-                .map(|pin| StoredPin {
-                    name: pin.name().to_owned(),
-                    spatial_id: pin.spatial_id().to_string(),
-                    selector: pin.selector().to_owned(),
-                    object_type: pin.object_type().as_str().to_owned(),
-                    scope: pin.scope().to_owned(),
-                    pinned_at: pin.pinned_at().to_string(),
-                })
-                .collect(),
-        };
-        let text = serde_json::to_string_pretty(&document).map_err(|error| {
+        let text = serde_json::to_string_pretty(document).map_err(|error| {
             ErrorValue::new(
                 ErrorCode::ProviderSchemaViolation,
                 format!("the pins could not be written as JSON: {error}"),
@@ -376,6 +436,13 @@ impl ono_command::CommandImpl for UnpinPlace {
                     })?,
             };
             if pins.remove(&name).is_none() {
+                // A pin is removed by its name, whatever kind of place it names — even one no
+                // package this session knows contributes (#129, ADR-1005).
+                if store.remove_unplaced(&name)? {
+                    return Ok(ono_command::Outcome::Values(
+                        ono_pipeline::ValueStream::from_values(Vec::new()),
+                    ));
+                }
                 return Err(ErrorValue::new(
                     ErrorCode::SpatialNotFound,
                     format!("no pin is called `{name}`"),

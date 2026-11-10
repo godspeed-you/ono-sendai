@@ -21,6 +21,8 @@ pub mod cursor;
 pub mod find;
 pub mod historical;
 pub mod interactive;
+#[cfg(feature = "kuang")]
+pub mod lazy;
 pub mod links;
 pub mod live;
 pub mod map;

@@ -333,7 +333,8 @@ impl CommandImpl for Jump {
             // §20.4's `jump @edge-proxy`: the pin was resolved when the store was read, so the
             // bookmark names a place rather than a spelling to guess at again.
             let there = if let Some(name) = selector.strip_prefix('@') {
-                pinned_place(&session, name, now)?
+                observe_pinned(ctx.providers(), &mut session, name, now).await;
+                pinned_place(&session, self.pins.as_ref(), name, now)?
             } else if let Some(host) = crossed_link(&selector)? {
                 // §19.2: a link is a place, and jumping to it produces a *new* SystemPlace for
                 // the remote host rather than resolving a name in this one's geography. The
@@ -409,10 +410,33 @@ fn announce(link: &str) {
 /// than deleting what the user chose.
 fn pinned_place(
     session: &SpatialSessionState,
+    store: Option<&crate::spatial::PinStore>,
     name: &str,
     now: Timestamp,
 ) -> Result<SpatialId, ErrorValue> {
     let Some(pin) = session.pins().get(name) else {
+        // §20.4: a pin that cannot be resolved "remains but reports unresolved state", and this
+        // is the question about that one pin — so it is reported here, naming the kind of place
+        // nobody contributes, and nowhere else (#129, ADR-1005).
+        if let Some((_, object_type)) = store
+            .map(crate::spatial::PinStore::unplaced)
+            .transpose()?
+            .unwrap_or_default()
+            .into_iter()
+            .find(|(pinned, _)| pinned == name)
+        {
+            return Err(ErrorValue::new(
+                ErrorCode::SpatialUnsupported,
+                format!(
+                    "the pin `{name}` names the type `{object_type}`, which no installed package \
+                     contributes"
+                ),
+            )
+            .with_help(format!(
+                "install the package that contributes it, or `unpin {name}` to remove the pin \
+                 (spec v0.4 §20.4, §36.1)"
+            )));
+        }
         let known: Vec<&str> = session
             .pins()
             .pins()
@@ -440,6 +464,42 @@ fn pinned_place(
         ),
     )
     .with_help("the pin is kept; `unpin` removes it (spec v0.4 §20.4)"))
+}
+
+/// Reads the place a pin marks again, where this session does not hold it (§20.4, §33.2).
+///
+/// A pin outlives the session that made it, and the next session's index starts empty: the
+/// identity the pin stored names a place nobody has observed yet. The kind of place the pin
+/// recorded says which target answers for it, so that target is asked and the pin resolved
+/// against what it answered — by its identity, or by its resilient selector where the identity is
+/// gone. A kind no target answers for is left alone, and the pin reports itself as gone.
+async fn observe_pinned(
+    providers: &ono_provider_api::ProviderRegistry,
+    session: &mut SpatialSessionState,
+    name: &str,
+    now: Timestamp,
+) {
+    let Some(pin) = session.pins().get(name) else {
+        return;
+    };
+    if still_a_place(session, pin.spatial_id(), now) {
+        return;
+    }
+    let Some((target, _)) = crate::spatial::relations::target_of(pin.object_type()) else {
+        return;
+    };
+    crate::spatial::view::observe_targets(
+        providers,
+        session,
+        &std::collections::BTreeSet::from([target]),
+        now,
+    )
+    .await;
+    let mut pins = session.pins().clone();
+    for (pinned, id) in crate::spatial::pins::resolved_pins(&pins, session.index(), now) {
+        pins.rebind(&pinned, id);
+    }
+    session.set_pins(pins);
 }
 
 /// The scope boundary a movement between two places crosses, where it crosses one (§3.2, §2.18).
