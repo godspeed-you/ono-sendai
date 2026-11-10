@@ -246,13 +246,13 @@ fn strip_api_version(path: &str) -> &str {
 
 fn route(method: &str, path: &str, behaviour: Runtime) -> (&'static str, String) {
     let container_list = format!(
-        r#"[{{"Id":"{CONTAINER_ID}","Names":["/web"],"Image":"nginx:1.27","ImageID":"{IMAGE_ID}","State":"running","Status":"Up 2 hours","Created":1700000000,"Labels":{{}},"Ports":[]}}]"#
+        r#"[{{"Id":"{CONTAINER_ID}","Names":["/web"],"Image":"nginx:1.27","ImageID":"{IMAGE_ID}","State":"running","Status":"Up 2 hours","Created":1700000000,"Labels":{{}},"Ports":[],"Mounts":[{{"Type":"bind","Source":"/tmp","Destination":"/data","Mode":"","RW":true,"Propagation":"rprivate"}}]}}]"#
     );
     let image_list = format!(
         r#"[{{"Id":"{IMAGE_ID}","RepoTags":["nginx:1.27"],"RepoDigests":[],"Size":{IMAGE_SIZE},"Created":1700000000,"Labels":{{}}}}]"#
     );
     let inspect = format!(
-        r#"{{"Id":"{CONTAINER_ID}","Name":"/web","Image":"{IMAGE_ID}","Created":"2023-11-14T22:13:20Z","State":{{"Status":"running","Running":true,"Pid":0}},"Config":{{"Image":"nginx:1.27","Labels":{{}}}},"HostConfig":{{"Memory":0,"NanoCpus":0}},"Mounts":[]}}"#
+        r#"{{"Id":"{CONTAINER_ID}","Name":"/web","Image":"{IMAGE_ID}","Created":"2023-11-14T22:13:20Z","State":{{"Status":"running","Running":true,"Pid":0}},"Config":{{"Image":"nginx:1.27","Labels":{{}}}},"HostConfig":{{"Memory":0,"NanoCpus":0}},"Mounts":[{{"Type":"bind","Source":"/tmp","Destination":"/data","Mode":"","RW":true,"Propagation":"rprivate"}}]}}"#
     );
 
     match (method, path) {
@@ -710,6 +710,51 @@ fn should_relate_a_container_to_its_image_when_tracing_it() {
         text(image_edge, "confidence"),
         "exact",
         "spec §22.2: the engine reported the image, it was not inferred, got {image_edge:?}"
+    );
+}
+
+#[test]
+#[cfg(feature = "container")]
+fn should_relate_a_container_to_the_host_paths_mounted_into_it_when_tracing_it() {
+    let runtime = FakeRuntime::start(Runtime::Accepting);
+
+    // Spec §9.1: `trace container` shows a container's mounts. The engine says what it mounted
+    // and from where on the host; the edge leads to that host path as the file provider
+    // describes it, and says where inside the container it appears (ADR-0974).
+    let listed = ono_with_runtime(&runtime, "get container | select name mounts | to json");
+    listed.assert_success();
+    assert!(
+        listed
+            .stdout()
+            .contains(r#""type":"bind","source":"/tmp","destination":"/data","read_only":false"#),
+        "`get container` carries the engine's mount list as data, got {:?}",
+        listed.stdout()
+    );
+
+    let run = ono_with_runtime(&runtime, "trace container web | to json");
+    run.assert_success();
+    let graphs = rows(&run);
+    let graph = &graphs[0];
+    let edges = graph["edges"]
+        .as_sequence()
+        .unwrap_or_else(|| panic!("graph.v1: `edges` is a list, got {graph:?}"));
+    let Some(mount) = edges.iter().find(|edge| text(edge, "relation") == "mount") else {
+        panic!("an edge named `mount` runs from the container, got {edges:?}")
+    };
+    assert_eq!(
+        mount["to"]["schema"].as_str(),
+        Some("ono.file/1"),
+        "the far end is the host path, as the file provider describes it, got {mount:?}"
+    );
+    assert_eq!(
+        text(mount, "confidence"),
+        "exact",
+        "spec §22.2: the engine reported the mount, it was not inferred, got {mount:?}"
+    );
+    let shown = format!("{mount:?}");
+    assert!(
+        shown.contains("/tmp") && shown.contains("/data"),
+        "the edge names the host path and the path inside the container, got {shown}"
     );
 }
 

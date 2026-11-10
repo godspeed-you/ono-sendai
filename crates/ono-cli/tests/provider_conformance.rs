@@ -92,6 +92,7 @@ async fn should_shape_ono_container_1_the_way_container_engine_declares_it() {
             harness::FieldContract { name: "state", ty: "enum<created|running|paused|restarting|removing|exited|dead|stopping|stopped|configured|unknown>", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "created", ty: "timestamp", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "labels", ty: "map", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "mounts", ty: "list<map>", required: false, nullable: true, unit: None },
         ],
     }).await;
 }

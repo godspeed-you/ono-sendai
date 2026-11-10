@@ -116,8 +116,44 @@ pub(crate) fn container_record(json: &Json, endpoint: &str) -> Result<RecordValu
         .set("state", Value::string(container_state(state)))?
         .set("created", created(json.get("Created")))?
         .set("labels", label_map(labels))?
+        // Both shapes carry `Mounts`, with the same entries.
+        .set("mounts", mount_list(json.get("Mounts")))?
         .build();
     Ok(record)
+}
+
+/// The engine's `Mounts` array as data: one map per mount, in the engine's order.
+///
+/// Null where the answer carried no array at all — an engine that did not say is not a
+/// container without mounts (spec §35.3).
+fn mount_list(mounts: Option<&Json>) -> Value {
+    let Some(mounts) = mounts.and_then(Json::as_array) else {
+        return Value::Null;
+    };
+    let entries = mounts
+        .iter()
+        .map(|mount| {
+            let field = |key: &str| {
+                text(mount.get(key))
+                    .filter(|value| !value.is_empty())
+                    .map_or(Value::Null, Value::string)
+            };
+            let mut map = MapValue::new();
+            map.insert("type".into(), field("Type"));
+            map.insert("source".into(), field("Source"));
+            map.insert("destination".into(), field("Destination"));
+            map.insert(
+                "read_only".into(),
+                mount
+                    .get("RW")
+                    .and_then(Json::as_bool)
+                    .map_or(Value::Null, |writable| Value::Bool(!writable)),
+            );
+            map.insert("name".into(), field("Name"));
+            Value::Map(Arc::new(map))
+        })
+        .collect::<Vec<_>>();
+    Value::list(entries)
 }
 
 /// The image record for one entry of `GET /images/json`.
@@ -293,7 +329,8 @@ pub(crate) fn event_record(json: &Json, endpoint: &str) -> Option<Result<RecordV
             .set("image_id", Value::Null)?
             .set("state", Value::string(state_after(action.as_deref())))?
             .set("created", Value::Null)?
-            .set("labels", Value::Null)?;
+            .set("labels", Value::Null)?
+            .set("mounts", Value::Null)?;
         if let Some(action) = &action {
             builder = builder.set_extra("container.action", Value::string(action));
         }
@@ -364,6 +401,30 @@ mod tests {
     }
 
     #[test]
+    fn should_carry_the_mounts_the_engine_reports_as_data() {
+        // `Mounts` has one shape in the listing and in the inspection (ADR-0974).
+        let json: Json = serde_json::from_str(
+            r#"{"Id":"abc","State":"running","Mounts":[
+                {"Type":"bind","Source":"/srv/data","Destination":"/data","Mode":"","RW":true,"Propagation":"rprivate"},
+                {"Type":"volume","Name":"pgdata","Source":"/var/lib/docker/volumes/pgdata/_data","Destination":"/var/lib/postgresql/data","Driver":"local","RW":false},
+                {"Type":"tmpfs","Source":"","Destination":"/run","RW":true}]}"#,
+        )
+        .unwrap();
+        let record = container_record(&json, "unix:///x").unwrap();
+        let rendered =
+            serde_json::to_string(&ono_value::to_json(record.get("mounts").unwrap())).unwrap();
+        assert_eq!(
+            rendered,
+            concat!(
+                r#"[{"type":"bind","source":"/srv/data","destination":"/data","read_only":false,"name":null},"#,
+                r#"{"type":"volume","source":"/var/lib/docker/volumes/pgdata/_data","destination":"/var/lib/postgresql/data","read_only":true,"name":"pgdata"},"#,
+                r#"{"type":"tmpfs","source":null,"destination":"/run","read_only":false,"name":null}]"#
+            ),
+            "one map per mount, in the engine's order, with an absent source as null"
+        );
+    }
+
+    #[test]
     fn should_leave_unknown_null_rather_than_invent_it() {
         let json: Json =
             serde_json::from_str(r#"{"Id":"abc","State":"zombie","Created":0}"#).unwrap();
@@ -372,6 +433,7 @@ mod tests {
         assert_eq!(record.get("image"), Some(&Value::Null));
         assert_eq!(record.get("created"), Some(&Value::Null));
         assert_eq!(record.get("labels"), Some(&Value::Null));
+        assert_eq!(record.get("mounts"), Some(&Value::Null));
         assert_eq!(record.get("state").unwrap().as_str().unwrap(), "unknown");
     }
 

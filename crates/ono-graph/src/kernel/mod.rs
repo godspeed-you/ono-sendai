@@ -19,7 +19,7 @@ mod procfs;
 mod remote;
 mod service;
 
-pub use container::{ContainerImage, ContainerProcesses};
+pub use container::{ContainerImage, ContainerMounts, ContainerPlacement, ContainerProcesses};
 pub use dns::{RemoteHosts, Resolver};
 pub use file::FileHolders;
 pub use identity::{ProcessUsers, UserGroups, UserProcesses};
@@ -87,6 +87,8 @@ pub fn rooted_relationships(
         Arc::new(HostLinks::new(Arc::clone(&registry))),
         Arc::new(LinkProviders::new()),
         Arc::new(ContainerProcesses::new(Arc::clone(&registry)).rooted(root)),
+        Arc::new(ContainerPlacement::new(Arc::clone(&registry)).rooted(root)),
+        Arc::new(ContainerMounts::new(Arc::clone(&registry))),
         Arc::new(ContainerImage::new(registry)),
     ]
 }

@@ -437,6 +437,7 @@ Default view: `id`, `name`, `image`, `state`, `created`
 | `state` | `enum` | — | required | The engine's lifecycle state. The values are Docker's, plus the ones Podman adds; a state this shell does not model is `unknown`, never a guess (spec §10.5). |
 | `created` | `timestamp` | — | nullable | When the container was created. |
 | `labels` | `map` | — | nullable | The container's labels, as the engine holds them. |
+| `mounts` | `list<map>` | — | nullable | What the engine mounted into the container, one map per mount: `type` (`bind`, `volume`, `tmpfs`, …), `source` (the host path behind it; null where there is none, as for a `tmpfs`), `destination` (the path inside the container), `read_only`, and `name` for a named volume. Null when the engine's answer carried no mount list, which is not the same as an empty one (ADR-0974). |
 
 ## Context — `ono.context/1`
 

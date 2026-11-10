@@ -6,16 +6,17 @@ mod common;
 use std::sync::Arc;
 
 use common::{
-    FixtureProvider, ProcFixture, TableResolver, container, edges, endpoint, file, filesystem,
-    group, interface, make_readable, mount, mount_in_group, neighbor, node, owned_process, process,
-    registry, route, service, service_requiring, socket, trace_with, user,
+    FixtureProvider, ProcFixture, TableResolver, cgroup, container, container_with_mounts, edges,
+    endpoint, file, filesystem, group, interface, make_readable, mount, mount_in_group, namespace,
+    neighbor, node, owned_process, process, registry, route, service, service_requiring, socket,
+    trace_with, user,
 };
 use ono_core::ErrorCode;
 use ono_graph::{
-    Confidence, ContainerProcesses, FileHolders, InterfaceSockets, MountDevices, MountFilesystems,
-    MountPeers, MountUsers, OpenFiles, ProcessSockets, ProcessTree, ProcessUsers, RemoteHosts,
-    RouteInterfaces, ServiceDependencies, ServiceProcesses, SocketOwners, TraceOptions, UserGroups,
-    UserProcesses,
+    Confidence, ContainerMounts, ContainerPlacement, ContainerProcesses, FileHolders,
+    InterfaceSockets, MountDevices, MountFilesystems, MountPeers, MountUsers, OpenFiles,
+    ProcessSockets, ProcessTree, ProcessUsers, RemoteHosts, RouteInterfaces, ServiceDependencies,
+    ServiceProcesses, SocketOwners, TraceOptions, UserGroups, UserProcesses,
 };
 use ono_provider_api::Provider;
 use ono_testkit::SkipReason;
@@ -983,4 +984,246 @@ async fn should_link_a_container_to_the_processes_in_its_cgroup() {
         ],
         "the processes in the container's cgroup, and nobody else's"
     );
+}
+
+#[tokio::test]
+async fn should_link_a_container_to_the_cgroup_and_the_namespaces_its_processes_are_in() {
+    // §9.1's `trace container` shows a container's namespaces and cgroups. The engine's record
+    // names neither; the processes it put in the container do: each one's `/proc/<pid>/cgroup`
+    // and `/proc/<pid>/ns/*` say where it is, and `get cgroup` and `get namespace` serve the
+    // objects at the far end (ADR-0974, #221).
+    let id = "4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c";
+    let scope = format!("/system.slice/docker-{id}.scope");
+    let proc = ProcFixture::new();
+    for pid in [5001, 5002] {
+        proc.process(pid)
+            .cgroup(&format!("0::{scope}"))
+            .link("ns/net", "net:[4026532281]")
+            .link("ns/pid", "pid:[4026532279]")
+            .link("ns/user", "user:[4026531837]");
+    }
+    proc.process(4419)
+        .cgroup("0::/user.slice/user-1000.slice")
+        .link("ns/net", "net:[4026531840]")
+        .link("ns/pid", "pid:[4026531836]")
+        .link("ns/user", "user:[4026531837]");
+    let providers: Vec<Arc<dyn Provider>> = vec![
+        Arc::new(FixtureProvider::new(
+            "fixture.cgroup",
+            &["cgroup"],
+            vec![
+                cgroup("/"),
+                cgroup(&scope),
+                cgroup("/user.slice/user-1000.slice"),
+            ],
+        )),
+        Arc::new(FixtureProvider::new(
+            "fixture.namespace",
+            &["namespace"],
+            vec![
+                namespace(4_026_531_836, "pid", 1),
+                namespace(4_026_531_837, "user", 3),
+                namespace(4_026_531_840, "net", 1),
+                namespace(4_026_532_279, "pid", 2),
+                namespace(4_026_532_281, "net", 2),
+            ],
+        )),
+    ];
+    let registry = registry(providers);
+    let subject = container(id, "web-1");
+
+    let graph = trace_with(
+        vec![Arc::new(
+            ContainerPlacement::new(Arc::clone(&registry)).rooted(proc.root()),
+        )],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        [
+            format!("cgroup -> cgroup/{scope}"),
+            "namespace -> namespace/4026532281".to_owned(),
+            "namespace -> namespace/4026532279".to_owned(),
+            "namespace -> namespace/4026531837".to_owned(),
+        ],
+        "the cgroup and the namespaces of the container's processes, each once, and no other \
+         process's"
+    );
+    assert!(
+        graph.failures().is_empty(),
+        "every far end was served, so nothing failed: {:?}",
+        graph.failures()
+    );
+}
+
+#[tokio::test]
+async fn should_report_a_namespace_it_cannot_describe_rather_than_drop_it() {
+    // A container's process is in a namespace `get namespace` did not serve — the caller may
+    // read the process's own links and still be refused the rest of the table. The trace says
+    // so; an edge that silently went missing would be a container with fewer namespaces than it
+    // has (spec §10.5).
+    let id = "9a1c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c";
+    let proc = ProcFixture::new();
+    proc.process(6001)
+        .cgroup(&format!("0::/docker/{id}"))
+        .link("ns/net", "net:[4026532999]");
+    let providers: Vec<Arc<dyn Provider>> = vec![
+        Arc::new(FixtureProvider::new(
+            "fixture.cgroup",
+            &["cgroup"],
+            vec![cgroup(&format!("/docker/{id}"))],
+        )),
+        Arc::new(FixtureProvider::new(
+            "fixture.namespace",
+            &["namespace"],
+            vec![namespace(4_026_531_840, "net", 1)],
+        )),
+    ];
+    let registry = registry(providers);
+    let subject = container(id, "db-1");
+
+    let graph = trace_with(
+        vec![Arc::new(
+            ContainerPlacement::new(Arc::clone(&registry)).rooted(proc.root()),
+        )],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(edges(&graph), [format!("cgroup -> cgroup//docker/{id}")]);
+    assert_eq!(
+        graph.failures().len(),
+        1,
+        "the namespace nobody could describe is one failure: {:?}",
+        graph.failures()
+    );
+    assert_eq!(graph.failures()[0].error().code(), ErrorCode::IoNotFound);
+}
+
+#[tokio::test]
+async fn should_report_the_namespaces_it_could_not_read_rather_than_show_a_container_without_any() {
+    // The usual container: its processes belong to another user, and their namespace links are
+    // closed to this one. The cgroup is readable and is shown; the namespaces are a failure of
+    // the read, never an absence (spec §10.5, §35.3).
+    let id = "7b3d0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c";
+    let proc = ProcFixture::new();
+    proc.process(7001)
+        .cgroup(&format!("0::/docker/{id}"))
+        .namespaces_not_a_directory();
+    let providers: Vec<Arc<dyn Provider>> = vec![
+        Arc::new(FixtureProvider::new(
+            "fixture.cgroup",
+            &["cgroup"],
+            vec![cgroup(&format!("/docker/{id}"))],
+        )),
+        Arc::new(FixtureProvider::new(
+            "fixture.namespace",
+            &["namespace"],
+            vec![namespace(4_026_531_840, "net", 1)],
+        )),
+    ];
+    let registry = registry(providers);
+    let subject = container(id, "cache-1");
+
+    let graph = trace_with(
+        vec![Arc::new(
+            ContainerPlacement::new(Arc::clone(&registry)).rooted(proc.root()),
+        )],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(edges(&graph), [format!("cgroup -> cgroup//docker/{id}")]);
+    assert_eq!(
+        graph.failures().len(),
+        1,
+        "the unread namespaces are one failure, not one per kind: {:?}",
+        graph.failures()
+    );
+    assert_eq!(
+        graph.failures()[0].error().code(),
+        ErrorCode::IoNotDirectory,
+        "the failure keeps the kernel's own reason"
+    );
+}
+
+#[tokio::test]
+async fn should_link_a_container_to_the_host_paths_the_engine_mounted_into_it() {
+    // §9.1's `trace container` shows a container's mounts. The engine states them — what it
+    // mounted, from where on the host, to where inside — and the far end of each is the host
+    // path, as the file provider describes it. A `tmpfs` has no host path behind it and is no
+    // edge; a source the file provider cannot describe is a failure, never a missing mount
+    // (ADR-0974, #221).
+    let id = "4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c";
+    let files: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.file",
+        &["file"],
+        vec![
+            file("/srv/data", "directory", 2049, 7001),
+            file("/etc/nginx/nginx.conf", "file", 2049, 7002),
+        ],
+    ))];
+    let registry = registry(files);
+    let subject = container_with_mounts(
+        id,
+        "web-1",
+        &[
+            ("bind", "/srv/data", "/data"),
+            ("tmpfs", "", "/run"),
+            ("bind", "/etc/nginx/nginx.conf", "/etc/nginx/nginx.conf"),
+            ("volume", "/var/lib/docker/volumes/cache/_data", "/cache"),
+        ],
+    );
+
+    let graph = trace_with(
+        vec![Arc::new(ContainerMounts::new(Arc::clone(&registry)))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["mount -> /srv/data", "mount -> /etc/nginx/nginx.conf"],
+        "one edge per mount that has a host path the file provider describes"
+    );
+    let destinations: Vec<String> = graph
+        .edges()
+        .iter()
+        .filter_map(|edge| edge.metadata().get("destination"))
+        .filter_map(|value| value.as_str().ok().map(str::to_owned))
+        .collect();
+    assert_eq!(
+        destinations,
+        ["/data", "/etc/nginx/nginx.conf"],
+        "each edge says where inside the container the path appears"
+    );
+    assert_eq!(
+        graph.failures().len(),
+        1,
+        "the volume whose host path nobody could describe is one failure: {:?}",
+        graph.failures()
+    );
+}
+
+#[tokio::test]
+async fn should_claim_no_mounts_for_a_container_whose_engine_reported_none() {
+    // A record without a mount list — an event, an engine that did not say — states nothing
+    // about mounts, and the trace asserts nothing (spec §35.3).
+    let registry = registry(Vec::new());
+    let subject = container("9a1c", "db-1");
+
+    let graph = trace_with(
+        vec![Arc::new(ContainerMounts::new(Arc::clone(&registry)))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert!(graph.edges().is_empty() && graph.failures().is_empty());
 }

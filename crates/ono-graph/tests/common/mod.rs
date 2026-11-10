@@ -103,6 +103,14 @@ impl ProcessFixture {
         self
     }
 
+    /// Makes the process's `ns` a regular file, so reading any namespace link fails for a reason
+    /// other than the process having gone — the stand-in for another user's process that holds
+    /// for every user, root included.
+    pub fn namespaces_not_a_directory(self) -> Self {
+        fs::write(self.dir.join("ns"), "not a directory\n").expect("the ns placeholder");
+        self
+    }
+
     /// Makes the process's `fd` directory unreadable, which is what another user's process looks
     /// like to an unprivileged shell.
     pub fn unreadable_fds(self) -> Self {
@@ -620,6 +628,54 @@ pub fn container(id: &str, name: &str) -> RecordValue {
         .set("id", Value::String(id.into()))
         .and_then(|builder| builder.set("name", Value::String(name.into())))
         .and_then(|builder| builder.set("state", Value::String("running".into())))
+        .map(ono_value::RecordBuilder::build)
+        .expect("the fixture container fits ono.container/1")
+}
+
+/// A control group record as `get cgroup` serves it: the path in the unified hierarchy (#221).
+pub fn cgroup(path: &str) -> RecordValue {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    RecordValue::builder(schema("ono.cgroup"), provenance("ono.cgroup"))
+        .set("path", Value::Path(Arc::from(Path::new(path))))
+        .and_then(|builder| builder.set("name", Value::String(name.into())))
+        .map(ono_value::RecordBuilder::build)
+        .expect("the fixture cgroup fits ono.cgroup/1")
+}
+
+/// A namespace record as `get namespace` serves it: the inode, the kind and a member count.
+pub fn namespace(id: i64, kind: &str, processes: i64) -> RecordValue {
+    RecordValue::builder(schema("ono.namespace"), provenance("ono.namespace"))
+        .set("id", Value::Int(i128::from(id)))
+        .and_then(|builder| builder.set("type", Value::String(kind.into())))
+        .and_then(|builder| builder.set("processes", Value::Int(i128::from(processes))))
+        .map(ono_value::RecordBuilder::build)
+        .expect("the fixture namespace fits ono.namespace/1")
+}
+
+/// A container record carrying the mounts the engine reports: `(type, source, destination)`,
+/// with an empty source for a mount that has none (#221).
+pub fn container_with_mounts(id: &str, name: &str, mounts: &[(&str, &str, &str)]) -> RecordValue {
+    let entries = mounts.iter().map(|(kind, source, destination)| {
+        Value::Map(Arc::new(map(&[
+            ("type", Value::String((*kind).into())),
+            (
+                "source",
+                if source.is_empty() {
+                    Value::Null
+                } else {
+                    Value::String((*source).into())
+                },
+            ),
+            ("destination", Value::String((*destination).into())),
+            ("read_only", Value::Bool(false)),
+            ("name", Value::Null),
+        ])))
+    });
+    RecordValue::builder(schema("ono.container"), provenance("ono.container"))
+        .set("id", Value::String(id.into()))
+        .and_then(|builder| builder.set("name", Value::String(name.into())))
+        .and_then(|builder| builder.set("state", Value::String("running".into())))
+        .and_then(|builder| builder.set("mounts", Value::list(entries)))
         .map(ono_value::RecordBuilder::build)
         .expect("the fixture container fits ono.container/1")
 }
