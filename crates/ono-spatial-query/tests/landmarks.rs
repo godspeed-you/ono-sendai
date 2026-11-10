@@ -304,3 +304,46 @@ fn should_still_promote_a_full_filesystem_that_does_not_say_whether_it_is_writab
         vec![LandmarkReason::StoragePressure]
     );
 }
+
+#[test]
+fn should_promote_a_file_that_was_modified_inside_the_change_window() {
+    // §15.4 lists `changed recently` among a directory place's neighbours, and §3.7's
+    // `recently_changed` is the reason for it: a file says when it was last modified, and inside
+    // the change window that is the object's last state change (ADR-0975).
+    let now = Timestamp::UNIX_EPOCH
+        .checked_add(Span::new().hours(10))
+        .expect("a fixture instant");
+    let file_at = |path: &str, modified: Timestamp| {
+        record(
+            "ono.file/1",
+            &[
+                (
+                    "path",
+                    Value::Path(std::sync::Arc::from(std::path::Path::new(path))),
+                ),
+                (
+                    "name",
+                    Value::string(path.rsplit('/').next().unwrap_or(path)),
+                ),
+                ("kind", Value::string("file")),
+                ("device", Value::string("8:2")),
+                ("inode", Value::Int(i128::from(path.len() as u32))),
+                ("modified", Value::Timestamp(modified)),
+            ],
+        )
+    };
+    let fresh = file_at(
+        "/etc/nginx/nginx.conf",
+        now.checked_sub(Span::new().seconds(40)).expect("just now"),
+    );
+    let old = file_at(
+        "/etc/hostname",
+        now.checked_sub(Span::new().hours(9)).expect("long ago"),
+    );
+
+    assert!(reasons_at(&fresh, now).contains(&LandmarkReason::RecentlyChanged));
+    assert!(
+        !reasons_at(&old, now).contains(&LandmarkReason::RecentlyChanged),
+        "spec §26.3: outside the change window a modification is history, not a landmark"
+    );
+}

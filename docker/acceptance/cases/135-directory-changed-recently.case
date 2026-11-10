@@ -1,0 +1,43 @@
+# v0.4 §15.4 lists `changed recently` among a directory place's semantic neighbours, and until
+# ADR-0975 nothing delivered it (#216). A file says when it was last modified; inside
+# `spatial.look.change_window` that makes it a `recently_changed` landmark of the directory it is
+# in, with the instant as its evidence (§3.7, §26.3).
+#
+# The directory is the case's own: one entry written now, one dated a day back.
+case: a directory points out the entries that changed recently
+timeout: 90
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  mkdir -p /tmp/changed-135
+  printf 'old\n' > /tmp/changed-135/settled.conf
+  touch -d '1 day ago' /tmp/changed-135/settled.conf
+  printf 'new\n' > /tmp/changed-135/fresh.conf
+  touch -d '1 day ago' /tmp/changed-135
+
+  echo "== the entry written a moment ago is a landmark of the directory (§15.4, §3.7) =="
+  prove c1 "look names the fresh entry as recently changed, with when it was modified" \
+    "ono -c 'enter /tmp/changed-135; look' | grep -qE 'fresh.conf +recently changed — modified '"
+  prove c2 "the entry dated a day back is no landmark (§26.3)" \
+    "! ono -c 'enter /tmp/changed-135; look' | grep -qE 'settled.conf +recently changed'"
+  prove c3 "the landmark is data: reason and evidence (§3.7)" \
+    "ono -c 'enter /tmp/changed-135; look --json' | grep -qF '\"reason\":\"recently_changed\"'"
+  prove c4 "near lists the changed entry first (§6.2)" \
+    "test \"\$(ono -c 'enter /tmp/changed-135; near children | select display_name | to text' | head -1)\" = /tmp/changed-135/fresh.conf"
+  echo done=ok
+exit: 0
+stdout-contains: PROVED c1
+stdout-contains: PROVED c2
+stdout-contains: PROVED c3
+stdout-contains: PROVED c4
+stdout-contains: done=ok
+stdout-not-contains: FAILED

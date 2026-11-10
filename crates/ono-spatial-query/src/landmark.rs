@@ -110,8 +110,8 @@ pub fn landmarks_of(
         ));
     }
 
-    // --- recent change (§26.2 "unexpected exit/recent start", §3.7) ----------------------------
-    if let Some((field, at)) = started_at(record)
+    // --- recent change (§26.2 "unexpected exit/recent start", §15.4 "changed recently", §3.7) --
+    if let Some((field, at)) = changed_at(record)
         && let Ok(edge) = now.checked_sub(thresholds.change_window)
         && at >= edge
         && at <= now
@@ -179,15 +179,17 @@ fn percent(record: &RecordValue, field: &str) -> Option<f64> {
     }
 }
 
-/// When the object began, in the provider's own words: a process started, a service has been in
-/// its state since, a container was created.
-fn started_at(record: &RecordValue) -> Option<(&'static str, Timestamp)> {
-    for field in ["started", "since", "created"] {
-        if let Some(Value::Timestamp(at)) = record.get(field) {
-            return Some((field, *at));
-        }
-    }
-    None
+/// When the object last changed, in the provider's own words: a process started, a service has
+/// been in its state since, a container was created, a file was modified. Where a record states
+/// more than one such instant — a file's birth and its last write — the latest is the change.
+fn changed_at(record: &RecordValue) -> Option<(&'static str, Timestamp)> {
+    ["started", "since", "created", "modified"]
+        .into_iter()
+        .filter_map(|field| match record.get(field) {
+            Some(Value::Timestamp(at)) => Some((field, *at)),
+            _ => None,
+        })
+        .max_by_key(|(_, at)| *at)
 }
 
 /// The address a listener is reachable at from outside this host, or `None` when it is not one.

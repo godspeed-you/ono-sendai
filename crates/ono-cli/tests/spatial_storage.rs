@@ -722,3 +722,54 @@ fn should_stand_in_the_directory_a_path_names_however_the_path_spells_it() {
          got {shown}"
     );
 }
+
+#[test]
+fn should_point_out_the_entries_of_a_directory_that_changed_recently() {
+    // §15.4 lists `changed recently` among a directory place's semantic neighbours. A file says
+    // when it was last modified, and inside `spatial.look.change_window` that makes it a
+    // `recently_changed` landmark of the directory it is in — with the instant as its evidence,
+    // and nothing for the entry that has not changed in hours (§3.7, §26.3, ADR-0975).
+    let directory = scratch();
+    let home = canonical(directory.path());
+    let watched = home.join("watched");
+    std::fs::create_dir(&watched).expect("create the directory");
+    std::fs::write(watched.join("fresh.conf"), b"new").expect("write the fresh entry");
+    let settled = watched.join("settled.conf");
+    std::fs::write(&settled, b"old").expect("write the settled entry");
+    let hours_ago = std::time::SystemTime::now() - Duration::from_secs(3 * 3600);
+    std::fs::File::options()
+        .write(true)
+        .open(&settled)
+        .and_then(|file| file.set_modified(hours_ago))
+        .expect("date the settled entry three hours back");
+    // The directory itself was just written to; dating it back keeps the test about its entries.
+    std::fs::File::open(&watched)
+        .and_then(|file| file.set_modified(hours_ago))
+        .expect("date the directory three hours back");
+
+    let run = ono_in(&home, &format!("enter {}; look --json", watched.display()));
+    let (_, _, view) = split(&run, "enter <directory>; look --json", 0, 0);
+    let landmarks = view
+        .get("landmarks")
+        .and_then(Value::as_sequence)
+        .cloned()
+        .unwrap_or_default();
+    let changed: Vec<String> = landmarks
+        .iter()
+        .filter(|landmark| carries(landmark, "reason", "recently_changed"))
+        .map(rendered)
+        .collect();
+    assert!(
+        changed
+            .iter()
+            .any(|landmark| landmark.contains("fresh.conf") && landmark.contains("modified")),
+        "spec §15.4/§3.7: the entry written a moment ago is a `recently_changed` landmark that \
+         says when it was modified, got {landmarks:?}"
+    );
+    assert!(
+        !changed
+            .iter()
+            .any(|landmark| landmark.contains("settled.conf")),
+        "spec §26.3: an entry last modified hours ago is history, not a landmark, got {changed:?}"
+    );
+}

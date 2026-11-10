@@ -79,6 +79,9 @@ landmarks:
     doc: >-
       §24.3's change section and §26.2's "unexpected exit/recent start". The window is the same
       one `look` uses, so what the change section shows and what is a landmark cannot disagree.
+      The change is the object's own statement of it — a process's `started`, a service's
+      `since`, a container's `created`, a file's `modified` — which makes the entries of a
+      directory that were written inside the window §15.4's `changed recently` (ADR-0975).
 
   - reason: privileged
     domain: security
