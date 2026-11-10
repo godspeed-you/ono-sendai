@@ -130,6 +130,10 @@ tokio.workspace = true
 [dev-dependencies]
 ono-testkit.workspace = true
 ono-process.workspace = true
+# The private certificate authority and the HTTPS artifact server of `tests/acquisition.rs`
+# (#153, ADR-1010); both are already in the graph through the remote transport.
+rcgen.workspace = true
+rustls.workspace = true
 # The fixture service manager of `tests/spatial_orientation_bound.rs` (ADR-0880).
 zbus = { version = "5.19", default-features = false, features = ["tokio"] }
 

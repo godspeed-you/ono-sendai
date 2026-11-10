@@ -42,6 +42,7 @@ document:
       name: {type: string, required: true, doc: "A kebab-case slug: what `<catalog>/<name>` selects by."}
       description: {type: string, nullable: true, doc: "One line, for humans, sanitised."}
       insecure_http: {type: bool, nullable: true, doc: "Whether releases may name plain `http://` artifacts. False by default, honoured only in an operator catalog, and never a relaxation of the digest or the signature check (K11A §6.3)."}
+      certificate_authorities: {type: list<string>, nullable: true, doc: "PEM files naming the certificate authorities this catalog's HTTPS artifact servers are verified against, in place of the public roots (ADR-1010, #153). A relative path is relative to the catalog file's directory. Only an operator catalog may name them; a file that cannot be read or holds no certificate refuses the fetch rather than falling back. Never a relaxation of the digest or the signature check."}
     entries:
       type: list<record>
       doc: "One per package."

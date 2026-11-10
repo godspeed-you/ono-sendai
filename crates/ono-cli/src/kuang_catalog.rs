@@ -65,7 +65,14 @@ impl Catalogs {
                     }
                 };
                 match Catalog::parse(&text, CatalogVerification::Operator) {
-                    Ok(catalog) => {
+                    Ok(mut catalog) => {
+                        // An operator names an authority beside the catalog that trusts it
+                        // (ADR-1010), so a relative path is read from the catalog's directory.
+                        for authority in &mut catalog.certificate_authorities {
+                            if authority.is_relative() {
+                                *authority = directory.join(&*authority);
+                            }
+                        }
                         if read
                             .catalogs
                             .iter()
@@ -671,6 +678,7 @@ impl Host {
                     &chosen.source,
                     digest,
                     catalog.insecure_http,
+                    &catalog.certificate_authorities,
                 )?;
                 (package, chosen.source, chosen.origin)
             }

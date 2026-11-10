@@ -16,7 +16,7 @@
     reason = "a test states its preconditions directly (AGENTS.md §16)"
 )]
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -119,40 +119,111 @@ fn serve(files: Vec<(String, Vec<u8>)>) -> Server {
     let counter = Arc::clone(&hits);
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
-            let mut reader = BufReader::new(stream);
-            let mut request = String::new();
-            if reader.read_line(&mut request).unwrap_or(0) == 0 {
-                continue;
-            }
-            loop {
-                let mut header = String::new();
-                if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
-                    break;
-                }
-            }
-            counter.fetch_add(1, Ordering::SeqCst);
-            let path = request.split_whitespace().nth(1).unwrap_or("/");
-            let mut stream = reader.into_inner();
-            match files.iter().find(|(name, _)| format!("/{name}") == path) {
-                Some((_, body)) => {
-                    let head = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                        body.len()
-                    );
-                    let _ = stream.write_all(head.as_bytes());
-                    let _ = stream.write_all(body);
-                }
-                None => {
-                    let _ = stream.write_all(
-                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                    );
-                }
-            }
-            let _ = stream.flush();
+            answer(stream, &files, &counter);
         }
     });
     Server {
         url: format!("http://127.0.0.1:{port}"),
+        hits,
+    }
+}
+
+/// Reads one `GET` request and answers it with the registered bytes, or 404.
+fn answer(stream: impl Read + Write, files: &[(String, Vec<u8>)], counter: &AtomicUsize) {
+    let mut reader = BufReader::new(stream);
+    let mut request = String::new();
+    if reader.read_line(&mut request).unwrap_or(0) == 0 {
+        return;
+    }
+    loop {
+        let mut header = String::new();
+        if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
+            break;
+        }
+    }
+    counter.fetch_add(1, Ordering::SeqCst);
+    let path = request.split_whitespace().nth(1).unwrap_or("/");
+    let mut stream = reader.into_inner();
+    match files.iter().find(|(name, _)| format!("/{name}") == path) {
+        Some((_, body)) => {
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body);
+        }
+        None => {
+            let _ = stream.write_all(
+                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+        }
+    }
+    let _ = stream.flush();
+}
+
+/// A private certificate authority, the way an enterprise runs one: a self-signed root that no
+/// public root store knows, and the PEM an operator would hand to a catalog.
+struct PrivateAuthority {
+    certificate: rcgen::Certificate,
+    key: rcgen::KeyPair,
+}
+
+impl PrivateAuthority {
+    fn new() -> Self {
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).expect("CA params");
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "Example Corp Internal Root");
+        let key = rcgen::KeyPair::generate().expect("a CA key");
+        let certificate = params.self_signed(&key).expect("the CA certificate");
+        Self { certificate, key }
+    }
+
+    fn pem(&self) -> String {
+        self.certificate.pem()
+    }
+}
+
+/// A loopback HTTPS server whose certificate for `127.0.0.1` the private authority issued.
+fn serve_tls(files: Vec<(String, Vec<u8>)>, authority: &PrivateAuthority) -> Server {
+    use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+    let leaf_key = rcgen::KeyPair::generate().expect("a server key");
+    let leaf = rcgen::CertificateParams::new(vec!["127.0.0.1".to_owned()])
+        .expect("server params")
+        .signed_by(&leaf_key, &authority.certificate, &authority.key)
+        .expect("the server certificate");
+    let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .expect("TLS versions")
+    .with_no_client_auth()
+    .with_single_cert(
+        vec![leaf.der().clone()],
+        PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(leaf_key.serialize_der())),
+    )
+    .expect("the server configuration");
+    let config = Arc::new(config);
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let port = listener.local_addr().expect("the address").port();
+    let hits = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&hits);
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let Ok(connection) = rustls::ServerConnection::new(Arc::clone(&config)) else {
+                continue;
+            };
+            answer(
+                rustls::StreamOwned::new(connection, stream),
+                &files,
+                &counter,
+            );
+        }
+    });
+    Server {
+        url: format!("https://127.0.0.1:{port}"),
         hits,
     }
 }
@@ -656,6 +727,148 @@ fn should_refuse_a_plain_http_artifact_the_catalog_did_not_allow() {
         found.stderr()
     );
     assert_eq!(server.hits.load(Ordering::SeqCst), 0);
+}
+
+/// The network catalog of `network_catalog`, naming the operator's own certificate authorities
+/// for its artifacts (#153, ADR-1010). Each entry is written as given: absolute, or relative to
+/// the catalog file's directory.
+fn network_catalog_trusting(
+    home: &ono_testkit::Scratch,
+    server: &Server,
+    digest: &str,
+    authorities: &[&str],
+) {
+    network_catalog(home, server, "0.1.0", digest);
+    let path = home.path().join("config/ono/kuang/catalogs/net.yaml");
+    let text = std::fs::read_to_string(&path).expect("the catalog just written");
+    let list = authorities
+        .iter()
+        .map(|entry| format!("\"{entry}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let text = text.replacen(
+        "  insecure_http: true\n",
+        &format!("  insecure_http: true\n  certificate_authorities: [{list}]\n"),
+        1,
+    );
+    std::fs::write(&path, text).expect("the catalog with its authorities");
+}
+
+#[test]
+fn should_refuse_an_artifact_server_whose_authority_no_root_store_knows() {
+    // ADR-0607: an artifact travels over HTTPS against the public roots webpki carries. A
+    // certificate a private authority issued is not one of them, whatever the digest would say.
+    let home = world();
+    let built = staged(&home, "0.1.0");
+    let authority = PrivateAuthority::new();
+    let server = serve_tls(
+        vec![("echo-0.1.0.kuang".to_owned(), pack(&built))],
+        &authority,
+    );
+    network_catalog(&home, &server, "0.1.0", &content_digest(&built));
+
+    let refused = ono(&home, "install plugin echo --confirm");
+    assert_refused_with(
+        &refused,
+        "Ono-Sendai-E1603",
+        "a server no known authority vouches for is unavailable",
+    );
+    assert_eq!(count(&home, "get plugin"), "[0]");
+}
+
+#[test]
+fn should_fetch_an_artifact_behind_a_private_authority_the_operator_catalog_names() {
+    // #153, ADR-1010: an operator catalog names the authorities its artifact servers are issued
+    // by, and the fetch verifies the server against exactly those. The digest and the signature
+    // are still checked; the relative path is read beside the catalog file.
+    let home = world();
+    let built = staged(&home, "0.1.0");
+    let authority = PrivateAuthority::new();
+    let server = serve_tls(
+        vec![("echo-0.1.0.kuang".to_owned(), pack(&built))],
+        &authority,
+    );
+    home.write(
+        "config/ono/kuang/catalogs/internal-root.pem",
+        authority.pem(),
+    );
+    network_catalog_trusting(
+        &home,
+        &server,
+        &content_digest(&built),
+        &["internal-root.pem"],
+    );
+
+    let run = ono(
+        &home,
+        "install plugin echo --confirm | select status | to json; echo:emit --count 3 | to json",
+    );
+    run.assert_success();
+    assert!(run.stdout().contains("[1,2,3]"), "{:?}", run.output());
+    let origin = acquisition(&home);
+    assert_eq!(text_of(&origin, "source_kind"), "catalog-network");
+    assert_eq!(server.hits.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn should_refuse_an_artifact_server_another_authority_issued_when_the_catalog_names_one() {
+    // ADR-1010: the named authorities are the whole trust for that catalog's artifacts. A server
+    // issued by a different private authority is refused, so naming one root grants no other.
+    let home = world();
+    let built = staged(&home, "0.1.0");
+    let issuer = PrivateAuthority::new();
+    let named = PrivateAuthority::new();
+    let server = serve_tls(vec![("echo-0.1.0.kuang".to_owned(), pack(&built))], &issuer);
+    let pem = home.path().join("elsewhere-root.pem");
+    std::fs::write(&pem, named.pem()).expect("the other authority");
+    network_catalog_trusting(
+        &home,
+        &server,
+        &content_digest(&built),
+        &[pem.to_str().expect("a UTF-8 path")],
+    );
+
+    let refused = ono(&home, "install plugin echo --confirm");
+    assert_refused_with(
+        &refused,
+        "Ono-Sendai-E1603",
+        "a server the named authority did not issue is unavailable",
+    );
+    assert_eq!(count(&home, "get plugin"), "[0]");
+}
+
+#[test]
+fn should_refuse_to_fetch_when_a_named_authority_cannot_be_read_and_name_the_file() {
+    // ADR-1010: an authority the catalog names and the host cannot read is no reason to fall
+    // back to another root set. The refusal names the file; nothing is fetched or installed.
+    let home = world();
+    let built = staged(&home, "0.1.0");
+    let authority = PrivateAuthority::new();
+    let server = serve_tls(
+        vec![("echo-0.1.0.kuang".to_owned(), pack(&built))],
+        &authority,
+    );
+    home.write("config/ono/kuang/catalogs/not-a-certificate.pem", "hello");
+    network_catalog_trusting(
+        &home,
+        &server,
+        &content_digest(&built),
+        &["missing-root.pem", "not-a-certificate.pem"],
+    );
+
+    let refused = ono(&home, "install plugin echo --confirm");
+    assert_refused_with(
+        &refused,
+        "Ono-Sendai-E1603",
+        "an unreadable authority makes the artifact unavailable",
+    );
+    assert!(
+        refused.stderr().contains("missing-root.pem"),
+        "the refusal names the file: {:?}",
+        refused.stderr()
+    );
+    assert_eq!(server.hits.load(Ordering::SeqCst), 0, "nothing was fetched");
+    assert_eq!(count(&home, "get plugin"), "[0]");
 }
 
 // --- §25.5: upgrades ---------------------------------------------------------------------------

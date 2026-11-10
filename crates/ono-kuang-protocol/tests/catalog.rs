@@ -70,6 +70,43 @@ fn should_allow_plain_http_only_in_an_operator_catalog_that_says_so() {
 }
 
 #[test]
+fn should_let_only_an_operator_catalog_name_certificate_authorities() {
+    // #153, ADR-1010: the authorities a catalog's artifact servers are verified against are the
+    // operator's statement about their own servers. An operator catalog names them, and the
+    // built-in catalog or one of unknown origin cannot widen the trust of a fetch.
+    let text = document(
+        false,
+        "https://mirror.example.internal/echo.kuang",
+        Some(DIGEST),
+    )
+    .replace(
+        "  insecure_http: false\n",
+        "  insecure_http: false\n  certificate_authorities: [internal-root.pem]\n",
+    );
+    let operator = Catalog::parse(&text, CatalogVerification::Operator)
+        .expect("an operator catalog may name its authorities");
+    assert_eq!(
+        operator.certificate_authorities,
+        vec![std::path::PathBuf::from("internal-root.pem")]
+    );
+    for verification in [CatalogVerification::BuiltIn, CatalogVerification::Unknown] {
+        let refused = Catalog::parse(&text, verification)
+            .expect_err("only an operator catalog names authorities");
+        assert_eq!(refused.code(), KuangErrorCode::PackageInvalid);
+        assert!(
+            refused.message().contains("certificate_authorities"),
+            "{refused:?}"
+        );
+    }
+    let none = Catalog::parse(
+        &document(false, "https://example.invalid/echo.kuang", Some(DIGEST)),
+        CatalogVerification::BuiltIn,
+    )
+    .expect("a catalog that names none reads as before");
+    assert!(none.certificate_authorities.is_empty());
+}
+
+#[test]
 fn should_read_the_other_artifact_forms_as_local_references() {
     let path = Catalog::parse(
         &document(false, "path:/srv/packages/echo", None),

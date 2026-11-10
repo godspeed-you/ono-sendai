@@ -364,6 +364,10 @@ pub struct Catalog {
     /// the default, and never for the built-in catalog; the digest and the package signature
     /// are still checked.
     pub insecure_http: bool,
+    /// The certificate authorities this catalog's artifact servers are verified against, in
+    /// place of the public roots (#153, ADR-1010). Empty unless an operator catalog names some;
+    /// a relative path is relative to the catalog file's directory, which the reader resolves.
+    pub certificate_authorities: Vec<PathBuf>,
 }
 
 impl Catalog {
@@ -506,6 +510,13 @@ impl Catalog {
                 deprecated: entry.deprecated,
             });
         }
+        if !raw.catalog.certificate_authorities.is_empty()
+            && verification != CatalogVerification::Operator
+        {
+            return Err(invalid(
+                "only an operator catalog may name `certificate_authorities` (ADR-1010)".to_owned(),
+            ));
+        }
         Ok(Self {
             name: raw.catalog.name,
             description: crate::sanitize(&raw.catalog.description, crate::PURPOSE_LIMIT),
@@ -513,6 +524,7 @@ impl Catalog {
             entries,
             insecure_http: raw.catalog.insecure_http
                 && verification == CatalogVerification::Operator,
+            certificate_authorities: raw.catalog.certificate_authorities,
         })
     }
 
@@ -573,6 +585,8 @@ struct RawCatalogInfo {
     description: String,
     #[serde(default)]
     insecure_http: bool,
+    #[serde(default)]
+    certificate_authorities: Vec<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]

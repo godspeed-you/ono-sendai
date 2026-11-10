@@ -303,7 +303,11 @@ pub fn sidecar_text(package: &str, manager: &str) -> String {
 ///
 /// `plugin.catalog_unavailable` when the artifact cannot be fetched, with the URL and the
 /// transport's own words.
-pub fn fetch(url: &str, allow_insecure: bool) -> Result<Vec<u8>, ErrorValue> {
+pub fn fetch(
+    url: &str,
+    allow_insecure: bool,
+    authorities: &[PathBuf],
+) -> Result<Vec<u8>, ErrorValue> {
     if url.starts_with("http://") && !allow_insecure {
         return Err(ErrorValue::new(
             ErrorCode::PluginTransportRefused,
@@ -331,11 +335,17 @@ pub fn fetch(url: &str, allow_insecure: bool) -> Result<Vec<u8>, ErrorValue> {
              another way — a local directory, or the distribution's own package (K11A §2, §20)",
         )
     };
-    let agent = ureq::Agent::config_builder()
+    let mut config = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(120)))
-        .max_redirects(4)
-        .build()
-        .new_agent();
+        .max_redirects(4);
+    if !authorities.is_empty() {
+        config = config.tls_config(
+            ureq::tls::TlsConfig::builder()
+                .root_certs(operator_authorities(url, authorities)?)
+                .build(),
+        );
+    }
+    let agent = config.build().new_agent();
     let mut response = agent
         .get(url)
         .call()
@@ -347,6 +357,47 @@ pub fn fetch(url: &str, allow_insecure: bool) -> Result<Vec<u8>, ErrorValue> {
         .read_to_vec()
         .map_err(|error| unavailable(error.to_string()))?;
     Ok(bytes)
+}
+
+/// The root set an operator catalog names for its artifacts (ADR-1010): exactly these
+/// authorities, read from their PEM files, in place of the public roots. A file that cannot be
+/// read or holds no certificate refuses the fetch — falling back to another root set would trust
+/// a server the operator did not name.
+fn operator_authorities(
+    url: &str,
+    authorities: &[PathBuf],
+) -> Result<ureq::tls::RootCerts, ErrorValue> {
+    let refused = |path: &Path, detail: String| {
+        ErrorValue::new(
+            ErrorCode::PluginCatalogUnavailable,
+            format!(
+                "the artifact `{url}` was not fetched: the catalog names the certificate \
+                 authority {}, which {detail}",
+                path.display()
+            ),
+        )
+        .with_help(
+            "an operator catalog's `certificate_authorities` are PEM files the host can read; \
+             fix the file or the catalog, and nothing was installed (ADR-1010)",
+        )
+    };
+    let mut certificates = Vec::new();
+    for path in authorities {
+        let pem = std::fs::read(path)
+            .map_err(|error| refused(path, format!("cannot be read: {error}")))?;
+        let before = certificates.len();
+        for item in ureq::tls::parse_pem(&pem) {
+            match item {
+                Ok(ureq::tls::PemItem::Certificate(certificate)) => certificates.push(certificate),
+                Ok(_) => {}
+                Err(error) => return Err(refused(path, format!("is not valid PEM: {error}"))),
+            }
+        }
+        if certificates.len() == before {
+            return Err(refused(path, "holds no certificate".to_owned()));
+        }
+    }
+    Ok(ureq::tls::RootCerts::new_with_certs(&certificates))
 }
 
 /// The largest artifact this host will fetch: a plugin is a program and its documents, not a
@@ -445,8 +496,9 @@ pub fn acquire_network(
     url: &str,
     expected_digest: &str,
     allow_insecure: bool,
+    authorities: &[PathBuf],
 ) -> Result<Installed, ErrorValue> {
-    let bytes = fetch(url, allow_insecure)?;
+    let bytes = fetch(url, allow_insecure, authorities)?;
     let nonce = format!(
         "{}-{}",
         std::process::id(),
