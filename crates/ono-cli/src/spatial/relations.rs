@@ -236,7 +236,9 @@ pub(crate) fn adjacent_targets(object_type: SpatialType) -> &'static [&'static s
 fn adjacent_labels(object_type: SpatialType) -> &'static [(&'static str, &'static str)] {
     use SpatialType as T;
     match object_type {
-        T::Interface => &[("address", "addresses")],
+        // A route record names the interface it leaves through, so the route table answers an
+        // interface's `routes` the same way.
+        T::Interface => &[("address", "addresses"), ("route", "routes")],
         _ => &[],
     }
 }

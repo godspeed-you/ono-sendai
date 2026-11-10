@@ -1191,6 +1191,25 @@ fn should_lead_from_an_interface_to_the_addresses_it_carries() {
 }
 
 #[test]
+fn should_answer_for_the_routes_of_an_interface_when_the_route_table_was_read() {
+    // §14.2 lists `routes` among an interface place's groups. The route table is read when the
+    // place is looked at, and a route record names the interface it leaves through, so the exit
+    // is a list — an empty one on an interface no route uses — and never `unsupported`, which is
+    // §35.2's word for an exit nothing in this build can fill.
+    let run = ono("home; enter network; enter interfaces; enter lo; look --json");
+    run.assert_success();
+    let view = rendered(&document(
+        &run,
+        "§29.1: `look --json` answers off a terminal",
+    ));
+    assert!(
+        !view.contains("no provider answers for the `routes`"),
+        "§35.2: the netlink provider serves `get route` and was asked, so the `routes` of an \
+         interface have been answered; got {view}"
+    );
+}
+
+#[test]
 fn should_keep_the_cgroup_and_the_namespace_a_process_led_to_alive_when_they_are_looked_at() {
     // §33.2: looking at a place asks its provider about that one object again, and a provider
     // that does not answer for it ends its lifetime (§10.3). A cgroup and a pid namespace reached
