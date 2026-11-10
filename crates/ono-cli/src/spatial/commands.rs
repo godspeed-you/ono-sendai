@@ -1262,6 +1262,9 @@ pub async fn resolved_place(
         // The provider is asked for that object, and the target is swept only where that did
         // not find it — the key may be a name the object answers to rather than its identity
         // (ADR-0986).
+        // The object asked for may lie behind a namespace boundary, and the comparison needs
+        // the observer's own namespace before the record is absorbed (§16.2, ADR-0983).
+        view::learn_own_namespace(providers, session).await;
         if let Ok(stream) = providers.snapshot(&question) {
             let records: Vec<ono_value::RecordValue> = stream
                 .collect()
