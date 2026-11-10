@@ -1306,3 +1306,56 @@ fn should_complete_the_relations_available_from_the_current_place_when_tab_follo
     shell.write_all(b"\x03exit\n").expect("leave");
     let _ = shell.wait();
 }
+
+#[test]
+fn should_say_a_name_is_no_place_without_reading_every_service() {
+    // v0.4.1 §36.1: "A selector miss MUST not be substantially more expensive than a hit solely
+    // because the system scans an unnecessarily complete global candidate set." The service
+    // manager is the expensive candidate — two round trips per unit — and it can say in one
+    // whether any unit carries the name. So a miss is told that, and the services are still
+    // unread afterwards: looking at them has to ask, and says `polled` (ADR-0987). A service is
+    // found by its name all the same.
+    let missed = ono("enter no-such-place-1a2b3c");
+    assert!(
+        !missed.status().is_success() && missed.stderr().contains("spatial.not_found"),
+        "§40: a name nothing answers to is `spatial.not_found`, got {:?}",
+        missed.output()
+    );
+    let after = ono(
+        "try { enter no-such-place-1a2b3c } catch e { }; home; enter compute; enter services; \
+         look --json",
+    );
+    after.assert_success();
+    // Where a service manager answers, the collection was not read by the miss and is read now.
+    // Where none does there is nothing to read either way, and the view is never `cached`: it
+    // was asked, and refused.
+    let freshness = text(&document(&after), "freshness").map(str::to_owned);
+    assert_ne!(
+        freshness.as_deref(),
+        Some("cached"),
+        "v0.4.1 §36.1: the miss did not read every unit, so the collection is not answered \
+         from what the miss left behind"
+    );
+
+    // A unit is found by its name all the same, where there is one to find.
+    let named = ono("get service | where state == \"active\" | select name | to json");
+    let unit = named
+        .stdout()
+        .split('"')
+        .find(|word| word.ends_with(".service") && !word.contains('\\') && !word.contains('@'))
+        .map(str::to_owned);
+    assert_eq!(
+        unit.is_some(),
+        service_manager_answers(),
+        "an active service is listed exactly where a service manager answers"
+    );
+    if let Some(unit) = unit {
+        let entered = ono(&format!("enter {}; look --json", unit.to_uppercase()));
+        entered.assert_success();
+        assert_eq!(
+            text(place(&document(&entered)), "name"),
+            Some(unit.as_str()),
+            "§27.1: a unit is reached by its name, in whatever case it was typed"
+        );
+    }
+}

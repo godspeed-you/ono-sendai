@@ -109,6 +109,13 @@ impl SystemdProvider {
 struct Plan {
     /// The units to ask for by name, or `None` to list every unit.
     named: Option<String>,
+    /// The name the caller is looking for, lowercased, where it said (`Query::seeking`).
+    ///
+    /// `ListUnits` names every unit in one answer and a unit's properties cost two round trips
+    /// more, so a caller that resolves a name is answered with the units whose name contains
+    /// it, compared without regard to case, and the others are not read (v0.4.1 §36.1,
+    /// ADR-0987).
+    sought: Option<String>,
     /// The selectors still to apply to each record, once it has been read.
     remaining: Vec<Selector>,
 }
@@ -133,7 +140,18 @@ impl Plan {
                 other => remaining.push(other.clone()),
             }
         }
-        Self { named, remaining }
+        Self {
+            named,
+            sought: query.sought().map(str::to_lowercase),
+            remaining,
+        }
+    }
+
+    /// Whether a listed unit of this name is one the caller may be looking for.
+    fn lists(&self, name: &str) -> bool {
+        self.sought
+            .as_ref()
+            .is_none_or(|text| name.to_lowercase().contains(text.as_str()))
     }
 
     fn keeps(&self, record: &ono_value::RecordValue) -> bool {
@@ -336,6 +354,7 @@ impl Provider for SystemdProvider {
                             // than there is what makes the population the count of what would
                             // really be answered (§34.4, ADR-0576).
                             .filter(|unit| unit.load_state.as_deref() != Some("not-found"))
+                            .filter(|unit| plan.lists(&unit.name))
                             .map(|unit| (unit.name, unit.path))
                             .collect(),
                         Err(error) => {

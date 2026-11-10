@@ -16,6 +16,7 @@ pub struct Query {
     limit: Option<usize>,
     pushed: Vec<crate::Comparison>,
     directory: Option<std::sync::Arc<std::path::Path>>,
+    sought: Option<String>,
 }
 
 impl Query {
@@ -30,7 +31,28 @@ impl Query {
             limit: None,
             pushed: Vec::new(),
             directory: None,
+            sought: None,
         }
+    }
+
+    /// Tells the provider which name the caller is looking for (v0.4.1 §36.1, ADR-0987).
+    ///
+    /// Advice, as a pushed comparison is: the caller resolves a name against whatever comes
+    /// back and discards the rest itself, so a provider whose source lists names more cheaply
+    /// than objects may leave out every object whose name does not contain `text`, compared
+    /// without regard to case — or ignore this and answer in full. It is no part of what the
+    /// query asks for, and [`matches`](Self::matches) does not read it. An answer to a query
+    /// that sought a name is never the whole target, and the caller must not keep it as one.
+    #[must_use]
+    pub fn seeking(mut self, text: impl Into<String>) -> Self {
+        self.sought = Some(text.into());
+        self
+    }
+
+    /// The name the caller is looking for, where it said.
+    #[must_use]
+    pub fn sought(&self) -> Option<&str> {
+        self.sought.as_deref()
     }
 
     /// Says what is asked of the objects, in the verb the user typed.

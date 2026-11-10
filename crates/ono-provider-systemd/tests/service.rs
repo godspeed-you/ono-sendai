@@ -1252,3 +1252,41 @@ async fn should_report_how_often_systemd_restarted_a_service_and_null_where_it_k
     let timer = unit(&provider, "logrotate.timer").await;
     assert_eq!(timer.get("restarts"), Some(&Value::Null));
 }
+
+#[tokio::test]
+async fn should_read_only_the_units_whose_name_matches_when_a_name_is_searched_for() {
+    // v0.4.1 §36.1: a selector miss "MUST not be substantially more expensive than a hit solely
+    // because the system scans an unnecessarily complete global candidate set". The service
+    // manager lists every unit's name in one answer and charges two round trips for each unit's
+    // properties, so a caller that says which name it is looking for is answered from the
+    // listing: the units whose name contains the text, whatever its case, are read, and the
+    // others are not (ADR-0987).
+    let bus = RecordedSystemd::running();
+    let reads = bus.property_reads();
+    let provider = provider_over(bus).await;
+
+    // Asked in the case a user types, for a unit systemd spells in its own.
+    let query = Query::target("service").seeking("NGINX");
+    let found = units(&provider, &query).await;
+
+    assert_eq!(
+        found
+            .iter()
+            .map(|unit| text(unit, "name"))
+            .collect::<Vec<_>>(),
+        ["nginx.service"]
+    );
+    assert_eq!(
+        reads.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "one unit matched the name, so one unit was read"
+    );
+
+    let none = Query::target("service").seeking("no-such-place-1a2b3c");
+    assert!(units(&provider, &none).await.is_empty());
+    assert_eq!(
+        reads.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "a name no unit carries costs the listing and no unit's properties"
+    );
+}

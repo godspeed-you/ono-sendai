@@ -1299,6 +1299,33 @@ pub async fn resolved_place(
             if targets.is_empty() {
                 continue;
             }
+            // A target whose provider lists names cheaply is told the name instead of being
+            // enumerated: what comes back is absorbed and never kept as the target's answer,
+            // because it is only the part of it that could match (v0.4.1 §36.1, ADR-0987).
+            let (named, targets): (
+                std::collections::BTreeSet<&'static str>,
+                std::collections::BTreeSet<&'static str>,
+            ) = targets.into_iter().partition(|target| {
+                ono_spatial_query::discovery::sought_by_name(target)
+                    && session.recall(target, now).is_none_or(|seen| seen.bounded)
+            });
+            for target in named {
+                let question = ono_provider_api::Query::target(target).seeking(selector);
+                let Ok(stream) = providers.snapshot(&question) else {
+                    continue;
+                };
+                let records: Vec<ono_value::RecordValue> = stream
+                    .collect()
+                    .await
+                    .into_values()
+                    .into_iter()
+                    .filter_map(|value| match value {
+                        Value::Record(record) => Some(ono_value::RecordValue::clone(&record)),
+                        _ => None,
+                    })
+                    .collect();
+                session.absorb(&records, now);
+            }
             view::observe_targets(providers, session, &targets, now).await;
             resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
             if !matches!(resolution, ono_spatial_query::Resolution::NotFound) {

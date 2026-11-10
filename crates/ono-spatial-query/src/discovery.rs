@@ -50,6 +50,21 @@ const SPATIAL_TARGETS: &[(&str, CostClass)] = &[
     ("file", CostClass::Expensive),
 ];
 
+/// Whether a selector sweep tells this target's provider which name it is looking for
+/// (v0.4.1 §36.1, ADR-0987).
+///
+/// True where two things hold. The places of the target answer to their name and to nothing a
+/// name does not contain, so an object left out for its name could not have resolved the
+/// selector. And the provider's source lists names far more cheaply than objects — the service
+/// manager names every unit in one answer and charges two round trips for each unit's
+/// properties — so saying the name is the difference between one round trip and a thousand.
+/// A kernel table read in one dump gains nothing from it, and a process answers to its
+/// executable as well as its name.
+#[must_use]
+pub fn sought_by_name(target: &str) -> bool {
+    target == "service"
+}
+
 /// What enumerating one provider target costs, in v0.4.1 §34.2's vocabulary.
 ///
 /// The class is the *search* cost — what it takes to enumerate the target — which is what a

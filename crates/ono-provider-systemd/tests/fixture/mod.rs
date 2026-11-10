@@ -66,6 +66,9 @@ pub struct RecordedSystemd {
     /// keeps the receiving one for the one client that subscribes.
     announcements: tokio::sync::mpsc::Sender<UnitSignal>,
     subscription: Mutex<Option<tokio::sync::mpsc::Receiver<UnitSignal>>>,
+    /// How many units have had their properties read — the round trips a query cost, as the
+    /// service manager counts them.
+    property_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl RecordedSystemd {
@@ -109,7 +112,13 @@ impl RecordedSystemd {
             queued: Mutex::new(0),
             announcements,
             subscription: Mutex::new(Some(subscription)),
+            property_reads: std::sync::Arc::default(),
         }
+    }
+
+    /// A counter of the units whose properties have been read.
+    pub fn property_reads(&self) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+        std::sync::Arc::clone(&self.property_reads)
     }
 
     /// The end a test announces signals from, as systemd would broadcast them.
@@ -230,6 +239,8 @@ impl SystemdBus for RecordedSystemd {
     }
 
     async fn unit_properties(&self, unit: &str) -> Result<Option<UnitProperties>, BusError> {
+        self.property_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         // Recorded from a real service manager: `LoadUnit` rejects a name with no unit suffix
         // outright rather than answering "no such unit". A provider that treats that as a fatal
         // error can never resolve `get service nginx`.
