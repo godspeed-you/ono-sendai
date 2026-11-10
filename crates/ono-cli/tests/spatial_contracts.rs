@@ -1632,3 +1632,24 @@ fn should_contribute_the_declared_relations_without_a_manual_grant() {
         run.stdout()
     );
 }
+
+#[test]
+fn should_honour_the_configured_landmark_settings_when_the_first_command_enters_a_target() {
+    // §26.3: "Thresholds MUST be inspectable and configurable", and §47 names the settings. The
+    // session reads them whichever command creates it — `enter process <pid>`, v0.2's own
+    // spelling, as much as `home` or `look`. With the landmark engine switched off, a process
+    // that started a moment ago is no `recently_changed` landmark of its own place.
+    let pid = std::process::id();
+    let script = format!("enter process {pid}; look --json");
+
+    let off = ono_testkit::Shell::new()
+        .env("ONO_SPATIAL_LANDMARKS_ENABLED", "false")
+        .args(["-c", &script])
+        .run();
+    off.assert_success();
+    assert!(
+        !off.stdout().contains("\"reason\":\"recently_changed\""),
+        "§26.3/§47: `spatial.landmarks.enabled = false` promotes nothing; got {:?}",
+        off.stdout()
+    );
+}

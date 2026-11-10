@@ -505,10 +505,13 @@ fn enter_record(
     // and §30.4 keeps them separate pieces of state.
     // §47 switches the place off with the rest of the layer: the context frame still narrows
     // later commands, and nothing moves a place no spatial verb will answer for.
-    if !crate::spatial::disabled(session)
-        && let Some((runtime, _)) = session.pipeline_context()
-    {
-        runtime.block_on(crate::spatial::enter_observed(record));
+    if !crate::spatial::disabled(session) {
+        // This may be the command that creates the spatial session, and the session takes the
+        // `spatial.*` settings as they are when it is created (§26.3, §47).
+        crate::spatial::configure_from(session.settings());
+        if let Some((runtime, _)) = session.pipeline_context() {
+            runtime.block_on(crate::spatial::enter_observed(record));
+        }
     }
     let registry = crate::eval::native::registry().map_err(Flow::Failed)?;
     let handle = registry.find("enter", Some(target)).and_then(|contract| {
