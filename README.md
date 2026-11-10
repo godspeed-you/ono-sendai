@@ -543,13 +543,13 @@ tests=7681
 tests_that_can_skip=122
 expected_ci_skips=16
 acceptance_cases=296
-adrs=696
+adrs=697
 command_contract_files=16
 commands=226
 stripped_bytes.kuang-compile.aarch64-unknown-linux-gnu=5591976
 stripped_bytes.kuang-compile.x86_64-unknown-linux-gnu=7430064
 stripped_bytes.ono.aarch64-unknown-linux-gnu=19418112
-stripped_bytes.ono.x86_64-unknown-linux-gnu=22916992
+stripped_bytes.ono.x86_64-unknown-linux-gnu=22923392
 stripped_bytes.ono.x86_64-unknown-linux-musl=7579872
 ```
 
