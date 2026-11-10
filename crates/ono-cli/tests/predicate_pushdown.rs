@@ -531,6 +531,94 @@ fn should_give_journalctl_one_priority_argument_when_level_and_where_both_narrow
     );
 }
 
+// --- equivalence: the same pipeline, handover on and off ---------------------------------------
+
+/// Pipelines whose answer must not depend on the handover: supported, unsupported and mixed
+/// predicates, thresholds with entries below, on and above them, predicates that meet an unknown
+/// `unit` or `pid`, predicates that fail on some records, and stages after the `where` that bound
+/// or reorder the stream.
+const PIPELINES: [&str; 30] = [
+    "get journal | where priority <= 3 | to json",
+    "get journal | where priority <= 0 | to json",
+    "get journal | where priority < 0 | to json",
+    "get journal | where priority < 1 | to json",
+    "get journal | where priority < 3 | to json",
+    "get journal | where priority == 3 | to json",
+    "get journal | where priority == 0 | to json",
+    "get journal | where priority == 7 | to json",
+    "get journal | where priority == 9 | to json",
+    "get journal | where priority <= 6 | to json",
+    "get journal | where priority <= 7 | to json",
+    "get journal | where 2 >= priority | to json",
+    "get journal | where priority >= 5 | to json",
+    "get journal | where priority != 3 | to json",
+    "get journal | where priority <= 3 | take 2 | to json",
+    "get journal | where priority <= 3 | take 1 | select cursor priority | to json",
+    "get journal | where priority <= 3 | count",
+    "get journal | where priority <= 3 | sort priority | select cursor | to json",
+    "get journal | where priority <= 4 and unit == \"cron.service\" | to json",
+    "get journal | where priority <= 4 and pid > 1 | to json",
+    "get journal | where priority <= 4 and unit != null | to json",
+    "get journal | where unit == \"cron.service\" and priority <= 4 | to json",
+    "get journal | where priority <= 3 or unit == \"ssh.service\" | to json",
+    "get journal | where priority <= 5 and priority == 4 and pid == 77 | to json",
+    "get journal | where priority <= 2 and priority == 4 | to json",
+    "get journal | where priority <= 4 and 10 / (pid - 42) > 0 | to json",
+    "get journal | where priority <= 3 | where unit == \"cron.service\" | to json",
+    "tail journal --lines 4 | where priority <= 3 | take 1 | to json",
+    "get log | where priority <= 3 | select cursor level priority | to json",
+    "get log --level warning | where priority == 4 and unit == \"ssh.service\" | to json",
+];
+
+#[test]
+fn should_answer_identically_when_the_handover_is_on_and_when_it_is_off() {
+    let journal = Journal::new();
+    for pipeline in PIPELINES {
+        let off = journal.run_without_pushdown(pipeline);
+        let on = journal.run(pipeline);
+        assert_eq!(
+            on, off,
+            "ADR-0980: `{pipeline}` yields the same records in the same order, the same \
+             diagnostics and the same exit status with the handover and without it"
+        );
+    }
+}
+
+#[test]
+fn should_keep_the_note_about_undecided_values_when_part_of_the_predicate_is_handed_over() {
+    let journal = Journal::new();
+    // c03 has priority 4 and no unit: `unit == …` cannot be decided on it (spec §10.5), with the
+    // handover and without. c08 has no pid but priority 6, so the first conjunct already drops it.
+    let pipeline = "get journal | where priority <= 4 and unit == \"cron.service\" | to json";
+
+    let on = journal.run(pipeline);
+
+    assert!(on.success, "got {on:?}");
+    assert!(
+        on.stderr
+            .contains("excluded because the condition could not be decided"),
+        "spec §10.5: the unknown `unit` of an entry the handover keeps is still counted, got {on:?}"
+    );
+    assert_eq!(on, journal.run_without_pushdown(pipeline));
+}
+
+#[test]
+fn should_report_the_same_failure_when_a_later_conjunct_fails_on_a_record_the_handover_keeps() {
+    let journal = Journal::new();
+    // `pid - 42` is zero for cron's entries; the division fails on each one the first conjunct
+    // lets through, and on none it rejects.
+    let pipeline = "get journal | where priority <= 4 and 10 / (pid - 42) > 0 | to json";
+
+    let on = journal.run(pipeline);
+    let off = journal.run_without_pushdown(pipeline);
+
+    assert_eq!(on, off, "ADR-0980: errors are part of the answer");
+    assert!(
+        !off.stderr.is_empty(),
+        "the fixture makes the later conjunct fail on some records, got {off:?}"
+    );
+}
+
 // --- the plan says what would be handed over ----------------------------------------------------
 
 #[test]
@@ -610,4 +698,46 @@ fn should_say_nothing_about_a_handover_when_the_run_would_make_none() {
         "ADR-0980: `providers.pushdown = false` hands the provider nothing, and the plan says \
          nothing else, got {off:?}"
     );
+}
+
+// --- the stated bound of the equivalence -------------------------------------------------------
+
+#[test]
+fn should_not_see_an_entry_without_a_canonical_priority_when_the_ceiling_is_handed_over() {
+    // ADR-0980 "Consequences": the declaration is over a field the schema requires
+    // (`ono.journal-event/1` `priority`, required and not nullable). A journal entry that carries
+    // no `PRIORITY` violates that contract and is reported today as `Ono-Sendai-E0908`. journald
+    // answers `--priority` from its index, which holds no such entry, so with the handover the
+    // entry is never read and its report is not made. This test pins that bound so that it cannot
+    // widen unnoticed; `providers.pushdown = false` restores the report.
+    let mut lines: Vec<String> = ENTRIES
+        .iter()
+        .enumerate()
+        .map(|(position, entry)| json_line(position, entry))
+        .collect();
+    lines.insert(
+        3,
+        r#"{"__CURSOR":"bare","__REALTIME_TIMESTAMP":"1700000000000000","_BOOT_ID":"0c0ffee0000000000000000000000001","_HOSTNAME":"fixture-host","SYSLOG_IDENTIFIER":"fixture","MESSAGE":"no priority"}"#
+            .to_owned(),
+    );
+    let journal = Journal::of(&lines);
+    let pipeline = "get journal | where priority <= 3 | to json";
+
+    let off = journal.run_without_pushdown(pipeline);
+    let on = journal.run(pipeline);
+
+    assert!(
+        !off.success && off.stderr.contains("Ono-Sendai-E0908"),
+        "without the handover the malformed entry is read and reported, got {off:?}"
+    );
+    assert!(
+        on.success && !on.stderr.contains("Ono-Sendai-E0908"),
+        "with the handover journalctl does not return the entry, got {on:?}"
+    );
+    assert_eq!(
+        cursors(&on),
+        expected(|priority, _| priority <= 3),
+        "the records themselves are the same either way"
+    );
+    assert_eq!(on.stdout, off.stdout);
 }
