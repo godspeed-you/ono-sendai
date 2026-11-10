@@ -141,9 +141,11 @@ contributed_types:
     this session does not know, and `find place --role <role>` naming a role no loaded package
     declares, load the installed packages that can answer for it before the command runs: a role
     names the packages whose on-disk `contributions.targets` declare it; a kind names the packages
-    whose on-disk `contributions.schemas` call one of their targets' schemas by it, and every
-    package that declares targets but no schema document. A package that will not load leaves the
-    command to refuse as it would have (#129, ADR-1005).
+    whose on-disk `contributions.schemas` call one of their targets' schemas by it (its display
+    name or its id), and no other: a package that declares no schema document is not started for
+    a kind word, and its kinds are reachable once anything has loaded it. A word no declaration
+    names loads nothing. A package that will not load leaves the command to refuse as it would
+    have (#129, ADR-1005, ADR-1021).
   pins: >-
     A pin stores the type name of the place it marks (§20.4). A pin whose type no loaded or
     installed package contributes costs that pin and nothing else: the pin store still reads,

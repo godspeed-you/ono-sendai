@@ -10,12 +10,11 @@
 //! or a role this session does not know yet, the installed packages that can answer for it are
 //! loaded the way a contributed command would load its own.
 //!
-//! The declaration on disk narrows the set where it can. A role is declared on a target in
-//! `contributions.targets`, so a role names exactly the packages that declare it. A kind of place
-//! is named by its schema's display name, which a package's `contributions.schemas` documents
-//! state on disk; a package that declares its schemas only in its handshake cannot be ruled out
-//! without running it, so it is loaded too when it declares a target at all — once per session,
-//! and only for a word that would otherwise be refused.
+//! The declaration on disk decides. A role is declared on a target in `contributions.targets`,
+//! so a role names exactly the packages that declare it. A kind of place is named by its schema's
+//! display name or id, which a package's `contributions.schemas` documents state on disk. A
+//! package that declares its schema names only in its handshake is not started for a word it
+//! might answer to: it is found once something has loaded it (ADR-1021).
 
 use crate::session::Session;
 
@@ -121,21 +120,19 @@ fn unknown_kind(kind: &str) -> bool {
         .any(|known| known.as_str().eq_ignore_ascii_case(kind))
 }
 
-/// Whether an installed package may contribute one of `kinds`, as far as its declaration on disk
-/// says (§31.68).
+/// Whether an installed package contributes one of `kinds`, as its declaration on disk says
+/// (§31.68; ADR-1021).
 ///
-/// A kind is a schema's display name or its id. Where the package's `contributions.schemas`
-/// documents name its schemas, they settle it; where they do not, a package that declares a
-/// target may still answer with one, and only loading it can tell.
+/// A kind is a schema's display name or its id, and both are known on disk only where the
+/// package's `contributions.schemas` documents state them for a schema one of its targets
+/// declares. A package that states none is not started for a word it might answer to: a package
+/// is loaded on its first invocation, never on a word nobody declared (K11P).
 fn may_contribute(package: &crate::kuang_host::Installed, kinds: &[String]) -> bool {
     let targets = crate::plugin_registry::declared_target_schemas(package);
     if targets.is_empty() {
         return false;
     }
     let schemas = declared_schemas(package);
-    if schemas.is_empty() {
-        return true;
-    }
     kinds.iter().any(|kind| {
         schemas.iter().any(|(id, name)| {
             targets.contains(id) && (name.eq_ignore_ascii_case(kind) || id == kind)
