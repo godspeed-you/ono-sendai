@@ -1018,7 +1018,17 @@ impl HostServices for ShellHost {
         _name: &str,
         _purpose: &str,
     ) -> Result<(), HostError> {
-        Err(HostError::unavailable("secret store"))
+        // There is nowhere for an operator to put a secret, and the one host call that would
+        // consume a handle, `network.request`, is not served (ADR-0573): a handle would name
+        // nothing usable. The environment is never a store (§31.20). The refusal says all of it
+        // rather than issuing a handle (ADR-1016).
+        Err(HostError {
+            code: ono_core::ErrorCode::ProviderUnavailable,
+            message: "this shell keeps no secret store: the operator has nowhere to put a \
+                      secret, the environment is not one, and no host call this build serves \
+                      would consume a handle, so none is issued (ADR-1016)"
+                .to_owned(),
+        })
     }
 }
 

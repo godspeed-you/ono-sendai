@@ -605,3 +605,95 @@ fn should_withdraw_a_packages_edges_when_it_is_unloaded() {
         run.stderr()
     );
 }
+
+// --- secrets.request (ADR-1016) ---------------------------------------------------------------
+
+#[test]
+fn should_refuse_a_granted_secret_request_and_say_why_this_shell_keeps_no_store() {
+    // There is no store for the operator to put a secret in, and no host call this build serves
+    // would consume a handle, so a handle would name nothing usable. The refusal says so rather
+    // than issuing one (ADR-1016).
+    let home = scratch();
+    plugin_home(&home);
+    let run = ono(
+        &home,
+        r#"grant capability secret.use --plugin dev.example.echo --scope "secrets=api-token" | count; load plugin dev.example.echo; try { echo:secret --name api-token } catch e { $e | select name message | to json }"#,
+    );
+    let shown = run.stdout();
+    assert!(
+        shown.contains("provider.unavailable"),
+        "no handle is issued; stdout {shown:?} stderr {:?}",
+        run.stderr()
+    );
+    assert!(
+        shown.contains("keeps no secret store") && shown.contains("ADR-1016"),
+        "the refusal says why, and where the decision is recorded; stdout {shown:?}"
+    );
+}
+
+#[test]
+fn should_never_answer_a_secret_request_from_the_environment() {
+    // Spec §31.20: a package gains no bulk access to environment variables or secret stores
+    // merely by running inside a shell. A variable that happens to share the secret's name is
+    // not a store.
+    let home = scratch();
+    plugin_home(&home);
+    let run = Shell::new()
+        .args([
+            "-c",
+            r#"grant capability secret.use --plugin dev.example.echo --scope "secrets=api-token" | count; load plugin dev.example.echo; try { echo:secret --name api-token } catch e { $e | select name | to json }; get audit --plugin dev.example.echo | to json"#,
+        ])
+        .env("HOME", home.path().display().to_string())
+        .env(
+            "XDG_CONFIG_HOME",
+            home.path().join("config").display().to_string(),
+        )
+        .env(
+            "XDG_STATE_HOME",
+            home.path().join("state").display().to_string(),
+        )
+        .env(
+            "ONO_PLUGIN_PATH",
+            home.path().join("plugins").display().to_string(),
+        )
+        .env("API_TOKEN", "hunter2-from-the-environment")
+        .env("api-token", "hunter2-from-the-environment")
+        .env("ONO_SECRET_API_TOKEN", "hunter2-from-the-environment")
+        .cwd(home.path())
+        .run();
+    assert!(
+        run.stdout().contains("provider.unavailable") && !run.stdout().contains("handle:"),
+        "a variable named like the secret issues no handle; stdout {:?} stderr {:?}",
+        run.stdout(),
+        run.stderr()
+    );
+    assert!(
+        !run.stdout().contains("hunter2") && !run.stderr().contains("hunter2"),
+        "and its value appears nowhere; stdout {:?} stderr {:?}",
+        run.stdout(),
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_refuse_a_secret_outside_the_granted_names_and_record_the_name_asked_for() {
+    // capabilities.v1.yaml: "A request outside the list is `capability.scope_violation` and is
+    // audited with the name that was asked for." No enumeration: the package learns nothing
+    // about names it was not granted.
+    let home = scratch();
+    plugin_home(&home);
+    let run = ono(
+        &home,
+        r#"grant capability secret.use --plugin dev.example.echo --scope "secrets=api-token" | count; load plugin dev.example.echo; try { echo:secret --name db-password } catch e { $e | select name | to json }; get audit --plugin dev.example.echo | where action == "secrets.request" | select result target | to json"#,
+    );
+    let shown = run.stdout();
+    assert!(
+        shown.contains("capability.scope_violation"),
+        "a name outside the grant is refused at the broker; stdout {shown:?} stderr {:?}",
+        run.stderr()
+    );
+    assert!(
+        shown.contains("db-password"),
+        "and the trail names what was asked for; stdout {shown:?}"
+    );
+}

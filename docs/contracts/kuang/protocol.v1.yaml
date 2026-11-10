@@ -906,10 +906,16 @@ host_calls:
       name: {type: string, required: true, doc: "The secret's name. Must be in the granted `secrets` scope."}
       purpose: {type: string, required: true, doc: "Shown to the operator in the consent prompt, sanitised and attributed to the package."}
     returns: {type: handle<secret>, doc: "An opaque handle, e.g. spec §31.20's `secret#A72`. The material never crosses."}
-    errors: [io.not_found]
+    errors: [io.not_found, provider.unavailable]
     doc: >-
       There is deliberately no `secrets.list`. Spec §31.12: "request opaque secret handles, never
-      enumerate." A package learns nothing about the secrets it did not name.
+      enumerate." A package learns nothing about the secrets it did not name. This build keeps no
+      secret store: the operator has nowhere to put a secret, the environment is never one
+      (spec §31.20), and no call it serves would consume a handle (`network.request` and the
+      `tls` protocol of `network.connect` are not served, ADR-0573). So a request inside the
+      granted `secrets` scope is answered `provider.unavailable`, saying so, and no handle is
+      issued; one outside the scope is `capability.scope_violation` at the broker, audited with
+      the name asked for (ADR-1016).
 
   - id: secrets.release
     domain: secrets
