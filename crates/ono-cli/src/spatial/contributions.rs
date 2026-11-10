@@ -24,10 +24,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use jiff::Timestamp;
 use ono_kuang_supervisor::LoadedPlugin;
 use ono_provider_api::{ProviderRegistry, Query, Selector};
-use ono_spatial_core::{
-    Confidence, ConfidenceClaim, CostClass, Direction, RelationSpec, RelationshipEdge, SpatialId,
-    SpatialType,
-};
+use ono_spatial_core::{Confidence, RelationshipEdge, SpatialId, SpatialType};
 use ono_value::{Provenance, RecordValue, SchemaId, Value};
 
 use crate::spatial::session::SpatialSessionState;
@@ -53,6 +50,11 @@ fn contributors() -> &'static Mutex<BTreeMap<String, Arc<LoadedPlugin>>> {
 /// grant from the negotiated contract. A package without the grant is left alone: it is degraded,
 /// `load plugin` says which capability it lacks (§31.17), and no relation of its bears its name.
 pub fn adopt(id: &str, plugin: &Arc<LoadedPlugin>, shapes: &[String]) {
+    use ono_spatial_core::relation::{Awaiting, await_shape, endpoint_type, shape_attributes};
+    // A package that has just been loaded may contribute the kind of place another package's
+    // shape was waiting for (ADR-1008), whatever this package may contribute itself.
+    ono_spatial_core::relation::forget_awaiting(id);
+    ono_spatial_core::relation::settle();
     let Some(granted) = plugin.contract().grant(RELATION_WRITE) else {
         return;
     };
@@ -76,44 +78,74 @@ pub fn adopt(id: &str, plugin: &Arc<LoadedPlugin>, shapes: &[String]) {
         let Some((from, to)) = ono_spatial_core::relation::parse_shape(shape) else {
             continue;
         };
-        let (Some(source), Some(target)) = (type_of(from), type_of(to)) else {
-            continue;
-        };
         let relation = ono_spatial_core::relation::contributed_id(id, from, to);
-        // Checked at load by [`check_shapes`]; a shape that got this far declares them well.
-        let attributes = ono_spatial_core::relation::shape_attributes(shape).unwrap_or_default();
         if let Some(allowed) = &allowed
             && !allowed.iter().any(|name| name == &relation || name == "*")
         {
             continue;
         }
-        let leak = |text: String| -> &'static str { Box::leak(text.into_boxed_str()) };
-        // §31.26's `name` is the word `follow` takes and `look` prints at the source end; a shape
-        // that declares none is called by its id, as it always was (ADR-1006).
-        let word = attributes.name.unwrap_or_else(|| relation.clone());
-        ono_spatial_core::relation::contribute(
-            RelationSpec {
-                id: leak(relation.clone()),
-                source,
-                target,
-                direction: Direction::Outbound,
-                canonical_label: leak(word.clone()),
-                inverse_label: leak(format!("{relation}.inverse")),
-                canonical_group: leak(word),
-                inverse_group: leak(format!("{relation}.inverse")),
-                // §36.2: a contributed edge may say how sure the package is, and the host never
-                // raises it — the host did not observe the edge.
-                confidence: ConfidenceClaim::ProviderDeclared,
-                // §32.1: what answering the relation costs, as the package declared it (ADR-1006).
-                cost_class: attributes.cost.unwrap_or(CostClass::Normal),
-            },
-            id,
-        );
+        // Checked at load by [`check_shapes`]; a shape that got this far declares them well.
+        let attributes = shape_attributes(shape).unwrap_or_default();
+        match (endpoint_type(from), endpoint_type(to)) {
+            (Some(source), Some(target)) => {
+                ono_spatial_core::relation::contribute(
+                    ono_spatial_core::relation::shape_spec(
+                        id,
+                        from,
+                        to,
+                        source,
+                        target,
+                        &attributes,
+                    ),
+                    id,
+                );
+            }
+            // An end in another package's namespace that nobody contributes yet: the relation
+            // waits for that package rather than being refused, and `follow` says what it is
+            // waiting for (ADR-1008).
+            _ if [from, to].iter().all(|end| {
+                endpoint_type(end).is_some()
+                    || ono_spatial_core::relation::is_foreign_schema(end, id)
+            }) =>
+            {
+                await_shape(Awaiting {
+                    package: id.to_owned(),
+                    from: from.to_owned(),
+                    to: to.to_owned(),
+                    attributes,
+                });
+            }
+            _ => continue,
+        }
         contributed = true;
     }
+    ono_spatial_core::relation::settle();
     if contributed && let Ok(mut registry) = contributors().lock() {
         registry.insert(id.to_owned(), Arc::clone(plugin));
     }
+}
+
+/// The refusal for `follow <word>` where `word` names a contributed relation that waits for a
+/// kind of place no loaded package contributes (ADR-1008, external-system-provider §14.5).
+#[must_use]
+pub fn awaiting_refusal(kind: SpatialType, word: &str) -> Option<ono_value::ErrorValue> {
+    let shape = ono_spatial_core::relation::awaiting_from(kind, word)?;
+    let missing = shape.missing().join("`, `");
+    Some(
+        ono_value::ErrorValue::new(
+            ono_core::ErrorCode::SpatialUnsupported,
+            format!(
+                "`{word}` is a relation `{}` contributes, and it leads to `{missing}`, which no \
+                 loaded package contributes",
+                shape.package
+            ),
+        )
+        .with_help(format!(
+            "install the package that declares `{missing}` in its `contributions.targets`; the \
+             relation is registered the moment that package loads (spec v0.4 §36.1, \
+             external-system-provider §14.5)"
+        )),
+    )
 }
 
 /// Forgets a package's contributions when it is unloaded.
@@ -271,14 +303,7 @@ async fn place_of(
 /// thing both times. A schema id names a kind of place the package contributed itself (§36.1),
 /// which is resolvable here because [`adopt`] runs after the handshake that registered it.
 fn type_of(name: &str) -> Option<SpatialType> {
-    let name = name.trim();
-    SpatialType::ALL
-        .iter()
-        .copied()
-        .find(|kind| kind.as_str().eq_ignore_ascii_case(name))
-        .or_else(|| {
-            ono_spatial_core::types::contributed_for_schema(name).map(|entry| entry.object_type)
-        })
+    ono_spatial_core::relation::endpoint_type(name)
 }
 
 /// Whether any relation a package contributed touches this kind of place.
@@ -338,7 +363,11 @@ pub fn check_shapes(
             ));
         };
         for endpoint in [from, to] {
-            if shape_endpoint_is_known(endpoint, package_schemas) {
+            // A schema in another package's namespace is that package's to declare, and it may
+            // not be installed: the shape is accepted and waits for it (ADR-1008).
+            if shape_endpoint_is_known(endpoint, package_schemas)
+                || ono_spatial_core::relation::is_foreign_schema(endpoint, package)
+            {
                 continue;
             }
             return Err(ono_value::ErrorValue::new(

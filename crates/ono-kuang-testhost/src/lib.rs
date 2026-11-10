@@ -368,7 +368,10 @@ pub fn check_spatial_package(directory: &std::path::Path) -> SpatialPackageRepor
         let unknown: Vec<&str> = [from, to]
             .into_iter()
             .filter(|endpoint| {
+                // Another package's schema is that package's to declare, and the shell lets the
+                // relation wait for it (ADR-1008).
                 !ono_spatial_core::relation::shape_endpoint_is_known(endpoint, &schemas)
+                    && !ono_spatial_core::relation::is_foreign_schema(endpoint, &package)
             })
             .collect();
         if unknown.is_empty() {

@@ -1623,6 +1623,13 @@ impl CommandImpl for Follow {
                 // The word may still be a relation of some other kind of place. §40 wants the
                 // difference visible: a name nobody declares is `not_found` as well, and both are
                 // "the current place cannot answer to this word".
+                // A relation a package declared towards another package's kind of place is a
+                // word that was understood: it is refused for what it waits for (ADR-1008).
+                if let Some(refusal) =
+                    crate::spatial::contributions::awaiting_refusal(object_type, &relation)
+                {
+                    return Err(refusal);
+                }
                 return Err(unknown_relation(&relation, object_type));
             }
             if specs.len() > 1 {

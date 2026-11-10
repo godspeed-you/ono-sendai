@@ -261,7 +261,8 @@ relation:
     manifest_field: contributions.relations
     document: "[\"<from>-><to>[; name=<word>][; cost=<class>]\", …]"
     read_without_running: true
-    endpoint: "a declared spatial type, in any case, or a schema id one of `contributions.targets` declares"
+    endpoint: "a declared spatial type, in any case; a schema id one of `contributions.targets` declares; or a schema id in another package's namespace (`<publisher>.<package>.<name>/<version>`), which the relation waits for (ADR-1008)"
+    awaiting: "a shape whose end is another package's schema is accepted at load and registered the moment a loaded package contributes that kind of place; until then `follow <name|id>` from the known end is `spatial.unsupported` naming the schema it waits for, and `follow` loads an installed package whose `contributions.targets` declare it first (ADR-1008)"
     registered_as: "`<package.id>.<from>_to_<to>`, a schema id contributing its local name; the attributes never change the id"
     # §31.26 gives a relation a `name`, and v0.4 §32.1 a cost class. Both are written into the
     # shape string after its ends, `;`-separated, so a shape without them means what it always

@@ -182,3 +182,25 @@ fn should_refuse_a_shape_naming_a_schema_no_target_of_this_package_answers_with(
         "a shape that names nothing registers nothing"
     );
 }
+
+#[test]
+fn should_accept_a_shape_naming_a_schema_of_another_packages_namespace() {
+    // #224 (1), ADR-1008: another package's schema is that package's to declare, and it may not
+    // be installed where this one is checked. The shell accepts the shape and the relation waits
+    // for the other package; the test host agrees with it rather than refusing what will load.
+    let scratch = package(
+        "\"process->io.github.example.racks.rack/1; name=racked-in\"",
+        GRANTABLE,
+    );
+    let report = ono_kuang_testhost::check_spatial_package(Path::new(scratch.path()));
+    assert!(
+        report.problems.is_empty(),
+        "a shape naming another package's schema is not a problem, got {:#?}",
+        report.problems
+    );
+    assert_eq!(
+        report.relations,
+        vec!["dev.example.topology.process_to_rack".to_owned()],
+        "and it would register the relation its ends name"
+    );
+}

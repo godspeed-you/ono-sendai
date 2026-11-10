@@ -351,3 +351,59 @@ fn should_refuse_a_relation_cost_that_is_not_a_cost_class() {
         run.output()
     );
 }
+
+/// A shape from the package's own kind to a kind another package contributes — one that is not
+/// installed here (#224 (1)).
+const FOREIGN_SHAPE: &str = "dev.example.echo.place/1->dev.example.racks.rack/1; name=racked-in";
+
+#[test]
+fn should_load_a_package_whose_shape_names_another_packages_kind_of_place() {
+    // #224 (1): `check_shapes` refused an endpoint that was neither a declared type nor the
+    // package's own schema, so no package could relate its places to another package's. The
+    // other package's schemas are its own to declare, and it may not be installed: the shape is
+    // accepted at load (ADR-1008).
+    let home = echo_plugin_home_with(ECHO, TARGETS, &[SHAPE, FOREIGN_SHAPE]);
+    let run = ono_with_plugins(
+        &home,
+        &at_the_place(&format!("follow {RELATION}; look | to json")),
+    );
+    run.assert_success();
+    assert_eq!(
+        rows(&run)[0]["place"]["identity"]["uid"].as_str(),
+        Some("z-1"),
+        "the package loads and its other relations work, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_refuse_following_a_relation_whose_far_kind_no_loaded_package_contributes() {
+    // The refusal moves to traversal, and says what it waits for — external-system-provider
+    // §14.5 keeps "target known but provider not installed" distinguishable from "no such
+    // relation".
+    let home = echo_plugin_home_with(ECHO, TARGETS, &[FOREIGN_SHAPE]);
+    let run = ono_with_plugins(&home, &at_the_place("follow racked-in"));
+    assert!(!run.status().is_success(), "there is nowhere to go");
+    let said = run.stderr();
+    assert!(
+        said.contains("spatial.unsupported")
+            && said.contains("`dev.example.racks.rack/1`")
+            && said.contains("no loaded package contributes"),
+        "the refusal names the kind of place the relation waits for, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_still_refuse_a_shape_naming_a_schema_of_its_own_package_it_does_not_declare() {
+    // The package's own namespace is the package's to declare, on disk, before it runs: a schema
+    // there that no target declares is a mistake the load can see (ADR-0585).
+    let shape = "dev.example.echo.place/1->dev.example.echo.nowhere/1";
+    let home = echo_plugin_home_with(ECHO, TARGETS, &[shape]);
+    let run = ono_with_plugins(&home, &format!("load plugin {ECHO}"));
+    assert!(
+        !run.status().is_success() && run.output().contains("dev.example.echo.nowhere/1"),
+        "an undeclared schema of the package's own is refused at load, got {:?}",
+        run.output()
+    );
+}

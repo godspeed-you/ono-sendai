@@ -1,0 +1,100 @@
+# #224 part (1) in the container: a contributed relation shape may name a kind of place another
+# package contributes. Spec §31.26 ("Plugins MAY add graph edges without owning either endpoint
+# schema"), §31.5, v0.4 §6.4, §36.1; external-system-provider §14.5 (target known, provider not
+# installed). ADR-1008.
+#
+# The package is the conformance fixture the container ships; its shape runs from its own resource
+# kind to `dev.example.racks.rack/1`, a schema of a package that is not installed here.
+case: a relation to another package's kind of place loads, and is refused at traversal for what it waits for
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  package="$home/plugins/dev.example.echo"
+  mkdir -p "$package/runtime" "$package/contributions"
+  cp /usr/local/bin/kuang-example-plugin "$package/runtime/echo"
+  write_manifest() {
+    cat > "$package/manifest.yaml" <<MANIFEST
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Answers for a few resources and the zones they sit in.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - relation.write
+  contributions:
+    targets: [contributions/targets.yaml]
+    relations: ["$1"]
+  network:
+    outbound: none
+  MANIFEST
+  }
+  cat > "$package/contributions/targets.yaml" <<'TARGETS'
+  targets:
+    - name: echo-place
+      schema: dev.example.echo.place/1
+      summary: Resources the example package answers for.
+      identity_doc: Two observations are the same resource when their `uid` matches.
+    - name: echo-zone
+      schema: dev.example.echo.zone/1
+      summary: Zones the resources sit in.
+      identity_doc: Two observations are the same zone when their `uid` matches.
+  TARGETS
+  at_ledger='load plugin dev.example.echo --grant relation.write; get echo-place | where uid == "u-3" | enter'
+
+  echo "== §31.26: the shape names another package's schema, and the package loads =="
+  write_manifest "dev.example.echo.place/1->dev.example.racks.rack/1; name=racked-in"
+  prove 168-a "a shape naming another package's schema is accepted at load" \
+    'ono -c "load plugin dev.example.echo --grant relation.write"'
+  prove 168-b "the package's places are still places" \
+    'ono -c "$at_ledger; look --json" | tail -1 | grep -q "\"uid\":\"u-3\""'
+
+  echo "== external-system-provider §14.5: traversal says what the relation waits for =="
+  prove 168-c "\`follow racked-in\` is \`spatial.unsupported\` naming the missing kind" \
+    'ono -c "$at_ledger; follow racked-in" 2>&1 | grep "spatial.unsupported" | grep -q "dev.example.racks.rack/1"'
+  prove 168-d "a word no relation declares is still \`spatial.no_relation\`" \
+    'ono -c "$at_ledger; follow nothing-at-all" 2>&1 | grep -q "spatial.no_relation\|spatial.not_found"'
+
+  echo "== §31.5: a schema of the package's own namespace it does not declare is refused at load =="
+  write_manifest "dev.example.echo.place/1->dev.example.echo.nowhere/1"
+  prove 168-e "an undeclared own schema is \`package.invalid\`" \
+    'ono -c "load plugin dev.example.echo" 2>&1 | grep "package.invalid" | grep -q "dev.example.echo.nowhere/1"'
+
+  echo "cross-package relation checks done"
+exit: 0
+stdout-contains: PROVED 168-a
+stdout-contains: PROVED 168-b
+stdout-contains: PROVED 168-c
+stdout-contains: PROVED 168-d
+stdout-contains: PROVED 168-e
+stdout-contains: cross-package relation checks done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

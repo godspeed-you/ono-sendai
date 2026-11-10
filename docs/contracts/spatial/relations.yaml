@@ -350,7 +350,12 @@ contributed_relations:
     lets a package relate the kinds of place it contributes itself. It is a schema id rather than
     the contributed type's display name because a display name may collide — with a declared type
     or with another package's schema — and because a schema id is readable from disk, which is
-    what makes the endpoint checkable before the package runs.
+    what makes the endpoint checkable before the package runs. A third spelling is the id of a
+    schema in **another package's namespace**: it cannot be checked at load, because that package
+    is its own and may not be installed, so the shape is accepted and the relation waits for it —
+    registered the moment a loaded package contributes the kind, refused at traversal as
+    `spatial.unsupported` naming the schema until then (ADR-1008). A schema in the package's own
+    namespace that none of its targets declares is still refused at load.
   ordering: >-
     A shape is read from the manifest at load and a contributed *type* is registered from the
     handshake, so the two are known at different moments. The refusal is settled at the earlier

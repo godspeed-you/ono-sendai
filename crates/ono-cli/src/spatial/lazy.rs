@@ -1,5 +1,5 @@
 //! Loading the installed package a spatial command needs, before the command runs (#129,
-//! spec §31.68, v0.4 §6.5, §6.8, §20.4; ADR-1005).
+//! spec §31.68, v0.4 §6.4, §6.5, §6.8, §20.4; ADR-1005, ADR-1008).
 //!
 //! A kind of place a KUANG/11 package contributes is learned from its handshake (ADR-0584), and
 //! a package is lazy: §31.68's `installed manifest -> registry placeholders -> first invocation
@@ -26,6 +26,8 @@ use crate::session::Session;
 pub fn load_contributors(session: &mut Session, list: &ono_parser::StageList, source: &str) {
     let mut roles: Vec<String> = Vec::new();
     let mut kinds: Vec<String> = Vec::new();
+    // Schema ids a contributed relation `follow` names is waiting for (ADR-1008).
+    let mut awaited: Vec<String> = Vec::new();
     for stage in &list.stages {
         let span = stage.span;
         let Some(text) = source.get(span.start() as usize..span.end() as usize) else {
@@ -37,6 +39,7 @@ pub fn load_contributors(session: &mut Session, list: &ono_parser::StageList, so
             .collect();
         match words.as_slice() {
             ["jump", selector, ..] => kinds.extend(unknown_kind_in(session, selector)),
+            ["follow", word, ..] => awaited.extend(ono_spatial_core::relation::awaited_by(word)),
             ["find", "place", rest @ ..] => {
                 let mut rest = rest.iter();
                 while let Some(&word) = rest.next() {
@@ -64,7 +67,7 @@ pub fn load_contributors(session: &mut Session, list: &ono_parser::StageList, so
             _ => {}
         }
     }
-    if kinds.is_empty() && roles.is_empty() {
+    if kinds.is_empty() && roles.is_empty() && awaited.is_empty() {
         return;
     }
     let (installed, _) = crate::plugins::installed(session);
@@ -74,7 +77,11 @@ pub fn load_contributors(session: &mut Session, list: &ono_parser::StageList, so
             continue;
         }
         let declared_roles = crate::plugin_registry::declared_target_roles(&package);
+        let declared_schemas = crate::plugin_registry::declared_target_schemas(&package);
         let answers = roles.iter().any(|role| declared_roles.contains(role))
+            || awaited
+                .iter()
+                .any(|schema| declared_schemas.contains(schema))
             || (!kinds.is_empty() && may_contribute(&package, &kinds));
         if answers {
             let _ = crate::plugins::load_plugin_with(

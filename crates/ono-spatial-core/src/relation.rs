@@ -1001,6 +1001,208 @@ pub fn contribute(spec: RelationSpec, origin: &str) -> &'static RelationSpec {
     leaked
 }
 
+// --- shapes that name another package's kind of place (ADR-1008) ------------------------------
+
+/// The kind of place a shape endpoint names, in either spelling a shape may use: a declared type
+/// in any case, or the id of a schema some loaded package contributed (§3.3, §36.1).
+#[must_use]
+pub fn endpoint_type(name: &str) -> Option<SpatialType> {
+    let name = name.trim();
+    SpatialType::ALL
+        .iter()
+        .copied()
+        .find(|kind| kind.as_str().eq_ignore_ascii_case(name))
+        .or_else(|| crate::types::contributed_for_schema(name).map(|entry| entry.object_type))
+}
+
+/// Whether a shape endpoint is the id of a schema in another package's namespace —
+/// `<publisher>.<package>.<name>/<version>` outside `package`'s own (§31.5, ADR-1008).
+///
+/// Such an endpoint cannot be checked at load: the other package may not be installed, or not
+/// loaded yet, and its schemas are its own to declare. It is accepted, and the relation waits for
+/// the kind of place to be contributed ([`await_shape`]).
+#[must_use]
+pub fn is_foreign_schema(name: &str, package: &str) -> bool {
+    let name = name.trim();
+    let Some((id, version)) = name.split_once('/') else {
+        return false;
+    };
+    let well_formed = !version.is_empty()
+        && version.chars().all(|c| c.is_ascii_digit())
+        && id.split('.').count() >= 3
+        && id.split('.').all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+        });
+    well_formed && !id.starts_with(&format!("{package}."))
+}
+
+/// The declaration a contributed shape becomes once both of its ends are kinds of place
+/// (§36.1, §31.26; ADR-0585, ADR-1006).
+#[must_use]
+pub fn shape_spec(
+    package: &str,
+    from: &str,
+    to: &str,
+    source: SpatialType,
+    target: SpatialType,
+    attributes: &ShapeAttributes,
+) -> RelationSpec {
+    let leak = |text: String| -> &'static str { Box::leak(text.into_boxed_str()) };
+    let id = contributed_id(package, from, to);
+    // §31.26's `name` is the word `follow` takes and `look` prints at the source end; a shape
+    // that declares none is called by its id, as it always was (ADR-1006).
+    let word = attributes.name.clone().unwrap_or_else(|| id.clone());
+    RelationSpec {
+        id: leak(id.clone()),
+        source,
+        target,
+        direction: Direction::Outbound,
+        canonical_label: leak(word.clone()),
+        inverse_label: leak(format!("{id}.inverse")),
+        canonical_group: leak(word),
+        inverse_group: leak(format!("{id}.inverse")),
+        // §36.2: a contributed edge may say how sure the package is, and the host never raises
+        // it — the host did not observe the edge.
+        confidence: ConfidenceClaim::ProviderDeclared,
+        // §32.1: what answering the relation costs, as the package declared it (ADR-1006).
+        cost_class: attributes.cost.unwrap_or(CostClass::Normal),
+    }
+}
+
+/// A contributed shape one of whose ends is a kind of place nobody has contributed yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Awaiting {
+    /// The package that declared the shape.
+    pub package: String,
+    /// The source end, as the shape spells it.
+    pub from: String,
+    /// The target end, as the shape spells it.
+    pub to: String,
+    /// What the shape declares beside its ends.
+    pub attributes: ShapeAttributes,
+}
+
+impl Awaiting {
+    /// The id the relation will be registered under (§31.5).
+    #[must_use]
+    pub fn id(&self) -> String {
+        contributed_id(&self.package, &self.from, &self.to)
+    }
+
+    /// The ends no loaded package contributes yet.
+    #[must_use]
+    pub fn missing(&self) -> Vec<&str> {
+        [self.from.as_str(), self.to.as_str()]
+            .into_iter()
+            .filter(|end| endpoint_type(end).is_none())
+            .collect()
+    }
+
+    /// Whether `word` names this relation for a user standing on a place of `kind`: the shape's
+    /// name or its id, from the end that is known (§6.4).
+    #[must_use]
+    pub fn answers(&self, kind: SpatialType, word: &str) -> bool {
+        let at_an_end = [&self.from, &self.to]
+            .into_iter()
+            .any(|end| endpoint_type(end).is_some_and(|known| kind.is_a(known)));
+        at_an_end && (self.attributes.name.as_deref() == Some(word) || self.id() == word)
+    }
+}
+
+fn awaiting() -> &'static std::sync::RwLock<Vec<Awaiting>> {
+    static AWAITING: std::sync::OnceLock<std::sync::RwLock<Vec<Awaiting>>> =
+        std::sync::OnceLock::new();
+    AWAITING.get_or_init(|| std::sync::RwLock::new(Vec::new()))
+}
+
+/// Records a shape whose other end another package contributes, to be registered when it does
+/// (ADR-1008). Recording the same shape twice keeps one.
+pub fn await_shape(shape: Awaiting) {
+    if let Ok(mut registry) = awaiting().write()
+        && !registry.contains(&shape)
+    {
+        registry.push(shape);
+    }
+}
+
+/// Registers every awaiting shape both of whose ends are kinds of place now, and answers the
+/// packages that contributed one (ADR-1008).
+///
+/// Called whenever a package has been loaded, because that is the moment a kind of place can
+/// start to exist.
+pub fn settle() -> Vec<String> {
+    let Ok(mut registry) = awaiting().write() else {
+        return Vec::new();
+    };
+    let mut settled = Vec::new();
+    registry.retain(|shape| {
+        let (Some(source), Some(target)) = (endpoint_type(&shape.from), endpoint_type(&shape.to))
+        else {
+            return true;
+        };
+        contribute(
+            shape_spec(
+                &shape.package,
+                &shape.from,
+                &shape.to,
+                source,
+                target,
+                &shape.attributes,
+            ),
+            &shape.package,
+        );
+        settled.push(shape.package.clone());
+        false
+    });
+    settled
+}
+
+/// The awaiting shape `word` names for a user standing on a place of `kind`, where there is one —
+/// what `follow` refuses with instead of calling the word unknown (ADR-1008).
+#[must_use]
+pub fn awaiting_from(kind: SpatialType, word: &str) -> Option<Awaiting> {
+    awaiting()
+        .read()
+        .ok()?
+        .iter()
+        .find(|shape| shape.answers(kind, word))
+        .cloned()
+}
+
+/// Every schema id an awaiting shape `word` names is waiting for — what the shell loads an
+/// installed package for before `follow <word>` runs (ADR-1008).
+#[must_use]
+pub fn awaited_by(word: &str) -> Vec<String> {
+    awaiting()
+        .read()
+        .map(|registry| {
+            registry
+                .iter()
+                .filter(|shape| {
+                    shape.attributes.name.as_deref() == Some(word) || shape.id() == word
+                })
+                .flat_map(|shape| {
+                    shape
+                        .missing()
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Forgets what a package was waiting for, when it is unloaded or loaded again.
+pub fn forget_awaiting(package: &str) {
+    if let Ok(mut registry) = awaiting().write() {
+        registry.retain(|shape| shape.package != package);
+    }
+}
+
 /// The contributed relation with this id, or `None`.
 #[must_use]
 pub fn contributed(id: &str) -> Option<Contributed> {
