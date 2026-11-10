@@ -798,6 +798,51 @@ fn honest_at_most(at_once: u32) -> Plugin {
                 &["provider.mutate"],
             )
         })
+        // The same kind of change, spelled as the generic action vocabulary spells it: `set` on
+        // the places this package answers for. A host that acts on a contributed object through
+        // its generic provider boundary finds this command by its verb and by the schema its
+        // action accepts, hands it the object and the action's arguments, and checks
+        // `provider.mutate` before any of this code runs (ADR-1012).
+        .contribute_command(CommandContribution {
+            verb: "set".to_owned(),
+            target: "echo-place".to_owned(),
+            options: vec![
+                ParameterContribution {
+                    name: "state".to_owned(),
+                    declared_type: "string".to_owned(),
+                    doc: "The state to put the place in; `rejected` is refused by the system."
+                        .to_owned(),
+                    repeatable: false,
+                    optional_value: false,
+                    default: None,
+                },
+                ParameterContribution {
+                    name: "dry-run".to_owned(),
+                    declared_type: "bool".to_owned(),
+                    doc: "Say what would change, and change nothing.".to_owned(),
+                    repeatable: false,
+                    optional_value: false,
+                    default: None,
+                },
+            ],
+            risk: Some("mutate".to_owned()),
+            action: Some(ActionContribution {
+                targets: vec![PLACE_SCHEMA.to_owned()],
+                mutates: true,
+                idempotency: Idempotency::Idempotent,
+                result: None,
+                verification: Some("the place is read back and its state compared".to_owned()),
+                effects: vec!["changes-state".to_owned()],
+                effect_classes: Vec::new(),
+            }),
+            examples: vec!["set echo-place u-3 --state ready".to_owned()],
+            ..command(
+                "set-place",
+                "Put a place in a state, under provider.mutate.",
+                "stream<string>",
+                &["provider.mutate"],
+            )
+        })
         .contribute_command(command(
             "context",
             "Report the context stack the host published.",
@@ -1179,6 +1224,32 @@ fn honest_at_most(at_once: u32) -> Plugin {
         .command(&format!("{PACKAGE}.command.mutate"), |ctx| {
             let _ = ctx.emit(&Value::Int(1));
             Outcome::Completed
+        })
+        .command(&format!("{PACKAGE}.command.set-place"), |ctx| {
+            // The object arrives as its schema and its identity fields, never as a label: a
+            // place called `checkout` is two places here (ADR-1012).
+            let uid = ctx
+                .arguments()
+                .get("object")
+                .and_then(|object| object.get("identity"))
+                .and_then(|identity| identity.get("uid"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let state = text_argument(ctx, "state", "");
+            if state == "rejected" {
+                return Outcome::Failed(ono_kuang_sdk::protocol::WireError {
+                    code: "Ono-Sendai-E0401".to_owned(),
+                    name: "provider.unavailable".to_owned(),
+                    message: format!("the system refused state `{state}` for `{uid}`"),
+                    help: None,
+                    metadata: Box::default(),
+                });
+            }
+            let dry_run = ctx.arguments().get("dry-run").and_then(serde_json::Value::as_bool)
+                == Some(true);
+            let verb = if dry_run { "would set" } else { "set" };
+            emit_text(ctx, &format!("{verb} {uid} to {state}"))
         })
         .command(&format!("{PACKAGE}.command.audit"), |ctx| {
             // A package's own claim about what it did. It arrives in the trail attributed to

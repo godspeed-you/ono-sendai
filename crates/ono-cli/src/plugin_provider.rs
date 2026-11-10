@@ -20,7 +20,9 @@ use ono_core::ErrorCode;
 use ono_kuang_protocol::Answer;
 use ono_kuang_supervisor::{LoadedPlugin, StreamEvent};
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
-use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Selector};
+use ono_provider_api::{
+    Action, ActionOutcome, Availability, Capability, ObjectId, ObjectRef, Provider, Query, Selector,
+};
 use ono_value::{ErrorValue, Schema, Value};
 
 /// One target a loaded package contributes, mounted as a [`Provider`].
@@ -209,6 +211,131 @@ impl Provider for PluginProvider {
             _ => Ok(refs),
         }
     }
+
+    /// Carries out the action the package *declared* for this operation on this kind of object
+    /// (ADR-1012).
+    ///
+    /// A package has no `provider.act` call: what it can do to the system it fronts is a
+    /// contributed command with an `action` block (ADR-0595), and that block is the contract read
+    /// here — the command whose verb is the operation and whose action accepts the object's
+    /// schema. It is invoked like any contributed command, so the broker checks every capability
+    /// it declares, `provider.mutate` among them, before any package code runs (ADR-0594), and a
+    /// denial is the error a provider returns when it cannot attempt an action at all.
+    /// Confirmation is not decided here, as no provider decides it: the caller above the
+    /// registry does, exactly as for a built-in provider's action.
+    async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        let plugin = self.plugin();
+        let schema = plugin
+            .targets()
+            .iter()
+            .find(|registered| registered.contribution.name == self.target())
+            .map(|registered| registered.contribution.schema.clone())
+            .ok_or_else(|| unclaimed(&self.package_id, self.target()))?;
+        let Some(command) = plugin.commands().iter().find(|registered| {
+            registered.contribution.verb == action.operation()
+                && registered
+                    .contribution
+                    .action
+                    .as_ref()
+                    .is_some_and(|declared| {
+                        declared
+                            .targets
+                            .iter()
+                            .any(|accepted| accepted == "*" || *accepted == schema)
+                    })
+        }) else {
+            return Err(ErrorValue::new(
+                ErrorCode::ProviderUnsupported,
+                format!(
+                    "`{}` declares no `{}` action on `{}`",
+                    self.package_id,
+                    action.operation(),
+                    self.target()
+                ),
+            )
+            .with_help(
+                "a package acts through the commands whose `action` block it declared (ADR-0595)",
+            ));
+        };
+        let contribution = &command.contribution;
+        let declares = |name: &str| {
+            contribution
+                .options
+                .iter()
+                .any(|option| option.name == name)
+        };
+        let mut arguments = serde_json::Map::new();
+        for (name, value) in action.arguments() {
+            // The host's own words: the confirmation was the caller's to decide, and which
+            // provider acts is what routed the action here.
+            if matches!(name.as_str(), "confirm" | "provider" | "dry-run") {
+                continue;
+            }
+            if !declares(name) {
+                return Err(ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!(
+                        "`{} {}` declares no `--{name}`",
+                        contribution.verb, contribution.target
+                    ),
+                )
+                .with_help("an action reads the options its contribution declared (ADR-0587)"));
+            }
+            arguments.insert(name.clone(), ono_value::to_json(value));
+        }
+        if action.is_dry_run() {
+            // A dry run asked of an action that cannot do one would be a real change.
+            if !declares("dry-run") {
+                return Err(ErrorValue::new(
+                    ErrorCode::ProviderUnsupported,
+                    format!(
+                        "`{} {}` declares no dry run, so one cannot be asked of it",
+                        contribution.verb, contribution.target
+                    ),
+                ));
+            }
+            arguments.insert("dry-run".to_owned(), serde_json::Value::Bool(true));
+        }
+        arguments.insert(
+            "object".to_owned(),
+            object_argument(&plugin, action.target()),
+        );
+        let invocation = plugin
+            .invoke(&contribution.id, arguments)
+            .await
+            .map_err(|error| crate::kuang_host::wire_error_value(&error))?;
+        // The stream carries the invocation's failure as its last event (ADR-0992).
+        let (events, _) = invocation.collect().await;
+        for event in events {
+            if let StreamEvent::Failed(error) = event {
+                return Ok(ActionOutcome::failed(
+                    action,
+                    crate::kuang_host::wire_error_value(&error),
+                ));
+            }
+        }
+        Ok(ActionOutcome::succeeded(action, !action.is_dry_run()))
+    }
+}
+
+/// The object an action is about, as the package reads it: its schema and its identity fields by
+/// name (ADR-1012). Never a label, which two objects may share.
+fn object_argument(plugin: &LoadedPlugin, object: &ObjectId) -> serde_json::Value {
+    let fields: Vec<String> = plugin
+        .schemas()
+        .iter()
+        .find(|schema| schema.id() == object.schema())
+        .map(|schema| schema.identity().iter().map(ToString::to_string).collect())
+        .unwrap_or_default();
+    let identity: serde_json::Map<String, serde_json::Value> = fields
+        .into_iter()
+        .zip(object.values())
+        .map(|(field, value)| (field, ono_value::to_json(value)))
+        .collect();
+    serde_json::json!({
+        "schema": object.schema().to_string(),
+        "identity": identity,
+    })
 }
 
 /// One invocation of a contributed target, as a stream of the values it emits.
