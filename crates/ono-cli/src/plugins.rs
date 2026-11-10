@@ -1158,10 +1158,70 @@ pub fn contributed_command(stage: &ono_parser::Stage) -> Option<&'static Command
         .arguments
         .first()
         .and_then(ono_parser::Argument::as_word);
-    let contract = registry
+    match registry
         .find(&name.name, target)
-        .or_else(|| registry.find(&name.name, None))?;
-    (!contract.origin().is_core()).then_some(contract)
+        .or_else(|| registry.find(&name.name, None))
+    {
+        Some(contract) => (!contract.origin().is_core()).then_some(contract),
+        // `watch <contributed target>` has no entry, because nothing can answer it (ADR-1013).
+        // Without one the word went on to whatever program called `watch` was on PATH, which
+        // answered about a command named after the target. The shell answers itself instead.
+        None if name.name == "watch" => {
+            target.and_then(|target| unwatchable_entry(registry, target))
+        }
+        None => None,
+    }
+}
+
+/// The entry `watch <target>` resolves to when a package contributes `target`: never registered,
+/// so `help`, completion and `get command` do not offer a command that only refuses (spec §50),
+/// and answered by [`invoke_contributed`] with the refusal of
+/// [`crate::plugin_provider::unwatchable`] before any package is loaded.
+///
+/// Built once per target and kept, like the target names `intern_target` keeps, because the
+/// dispatch hands contracts around as `&'static`; the total is bounded by the distinct targets
+/// the installed packages declare.
+fn unwatchable_entry(
+    registry: &'static ono_command::CommandRegistry,
+    target: &str,
+) -> Option<&'static CommandContract> {
+    static ENTRIES: std::sync::OnceLock<std::sync::Mutex<Vec<&'static CommandContract>>> =
+        std::sync::OnceLock::new();
+    let read = registry.find("get", Some(target))?;
+    let package = read.origin().package()?;
+    if read.id() != crate::plugin_registry::target_command_id(package, target) {
+        return None;
+    }
+    let entries = ENTRIES.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    let mut entries = entries
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(existing) = entries
+        .iter()
+        .find(|entry| entry.id() == read.id() && entry.origin() == read.origin())
+    {
+        return Some(existing);
+    }
+    let entry = ono_command::ContributedCommand {
+        id: read.id().to_owned(),
+        verb: "watch".to_owned(),
+        target: target.to_owned(),
+        summary: format!("`{target}` cannot be watched (ADR-1013)"),
+        input: None,
+        output: "stream<record>".to_owned(),
+        capabilities: Vec::new(),
+        argument_mode: "words".to_owned(),
+        selectors: Vec::new(),
+        options: Vec::new(),
+        risk: Some("read".to_owned()),
+        examples: Vec::new(),
+        origin: read.origin().clone(),
+    }
+    .into_contract()
+    .ok()?;
+    let entry: &'static CommandContract = Box::leak(Box::new(entry));
+    entries.push(entry);
+    Some(entry)
 }
 
 /// The registry entry `<package>:<command>` names, when the package declared it (spec §31.66).
@@ -1225,6 +1285,14 @@ pub fn invoke_contributed(
             format!("`{}` names no package to run it", contract.spelling()),
         ))
     })?;
+    // Answered from the declaration, so nothing is started to say it (ADR-1013).
+    if contract.verb() == "watch"
+        && let Some(target) = contract.target()
+    {
+        return Err(Flow::Failed(crate::plugin_provider::unwatchable(
+            package, target,
+        )));
+    }
     if loaded_package(session, package).is_none() {
         load_plugin_with(
             session,

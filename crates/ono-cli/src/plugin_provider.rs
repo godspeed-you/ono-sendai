@@ -21,7 +21,8 @@ use ono_kuang_protocol::Answer;
 use ono_kuang_supervisor::{LoadedPlugin, StreamEvent};
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
 use ono_provider_api::{
-    Action, ActionOutcome, Availability, Capability, ObjectId, ObjectRef, Provider, Query, Selector,
+    Action, ActionOutcome, Availability, Capability, EventStream, ObjectId, ObjectRef, Provider,
+    Query, Selector,
 };
 use ono_value::{ErrorValue, Schema, Value};
 
@@ -136,6 +137,11 @@ impl Provider for PluginProvider {
         // provider needs of the operating system. Restating the grants here would be a second
         // answer to a question that already has an authoritative one.
         Vec::new()
+    }
+
+    fn subscribe(&self, query: &Query) -> Result<EventStream, ErrorValue> {
+        let _ = query;
+        Err(unwatchable(&self.package_id, self.target()))
     }
 
     fn availability(&self) -> Availability {
@@ -415,6 +421,28 @@ fn query_arguments(query: &Query) -> serde_json::Map<String, serde_json::Value> 
         arguments.insert(name.clone(), ono_value::to_json(value));
     }
     arguments
+}
+
+/// Why a contributed target cannot be watched (ADR-1013).
+///
+/// `watch` folds a target's changes into the event envelope of spec §18.2, and that envelope is a
+/// schema per target — `ono.<target>-event/1` — which only the core declares. A package can
+/// declare a target and its record schema, and nothing about its events, so there is nothing to
+/// watch it with. The one live read a package does have is a target declared `answer: unbounded`,
+/// which `get` shows as it arrives (ADR-0588); the refusal says so rather than the generic
+/// "cannot watch" of a provider that simply never implemented it.
+pub(crate) fn unwatchable(package_id: &str, target: &str) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::ProviderUnsupported,
+        format!(
+            "`{target}` cannot be watched: `{package_id}` contributes it, and a contributed target \
+             declares no event vocabulary to watch it with"
+        ),
+    )
+    .with_help(format!(
+        "`get {target}` reads it; a target its package declares `answer: unbounded` is shown live \
+         as it arrives (ADR-0588, ADR-1013)"
+    ))
 }
 
 /// The refusal for a target this provider does not answer for.

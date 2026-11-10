@@ -546,3 +546,27 @@ fn should_fail_rather_than_answer_short_when_a_bounded_answer_fails_after_a_valu
         run.output()
     );
 }
+
+// --- a contributed target cannot be watched, and says so (#224 (6), ADR-1013) ------------------
+
+#[test]
+fn should_refuse_to_watch_a_contributed_target_and_say_why() {
+    // `watch` needs an event vocabulary for its target (spec §18.2), and a contributed target
+    // declares none. The word used to fall through to whatever program called `watch` was on
+    // PATH, which answered about a command named `echo-item`; the shell now answers itself, with
+    // a structured refusal that names the reason and the read that does work.
+    let home = echo_plugin_home(ECHO, TARGETS);
+    let run = ono_with_plugins(&home, "watch echo-item");
+    assert_ne!(run.status().code(), 0, "{:?}", run.output());
+    let stderr = run.stderr();
+    assert!(
+        stderr.contains("provider.unsupported") && stderr.contains("no event vocabulary"),
+        "the refusal is structured and says why, got {:?}",
+        run.output()
+    );
+    assert!(
+        stderr.contains("get echo-item"),
+        "and it names the read that does answer, got {:?}",
+        run.output()
+    );
+}

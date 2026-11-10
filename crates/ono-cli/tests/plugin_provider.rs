@@ -544,3 +544,32 @@ async fn should_refuse_an_operation_the_package_declares_no_action_for() {
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
         .await;
 }
+
+// --- watching a contributed target (#224 (6), ADR-1013) -----------------------------------------
+
+#[tokio::test]
+async fn should_refuse_to_subscribe_to_a_contributed_target_and_say_why() {
+    // The registry's `subscribe` is what `watch` and the live map ask. A contributed target has no
+    // event vocabulary to answer with, and the refusal says that rather than the generic "cannot
+    // watch for changes" a provider that simply never implemented it gives.
+    let scratch = ono_testkit::scratch();
+    let plugin = load(&scratch, 16).await;
+    let registry = registry_of(&plugin);
+
+    let Err(refusal) = registry.subscribe(&Query::target("echo-item")) else {
+        panic!("a contributed target cannot be subscribed to");
+    };
+    assert_eq!(
+        refusal.code().name(),
+        "provider.unsupported",
+        "got {refusal:?}"
+    );
+    assert!(
+        refusal.message().contains("no event vocabulary"),
+        "the refusal says why, got {refusal:?}"
+    );
+
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
