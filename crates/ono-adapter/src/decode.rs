@@ -1247,6 +1247,21 @@ fn coerce_mapped(
     ty: &FieldType,
     ctx: &Coercion<'_>,
 ) -> Result<Value, String> {
+    // A closed set of texts is checked against what the tool wrote, before anything reads it
+    // as a number or translates it: `03` and `3` are one integer and two different values to a
+    // tool that matches on the text, as journald's `--priority` does (ADR-0988).
+    if let Some(accepted) = map.accept()
+        && !raw.is_null()
+    {
+        let text = scalar_text(raw);
+        if !text.as_ref().is_some_and(|text| accepted.contains(text)) {
+            return Err(format!(
+                "{} is none of the values the adapter accepts here ({})",
+                describe(raw),
+                accepted.join(", ")
+            ));
+        }
+    }
     let mut current = raw.clone();
     // A null element of a list is a slot the tool had nothing for — lsblk before 2.39 writes
     // `"mountpoints": [null]` for an unmounted device — and an unknown that is not there is

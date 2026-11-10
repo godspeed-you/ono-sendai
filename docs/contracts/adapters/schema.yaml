@@ -119,6 +119,7 @@ field:
     split:     {type: string, nullable: true, doc: "Split a string on this separator into `list<string>`."}
     contains:  {type: string, nullable: true, doc: "After `split`: the field is `true` when the list holds this literal. Exactness `normalized`."}
     map:       {type: map, nullable: true, doc: "Literal translations applied before coercion, e.g. `{\"0\": false, \"1\": true}`."}
+    accept:    {type: "list<string>", nullable: true, doc: "The only texts the tool's value may be, compared before any other step; any other value is a schema violation (`Ono-Sendai-E0908`). For a field whose text a tool matches on exactly, such as journald's `PRIORITY` (ADR-0988)."}
     exactness: {type: "enum[exact, normalized, inferred]", nullable: true, doc: "Defaults to `exact`, or `normalized` when `unit`, `split`, `contains` or `map` applies. `inferred` must be written down (spec v0.3 §1.8)."}
 
 invocation:

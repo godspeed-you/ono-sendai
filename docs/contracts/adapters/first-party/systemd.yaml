@@ -34,7 +34,7 @@ adapters:
       kind: jsonl
     fields:
       timestamp: {from: __REALTIME_TIMESTAMP, unit: microseconds}
-      priority: {from: PRIORITY}
+      priority: {from: PRIORITY, accept: ["0", "1", "2", "3", "4", "5", "6", "7"]}
       message: {from: MESSAGE}
       identifier: {from: SYSLOG_IDENTIFIER}
       unit: {from: _SYSTEMD_UNIT}

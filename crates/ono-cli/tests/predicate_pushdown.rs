@@ -741,3 +741,40 @@ fn should_not_see_an_entry_without_a_canonical_priority_when_the_ceiling_is_hand
     );
     assert_eq!(on.stdout, off.stdout);
 }
+
+#[test]
+fn should_report_an_entry_whose_priority_is_not_one_canonical_digit_rather_than_read_it_as_one() {
+    // ADR-0980 "Consequences": journald's `--priority` keeps an entry only when its `PRIORITY` is
+    // exactly one of the digits of the range, so the bound of the equivalence covers an entry
+    // "outside the canonical digits" as well as one without the field — and it holds only if
+    // reading such an entry reports it. Read as a number, `03`, `+2` and `-1` passed for 3, 2
+    // and -1: `where priority <= 3` kept them without the handover and journalctl withheld them
+    // with it, so the two answers differed in records, silently (release review of v0.6.4).
+    for text in ["03", "+2", "-1", " 3", "8"] {
+        let mut lines: Vec<String> = ENTRIES
+            .iter()
+            .enumerate()
+            .map(|(position, entry)| json_line(position, entry))
+            .collect();
+        lines.insert(
+            3,
+            format!(
+                r#"{{"__CURSOR":"odd","__REALTIME_TIMESTAMP":"1700000000000000","_BOOT_ID":"0c0ffee0000000000000000000000001","_HOSTNAME":"fixture-host","PRIORITY":"{text}","SYSLOG_IDENTIFIER":"fixture","MESSAGE":"odd priority"}}"#
+            ),
+        );
+        let journal = Journal::of(&lines);
+        let pipeline = "get journal | where priority <= 3 | to json";
+
+        let off = journal.run_without_pushdown(pipeline);
+        assert!(
+            !off.success && off.stderr.contains("Ono-Sendai-E0908"),
+            "a PRIORITY of `{text}` is no syslog priority journald would match, so reading it \
+             reports it rather than reading it as a number, got {off:?}"
+        );
+        let on = journal.run(pipeline);
+        assert!(
+            on.success && !on.stdout.contains("\"odd\""),
+            "with the handover journalctl withholds the entry, as ADR-0980 states, got {on:?}"
+        );
+    }
+}

@@ -437,6 +437,8 @@ pub struct FieldMap {
     #[serde(default)]
     map: Option<BTreeMap<String, serde_yaml_ng::Value>>,
     #[serde(default)]
+    accept: Option<Vec<String>>,
+    #[serde(default)]
     exactness: Option<Exactness>,
 }
 
@@ -838,6 +840,12 @@ impl FieldMap {
     #[must_use]
     pub fn map(&self) -> Option<&BTreeMap<String, serde_yaml_ng::Value>> {
         self.map.as_ref()
+    }
+
+    /// The only texts the tool's value may be, where the mapping closes it (ADR-0988).
+    #[must_use]
+    pub fn accept(&self) -> Option<&[String]> {
+        self.accept.as_deref()
     }
 
     /// The exactness, defaulted as the contract says.
