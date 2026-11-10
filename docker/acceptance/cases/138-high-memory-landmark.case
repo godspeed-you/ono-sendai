@@ -30,7 +30,7 @@ run: |
   prove h1 "at the default a sleeping process is no high_memory landmark" \
     "! ono -c 'enter process/$idle; look --json' | grep -qF '\"reason\":\"high_memory\"'"
   prove h2 "with the threshold at zero it is, and the evidence names the share and the budget" \
-    "ONO_SPATIAL_LANDMARKS_HIGH_MEMORY=0 ono -c 'enter process/$idle; look' | grep -qE 'sleep +high memory — memory [0-9.]+ [KMG]iB, [0-9]+% of [0-9.]+ [KMGT]iB'"
+    "ONO_SPATIAL_LANDMARKS_HIGH_MEMORY=0 ono -c 'enter process/$idle; look' | grep -qE 'sleep +high memory — memory [0-9.]+ [KMG]iB, [0-9]+% of host memory [0-9.]+ [KMGT]iB'"
 
   kill "$idle" 2>/dev/null || true
   wait 2>/dev/null || true

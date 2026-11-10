@@ -394,6 +394,31 @@ fn should_promote_a_process_holding_a_large_share_of_the_hosts_memory() {
 }
 
 #[test]
+fn should_name_the_host_as_what_a_memory_share_is_measured_against_when_it_is_shown() {
+    // §26.2 allows the budget to be the host's or a cgroup's, and this build states only the
+    // host's (ADR-0978). A share shown without its denominator reads as the workload's own limit
+    // inside a container place, where the host is many times larger, so the evidence says which
+    // budget it divided by.
+    const GIB: u64 = 1 << 30;
+    let host = LandmarkThresholds {
+        memory_budget: Some(16 * GIB),
+        ..LandmarkThresholds::default()
+    };
+    let heavy = process_holding(204, 6 * GIB);
+    let evidence: Vec<String> =
+        landmarks_of_object(&place_of(&heavy), Some(&heavy), &host, &scope(), LATER)
+            .iter()
+            .filter(|landmark| landmark.reason() == LandmarkReason::HighMemory)
+            .map(|landmark| landmark.evidence().to_owned())
+            .collect();
+    assert_eq!(
+        evidence,
+        vec!["memory 6.00 GiB, 38% of host memory 16.00 GiB".to_owned()],
+        "the evidence names the host as the budget the share is of"
+    );
+}
+
+#[test]
 fn should_not_call_memory_high_when_nobody_stated_a_budget_to_measure_it_against() {
     // §2.17: a landmark whose evidence is unavailable is an unknown, not a landmark. Without a
     // budget there is no share, however many bytes the process holds.

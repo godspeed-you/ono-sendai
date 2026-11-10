@@ -114,7 +114,9 @@ pub fn landmarks_of(
         ));
     }
     // §26.2 "high memory relative to host/cgroup budget": resident memory over the budget a
-    // provider stated. No budget, no share, no landmark (§2.17).
+    // provider stated. No budget, no share, no landmark (§2.17). The budget is the host's
+    // memory — no provider states a cgroup's yet (ADR-0978) — and the evidence says so, since a
+    // share of the host read inside a container place would pass for the workload's own limit.
     if let Some(budget) = thresholds.memory_budget.filter(|budget| *budget > 0)
         && let Some(held) = bytes(record, "memory")
     {
@@ -128,7 +130,7 @@ pub fn landmarks_of(
                 id.clone(),
                 LandmarkReason::HighMemory,
                 format!(
-                    "memory {}, {share:.0}% of {}",
+                    "memory {}, {share:.0}% of host memory {}",
                     ono_value::ByteSize::from_bytes(held),
                     ono_value::ByteSize::from_bytes(u128::from(budget)),
                 ),

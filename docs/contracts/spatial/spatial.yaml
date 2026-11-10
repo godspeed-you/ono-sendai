@@ -341,7 +341,7 @@ settings:
   - key: spatial.landmarks.high_memory
     type: int
     default: 25
-    doc: The share of the host or cgroup memory budget that makes a `high_memory` landmark (§26.3).
+    doc: The share of the host's memory that makes a `high_memory` landmark (§26.3); a cgroup's memory limit is not read (ADR-0978).
   - key: spatial.landmarks.restart_loop
     type: int
     default: 3

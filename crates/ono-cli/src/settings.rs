@@ -352,7 +352,7 @@ pub const CATALOGUE: &[SettingSpec] = &[
     SettingSpec {
         key: "spatial.landmarks.high_memory",
         ty: SettingType::Int,
-        description: "The share of the host or cgroup memory budget, in percent, that makes a `high_memory` landmark (spec v0.4 §26.3).",
+        description: "The share of the host's memory, in percent, that makes a `high_memory` landmark (spec v0.4 §26.3); a cgroup's memory limit is not read.",
         default: DefaultValue::Int(25),
         range: None,
     },
