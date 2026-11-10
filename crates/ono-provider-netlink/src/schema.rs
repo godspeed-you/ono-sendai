@@ -90,6 +90,63 @@ pub fn interface_schema() -> Arc<Schema> {
     }))
 }
 
+/// `ono.interface-address/1` — one address configured on an interface (v0.3 §1.33).
+///
+/// The identity is the interface index and the address: the same address can sit on two
+/// interfaces, and an interface's name can change under it.
+#[must_use]
+pub fn address_schema() -> Arc<Schema> {
+    static SCHEMA: OnceLock<Arc<Schema>> = OnceLock::new();
+    Arc::clone(SCHEMA.get_or_init(|| {
+        build(
+            Schema::builder(
+                SchemaId::new("ono.interface-address", 1),
+                "InterfaceAddress",
+            )
+            .doc("One address configured on a network interface.")
+            .field(
+                FieldDef::new("interface", FieldType::Ref(SchemaId::new("ono.interface", 1)))
+                    .required()
+                    .with_doc("The interface the address belongs to, by name."),
+            )
+            .field(
+                FieldDef::new("index", FieldType::Int)
+                    .required()
+                    .with_doc("The interface's index, which is its stable identity (spec §23.2)."),
+            )
+            .field(
+                FieldDef::new("family", FieldType::enumeration(&["inet", "inet6"]))
+                    .required()
+                    .with_doc("The address family."),
+            )
+            .field(
+                FieldDef::new("address", FieldType::IpNetwork)
+                    .required()
+                    .with_doc("The address with its prefix length."),
+            )
+            .field(
+                FieldDef::new("scope", FieldType::String)
+                    .required()
+                    .with_doc(
+                        "The address scope as the kernel names it — `global`, `link`, `host`, \
+                         `site`.",
+                    ),
+            )
+            .field(
+                FieldDef::new("label", FieldType::String)
+                    .nullable()
+                    .with_doc("The address label, where one is set; null otherwise."),
+            )
+            .field(FieldDef::new("dynamic", FieldType::Bool).nullable().with_doc(
+                "Whether the address was configured dynamically (DHCP, SLAAC); null when the \
+                 tool does not say.",
+            ))
+            .identity(["index", "address"])
+            .default_view(["interface", "family", "address", "scope"]),
+        )
+    }))
+}
+
 /// `ono.route/1` — a routing table entry.
 #[must_use]
 pub fn route_schema() -> Arc<Schema> {
@@ -387,6 +444,7 @@ pub fn endpoint_schema() -> Arc<Schema> {
 pub fn schemas() -> Vec<Arc<Schema>> {
     vec![
         interface_schema(),
+        address_schema(),
         route_schema(),
         neighbor_schema(),
         socket_schema(),

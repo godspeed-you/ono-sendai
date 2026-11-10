@@ -25,6 +25,7 @@ async fn should_register_exactly_the_providers_the_declarations_name() {
     harness::assert_registry(&[
         ("container-engine", &["container", "image"]),
         ("linux.netlink", &["interface"]),
+        ("linux.netlink", &["address"]),
         ("linux.netlink", &["route"]),
         ("linux.netlink", &["neighbor"]),
         ("linux.sock-diag", &["socket", "connection"]),
@@ -38,6 +39,8 @@ async fn should_register_exactly_the_providers_the_declarations_name() {
         ("linux.mountinfo", &["mount", "filesystem"]),
         ("linux.sysfs", &["device"]),
         ("linux.kernel", &["kernel"]),
+        ("linux.cgroups", &["cgroup"]),
+        ("linux.namespaces", &["namespace"]),
         ("linux.resolver", &["dns"]),
         ("ono.probe", &["port"]),
         ("systemd", &["service"]),
@@ -196,6 +199,64 @@ async fn should_answer_for_interface_within_its_contract_when_linux_netlink_serv
         exercise: harness::Exercise::Enumerable,
         schemas: &["ono.interface/1"],
         identity_strategy: Some("stable"),
+    }).await;
+}
+
+/// Interface addresses, one record per address from rtnetlink (RTM_GETADDR), named through the link dump (ADR-0971). The read path only: an address is added and removed through the interface target.
+#[rustfmt::skip]
+#[tokio::test]
+async fn should_advertise_exactly_what_linux_netlink_serving_address_declares() {
+    harness::assert_surface(&harness::Surface {
+        provider: "linux.netlink",
+        targets: &["address"],
+        capabilities: &[
+            harness::CapabilityClaim { id: "address.list", risk: "read", elevation: "none" },
+        ],
+        schemas: &["ono.interface-address/1"],
+        identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
+    }).await;
+}
+
+#[rustfmt::skip]
+#[tokio::test]
+async fn should_shape_ono_interface_address_1_the_way_linux_netlink_serving_address_declares_it() {
+    harness::assert_schema_contract(&harness::SchemaContract {
+        provider: "linux.netlink",
+        targets: &["address"],
+        schema: "ono.interface-address/1",
+        identity: &["index", "address"],
+        identity_fallback: &[],
+        default_view: &["interface", "family", "address", "scope"],
+        fields: &[
+            harness::FieldContract { name: "interface", ty: "ref<ono.interface/1>", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "index", ty: "int", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "family", ty: "enum<inet|inet6>", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "address", ty: "ipnetwork", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "scope", ty: "string", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "label", ty: "string", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "dynamic", ty: "bool", required: false, nullable: true, unit: None },
+        ],
+    }).await;
+}
+
+#[rustfmt::skip]
+#[tokio::test]
+async fn should_answer_for_address_within_its_contract_when_linux_netlink_serving_address_is_asked() {
+    harness::assert_target_conforms(&harness::TargetCase {
+        provider: "linux.netlink",
+        targets: &["address"],
+        target: "address",
+        exercise: harness::Exercise::Enumerable,
+        schemas: &["ono.interface-address/1"],
+        identity_strategy: Some("lifetime"),
     }).await;
 }
 
@@ -1789,6 +1850,119 @@ async fn should_answer_for_kernel_within_its_contract_when_linux_kernel_is_asked
     }).await;
 }
 
+/// Control groups, one record per directory of the unified hierarchy under /sys/fs/cgroup (or /sys/fs/cgroup/unified on a hybrid host), keyed on the path /proc/<pid>/cgroup uses (ADR-0971). Unavailable where no unified hierarchy is mounted.
+#[rustfmt::skip]
+#[tokio::test]
+async fn should_advertise_exactly_what_linux_cgroups_declares() {
+    harness::assert_surface(&harness::Surface {
+        provider: "linux.cgroups",
+        targets: &["cgroup"],
+        capabilities: &[
+            harness::CapabilityClaim { id: "cgroup.read", risk: "read", elevation: "none" },
+        ],
+        schemas: &["ono.cgroup/1"],
+        identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
+    }).await;
+}
+
+#[rustfmt::skip]
+#[tokio::test]
+async fn should_shape_ono_cgroup_1_the_way_linux_cgroups_declares_it() {
+    harness::assert_schema_contract(&harness::SchemaContract {
+        provider: "linux.cgroups",
+        targets: &["cgroup"],
+        schema: "ono.cgroup/1",
+        identity: &["path"],
+        identity_fallback: &[],
+        default_view: &["path", "name", "parent"],
+        fields: &[
+            harness::FieldContract { name: "path", ty: "path", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "name", ty: "string", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "parent", ty: "path", required: false, nullable: true, unit: None },
+        ],
+    }).await;
+}
+
+#[rustfmt::skip]
+#[tokio::test]
+async fn should_answer_for_cgroup_within_its_contract_when_linux_cgroups_is_asked() {
+    harness::assert_target_conforms(&harness::TargetCase {
+        provider: "linux.cgroups",
+        targets: &["cgroup"],
+        target: "cgroup",
+        exercise: harness::Exercise::Enumerable,
+        schemas: &["ono.cgroup/1"],
+        identity_strategy: Some("lifetime"),
+    }).await;
+}
+
+/// Kernel namespaces, aggregated by kind and inode from the /proc/<pid>/ns links of every process the caller can see into (ADR-0971). An unprivileged caller therefore sees the namespaces its own processes are in, as `lsns` shows them; where links were refused and none could be read the answer is permission_denied, never an empty list (v0.4 §42.4).
+#[rustfmt::skip]
+#[tokio::test]
+async fn should_advertise_exactly_what_linux_namespaces_declares() {
+    harness::assert_surface(&harness::Surface {
+        provider: "linux.namespaces",
+        targets: &["namespace"],
+        capabilities: &[
+            harness::CapabilityClaim { id: "namespace.read", risk: "read", elevation: "none" },
+        ],
+        schemas: &["ono.namespace/1"],
+        identity_token: None,
+        temporal: harness::TemporalClaim {
+            current_snapshot: true,
+            live_events: false,
+            historical_query: false,
+            exhaustive_events: false,
+            causal_tokens: false,
+            checkpointable: true,
+        },
+    }).await;
+}
+
+#[rustfmt::skip]
+#[tokio::test]
+async fn should_shape_ono_namespace_1_the_way_linux_namespaces_declares_it() {
+    harness::assert_schema_contract(&harness::SchemaContract {
+        provider: "linux.namespaces",
+        targets: &["namespace"],
+        schema: "ono.namespace/1",
+        identity: &["id"],
+        identity_fallback: &[],
+        default_view: &["id", "type", "processes", "pid", "user", "command"],
+        fields: &[
+            harness::FieldContract { name: "id", ty: "int", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "type", ty: "string", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "processes", ty: "int", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "pid", ty: "int", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "parent_pid", ty: "int", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "user", ty: "string", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "uid", ty: "int", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "command", ty: "string", required: false, nullable: true, unit: None },
+        ],
+    }).await;
+}
+
+#[rustfmt::skip]
+#[tokio::test]
+async fn should_answer_for_namespace_within_its_contract_when_linux_namespaces_is_asked() {
+    harness::assert_target_conforms(&harness::TargetCase {
+        provider: "linux.namespaces",
+        targets: &["namespace"],
+        target: "namespace",
+        exercise: harness::Exercise::Enumerable,
+        schemas: &["ono.namespace/1"],
+        identity_strategy: Some("lifetime"),
+    }).await;
+}
+
 /// Names and addresses, through the C library's resolver (getaddrinfo / getnameinfo) — NSS, so /etc/hosts, DNS, mDNS and LDAP all answer, exactly as they do for every other program.
 #[rustfmt::skip]
 #[tokio::test]
@@ -2140,6 +2314,7 @@ async fn should_account_for_every_capability_the_declarations_name() {
         harness::Account { provider: "container-engine", targets: &["container", "image"], capability: "container.manage", risk: "mutate", through: harness::Through::Command(&["ono.container.remove", "ono.container.restart", "ono.container.set", "ono.container.start", "ono.container.stop"]) },
         harness::Account { provider: "linux.netlink", targets: &["interface"], capability: "interface.list", risk: "read", through: harness::Through::Snapshot("interface") },
         harness::Account { provider: "linux.netlink", targets: &["interface"], capability: "interface.set", risk: "mutate", through: harness::Through::Command(&["ono.interface.add", "ono.interface.remove", "ono.interface.set", "ono.interface.start", "ono.interface.stop"]) },
+        harness::Account { provider: "linux.netlink", targets: &["address"], capability: "address.list", risk: "read", through: harness::Through::Snapshot("address") },
         harness::Account { provider: "linux.netlink", targets: &["route"], capability: "route.list", risk: "read", through: harness::Through::Snapshot("route") },
         harness::Account { provider: "linux.netlink", targets: &["route"], capability: "route.set", risk: "mutate", through: harness::Through::Command(&["ono.route.add", "ono.route.remove", "ono.route.set"]) },
         harness::Account { provider: "linux.netlink", targets: &["neighbor"], capability: "neighbor.list", risk: "read", through: harness::Through::Snapshot("neighbor") },
@@ -2198,6 +2373,8 @@ async fn should_account_for_every_capability_the_declarations_name() {
         harness::Account { provider: "linux.mountinfo", targets: &["mount", "filesystem"], capability: "mount.manage", risk: "mutate", through: harness::Through::Command(&["ono.filesystem.mount", "ono.filesystem.unmount", "ono.mount.add", "ono.mount.remove", "ono.mount.set", "ono.mount.start", "ono.mount.stop"]) },
         harness::Account { provider: "linux.sysfs", targets: &["device"], capability: "device.list", risk: "read", through: harness::Through::Snapshot("device") },
         harness::Account { provider: "linux.kernel", targets: &["kernel"], capability: "kernel.read", risk: "read", through: harness::Through::Snapshot("kernel") },
+        harness::Account { provider: "linux.cgroups", targets: &["cgroup"], capability: "cgroup.read", risk: "read", through: harness::Through::Snapshot("cgroup") },
+        harness::Account { provider: "linux.namespaces", targets: &["namespace"], capability: "namespace.read", risk: "read", through: harness::Through::Snapshot("namespace") },
         harness::Account { provider: "linux.resolver", targets: &["dns"], capability: "dns.resolve", risk: "read", through: harness::Through::Snapshot("dns") },
         harness::Account { provider: "ono.probe", targets: &["port"], capability: "port.probe", risk: "observe", through: harness::Through::Command(&["ono.port.test"]) },
         harness::Account { provider: "systemd", targets: &["service"], capability: "service.list", risk: "read", through: harness::Through::Snapshot("service") },

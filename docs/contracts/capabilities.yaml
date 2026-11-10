@@ -202,6 +202,10 @@ provider_capabilities:
     summary: Enumerate ARP and NDP neighbour entries.
     risk: read
     elevation: none
+  - id: address.list
+    summary: Enumerate the addresses configured on network interfaces.
+    risk: read
+    elevation: none
   - id: dns.resolve
     summary: Perform an explicit name resolution.
     risk: read
@@ -240,6 +244,14 @@ provider_capabilities:
     elevation: none
   - id: kernel.read
     summary: Read the running kernel's release, the operating system it boots and the uptime.
+    risk: read
+    elevation: none
+  - id: cgroup.read
+    summary: Enumerate the control groups of the unified cgroup hierarchy.
+    risk: read
+    elevation: none
+  - id: namespace.read
+    summary: Enumerate kernel namespaces and the processes the caller can see in them.
     risk: read
     elevation: none
   - id: env.set

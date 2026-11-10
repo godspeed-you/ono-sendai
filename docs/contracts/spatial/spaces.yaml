@@ -174,11 +174,9 @@ spaces:
     commands: [look, map, near, enter, find place, pin]
     summary_fields: [count]
     doc: >-
-      The cgroup tree §7.2 requires access to. No provider answers `get cgroup`: the control
-      group path is a fact `/proc/<pid>/cgroup` carries and `ono.process-detail/1` reports, and
-      the spatial bridge composes an `ono.cgroup/1` place from it (§16.3, ADR-0135). A process
-      that nobody has looked at closely yet leaves the collection empty rather than absent
-      (§4, §35.2).
+      The cgroup tree §7.2 requires access to, listed by `get cgroup` from the unified
+      hierarchy (§16.3, ADR-0971). A process's `cgroup` exit leads to the same place: the path
+      `/proc/<pid>/cgroup` carries is the key the provider's record has (ADR-0135).
 
   - id: compute.workloads
     label: workloads
@@ -219,7 +217,9 @@ spaces:
     enterable: true
     commands: [look, map, near, enter, find place, pin]
     summary_fields: [count, ipv4, ipv6]
-    doc: The addresses configured on the interfaces of this host (§14.1).
+    doc: >-
+      The addresses configured on the interfaces of this host (§14.1), one place per address
+      from `get address` (ADR-0971).
 
   - id: network.routes
     label: routes
@@ -282,8 +282,10 @@ spaces:
     commands: [look, map, near, enter, find place, pin]
     summary_fields: [count]
     doc: >-
-      Network namespaces, which are scope boundaries as well as objects: crossing one is
-      visible in the trail and the prompt (§16.2, §2.18).
+      The kernel namespaces `get namespace` lists, of every kind and told apart by `type`
+      (ADR-0971): the place a process's `namespaces` exit leads to has one canonical
+      collection, and it is this one. A network namespace is a scope boundary as well as an
+      object: crossing one is visible in the trail and the prompt (§16.2, §2.18).
 
   # --- STORAGE (§7.4) -------------------------------------------------------------------------
   - id: storage.filesystems

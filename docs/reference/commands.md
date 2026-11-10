@@ -3668,6 +3668,29 @@ get neighbor
 get neighbor | where state == reachable
 ```
 
+### `get address`
+
+Enumerate the addresses configured on network interfaces, one record each.
+
+| | |
+|---|---|
+| id | `ono.address.get` |
+| stability | stable |
+| phase | C |
+| input | `null` |
+| output | `stream<ono.interface-address/1>` |
+| provider capability | `address.list` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
+
+**Examples**
+
+```text
+get address
+get address | where family == "inet6"
+```
+
 ### `resolve dns`
 
 Perform an explicit DNS resolution.
@@ -6972,6 +6995,54 @@ The running kernel, the operating system it boots, and how long it has been up.
 
 ```text
 get kernel
+```
+
+### `get cgroup`
+
+Enumerate the control groups of the unified hierarchy.
+
+| | |
+|---|---|
+| id | `ono.cgroup.get` |
+| stability | stable |
+| phase | C |
+| input | `null` |
+| output | `stream<ono.cgroup/1>` |
+| provider capability | `cgroup.read` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
+| acquisition | scope `local`, cost `moderate` (ADR-0947) |
+
+**Examples**
+
+```text
+get cgroup
+get cgroup | where parent == null
+```
+
+### `get namespace`
+
+Enumerate the kernel namespaces the caller's view of the process table reaches.
+
+| | |
+|---|---|
+| id | `ono.namespace.get` |
+| stability | stable |
+| phase | C |
+| input | `null` |
+| output | `stream<ono.namespace/1>` |
+| provider capability | `namespace.read` |
+| privilege | conditional |
+| arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
+| acquisition | scope `local`, cost `moderate` (ADR-0947) |
+
+**Examples**
+
+```text
+get namespace
+get namespace | where type == "net"
 ```
 
 ## temporal

@@ -104,6 +104,14 @@ targets:
     summary: A network interface with its addresses, state and counters.
     schema: ono.interface/1
     phase: C
+  - id: ono.target.address
+    name: address
+    category: system
+    # §8.1 names no `address`; v0.3 §1.33 defines the record and v0.4 §7.3 makes the collection
+    # mandatory, so it is a target of its own (ADR-0971, with the deviation recorded there).
+    summary: An address configured on a network interface.
+    schema: ono.interface-address/1
+    phase: C                   # delivered in v0.6.4 (#206, ADR-0971): `get address`
   - id: ono.target.route
     name: route
     category: system
@@ -206,15 +214,15 @@ targets:
     summary: >-
       A kernel namespace. Spec §8.3 lists a Kubernetes namespace under the same word; the two
       are distinguished by provider qualification — `get linux:namespace` and `get k8s:namespace`.
-    schema: null
-    phase: planned
+    schema: ono.namespace/1
+    phase: C                   # delivered in v0.6.4 (#206, ADR-0971): `get namespace`
     provider_qualified: true
   - id: ono.target.cgroup
     name: cgroup
     category: system
-    summary: A control group and its resource accounting.
-    schema: null
-    phase: planned
+    summary: A control group and its place in the hierarchy.
+    schema: ono.cgroup/1
+    phase: C                   # delivered in v0.6.4 (#206, ADR-0971): `get cgroup`
   - id: ono.target.journal
     name: journal
     category: system

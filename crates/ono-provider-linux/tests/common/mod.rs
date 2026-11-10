@@ -420,3 +420,9 @@ impl Signals for RecordingSignals {
         Ok(())
     }
 }
+
+/// Whether the suite is running with the privileges that make mode bits meaningless.
+pub fn is_root() -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    std::fs::metadata("/proc/self").is_ok_and(|meta| meta.uid() == 0)
+}

@@ -1,0 +1,63 @@
+# Three collections of the spatial geography answered `unsupported` because no provider served a
+# cgroup, a namespace or an address as an object (#206). ADR-0971 makes each a provider target —
+# `get cgroup` over the unified hierarchy, `get namespace` over `/proc/<pid>/ns`, `get address`
+# over the netlink address dump — and the collections `compute/cgroups`, `network/namespaces` and
+# `network/addresses` take their members from them (v0.2 §8.1; v0.4 §7.3, §16.3, §35.2).
+#
+# The container is the smallest host that has all three: its cgroup namespace shows one hierarchy
+# whose root is `/`, its unprivileged user can read the namespaces of its own processes, and with
+# networking disabled the loopback interface still carries `127.0.0.1/8`.
+case: cgroups, namespaces and addresses are objects, and the collections that hold them list members
+timeout: 90
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  echo "== the three targets are ordinary pipelines (v0.2 §8.1, ADR-0971) =="
+  ono -c 'get cgroup | where parent == null | select path name parent | to json'
+  ono -c 'get namespace | where type == "net" | select type | to json'
+  ono -c 'get address | where interface == "lo" and family == "inet" | select interface address family scope | to json'
+  prove t1 "a namespace record counts the processes in it and names the lowest pid" \
+    'test "$(ono -c "get namespace | where type == \"pid\" | where processes >= 1 and pid >= 1 | count | to json" | tail -1)" != "[0]"'
+
+  echo "== the collections list members instead of answering unsupported (v0.4 §7.3, §35.2) =="
+  for place in "compute cgroups" "network namespaces" "network addresses"; do
+    set -- $place
+    prove "c-$2" "$1/$2 lists members" \
+      "test \"\$(ono -c 'enter $1; enter $2; near --all | count | to json' | tail -1)\" != '[0]' &&
+       ! ono -c 'enter $1; enter $2; look --json' | grep -qF '\"state\":\"unsupported\"'"
+    prove "n-$2" "$1 counts its $2 (§24)" \
+      "ono -c 'enter $1; look' | grep -qE '^ +$2 +[1-9]'"
+  done
+
+  echo "== an interface leads to the addresses it carries (interface.has_address) =="
+  prove i1 "the loopback interface's addresses exit is a list that holds 127.0.0.1/8" \
+    'ono -c "enter network; enter interfaces; enter lo; near addresses | select display_name | to text" | grep -qF "127.0.0.1/8"'
+
+  echo "== the place a process leads to is the member of the collection, and it is alive =="
+  prove p1 "the cgroup a process is in is a live place after a look (ADR-0971)" \
+    '! ono -c "enter process \$\$; follow cgroup; look --json" | grep -qF "\"state\":\"removed\""'
+  echo done=ok
+exit: 0
+stdout-contains: [{"path":"/","name":"/","parent":null}]
+stdout-contains: [{"type":"net"}]
+stdout-contains: [{"interface":"lo","address":"127.0.0.1/8","family":"inet","scope":"host"}]
+stdout-contains: PROVED t1
+stdout-contains: PROVED c-cgroups
+stdout-contains: PROVED c-namespaces
+stdout-contains: PROVED c-addresses
+stdout-contains: PROVED n-cgroups
+stdout-contains: PROVED n-namespaces
+stdout-contains: PROVED n-addresses
+stdout-contains: PROVED i1
+stdout-contains: PROVED p1
+stdout-contains: done=ok
+stdout-not-contains: FAILED

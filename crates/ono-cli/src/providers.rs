@@ -81,6 +81,7 @@ pub fn registry_with_tables(
     ));
 
     registry.register(Arc::new(ono_provider_netlink::InterfaceProvider::new()));
+    registry.register(Arc::new(ono_provider_netlink::AddressProvider::new()));
     registry.register(Arc::new(ono_provider_netlink::RouteProvider::new()));
     registry.register(Arc::new(ono_provider_netlink::NeighborProvider::new()));
     registry.register(Arc::new(ono_provider_netlink::SocketProvider::new()));

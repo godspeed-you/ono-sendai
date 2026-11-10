@@ -78,6 +78,10 @@ pub(crate) const IFLA_INFO_KIND: u16 = 1;
 // `linux/if_addr.h`.
 pub(crate) const IFA_ADDRESS: u16 = 1;
 pub(crate) const IFA_LOCAL: u16 = 2;
+pub(crate) const IFA_LABEL: u16 = 3;
+pub(crate) const IFA_FLAGS: u16 = 8;
+/// `IFA_F_PERMANENT`: the address was configured by hand and has no lifetime.
+pub(crate) const IFA_F_PERMANENT: u32 = 0x80;
 
 // `linux/rtnetlink.h`: the `RTA_*` attributes read here.
 pub(crate) const RTA_DST: u16 = 1;
@@ -194,6 +198,20 @@ pub(crate) fn route_scope(code: u8) -> Option<&'static str> {
         254 => Some("host"),
         255 => Some("nowhere"),
         _ => None,
+    }
+}
+
+/// The scope of an address, in the words `ip address` uses for `RT_SCOPE_*`: an address the
+/// whole network may route to is `global` where a route with the same scope byte is `universe`.
+pub(crate) fn address_scope(code: u8) -> String {
+    match code {
+        0 => "global".to_owned(),
+        200 => "site".to_owned(),
+        253 => "link".to_owned(),
+        254 => "host".to_owned(),
+        255 => "nowhere".to_owned(),
+        // A scope between the named ones is an administrator's own; its number is its name.
+        other => other.to_string(),
     }
 }
 

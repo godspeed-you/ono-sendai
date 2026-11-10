@@ -131,6 +131,24 @@ commands:
       - get neighbor
       - get neighbor | where state == reachable
 
+  - id: ono.address.get
+    verb: get
+    target: address
+    summary: Enumerate the addresses configured on network interfaces, one record each.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.interface-address/1>
+    provider_capability: address.list
+    selectors: []
+    options: []
+    privilege: none
+    streaming: true
+    phase: C
+    examples:
+      - get address
+      - get address | where family == "inet6"
+
   - id: ono.dns.resolve
     verb: resolve
     target: dns

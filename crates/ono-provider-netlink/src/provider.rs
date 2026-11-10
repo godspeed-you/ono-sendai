@@ -18,12 +18,12 @@ use ono_provider_api::{
 use ono_value::{ErrorValue, RecordValue, Schema, Value};
 
 use crate::decoded::{Decoded, Item};
-use crate::interface::{InterfaceNames, decode_interfaces};
+use crate::interface::{InterfaceNames, decode_addresses, decode_interfaces};
 use crate::neighbor::decode_neighbors;
 use crate::owners::SocketOwners;
 use crate::route::decode_routes;
 use crate::schema::{
-    endpoint_schema, interface_schema, neighbor_schema, route_schema, socket_schema,
+    address_schema, endpoint_schema, interface_schema, neighbor_schema, route_schema, socket_schema,
 };
 use crate::socket::{
     SocketProtocol, decode_inet_sockets, decode_unix_sockets, inet_sockets, unix_sockets,
@@ -61,6 +61,18 @@ pub struct InterfaceProvider;
 
 impl InterfaceProvider {
     /// A provider reading this machine's interfaces.
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+/// The addresses configured on the interfaces, one object each, from `RTM_GETADDR`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AddressProvider;
+
+impl AddressProvider {
+    /// A provider reading this machine's addresses.
     #[must_use]
     pub fn new() -> Self {
         Self
@@ -259,6 +271,44 @@ impl Provider for NeighborProvider {
 
     async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
         references(read_on_a_blocking_thread(read_neighbors).await?, selector)
+    }
+}
+
+#[async_trait::async_trait]
+impl Provider for AddressProvider {
+    fn id(&self) -> &str {
+        crate::NETLINK_PROVIDER
+    }
+
+    fn targets(&self) -> &[&str] {
+        &["address"]
+    }
+
+    fn schemas(&self) -> Vec<Arc<Schema>> {
+        vec![address_schema()]
+    }
+
+    fn capabilities(&self) -> Vec<Capability> {
+        vec![Capability::new("address.list", Risk::Read)]
+    }
+
+    fn availability(&self) -> Availability {
+        route_availability()
+    }
+
+    fn temporal(&self) -> TemporalCapabilities {
+        // The kernel pushes address changes on `RTMGRP_IPV4_IFADDR`, and the interface target
+        // subscribes to it. This target reads the table and joins no group, and a capability the
+        // code does not use is not a capability (§21.1).
+        SNAPSHOT_TABLE
+    }
+
+    fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
+        stream(query.clone(), |_| read_addresses())
+    }
+
+    async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
+        references(read_on_a_blocking_thread(read_addresses).await?, selector)
     }
 }
 
@@ -561,6 +611,14 @@ fn read_interfaces() -> Result<Decoded, ErrorValue> {
     let links = socket.dump(sys::RTM_GETLINK, &link_request())?;
     let addresses = socket.dump(sys::RTM_GETADDR, &address_request())?;
     Ok(decode_interfaces(&links, &addresses))
+}
+
+/// The same two dumps, with every address an object of its own (ADR-0971).
+fn read_addresses() -> Result<Decoded, ErrorValue> {
+    let socket = NetlinkSocket::open_route()?;
+    let links = socket.dump(sys::RTM_GETLINK, &link_request())?;
+    let addresses = socket.dump(sys::RTM_GETADDR, &address_request())?;
+    Ok(decode_addresses(&links, &addresses))
 }
 
 /// How long a multicast reader waits for the kernel before coming up for air.

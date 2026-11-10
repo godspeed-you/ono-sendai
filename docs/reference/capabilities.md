@@ -43,6 +43,7 @@ Two vocabularies that are not the same thing. A **provider capability** is what 
 | `route.watch` | observe | none | Subscribe to routing table changes. |
 | `route.set` | mutate | required | Add, remove or modify routing table entries. |
 | `neighbor.list` | read | none | Enumerate ARP and NDP neighbour entries. |
+| `address.list` | read | none | Enumerate the addresses configured on network interfaces. |
 | `dns.resolve` | read | none | Perform an explicit name resolution. |
 | `port.probe` | observe | none | Attempt a connection to a host and port and time the result. |
 | `user.list` | read | none | Enumerate user accounts. |
@@ -52,6 +53,8 @@ Two vocabularies that are not the same thing. A **provider capability** is what 
 | `session.list` | read | none | Enumerate login and seat sessions. |
 | `env.read` | read | none | Read environment and shell variables. |
 | `kernel.read` | read | none | Read the running kernel's release, the operating system it boots and the uptime. |
+| `cgroup.read` | read | none | Enumerate the control groups of the unified cgroup hierarchy. |
+| `namespace.read` | read | none | Enumerate kernel namespaces and the processes the caller can see in them. |
 | `env.set` | mutate | none | Set an environment or shell variable in the current scope. |
 | `mount.list` | read | none | Enumerate mounted filesystems with their structured options. |
 | `mount.watch` | observe | none | Subscribe to mount and unmount events. |

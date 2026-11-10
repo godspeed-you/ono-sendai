@@ -1,7 +1,8 @@
 # The system family: the running kernel and the operating system it boots (spec §8.1's `kernel`
 # target; ADR-0964). One record per host, from the provider `linux.kernel`, so that v0.4 §7.1's
 # `SystemPlace` has a source for `os`, `kernel` and `uptime` and the spatial layer reads nothing
-# behind the providers' backs (§2.16).
+# behind the providers' backs (§2.16). Beside it the two kernel structures §8.1 lists and every
+# process lives in: control groups and namespaces (ADR-0971).
 version: 1
 family: system
 
@@ -23,3 +24,45 @@ commands:
     phase: C
     examples:
       - get kernel
+
+  - id: ono.cgroup.get
+    verb: get
+    target: cgroup
+    summary: Enumerate the control groups of the unified hierarchy.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.cgroup/1>
+    provider_capability: cgroup.read
+    selectors: []
+    options: []
+    privilege: none
+    streaming: true
+    acquisition: {scope: local, cost: moderate}
+    phase: C
+    examples:
+      - get cgroup
+      - get cgroup | where parent == null
+
+  - id: ono.namespace.get
+    verb: get
+    target: namespace
+    summary: Enumerate the kernel namespaces the caller's view of the process table reaches.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.namespace/1>
+    provider_capability: namespace.read
+    selectors: []
+    options: []
+    # Reading another user's `/proc/<pid>/ns` needs CAP_SYS_PTRACE over that process, so an
+    # unprivileged caller sees the namespaces its own processes are in — what `lsns` shows it.
+    privilege: conditional
+    streaming: true
+    acquisition: {scope: local, cost: moderate}
+    phase: C
+    examples:
+      - get namespace
+      - get namespace | where type == "net"
+    unprivileged_examples:            # ADR-0967: the caller's own processes always answer
+      - get namespace

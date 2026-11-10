@@ -7,12 +7,15 @@ use ono_core::ErrorCode;
 use ono_value::{ByteSize, ErrorValue, IpNetwork, Value};
 
 use crate::decoded::Decoded;
-use crate::schema::interface_schema;
+use crate::schema::{address_schema, interface_schema};
 use crate::wire::{self, Frame};
 use crate::{NETLINK_PROVIDER, sys};
 
 /// Where an interface record says it came from.
 pub(crate) const SOURCE: &str = "NETLINK_ROUTE RTM_GETLINK+RTM_GETADDR";
+
+/// Where an address record says it came from.
+const ADDRESS_SOURCE: &str = "NETLINK_ROUTE RTM_GETADDR";
 
 /// The interface names the kernel gave for each index.
 ///
@@ -119,7 +122,7 @@ impl FromIterator<(u32, String)> for InterfaceNames {
 #[must_use]
 pub fn decode_interfaces(links: &[u8], addresses: &[u8]) -> Decoded {
     let mut decoded = Decoded::new();
-    let by_index = decode_addresses(addresses, &mut decoded);
+    let by_index = addresses_by_index(addresses, &mut decoded);
     let schema = interface_schema();
 
     for frame in wire::frames(links) {
@@ -205,9 +208,70 @@ pub fn decode_interfaces(links: &[u8], addresses: &[u8]) -> Decoded {
     decoded
 }
 
+/// Decodes an `RTM_GETADDR` dump into one `ono.interface-address/1` record per address, naming
+/// each interface through the `RTM_GETLINK` dump read beside it (v0.3 §1.33, ADR-0971).
+///
+/// ```
+/// use ono_provider_netlink::decode_addresses;
+/// let decoded = decode_addresses(&[], &[]);
+/// assert!(decoded.records().is_empty());
+/// assert!(decoded.errors().is_empty(), "an empty dump is not a failure");
+/// ```
+#[must_use]
+pub fn decode_addresses(links: &[u8], addresses: &[u8]) -> Decoded {
+    let mut decoded = Decoded::new();
+    let names = InterfaceNames::from_links(links);
+    let schema = address_schema();
+    for address in configured_addresses(addresses, &mut decoded) {
+        decoded.record(
+            &schema,
+            ADDRESS_SOURCE,
+            NETLINK_PROVIDER,
+            vec![
+                ("interface", names.reference(address.index)),
+                ("index", Value::Int(i128::from(address.index))),
+                ("family", Value::string(address.family)),
+                ("address", Value::IpNetwork(address.network)),
+                ("scope", Value::string(&sys::address_scope(address.scope))),
+                (
+                    "label",
+                    address
+                        .label
+                        .map_or(Value::Null, |label| Value::String(label.into())),
+                ),
+                ("dynamic", Value::Bool(!address.permanent)),
+            ],
+            Vec::new(),
+        );
+    }
+    decoded
+}
+
+/// One address as an `RTM_NEWADDR` message states it.
+struct Configured {
+    index: u32,
+    family: &'static str,
+    network: IpNetwork,
+    scope: u8,
+    label: Option<String>,
+    permanent: bool,
+}
+
 /// The addresses of each interface index, in the order the kernel reported them.
-fn decode_addresses(addresses: &[u8], decoded: &mut Decoded) -> BTreeMap<u32, Vec<Value>> {
+fn addresses_by_index(addresses: &[u8], decoded: &mut Decoded) -> BTreeMap<u32, Vec<Value>> {
     let mut by_index: BTreeMap<u32, Vec<Value>> = BTreeMap::new();
+    for address in configured_addresses(addresses, decoded) {
+        by_index
+            .entry(address.index)
+            .or_default()
+            .push(Value::IpNetwork(address.network));
+    }
+    by_index
+}
+
+/// Every address of an `RTM_GETADDR` dump, in the order the kernel reported them.
+fn configured_addresses(addresses: &[u8], decoded: &mut Decoded) -> Vec<Configured> {
+    let mut configured = Vec::new();
     for frame in wire::frames(addresses) {
         let message = match frame {
             Frame::Message(message) => message,
@@ -235,6 +299,8 @@ fn decode_addresses(addresses: &[u8], decoded: &mut Decoded) -> BTreeMap<u32, Ve
         }
         let family = wire::u8_at(message.payload, 0).unwrap_or(0);
         let prefix_len = wire::u8_at(message.payload, 1).unwrap_or(0);
+        let header_flags = wire::u8_at(message.payload, 2).unwrap_or(0);
+        let scope = wire::u8_at(message.payload, 3).unwrap_or(0);
         let index = wire::u32_at(message.payload, 4).unwrap_or(0);
         let attributes = message.payload.get(sys::IFADDRMSG..).unwrap_or(&[]);
 
@@ -247,15 +313,27 @@ fn decode_addresses(addresses: &[u8], decoded: &mut Decoded) -> BTreeMap<u32, Ve
         else {
             continue;
         };
+        // `wire::address` reads IPv4 and IPv6 only, so the family has one of the two names.
+        let Some(family_name) = crate::route::family_name(family) else {
+            continue;
+        };
+        // `IFA_FLAGS` carries the flags the header's single byte cannot hold and repeats the
+        // ones it can, so it is authoritative wherever the kernel sends it.
+        let flags = wire::attribute_u32(attributes, sys::IFA_FLAGS)
+            .unwrap_or_else(|| u32::from(header_flags));
         match IpNetwork::new(address, prefix_len) {
-            Ok(network) => by_index
-                .entry(index)
-                .or_default()
-                .push(Value::IpNetwork(network)),
+            Ok(network) => configured.push(Configured {
+                index,
+                family: family_name,
+                network,
+                scope,
+                label: wire::attribute(attributes, sys::IFA_LABEL).and_then(wire::text),
+                permanent: flags & sys::IFA_F_PERMANENT != 0,
+            }),
             Err(error) => decoded.fail(error),
         }
     }
-    by_index
+    configured
 }
 
 /// The eight counters every kernel reports, from `IFLA_STATS64` or from the 32-bit `IFLA_STATS`.

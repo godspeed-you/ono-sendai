@@ -39,6 +39,41 @@ providers:
 
   - id: linux.netlink
     doc: >-
+      Interface addresses, one record per address from rtnetlink (RTM_GETADDR), named through
+      the link dump (ADR-0971). The read path only: an address is added and removed through the
+      interface target.
+    targets: [address]
+    capabilities: [address.list]
+    schemas: [ono.interface-address/1]
+    conformance:
+      address: enumerable
+    temporal:
+      # The interface target subscribes to the address groups and reports a change as a change
+      # of the interface; this target reads the table as it is now and claims no more (§21.1).
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+      coverage: snapshot
+    spatial:
+      # An address is the pair of interface index and address; remove it and add it again and
+      # it is a new address with the same shape (§10.1 Tier B).
+      identity_strategy: lifetime
+      canonical_parent:
+        Address: [interface.has_address, network.addresses]
+      relationships:
+        - interface.has_address
+      freshness: on_demand
+      events: false
+      permissions: [available, empty, permission_denied]
+      cost_class: cheap
+      landmark_metrics: [scope, dynamic]
+
+  - id: linux.netlink
+    doc: >-
       Routes, from rtnetlink (RTM_GETROUTE); changed through RTM_NEWROUTE / RTM_DELROUTE,
       which need CAP_NET_ADMIN.
     targets: [route]

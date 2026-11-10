@@ -31,6 +31,7 @@ const SPATIAL_TARGETS: &[(&str, CostClass)] = &[
     ("host", CostClass::Cheap),
     ("process", CostClass::Cheap),
     ("interface", CostClass::Cheap),
+    ("address", CostClass::Cheap),
     ("mount", CostClass::Cheap),
     ("service", CostClass::Normal),
     ("socket", CostClass::Normal),
@@ -40,6 +41,8 @@ const SPATIAL_TARGETS: &[(&str, CostClass)] = &[
     ("filesystem", CostClass::Normal),
     ("device", CostClass::Normal),
     ("container", CostClass::Normal),
+    ("cgroup", CostClass::Normal),
+    ("namespace", CostClass::Normal),
     ("user", CostClass::Normal),
     ("group", CostClass::Normal),
     ("session", CostClass::Normal),
@@ -321,9 +324,9 @@ pub struct SpaceSource {
 ///
 /// `None` is the root and the four domains that are pure geography: their exits are the spaces
 /// below them, and asking a provider about "COMPUTE" would be asking about a word. A space that
-/// *does* hold objects but that no target serves — `network.addresses`, `compute.cgroups`,
-/// `network.namespaces` — answers with an empty `targets`, which is how the place stays visible
-/// and reports `unsupported` rather than an empty collection (§4, §35.2, §2.17).
+/// *does* hold objects but that no target serves — `compute.workloads` — answers with an empty
+/// `targets`, which is how the place stays visible and reports `unsupported` rather than an
+/// empty collection (§4, §35.2, §2.17).
 #[must_use]
 pub fn source_of_space(space_id: &str) -> Option<SpaceSource> {
     use CostClass::{Cheap, Expensive, Normal};
@@ -341,15 +344,15 @@ pub fn source_of_space(space_id: &str) -> Option<SpaceSource> {
         "compute.processes" => source(&["process"], &[T::Process], Cheap),
         "compute.services" => source(&["service"], &[T::Service], Normal),
         "compute.jobs" => source(&["job"], &[T::Job], Cheap),
-        "compute.cgroups" => source(&[], &[T::Cgroup], Normal),
+        "compute.cgroups" => source(&["cgroup"], &[T::Cgroup], Normal),
         "compute.workloads" => source(&[], &[T::Workload], Normal),
         "network.interfaces" => source(&["interface"], &[T::Interface], Cheap),
-        "network.addresses" => source(&[], &[T::Address], Cheap),
+        "network.addresses" => source(&["address"], &[T::Address], Cheap),
         "network.routes" => source(&["route"], &[T::Route], Normal),
         "network.neighbors" => source(&["neighbor"], &[T::Neighbor], Normal),
         "network.listeners" => source(&["socket"], &[T::Listener], Normal),
         "network.connections" => source(&["socket"], &[T::Connection], Normal),
-        "network.namespaces" => source(&[], &[T::Namespace], Normal),
+        "network.namespaces" => source(&["namespace"], &[T::Namespace], Normal),
         "storage.filesystems" => source(&["filesystem"], &[T::Filesystem], Normal),
         "storage.mounts" => source(&["mount"], &[T::Mount], Cheap),
         "storage.devices" => source(&["device"], &[T::BlockDevice], Normal),

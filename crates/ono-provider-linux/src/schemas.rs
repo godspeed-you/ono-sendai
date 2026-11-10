@@ -75,6 +75,18 @@ pub fn kernel_id() -> SchemaId {
     SchemaId::new("ono.kernel", 1)
 }
 
+/// `ono.cgroup/1` — `docs/contracts/schemas/cgroup.v1.yaml`.
+#[must_use]
+pub fn cgroup_id() -> SchemaId {
+    SchemaId::new("ono.cgroup", 1)
+}
+
+/// `ono.namespace/1` — `docs/contracts/schemas/namespace.v1.yaml`.
+#[must_use]
+pub fn namespace_id() -> SchemaId {
+    SchemaId::new("ono.namespace", 1)
+}
+
 /// Every id the Linux providers produce records of.
 #[must_use]
 pub fn ids() -> Vec<SchemaId> {
@@ -89,6 +101,8 @@ pub fn ids() -> Vec<SchemaId> {
         device_id(),
         env_var_id(),
         kernel_id(),
+        cgroup_id(),
+        namespace_id(),
     ]
 }
 

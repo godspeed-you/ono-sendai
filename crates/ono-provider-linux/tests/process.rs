@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use common::{
     FIXTURE_BOOT_ID, FIXTURE_UPTIME_SECONDS, FakeAccounts, ProcFixture, RecordingSignals,
-    StatFields, TestClock, USER_HZ, drain, expected_start, find, records,
+    StatFields, TestClock, USER_HZ, drain, expected_start, find, is_root, records,
 };
 use ono_core::ErrorCode;
 use ono_provider_api::{Action, ObjectId, Provider, Query, Selector};
@@ -643,12 +643,6 @@ fn should_declare_the_capability_ids_the_registry_defines() {
     assert!(ids.contains(&"process.list".to_owned()));
     assert!(ids.contains(&"process.inspect".to_owned()));
     assert!(ids.contains(&"process.signal".to_owned()));
-}
-
-/// Whether the suite is running with the privileges that make mode bits meaningless.
-fn is_root() -> bool {
-    use std::os::unix::fs::MetadataExt as _;
-    std::fs::metadata("/proc/self").is_ok_and(|meta| meta.uid() == 0)
 }
 
 #[tokio::test]

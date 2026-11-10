@@ -219,8 +219,24 @@ pub(crate) fn adjacent_targets(object_type: SpatialType) -> &'static [&'static s
         T::File | T::Directory => &["mount"],
         T::Mount => &["filesystem"],
         T::Filesystem => &["mount"],
-        T::Interface => &["route"],
+        // §14.2: an interface's addresses are address records that name it (ADR-0971).
+        T::Interface => &["address", "route"],
         T::User => &["group"],
+        _ => &[],
+    }
+}
+
+/// The exits of a place that the records of an adjacent target fill, by the target that fills
+/// them (§35.2).
+///
+/// An address record names the interface that carries it, so asking `address` is what answers an
+/// interface's `addresses` — with a list, with an empty list where the interface carries none,
+/// or with the provider's refusal. Without this the exit had been asked and was still called
+/// `unsupported` (ADR-0971).
+fn adjacent_labels(object_type: SpatialType) -> &'static [(&'static str, &'static str)] {
+    use SpatialType as T;
+    match object_type {
+        T::Interface => &[("address", "addresses")],
         _ => &[],
     }
 }
@@ -236,6 +252,9 @@ pub fn target_of(object_type: SpatialType) -> Option<(&'static str, &'static str
         T::Container => ("container", "id"),
         T::Socket | T::Listener | T::Connection => ("socket", "inode"),
         T::Interface => ("interface", "name"),
+        T::Address => ("address", "address"),
+        T::Cgroup => ("cgroup", "path"),
+        T::Namespace => ("namespace", "id"),
         T::Route => ("route", "destination"),
         T::Neighbor => ("neighbor", "address"),
         T::Filesystem => ("filesystem", "source"),
@@ -367,7 +386,21 @@ fn reference_value(session: &SpatialSessionState, id: &SpatialId, field: &str) -
         .identity()
         .iter()
         .position(|name| name.as_ref() == field)?;
-    reference.values().get(position).cloned()
+    let value = reference.values().get(position)?;
+    // A composed place is named by the text another record stated — a cgroup's path, a
+    // namespace's inode — while the provider that serves the object compares a selector with
+    // the value its records carry. The question is asked in the type the schema declares, or
+    // a provider that holds the object would answer that it is not there (§33.2, ADR-0971).
+    let declared = schema.field(field).map(ono_value::FieldDef::ty);
+    Some(match (declared, value) {
+        (Some(ono_value::FieldType::Path), Value::String(text)) => {
+            Value::Path(Arc::from(std::path::Path::new(text.as_ref())))
+        }
+        (Some(ono_value::FieldType::Int), Value::String(text)) => text
+            .parse::<i128>()
+            .map_or_else(|_| value.clone(), Value::Int),
+        _ => value.clone(),
+    })
 }
 
 /// Reads the relationship edges of the object at `id` and registers them (§11.2, §12–§18).
@@ -446,6 +479,19 @@ pub async fn observe(
     }
 
     let mut answered: BTreeSet<&'static str> = contributed_exits;
+    // What the adjacent targets said about the exits they fill: an answer, or why there is none.
+    for (target, label) in adjacent_labels(object_type) {
+        let Some(seen) = session.recall(target, now) else {
+            continue;
+        };
+        if seen.served {
+            answered.insert(label);
+        } else if let Some((state, detail)) = seen.refusal.clone() {
+            let (index, _) = session.absorb_with();
+            index.record_withheld(id, label, state, &detail);
+            answered.insert(label);
+        }
+    }
     // The relations a provider serves that §32.1 kept this view from spending its budget on.
     let mut declined: BTreeSet<&'static str> = BTreeSet::new();
     let providers = Arc::new(providers.clone());

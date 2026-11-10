@@ -72,13 +72,16 @@ mod transport;
 mod wire;
 
 pub use decoded::Decoded;
-pub use interface::{InterfaceNames, decode_interfaces};
+pub use interface::{InterfaceNames, decode_addresses, decode_interfaces};
 pub use neighbor::decode_neighbors;
 pub use owners::{ProcessOwner, SocketOwners};
-pub use provider::{InterfaceProvider, NeighborProvider, RouteProvider, SocketProvider};
+pub use provider::{
+    AddressProvider, InterfaceProvider, NeighborProvider, RouteProvider, SocketProvider,
+};
 pub use route::decode_routes;
 pub use schema::{
-    endpoint_schema, interface_schema, neighbor_schema, route_schema, schemas, socket_schema,
+    address_schema, endpoint_schema, interface_schema, neighbor_schema, route_schema, schemas,
+    socket_schema,
 };
 pub use socket::{SocketProtocol, count_diag_sockets, decode_inet_sockets, decode_unix_sockets};
 

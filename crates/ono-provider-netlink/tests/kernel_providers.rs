@@ -17,9 +17,11 @@ use std::net::{IpAddr, Ipv4Addr};
 
 use ono_pipeline::StreamEvent;
 use ono_provider_api::{Availability, Provider, Query, Selector};
-use ono_provider_netlink::{InterfaceProvider, NeighborProvider, RouteProvider, SocketProvider};
+use ono_provider_netlink::{
+    AddressProvider, InterfaceProvider, NeighborProvider, RouteProvider, SocketProvider,
+};
 use ono_testkit::{SkipReason, require};
-use ono_value::{RecordValue, Value};
+use ono_value::{IpNetwork, RecordValue, Value};
 
 /// Drains a provider's snapshot into the records and the errors it produced.
 async fn snapshot(
@@ -83,6 +85,30 @@ async fn should_find_a_loopback_interface_that_is_up_and_carries_localhost() {
         )),
         "loopback must carry 127.0.0.1, got {addresses:?}"
     );
+}
+
+#[tokio::test]
+async fn should_list_localhost_as_an_address_of_its_own_with_host_scope() {
+    let provider = AddressProvider::new();
+    assert_eq!(provider.availability(), Availability::Available);
+
+    let (records, errors) = snapshot(&provider, &Query::target("address")).await;
+    assert!(errors.is_empty(), "{errors:?}");
+
+    let localhost = Value::IpNetwork(IpNetwork::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8).unwrap());
+    let record = records
+        .iter()
+        .find(|record| record.get("address") == Some(&localhost))
+        .expect("every Linux carries 127.0.0.1/8 on its loopback");
+    assert_eq!(record.get("interface"), Some(&Value::String("lo".into())));
+    assert_eq!(record.get("index"), Some(&Value::Int(1)));
+    assert_eq!(record.get("family"), Some(&Value::String("inet".into())));
+    assert_eq!(record.get("scope"), Some(&Value::String("host".into())));
+    for record in &records {
+        record
+            .validate()
+            .unwrap_or_else(|error| panic!("{record:?} violates its schema: {error:?}"));
+    }
 }
 
 #[tokio::test]

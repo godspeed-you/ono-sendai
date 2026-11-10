@@ -18,6 +18,7 @@ The nouns of spec §8 — the resources a verb acts on. `schema` names the objec
 | `socket` | system | `ono.socket/1` | C | A socket with its endpoints, owning process and state. |
 | `connection` | system | `—` | C | A connection-oriented view over sockets. |
 | `interface` | system | `ono.interface/1` | C | A network interface with its addresses, state and counters. |
+| `address` | system | `ono.interface-address/1` | C | An address configured on a network interface. |
 | `route` | system | `ono.route/1` | C | A routing table entry. |
 | `neighbor` | system | `ono.neighbor/1` | C | An ARP or NDP neighbour entry. |
 | `dns` | system | `—` | C | The name-resolution service, queried explicitly rather than implicitly. |
@@ -34,8 +35,8 @@ The nouns of spec §8 — the resources a verb acts on. `schema` names the objec
 | `kernel` | system | `ono.kernel/1` | C | The running kernel, its version and its parameters. |
 | `module` | system | `—` | planned | A loaded kernel module. |
 | `container` | system | `ono.container/1` | C | A container, through an installed container provider. |
-| `namespace` | system | `—` | planned | A kernel namespace. Spec §8.3 lists a Kubernetes namespace under the same word; the two are distinguished by provider qualification — `get linux:namespace` and `get k8s:namespace`. |
-| `cgroup` | system | `—` | planned | A control group and its resource accounting. |
+| `namespace` | system | `ono.namespace/1` | C | A kernel namespace. Spec §8.3 lists a Kubernetes namespace under the same word; the two are distinguished by provider qualification — `get linux:namespace` and `get k8s:namespace`. |
+| `cgroup` | system | `ono.cgroup/1` | C | A control group and its place in the hierarchy. |
 | `journal` | system | `ono.journal-event/1` | C | The structured system journal. |
 | `log` | system | `ono.log-record/1` | C | A log source, queried as records rather than parsed as text. |
 | `port` | system | `—` | C | A transport port, as the subject of a reachability test. |

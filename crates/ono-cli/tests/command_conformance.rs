@@ -8,7 +8,7 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 126 examples run; 239 are not run, each for the reason listed at the end of this file.
+//! 131 examples run; 240 are not run, each for the reason listed at the end of this file.
 //! 51 of the examples that run may produce no value in a fresh environment, each with the reason it carries; every other one must produce at least one.
 //!
 //! Commands no example of which runs (144):
@@ -1048,6 +1048,30 @@ fn should_produce_what_ono_neighbor_get_declares_when_example_2_runs() {
     });
 }
 
+/// `get address`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_address_get_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.address.get",
+        example: "get address",
+        output: "stream<ono.interface-address/1>",
+        may_be_empty: None,
+    });
+}
+
+/// `get address | where family == "inet6"`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_address_get_declares_when_example_2_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.address.get",
+        example: "get address | where family == \"inet6\"",
+        output: "stream<ono.interface-address/1>",
+        may_be_empty: None,
+    });
+}
+
 /// `trace route 0.0.0.0/0`
 #[rustfmt::skip]
 #[test]
@@ -1492,6 +1516,42 @@ fn should_produce_what_ono_kernel_get_declares_when_example_1_runs() {
     });
 }
 
+/// `get cgroup`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_cgroup_get_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.cgroup.get",
+        example: "get cgroup",
+        output: "stream<ono.cgroup/1>",
+        may_be_empty: None,
+    });
+}
+
+/// `get cgroup | where parent == null`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_cgroup_get_declares_when_example_2_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.cgroup.get",
+        example: "get cgroup | where parent == null",
+        output: "stream<ono.cgroup/1>",
+        may_be_empty: None,
+    });
+}
+
+/// `get namespace`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_namespace_get_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.namespace.get",
+        example: "get namespace",
+        output: "stream<ono.namespace/1>",
+        may_be_empty: None,
+    });
+}
+
 /// `now`
 #[rustfmt::skip]
 #[test]
@@ -1912,6 +1972,7 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.mount.stop` `stop mount /mnt/data` — runs `ono.mount.stop`, whose verb `stop` changes the system (verbs.yaml)
 // - `ono.mount.watch` `watch mount` — runs `ono.mount.watch`, whose verb `watch` follows a live source that does not end (verbs.yaml)
 // - `ono.mount.trace` `trace mount /mnt/data` — runs `ono.mount.trace`, which declares privilege `conditional`
+// - `ono.namespace.get` `get namespace | where type == "net"` — runs `ono.namespace.get`, which declares privilege `conditional`
 // - `ono.temporal.at` `at -10m` — exempt: asks for recorded history, and a fresh shell has recorded nothing: recording is off until `start recorder` (v0.5 §10.2), which mutates.
 // - `ono.temporal.at` `at 12:17` — exempt: asks for recorded history, and a fresh shell has recorded nothing: recording is off until `start recorder` (v0.5 §10.2), which mutates.
 // - `ono.temporal.at` `at 2026-08-31T12:17:00+02:00` — exempt: asks for recorded history, and a fresh shell has recorded nothing: recording is off until `start recorder` (v0.5 §10.2), which mutates.

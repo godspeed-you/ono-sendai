@@ -231,6 +231,9 @@ declared:
   - id: "crates/ono-process/tests/terminal_control.rs::acts_as_the_shell_when_a_role_is_requested"
     category: fixture_not_applicable
     prerequisite: "the re-exec entry point is given its role in the environment by the test that drives it"
+  - id: "crates/ono-provider-linux/tests/namespace.rs::should_refuse_rather_than_answer_empty_when_every_link_is_withheld"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
   - id: "crates/ono-provider-linux/tests/process.rs::should_report_permission_denied_in_the_field_when_a_file_is_closed_to_this_user"
     category: missing_privilege
     prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"

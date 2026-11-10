@@ -1,6 +1,6 @@
 //! The Linux core providers of Ono-Sendai (spec §23, §28, §35.3).
 //!
-//! Six providers, each answering from a kernel or system interface and never from the output of
+//! Nine providers, each answering from a kernel or system interface and never from the output of
 //! a program — spec §50's last bullet and AGENTS.md §6 both forbid the latter, and `/proc`,
 //! `statvfs` and NSS make it unnecessary:
 //!
@@ -12,6 +12,9 @@
 //! | `env` | [`EnvProvider`] | the session's own bindings |
 //! | `mount`, `filesystem` | [`StorageProvider`] | `/proc/self/mountinfo` and `statvfs(3)` |
 //! | `device` | [`DeviceProvider`] | the nodes under `/dev`, `stat(2)` and `/sys/dev` |
+//! | `kernel` | [`KernelProvider`] | `/proc/sys/kernel`, `/proc/stat`, `/proc/uptime` and `os-release(5)` |
+//! | `cgroup` | [`CgroupProvider`] | the unified hierarchy under `/sys/fs/cgroup` |
+//! | `namespace` | [`NamespaceProvider`] | the links under `/proc/<pid>/ns` |
 //!
 //! # The three kinds of nothing
 //!
@@ -47,6 +50,7 @@
 
 pub mod account_tools;
 pub mod accounts;
+mod cgroups;
 mod common;
 mod device;
 mod env;
@@ -55,6 +59,7 @@ mod file_mutations;
 mod file_watch;
 mod identity;
 mod kernel;
+mod namespaces;
 mod package_sources;
 mod packages;
 mod packages_rpm;
@@ -93,11 +98,13 @@ pub mod decoders {
 
 pub use account_tools::AccountCommand;
 pub use accounts::{Accounts, GroupAccount, NSS_TIMEOUT, NssAccounts, UserAccount};
+pub use cgroups::CgroupProvider;
 pub use device::DeviceProvider;
 pub use env::{EnvBinding, EnvProvider, EnvSource};
 pub use file::FileProvider;
 pub use identity::IdentityProvider;
 pub use kernel::KernelProvider;
+pub use namespaces::NamespaceProvider;
 pub use package_sources::package_source_schema;
 pub use packages::{PACKAGE_PROVIDER_ID, PackageProvider, package_schema};
 pub use packages_rpm::{RPM_PROVIDER_ID, RpmPackageProvider};
@@ -128,6 +135,8 @@ pub fn register_with_env(registry: &mut ProviderRegistry, env: Arc<EnvProvider>)
     registry.register(Arc::new(StorageProvider::new()));
     registry.register(Arc::new(DeviceProvider::new()));
     registry.register(Arc::new(KernelProvider::new()));
+    registry.register(Arc::new(CgroupProvider::new()));
+    registry.register(Arc::new(NamespaceProvider::new()));
     // Both package databases are registered on every machine, and the registry answers with
     // the first that is available: dpkg on Debian, rpm on Red Hat and SUSE, and where neither is
     // present each says what it looked for rather than either claiming there are no packages

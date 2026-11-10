@@ -1086,32 +1086,152 @@ fn should_reconcile_an_adapted_object_with_its_native_twin_into_one_place() {
 }
 
 #[test]
-fn should_show_a_place_only_an_adapter_observed_when_standing_in_the_collection_that_holds_it() {
-    // §37.1's second sentence — "If identity cannot be safely reconciled, both objects may appear
-    // with provenance" — and ADR-0193's reading of it: "Where no provider answers, the adapted
-    // record is all there is and it appears with its own provenance." No canonical provider
-    // answers for `network.addresses`, so the addresses `ip addr` reported are all the shell has;
-    // standing in the space that holds them and being told nothing is known there is the claim
-    // §2.17 forbids.
-    let empty = ono("home; enter network; enter addresses; look --json");
-    empty.assert_success();
-    assert!(
-        rendered(&document(
-            &empty,
-            "§29.1: `look --json` answers off a terminal"
-        ))
-        .contains("unsupported"),
-        "the premise of this test: nothing has observed an address yet, so the space says so"
+fn should_show_an_address_an_adapter_observed_as_the_place_the_native_provider_serves() {
+    // §37.1: "Objects from adapters MUST be reconciled with canonical provider identities before
+    // appearing as duplicate map nodes." Until `get address` existed the `ip addr` adapter was
+    // the only source `network/addresses` had (ADR-0197); now the netlink provider serves the
+    // same addresses under the same identity — index and address — so the loopback address
+    // observed through both is one place carrying both sources (ADR-0971, ADR-0193).
+    let run = ono("ip addr | count | to text; \
+         home; enter network; enter addresses; \
+         near --all | where display_name == \"127.0.0.1/8\" | count | to text");
+    run.assert_success();
+    let counts: Vec<&str> = run
+        .stdout()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    assert_eq!(
+        counts.last().copied(),
+        Some("1"),
+        "§37.1: the loopback address was observed through the `ip` adapter and through the \
+         native provider, and ADDRESSES holds exactly one place for it; the counts were \
+         {counts:?}"
     );
 
-    let run = ono("ip addr | count | to text; \
-         home; enter network; enter addresses; near --all | select display_name | to text");
+    let provenance = ono("ip addr | count | to text; \
+         home; enter network; enter addresses; \
+         near --all | where display_name == \"127.0.0.1/8\" | inspect | to json");
+    let inspected = rendered(&document(
+        &provenance,
+        "spec v0.2 §11.4: `inspect` returns a record",
+    ));
+    assert!(
+        inspected.contains("linux.netlink") && inspected.contains("adapter:"),
+        "§37.1/spec v0.3 §1.47: reconciliation keeps both sources on the record; got {inspected}"
+    );
+}
+
+#[test]
+fn should_list_the_members_of_the_collections_that_used_to_answer_unsupported() {
+    // §7.2 and §7.3: COMPUTE gives access to cgroups, NETWORK MUST provide addresses and
+    // namespaces. Each collection is filled from a provider target of its own (ADR-0971), so a
+    // session that has observed nothing yet stands in a collection with members: this shell's
+    // own namespaces, the loopback address, the root of the cgroup hierarchy.
+    for (collection, target) in [
+        ("compute; enter cgroups", "cgroup"),
+        ("network; enter namespaces", "namespace"),
+        ("network; enter addresses", "address"),
+    ] {
+        let served = ono(&format!("get {target} | count | to text"));
+        served.assert_success();
+        if served.stdout().trim() == "0" {
+            // A sandbox that mounts no unified cgroup hierarchy has no group to list, and the
+            // collection says so in the provider's words; the other two exist on every Linux.
+            assert_eq!(target, "cgroup", "`get {target}` answered nothing");
+            continue;
+        }
+
+        let view = ono(&format!("home; enter {collection}; look --json"));
+        view.assert_success();
+        assert!(
+            !rendered(&document(
+                &view,
+                "§29.1: `look --json` answers off a terminal"
+            ))
+            .contains("unsupported"),
+            "§35.2: `{target}` is a provider target, so its collection is not `unsupported`"
+        );
+
+        let members = ono(&format!(
+            "home; enter {collection}; near --all | count | to text"
+        ));
+        members.assert_success();
+        let count = members
+            .stdout()
+            .lines()
+            .map(str::trim)
+            .rfind(|line| !line.is_empty())
+            .and_then(|line| line.parse::<u32>().ok())
+            .unwrap_or_default();
+        assert!(
+            count > 0,
+            "§42.4: `get {target}` lists objects, so the collection that holds them lists \
+             places; got {:?}",
+            members.stdout()
+        );
+    }
+}
+
+#[test]
+fn should_lead_from_an_interface_to_the_addresses_it_carries() {
+    // §14.2 lists `addresses` among an interface place's groups, and `interface.has_address` is
+    // read from the address records the netlink provider serves (ADR-0971).
+    let run = ono(
+        "home; enter network; enter interfaces; enter lo; near --type address --all \
+         | select display_name | to text",
+    );
     run.assert_success();
     assert!(
         run.stdout().contains("127.0.0.1"),
-        "§37.1: the loopback address the `ip` adapter observed is a place in ADDRESSES, so \
-         standing there shows it rather than a refusal; got {:?}",
+        "§14.2: the loopback interface carries 127.0.0.1, and standing on it shows that address \
+         as a place; got {:?}",
         run.stdout()
+    );
+}
+
+#[test]
+fn should_keep_the_cgroup_and_the_namespace_a_process_led_to_alive_when_they_are_looked_at() {
+    // §33.2: looking at a place asks its provider about that one object again, and a provider
+    // that does not answer for it ends its lifetime (§10.3). A cgroup and a pid namespace reached
+    // from a process are composed from the process record — a path and an inode as text — so
+    // the question has to reach `get cgroup` and `get namespace` in the type their records
+    // carry, or the place a process just led to is reported removed the moment it is entered
+    // (ADR-0971).
+    let pid = std::process::id();
+    let cgroup = ono(&format!("enter process {pid}; follow cgroup; look --json"));
+    cgroup.assert_success();
+    let view = rendered(&document(
+        &cgroup,
+        "§29.1: `look --json` answers off a terminal",
+    ));
+    assert!(
+        !view.contains("\"state\":\"removed\""),
+        "§10.3: the control group this test runs in exists, so its place is live; got {view}"
+    );
+
+    let namespace = ono(&format!(
+        "enter process {pid}; near namespaces | select spatial_id | to text"
+    ));
+    namespace.assert_success();
+    let id = namespace
+        .stdout()
+        .lines()
+        .map(str::trim)
+        .rfind(|line| line.starts_with("ono:"))
+        .expect("§12: a process the caller owns names its pid namespace")
+        .to_owned();
+    let entered = ono(&format!(
+        "enter process {pid}; near namespaces | count | to text; enter {id}; look --json"
+    ));
+    entered.assert_success();
+    let view = rendered(&document(
+        &entered,
+        "§29.1: `look --json` answers off a terminal",
+    ));
+    assert!(
+        !view.contains("\"state\":\"removed\""),
+        "§10.3: the pid namespace this test runs in exists, so its place is live; got {view}"
     );
 }
 
@@ -1146,9 +1266,11 @@ fn should_describe_a_search_result_and_a_place_view_with_the_same_record() {
 fn should_find_a_place_by_its_properties_when_the_index_holds_it_and_no_provider_serves_it() {
     // §6.8: `find` "MUST search the spatial index **and** provider registries". The predicate was
     // evaluated against what the providers answered and against nothing else, so a place the
-    // session is holding that no canonical provider serves — an adapted observation, §37.1 and
+    // session was holding that no canonical provider served — an adapted observation, §37.1 and
     // ADR-0193 — was findable by name and invisible to a property. `find place --type address`
-    // answers twenty-three, `--where family == "inet"` answered none of them.
+    // answered twenty-three, `--where family == "inet"` answered none of them. Addresses have a
+    // provider since ADR-0971; the adapted observation in front of the search stays, so the
+    // predicate is still asked of places the index held before any provider was.
     let run = ono("ip addr | count | to text; \
          find place --type address | count | to text; \
          find place --type address --where family == \"inet\" | count | to text");

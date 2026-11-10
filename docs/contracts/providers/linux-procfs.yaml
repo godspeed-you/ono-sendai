@@ -326,3 +326,73 @@ providers:
       checkpointable: true
       retained_history: null
       coverage: snapshot
+
+  - id: linux.cgroups
+    doc: >-
+      Control groups, one record per directory of the unified hierarchy under /sys/fs/cgroup
+      (or /sys/fs/cgroup/unified on a hybrid host), keyed on the path /proc/<pid>/cgroup uses
+      (ADR-0971). Unavailable where no unified hierarchy is mounted.
+    targets: [cgroup]
+    capabilities: [cgroup.read]
+    schemas: [ono.cgroup/1]
+    conformance:
+      cgroup: enumerable
+    temporal:
+      # The hierarchy as it is now. cgroup.events is per group and inotify over cgroupfs is not
+      # subscribed here, so a group that came and went between two reads leaves no trace.
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+      coverage: snapshot
+    spatial:
+      # A path names a group for as long as the directory exists; remove it and make it again
+      # and it is a new group under the old name (§10.1 Tier B).
+      identity_strategy: lifetime
+      canonical_parent:
+        Cgroup: [compute.cgroups]
+      relationships:
+        - process.member_of_cgroup
+      freshness: on_demand
+      events: false
+      permissions: [available, empty, permission_denied, unsupported]
+      cost_class: normal
+      # The hierarchy is the fact a rule can be built on: a group at the root, a group below one.
+      landmark_metrics: [parent]
+
+  - id: linux.namespaces
+    doc: >-
+      Kernel namespaces, aggregated by kind and inode from the /proc/<pid>/ns links of every
+      process the caller can see into (ADR-0971). An unprivileged caller therefore sees the
+      namespaces its own processes are in, as `lsns` shows them; where links were refused and
+      none could be read the answer is permission_denied, never an empty list (v0.4 §42.4).
+    targets: [namespace]
+    capabilities: [namespace.read]
+    schemas: [ono.namespace/1]
+    conformance:
+      namespace: enumerable
+    temporal:
+      # A scan of the process table as it is now; nothing announces a namespace's creation.
+      current_snapshot: true
+      live_events: false
+      historical_query: false
+      exhaustive_events: false
+      causal_tokens: false
+      checkpointable: true
+      retained_history: null
+      coverage: snapshot
+    spatial:
+      # The inode number names a namespace while it lives and is reused afterwards (Tier B).
+      identity_strategy: lifetime
+      canonical_parent:
+        Namespace: [network.namespaces]
+      relationships:
+        - process.in_namespace
+      freshness: on_demand
+      events: false
+      permissions: [available, permission_denied]
+      cost_class: normal
+      landmark_metrics: [processes]

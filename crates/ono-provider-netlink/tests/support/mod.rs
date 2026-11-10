@@ -117,6 +117,17 @@ pub fn ifaddrmsg(family: u8, prefix_len: u8, index: u32) -> Vec<u8> {
     out
 }
 
+/// A `struct ifaddrmsg` that states its flags and its scope.
+pub fn ifaddrmsg_scoped(family: u8, prefix_len: u8, flags: u8, scope: u8, index: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8);
+    out.push(family);
+    out.push(prefix_len);
+    out.push(flags);
+    out.push(scope);
+    out.extend_from_slice(&index.to_ne_bytes());
+    out
+}
+
 /// A `struct rtmsg`.
 #[allow(
     clippy::too_many_arguments,
