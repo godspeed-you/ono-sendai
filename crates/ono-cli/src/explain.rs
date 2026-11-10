@@ -350,6 +350,63 @@ fn plan(
         }
     }
 
+    // ADR-0980: a filter directly after a producer hands the provider the comparisons it declared
+    // it can decide at its source. The plan asks the two functions the run asks — what the filter
+    // offers, and which of it the provider declared — so it names exactly what the run hands
+    // over, and nothing where the setting switched the handover off. Over a link the provider is
+    // the remote's, and nothing is handed across it.
+    if remote_host.is_none() && session.settings().flag("providers.pushdown") != Some(false) {
+        let providers = session.providers();
+        for (position, pair) in pipeline.head.stages.windows(2).enumerate() {
+            let [producer, filter] = pair else {
+                continue;
+            };
+            let asks_a_provider = plan.stages().get(position).is_some_and(|planned| {
+                planned.provider().is_some()
+                    && !planned.risk().is_some_and(|risk| risk.changes_the_world())
+            });
+            let (true, Some(verb), Some(next)) =
+                (asks_a_provider, producer.head.name(), filter.head.name())
+            else {
+                continue;
+            };
+            let Ok(asking) = registry.resolve(verb, &producer.arguments) else {
+                continue;
+            };
+            let Some(target) = asking.contract.target() else {
+                continue;
+            };
+            let Ok(deciding) = registry.resolve(next, &filter.arguments) else {
+                continue;
+            };
+            let Ok(bound) = deciding.contract.bind(deciding.arguments) else {
+                continue;
+            };
+            let handed = providers.handed_over(
+                target,
+                &ono_command::pushable_comparisons(deciding.contract, &bound),
+            );
+            let Some(planned) = plan.stages_mut().get_mut(position) else {
+                continue;
+            };
+            let quoted: Vec<String> = handed
+                .iter()
+                .map(|comparison| format!("`{comparison}`"))
+                .collect();
+            let named = match quoted.as_slice() {
+                [] => continue,
+                [only] => format!("the comparison {only}"),
+                several => format!("the comparisons {}", several.join(" and ")),
+            };
+            let provider = planned.provider().unwrap_or_default().to_owned();
+            planned.push_note(format!(
+                "hands the provider `{provider}` {named} of the `{next}` after it, which the \
+                 provider declared it can decide at its source; the `{next}` still decides every \
+                 record (ADR-0980)"
+            ));
+        }
+    }
+
     // An option that changes what a stage holds (ADR-0953) decides it by its value, so a plan
     // reads the value of every option expression that only reads the session, as the run will —
     // `measure --percentiles $p` with `$p` null holds constant state. An expression that could run

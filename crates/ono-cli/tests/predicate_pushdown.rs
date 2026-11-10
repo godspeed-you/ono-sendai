@@ -530,3 +530,84 @@ fn should_give_journalctl_one_priority_argument_when_level_and_where_both_narrow
         expected(|priority, _| priority <= 2)
     );
 }
+
+// --- the plan says what would be handed over ----------------------------------------------------
+
+#[test]
+fn should_name_the_comparisons_the_provider_is_handed_when_explain_plans_the_pipeline() {
+    let journal = Journal::new();
+    let _ = journal.invocations();
+
+    let plan =
+        journal.run(r#"explain get journal | where priority <= 3 and unit == "cron.service""#);
+
+    assert!(plan.success, "the plan is made, got {plan:?}");
+    assert!(
+        plan.stdout.contains(
+            "hands the provider `systemd-journal` the comparison `priority <= 3` of the `where` \
+             after it"
+        ),
+        "ADR-0980: the plan names what the producer hands its provider, and only the part the \
+         provider declared, got {plan:?}"
+    );
+    assert!(
+        plan.stdout.contains("`where` still decides every record"),
+        "ADR-0980: the plan says the filter is applied all the same, got {plan:?}"
+    );
+    assert!(
+        !plan.stdout.contains("`unit =="),
+        "`unit` is no part of the journal's declaration, got {plan:?}"
+    );
+    assert_eq!(
+        journal.invocations(),
+        Vec::<String>::new(),
+        "`explain` asks the journal nothing (spec §15.3)"
+    );
+}
+
+#[test]
+fn should_name_every_comparison_handed_over_when_the_predicate_starts_with_several() {
+    let journal = Journal::new();
+
+    let plan = journal.run("explain get log | where priority == 3 and priority < 5 and pid == 42");
+    assert!(
+        plan.stdout
+            .contains("the comparisons `priority == 3` and `priority < 5` of the `where`"),
+        "ADR-0980: the leading declared comparisons are named in the order they are written, \
+         got {plan:?}"
+    );
+}
+
+#[test]
+fn should_say_nothing_about_a_handover_when_the_run_would_make_none() {
+    let journal = Journal::new();
+
+    for (pipeline, why) in [
+        (
+            r#"explain get journal | where unit == "cron.service""#,
+            "the journal declared nothing about `unit`",
+        ),
+        (
+            "explain get journal | take 5 | where priority <= 3",
+            "the `where` does not follow the producer directly",
+        ),
+        (
+            "explain get journal | where priority >= 3",
+            "`>=` is no operator the journal declared",
+        ),
+        ("explain get journal", "there is no `where`"),
+    ] {
+        let plan = journal.run(pipeline);
+        assert!(
+            plan.success && !plan.stdout.contains("hands the provider"),
+            "ADR-0980: {why}, so `{pipeline}` plans no handover, got {plan:?}"
+        );
+    }
+
+    let off = journal.run_without_pushdown("explain get journal | where priority <= 3");
+    assert!(
+        off.success && !off.stdout.contains("hands the provider"),
+        "ADR-0980: `providers.pushdown = false` hands the provider nothing, and the plan says \
+         nothing else, got {off:?}"
+    );
+}

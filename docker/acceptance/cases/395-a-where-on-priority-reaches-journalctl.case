@@ -1,0 +1,90 @@
+# Conservative predicate pushdown (issue #281, ADR-0980), through the real binary.
+#
+# A `where` directly after `get journal` hands the journal provider the comparisons it declared
+# it can decide at its source — `priority` with `==`, `<` and `<=`
+# (docs/contracts/providers/systemd.yaml) — and the provider turns them into the one
+# `journalctl --priority` argument that means the same. The `where` decides every record all the
+# same, so the answer is the one the pipeline gave before; `explain` names what is handed over,
+# and the setting `providers.pushdown` switches the handover off.
+#
+# The container runs no journald, so a `journalctl` shim serves a small journal the way the real
+# tool does and writes down the arguments it was started with: the handover is observed at
+# `journalctl`'s command line, the place it exists for.
+case: a where on the journal's priority reaches journalctl as --priority, and the answer stays the same
+timeout: 120
+env: NO_COLOR=1
+run: |
+  work=$(mktemp -d)
+  mkdir -p "$work/bin"
+  n=0
+  for priority in 6 3 7 4 2 5 3 0 6; do
+    n=$((n + 1))
+    printf '{"__CURSOR":"c%s","__REALTIME_TIMESTAMP":"17000000%s0000000","_BOOT_ID":"0c0ffee0000000000000000000000001","_HOSTNAME":"case","PRIORITY":"%s","SYSLOG_IDENTIFIER":"case","MESSAGE":"entry %s"}\n' "$n" "$n" "$priority" "$n"
+  done > "$work/journal.jsonl"
+  cat > "$work/bin/journalctl" <<SH
+  #!/bin/sh
+  if [ "\$1" = --version ]; then echo 'systemd 259 (259.5)'; exit 0; fi
+  echo "\$*" >> "$work/argv.log"
+  low=0
+  high=7
+  for argument in "\$@"; do
+    case "\$argument" in
+      --priority=*..*) range=\${argument#--priority=}; low=\${range%%..*}; high=\${range##*..} ;;
+      --priority=*) low=0; high=\${argument#--priority=} ;;
+    esac
+  done
+  awk -v low="\$low" -v high="\$high" '
+    { priority = 8; if (match(\$0, /"PRIORITY":"[0-7]"/)) priority = substr(\$0, RSTART + 12, 1) + 0 }
+    priority >= low && priority <= high { print }
+  ' "$work/journal.jsonl"
+  SH
+  chmod +x "$work/bin/journalctl"
+  export PATH="$work/bin:$PATH"
+  asked() { tr ' ' '\n' < "$work/argv.log" | grep -c -- "$1"; rm -f "$work/argv.log"; }
+
+  echo "== the ceiling is handed over, and the records are the ones where keeps =="
+  ono -c 'get journal | where priority <= 3 | select cursor priority | to json' | sed 's/^/on=/'
+  echo "ceiling=$(asked '^--priority=3$')"
+  echo "== an exact priority is a range of one =="
+  ono -c 'get journal | where priority == 3 | select cursor | to json' | sed 's/^/exact=/'
+  echo "exact-range=$(asked '^--priority=3\.\.3$')"
+  echo "== only the declared part of a conjunction goes, the rest stays with where =="
+  ono -c 'get journal | where priority < 4 and message == "entry 5" | select cursor | to json' | sed 's/^/mixed=/'
+  echo "mixed-ceiling=$(asked '^--priority=3$')"
+  echo "== outside the declaration nothing is handed over =="
+  ono -c 'get journal | where priority >= 6 | select cursor | to json' | sed 's/^/floor=/'
+  echo "floor-priority=$(asked '^--priority')"
+  ono -c 'get journal | where priority <= 3 or message == "entry 1" | select cursor | to json' | sed 's/^/either=/'
+  echo "either-priority=$(asked '^--priority')"
+  echo "== switched off, journalctl is asked for everything and the answer is the same =="
+  ONO_PROVIDERS_PUSHDOWN=false ono -c 'get journal | where priority <= 3 | select cursor priority | to json' | sed 's/^/off=/'
+  echo "off-priority=$(asked '^--priority')"
+  ono -c 'get config providers.pushdown | select value type layer | to json' | sed 's/^/setting=/'
+  ONO_PROVIDERS_PUSHDOWN=false ono -c 'get config providers.pushdown | select value layer | to json' | sed 's/^/setting-off=/'
+  echo "== explain names what is handed over, and asks the journal nothing =="
+  ono -c 'explain get journal | where priority <= 3 and message == "entry 5"' | grep -o 'hands the provider `systemd-journal` the comparison `priority <= 3`' | head -1
+  ono -c 'explain get journal | where priority <= 3' | grep -c 'still decides every record' | sed 's/^/reapplied=/'
+  ONO_PROVIDERS_PUSHDOWN=false ono -c 'explain get journal | where priority <= 3' | grep -c 'hands the provider' | sed 's/^/explained-off=/'
+  test -e "$work/argv.log" && echo EXPLAIN-ASKED-THE-JOURNAL
+  echo done=ok
+exit: 0
+stdout-contains: on=[{"cursor":"c2","priority":3},{"cursor":"c5","priority":2},{"cursor":"c7","priority":3},{"cursor":"c8","priority":0}]
+stdout-contains: ceiling=1
+stdout-contains: exact=[{"cursor":"c2"},{"cursor":"c7"}]
+stdout-contains: exact-range=1
+stdout-contains: mixed=[{"cursor":"c5"}]
+stdout-contains: mixed-ceiling=1
+stdout-contains: floor=[{"cursor":"c1"},{"cursor":"c3"},{"cursor":"c9"}]
+stdout-contains: floor-priority=0
+stdout-contains: either=[{"cursor":"c1"},{"cursor":"c2"},{"cursor":"c5"},{"cursor":"c7"},{"cursor":"c8"}]
+stdout-contains: either-priority=0
+stdout-contains: off=[{"cursor":"c2","priority":3},{"cursor":"c5","priority":2},{"cursor":"c7","priority":3},{"cursor":"c8","priority":0}]
+stdout-contains: off-priority=0
+stdout-contains: setting=[{"value":true,"type":"bool","layer":"default"}]
+stdout-contains: setting-off=[{"value":false,"layer":"environment"}]
+stdout-contains: hands the provider `systemd-journal` the comparison `priority <= 3`
+stdout-contains: reapplied=1
+stdout-contains: explained-off=0
+stdout-contains: done=ok
+stdout-not-contains: EXPLAIN-ASKED-THE-JOURNAL
+stdout-not-contains: Ono-Sendai-E
