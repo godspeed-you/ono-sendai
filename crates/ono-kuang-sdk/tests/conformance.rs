@@ -2944,6 +2944,162 @@ async fn should_refuse_a_view_that_names_no_invocation_while_several_are_open() 
         .await;
 }
 
+// --- one channel carries the whole answer (issue #154, ADR-0992) -----------------------------
+
+/// Everything a consumer that reads only the stream learns: the events up to its end, and never
+/// the invocation's result.
+async fn read_only_the_stream(
+    mut invocation: ono_kuang_supervisor::RunningInvocation,
+) -> Vec<StreamEvent> {
+    let mut events = Vec::new();
+    while let Some(event) = invocation.next().await {
+        events.push(event);
+    }
+    events
+}
+
+fn failure_names(events: &[StreamEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::Failed(error) => Some(error.name.clone()),
+            StreamEvent::Value(_) => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn should_end_the_stream_with_the_refusal_when_a_handler_fails_before_emitting() {
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .query("echo-tick", args(&[("refuse", json!(true))]))
+        .await
+        .expect("starts");
+    let events = read_only_the_stream(invocation).await;
+    assert_eq!(
+        failure_names(&events),
+        ["contribution.refused"],
+        "a refusal with nothing before it reaches the stream as a refusal, not as an empty \
+         answer (ADR-0590's bug, closed at the source): {events:?}"
+    );
+    assert_eq!(events.len(), 1, "and nothing else: {events:?}");
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_end_the_stream_with_the_failure_when_a_handler_fails_after_emitting() {
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(2)), ("then", json!("fail"))]),
+        )
+        .await
+        .expect("starts");
+    let events = read_only_the_stream(invocation).await;
+    assert_eq!(
+        values_of(&events),
+        [Value::Int(1), Value::Int(2)],
+        "the values before the failure stand"
+    );
+    assert!(
+        matches!(events.last(), Some(StreamEvent::Failed(error)) if error.name == "runtime.trap"),
+        "and the stream says it is truncated rather than complete: {events:?}"
+    );
+    assert_eq!(failure_names(&events).len(), 1, "once: {events:?}");
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_end_the_stream_with_the_failure_when_a_package_closes_it_cleanly_and_then_fails() {
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .args(&["--misbehave=close-then-fail"])
+        .load()
+        .await
+        .expect("the fixture loads; it misbehaves only when invoked");
+    let invocation = plugin
+        .invoke("dev.example.echo.command.flood", args(&[]))
+        .await
+        .expect("starts");
+    let events = read_only_the_stream(invocation).await;
+    assert_eq!(values_of(&events), [Value::Int(1)]);
+    assert!(
+        matches!(events.last(), Some(StreamEvent::Failed(error)) if error.name == "runtime.trap"),
+        "a clean close followed by a failed result is a failed answer, and the stream is where \
+         its consumer learns it: {events:?}"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_end_a_stream_its_consumer_cancelled_without_a_failure() {
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
+        .limits(one_value_of_credit())
+        .load()
+        .await
+        .expect("loads");
+    let mut invocation = plugin
+        .invoke("dev.example.echo.command.count-forever", args(&[]))
+        .await
+        .expect("starts");
+    assert_eq!(
+        invocation.next().await,
+        Some(StreamEvent::Value(Value::Int(1)))
+    );
+    invocation.cancel().await;
+    let mut after = Vec::new();
+    while let Some(event) = invocation.next().await {
+        after.push(event);
+    }
+    assert!(
+        failure_names(&after).is_empty(),
+        "a cancellation the consumer asked for stays a cancellation: {after:?}"
+    );
+    assert_eq!(invocation.finish().await.status, InvokeStatus::Cancelled);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_end_the_stream_as_cancelled_when_a_package_stops_without_being_asked() {
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(2)), ("then", json!("cancel"))]),
+        )
+        .await
+        .expect("starts");
+    let events = read_only_the_stream(invocation).await;
+    assert_eq!(values_of(&events), [Value::Int(1), Value::Int(2)]);
+    assert_eq!(
+        failure_names(&events),
+        ["stream.cancelled"],
+        "nobody asked for this cancellation, so the consumer is told the answer stopped short — \
+         as a cancellation, not as a failure of the package, and not as a complete answer: \
+         {events:?}"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
 // --- concurrent invocations, spec §31.15, §31.34 -----------------------------------------------
 
 /// A credit window of one, so a handler blocks inside `emit` until its consumer pulls.
@@ -3169,8 +3325,14 @@ async fn should_refuse_an_invocation_beyond_the_negotiated_concurrency_ceiling()
         "a ceiling an operator agreed to is refused visibly, not queued silently"
     );
     assert!(
-        refused_events.is_empty(),
+        values_of(&refused_events).is_empty(),
         "nothing ran, so nothing was emitted"
+    );
+    assert_eq!(
+        failure_names(&refused_events),
+        ["runtime.concurrency_limit"],
+        "and the stream says so itself, so a consumer reading only the stream sees the refusal \
+         (ADR-0992)"
     );
     let (first_out, second_out) = tokio::join!(first.collect(), second.collect());
     assert_eq!(first_out.1.status, InvokeStatus::Completed);

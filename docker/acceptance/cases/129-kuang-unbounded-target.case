@@ -67,20 +67,28 @@ run: |
   ono -c 'load plugin dev.example.echo; get echo-tick' 2>&1 >/dev/null | head -1
 
   # The failure this case grew for. A package that refuses *before emitting anything* answers on
-  # the invocation result and the supervisor drops the output stream with no `Failed` event on
-  # it, so the host saw an ordinary end of stream. Reading that as the whole answer turned every
-  # refusal from an unbounded target into a clean empty table — the substitution §21.4 of the
-  # provider contract exists to prevent, made by the host rather than by the provider.
+  # the invocation result, and the supervisor used to drop the output stream with no `Failed`
+  # event on it, so the host saw an ordinary end of stream. Reading that as the whole answer
+  # turned every refusal from an unbounded target into a clean empty table — the substitution
+  # §21.4 of the provider contract exists to prevent, made by the host rather than by the
+  # provider (ADR-0590). Since ADR-0992 the supervisor ends the stream with the failure itself,
+  # so the stream is the whole answer — and the refusal must then be said once, not once per
+  # channel.
   echo "== a refusal with nothing before it is a refusal, not an empty answer =="
   timeout 30 ono -c 'load plugin dev.example.echo; get echo-tick --refuse true | to json' 2>&1 \
     && echo "MISSING: the refusal did not fail the command"
   echo "refused with exit $?"
+
+  echo "== and it is said once, not once per channel (ADR-0992) =="
+  timeout 30 ono -c 'load plugin dev.example.echo; get echo-tick --refuse true | to json' 2>&1 \
+    | grep -c '^ono: .*contribution.refused' | sed 's/^/refusals reported: /'
 exit: 0
 stdout-contains: 3
 stdout-contains: [{"seq":1},{"seq":2}]
 stdout-contains: a live stream needs a representation when nobody is watching it
 stdout-contains: this answer has no values and that is not an empty answer
 stdout-contains: refused with exit 1
+stdout-contains: refusals reported: 1
 stdout-not-contains: MISSING
 stdout-not-contains: "[]"
 stdout-not-contains: panicked

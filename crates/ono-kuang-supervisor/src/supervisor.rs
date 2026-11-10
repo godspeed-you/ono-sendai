@@ -191,7 +191,9 @@ pub enum StreamEvent {
     /// A typed value, decoded from the lossless encoding and provenance-stamped by the host.
     Value(Value),
     /// A per-element or terminal failure. A stream can carry an error and continue
-    /// (spec §16.5); a terminal one is followed by the end of the stream.
+    /// (spec §16.5); a terminal one is followed by the end of the stream. An invocation that
+    /// failed, or that its package cancelled without being asked, always ends its stream with
+    /// one, so the stream alone is the whole answer (ADR-0992).
     Failed(WireError),
 }
 
@@ -517,6 +519,7 @@ impl Supervisor {
             seq: 2,
             pending: HashMap::new(),
             streams: HashMap::new(),
+            closed_outputs: HashMap::new(),
             next_handle: 1,
             invocation_counter: 0,
             invocations: HashMap::new(),
@@ -1335,6 +1338,11 @@ pub struct RunningInvocation {
 impl RunningInvocation {
     /// The next stream delivery, or `None` when the stream has ended. Taking a value grants the
     /// producer one more credit — consumption is what creates demand (ADR-0022 §8).
+    ///
+    /// A stream that ends without a [`StreamEvent::Failed`] last is a complete answer, or one this
+    /// consumer cancelled: a failure, and a cancellation the package made unasked, arrive here
+    /// before the end, so reading [`Self::finish`] as well is never needed to see them
+    /// (ADR-0992).
     pub async fn next(&mut self) -> Option<StreamEvent> {
         let event = self.values.recv().await;
         if event.is_some() {
@@ -1442,6 +1450,9 @@ struct OutStream {
     tx: mpsc::UnboundedSender<StreamEvent>,
     credit: u32,
     cancelled: bool,
+    /// Whether the consumer asked for the cancellation, rather than the package cancelling its
+    /// own output: only an asked-for cancellation ends the stream without a word (ADR-0992).
+    cancel_requested: bool,
     expected: Expected,
 }
 
@@ -1647,6 +1658,10 @@ struct Actor {
     seq: u64,
     pending: HashMap<u64, Pending>,
     streams: HashMap<u64, OutStream>,
+    /// Output streams the package closed cleanly before answering its invocation, held until the
+    /// answer comes: a failure in the answer still reaches the consumer on the stream
+    /// (ADR-0992). Whether the consumer had asked for a cancellation travels with each.
+    closed_outputs: HashMap<u64, (mpsc::UnboundedSender<StreamEvent>, bool)>,
     next_handle: u64,
     invocation_counter: u64,
     invocations: HashMap<u64, String>,
@@ -1999,6 +2014,9 @@ impl Actor {
         for (_, stream) in self.streams.drain() {
             let _ = stream.tx.send(StreamEvent::Failed(error.into()));
         }
+        for (_, (tx, _)) in self.closed_outputs.drain() {
+            let _ = tx.send(StreamEvent::Failed(error.into()));
+        }
         for (_, pending) in self.pending.drain() {
             match pending {
                 Pending::Invocation { result, .. } => {
@@ -2092,6 +2110,7 @@ impl Actor {
             ActorMsg::CancelStream { handle } => {
                 if let Some(stream) = self.streams.get_mut(&handle) {
                     stream.cancelled = true;
+                    stream.cancel_requested = true;
                     let seq = self.next_seq(Pending::FireAndForget);
                     let envelope = Envelope::Request {
                         seq,
@@ -2322,6 +2341,7 @@ impl Actor {
                 tx,
                 credit,
                 cancelled: false,
+                cancel_requested: false,
                 expected,
             },
         );
@@ -2370,6 +2390,33 @@ impl Actor {
         // The actor cannot hold its own receiver's sender permanently (it would never close);
         // hand out a clone lazily through the shared config instead.
         self.msg_sender.clone()
+    }
+}
+
+/// The event that ends an invocation's stream, when its ending is one a consumer could otherwise
+/// mistake for a complete answer (ADR-0992).
+///
+/// A failure is the failure — the package's own error, or a named one when it gave none. A
+/// cancellation nobody asked for is `stream.cancelled`: the answer stopped short, and that is a
+/// cancellation rather than a failure of the package. A completion, and a cancellation the
+/// consumer asked for, end the stream without a word.
+fn terminal_event(outcome: &InvokeResult, cancel_requested: bool) -> Option<StreamEvent> {
+    match outcome.status {
+        InvokeStatus::Completed => None,
+        InvokeStatus::Cancelled if cancel_requested => None,
+        InvokeStatus::Cancelled => Some(StreamEvent::Failed(WireError::from_core(
+            ono_core::ErrorCode::StreamCancelled,
+            "the package ended the invocation as cancelled without being asked; the values \
+             before this are all it answered",
+        ))),
+        InvokeStatus::Failed => Some(StreamEvent::Failed(outcome.error.clone().unwrap_or_else(
+            || {
+                WireError::from_core(
+                    ono_core::ErrorCode::ProviderUnavailable,
+                    "the package reported the invocation failed and named no reason",
+                )
+            },
+        ))),
     }
 }
 
@@ -2572,7 +2619,20 @@ impl Actor {
                             let _ = shared.lifecycle.end_invocation();
                         }
                         self.invocations.remove(&invocation);
-                        self.streams.remove(&output);
+                        // One channel carries the whole answer (ADR-0992): the stream's last
+                        // event says how the invocation ended whenever that is not "completed"
+                        // or "cancelled because the consumer asked", so a consumer that reads
+                        // only the stream cannot take a failure for a complete answer.
+                        let ending = self
+                            .streams
+                            .remove(&output)
+                            .map(|stream| (stream.tx, stream.cancel_requested))
+                            .or_else(|| self.closed_outputs.remove(&output));
+                        if let Some((tx, asked)) = ending
+                            && let Some(terminal) = terminal_event(&outcome, asked)
+                        {
+                            let _ = tx.send(terminal);
+                        }
                         // A view outlives no invocation (spec §31.28) — its own, and no other:
                         // the terminal comes back however the command ended, and a sibling
                         // invocation's view stays where it is (ADR-0991).
@@ -3136,10 +3196,18 @@ impl Actor {
                 close.handle
             )));
         };
-        if let Some(error) = close.error {
-            let _ = stream.tx.send(StreamEvent::Failed(error));
+        match close.error {
+            Some(error) => {
+                let _ = stream.tx.send(StreamEvent::Failed(error));
+            }
+            // A clean close is the package's word that the values are done, not that the
+            // invocation succeeded: the consumer's end of the stream waits for the answer
+            // (ADR-0992).
+            None => {
+                self.closed_outputs
+                    .insert(close.handle, (stream.tx, stream.cancel_requested));
+            }
         }
-        drop(stream);
         self.reply_ok(seq, Json::Null).await;
         Ok(())
     }
