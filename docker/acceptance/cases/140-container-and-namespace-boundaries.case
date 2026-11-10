@@ -1,0 +1,91 @@
+# v0.4 §21.3 requires "privilege, remote and namespace changes" to be recognisable in a colourless
+# terminal, §3.2 wants a scope crossing observable in the trail, and §16.2 says "entering a
+# namespace MUST show the boundary explicitly". Privilege and remote were shown; a container or
+# namespace boundary could not be, because no place ever carried such a scope (#211). ADR-0983:
+# a process whose record names its container, or whose pid namespace is another than the shell's
+# own, belongs to that scope — and moving onto it says so.
+#
+# The case makes both boundaries itself and needs root for it: a control group named the way an
+# engine names a container's (`docker-<64 hex>.scope`), and a process in a new pid namespace.
+# No engine runs here, so the container the process names is one nobody describes — which is the
+# refusal the `container` exit has to show instead of an empty group (§42.4).
+case: a container and a namespace boundary are marked where a place lies behind one
+capability: SYS_ADMIN
+user: root
+privileged: true
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  cid=4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c
+  short=4f9c0a2b7e1d
+  group="/sys/fs/cgroup/docker-$cid.scope"
+  mkdir "$group"
+  sleep 90 &
+  contained=$!
+  echo "$contained" > "$group/cgroup.procs"
+
+  unshare --pid --fork sleep 90 &
+  for _ in $(seq 25); do
+    isolated=$(pgrep -P $! -x sleep | head -1)
+    [ -n "$isolated" ] && break
+    sleep 0.2
+  done
+  own=$(readlink /proc/self/ns/pid | tr -dc 0-9)
+  other=$(readlink "/proc/$isolated/ns/pid" | tr -dc 0-9)
+
+  echo "== the process record names the container its cgroup carries (ADR-0983) =="
+  prove c1 "get process states the engine's id" \
+    "ono -c 'get process $contained | select container | to json' | grep -qF '\"container\":\"$cid\"'"
+
+  echo "== the container boundary (§3.2, §21.3) =="
+  prove c2 "the place belongs to the container's scope" \
+    "ono -c 'enter process/$contained; look --json' 2>/dev/null | grep -qF '\"scope\":\"container:$short\"'"
+  prove c3 "moving onto it says which boundary was crossed" \
+    "ono -c 'enter process/$contained' 2>&1 | grep -qE 'crossing scope: host:[^ ]+ -> container:$short'"
+  prove c4 "the trail records the crossing (§20.1)" \
+    "ono -c 'enter process/$contained; trail | to json' 2>/dev/null | grep -qF '\"scope_crossing\":{\"kind\":\"container\"'"
+  prove c5 "and leaving it is a crossing as well" \
+    "ono -c 'enter process/$contained; up' 2>&1 | grep -qE 'crossing scope: container:$short -> host:'"
+  prove c6 "seen from the host, the process is a security-boundary landmark (§26.2)" \
+    "ono -c 'enter process/$contained; look --json' 2>/dev/null | grep -qF '\"reason\":\"security_boundary\"'"
+  prove c7 "the container nobody describes is a refusal, never an empty group (§42.4)" \
+    "test \"\$(ono -c 'enter process/$contained; look --json | from json | select exits.container.state | to text --field state' 2>/dev/null)\" != available"
+
+  echo "== the namespace boundary (§16.2, §21.3) =="
+  prove n1 "the fixture is in another pid namespace than this shell" \
+    "test -n '$other' && test '$other' != '$own'"
+  prove n2 "the place belongs to the namespace's scope" \
+    "ono -c 'enter process/$isolated; look --json' 2>/dev/null | grep -qF '\"scope\":\"namespace:pid:[$other]\"'"
+  prove n3 "entering it shows the boundary explicitly" \
+    "ono -c 'enter process/$isolated' 2>&1 | grep -qF 'crossing scope: host:' && ono -c 'enter process/$isolated' 2>&1 | grep -qF -- '-> namespace:pid:[$other]'"
+  prove n4 "a process in the shell's own namespace crosses nothing" \
+    "! ono -c 'enter process/1' 2>&1 | grep -qF 'crossing scope'"
+
+  kill "$contained" $(jobs -p) 2>/dev/null || true
+  wait 2>/dev/null || true
+  rmdir "$group" 2>/dev/null || true
+  echo done=ok
+exit: 0
+stdout-contains: PROVED c1
+stdout-contains: PROVED c2
+stdout-contains: PROVED c3
+stdout-contains: PROVED c4
+stdout-contains: PROVED c5
+stdout-contains: PROVED c6
+stdout-contains: PROVED c7
+stdout-contains: PROVED n1
+stdout-contains: PROVED n2
+stdout-contains: PROVED n3
+stdout-contains: PROVED n4
+stdout-contains: done=ok
+stdout-not-contains: FAILED

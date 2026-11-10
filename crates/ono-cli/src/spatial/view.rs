@@ -372,6 +372,46 @@ pub(crate) async fn learn_memory_budget(
     session.set_memory_budget(budget);
 }
 
+/// Learns the pid namespace this shell runs in, once per session (§16.2, ADR-0983).
+///
+/// A process in another pid namespace is across a boundary §16.2 requires to be shown, and the
+/// comparison needs the observer's own. §2.16 keeps the spatial layer from reading `/proc`, so
+/// the shell asks the process provider about itself: its own record states the namespace. On a
+/// linked host the shell's pid names nothing, and nothing is asked.
+pub(crate) async fn learn_own_namespace(
+    providers: &ProviderRegistry,
+    session: &mut SpatialSessionState,
+) {
+    if session.host().is_some()
+        || session.asked_own_namespace()
+        || providers.for_target("process").is_empty()
+    {
+        return;
+    }
+    session.mark_own_namespace_asked();
+    let myself = Query::target("process").with(ono_provider_api::Selector::field(
+        "pid",
+        Value::Int(i128::from(std::process::id())),
+    ));
+    let Ok(stream) = providers.snapshot(&myself) else {
+        return;
+    };
+    let namespace = stream
+        .collect()
+        .await
+        .values()
+        .iter()
+        .filter_map(|value| value.as_record().ok())
+        .find_map(|own| match own.get("pid_namespace") {
+            Some(Value::Int(inode)) => Some(*inode),
+            _ => None,
+        });
+    if let Some(inode) = namespace {
+        let (_, bridge) = session.absorb_with();
+        bridge.observe_from_pid_namespace(inode);
+    }
+}
+
 /// Asks every target once and registers what came back (§33.1, §42.1, §34).
 ///
 /// "Once" is per *observation lifetime*, not per command: a target the session asked inside its
@@ -388,6 +428,7 @@ async fn observe(
 ) -> Observed {
     if targets.contains("process") {
         learn_memory_budget(providers, session).await;
+        learn_own_namespace(providers, session).await;
     }
     let mut observed = Observed::default();
     let mut asked = false;

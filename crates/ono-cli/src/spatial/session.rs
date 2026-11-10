@@ -80,6 +80,9 @@ pub struct SpatialSessionState {
     /// process's memory is a share of (§26.2). `None` inside is a host whose provider stated no
     /// budget; a scope that is not here has not been asked (ADR-0978).
     memory_budgets: BTreeMap<String, Option<u64>>,
+    /// Whether the shell has asked the process provider which pid namespace it runs in itself
+    /// (§16.2, ADR-0983). Asked once; the answer lives in the local bridge's projection.
+    own_namespace_asked: bool,
 }
 
 /// One expansion of a place's relationship providers: when it was made, how much it asked for,
@@ -294,6 +297,7 @@ impl SpatialSessionState {
             targets: BTreeMap::new(),
             expansions: BTreeMap::new(),
             memory_budgets: BTreeMap::new(),
+            own_namespace_asked: false,
         }
     }
 
@@ -464,6 +468,17 @@ impl SpatialSessionState {
         }
         let index = &self.index;
         self.records.retain(|id, _| index.contains(id));
+    }
+
+    /// Whether the shell's own pid namespace has been asked for (§16.2).
+    #[must_use]
+    pub fn asked_own_namespace(&self) -> bool {
+        self.own_namespace_asked
+    }
+
+    /// Records that the shell's own pid namespace was asked for, whatever came back.
+    pub fn mark_own_namespace_asked(&mut self) {
+        self.own_namespace_asked = true;
     }
 
     /// Whether the host this session stands on has been asked for its memory budget (§26.2).

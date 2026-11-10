@@ -272,6 +272,9 @@ fn adjacent_labels(object_type: SpatialType) -> &'static [(&'static str, &'stati
         // A route record names the interface it leaves through, so the route table answers an
         // interface's `routes` the same way.
         T::Interface => &[("address", "addresses"), ("route", "routes")],
+        // Asked only for a process whose record names a container; where it was not asked
+        // there is nothing recalled and nothing recorded.
+        T::Process => &[("container", "container")],
         _ => &[],
     }
 }
@@ -333,6 +336,7 @@ async fn refresh(
     let key = reference_value(session, id, field)?;
     if object_type == SpatialType::Process {
         crate::spatial::view::learn_memory_budget(providers, session).await;
+        crate::spatial::view::learn_own_namespace(providers, session).await;
     }
 
     if providers.for_target(target).is_empty() {
@@ -533,7 +537,16 @@ async fn expand(
         None => return Ok(()),
     };
 
-    let adjacent: BTreeSet<&'static str> = adjacent_targets(object_type).iter().copied().collect();
+    let mut adjacent: BTreeSet<&'static str> =
+        adjacent_targets(object_type).iter().copied().collect();
+    // A process whose record names its container has a container to show, and the engine is
+    // who describes it: asked here, the exit is the container, or the engine's refusal — never
+    // the empty group a named and unread container would otherwise leave (§42.4, ADR-0983).
+    if object_type == SpatialType::Process
+        && matches!(record.get("container"), Some(Value::String(_)))
+    {
+        adjacent.insert("container");
+    }
     if !adjacent.is_empty() {
         crate::spatial::view::observe_targets(providers, session, &adjacent, now).await;
     }

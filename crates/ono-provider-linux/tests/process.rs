@@ -1054,3 +1054,57 @@ async fn should_carry_the_kernels_start_ticks_beside_the_instant() {
         "and the instant is still the same count read through btime"
     );
 }
+
+#[tokio::test]
+async fn should_name_the_container_a_process_runs_in_when_its_cgroup_carries_the_engines_id() {
+    // An engine puts every process of a container in a control group named after the
+    // container's full id — `docker-<id>.scope`, `libpod-<id>.scope`, `/docker/<id>`, a
+    // `cri-containerd-<id>.scope` under kubepods. Sixty-four hex digits are the engine's id and
+    // nothing else, so the process record states the container; a process in an ordinary slice
+    // states none, and none is null (spec §35.3, ADR-0983).
+    let id = "4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c";
+    let fixture = ProcFixture::new();
+    let layouts = [
+        format!("0::/system.slice/docker-{id}.scope"),
+        format!("0::/machine.slice/libpod-{id}.scope/container"),
+        format!("0::/docker/{id}"),
+        format!(
+            "0::/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod1a2b.slice/cri-containerd-{id}.scope"
+        ),
+    ];
+    for (offset, layout) in layouts.iter().enumerate() {
+        fixture
+            .process(31 + i64::try_from(offset).expect("a small fixture"))
+            .stat("contained", StatFields::default())
+            .cgroup(layout);
+    }
+    fixture
+        .process(40)
+        .stat("on-the-host", StatFields::default())
+        .cgroup("0::/user.slice/user-1000.slice/session-2.scope");
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("process"))
+            .expect("a snapshot"),
+    )
+    .await;
+
+    for record in records(&collected) {
+        let pid = record.get("pid").and_then(|value| value.as_int().ok());
+        let container = record.get("container").cloned();
+        if pid == Some(40) {
+            assert_eq!(
+                container,
+                Some(Value::Null),
+                "an ordinary slice is no container"
+            );
+        } else {
+            assert_eq!(
+                container,
+                Some(Value::String(id.into())),
+                "pid {pid:?}: the cgroup names the container"
+            );
+        }
+    }
+}

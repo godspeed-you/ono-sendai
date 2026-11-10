@@ -409,6 +409,12 @@ impl ProviderBridge {
         &self.projection
     }
 
+    /// States the pid namespace the observations are made from, so a process in another one is
+    /// placed across that boundary (§16.2, ADR-0983).
+    pub fn observe_from_pid_namespace(&mut self, inode: i128) {
+        self.projection = self.projection.clone().observed_from_pid_namespace(inode);
+    }
+
     /// Projects one record into the place it is (§3.1).
     ///
     /// # Errors
@@ -834,7 +840,12 @@ fn facts_of(id: &SpatialId, object_type: SpatialType, record: &RecordValue) -> A
                     Confidence::Exact,
                     Vec::new(),
                 );
-                if let Some(container) = container_id_in(&path) {
+                // A record that names its container has said so itself, and that statement is
+                // the edge above; composing a second one from the path would show one container
+                // twice (ADR-0983).
+                if text(record.get("container")).is_none()
+                    && let Some(container) = container_id_in(&path)
+                {
                     // §11.5: the kernel does not report container membership. The runtime id in
                     // the cgroup path leaves no serious alternative, which is `strong`, and the
                     // path travels with the edge as the evidence §11.4 requires.

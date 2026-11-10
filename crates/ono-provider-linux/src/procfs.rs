@@ -116,6 +116,33 @@ pub fn service_unit(text: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+/// The container named by `/proc/<pid>/cgroup`, when an engine put the process in one.
+///
+/// Docker, Podman, containerd and CRI-O all name the control group of a container after its full
+/// id — `docker-<id>.scope`, `libpod-<id>.scope`, `/docker/<id>`, `cri-containerd-<id>.scope` —
+/// and the id is sixty-four lowercase hex digits, which no slice, unit or session name is. The
+/// innermost path component that carries such a run names the container (ADR-0983).
+#[must_use]
+pub fn container_id(text: &str) -> Option<String> {
+    text.lines()
+        .filter_map(|line| line.splitn(3, ':').nth(2))
+        .flat_map(|path| path.rsplit('/'))
+        .find_map(|component| {
+            let bytes = component.as_bytes();
+            bytes
+                .windows(64)
+                .enumerate()
+                .find(|(start, run)| {
+                    let hex = |byte: &u8| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte);
+                    run.iter().all(hex)
+                        // Exactly sixty-four: a longer hex run is something else's name.
+                        && !bytes.get(start + 64).is_some_and(hex)
+                        && !start.checked_sub(1).and_then(|before| bytes.get(before)).is_some_and(hex)
+                })
+                .map(|(start, _)| component[start..start + 64].to_owned())
+        })
+}
+
 /// The moment the system booted, in seconds since the epoch, from `/proc/stat`'s `btime` line.
 ///
 /// This is what turns field 22 of `/proc/<pid>/stat` — ticks since boot — into the wall-clock

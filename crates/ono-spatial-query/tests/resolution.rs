@@ -417,3 +417,42 @@ fn figure(baseline: &[serde_yaml_ng::Value], benchmark: &str, profile: &str) -> 
             )
         })
 }
+
+#[test]
+fn should_mark_the_container_and_the_namespace_between_the_host_and_the_place() {
+    // §21.3: "Privilege, remote and namespace changes MUST be visually recognizable even in
+    // minimal colorless terminals", with `container:api /process/441` and
+    // `ns:net/4026533331 /socket/443` as its examples. The concise path the prompt shows names
+    // every boundary inside the host that the place lies behind, in words (ADR-0983).
+    let id = "4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c";
+    let contained = common::with(
+        common::with(
+            process(441, "nginx", "running"),
+            "container",
+            Value::string(id),
+        ),
+        "pid_namespace",
+        Value::Int(4_026_532_279),
+    );
+    let beside = common::with(
+        process(812, "sshd", "running"),
+        "pid_namespace",
+        Value::Int(4_026_531_836),
+    );
+    let mut index = index();
+    let mut bridge = bridge();
+    bridge.observe_from_pid_namespace(4_026_531_836);
+    bridge.absorb(&mut index, &[contained, beside], NOW);
+
+    let path_of =
+        |name: &str| ono_spatial_query::resolve::concise_path(&index, &resolved(&index, name));
+    assert_eq!(
+        path_of("nginx"),
+        "local container:4f9c0a2b7e1d ns:pid/4026532279 /process/nginx"
+    );
+    assert_eq!(
+        path_of("sshd"),
+        "local/process/sshd",
+        "a process in the observer's own scope carries no marker"
+    );
+}

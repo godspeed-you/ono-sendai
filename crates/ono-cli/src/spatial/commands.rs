@@ -757,12 +757,16 @@ pub async fn enter_observed(record: &ono_value::RecordValue) {
     session.absorb(std::slice::from_ref(record), now);
     let here = session.current_place().clone();
     if here != there {
-        session.trail_mut().record(NavigationStep::new(
+        // §3.2: v0.2's `enter <target>` moves the place as `enter <selector>` does, and a
+        // boundary it crosses is as observable in the trail (§20.1).
+        let step = crate::spatial::movement::step_across(
+            &session,
             now,
             here,
             there.clone(),
             Movement::Enter,
-        ));
+        );
+        session.trail_mut().record(step);
         session.arrive_at(&there, now);
     }
 }
@@ -1114,13 +1118,13 @@ impl CommandImpl for Enter {
             };
 
             if here != there {
-                let mut step =
-                    NavigationStep::new(now, here.clone(), there.clone(), Movement::Enter);
-                if let Some(crossing) =
-                    crate::spatial::movement::crossing_between(&session, &here, &there)
-                {
-                    step = step.crossing(crossing);
-                }
+                let step = crate::spatial::movement::step_across(
+                    &session,
+                    now,
+                    here.clone(),
+                    there.clone(),
+                    Movement::Enter,
+                );
                 session.trail_mut().record(step);
                 session.arrive_at(&there, now);
             }
@@ -1677,11 +1681,17 @@ impl CommandImpl for Follow {
                 }
             };
 
-            let step = NavigationStep::new(now, here, there.clone(), Movement::Follow)
-                .along(specs[0].relation_type())
-                // §6.4: the relation traversed is recorded — and a relation has two ends and
-                // therefore two words, so the word this traversal took travels with the id.
-                .spelled(relation.as_str());
+            let step = crate::spatial::movement::step_across(
+                &session,
+                now,
+                here,
+                there.clone(),
+                Movement::Follow,
+            )
+            .along(specs[0].relation_type())
+            // §6.4: the relation traversed is recorded — and a relation has two ends and
+            // therefore two words, so the word this traversal took travels with the id.
+            .spelled(relation.as_str());
             session.trail_mut().record(step);
             // §14.5: following an edge whose far end is on another host crosses the boundary,
             // and the session's host follows the place it is standing on (§19.2, §3.2).

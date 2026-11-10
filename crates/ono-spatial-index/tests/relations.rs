@@ -687,3 +687,45 @@ fn should_send_up_from_a_file_to_the_directory_that_contains_it() {
             .expect("the directory is a place")
     );
 }
+
+#[test]
+fn should_show_one_container_when_a_process_record_names_it_and_its_cgroup_carries_the_id() {
+    // A process record may name its container outright, and its detail view also carries the
+    // control group whose path holds the same id. That is one fact stated twice, and the
+    // process has one container to show — never the same place counted as two (§42.1,
+    // ADR-0983).
+    let id = "4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c";
+    let container = common::record(
+        "ono.container/1",
+        &[
+            ("id", Value::string(id)),
+            ("name", Value::string("web-1")),
+            ("state", Value::string("running")),
+        ],
+    );
+    let process = common::record(
+        "ono.process-detail/1",
+        &[
+            ("pid", Value::Int(441)),
+            ("name", Value::string("nginx")),
+            ("started", Value::string("1000")),
+            ("container", Value::string(id)),
+            (
+                "cgroup",
+                Value::string(&format!("/system.slice/docker-{id}.scope")),
+            ),
+        ],
+    );
+    let mut index = common::index();
+    let mut bridge = common::bridge();
+    bridge.absorb(&mut index, &[container, process.clone()], common::NOW);
+
+    let place = bridge.project(&process).expect("a place");
+    let containers: Vec<_> = index
+        .relation_summary(place.spatial_id(), usize::MAX, common::NOW)
+        .into_iter()
+        .find(|group| group.label() == "container")
+        .map(|group| group.members().to_vec())
+        .unwrap_or_default();
+    assert_eq!(containers.len(), 1, "one container, got {containers:?}");
+}

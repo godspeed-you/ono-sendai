@@ -685,11 +685,13 @@ impl SpatialIndex {
     }
 
     /// What makes two observations the same provider object: the reference, inside the scope it
-    /// was observed in. The same uid in two containers is two objects (§16.2).
+    /// was observed in. The same uid in two containers is two objects (§16.2). The scope the
+    /// object *lives* in is not part of it: a process is the same provider object before and
+    /// after its container or its namespace is known (ADR-0983).
     fn provider_key(object: &SpatialObject) -> (String, String) {
         (
             object
-                .scope()
+                .observed_in()
                 .chain()
                 .iter()
                 .map(ToString::to_string)

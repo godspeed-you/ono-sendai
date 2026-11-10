@@ -512,7 +512,7 @@ impl Reader {
         let command = self.command(&dir, &mut sources);
         let executable = link(&dir.join("exe"), &mut sources);
         let cwd = link(&dir.join("cwd"), &mut sources);
-        let service = self.service(&dir, &mut sources);
+        let (service, container) = self.claimed_by(&dir, &mut sources);
         let pid_namespace = namespace_inode(&dir, "pid", &mut sources);
         let memory = u128::try_from(stat.rss_pages).map_or(Value::Null, |pages| {
             Value::ByteSize(ByteSize::from_bytes(pages.saturating_mul(self.page_size)))
@@ -550,8 +550,9 @@ impl Reader {
         .set("start_ticks", Value::Int(i128::from(stat.starttime)))?
         .set("cwd", cwd)?
         .set("service", service)?
-        // No container provider claims this process; unknown is null, never a guess (spec §35.3).
-        .set("container", Value::Null)?
+        // The container whose id the engine wrote into the process's control group; null for a
+        // process in none — never a guess (spec §35.3, ADR-0983).
+        .set("container", container)?
         .set("pid_namespace", pid_namespace)?
         .build();
         Ok(record)
@@ -692,17 +693,26 @@ impl Reader {
         }
     }
 
-    /// The service unit claiming the process, where one does.
-    fn service(&self, dir: &Path, sources: &mut Vec<String>) -> Value {
+    /// The service unit and the container claiming the process, where one does: both are read
+    /// out of the one control-group path the kernel reports for it.
+    fn claimed_by(&self, dir: &Path, sources: &mut Vec<String>) -> (Value, Value) {
         let path = dir.join("cgroup");
         match fs::read_to_string(&path) {
             Ok(text) => {
                 sources.push(path.display().to_string());
-                procfs::service_unit(&text).map_or(Value::Null, |unit| Value::string(&unit))
+                (
+                    procfs::service_unit(&text).map_or(Value::Null, |unit| Value::string(&unit)),
+                    procfs::container_id(&text).map_or(Value::Null, |id| Value::string(&id)),
+                )
             }
             // A kernel without cgroups has no unit to report: unknown, not unreadable.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Value::Null,
-            Err(error) => io_error(&error, &path).into_value(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                (Value::Null, Value::Null)
+            }
+            Err(error) => {
+                let refused = io_error(&error, &path).into_value();
+                (refused.clone(), refused)
+            }
         }
     }
 

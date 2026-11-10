@@ -279,11 +279,7 @@ pub fn go_up(
              question (spec v0.4 §6.6, §7.1, §40)",
         ));
     };
-    let crossing = crossing_between(session, &here, &there);
-    let mut step = NavigationStep::new(now, here, there.clone(), Movement::Up);
-    if let Some(crossing) = crossing {
-        step = step.crossing(crossing);
-    }
+    let step = step_across(session, now, here, there.clone(), Movement::Up);
     session.trail_mut().record(step);
     session.arrive_at(&there, now);
     Ok(())
@@ -356,11 +352,7 @@ impl CommandImpl for Jump {
             }
             // §6.5: "MUST visibly record the source and destination in the trail" — and §3.2 adds
             // the boundary, where the teleport crossed one.
-            let crossing = crossing_between(&session, &here, &there);
-            let mut step = NavigationStep::new(now, here, there.clone(), Movement::Jump);
-            if let Some(crossing) = crossing {
-                step = step.crossing(crossing);
-            }
+            let step = step_across(&session, now, here, there.clone(), Movement::Jump);
             session.trail_mut().record(step);
             session.arrive_at(&there, now);
             Ok(Outcome::Values(ValueStream::from_values(Vec::new())))
@@ -465,6 +457,39 @@ pub(crate) fn crossing_between(
     let there = scope_of(session, to);
     here.boundary_to(&there)
         .or_else(|| crate::spatial::storage::filesystem_crossing(session, from, to))
+}
+
+/// The step of a movement from `here` to `there`, carrying the boundary it crosses — and the
+/// boundary said out loud where it is a container's or a namespace's (§3.2, §16.2, §20.1).
+///
+/// §16.2: "Entering a namespace MUST show the boundary explicitly", and §3.2 wants a crossing
+/// observable in the trail. The trail gets the boundary on the step; the reader gets one line on
+/// the diagnostic stream, which is where `jump` states a crossed link, so a pipeline keeps
+/// reading objects rather than prose (§29.1).
+pub(crate) fn step_across(
+    session: &SpatialSessionState,
+    now: Timestamp,
+    here: SpatialId,
+    there: SpatialId,
+    movement: Movement,
+) -> NavigationStep {
+    let crossing = crossing_between(session, &here, &there);
+    let mut step = NavigationStep::new(now, here, there, movement);
+    if let Some(crossing) = crossing {
+        if matches!(
+            crossing.kind(),
+            ono_spatial_core::ScopeKind::Container | ono_spatial_core::ScopeKind::Namespace
+        ) {
+            ono_core::diagnostic!(
+                "{}: crossing scope: {} -> {}",
+                ono_core::SHORT_NAME,
+                crossing.from(),
+                crossing.to()
+            );
+        }
+        step = step.crossing(crossing);
+    }
+    step
 }
 
 /// The scope a place belongs to: its own where it was observed, its host's where it is declared

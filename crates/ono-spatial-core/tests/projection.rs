@@ -323,3 +323,106 @@ fn should_keep_one_identity_for_a_process_when_the_wall_clock_is_stepped() {
         .expect("a process projects");
     assert_ne!(before.spatial_id(), reused.spatial_id());
 }
+
+/// A process record that states the container and the pid namespace it runs in.
+fn contained(pid: i64, container: Option<&str>, pid_namespace: Option<i64>) -> RecordValue {
+    let schema = builtin_schemas()
+        .get(&SchemaId::new("ono.process", 1))
+        .expect("the process contract");
+    RecordValue::builder(
+        schema,
+        Provenance::local("linux.procfs", SchemaId::new("ono.process", 1)),
+    )
+    .set("pid", Value::Int(i128::from(pid)))
+    .and_then(|builder| builder.set("name", Value::string("nginx")))
+    .and_then(|builder| builder.set("started", Value::string("2026-08-27T10:00:00Z")))
+    .and_then(|builder| {
+        builder.set(
+            "container",
+            container.map_or(Value::Null, |id| Value::String(id.into())),
+        )
+    })
+    .and_then(|builder| {
+        builder.set(
+            "pid_namespace",
+            pid_namespace.map_or(Value::Null, |inode| Value::Int(i128::from(inode))),
+        )
+    })
+    .expect("the fixture's own fields")
+    .build()
+}
+
+#[test]
+fn should_place_a_process_in_the_container_its_record_names_without_changing_which_process_it_is() {
+    // §3.2: "A scope defines the execution and discovery boundary to which an object belongs",
+    // and scopes nest — `host -> container`. A process whose record names its container belongs
+    // to that container's scope, which is what makes the crossing observable (§2.18, §21.3).
+    // Which process it is does not depend on that: the identity is the one §10.2 gives it, so
+    // the place is the same place whether or not the provider could name the container
+    // (ADR-0983).
+    let id = "4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c0a2b7e1d4f9c";
+    let inside = projection()
+        .project_as(&contained(441, Some(id), None), SpatialType::Process)
+        .expect("projects");
+    let unnamed = projection()
+        .project_as(&contained(441, None, None), SpatialType::Process)
+        .expect("projects");
+
+    assert_eq!(
+        inside.scope().kind(),
+        ono_spatial_core::ScopeKind::Container
+    );
+    assert_eq!(
+        inside.scope().id(),
+        "4f9c0a2b7e1d",
+        "the engine's short id, the form every container tool prints"
+    );
+    assert_eq!(
+        inside
+            .scope()
+            .parent()
+            .map(ono_spatial_core::SpatialScope::kind),
+        Some(ono_spatial_core::ScopeKind::Host),
+        "the container is nested in the host it was observed on"
+    );
+    assert_eq!(unnamed.scope().kind(), ono_spatial_core::ScopeKind::Host);
+    assert_eq!(
+        inside.spatial_id(),
+        unnamed.spatial_id(),
+        "§42.1: one process is one place, whatever is known about where it runs"
+    );
+}
+
+#[test]
+fn should_place_a_process_in_its_pid_namespace_when_that_is_not_the_observers_own() {
+    // §16.2: "Entering a namespace MUST show the boundary explicitly", and §3.2's own example
+    // nests a namespace scope. A process in another pid namespace than the one the shell
+    // observes from is across that boundary; one in the same namespace is not, and where the
+    // observer's namespace is unknown nothing is claimed (§2.17, ADR-0983).
+    let host = 4_026_531_836_i64;
+    let other = 4_026_532_279_i64;
+    let observing = projection().observed_from_pid_namespace(i128::from(host));
+
+    let across = observing
+        .project_as(&contained(1, None, Some(other)), SpatialType::Process)
+        .expect("projects");
+    assert_eq!(
+        across.scope().kind(),
+        ono_spatial_core::ScopeKind::Namespace
+    );
+    assert_eq!(across.scope().id(), "pid:[4026532279]");
+
+    let beside = observing
+        .project_as(&contained(812, None, Some(host)), SpatialType::Process)
+        .expect("projects");
+    assert_eq!(beside.scope().kind(), ono_spatial_core::ScopeKind::Host);
+
+    let unknown_observer = projection()
+        .project_as(&contained(1, None, Some(other)), SpatialType::Process)
+        .expect("projects");
+    assert_eq!(
+        unknown_observer.scope().kind(),
+        ono_spatial_core::ScopeKind::Host,
+        "without the observer's own namespace there is nothing to compare with"
+    );
+}

@@ -13,7 +13,9 @@ use ono_core::ErrorCode;
 use ono_provider_api::ObjectRef;
 use ono_value::{ErrorValue, Provenance, RecordValue};
 
-use crate::{BootIdentity, IdentityTier, SpatialId, SpatialIdentity, SpatialScope, SpatialType};
+use crate::{
+    BootIdentity, IdentityTier, ScopeKind, SpatialId, SpatialIdentity, SpatialScope, SpatialType,
+};
 
 /// What a spatial object can be asked to do (§3.1's `capabilities: Set<SpatialCapability>`).
 ///
@@ -132,12 +134,23 @@ pub struct SpatialObject {
     canonical_ref: ObjectRef,
     display_name: String,
     scope: SpatialScope,
+    observed_in: SpatialScope,
     lifetime: LifetimeDescriptor,
     provenance: Provenance,
     capabilities: BTreeSet<SpatialCapability>,
 }
 
 impl SpatialObject {
+    /// The scope the observation was made in — the host the provider answered for.
+    ///
+    /// It is the scope the object's identity is derived in, and it stays the same however much
+    /// is learned about where the object lives: [`SpatialObject::scope`] may name a container
+    /// or a namespace inside it (ADR-0983).
+    #[must_use]
+    pub fn observed_in(&self) -> &SpatialScope {
+        &self.observed_in
+    }
+
     /// The object's opaque identity (§3.1).
     #[must_use]
     pub fn spatial_id(&self) -> &SpatialId {
@@ -224,13 +237,63 @@ impl SpatialObject {
 pub struct Projection {
     scope: SpatialScope,
     at: Timestamp,
+    /// The pid namespace the observer itself runs in, where it is known — what a process's own
+    /// namespace is compared with to tell whether it is across a boundary (§16.2).
+    observer_pid_namespace: Option<i128>,
 }
 
 impl Projection {
     /// A projection into `scope`, for observations made at `at`.
     #[must_use]
     pub fn new(scope: SpatialScope, at: Timestamp) -> Self {
-        Self { scope, at }
+        Self {
+            scope,
+            at,
+            observer_pid_namespace: None,
+        }
+    }
+
+    /// States the pid namespace the observations are made from (§16.2).
+    ///
+    /// A process in another pid namespace is across a namespace boundary, and that is only
+    /// decidable against the observer's own. Until it is stated no process is placed in a
+    /// namespace scope: an unknown observer is not a boundary (§2.17).
+    #[must_use]
+    pub fn observed_from_pid_namespace(mut self, inode: i128) -> Self {
+        self.observer_pid_namespace = Some(inode);
+        self
+    }
+
+    /// The pid namespace the observations are made from, where it was stated.
+    #[must_use]
+    pub fn observer_pid_namespace(&self) -> Option<i128> {
+        self.observer_pid_namespace
+    }
+
+    /// The scope one observed object belongs to (§3.2).
+    ///
+    /// Scopes nest, outermost first: the host the projection is into, then the container a
+    /// process's record names, then its pid namespace where that differs from the observer's.
+    /// The identity of the object is unaffected — it stays the one its record and the host give
+    /// it — so learning more about where a process runs never makes it another place (§42.1,
+    /// ADR-0983).
+    fn scope_of(&self, object_type: SpatialType, record: &RecordValue) -> SpatialScope {
+        if object_type != SpatialType::Process {
+            return self.scope.clone();
+        }
+        let mut scope = self.scope.clone();
+        if let Some(ono_value::Value::String(id)) = record.get("container") {
+            // The short form of the engine's id, the one every container tool prints.
+            let short = id.get(..12).unwrap_or(id);
+            scope = scope.nest(ScopeKind::Container, short);
+        }
+        if let Some(observer) = self.observer_pid_namespace
+            && let Some(ono_value::Value::Int(inode)) = record.get("pid_namespace")
+            && *inode != observer
+        {
+            scope = scope.nest(ScopeKind::Namespace, &format!("pid:[{inode}]"));
+        }
+        scope
     }
 
     /// The scope objects are projected into.
@@ -295,7 +358,8 @@ impl Projection {
             object_type,
             canonical_ref,
             display_name,
-            scope: self.scope.clone(),
+            scope: self.scope_of(object_type, record),
+            observed_in: self.scope.clone(),
             lifetime: LifetimeDescriptor::observed(identity.tier(), self.at),
             provenance: record.provenance().clone(),
             capabilities,
@@ -351,6 +415,7 @@ impl Projection {
             canonical_ref,
             display_name: key.to_owned(),
             scope: self.scope.clone(),
+            observed_in: self.scope.clone(),
             lifetime: LifetimeDescriptor::observed(identity.tier(), self.at),
             provenance,
             capabilities,

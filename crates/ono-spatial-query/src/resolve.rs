@@ -687,7 +687,38 @@ pub fn concise_path(index: &SpatialIndex, id: &SpatialId) -> String {
     };
     let link = locality(Some(entry.object().scope()));
     let kind = entry.object().object_type().as_str().to_ascii_lowercase();
-    format!("{link}/{kind}/{}", entry.object().display_name())
+    let name = entry.object().display_name();
+    // §21.3: a container or namespace boundary is a marker of its own, in words, between the
+    // host and the place — `local container:4f9c0a2b7e1d /process/nginx`.
+    match boundary_markers(entry.object().scope()).as_slice() {
+        [] => format!("{link}/{kind}/{name}"),
+        markers => format!("{link} {} /{kind}/{name}", markers.join(" ")),
+    }
+}
+
+/// The boundaries inside its host that a scope lies behind, outermost first, as §21.3 spells
+/// them: `container:<id>` and `ns:<kind>/<inode>`.
+///
+/// Empty for a scope that is a host. The words are the marker — §21.3 requires the change to
+/// be "visually recognizable even in minimal colorless terminals".
+#[must_use]
+pub fn boundary_markers(scope: &ono_spatial_core::SpatialScope) -> Vec<String> {
+    use ono_spatial_core::ScopeKind;
+    scope
+        .chain()
+        .into_iter()
+        .filter_map(|scope| match scope.kind() {
+            ScopeKind::Container => Some(format!("container:{}", scope.id())),
+            // The scope is named `pid:[4026532279]`, the way the kernel prints the link; the
+            // marker is §21.3's `ns:pid/4026532279`.
+            ScopeKind::Namespace => {
+                let (kind, inode) = scope.id().split_once(':').unwrap_or(("", scope.id()));
+                let inode = inode.trim_start_matches('[').trim_end_matches(']');
+                Some(format!("ns:{kind}/{inode}"))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// The canonical hierarchy path a place sits at — §27.2's third column and §6.8's `path/scope`
