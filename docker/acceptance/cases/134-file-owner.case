@@ -1,0 +1,50 @@
+# A file place printed `owner — available on request`, and no request filled it: the file's record
+# names its owner, and nothing at a file place read the user that record names (#206). v0.4.1
+# §34.3 forbids a relation that is described as requestable and cannot be requested. ADR-0973
+# reads the `user` target when the owner is asked for — by naming the relation, by `--resolve`, or
+# by the kind of neighbour — and leaves a default `look` as cheap as it was (v0.4 §32.1, §32.2).
+#
+# The file is the case's own, so its owner is the unprivileged user the case runs as.
+case: a file leads to the user that owns it when the owner is asked for
+timeout: 90
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  mkdir -p /tmp/owner-134
+  printf 'fixture\n' > /tmp/owner-134/owned.txt
+  me=$(id -u)
+
+  echo "== a default look leaves the owner unloaded and says so (§32.1, §32.2) =="
+  prove o1 "the owner exit reads available on request" \
+    "ono -c 'enter /tmp/owner-134/owned.txt; look' | grep -qE '^ +owner +unknown — available on request'"
+
+  echo "== and every way of asking for it is a request path (v0.4.1 §34.3, ADR-0973) =="
+  prove o2 "\`follow owner\` reaches the user that owns the file" \
+    "ono -c 'enter /tmp/owner-134/owned.txt; follow owner; look --json' | grep -qF '\"uid\":$me'"
+  prove o3 "\`follow owner --resolve\` reaches the same place" \
+    "ono -c 'enter /tmp/owner-134/owned.txt; follow owner --resolve; look --json' | grep -qF '\"uid\":$me'"
+  prove o4 "\`near --type user\` lists the owner" \
+    "test \"\$(ono -c 'enter /tmp/owner-134/owned.txt; near --type user | count | to json' | tail -1)\" = '[1]'"
+  prove o5 "\`look --all\` counts it" \
+    "ono -c 'enter /tmp/owner-134/owned.txt; look --all' | grep -qE '^ +owner +1'"
+  prove o6 "a directory answers the same way" \
+    "ono -c 'enter /tmp/owner-134; follow owner; look --json' | grep -qF '\"uid\":$me'"
+  echo done=ok
+exit: 0
+stdout-contains: PROVED o1
+stdout-contains: PROVED o2
+stdout-contains: PROVED o3
+stdout-contains: PROVED o4
+stdout-contains: PROVED o5
+stdout-contains: PROVED o6
+stdout-contains: done=ok
+stdout-not-contains: FAILED

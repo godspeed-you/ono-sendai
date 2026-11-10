@@ -482,6 +482,29 @@ pub async fn observe(
         crate::spatial::storage::observe_children(providers, session, id, &path, now).await;
     }
 
+    // v0.4.1 §34.3: a file's record names its owner, and the user place it names is read when
+    // the owner is asked for. From this end the relation costs one read of the account database;
+    // it is the user's end — every file a user owns — that makes it expensive, so a default
+    // `look` still leaves it unloaded (§32.1, ADR-0973).
+    if matches!(object_type, SpatialType::Directory | SpatialType::File)
+        && interest.wants(&["owner"], SpatialType::User, object_type)
+    {
+        let users: BTreeSet<&'static str> = BTreeSet::from(["user"]);
+        crate::spatial::view::observe_targets(providers, session, &users, now).await;
+        let refusal = session
+            .recall("user", now)
+            .and_then(|seen| seen.refusal.clone());
+        let (index, _) = session.absorb_with();
+        match refusal {
+            Some((state, detail)) => {
+                index.record_withheld(id, "owner", state, &detail);
+            }
+            None => {
+                index.clear_withheld(id, "owner");
+            }
+        }
+    }
+
     let mut answered: BTreeSet<&'static str> = contributed_exits;
     // What the adjacent targets said about the exits they fill: an answer, or why there is none.
     for (target, label) in adjacent_labels(object_type) {

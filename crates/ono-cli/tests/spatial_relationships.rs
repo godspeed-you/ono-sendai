@@ -1346,3 +1346,56 @@ fn should_pay_for_an_expensive_relation_when_follow_is_asked_to_resolve_it() {
     assert_place_is(&place_view(&run), "process", &mine, "v0.4.1 §34.3");
     drop(file);
 }
+
+#[test]
+fn should_lead_from_a_file_to_the_user_that_owns_it_when_the_owner_is_asked_for() {
+    // v0.4.1 §34.3: a relation described as "available on request" has a request path. A file's
+    // record names its owner, and the user place it names is read when the owner is asked for —
+    // by naming the relation, by `--resolve`, or by the kind of neighbour (ADR-0973).
+    use std::os::unix::fs::MetadataExt as _;
+    let home = scratch();
+    let owned = home.path().join("owned.txt");
+    std::fs::write(&owned, b"fixture").expect("the fixture file is writable");
+    let uid = std::fs::metadata(&owned)
+        .expect("the fixture file was just written")
+        .uid()
+        .to_string();
+
+    for request in ["follow owner", "follow owner --resolve"] {
+        let run = ono(&format!(
+            "enter {}; {request}; look --json",
+            owned.display()
+        ));
+        assert_place_is(&place_view(&run), "user", &uid, "v0.4.1 §34.3");
+    }
+
+    let near = ono(&format!(
+        "enter {}; near --type user | select spatial_type identity | to json",
+        owned.display()
+    ));
+    near.assert_success();
+    assert!(
+        near.stdout().contains("\"User\"") && near.stdout().contains(&format!("\"{uid}\"")),
+        "§6.2: asked for by kind, the owner is the file's one user neighbour (uid {uid}); got {:?}",
+        near.stdout()
+    );
+}
+
+#[test]
+fn should_leave_the_owner_of_a_file_on_request_when_a_default_look_reads_the_place() {
+    // §32.1: a default `look` stays away from a relation declared expensive. The owner of a file
+    // stays discoverable and unloaded, and the place says so (§32.2, §35.2).
+    let home = scratch();
+    let owned = home.path().join("owned.txt");
+    std::fs::write(&owned, b"fixture").expect("the fixture file is writable");
+
+    let run = ono(&format!("enter {}; look --json", owned.display()));
+    run.assert_success();
+    let owner = exit_group(&place_view(&run), "owner");
+    let shown = rendered(&owner);
+    assert!(
+        shown.contains("available on request"),
+        "§32.2: nothing asked for the owner, so the exit is unloaded and says how to load it; \
+         got {shown}"
+    );
+}
