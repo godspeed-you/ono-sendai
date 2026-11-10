@@ -12,7 +12,7 @@
 //! blocked on `/proc` would be neither local nor metadata. What makes the members of a place
 //! nobody has looked at available all the same is §34.1's background discovery: once the prompt
 //! is back after a movement, the shell reads the collection it now stands in, behind the prompt
-//! ([`crate::spatial::view::discover`], ADR-0984). Until that read has arrived the offer is the
+//! (`view::discover`, ADR-0984). Until that read has arrived the offer is the
 //! declared geography and no more, which is honest — it is exactly what the shell knows.
 
 use ono_spatial_core::{PermissionState, space};
