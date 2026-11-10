@@ -114,7 +114,7 @@ run: |
   prove s4b-u "pid 1 belongs to another user, and its files say so rather than reporting zero" \
     'test "$(ono -c "enter process/1; look --json | from json | select exits.files.state | to text --field state")" != "empty"'
   prove s4b-v "a relation nothing in this build serves is unsupported, not empty" \
-    'test "$(ono -c "enter process/1; look --json | from json | select exits.endpoints.state | to text --field state")" = "unsupported"'
+    'test "$(ono -c "enter process/1; follow user; look --json | from json | select exits.files.state | to text --field state")" = "unsupported"'
   prove s4b-w "this user's own process has readable descriptors, so the group is available" \
     "test \"\$(ono -c 'enter process/$holder; look --json | from json | select exits.files.state | to text --field state')\" = 'available'"
 
