@@ -58,7 +58,11 @@ pub fn rooted_relationships(
                 .sharing(Arc::clone(&snapshots)),
         ),
         Arc::new(ServiceDependencies::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
-        Arc::new(ProcessTree::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
+        Arc::new(
+            ProcessTree::new(Arc::clone(&registry))
+                .rooted(root)
+                .sharing(Arc::clone(&snapshots)),
+        ),
         Arc::new(
             ProcessSockets::new(Arc::clone(&registry))
                 .rooted(root)

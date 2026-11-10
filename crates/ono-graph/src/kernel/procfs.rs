@@ -156,6 +156,35 @@ pub(crate) fn cgroups(proc: &Path, pid: i64) -> Result<Vec<String>, ErrorValue> 
         .collect())
 }
 
+/// The children of a process, as the kernel lists them under `/proc/<pid>/task/<tid>/children`,
+/// in numeric order — or `None` where the kernel publishes no such list for it.
+///
+/// The list is per thread, because a child belongs to the thread that forked it; a process's
+/// children are the union. A kernel built without `CONFIG_PROC_CHILDREN` has no such file, and
+/// a process that has gone has no `task` directory: both are "not listed here", which the
+/// caller answers by reading the process table instead.
+pub(crate) fn children(proc: &Path, pid: i64) -> Option<Vec<i64>> {
+    let tasks = fs::read_dir(proc.join(pid.to_string()).join("task")).ok()?;
+    let mut listed = false;
+    let mut children: Vec<i64> = Vec::new();
+    for task in tasks.flatten() {
+        let Ok(text) = fs::read_to_string(task.path().join("children")) else {
+            continue;
+        };
+        listed = true;
+        children.extend(
+            text.split_whitespace()
+                .filter_map(|pid| pid.parse::<i64>().ok()),
+        );
+    }
+    if !listed {
+        return None;
+    }
+    children.sort_unstable();
+    children.dedup();
+    Some(children)
+}
+
 /// Where one of a process's magic links points: its `root`, its `cwd`, a namespace under `ns/`.
 ///
 /// `who` is a pid, or `self` for the reader.

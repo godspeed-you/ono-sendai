@@ -1,0 +1,57 @@
+# v0.4.1 §34.4: "A local neighborhood query SHOULD NOT require construction of the complete system
+# graph when provider APIs can answer the neighborhood incrementally." `trace process <pid>` read
+# the whole process table for one parent and a few children, and `enter process/<pid>` swept the
+# whole target on an index miss (#296). ADR-0986: the tree is read from the kernel's own list of
+# a process's children, and a `<type>/<key>` selector asks for the object it names.
+case: one object is asked for where the kernel and the provider can answer for one
+timeout: 90
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  sh -c 'sleep 80 & sleep 80 & wait' &
+  parent=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ "$(pgrep -P "$parent" | wc -l)" -ge 2 ] && break
+    sleep 0.2
+  done
+  kids=$(pgrep -P "$parent" | sort -n | tr '\n' ' ')
+
+  echo "== the tree of one process is its parent and its children (§22.2) =="
+  ono -c "trace process $parent --depth 1" > /tmp/tree.txt
+  prove t1 "the parent is the shell that started it" \
+    "grep -qE 'parent -> process/$$ ' /tmp/tree.txt"
+  for kid in $kids; do
+    prove "t2-$kid" "child $kid is in the tree" \
+      "grep -qE 'child -> process/$kid sleep' /tmp/tree.txt"
+  done
+  prove t3 "and nobody else's child is" \
+    "test \"\$(grep -c 'child -> ' /tmp/tree.txt)\" -eq 2"
+
+  echo "== a typed selector asks for the one object it names (§11.2, v0.4.1 §34.4) =="
+  prove s1 "process/<pid> reaches the process" \
+    "ono -c 'enter process/$parent; look --json' | grep -qF '\"pid\":$parent'"
+  prove s2 "and the process table is still unread afterwards: looking at it asks" \
+    "ono -c 'enter process/$parent; home; enter compute; enter processes; look --json' | grep -qF '\"freshness\":\"polled\"'"
+  prove s3 "a key that is a name is still found, by the sweep (ADR-0497)" \
+    "ono -c 'enter process/1; look --json' | grep -qF '\"pid\":1'"
+
+  kill "$parent" $kids 2>/dev/null || true
+  wait 2>/dev/null || true
+  echo done=ok
+exit: 0
+stdout-contains: PROVED t1
+stdout-contains: PROVED t3
+stdout-contains: PROVED s1
+stdout-contains: PROVED s2
+stdout-contains: PROVED s3
+stdout-contains: done=ok
+stdout-not-contains: FAILED

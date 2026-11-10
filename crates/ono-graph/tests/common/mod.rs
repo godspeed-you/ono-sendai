@@ -132,6 +132,21 @@ impl ProcessFixture {
         self
     }
 
+    /// Writes `/proc/<pid>/task/<pid>/children`, where the kernel lists a process's children.
+    pub fn children(self, pids: &[i64]) -> Self {
+        let pid = self
+            .dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_owned();
+        let task = self.dir.join("task").join(&pid);
+        fs::create_dir_all(&task).expect("the task directory");
+        let listed: String = pids.iter().map(|child| format!("{child} ")).collect();
+        fs::write(task.join("children"), listed).expect("the children file");
+        self
+    }
+
     pub fn cgroup(self, text: &str) -> Self {
         fs::write(self.dir.join("cgroup"), format!("{text}\n")).expect("the cgroup file");
         self
@@ -159,6 +174,8 @@ pub struct FixtureProvider {
     id: String,
     targets: Vec<&'static str>,
     records: Vec<RecordValue>,
+    /// How many records this provider has handed out, over every query it answered.
+    handed_out: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl FixtureProvider {
@@ -167,7 +184,15 @@ impl FixtureProvider {
             id: id.to_owned(),
             targets: targets.to_vec(),
             records,
+            handed_out: Arc::default(),
         }
+    }
+
+    /// A counter of the records this provider hands out — what a caller made it read, seen from
+    /// outside. A question about one object costs one record; a read of the whole target costs
+    /// all of them (#296).
+    pub fn counter(&self) -> Arc<std::sync::atomic::AtomicUsize> {
+        Arc::clone(&self.handed_out)
     }
 }
 
@@ -196,6 +221,8 @@ impl Provider for FixtureProvider {
             .filter(|record| query.matches(record))
             .map(|record| record.clone().into_value())
             .collect();
+        self.handed_out
+            .fetch_add(values.len(), std::sync::atomic::Ordering::SeqCst);
         Ok(ValueStream::from_values(values))
     }
 

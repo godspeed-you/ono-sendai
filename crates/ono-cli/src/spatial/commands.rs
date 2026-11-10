@@ -1255,6 +1255,28 @@ pub async fn resolved_place(
         view::observe_path(providers, session, &path, now).await;
         resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
     }
+    if matches!(resolution, ono_spatial_query::Resolution::NotFound)
+        && let Some(question) = pinned_question(providers, selector)
+    {
+        // v0.4.1 §34.4: `process/1842` names one object by the field its provider is keyed on.
+        // The provider is asked for that object, and the target is swept only where that did
+        // not find it — the key may be a name the object answers to rather than its identity
+        // (ADR-0986).
+        if let Ok(stream) = providers.snapshot(&question) {
+            let records: Vec<ono_value::RecordValue> = stream
+                .collect()
+                .await
+                .into_values()
+                .into_iter()
+                .filter_map(|value| match value {
+                    Value::Record(record) => Some(ono_value::RecordValue::clone(&record)),
+                    _ => None,
+                })
+                .collect();
+            session.absorb(&records, now);
+            resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
+        }
+    }
     if matches!(resolution, ono_spatial_query::Resolution::NotFound) {
         let plan = ono_spatial_query::targets_for(
             type_hint(selector),
@@ -1310,6 +1332,37 @@ fn absolute_path_in(selector: &str) -> Option<std::path::PathBuf> {
     candidate
         .starts_with('/')
         .then(|| std::path::PathBuf::from(candidate))
+}
+
+/// The question that asks a provider for the one object a `<type>/<key>` selector names: the
+/// target that serves the type, pinned on the field another record names such an object by,
+/// with the key in the type the schema declares for that field (v0.4.1 §34.4, ADR-0986).
+///
+/// `None` where the selector is not of that shape, where no provider serves the type, and where
+/// the key is not a value of the field — `process/nginx` is a name, and a name is found by the
+/// sweep.
+fn pinned_question(
+    providers: &ProviderRegistry,
+    selector: &str,
+) -> Option<ono_provider_api::Query> {
+    let object_type = type_hint(selector)?;
+    let (_, key) = selector.split_once('/')?;
+    let (target, field) = crate::spatial::relations::target_of(object_type)?;
+    let declared = providers
+        .for_target(target)
+        .iter()
+        .flat_map(|provider| provider.schemas())
+        .find_map(|schema| schema.field(field).map(|field| field.ty().clone()))?;
+    let value = match declared {
+        ono_value::FieldType::Int => Value::Int(key.parse().ok()?),
+        ono_value::FieldType::String => Value::string(key),
+        ono_value::FieldType::Path => Value::Path(Arc::from(std::path::Path::new(key))),
+        _ => return None,
+    };
+    Some(
+        ono_provider_api::Query::target(target)
+            .with(ono_provider_api::Selector::field(field, value)),
+    )
 }
 
 /// The kind of place a `<type>/<key>` selector names, where it names one (§11.2's `process/1842`).

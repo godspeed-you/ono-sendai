@@ -1682,3 +1682,40 @@ fn should_keep_live_updates_and_say_what_reduced_motion_switches_off() {
         "§39.4: live updates are preserved with reduced motion on"
     );
 }
+
+#[test]
+fn should_ask_for_the_one_object_a_typed_selector_names_rather_than_its_whole_target() {
+    // v0.4.1 §34.4: "A local neighborhood query SHOULD NOT require construction of the complete
+    // system graph when provider APIs can answer the neighborhood incrementally." `process/<pid>`
+    // names one object by the field its provider is keyed on, and the provider answers for one
+    // pid. So entering it reads that process — and the process table is still unread
+    // afterwards: a `look` at `compute/processes` has to ask, and says `polled`, where a
+    // session that had swept the table to find one pid would answer from its cache (ADR-0986).
+    let pid = std::process::id();
+    let entered = ono(&format!(
+        "enter process/{pid}; look --json | from json | select place.pid | to json"
+    ));
+    entered.assert_success();
+    assert!(
+        entered.stdout().contains(&pid.to_string()),
+        "§11.2: `process/<pid>` reaches the process, got {:?}",
+        entered.stdout()
+    );
+
+    let run = ono(&format!(
+        "enter process/{pid}; home; enter compute; enter processes; look --json"
+    ));
+    run.assert_success();
+    let view = rendered(&document(
+        &run,
+        "§29.1: `look --json` answers off a terminal",
+    ));
+    assert!(
+        view.contains("freshness: polled"),
+        "v0.4.1 §34.4: finding one pid did not read every process, so the collection is read \
+         when it is looked at; got a view whose freshness is not `polled`: {}",
+        view.lines()
+            .find(|line| line.starts_with("freshness"))
+            .unwrap_or_default()
+    );
+}

@@ -25,6 +25,9 @@ const SOCKET: &str = "ono.socket/1";
 pub struct ProcessTree {
     registry: Arc<ProviderRegistry>,
     snapshots: Arc<super::lookup::SharedSnapshots>,
+    /// Where `/proc` is, when the tree may be read from the kernel's own list of a process's
+    /// children. `None` leaves the tree to the process table.
+    root: Option<PathBuf>,
 }
 
 impl ProcessTree {
@@ -34,7 +37,46 @@ impl ProcessTree {
         Self {
             registry,
             snapshots: Arc::default(),
+            root: None,
         }
+    }
+
+    /// Reads the children of a process from `<root>/proc/<pid>/task/<tid>/children`, where the
+    /// kernel publishes that list, and asks the process provider for those processes alone
+    /// (v0.4.1 §34.4, ADR-0986). Where the kernel publishes none the process table is read, as
+    /// it is without a root.
+    #[must_use]
+    pub fn rooted(mut self, root: impl AsRef<Path>) -> Self {
+        self.root = Some(root.as_ref().to_path_buf());
+        self
+    }
+
+    /// The tree around `pid` from the kernel's list of its children and two kinds of pinned
+    /// question, or `None` where the kernel lists no children for it.
+    async fn neighbourhood(&self, subject: &Node, pid: i64) -> Option<Relationships> {
+        let proc = procfs::proc_dir(self.root.as_deref()?);
+        let children = procfs::children(&proc, pid)?;
+        let mut found = Relationships::new();
+        if let Some(ppid) = subject.integer("ppid").filter(|ppid| *ppid > 0) {
+            match lookup::process_node(&self.registry, ppid).await {
+                Ok(parent) => found.push(Relationship::exact(subject, parent, "parent", self.id())),
+                // The parent exited after the subject was read: the tree has no such edge now.
+                Err(error) if error.code() == ErrorCode::IoNotFound => {}
+                Err(error) => found.fail(error),
+            }
+        }
+        for child in children {
+            if child == pid {
+                continue;
+            }
+            match lookup::process_node(&self.registry, child).await {
+                Ok(node) => found.push(Relationship::exact(subject, node, "child", self.id())),
+                // A child that exited between the listing and the question is not a child now.
+                Err(error) if error.code() == ErrorCode::IoNotFound => {}
+                Err(error) => found.fail(error),
+            }
+        }
+        Some(found)
     }
 
     pub(crate) fn sharing(mut self, snapshots: Arc<super::lookup::SharedSnapshots>) -> Self {
@@ -65,6 +107,11 @@ impl RelationshipProvider for ProcessTree {
         let Some(pid) = subject.integer("pid") else {
             return Relationships::failed(missing_field(subject, "pid"));
         };
+        // v0.4.1 §34.4: the neighbourhood is answered incrementally where the kernel and the
+        // provider can. The whole table is the fallback, read once per trace.
+        if let Some(found) = self.neighbourhood(subject, pid).await {
+            return found;
+        }
         let (records, failures) = match self.snapshots.all(&self.registry, "process").await {
             Ok(found) => found,
             Err(error) => return Relationships::failed(error),

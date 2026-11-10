@@ -1227,3 +1227,90 @@ async fn should_claim_no_mounts_for_a_container_whose_engine_reported_none() {
 
     assert!(graph.edges().is_empty() && graph.failures().is_empty());
 }
+
+#[tokio::test]
+async fn should_ask_for_the_parent_and_the_children_alone_when_the_kernel_lists_the_children() {
+    // v0.4.1 §34.4: "A local neighborhood query SHOULD NOT require construction of the complete
+    // system graph when provider APIs can answer the neighborhood incrementally." A process's
+    // neighbourhood in the tree is its parent and its children. The kernel lists the children
+    // under `/proc/<pid>/task/<tid>/children`, and the process provider answers for one pid, so
+    // the tree of one process costs the processes in it — three here, on a host of two hundred
+    // — and the answer is the one a read of the whole table gives (ADR-0986, #296).
+    let mut table = vec![
+        process(4381, Some(1), "cargo"),
+        process(4419, Some(4381), "rustc"),
+        process(4420, Some(4419), "rustc"),
+        process(4421, Some(4419), "rustc"),
+    ];
+    for pid in 5000..5196 {
+        table.push(process(pid, Some(1), "worker"));
+    }
+    let provider = FixtureProvider::new("fixture.process", &["process"], table);
+    let handed_out = provider.counter();
+    let registry = registry(vec![Arc::new(provider) as Arc<dyn Provider>]);
+    let proc = ProcFixture::new();
+    proc.process(4419).children(&[4420, 4421]);
+    let subject = process(4419, Some(4381), "rustc");
+
+    let graph = trace_with(
+        vec![Arc::new(
+            ProcessTree::new(Arc::clone(&registry)).rooted(proc.root()),
+        )],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        [
+            "parent -> process/4381 cargo",
+            "child -> process/4420 rustc",
+            "child -> process/4421 rustc",
+        ],
+        "the same tree a read of the whole table gives"
+    );
+    assert_eq!(
+        handed_out.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "v0.4.1 §34.4: the provider was asked for the parent and the two children, never for \
+         the two hundred processes of the host"
+    );
+}
+
+#[tokio::test]
+async fn should_read_the_process_table_once_when_the_kernel_does_not_list_children() {
+    // A kernel without the children file — or a fixture without one — leaves the tree to the
+    // process table, read once per trace as before: the answer does not depend on which way it
+    // was found.
+    let table = vec![
+        process(4381, Some(1), "cargo"),
+        process(4419, Some(4381), "rustc"),
+        process(4420, Some(4419), "rustc"),
+    ];
+    let registry =
+        registry(vec![
+            Arc::new(FixtureProvider::new("fixture.process", &["process"], table))
+                as Arc<dyn Provider>,
+        ]);
+    let proc = ProcFixture::new();
+    proc.process(4419);
+    let subject = process(4419, Some(4381), "rustc");
+
+    let graph = trace_with(
+        vec![Arc::new(
+            ProcessTree::new(Arc::clone(&registry)).rooted(proc.root()),
+        )],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        [
+            "parent -> process/4381 cargo",
+            "child -> process/4420 rustc"
+        ]
+    );
+}
