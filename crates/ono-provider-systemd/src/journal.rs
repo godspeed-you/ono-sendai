@@ -21,8 +21,8 @@ use ono_adapter::{Adapter, Decoding, Trace};
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, StreamSink, ValueStream};
 use ono_provider_api::{
-    Availability, Capability, ObjectRef, Provider, Query, Risk, Selector, TemporalCapabilities,
-    TimeWindow,
+    Availability, Capability, Comparison, ComparisonOperator, LiteralType, ObjectRef, Provider,
+    PushdownCapability, Query, Risk, Selector, TemporalCapabilities, TimeWindow,
 };
 use ono_value::{ErrorValue, Provenance, RecordValue, Schema, SchemaId, Value, builtin_schemas};
 use tokio::io::AsyncReadExt;
@@ -38,6 +38,17 @@ const JOURNALCTL_ADAPTER: &str = "journalctl";
 const LEVELS: [&str; 8] = [
     "emerg", "alert", "crit", "error", "warning", "notice", "info", "debug",
 ];
+
+/// The names `journalctl --priority` gives the syslog priorities 0 to 7, in that order.
+const PRIORITY_NAMES: [&str; 8] = [
+    "emerg", "alert", "crit", "err", "warning", "notice", "info", "debug",
+];
+
+/// The numerically highest syslog priority, `debug`: a ceiling here excludes nothing.
+const LEAST_SEVERE: i128 = 7;
+
+/// The field of both targets that carries the syslog priority as an integer.
+const PRIORITY: &str = "priority";
 
 /// The journal provider: `ono.journal-event/1` records from `journalctl --output=json`.
 ///
@@ -149,6 +160,11 @@ fn arguments(query: &Query) -> Result<Vec<String>, ErrorValue> {
         .ok()
         .and_then(ono_adapter::Adapter::temporal)
         .filter(|plan| plan.historical_query());
+    // `--level` and the handed-over comparisons both narrow by priority, and `journalctl` reads
+    // one `--priority`: a later one replaces an earlier one. They are folded into one argument
+    // below, at the place `--level` put its own.
+    let mut ceiling = None;
+    let mut level_argument = None;
     for (name, value) in query.options() {
         match (name.as_str(), value) {
             ("follow", _) | ("provider", _) => {}
@@ -162,9 +178,17 @@ fn arguments(query: &Query) -> Result<Vec<String>, ErrorValue> {
             ("lines", Value::Int(lines)) => argv.push(format!("--lines={lines}")),
             ("service", Value::String(unit)) => argv.push(format!("--unit={unit}")),
             ("level", Value::String(level)) => {
-                argv.push(format!("--priority={}", level_name(level)?));
+                let name = level_name(level)?;
+                ceiling = PRIORITY_NAMES
+                    .iter()
+                    .position(|candidate| *candidate == name)
+                    .and_then(|number| i128::try_from(number).ok());
+                level_argument = Some(argv.len());
+                argv.push(format!("--priority={name}"));
             }
             ("level", Value::Int(priority)) if (0..=7).contains(priority) => {
+                ceiling = Some(*priority);
+                level_argument = Some(argv.len());
                 argv.push(format!("--priority={priority}"));
             }
             (name, other) => {
@@ -176,7 +200,69 @@ fn arguments(query: &Query) -> Result<Vec<String>, ErrorValue> {
             }
         }
     }
+    if let Some(narrowed) = priority_argument(ceiling, handed_over(query)) {
+        match level_argument.and_then(|at| argv.get_mut(at)) {
+            Some(argument) => *argument = narrowed,
+            None => argv.push(narrowed),
+        }
+    }
     Ok(argv)
+}
+
+/// The comparisons of `query` this provider asks `journalctl` to decide (ADR-0980).
+///
+/// None where the query asks for the newest entries: `--lines` counts what `journalctl` would
+/// print, and `--follow` starts with the last ten of them, so a `--priority` beside either one
+/// chooses *other* entries than the pipeline filtering the unfiltered tail would keep. A limit
+/// on the number of objects is the same question asked from the front.
+fn handed_over(query: &Query) -> &[Comparison] {
+    if query.flag("follow") || query.option_value("lines").is_some() || query.max().is_some() {
+        return &[];
+    }
+    query.pushed()
+}
+
+/// The one `--priority` argument that asks `journalctl` for what `--level` and the handed-over
+/// comparisons keep together, or `None` where the comparisons change nothing about the argument
+/// the options already produced.
+///
+/// `journalctl --priority` takes a ceiling (`3`: priorities 0 to 3) or a range (`2..3`), which
+/// answers `<=`, `<` and `==` on an integer priority; those are the operators
+/// [`JournalProvider`] declares. `ceiling` is the bound `--level` already set.
+///
+/// A set of comparisons no priority satisfies is left to the pipeline: `journalctl` has no
+/// spelling for "nothing", and the pipeline rejects every record just as well.
+fn priority_argument(ceiling: Option<i128>, pushed: &[Comparison]) -> Option<String> {
+    let mut lowest = 0_i128;
+    let mut highest = ceiling.unwrap_or(LEAST_SEVERE);
+    let mut narrowed = false;
+    for comparison in pushed {
+        let (PRIORITY, Value::Int(bound)) = (comparison.field(), comparison.literal()) else {
+            continue;
+        };
+        match comparison.operator() {
+            ComparisonOperator::LessOrEqual => highest = highest.min(*bound),
+            ComparisonOperator::Less => highest = highest.min(bound.saturating_sub(1)),
+            ComparisonOperator::Equal => {
+                lowest = lowest.max(*bound);
+                highest = highest.min(*bound);
+            }
+            // Not declared, so never handed over; asking for more than it keeps is always sound.
+            ComparisonOperator::NotEqual
+            | ComparisonOperator::Greater
+            | ComparisonOperator::GreaterOrEqual => continue,
+        }
+        narrowed = true;
+    }
+    let everything = lowest == 0 && highest >= LEAST_SEVERE;
+    if !narrowed || everything || lowest > highest {
+        return None;
+    }
+    Some(if lowest == 0 {
+        format!("--priority={highest}")
+    } else {
+        format!("--priority={lowest}..{highest}")
+    })
 }
 
 /// The severity name `journalctl --priority` understands, for the spellings a user writes.
@@ -427,6 +513,30 @@ impl Provider for JournalProvider {
             Ok(_) => Availability::Available,
             Err(error) => Availability::unavailable(error.message().to_owned()),
         }
+    }
+
+    fn pushdown(&self) -> Vec<PushdownCapability> {
+        // ADR-0980. `priority` is a required integer of both schemas, and `journalctl
+        // --priority` is a ceiling or a range over exactly that integer: `<=`, `<` and `==`
+        // mean on its side what they mean in a `where`. `!=` has no spelling there, and a floor
+        // alone (`>=`, `>`) is left to the pipeline in this first declaration. `level` is the
+        // same number as a name, but it is nullable and an enum whose order is the reverse of
+        // the number's (ADR-0222), so it stays the pipeline's alone.
+        ["journal", "log"]
+            .into_iter()
+            .map(|target| {
+                PushdownCapability::new(
+                    target,
+                    PRIORITY,
+                    LiteralType::Int,
+                    [
+                        ComparisonOperator::Equal,
+                        ComparisonOperator::Less,
+                        ComparisonOperator::LessOrEqual,
+                    ],
+                )
+            })
+            .collect()
     }
 
     fn temporal(&self) -> TemporalCapabilities {

@@ -2181,7 +2181,10 @@ async fn should_advertise_exactly_what_systemd_journal_declares() {
             causal_tokens: false,
             checkpointable: false,
         },
-        pushdown: &[],
+        pushdown: &[
+            harness::PushdownClaim { target: "journal", field: "priority", ty: "int", operators: &["==", "<", "<="] },
+            harness::PushdownClaim { target: "log", field: "priority", ty: "int", operators: &["==", "<", "<="] },
+        ],
     }).await;
 }
 

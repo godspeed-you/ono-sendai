@@ -73,6 +73,20 @@ providers:
       checkpointable: false
       retained_history: null
       coverage: historical_query
+    pushdown:
+      # ADR-0980: `journalctl --priority` is a ceiling (`3`) or a range (`2..3`) over the syslog
+      # priority, which is `<=`, `<` and `==` on the integer both schemas require. `!=` has no
+      # spelling there, and a floor alone (`>=`, `>`) is left to the pipeline in this first
+      # declaration. `level` is the same number as a name, but it is nullable and an enum
+      # ordered the other way round (ADR-0222), and is not declared.
+      - target: journal
+        field: priority
+        type: int
+        operators: ["==", "<", "<="]
+      - target: log
+        field: priority
+        type: int
+        operators: ["==", "<", "<="]
 
   - id: systemd-logind
     doc: >-

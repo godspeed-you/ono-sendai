@@ -1942,6 +1942,46 @@ fn should_require_this_repositorys_own_providers_to_declare_only_sound_pushdowns
     );
 }
 
+#[test]
+fn should_find_the_journals_priority_declared_for_both_of_its_targets() {
+    // Issue #281: the journal's `priority` is the first declared capability. This is the one
+    // place that says so about the registry itself rather than about a fixture.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let text = std::fs::read_to_string(root.join("docs/contracts/providers/systemd.yaml"))
+        .expect("the systemd provider declarations");
+    let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(&text).expect("valid YAML");
+    let journal = document
+        .get("providers")
+        .and_then(serde_yaml_ng::Value::as_sequence)
+        .and_then(|providers| {
+            providers.iter().find(|provider| {
+                provider.get("id").and_then(serde_yaml_ng::Value::as_str) == Some("systemd-journal")
+            })
+        })
+        .expect("the journal provider");
+    let declared: Vec<(String, String)> = journal
+        .get("pushdown")
+        .and_then(serde_yaml_ng::Value::as_sequence)
+        .expect("a `pushdown:` block")
+        .iter()
+        .filter_map(|entry| {
+            Some((
+                entry.get("target")?.as_str()?.to_owned(),
+                entry.get("field")?.as_str()?.to_owned(),
+            ))
+        })
+        .collect();
+    assert_eq!(
+        declared,
+        vec![
+            ("journal".to_owned(), "priority".to_owned()),
+            ("log".to_owned(), "priority".to_owned()),
+        ]
+    );
+}
+
 // --- v0.4.1 §34.4: a global acquisition is declared and held to the code (ADR-0947) -----------
 
 /// A fixture repository with one command contract file holding `commands`.
