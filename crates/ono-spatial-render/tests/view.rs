@@ -368,3 +368,35 @@ fn should_show_the_gap_rather_than_the_last_state_when_the_view_cursor_is_in_a_c
         "leaving the gap did not restore the drawing"
     );
 }
+
+#[test]
+fn should_hand_the_query_to_the_shell_when_nothing_drawn_matches_it() {
+    // §23.3's `/` is "search visible/global map". What is drawn is searched first, by the view,
+    // and a query nothing drawn answers is a question about the rest of the system: the view
+    // has no index, so it tells the shell what was asked and stays as it is (ADR-0984).
+    let mut view = view();
+    let before = view.focused_node().map(str::to_owned);
+    for key in [
+        Key::Char('/'),
+        Key::Char('p'),
+        Key::Char('o'),
+        Key::Char('s'),
+        Key::Char('t'),
+        Key::Char('g'),
+        Key::Char('r'),
+        Key::Char('e'),
+        Key::Char('s'),
+    ] {
+        assert_eq!(view.apply(key), Effect::Stay);
+    }
+    assert_eq!(
+        view.apply(Key::Enter),
+        Effect::SearchBeyond("postgres".to_owned()),
+        "the query nothing on the map answers is the shell's to search for"
+    );
+    assert_eq!(
+        view.focused_node().map(str::to_owned),
+        before,
+        "searching is a view action: the cursor stays where it was"
+    );
+}

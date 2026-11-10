@@ -152,7 +152,7 @@ pub enum Action {
     Up,
     /// Home, to the root place (§6.6).
     Home,
-    /// Search the drawn map.
+    /// Search the drawn map, and beyond it where nothing drawn matches.
     Search,
     /// One zoom level closer (§8.1).
     ZoomIn,
@@ -286,7 +286,7 @@ impl Action {
             Action::Back => "back along the trail",
             Action::Up => "up the hierarchy",
             Action::Home => "home to SYSTEM",
-            Action::Search => "search the drawn map",
+            Action::Search => "search the map, then everything beyond it",
             Action::ZoomIn => "zoom in",
             Action::ZoomOut => "zoom out",
             Action::ZoomCycle => "cycle the zoom level",
@@ -471,6 +471,9 @@ pub enum Effect {
     Pin(String),
     /// Leave the view, keeping the current place (§23.3).
     Close,
+    /// Search everything the session can find for this text: nothing drawn matched it, and
+    /// §23.3's search is of the "visible/global map".
+    SearchBeyond(String),
     /// Freeze or release the view's temporal cursor (v0.5 §18.2).
     PauseCursor,
     /// Move the cursor to the previous significant event (v0.5 §18.4).
@@ -485,6 +488,16 @@ pub enum Effect {
     OpenTimeline,
     /// Show what changed between the cursor and now (v0.5 §18.3).
     ChangesToNow,
+}
+
+/// What a search of the drawn map came to.
+enum Sought {
+    /// The cursor is on a match.
+    Found,
+    /// Nothing was asked.
+    Nothing,
+    /// Nothing drawn matches this text.
+    NotDrawn(String),
 }
 
 /// What the view is showing instead of the map, if anything.
@@ -712,8 +725,10 @@ impl MapView {
                 }
                 Key::Enter => {
                     let query = self.searching.take().unwrap_or_default();
-                    self.seek(&query);
-                    return Effect::Stay;
+                    return match self.seek(&query) {
+                        Sought::Found | Sought::Nothing => Effect::Stay,
+                        Sought::NotDrawn(text) => Effect::SearchBeyond(text),
+                    };
                 }
                 Key::Esc => {
                     self.searching = None;
@@ -965,11 +980,11 @@ impl MapView {
     }
 
     /// Moves the cursor to the next line whose text contains `query` (§23.3's `/`).
-    fn seek(&mut self, query: &str) {
+    fn seek(&mut self, query: &str) -> Sought {
         let needle = query.trim().to_lowercase();
         if needle.is_empty() {
             self.query = None;
-            return;
+            return Sought::Nothing;
         }
         let start = self.focus.map_or(0, |at| at + 1);
         let found = self
@@ -985,10 +1000,16 @@ impl MapView {
                 self.focus = Some(at);
                 self.query = Some(needle);
                 self.scroll_into_view();
+                Sought::Found
             }
             None => {
                 self.query = None;
-                self.say(format!("nothing drawn here matches `{needle}`"));
+                self.say(format!(
+                    "nothing drawn here matches `{needle}`; searching beyond the map"
+                ));
+                // The text as it was typed: names are matched the way `find place` matches
+                // them, and that is the shell's rule to apply.
+                Sought::NotDrawn(query.trim().to_owned())
             }
         }
     }

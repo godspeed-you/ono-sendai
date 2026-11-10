@@ -69,7 +69,7 @@ pub mod complete {
 
     /// No place is visible from here.
     #[must_use]
-    pub const fn places_here() -> Vec<Offer> {
+    pub const fn places_here(_prefix: &str) -> Vec<Offer> {
         Vec::new()
     }
 
@@ -93,3 +93,6 @@ pub mod storage {
         false
     }
 }
+
+/// The core build has no neighbourhood to discover.
+pub const fn discover_behind_the_prompt(_session: &crate::session::Session) {}

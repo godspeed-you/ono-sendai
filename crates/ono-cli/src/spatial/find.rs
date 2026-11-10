@@ -413,6 +413,37 @@ fn text_of(value: &Value) -> Option<String> {
     }
 }
 
+/// The places a name finds anywhere this session can look — `find place <text>` for a caller
+/// that already holds the session, which is how the map's `/` reaches beyond what it drew
+/// (§6.8, §23.3, ADR-0984).
+///
+/// # Errors
+///
+/// Whatever a provider's records could not be read with.
+pub(crate) async fn named(
+    providers: &ProviderRegistry,
+    session: &mut crate::spatial::SpatialSessionState,
+    scope: &Arc<Scope>,
+    text: &str,
+    now: Timestamp,
+) -> Result<Vec<ono_spatial_query::FoundPlace>, ErrorValue> {
+    let plan = plan_for(providers, None, None, None);
+    for target in plan.asked() {
+        let records = observe(providers, target, None, &BTreeSet::new(), scope, now).await?;
+        session.absorb(&records, now);
+    }
+    let request = FindRequest::new()
+        .in_scope(local_scope())
+        .matching(text)
+        .from_place(session.current_place().clone());
+    Ok(ono_spatial_query::find_places(
+        session.index(),
+        &request,
+        session.pins(),
+        now,
+    ))
+}
+
 /// Which provider targets this search asks (§34, §45.3, ADR-0139).
 fn plan_for(
     providers: &ProviderRegistry,

@@ -9,9 +9,11 @@
 //! canonical geography of the current place, which is declared and costs nothing, and the places
 //! and relations this session has already observed. Nothing is asked of a provider while the user
 //! is holding Tab: §34 budgets 50 ms for the first results from local metadata, and an offer that
-//! blocked on `/proc` would be neither local nor metadata. A neighbourhood nobody has looked at
-//! yet is therefore offered as its declared geography and no more, which is honest — it is
-//! exactly what the shell knows.
+//! blocked on `/proc` would be neither local nor metadata. What makes the members of a place
+//! nobody has looked at available all the same is §34.1's background discovery: once the prompt
+//! is back after a movement, the shell reads the collection it now stands in, behind the prompt
+//! ([`crate::spatial::view::discover`], ADR-0984). Until that read has arrived the offer is the
+//! declared geography and no more, which is honest — it is exactly what the shell knows.
 
 use ono_spatial_core::{PermissionState, space};
 
@@ -39,9 +41,15 @@ impl Offer {
 /// How many observed neighbours a single Tab offers before the list stops being a map.
 const HORIZON: usize = 24;
 
-/// The places `enter` can reach from where the session is standing (§9.4, §24.2).
+/// The places `enter` can reach from where the session is standing whose name starts with
+/// `prefix` (§9.4, §24.2).
+///
+/// The prefix is applied before the list is bounded: a collection of three hundred processes
+/// offers the ones the user is typing towards, not the first twenty-four of the alphabet.
 #[must_use]
-pub fn places_here() -> Vec<Offer> {
+pub fn places_here(prefix: &str) -> Vec<Offer> {
+    let prefix = prefix.to_lowercase();
+    let wanted = |name: &str| name.to_lowercase().starts_with(&prefix);
     if !crate::spatial::session::configured_flag_or("spatial.enabled", true) {
         // §47: with the layer off there is no neighbourhood to complete from, and offering one
         // would promise a `enter compute` that refuses.
@@ -59,6 +67,7 @@ pub fn places_here() -> Vec<Offer> {
         let mut offers: Vec<Offer> = space::children(space.id)
             .filter(|child| child.is_served() && child.enterable)
             .map(|child| Offer::new(child.label.to_ascii_lowercase(), ""))
+            .filter(|offer| wanted(&offer.insert))
             .collect();
         // Then what this session has actually seen filed under this place, in a fixed order and
         // bounded — the same two rules the map obeys, for the same reason (§34.2).
@@ -69,6 +78,7 @@ pub fn places_here() -> Vec<Offer> {
                     .canonical_parent()
                     .is_some_and(|edge| edge.parent() == &here)
             })
+            .filter(|entry| wanted(entry.object().display_name()))
             .map(|entry| Offer::new(entry.object().display_name(), ""))
             .collect();
         seen.sort_by(|left, right| left.insert.cmp(&right.insert));
@@ -86,6 +96,7 @@ pub fn places_here() -> Vec<Offer> {
         .edges()
         .iter()
         .filter_map(|edge| index.get(edge.target()))
+        .filter(|neighbour| wanted(neighbour.object().display_name()))
         .map(|neighbour| {
             Offer::new(
                 neighbour.object().display_name(),

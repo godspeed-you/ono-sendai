@@ -1,0 +1,92 @@
+# v0.4 §23.3's `/` is "search visible/global map", and the full-screen map searched only what it
+# drew; §9.4 makes completion "a lightweight local map", and `enter <TAB>` in a collection nobody
+# had looked at offered no members (#212). ADR-0984: a query nothing drawn answers is searched
+# for with `find place`, and the collection the session stands in is read behind the prompt
+# (§34.1), so its members are there to complete.
+#
+# The session is driven through a pseudo-terminal by a keystroke script, as case 107 is. The
+# fixture is a process with a name nothing else in the container has.
+case: the map searches beyond what it drew, and completion knows a collection nobody looked at
+pty: true
+columns: 100
+lines: 30
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  drive() {
+    local keys="$1" out="$2" writer="$3" typist
+    rm -f "$keys" "$out"
+    mkfifo "$keys"
+    ( eval "$writer" ) > "$keys" &
+    typist=$!
+    script --quiet --return --command 'ono' "$out" < "$keys" > /dev/null 2>&1 || true
+    wait "$typist" 2>/dev/null || true
+    rm -f "$keys"
+  }
+
+  ESC=$(printf '\033')
+  ENTER=$(printf '\r')
+  TAB=$(printf '\t')
+
+  mkdir -p /tmp/fixture-141
+  cp "$(command -v sleep)" /tmp/fixture-141/ono-lone-141
+  /tmp/fixture-141/ono-lone-141 150 &
+  fixture=$!
+  # Enough processes that the root map's thirty nodes cannot hold the fixture as well.
+  for _ in $(seq 40); do sleep 150 & done
+
+  echo '== the map searches beyond what it drew (§23.3, ADR-0984) =='
+  drive /tmp/keys1 /tmp/session1 "
+    sleep 3
+    printf 'map\n';                  sleep 5
+    printf '/ono-lone-141';          sleep 1
+    printf '%s' '${ENTER}';          sleep 5
+    printf '%s' '${ESC}';            sleep 2
+    printf '%s' '${ESC}';            sleep 2
+    printf 'echo AFTER-SEARCH\n';    sleep 2
+    printf 'exit\n';                 sleep 2
+  "
+  prove g1 "a name the drawn map does not hold is searched for beyond it" \
+    "grep -qaF 'beyond the map' /tmp/session1"
+  prove g2 "the place found is shown with what it is" \
+    "grep -qaE 'ono-lone-141 +process' /tmp/session1"
+  prove g3 "searching moved nothing: the prompt is still at the root (§23.4)" \
+    "grep -aF 'AFTER-SEARCH' /tmp/session1 | tail -1 | grep -qv 'process/'"
+
+  echo '== completion offers the members of a collection nobody looked at (§9.4, §34.1) =='
+  drive /tmp/keys2 /tmp/session2 "
+    sleep 3
+    printf 'enter compute\n';        sleep 2
+    printf 'enter processes\n';      sleep 6
+    printf 'enter ono-lone';         sleep 1
+    printf '%s' '${TAB}';            sleep 3
+    printf '\n';                     sleep 3
+    printf 'echo AFTER-TAB\n';       sleep 2
+    printf 'exit\n';                 sleep 2
+  "
+  prove t1 "Tab completes the member's name without a look in between" \
+    "grep -qaF 'enter ono-lone-141' /tmp/session2"
+  prove t2 "and the completed line enters the process" \
+    "grep -qaF 'process/ono-lone-141://' /tmp/session2"
+
+  kill "$fixture" $(jobs -p) 2>/dev/null || true
+  wait 2>/dev/null || true
+  echo done=ok
+exit: 0
+stdout-contains: PROVED g1
+stdout-contains: PROVED g2
+stdout-contains: PROVED g3
+stdout-contains: PROVED t1
+stdout-contains: PROVED t2
+stdout-contains: done=ok
+stdout-not-contains: FAILED

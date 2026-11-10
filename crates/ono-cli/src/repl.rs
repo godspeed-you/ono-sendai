@@ -411,7 +411,7 @@ fn spatial_offers(line: &str, start: usize, prefix: &str) -> Vec<crate::spatial:
     let stage = &stage[stage.rfind(['|', ';', '&']).map_or(0, |at| at + 1)..];
     let offers = match stage.trim() {
         // §6.3, §6.5, §6.9: all three take a place, and the places are the same ones.
-        "enter" | "jump" | "map" => crate::spatial::complete::places_here(),
+        "enter" | "jump" | "map" => crate::spatial::complete::places_here(prefix),
         // §6.4, §9.4's second half: the relations this place actually has.
         "follow" => crate::spatial::complete::relations_here(),
         _ => return Vec::new(),
@@ -557,6 +557,10 @@ pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> Exi
         let started = std::time::Instant::now();
         let _ = session.take_adaptations();
         let status = run_source(session, &line, reporter);
+        // §34.1: "Expensive discovery SHOULD occur asynchronously after prompt availability."
+        // The command may have moved the place; what is in the collection it now stands in is
+        // read behind the prompt, so completion has members to offer (§9.4, ADR-0984).
+        crate::spatial::discover_behind_the_prompt(session);
         let (adapters, plans): (Vec<String>, Vec<String>) =
             session.take_adaptations().into_iter().unzip();
 

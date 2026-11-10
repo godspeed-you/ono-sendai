@@ -618,6 +618,62 @@ fn answered_by(
     fresh
 }
 
+/// Reads the members of the collection the session stands in, without holding the session while
+/// the providers answer (§9.4, §34.1, ADR-0984).
+///
+/// `enter <name>` on a name the index does not hold sweeps the collection's targets whole; this
+/// is that sweep, made behind the prompt once per arrival, so the name is there to complete and
+/// to resolve. A target the session read whole a moment ago is not asked again. The session is
+/// locked to learn where it stands and again to register each answer — never across a read — so
+/// a slow provider delays its own answer and nothing else.
+pub(crate) async fn discover(providers: &ProviderRegistry) {
+    let (scope, place, targets) = {
+        let mut session = crate::spatial::spatial_session().await;
+        // On a linked host the providers are the far side's, reached through the session.
+        if session.host().is_some() {
+            return;
+        }
+        let here = session.current_place().clone();
+        if !session.arrived_undiscovered(&here) {
+            return;
+        }
+        let Some(space) = ono_spatial_query::resolve::space_of(&here) else {
+            return;
+        };
+        // A collection holds objects; a domain holds collections, which are declared.
+        if space.member_type.is_none() {
+            return;
+        }
+        let Some(source) =
+            source_of_space(space.id).filter(|source| affordable(source.cost, false))
+        else {
+            return;
+        };
+        let now = Timestamp::now();
+        let targets: Vec<&'static str> = source
+            .targets
+            .iter()
+            .copied()
+            .filter(|target| !providers.for_target(target).is_empty())
+            .filter(|target| session.recall(target, now).is_none_or(|seen| seen.bounded))
+            .collect();
+        (session.current_scope().clone(), here, targets)
+    };
+    for target in targets {
+        let answer = match providers.snapshot(&Query::target(target)) {
+            Err(error) => Err(error),
+            Ok(stream) => Ok(stream.collect().await),
+        };
+        let mut session = crate::spatial::spatial_session().await;
+        // The answer belongs to the host and the place it was asked for (§43.7).
+        if session.current_scope() != &scope || session.current_place() != &place {
+            return;
+        }
+        let fresh = answered_by(&mut session, None, answer, Timestamp::now());
+        session.remember(target, fresh);
+    }
+}
+
 /// How long the view being built waits for a provider before it is drawn without it, in
 /// milliseconds; zero for every view but the startup horizon.
 static HORIZON_PATIENCE_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

@@ -1549,3 +1549,124 @@ fn should_reach_the_prompt_before_a_slow_provider_answers_and_say_what_is_still_
     );
     session.line("exit");
 }
+
+/// One process with a name nothing else on the machine has, alive for the test.
+fn lone(scratch: &Scratch, name: &str) -> Children {
+    let binary = scratch.path().join("bin").join(name);
+    std::fs::create_dir_all(binary.parent().expect("a parent")).expect("a bin directory");
+    ono_testkit::executable_copy(program_path("sleep"), &binary);
+    Children(vec![
+        std::process::Command::new(&binary)
+            .arg("300")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("the fixture process must start"),
+    ])
+}
+
+#[test]
+fn should_search_beyond_the_drawn_map_when_nothing_on_it_matches() {
+    // §23.3's `/` is "search visible/global map". The map of the root draws the geography and
+    // thirty nodes of it; a process started a moment ago is not among them. Searching for its
+    // name finds it anyway — the global half is `find place` — and shows what it is and where
+    // it sits, without moving the place (§23.4, ADR-0984).
+    let (home, work) = workspace();
+    let _fixture = lone(&home, "ono-beyond-212");
+    let mut session = Session::start(WindowSize::new(30, 100), home.path(), &work);
+    assert!(
+        session.wait_for("> ", STARTUP),
+        "the shell must reach a prompt; saw:\n{}",
+        plain(session.seen())
+    );
+    session.prompt("SB0");
+    session.line("map");
+    assert!(
+        session.wait_for_after("\r\nSB0\r\n", ALTERNATE_SCREEN_ON, BUDGET),
+        "§52.1: `map` opens a full-screen view; saw:\n{}",
+        plain(&after(session.seen(), "\r\nSB0\r\n"))
+    );
+    session.settle(Duration::from_millis(600));
+
+    session.keys(b"/ono-beyond-212\r");
+    assert!(
+        session.wait_until(BUDGET, |seen| {
+            let drawn = plain(&after(seen, ALTERNATE_SCREEN_ON));
+            drawn.contains("beyond the map")
+                && drawn
+                    .lines()
+                    .any(|line| line.contains("ono-beyond-212") && line.contains("process"))
+        }),
+        "§23.3: a name the drawn map does not hold is searched for beyond it, and the place is \
+         shown with its kind; saw:\n{}",
+        plain(&after(session.seen(), ALTERNATE_SCREEN_ON))
+    );
+
+    // One Esc closes the list, the next the view; sent apart, so the terminal reads two keys.
+    session.keys(ESCAPE);
+    session.settle(Duration::from_millis(400));
+    session.keys(ESCAPE);
+    assert!(
+        session.wait_for_after(ALTERNATE_SCREEN_ON, ALTERNATE_SCREEN_OFF, BUDGET),
+        "the view closes again; saw:\n{}",
+        plain(&after(session.seen(), ALTERNATE_SCREEN_ON))
+    );
+    let prompt = session.prompt("SB1");
+    assert!(
+        !prompt.contains("ono-beyond-212"),
+        "§23.4: searching is a view action and moves nothing, got the prompt {prompt:?}"
+    );
+    session.line("exit");
+}
+
+#[test]
+fn should_offer_the_members_of_a_collection_nobody_looked_at_when_completion_runs() {
+    // §9.4: completion is "a lightweight local map", and §34.1: "Expensive discovery SHOULD
+    // occur asynchronously after prompt availability." Walking into `compute/processes` reads
+    // nothing by itself; the shell reads the neighbourhood in the background once the prompt is
+    // back, so `enter <TAB>` offers the processes that are there without a `look` in between
+    // (ADR-0984). The fixture's name is one nothing else on the machine has, so the completion
+    // that inserts it can only have come from the collection's members.
+    let (home, work) = workspace();
+    let _fixture = lone(&home, "ono-tabbed-212");
+    let mut session = Session::start(WindowSize::new(30, 100), home.path(), &work);
+    assert!(
+        session.wait_for("> ", STARTUP),
+        "the shell must reach a prompt; saw:\n{}",
+        plain(session.seen())
+    );
+    session.prompt("TA0");
+    session.line("enter compute");
+    session.prompt("TA1");
+    session.line("enter processes");
+    session.prompt("TB0");
+
+    // The discovery runs behind the prompt; Tab is pressed until the member is offered, which
+    // bounds the wait without assuming how long a read of `/proc` takes on this machine.
+    let deadline = Instant::now() + BUDGET;
+    let mut round = 0;
+    let offered = loop {
+        round += 1;
+        let mark = format!("TB{round}");
+        session.prompt(&mark);
+        session.keys(b"enter ono-tab\t");
+        let completed = session.wait_until(Duration::from_secs(2), |seen| {
+            plain(&after(seen, &format!("\r\n{mark}\r\n"))).contains("ono-tabbed-212")
+        });
+        session.keys(INTERRUPT);
+        if completed {
+            break true;
+        }
+        if Instant::now() >= deadline {
+            break false;
+        }
+    };
+    assert!(
+        offered,
+        "§9.4/§34.1: the members of the place the session stands in are offered without a \
+         `look`; saw:\n{}",
+        plain(session.seen())
+    );
+    session.line("exit");
+}

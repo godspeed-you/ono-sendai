@@ -521,6 +521,27 @@ pub async fn run_map_view(
                 };
             }
             Effect::Inspect(node) => view.show_detail(detail(session, &node)),
+            // §23.3: "search visible/global map". The view searched what it drew; what it did
+            // not draw is `find place`'s to search, and the answer is shown over the map — a
+            // view action, which moves nothing (§23.4, ADR-0984).
+            Effect::SearchBeyond(text) => {
+                let scope = std::sync::Arc::clone(ctx.scope());
+                let found = crate::spatial::find::named(
+                    ctx.providers(),
+                    session,
+                    &scope,
+                    &text,
+                    Timestamp::now(),
+                )
+                .await;
+                match found {
+                    Ok(places) if places.is_empty() => {
+                        view.say(format!("nothing here or beyond the map matches `{text}`"));
+                    }
+                    Ok(places) => view.show_detail(beyond(&text, &places)),
+                    Err(error) => view.say(error.message().to_owned()),
+                }
+            }
             Effect::Pin(node) => {
                 let said = pin(pins, session, &node, Timestamp::now());
                 view.say(said);
@@ -889,6 +910,32 @@ fn follow(session: &mut SpatialSessionState, relation: &str, there: &SpatialId, 
 }
 
 /// Everything this session knows about a node, for the `i` overlay (§6.1's `inspect`).
+/// How many places found beyond the map are listed over it.
+const BEYOND_LISTED: usize = 12;
+
+/// What a search found beyond the drawn map: each place, what it is and where it sits, and the
+/// command that goes there (§23.3, §23.4).
+fn beyond(text: &str, places: &[ono_spatial_query::FoundPlace]) -> Vec<String> {
+    let mut lines = vec![format!("  `{text}` beyond the map"), String::new()];
+    for place in places.iter().take(BEYOND_LISTED) {
+        lines.push(format!(
+            "  {:<28} {:<12} {}",
+            place.name(),
+            place.object_type().as_str().to_ascii_lowercase(),
+            place.place_path()
+        ));
+    }
+    if places.len() > BEYOND_LISTED {
+        lines.push(format!(
+            "  + {} more — `find place {text}` lists them",
+            places.len() - BEYOND_LISTED
+        ));
+    }
+    lines.push(String::new());
+    lines.push("  `jump <name>` goes to one; searching moves nothing".to_owned());
+    lines
+}
+
 fn detail(session: &SpatialSessionState, node: &str) -> Vec<String> {
     let Some(id) = SpatialId::parse(node) else {
         return vec!["  a cluster stands for many objects; expand it to inspect one".to_owned()];

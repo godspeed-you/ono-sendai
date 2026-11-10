@@ -83,6 +83,9 @@ pub struct SpatialSessionState {
     /// Whether the shell has asked the process provider which pid namespace it runs in itself
     /// (§16.2, ADR-0983). Asked once; the answer lives in the local bridge's projection.
     own_namespace_asked: bool,
+    /// The place whose members were last read behind the prompt, so one arrival is one read
+    /// (§34.1, ADR-0984).
+    discovered: Option<SpatialId>,
 }
 
 /// One expansion of a place's relationship providers: when it was made, how much it asked for,
@@ -298,6 +301,7 @@ impl SpatialSessionState {
             expansions: BTreeMap::new(),
             memory_budgets: BTreeMap::new(),
             own_namespace_asked: false,
+            discovered: None,
         }
     }
 
@@ -468,6 +472,16 @@ impl SpatialSessionState {
         }
         let index = &self.index;
         self.records.retain(|id, _| index.contains(id));
+    }
+
+    /// Whether `here` is a place the session has arrived at and not yet read behind the prompt;
+    /// asking marks it read (§34.1).
+    pub fn arrived_undiscovered(&mut self, here: &SpatialId) -> bool {
+        if self.discovered.as_ref() == Some(here) {
+            return false;
+        }
+        self.discovered = Some(here.clone());
+        true
     }
 
     /// Whether the shell's own pid namespace has been asked for (§16.2).

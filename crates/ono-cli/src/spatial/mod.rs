@@ -44,6 +44,22 @@ pub use prompt::{at_terminal, mark_interactive, place_segment};
 pub use session::{RemoteHost, SpatialSessionState, spatial_session};
 pub use view::set_horizon_patience;
 
+/// Reads the collection the session stands in, behind the prompt (spec v0.4 §9.4, §34.1).
+///
+/// Called by the interactive loop after every command. The read runs on the session's runtime
+/// while the prompt is already back; what it finds is in the index for the next Tab, the next
+/// `enter <name>` and the next `look` (ADR-0984).
+pub fn discover_behind_the_prompt(session: &mut crate::session::Session) {
+    if disabled(session) {
+        return;
+    }
+    let providers = std::sync::Arc::new(session.providers().clone());
+    let Some((runtime, _)) = session.pipeline_context() else {
+        return;
+    };
+    runtime.spawn(async move { view::discover(&providers).await });
+}
+
 /// Reads the `spatial.*` settings the spatial layer honours, and hands them to the session state
 /// (spec v0.4 §26.3, §34.2, §47).
 ///
