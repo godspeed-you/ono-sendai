@@ -628,6 +628,25 @@ fn should_refuse_to_follow_a_canonical_child_that_is_not_a_relationship_edge() {
 }
 
 #[test]
+fn should_follow_an_exit_of_the_place_when_a_canonical_space_carries_the_same_word() {
+    // §6.4: `follow` takes the word `look` prints for an exit. `addresses` is such a word at an
+    // interface place (§14.2) and also the name of the collection `network/addresses` (§7.3).
+    // Standing on the interface, the word names the exit: the refusal of §11.1 is for a place
+    // that has no such relation, and it must not take an exit away from a place that prints it.
+    let run = ono(
+        "home; enter network; enter interfaces; enter lo; follow addresses 127.0.0.1; \
+         look --json",
+    );
+    let view = place_view(&run);
+    assert_place_is(&view, "address", "127.0.0.1", "spec v0.4 §6.4, §14.2");
+
+    // The same word at a place without that exit is still the hierarchy's, and `enter` is how
+    // the hierarchy is walked (§11.1).
+    let refused = ono("enter process 1; follow addresses");
+    assert_spatial_error(&refused, "follow addresses", "spatial.no_relation");
+}
+
+#[test]
 fn should_return_to_the_process_with_back_after_following_a_socket_edge() {
     // §44.6 and invariant 4: `back` follows the actual navigation trail, so after a real
     // relationship hop it returns through that hop to the process that owns the socket.

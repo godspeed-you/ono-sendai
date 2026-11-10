@@ -1483,10 +1483,17 @@ impl CommandImpl for Follow {
             }
 
             // §11.1: hierarchy is not the graph. A canonical space is reached with `enter`, and
-            // saying so is more useful than saying the word is unknown.
-            if let Some(space) = ono_spatial_core::space::spaces()
-                .iter()
-                .find(|space| space.label.eq_ignore_ascii_case(&relation) && space.is_served())
+            // saying so is more useful than saying the word is unknown. A word this place prints
+            // for one of its own exits is that exit first: `addresses` at an interface is the
+            // relation §14.2 lists, whatever collection shares the name (§6.4).
+            let an_exit_here = session.index().get(&here).is_some_and(|entry| {
+                !ono_spatial_core::relation::resolve_label(entry.object().object_type(), &relation)
+                    .is_empty()
+            });
+            if !an_exit_here
+                && let Some(space) = ono_spatial_core::space::spaces()
+                    .iter()
+                    .find(|space| space.label.eq_ignore_ascii_case(&relation) && space.is_served())
             {
                 return Err(ErrorValue::new(
                     ErrorCode::SpatialNoRelation,
