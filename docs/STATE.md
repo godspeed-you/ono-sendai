@@ -146,9 +146,11 @@ never collide: ADR-0990 … 0994 and cases 145–149 for `supervisor`; ADR-0995 
 cases 165–169 for `spatial`; ADR-1010 … 1014 and cases 172–179 for the orchestrator.
 
 - [orchestrator | 2026-11-10] #198, #184 — done on `implementation` (8a8b9dd6, a4214f84).
-- [supervisor | 2026-11-10] #157, #154, #197 — files: `crates/ono-kuang-supervisor/`,
-  `crates/ono-kuang-protocol/`, `crates/ono-kuang-testhost/`, `crates/ono-kuang-sdk/`,
-  `crates/ono-cli/src/plugin_provider.rs` (`stream_of` only), `docs/contracts/kuang/protocol.v1.yaml`.
+- [supervisor | 2026-11-10] #157, #154, #197 — merged into `implementation` (a3edd602,
+  ADR-0990 … ADR-0992, cases 145, 146).
+- [safety | 2026-11-10] #156 — files: `crates/ono-command/src/contract.rs`,
+  `crates/ono-cli/src/eval/pipeline.rs`, the confirmation gate, `crates/ono-kuang-sdk/examples/`,
+  `docs/contracts/kuang/contributions.v1.yaml` (command risk only).
 - [instances | 2026-11-10] #304, #222, #199 — files: `crates/ono-cli/src/session.rs`,
   `crates/ono-cli/src/kuang_host.rs`, `crates/ono-cli/src/plugins.rs` (instance lookup),
   `docs/contracts/schemas/plugin.v1.yaml`.
@@ -214,6 +216,21 @@ gh issue list --limit 100        # the backlog
 gh issue view <NN>               # the evidence for one problem
 gh issue list --label class-c    # the large ones, a tranche each
 ```
+
+**Found during the v0.6.5 run (2026-11-10 …).** Outside the milestone's issues; each checked
+against the tracker (no existing issue):
+
+- A plugin instance that crashes with a view open never closes that view through `close_view`:
+  `fail_instance` → `close_everything` (`crates/ono-kuang-supervisor/src/supervisor.rs`) answers the
+  pending invocations directly, and `open_views` is dropped without an unmount, so whether the
+  terminal is restored depends on the mounted view's `Drop` in ono-cli. Pre-existing (before
+  ADR-0991). Reproduce: the example plugin's `browse` at a terminal, then `--misbehave=die`.
+  Severity low–medium. Exit: `close_everything` closes every open view, with a conformance case
+  that kills an instance while a view is open.
+- The `working_directory` row of a confinement report can read `applied` for a directory the child
+  never entered: the parent records it after `create_dir_all`, the `chdir` happens in the child and
+  can fail (case 145 makes it fail). v0.4.1 §2.6 honesty. Severity low. Exit: in the spawn-error
+  path the row is not `applied` when the error is the `chdir`'s, or the child records the row.
 
 **Found during the v0.6.4 run (2026-11-09 … 2026-11-10).** Outside the milestone's issues, or the
 part of one that was left; each checked against the tracker (no existing issue). The release review
