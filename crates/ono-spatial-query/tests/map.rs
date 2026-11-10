@@ -261,3 +261,112 @@ fn should_leave_the_centre_where_it_is_when_a_node_is_focused() {
     assert_eq!(focused.focus.as_ref(), Some(&target));
     assert_ne!(focused.center, target);
 }
+
+/// A directory and `files` + `directories` entries inside it, as the shell hands the projection
+/// the horizon of a directory place: the entries one containment hop from the centre.
+fn directory_of(files: usize, directories: usize) -> (SpatialIndex, SpatialId, MapHorizon) {
+    let entry = |path: String, kind: &str, inode: usize| {
+        common::record(
+            "ono.file/1",
+            &[
+                (
+                    "path",
+                    ono_value::Value::Path(std::sync::Arc::from(std::path::Path::new(&path))),
+                ),
+                (
+                    "name",
+                    ono_value::Value::string(path.rsplit('/').next().unwrap_or(&path)),
+                ),
+                ("kind", ono_value::Value::string(kind)),
+                ("device", ono_value::Value::string("8:2")),
+                (
+                    "inode",
+                    ono_value::Value::Int(i128::try_from(inode).expect("a small fixture")),
+                ),
+            ],
+        )
+    };
+    let mut records = vec![entry("/srv".to_owned(), "dir", 1)];
+    for step in 0..files {
+        records.push(entry(format!("/srv/file-{step:03}"), "file", 100 + step));
+    }
+    for step in 0..directories {
+        records.push(entry(format!("/srv/dir-{step:03}"), "dir", 1000 + step));
+    }
+    let mut index = index();
+    let mut bridge = bridge();
+    bridge.absorb(&mut index, &records, NOW);
+    let center = index
+        .of_type(SpatialType::Directory)
+        .into_iter()
+        .find(|entry| entry.object().display_name().ends_with("srv"))
+        .expect("the directory was absorbed")
+        .object()
+        .spatial_id()
+        .clone();
+
+    let mut horizon = MapHorizon::new();
+    horizon.place(HorizonPlace::new(center.clone(), 0, None));
+    for kind in [SpatialType::File, SpatialType::Directory] {
+        for entry in index.of_type(kind) {
+            let id = entry.object().spatial_id().clone();
+            if id != center {
+                horizon.place(HorizonPlace::new(
+                    id,
+                    1,
+                    Some((center.clone(), HierarchyKind::Containment)),
+                ));
+            }
+        }
+    }
+    (index, center, horizon)
+}
+
+#[test]
+fn should_cluster_the_entries_of_a_directory_by_kind_when_they_exceed_the_budget() {
+    // §15.4: a huge directory is clustered or summarised, never enumerated; §8.2 allows the
+    // directory subtree as a clustering dimension and requires each cluster to report what it
+    // hides. Counting "83 more in /srv" says less than the directory can: the entries that did
+    // not fit are grouped by what they are — files, directories — under the directory that
+    // holds them (ADR-0976).
+    let (index, center, horizon) = directory_of(70, 40);
+
+    let map = ono_spatial_query::project_map(
+        &index,
+        &center,
+        &horizon,
+        &MapRequest::new(),
+        &ono_spatial_index::PinRegistry::new(),
+        MAP_NODE_BUDGET,
+        NOW,
+    );
+
+    assert!(map.nodes.len() <= TEXT_MAP_BUDGET);
+    let mut clusters: Vec<(String, &str, usize)> = map
+        .clusters
+        .iter()
+        .map(|cluster| (cluster.label.clone(), cluster.grouping, cluster.members()))
+        .collect();
+    clusters.sort();
+    let labels: Vec<&str> = clusters
+        .iter()
+        .map(|(label, _, _)| label.as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        ["/srv (directories)", "/srv (files)"],
+        "one cluster per kind of entry, named after the directory and the kind"
+    );
+    assert!(
+        clusters
+            .iter()
+            .all(|(_, grouping, _)| *grouping == "directory_subtree"),
+        "spec §8.2: the dimension is the directory subtree; got {clusters:?}"
+    );
+    let clustered: usize = clusters.iter().map(|(_, _, members)| members).sum();
+    assert_eq!(
+        clustered + map.nodes.len(),
+        111,
+        "spec §8.2/§23.6: every entry is either drawn or counted by a cluster"
+    );
+}

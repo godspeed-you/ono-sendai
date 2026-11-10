@@ -1,0 +1,54 @@
+# v0.4 §15.4: a directory place supports path navigation, and a huge directory is clustered or
+# summarised rather than enumerated. Until ADR-0976 the map of a directory drew none of its
+# entries (#216). It now draws as many as the view budget allows and clusters the rest along
+# §8.2's directory subtree, one cluster per kind of entry, each saying how many it stands for.
+#
+# The directory is the case's own: 45 directories and 60 files.
+case: the map of a directory draws its entries and clusters the rest by kind
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  mkdir -p /tmp/crowded-136
+  for n in $(seq -w 1 45); do mkdir "/tmp/crowded-136/dir-$n"; done
+  for n in $(seq -w 1 60); do : > "/tmp/crowded-136/file-$n"; done
+  ono -c 'enter /tmp/crowded-136; map --json' > /tmp/map-136.json
+  ono -c 'enter /tmp/crowded-136; map' > /tmp/map-136.txt
+
+  echo "== entries are drawn, inside the budget (§15.4, §34.2) =="
+  prove m1 "the map draws entries of the directory" \
+    "grep -qF '/tmp/crowded-136/dir-' /tmp/map-136.txt"
+  prove m2 "and stays inside the text map's thirty nodes" \
+    "test \"\$(grep -oE '\"depth\":[0-9]+' /tmp/map-136.json | wc -l)\" -le 30"
+
+  echo "== the rest is clustered by kind and counted (§8.2, §23.6) =="
+  prove m3 "the files that did not fit are one cluster that says how many" \
+    "grep -qE '\\+ 60 more in /tmp/crowded-136 \\(files\\)' /tmp/map-136.txt"
+  prove m4 "the directories that did not fit are another" \
+    "grep -qE '\\+ [0-9]+ more in /tmp/crowded-136 \\(directories\\)' /tmp/map-136.txt"
+  prove m5 "the dimension is the directory subtree" \
+    "grep -qF '\"grouping\":\"directory_subtree\"' /tmp/map-136.json"
+
+  echo "== a cluster is expandable by its id, in a later run (§8.3) =="
+  id=$(grep -oE '\{"id":"cluster:[0-9a-f]+","label":"/tmp/crowded-136 \(directories\)"' /tmp/map-136.json | grep -oE 'cluster:[0-9a-f]+')
+  prove m6 "expanding the directories cluster draws its members" \
+    "ono -c 'enter /tmp/crowded-136; map --expand $id' | grep -oE '/tmp/crowded-136/dir-[0-9]+' | sort -u | wc -l | grep -qx 45"
+  echo done=ok
+exit: 0
+stdout-contains: PROVED m1
+stdout-contains: PROVED m2
+stdout-contains: PROVED m3
+stdout-contains: PROVED m4
+stdout-contains: PROVED m5
+stdout-contains: PROVED m6
+stdout-contains: done=ok
+stdout-not-contains: FAILED

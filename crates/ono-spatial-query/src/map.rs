@@ -711,36 +711,58 @@ fn split(places: Vec<HorizonPlace>, budget: usize) -> (Vec<HorizonPlace>, Vec<Ho
 /// The dimension is §8.2's first: the canonical collection each object is filed under. It is the
 /// one every place has, it is the one `enter` reaches, and it makes the cluster's id the same in
 /// two separate runs, which is what `map --expand <id>` needs (§8.3).
+///
+/// The entries of a directory are the exception §15.4 asks for: they are grouped along §8.2's
+/// directory subtree, one cluster per kind of entry, so a crowded directory says how many files
+/// and how many directories it hides rather than how many "more" (ADR-0976).
 fn cluster(index: &SpatialIndex, rest: &[HorizonPlace]) -> Vec<MapCluster> {
-    let mut groups: BTreeMap<String, (String, Vec<SpatialId>)> = BTreeMap::new();
+    let mut groups: BTreeMap<(&'static str, String), (String, Vec<SpatialId>)> = BTreeMap::new();
     for place in rest {
         let parent = place
             .parent
             .as_ref()
             .map(|(parent, _)| parent.clone())
             .or_else(|| crate::resolve::parent_of(index, &place.id));
-        let (key, label) = match parent {
-            Some(parent) => (parent.to_string(), label_of(index, &parent)),
+        let (grouping, key, label) = match parent {
+            Some(parent) if type_of(index, &parent) == SpatialType::Directory => {
+                let kind = type_of(index, &place.id);
+                let entries = match kind {
+                    SpatialType::Directory => "directories".to_owned(),
+                    SpatialType::File => "files".to_owned(),
+                    other => format!("{} entries", other.as_str()),
+                };
+                (
+                    "directory_subtree",
+                    format!("{parent}/{}", kind.as_str()),
+                    format!("{} ({entries})", label_of(index, &parent)),
+                )
+            }
+            Some(parent) => (
+                "canonical_collection",
+                parent.to_string(),
+                label_of(index, &parent),
+            ),
             None => (
+                "canonical_collection",
                 type_of(index, &place.id).as_str().to_owned(),
                 format!("{} places", type_of(index, &place.id).as_str()),
             ),
         };
         groups
-            .entry(key)
+            .entry((grouping, key))
             .or_insert_with(|| (label, Vec::new()))
             .1
             .push(place.id.clone());
     }
     groups
         .into_iter()
-        .map(|(key, (label, mut members))| {
+        .map(|((grouping, key), (label, mut members))| {
             members.sort();
             MapCluster {
-                id: token("cluster", &["canonical_collection", &key]),
+                id: token("cluster", &[grouping, &key]),
                 label,
                 member_ids: members,
-                grouping: "canonical_collection",
+                grouping,
             }
         })
         .collect()

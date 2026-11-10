@@ -538,6 +538,17 @@ async fn observe_object(
         }
         horizon.edge(edge);
     }
+    // §15.4: a directory place is what is in it. The entries are hierarchy, one containment hop
+    // from the centre (§3.4, ADR-0188); the projection draws what the budget allows and clusters
+    // the rest by kind of entry (§8.2, ADR-0976).
+    for child in session.index().path_children(center) {
+        horizon.place(place_at(
+            session,
+            &child,
+            1,
+            Some((center.clone(), HierarchyKind::Containment)),
+        ));
+    }
     Ok(())
 }
 

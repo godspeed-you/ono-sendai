@@ -1336,3 +1336,54 @@ fn should_not_invent_a_change_section_when_no_snapshot_or_event_source_exists() 
         }
     }
 }
+
+#[test]
+fn should_draw_the_entries_of_a_directory_and_cluster_the_rest_by_kind() {
+    // §15.4: a directory place supports path navigation, and a huge directory is clustered or
+    // summarised rather than enumerated. Standing in a directory, the map shows what is in it:
+    // as many entries as the view budget draws, and for the rest one cluster per kind of entry
+    // that says how many files and how many directories it stands for (§8.2, ADR-0976).
+    let directory = ono_testkit::scratch();
+    let crowded = directory.path().join("crowded");
+    std::fs::create_dir(&crowded).expect("create the crowded directory");
+    for index in 0..60 {
+        std::fs::write(crowded.join(format!("file-{index:03}")), b"x").expect("create a file");
+    }
+    // More directories than the text map draws at all: a directory is a place to go and ranks
+    // ahead of a file (§8.1), so fewer would all be drawn and leave nothing to cluster.
+    for index in 0..45 {
+        std::fs::create_dir(crowded.join(format!("dir-{index:03}"))).expect("create a directory");
+    }
+
+    let document = map_at(&format!("enter {}; ", crowded.display()), "");
+    let drawn = nodes(&document)
+        .iter()
+        .filter(|node| mentions(node, "crowded/"))
+        .count();
+    assert!(
+        drawn > 0,
+        "spec §15.4: the map of a directory draws entries of it, got {:?}",
+        nodes(&document)
+    );
+    let clusters = clusters(&document);
+    let stands_for = |kind: &str| -> i64 {
+        clusters
+            .iter()
+            .filter(|cluster| {
+                text(cluster, "grouping", "§8.2") == "directory_subtree"
+                    && text(cluster, "label", "§8.2").ends_with(&format!("({kind})"))
+            })
+            .map(|cluster| cluster["members"].as_i64().unwrap_or(0))
+            .sum()
+    };
+    let (files, directories) = (stands_for("files"), stands_for("directories"));
+    assert!(
+        files > 0 && directories > 0,
+        "spec §8.2: what the budget did not draw is clustered by kind of entry, got {clusters:?}"
+    );
+    assert_eq!(
+        i64::try_from(drawn).expect("a small count") + files + directories,
+        105,
+        "spec §8.2/§23.6: every entry is drawn or counted by a cluster — none is dropped"
+    );
+}

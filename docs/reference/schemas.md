@@ -1133,9 +1133,9 @@ Default view: `label`, `members`, `grouping`, `expandable`
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
 | `id` | `string` | — | required | The cluster's stable identity, which `map --expand <id>` takes (§8.3). |
-| `label` | `string` | — | required | What the group is called — the canonical collection its members are filed under. |
+| `label` | `string` | — | required | What the group is called — the canonical collection its members are filed under, or, for the entries of a directory, the directory and the kind of entry: `/etc (files)`. |
 | `members` | `int` | — | required | How many objects it stands for (§8.2). |
-| `grouping` | `string` | — | required | The dimension it was grouped along, from §8.2's list of allowed dimensions. |
+| `grouping` | `string` | — | required | The dimension it was grouped along, from §8.2's list of allowed dimensions: `canonical_collection`, or `directory_subtree` for the entries of a directory (ADR-0976). |
 | `expandable` | `bool` | — | required | Whether `map --expand` can draw its members instead (§8.3). |
 
 ## MapEdge — `ono.map-edge/1`

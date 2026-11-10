@@ -16,7 +16,9 @@ fields:
   label:
     type: string
     required: true
-    doc: What the group is called — the canonical collection its members are filed under.
+    doc: >-
+      What the group is called — the canonical collection its members are filed under, or, for
+      the entries of a directory, the directory and the kind of entry: `/etc (files)`.
   members:
     type: int
     required: true
@@ -24,7 +26,9 @@ fields:
   grouping:
     type: string
     required: true
-    doc: The dimension it was grouped along, from §8.2's list of allowed dimensions.
+    doc: >-
+      The dimension it was grouped along, from §8.2's list of allowed dimensions:
+      `canonical_collection`, or `directory_subtree` for the entries of a directory (ADR-0976).
   expandable:
     type: bool
     required: true
