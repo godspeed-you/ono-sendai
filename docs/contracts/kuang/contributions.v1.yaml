@@ -181,6 +181,10 @@ schema:
     - "Unknown data is null, never fabricated and never zero (spec §35.3). A provider that cannot answer says so."
     - "A breaking change takes the next major and a new id; `spec-check` and the conformance suite refuse a break without a version bump (spec §36.5, §10.4)."
     - "A package SHOULD prefer annotating a core record over forking a core schema to add fields (spec §31.23)."
+  # Read from the package's `contributions.schemas` document on disk when the package is loaded;
+  # the handshake's schema contribution carries no such field, and needs none (ADR-1009).
+  fields:
+    scope: {type: list<string>, nullable: true, doc: "The fields of this schema that name the provider-native scope an object sits in, outermost first — `[cluster, namespace]` (external-system-provider §9.2). Each one the record names nests a `plugin` scope of the place (spec v0.4 §3.2) inside the host it is reached from; one the record leaves null is no boundary. Absent: the place sits in the host's scope. A place's identity never depends on it (ADR-1009)."}
 
 annotation:
   doc: >-

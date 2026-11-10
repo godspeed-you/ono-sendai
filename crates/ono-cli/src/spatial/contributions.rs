@@ -55,6 +55,10 @@ pub fn adopt(id: &str, plugin: &Arc<LoadedPlugin>, shapes: &[String]) {
     // shape was waiting for (ADR-1008), whatever this package may contribute itself.
     ono_spatial_core::relation::forget_awaiting(id);
     ono_spatial_core::relation::settle();
+    // The scope a package's kinds of place sit in is declared on disk beside their schemas
+    // (ADR-1009); it needs no capability, because it says where the package's own places are.
+    #[cfg(feature = "kuang")]
+    crate::spatial::lazy::declare_scopes(id);
     let Some(granted) = plugin.contract().grant(RELATION_WRITE) else {
         return;
     };

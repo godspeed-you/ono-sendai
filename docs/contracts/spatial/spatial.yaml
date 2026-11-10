@@ -103,6 +103,14 @@ contributed_types:
     Composed from the fields the contributed schema calls its `identity`, exactly as a core
     schema's is (§3.1). The display name is never part of it, so two resources of one name are two
     places and a renamed resource is one place (external-system-provider §11.1, §11.2).
+  scope: >-
+    The host the place is reached from, then one `plugin` scope (§3.2's `PluginScope`) per scope
+    dimension the package declared for the schema (`contributions.v1.yaml` → `schema.scope`)
+    that the record names, outermost first, each scope's id carrying the dimensions above it —
+    `plugin:cluster=kind-ono`, `plugin:cluster=kind-ono/namespace=shop` (external-system-provider
+    §9.2). A dimension the record leaves null is no boundary; a schema that declares none sits in
+    the host's scope, as before. The place record's `scope` and the trail's `scope_crossing` show
+    it; the identity never depends on it (§42.1; ADR-1009).
   identity_tier: >-
     Always `lifetime`. §10.1 lets a tier be weakened and never strengthened, and the strongest
     thing a host can prove about a resource it did not observe is that the identity lasts as long

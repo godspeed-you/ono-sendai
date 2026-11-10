@@ -1,0 +1,94 @@
+# #224 part (4) in the container: a contributed schema declares the scope its places sit in.
+# Spec v0.4 §3.2 (PluginScope; a crossing is observable in the trail), §42.1 (identity does not
+# depend on it); external-system-provider §9.2 (scope dimensions). ADR-1009.
+#
+# The package is the conformance fixture the container ships. Its schema document declares the
+# resource kind's `state` field as its one scope dimension, standing in for a cluster.
+case: a contributed place sits in the scope its schema declares, and crossing it is in the trail
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  package="$home/plugins/dev.example.echo"
+  mkdir -p "$package/runtime" "$package/contributions"
+  cp /usr/local/bin/kuang-example-plugin "$package/runtime/echo"
+  cat > "$package/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Answers for a few resources in two scopes.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  contributions:
+    targets: [contributions/targets.yaml]
+    schemas: [contributions/schemas.yaml]
+  network:
+    outbound: none
+  MANIFEST
+  cat > "$package/contributions/targets.yaml" <<'TARGETS'
+  targets:
+    - name: echo-place
+      schema: dev.example.echo.place/1
+      summary: Resources the example package answers for.
+      identity_doc: Two observations are the same resource when their `uid` matches.
+  TARGETS
+  cat > "$package/contributions/schemas.yaml" <<'SCHEMAS'
+  schemas:
+    - id: dev.example.echo.place/1
+      name: EchoPlace
+      scope: [state]
+  SCHEMAS
+
+  echo "== §3.2, external-system-provider §9.2: the place is in the scope its record names =="
+  prove 169-a "the place record names its plugin scope" \
+    'ono -c "get echo-place | where uid == \"u-3\" | enter; look --json" | tail -1 |
+       grep -q "\"scope\":\"plugin:state=degraded\""'
+  prove 169-b "moving between two scopes is a crossing in the trail" \
+    'ono -c "get echo-place | where uid == \"u-3\" | enter; get echo-place | where uid == \"u-1\" | enter; trail | to json" |
+       tail -1 | grep -q "\"from\":\"plugin:state=degraded\",\"to\":\"plugin:state=ready\""'
+
+  echo "== §42.1: the scope never moves the identity =="
+  scoped=$(ono -c 'get echo-place | where uid == "u-3" | enter; look --json' | tail -1 | sed 's/.*"spatial_id":"\([^"]*\)".*/\1/')
+  rm "$package/contributions/schemas.yaml"
+  sed -i '/schemas: \[contributions\/schemas.yaml\]/d' "$package/manifest.yaml"
+  plain=$(ono -c 'get echo-place | where uid == "u-3" | enter; look --json' | tail -1 | sed 's/.*"spatial_id":"\([^"]*\)".*/\1/')
+  prove 169-c "the same resource is the same place with or without the declared scope" \
+    'test -n "'"$scoped"'" && test "'"$scoped"'" = "'"$plain"'"'
+  prove 169-d "without a declaration the place is in the host's scope, as before" \
+    'ono -c "get echo-place | where uid == \"u-3\" | enter; look --json" | tail -1 | grep -q "\"scope\":\"host:"'
+
+  echo "contributed scope checks done"
+exit: 0
+stdout-contains: PROVED 169-a
+stdout-contains: PROVED 169-b
+stdout-contains: PROVED 169-c
+stdout-contains: PROVED 169-d
+stdout-contains: contributed scope checks done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

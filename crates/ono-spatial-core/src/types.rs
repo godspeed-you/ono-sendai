@@ -467,6 +467,58 @@ pub fn contribute(
     object_type
 }
 
+/// The scope dimensions packages declared, by schema id (ADR-1009).
+fn scopes() -> &'static std::sync::RwLock<Vec<(&'static str, &'static [&'static str])>> {
+    static SCOPES: std::sync::OnceLock<
+        std::sync::RwLock<Vec<(&'static str, &'static [&'static str])>>,
+    > = std::sync::OnceLock::new();
+    SCOPES.get_or_init(|| std::sync::RwLock::new(Vec::new()))
+}
+
+/// Records the provider-native scope of a contributed schema: the fields of its records that name
+/// the boundary an object sits in, outermost first — `cluster`, then `namespace`
+/// (external-system-provider §9.2; ADR-1009).
+///
+/// Declaring a schema again replaces what it declared, so a package that is loaded again says
+/// what it says now. The names are leaked once per declaration, as a contributed type's are.
+pub fn declare_scope(schema: &str, dimensions: &[&str]) {
+    let leak = |text: &str| -> &'static str { Box::leak(text.to_owned().into_boxed_str()) };
+    let Ok(mut registry) = scopes().write() else {
+        return;
+    };
+    registry.retain(|(known, _)| *known != schema);
+    if dimensions.is_empty() {
+        return;
+    }
+    let dimensions: &'static [&'static str] = Box::leak(
+        dimensions
+            .iter()
+            .map(|dimension| leak(dimension))
+            .collect::<Vec<&'static str>>()
+            .into_boxed_slice(),
+    );
+    registry.push((leak(schema), dimensions));
+}
+
+/// The scope dimensions of a kind of place, outermost first; empty where its package declared
+/// none, and for every declared type (ADR-1009).
+#[must_use]
+pub fn scope_dimensions(object_type: SpatialType) -> &'static [&'static str] {
+    let Some(contributed) = contributed_for_type(object_type) else {
+        return &[];
+    };
+    scopes()
+        .read()
+        .ok()
+        .and_then(|registry| {
+            registry
+                .iter()
+                .find(|(schema, _)| *schema == contributed.schema)
+                .map(|(_, dimensions)| *dimensions)
+        })
+        .unwrap_or(&[])
+}
+
 /// The semantic roles a kind of place carries, from every contribution registered for it
 /// (ADR-0596). Empty for a declared type, which carries none yet.
 #[must_use]

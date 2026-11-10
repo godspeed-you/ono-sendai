@@ -148,15 +148,58 @@ fn may_contribute(package: &crate::kuang_host::Installed, kinds: &[String]) -> b
 /// Only the two fields this module needs are read, so a document written for a later version of
 /// the schema contract still answers what it names.
 fn declared_schemas(package: &crate::kuang_host::Installed) -> Vec<(String, String)> {
+    schema_documents(package)
+        .into_iter()
+        .map(|declared| (declared.id, declared.name))
+        .collect()
+}
+
+/// One schema of a `contributions.schemas` document, as far as the spatial layer reads it.
+#[derive(serde::Deserialize)]
+struct Declared {
+    id: String,
+    name: String,
+    /// The fields naming the provider-native scope of an object, outermost first (ADR-1009).
+    #[serde(default)]
+    scope: Vec<String>,
+}
+
+/// Records the scope dimensions the schemas of the installed package `id` declare on disk, so
+/// its places are placed in the scope they belong to (external-system-provider §9.2; ADR-1009).
+///
+/// Called when the package is loaded. The package is found under the plugin path the process
+/// started with, which is the set the registry placeholders were built from (§31.68).
+pub fn declare_scopes(id: &str) {
+    let roots: Vec<std::path::PathBuf> = match std::env::var_os("ONO_PLUGIN_PATH") {
+        Some(path) => std::env::split_paths(&path).collect(),
+        None => std::env::var_os("HOME")
+            .map(|home| std::path::PathBuf::from(home).join(".config/ono/plugins"))
+            .into_iter()
+            .collect(),
+    };
+    for root in roots {
+        let (packages, _) = crate::kuang_host::packages_under(&root);
+        let Some(package) = packages
+            .into_iter()
+            .find(|package| package.manifest.package.id == id)
+        else {
+            continue;
+        };
+        for declared in schema_documents(&package) {
+            let dimensions: Vec<&str> = declared.scope.iter().map(String::as_str).collect();
+            ono_spatial_core::types::declare_scope(&declared.id, &dimensions);
+        }
+        return;
+    }
+}
+
+/// The schemas a package's `contributions.schemas` documents declare, read tolerantly: only the
+/// fields this module needs, so a document written for a later version still answers.
+fn schema_documents(package: &crate::kuang_host::Installed) -> Vec<Declared> {
     #[derive(serde::Deserialize)]
     struct Document {
         #[serde(default)]
         schemas: Vec<Declared>,
-    }
-    #[derive(serde::Deserialize)]
-    struct Declared {
-        id: String,
-        name: String,
     }
     let paths = package
         .manifest
@@ -169,6 +212,5 @@ fn declared_schemas(package: &crate::kuang_host::Installed) -> Vec<(String, Stri
         .filter_map(|path| std::fs::read_to_string(package.directory.join(path)).ok())
         .filter_map(|text| serde_yaml_ng::from_str::<Document>(&text).ok())
         .flat_map(|document| document.schemas)
-        .map(|declared| (declared.id, declared.name))
         .collect()
 }

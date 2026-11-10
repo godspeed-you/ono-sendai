@@ -278,6 +278,9 @@ impl Projection {
     /// it — so learning more about where a process runs never makes it another place (§42.1,
     /// ADR-0983).
     fn scope_of(&self, object_type: SpatialType, record: &RecordValue) -> SpatialScope {
+        if let SpatialType::Contributed(_) = object_type {
+            return self.contributed_scope(object_type, record);
+        }
         if object_type != SpatialType::Process {
             return self.scope.clone();
         }
@@ -292,6 +295,32 @@ impl Projection {
             && *inode != observer
         {
             scope = scope.nest(ScopeKind::Namespace, &format!("pid:[{inode}]"));
+        }
+        scope
+    }
+
+    /// The scope of a contributed place: the host it is reached from, then one `plugin` scope per
+    /// dimension its package declared that the record names — `cluster=kind-ono`, then
+    /// `cluster=kind-ono/namespace=shop` (external-system-provider §9.2, v0.4 §3.2; ADR-1009).
+    ///
+    /// Each nested scope's id carries the dimensions above it, so two namespaces of one name in
+    /// two clusters are two scopes, and a dimension the record leaves null — a cluster-scoped
+    /// resource has no namespace — is not a boundary at all (§2.17). The identity is unaffected,
+    /// exactly as a process's is by its container (§42.1).
+    fn contributed_scope(&self, object_type: SpatialType, record: &RecordValue) -> SpatialScope {
+        let mut scope = self.scope.clone();
+        let mut path: Vec<String> = Vec::new();
+        for dimension in crate::types::scope_dimensions(object_type) {
+            let Some(value) = record
+                .get(dimension)
+                .filter(|value| !value.is_null())
+                .and_then(|value| ono_value::canonical_text(value).ok())
+                .filter(|text| !text.is_empty())
+            else {
+                continue;
+            };
+            path.push(format!("{dimension}={value}"));
+            scope = scope.nest(ScopeKind::Plugin, &path.join("/"));
         }
         scope
     }
