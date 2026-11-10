@@ -1573,9 +1573,12 @@ pub fn plugin_record(
             "kuang_api",
             Value::string(manifest.compatibility.kuang_api.source()),
         )?
-        // Invocations run in the foreground of this session and finish before the next
-        // statement, so nothing is running when a table is read.
-        .set("jobs", Value::Int(0))?
+        // A job runs packages in the session's instance (ADR-0995), so an invocation can be
+        // running while the shell reads the table: the instance's own count, zero unless active.
+        .set(
+            "jobs",
+            Value::Int(plugin.map_or(0, |plugin| i128::from(plugin.running_invocations()))),
+        )?
         // Spec §31.33's figures, measured where the host can measure them and null where it
         // cannot or has not yet: unknown is never zero (spec §35.3, ADR-0997).
         .set(

@@ -1,7 +1,8 @@
 # Spec §31.8, §31.14, §18.4; ADR-0952, ADR-0959, ADR-0995, ADR-0998: a job runs packages in the
 # session's instance, so `kill %N` ends the job by cancelling the invocation it has running there.
 # The job leaves the table, the instance goes back to `loaded` and answers the shell, and a
-# second job streaming from the same instance runs on until it is killed in turn.
+# second job streaming from the same instance runs on until it is killed in turn. `get plugin`'s
+# `jobs` counts the invocations running in the instance, a job's among them.
 case: killing a job cancels its package invocation and leaves the shared instance running
 timeout: 180
 run: |
@@ -77,8 +78,18 @@ run: |
   kill %1
   get job | select id state | to json' 2>&1)
   echo "one-of-two-killed: $(echo "$out" | answers)"
+
+  echo "== get plugin counts the invocation a job holds open in the instance (ono.plugin/2 jobs) =="
+  out=$(ono -c 'load plugin dev.example.echo
+  echo:count-forever | count &
+  while (get plugin | where id == "dev.example.echo" and state == "active" | count) == 0 { sleep 0.05 }
+  get plugin | where id == "dev.example.echo" | select state jobs | to json
+  kill %1
+  get plugin | where id == "dev.example.echo" | select state jobs | to json' 2>&1)
+  echo "jobs-counted: $(echo "$out" | answers)"
 exit: 0
 stdout-contains: after-kill: [{"state":"loaded"}] [1,2] []
 stdout-contains: one-of-two-killed: [1,2,3] [{"state":"active"}] [{"id":1,"state":"running"}] []
+stdout-contains: jobs-counted: [{"state":"active","jobs":1}] [{"state":"loaded","jobs":0}]
 stdout-not-contains: has not stopped yet
 stdout-not-contains: panicked

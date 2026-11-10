@@ -1158,6 +1158,13 @@ impl LoadedPlugin {
         lock(&self.shared).lifecycle.state()
     }
 
+    /// How many invocations are running in the instance — the foreground's and every job's
+    /// together (spec §31.8, ADR-0995). Zero whenever the instance is not `active`.
+    #[must_use]
+    pub fn running_invocations(&self) -> u32 {
+        lock(&self.shared).lifecycle.running_invocations()
+    }
+
     /// Why the instance was quarantined, when it was.
     #[must_use]
     pub fn quarantine_reason(&self) -> Option<String> {

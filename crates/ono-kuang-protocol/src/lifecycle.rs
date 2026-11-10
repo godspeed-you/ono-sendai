@@ -136,6 +136,16 @@ impl Lifecycle {
         }
     }
 
+    /// How many invocations are executing: the count that makes the instance `active`, and zero
+    /// in every state that is not (`ono.plugin/2`'s `jobs`).
+    #[must_use]
+    pub const fn running_invocations(&self) -> u32 {
+        match self.base {
+            Base::Loaded => self.invocations,
+            Base::Installed | Base::Enabled | Base::Quarantined => 0,
+        }
+    }
+
     /// Whether the instance runs with denied optional capabilities, whatever else it is doing.
     #[must_use]
     pub const fn is_degraded(&self) -> bool {

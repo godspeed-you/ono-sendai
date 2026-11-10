@@ -320,3 +320,32 @@ fn should_end_only_the_killed_jobs_invocation_when_another_job_and_the_shell_use
         run.output()
     );
 }
+
+#[test]
+fn should_count_the_invocation_a_job_holds_open_in_get_plugins_jobs() {
+    // `ono.plugin/2`'s `jobs`: how many invocations are running, zero for anything not `active`.
+    // A job can hold an invocation open in the session's instance while the shell reads the
+    // table (ADR-0995), so the count is the instance's, not a constant.
+    let home = plugin_home();
+    let run = ono(
+        &home,
+        "load plugin dev.example.echo\n\
+         echo:count-forever | count &\n\
+         while (get plugin | where id == \"dev.example.echo\" and state == \"active\" | count) == 0 { sleep 0.05 }\n\
+         get plugin | where id == \"dev.example.echo\" | select state jobs | to json\n\
+         kill %1\n\
+         get plugin | where id == \"dev.example.echo\" | select state jobs | to json",
+    );
+
+    run.assert_success();
+    assert!(
+        run.stdout().contains(r#"[{"state":"active","jobs":1}]"#),
+        "an active instance counts the invocation the job runs in it: {:?}",
+        run.output()
+    );
+    assert!(
+        run.stdout().contains(r#"[{"state":"loaded","jobs":0}]"#),
+        "once the job's invocation has ended, nothing is counted: {:?}",
+        run.output()
+    );
+}
