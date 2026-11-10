@@ -2743,6 +2743,207 @@ async fn should_refuse_a_view_without_the_ui_view_grant() {
         .await;
 }
 
+// --- a view outlives no invocation, but only its own (spec §31.28, issue #157) ---------------
+
+/// Two `browse` invocations open at once on one instance, each with a view of its own; the
+/// first is left with `q` and ends as `end` says, without closing its view. Returns the first
+/// invocation's status.
+///
+/// The assertions are the issue's exit: the first view is closed by the host because *its*
+/// invocation ended, the second survives that end and keeps answering keys, and is closed when
+/// its own invocation ends.
+async fn two_views_and_the_first_invocation_ends(end: &str) -> InvokeStatus {
+    let views = ono_kuang_testhost::RecordingViews::terminal();
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
+        .views(views.clone())
+        .grant(Capability::UiView)
+        .load()
+        .await
+        .expect("loads");
+    let mut first = plugin
+        .invoke(
+            "dev.example.echo.command.browse",
+            args(&[("count", json!(2)), ("end", json!(end))]),
+        )
+        .await
+        .expect("the first invocation starts");
+    wait_until(|| views.is_open(0), "the first view").await;
+    let second = plugin
+        .invoke(
+            "dev.example.echo.command.browse",
+            args(&[("count", json!(3))]),
+        )
+        .await
+        .expect("the second invocation starts while the first is open");
+    wait_until(|| views.is_open(1), "the second view").await;
+    if end == "cancel" {
+        // A cancellation the host asked for, which the handler observes when it is next woken.
+        first.cancel().await;
+    }
+
+    views.press_on(0, "q");
+    while first.next().await.is_some() {}
+    let status = first.finish().await.status;
+    assert!(
+        !views.is_open(0),
+        "the host closes a view its invocation left open, however the invocation ended ({end})"
+    );
+    assert!(
+        views.is_open(1),
+        "a view outlives no invocation, but only its own: the second view survives the first \
+         invocation's end ({end})"
+    );
+
+    let trees_before = views.trees().len();
+    views.press_on(1, "down");
+    wait_until(
+        || {
+            views.trees().len() > trees_before
+                && views.trees().last().and_then(selected_row) == Some(1)
+        },
+        "the surviving view answering a key",
+    )
+    .await;
+    views.press_on(1, "q");
+    let (events, result) = second.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    assert_eq!(
+        strings(&events),
+        ["selected: item 2"],
+        "the surviving invocation saw its own view to the end, and no unmount it did not earn"
+    );
+    assert!(
+        !views.is_open(1),
+        "and its view closes with its own invocation"
+    );
+    assert_eq!(plugin.state(), PluginState::Loaded);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+    status
+}
+
+#[tokio::test]
+async fn should_keep_a_view_open_when_another_invocation_on_the_instance_completes() {
+    assert_eq!(
+        two_views_and_the_first_invocation_ends("complete").await,
+        InvokeStatus::Completed
+    );
+}
+
+#[tokio::test]
+async fn should_keep_a_view_open_when_another_invocation_on_the_instance_fails() {
+    assert_eq!(
+        two_views_and_the_first_invocation_ends("fail").await,
+        InvokeStatus::Failed
+    );
+}
+
+#[tokio::test]
+async fn should_keep_a_view_open_when_another_invocation_on_the_instance_is_cancelled() {
+    assert_eq!(
+        two_views_and_the_first_invocation_ends("cancel").await,
+        InvokeStatus::Cancelled
+    );
+}
+
+/// A `browse` that opens its view with a raw `views.open` naming `claim` as the owner (`null`:
+/// naming none), and reports `opened` or the refusal.
+async fn open_a_view_claiming(
+    plugin: &ono_kuang_supervisor::LoadedPlugin,
+    claim: serde_json::Value,
+) -> (InvokeStatus, Vec<String>, Option<String>) {
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.browse",
+            args(&[("invocation", claim)]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    (
+        result.status,
+        strings(&events),
+        result.error.map(|error| error.name),
+    )
+}
+
+#[tokio::test]
+async fn should_refuse_a_view_whose_named_invocation_is_not_open() {
+    let views = ono_kuang_testhost::RecordingViews::terminal();
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
+        .views(views.clone())
+        .grant(Capability::UiView)
+        .load()
+        .await
+        .expect("loads");
+    let (status, _, error) = open_a_view_claiming(&plugin, json!(999_999)).await;
+    assert_eq!(status, InvokeStatus::Failed);
+    assert_eq!(
+        error.as_deref(),
+        Some("view.protocol_error"),
+        "a view belongs to an invocation that is open, and dies with it"
+    );
+    assert!(views.opened().is_empty(), "nothing took the terminal");
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_give_a_view_that_names_no_invocation_to_the_only_one_open() {
+    // A package that predates the `invocation` parameter still opens views, as long as there is
+    // exactly one invocation it can belong to.
+    let views = ono_kuang_testhost::RecordingViews::terminal();
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
+        .views(views.clone())
+        .grant(Capability::UiView)
+        .load()
+        .await
+        .expect("loads");
+    let (status, events, error) = open_a_view_claiming(&plugin, json!(null)).await;
+    assert_eq!(status, InvokeStatus::Completed, "{error:?}");
+    assert_eq!(events, ["opened"]);
+    assert_eq!(views.opened(), ["dev.example.echo.view.items"]);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_a_view_that_names_no_invocation_while_several_are_open() {
+    let views = ono_kuang_testhost::RecordingViews::terminal();
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
+        .views(views.clone())
+        .grant(Capability::UiView)
+        .load()
+        .await
+        .expect("loads");
+    let holder = plugin
+        .invoke(
+            "dev.example.echo.command.browse",
+            args(&[("count", json!(1))]),
+        )
+        .await
+        .expect("the first invocation starts");
+    wait_until(|| views.is_open(0), "the first view").await;
+    let (status, _, error) = open_a_view_claiming(&plugin, json!(null)).await;
+    assert_eq!(status, InvokeStatus::Failed);
+    assert_eq!(
+        error.as_deref(),
+        Some("view.protocol_error"),
+        "with two invocations open the host cannot tell whose view it is, and guessing would \
+         hand one invocation's terminal to the other"
+    );
+    assert!(views.is_open(0), "the refusal touched nobody else's view");
+    views.press_on(0, "q");
+    let (_, result) = holder.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
 // --- concurrent invocations, spec §31.15, §31.34 -----------------------------------------------
 
 /// A credit window of one, so a handler blocks inside `emit` until its consumer pulls.

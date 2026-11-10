@@ -20,10 +20,11 @@ use std::io::Write;
 use ono_kuang_protocol::{
     ActionContribution, Answer, ChangeViewContribution, CommandContribution, ContributionSet,
     EffectClassContribution, EmitParams, Envelope, FrameLimits, Hello, Idempotency,
-    ImpactProviderContribution, InitResult, InvokeParams, InvokeResult, InvokeStatus,
-    PACKAGE_FORMAT, ParameterContribution, RecoveryProviderContribution, RiskRuleContribution,
-    SchemaContribution, SchemaFieldContribution, TargetContribution, TransactionContribution,
-    VerificationCheckContribution, VerificationProviderContribution, ViewContribution, method,
+    ImpactProviderContribution, InitResult, InvokeParams, InvokeResult, InvokeStatus, KuangError,
+    KuangErrorCode, PACKAGE_FORMAT, ParameterContribution, RecoveryProviderContribution,
+    RiskRuleContribution, SchemaContribution, SchemaFieldContribution, TargetContribution,
+    TransactionContribution, VerificationCheckContribution, VerificationProviderContribution,
+    ViewContribution, method,
 };
 use ono_kuang_sdk::{Ctx, Outcome, Plugin};
 use ono_value::{Provenance, RecordValue, Value};
@@ -1652,7 +1653,28 @@ fn honest_at_most(at_once: u32) -> Plugin {
             // selection; the host draws, forwards keys, and owns the exits.
             let count = int_argument(ctx, "count", 3).clamp(1, 1000);
             let broken = int_argument(ctx, "broken", 0) != 0;
+            // `complete`, `fail` or `cancel`: when the view is left with `q`, the handler ends
+            // that way and leaves the view for the host to close, which is what a package that
+            // forgets its views does — the host closes them with *its* invocation (spec §31.28).
+            let end = text_argument(ctx, "end", "");
             let items: Vec<String> = (1..=count).map(|at| format!("item {at}")).collect();
+            if let Some(claim) = ctx.arguments().get("invocation").cloned() {
+                // A package that names the owning invocation itself — another one, or none at
+                // all (`null`) — as a package without this SDK might (ADR-0991).
+                let mut params = json!({"view": format!("{PACKAGE}.view.items")});
+                if !claim.is_null() {
+                    params["invocation"] = claim;
+                }
+                return match ctx.host_call(method::VIEWS_OPEN, params) {
+                    Ok(answer) => {
+                        if let Some(handle) = answer.get("handle").and_then(serde_json::Value::as_u64) {
+                            let _ = ctx.close_view(handle);
+                        }
+                        emit_text(ctx, "opened")
+                    }
+                    Err(error) => Outcome::Failed(error),
+                };
+            }
             let opened = match ctx.open_view(&format!("{PACKAGE}.view.items"), None) {
                 Ok(opened) => opened,
                 Err(error) => return Outcome::Failed(error),
@@ -1685,6 +1707,17 @@ fn honest_at_most(at_once: u32) -> Plugin {
                         Some("down" | "j") => selected = (selected + 1).min(items.len() - 1),
                         Some("up" | "k") => selected = selected.saturating_sub(1),
                         Some("enter") => inspecting = !inspecting,
+                        Some("q") if end == "complete" => return Outcome::Completed,
+                        Some("q") if end == "cancel" => return Outcome::Cancelled,
+                        Some("q") if end == "fail" => {
+                            return Outcome::Failed(
+                                KuangError::new(
+                                    KuangErrorCode::RuntimeTrap,
+                                    "the browse handler was told to fail with its view open",
+                                )
+                                .into(),
+                            );
+                        }
                         Some("q") => break,
                         _ => {}
                     },

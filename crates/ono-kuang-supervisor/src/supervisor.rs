@@ -1449,6 +1449,8 @@ struct OutStream {
 struct OpenView {
     #[allow(dead_code, reason = "named for the trail and diagnostics that follow")]
     id: String,
+    /// The invocation the view belongs to and dies with (spec §31.28, ADR-0991).
+    invocation: u64,
     mounted: Option<Box<dyn crate::view::MountedView>>,
     forwarder: tokio::task::JoinHandle<()>,
 }
@@ -2571,9 +2573,10 @@ impl Actor {
                         }
                         self.invocations.remove(&invocation);
                         self.streams.remove(&output);
-                        // A view outlives no invocation (spec §31.28): the terminal comes back
-                        // however the command ended.
-                        self.close_all_views(false).await;
+                        // A view outlives no invocation (spec §31.28) — its own, and no other:
+                        // the terminal comes back however the command ended, and a sibling
+                        // invocation's view stays where it is (ADR-0991).
+                        self.close_views_of(invocation).await;
                         let _ = result_tx.send(outcome);
                         Ok(LoopStep::Continue)
                     }
@@ -4834,6 +4837,35 @@ impl Actor {
             self.reply_err(seq, error.into()).await;
             return Ok(());
         }
+        let owner = match open.invocation {
+            Some(named) if self.invocations.contains_key(&named) => Some(named),
+            Some(_) => None,
+            // A package that does not say is understood only when there is one candidate.
+            None if self.invocations.len() == 1 => self.invocations.keys().next().copied(),
+            None => None,
+        };
+        let Some(owner) = owner else {
+            let why = match open.invocation {
+                Some(named) => format!("invocation {named} is not open"),
+                None => format!(
+                    "{} invocations are open and `views.open` named none of them",
+                    self.invocations.len()
+                ),
+            };
+            self.reply_err(
+                seq,
+                KuangError::new(
+                    KuangErrorCode::ViewProtocolError,
+                    format!(
+                        "a view belongs to the invocation that opens it, and this one has none: \
+                         {why}"
+                    ),
+                )
+                .into(),
+            )
+            .await;
+            return Ok(());
+        };
         let Some(contribution) = self
             .contributed_views
             .iter()
@@ -4892,6 +4924,7 @@ impl Actor {
             handle,
             OpenView {
                 id: contribution.id.clone(),
+                invocation: owner,
                 mounted,
                 forwarder,
             },
@@ -4998,11 +5031,16 @@ impl Actor {
         }
     }
 
-    /// Every view the instance has open is closed: an invocation ended, or the instance did.
-    async fn close_all_views(&mut self, tell_plugin: bool) {
-        let handles: Vec<u64> = self.open_views.keys().copied().collect();
+    /// Every view `invocation` opened is closed, because it ended; nobody else's is touched.
+    async fn close_views_of(&mut self, invocation: u64) {
+        let handles: Vec<u64> = self
+            .open_views
+            .iter()
+            .filter(|(_, view)| view.invocation == invocation)
+            .map(|(handle, _)| *handle)
+            .collect();
         for handle in handles {
-            self.close_view(handle, tell_plugin).await;
+            self.close_view(handle, false).await;
         }
     }
 

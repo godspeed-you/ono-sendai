@@ -650,6 +650,8 @@ struct RecordedViews {
     opened: Vec<String>,
     trees: Vec<Json>,
     closed: usize,
+    /// Whether each view, in the order it was opened, still holds the terminal.
+    open: Vec<bool>,
     events: Vec<tokio::sync::mpsc::Sender<ono_kuang_protocol::ViewEvent>>,
 }
 
@@ -685,6 +687,25 @@ impl RecordingViews {
     #[must_use]
     pub fn closed(&self) -> usize {
         lock(&self.inner).closed
+    }
+
+    /// Whether the `index`-th view taken (counting from zero, in the order they were opened)
+    /// still holds the terminal. False for a view that was never opened.
+    #[must_use]
+    pub fn is_open(&self, index: usize) -> bool {
+        lock(&self.inner).open.get(index).copied().unwrap_or(false)
+    }
+
+    /// Sends a key to the `index`-th view taken; nothing when there is no such view.
+    pub fn press_on(&self, index: usize, key: &str) {
+        let sender = lock(&self.inner).events.get(index).cloned();
+        if let Some(sender) = sender {
+            let _ = sender.try_send(ono_kuang_protocol::ViewEvent {
+                kind: "key".to_owned(),
+                key: Some(key.to_owned()),
+                size: None,
+            });
+        }
     }
 
     /// Sends a key to the view opened last; nothing when no view is open.
@@ -730,6 +751,8 @@ fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 struct RecordedView {
     inner: std::sync::Arc<std::sync::Mutex<RecordedViews>>,
+    /// Where this view stands in the order the views were taken.
+    index: usize,
 }
 
 impl ono_kuang_supervisor::MountedView for RecordedView {
@@ -746,7 +769,11 @@ impl ono_kuang_supervisor::MountedView for RecordedView {
     }
 
     fn close(&self) {
-        lock(&self.inner).closed += 1;
+        let mut inner = lock(&self.inner);
+        inner.closed += 1;
+        if let Some(open) = inner.open.get_mut(self.index) {
+            *open = false;
+        }
     }
 }
 
@@ -763,8 +790,10 @@ impl ono_kuang_supervisor::ViewHost for RecordingViews {
             return Ok(None);
         }
         inner.events.push(events);
+        inner.open.push(true);
         Ok(Some(Box::new(RecordedView {
             inner: std::sync::Arc::clone(&self.inner),
+            index: inner.open.len() - 1,
         })))
     }
 }

@@ -367,11 +367,16 @@ host_calls:
     params:
       view: {type: string, required: true, doc: "A contributed view id."}
       input: {type: handle<stream>, nullable: true, doc: "The stream the view renders."}
+      invocation: {type: handle<invocation>, nullable: true, doc: "The invocation the view belongs to and dies with. Absent is accepted only while exactly one invocation is open, which then owns the view (ADR-0991)."}
     returns: {type: handle<view>, doc: "The mounted view."}
     errors: [view.protocol_error]
     doc: >-
       Opening a view does not confer terminal ownership. If stdout is redirected the host mounts
       nothing and the command falls back to its declared non-interactive output (spec §31.28).
+      A view belongs to exactly one invocation, as every handle does: the host closes it when
+      that invocation ends, however it ends, and never when another one does. A named invocation
+      that is not open, or no name while several are open, is `view.protocol_error` — the host
+      will not guess whose terminal it is (ADR-0991).
 
   - id: views.submit
     domain: views
