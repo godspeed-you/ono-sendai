@@ -82,6 +82,9 @@ fn should_define_the_process_schema_exactly_as_the_spec_does() {
             ("virtual_mem", true),
             ("threads", true),
             ("started", true),
+            // ADR-0969: the kernel's own start time, in clock ticks since boot, so that two
+            // reads of one process agree on when it started.
+            ("start_ticks", true),
             ("cwd", true),
             ("service", true),
             ("container", true),
