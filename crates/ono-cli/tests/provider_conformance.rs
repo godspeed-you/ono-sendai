@@ -1215,6 +1215,7 @@ async fn should_shape_ono_plugin_2_the_way_ono_shell_declares_it() {
             harness::FieldContract { name: "kuang_api", ty: "string", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "jobs", ty: "int", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "memory", ty: "bytesize", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "cpu_time", ty: "duration", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "state_usage", ty: "bytesize", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "degraded_reason", ty: "string", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "quarantine_reason", ty: "string", required: false, nullable: true, unit: None },

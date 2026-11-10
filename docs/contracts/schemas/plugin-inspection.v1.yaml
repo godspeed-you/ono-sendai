@@ -92,7 +92,10 @@ fields:
   memory_current:
     type: bytesize
     nullable: true
-    doc: Instance memory now. Null when nothing is loaded.
+    doc: >-
+      Instance memory now: the kernel's account of what a native process has allocated, or the
+      runtime's account of a component's memory. Null when nothing is loaded, and null until the
+      host has sampled the instance.
   memory_limit:
     type: bytesize
     required: true
@@ -100,7 +103,10 @@ fields:
   cpu_time:
     type: duration
     nullable: true
-    doc: CPU consumed by the current instance. Null when nothing is loaded.
+    doc: >-
+      CPU consumed by the current instance, as the kernel accounts it for a native process. Null
+      when nothing is loaded, null until the host has sampled the instance, and null for a `wasm`
+      component, whose CPU time the runtime does not account per instance (ADR-0997).
   host_calls:
     type: int
     required: true

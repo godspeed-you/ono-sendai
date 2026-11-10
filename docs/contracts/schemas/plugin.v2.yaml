@@ -10,7 +10,8 @@
 # ADR-0996: version 2 drops `isolation`. It repeated spec §31.10's manifest vocabulary beside
 # `execution_tier`, so two fields answered one question — what the instance runs in — and the
 # answers could differ (ADR-0448). The manifest's declared `runtime.kind` is still read from the
-# manifest (`inspect plugin`); this record names the tier once.
+# manifest (`inspect plugin`); this record names the tier once. It also carries the instance's
+# measured `memory` and a `cpu_time` beside it (ADR-0997).
 #
 # ADR-0022: the fourth state is `active`, not `running`. Spec §31.8's state machine writes ACTIVE
 # and its definitions define "Active"; "run" appears only in that section's heading.
@@ -115,8 +116,23 @@ fields:
     type: bytesize
     nullable: true
     doc: >-
-      Current instance memory. Null when nothing is loaded — which is not zero, because an
-      unloaded package has no instance to measure (spec §10.5).
+      The memory the current instance has allocated, measured by the host (spec §31.33): for a
+      `native-confined` process the kernel's own accounting of what the process has allocated
+      (the figure its memory ceiling bounds), sampled while it runs; for a `wasm` component the
+      runtime's account of the component's memory, which every growth passes. Null when nothing
+      is loaded — not zero, because an unloaded package has no instance to measure (spec §10.5)
+      — and null for an instance the host has not sampled yet.
+  cpu_time:
+    type: duration
+    nullable: true
+    doc: >-
+      The CPU time the current instance has used, user and system together, as the kernel
+      accounts it for a `native-confined` process (spec §31.33), sampled while it runs; the
+      kernel counts it in clock ticks, so an instance that has done next to nothing reads `0ns`.
+      Null when nothing is loaded, null for an instance the host has not sampled yet, and null
+      for a `wasm` component: a component runs on the shell's own threads, and the runtime keeps
+      no account of the CPU time one instance used, so there is no figure to report — never a
+      zero standing in for one (spec §35.3, ADR-0997).
   state_usage:
     type: bytesize
     nullable: true

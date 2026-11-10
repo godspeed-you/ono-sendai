@@ -1576,7 +1576,24 @@ pub fn plugin_record(
         // Invocations run in the foreground of this session and finish before the next
         // statement, so nothing is running when a table is read.
         .set("jobs", Value::Int(0))?
-        .set("memory", Value::Null)?
+        // Spec §31.33's figures, measured where the host can measure them and null where it
+        // cannot or has not yet: unknown is never zero (spec §35.3, ADR-0997).
+        .set(
+            "memory",
+            plugin
+                .and_then(LoadedPlugin::current_memory)
+                .map_or(Value::Null, |allocated| {
+                    Value::ByteSize(ono_value::ByteSize::from_bytes(u128::from(allocated)))
+                }),
+        )?
+        .set(
+            "cpu_time",
+            plugin
+                .and_then(LoadedPlugin::cpu_time)
+                .map_or(Value::Null, |nanoseconds| {
+                    Value::Duration(ono_value::Duration::from_nanoseconds(nanoseconds))
+                }),
+        )?
         .set("state_usage", Value::Null)?
         .set(
             "degraded_reason",

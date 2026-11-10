@@ -158,3 +158,114 @@ fn should_say_get_plugin_answers_the_second_version_of_the_plugin_record() {
         run.stdout()
     );
 }
+
+#[test]
+fn should_report_the_memory_and_cpu_time_of_an_instance_that_has_run() {
+    // Issue #222: a native-process instance is measured from the kernel's own accounting
+    // (spec §31.33), so the record shows what it has allocated and the CPU time it has used.
+    let home = plugin_home();
+    let record = plugin_record(
+        &home,
+        "load plugin dev.example.echo; echo:emit --count 3 | count; ",
+    );
+
+    let memory = record["memory"].as_u64().unwrap_or_else(|| {
+        panic!("spec §31.33: a running instance has a measured memory figure: {record:?}")
+    });
+    assert!(
+        memory > 0,
+        "a running process has allocated something: {record:?}"
+    );
+    assert!(
+        record["cpu_time"].as_str().is_some(),
+        "spec §31.33: a running instance's CPU time is a typed duration: {record:?}"
+    );
+}
+
+#[test]
+fn should_report_no_memory_or_cpu_time_for_a_package_nothing_has_loaded() {
+    // Unknown is null, never zero (spec §35.3): an installed package has no instance to measure.
+    let home = plugin_home();
+    let record = plugin_record(&home, "");
+
+    let null = |field: &str| record.get(field).is_some_and(serde_yaml_ng::Value::is_null);
+    assert!(
+        null("memory") && null("cpu_time"),
+        "spec §10.5: no instance, no figure — null rather than zero: {record:?}"
+    );
+}
+
+#[test]
+fn should_report_a_components_memory_and_no_cpu_time_when_it_is_inspected() {
+    // The wasm tier: the runtime accounts every growth of a component's memory, so the figure is
+    // exact; it keeps no account of the CPU time one instance used, so that figure is null, as
+    // `ono.plugin/2` and `ono.plugin-inspection/1` document — never a zero standing in for it.
+    let component = match support::component_fixture() {
+        Ok(path) => path,
+        Err(why) => {
+            ono_testkit::skipped(ono_testkit::SkipReason::ExternalToolUnavailable, &why);
+            return;
+        }
+    };
+    let home = ono_testkit::scratch();
+    home.write(
+        "plugins/dev.example.echo/manifest.yaml",
+        MANIFEST
+            .replace("kind: native-process", "kind: wasm-component")
+            .replace("entry: runtime/echo", "entry: runtime/echo.wasm"),
+    );
+    let placed = home
+        .path()
+        .join("plugins/dev.example.echo/runtime/echo.wasm");
+    std::fs::create_dir_all(placed.parent().expect("a parent")).expect("the runtime directory");
+    std::fs::copy(&component, &placed).expect("the component");
+    let compiled = std::process::Command::new(sibling("kuang-compile"))
+        .arg(&placed)
+        .env("XDG_CACHE_HOME", home.path().join("cache"))
+        .output()
+        .expect("kuang-compile runs");
+    assert!(
+        compiled.status.success(),
+        "kuang-compile compiles the component: {}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+
+    let run = ono(
+        &home,
+        "load plugin dev.example.echo; echo:emit --count 2 | count; \
+         inspect plugin dev.example.echo | select memory_current cpu_time | to json; \
+         get plugin dev.example.echo | select execution_tier memory cpu_time | to json",
+    );
+
+    run.assert_success();
+    let shown = run.stdout();
+    let rows: Vec<serde_yaml_ng::Value> = shown
+        .lines()
+        .filter(|line| line.starts_with("[{"))
+        .map(|line| serde_yaml_ng::from_str(line).expect("a JSON document"))
+        .collect();
+    assert_eq!(rows.len(), 2, "both answers arrived: {:?}", run.output());
+    let inspected = &rows[0][0];
+    let listed = &rows[1][0];
+    assert_eq!(
+        listed["execution_tier"].as_str(),
+        Some("wasm"),
+        "{listed:?}"
+    );
+    for record in [inspected, listed] {
+        let memory = record
+            .get("memory_current")
+            .or_else(|| record.get("memory"))
+            .and_then(serde_yaml_ng::Value::as_u64);
+        assert!(
+            memory.is_some_and(|bytes| bytes > 0),
+            "the runtime's gauge measures a component's memory: {record:?}"
+        );
+        assert!(
+            record
+                .get("cpu_time")
+                .is_some_and(serde_yaml_ng::Value::is_null),
+            "a component's CPU time is not measured, so it is null rather than zero: {record:?}"
+        );
+    }
+}
