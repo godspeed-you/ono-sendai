@@ -717,6 +717,31 @@ fn honest_at_most(at_once: u32) -> Plugin {
             roles: Vec::new(),
             parent: None,
         })
+        // A *bounded* answer whose end the host may have to wait for: one item, and then — with
+        // `--then wait` — nothing until the query is cancelled (ADR-1011). A host that collected a
+        // bounded answer before passing it on would wait there for ever; one that streams it
+        // hands the first item on, and a `take 1` downstream is what ends the query. That
+        // ordering is the proof, so it needs no clock. `--then fail` ends it in a failure after
+        // the item, and without `then` it ends after the item, so a search that reaches this
+        // target by its schema is not held.
+        .contribute_target(TargetContribution {
+            name: "echo-hold".to_owned(),
+            schema: ITEM_SCHEMA.to_owned(),
+            summary: "One item, then what `then` says: `wait` until cancelled, or `fail`."
+                .to_owned(),
+            identity_doc: "Two observations are the same item when their `seq` matches.".to_owned(),
+            options: vec![ParameterContribution {
+                name: "then".to_owned(),
+                declared_type: "string".to_owned(),
+                doc: "After the first item: `wait` until cancelled, or `fail`.".to_owned(),
+                repeatable: false,
+                optional_value: false,
+                default: None,
+            }],
+            answer: Answer::Bounded,
+            roles: Vec::new(),
+            parent: None,
+        })
         .contribute_command(command(
             "emit",
             "Emit counted integers.",
@@ -1986,6 +2011,30 @@ fn honest_at_most(at_once: u32) -> Plugin {
                 }
                 seq += 1;
             }
+        })
+        .provider("echo-hold", |ctx| {
+            if ctx.emit(&item_record(1, "held")).is_err() {
+                return Outcome::Cancelled;
+            }
+            let then = text_argument(ctx, "then", "");
+            if then == "fail" {
+                return Outcome::Failed(ono_kuang_sdk::protocol::WireError {
+                    code: "Ono-Sendai-E0401".to_owned(),
+                    name: "provider.unavailable".to_owned(),
+                    message: "the system stopped answering after the first item".to_owned(),
+                    help: None,
+                    metadata: Box::default(),
+                });
+            }
+            if then != "wait" {
+                return Outcome::Completed;
+            }
+            // Nothing more until the host cancels. The wait is the package's own; it is what a
+            // slow enumeration looks like from the host's side.
+            while !ctx.cancelled() {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Outcome::Cancelled
         })
 }
 

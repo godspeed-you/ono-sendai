@@ -1194,15 +1194,17 @@ pub fn contributed_by_namespace(
 /// will not start — or the package's refusal of the invocation.
 /// What a contributed entry answered with.
 ///
-/// Two shapes because a contribution now says which it is (`ADR-0588`). Everything a package
-/// contributed used to be read to its end, which is right for a collection and wrong for a watch:
-/// an answer that does not end never reached the prompt at all. A declared unbounded answer
-/// becomes the stream the pipeline already knows how to run and the live view already knows how
-/// to show (shell specification §18.2, §18.3).
+/// Two shapes: a contributed command's answer is read to its end, and a contributed target's is
+/// a stream. Everything a package contributed used to be read to its end, which is wrong for a
+/// watch — an answer that does not end never reached the prompt at all (ADR-0588) — and wrong for
+/// a bounded target too, whose first value waited for its last (ADR-1011). A target's answer
+/// becomes the stream the pipeline already knows how to run and, when its declaration says it
+/// does not end, the live view already knows how to show (shell specification §18.2, §18.3).
 pub enum Answered {
-    /// A finite answer, read to its end.
+    /// A command's answer, read to its end.
     Values(Vec<Value>),
-    /// An answer that continues until the operator ends it.
+    /// A target's answer, passed on as it arrives. The stream's boundedness is the target's
+    /// declared one, so it says whether the answer ends.
     Live(ono_pipeline::ValueStream),
 }
 
@@ -1272,7 +1274,7 @@ pub fn query(
             "the operating system refused to start the runtime",
         ))
     })?;
-    let outcome = {
+    {
         let runtime = session.runtime_handle().ok_or_else(|| {
             Flow::Failed(ErrorValue::new(
                 ErrorCode::IoPermissionDenied,
@@ -1301,32 +1303,28 @@ pub fn query(
                 ),
             ));
         };
-        // An answer the package declared does not end is not collected. It becomes a stream with
-        // the boundedness the declaration gave it, which is what carries it to the live view of
-        // shell specification §18.3 rather than to a table that would never be drawn (ADR-0588).
-        // Collecting it was not a decision anybody took: it was the only thing the host could do
-        // before a target could say which kind of answer it has.
-        if !registered.contribution.answer.is_bounded() {
-            let target = crate::plugin_provider::intern_target(target);
-            let _guard = runtime.enter();
-            return Ok(Answered::Live(crate::plugin_provider::stream_of(
-                plugin,
-                target,
-                arguments,
-                ono_pipeline::Boundedness::Unbounded,
-                None,
-            )));
-        }
-        runtime.block_on(async {
-            let invocation = plugin
-                .query(target, arguments)
-                .await
-                .map_err(|error| crate::kuang_host::wire_error_value(&error))?;
-            Ok::<_, ErrorValue>(invocation.collect().await)
-        })
-    };
-    let (events, result) = outcome.map_err(Flow::Failed)?;
-    delivered(events, &result).map(Answered::Values)
+        // A target's answer is never collected before it is passed on. It becomes a stream with
+        // the boundedness the declaration gave it: an unbounded one reaches the live view of shell
+        // specification §18.3 rather than a table that would never be drawn (ADR-0588), and a
+        // bounded one reaches the next stage value by value, as a core provider's does — so a
+        // `take 1` finishes on the first value rather than after the last (ADR-1011). The stream
+        // carries the invocation's failure as its last event (ADR-0992), so a failure after some
+        // values fails the pipeline instead of reading as a shorter answer.
+        let boundedness = if registered.contribution.answer.is_bounded() {
+            ono_pipeline::Boundedness::Bounded
+        } else {
+            ono_pipeline::Boundedness::Unbounded
+        };
+        let target = crate::plugin_provider::intern_target(target);
+        let _guard = runtime.enter();
+        Ok(Answered::Live(crate::plugin_provider::stream_of(
+            plugin,
+            target,
+            arguments,
+            boundedness,
+            None,
+        )))
+    }
 }
 
 /// The registry entry for a contributed id, when the registry holds one.
