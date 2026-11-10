@@ -14,7 +14,9 @@
 # every id, risk, elevation and scope-key list; `cargo xtask spec-check` compares them, and
 # `docs/contracts/capabilities.yaml` wins where they ever differ.
 #
-# Nothing here is implemented. These are the contracts spec §37 Phase I is built against.
+# Implemented: spec §37 Phase I was built against this contract and the releases since extend it;
+# `spec-check` and the KUANG/11 conformance suite hold the shell to it, and where the shell departs
+# from a sentence here an ADR records the departure.
 #
 # The rule this whole file exists to serve, spec §31.16, verbatim:
 #

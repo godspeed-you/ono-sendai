@@ -9,7 +9,9 @@
 # manifest a *package* ships; it is not an Ono object schema. The objects the shell shows for a
 # package are `docs/contracts/schemas/plugin.v2.yaml` and `plugin-package.v1.yaml`.
 #
-# Nothing here is implemented. These are the contracts spec §37 Phase I is built against.
+# Implemented: spec §37 Phase I was built against this contract and the releases since extend it;
+# `spec-check` and the KUANG/11 conformance suite hold the shell to it, and where the shell departs
+# from a sentence here an ADR records the departure.
 #
 # Reading the field tables:
 #   `type`      the value model of spec §10.2 plus ADR-0012 §7's three additions.

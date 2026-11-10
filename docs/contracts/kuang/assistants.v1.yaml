@@ -20,7 +20,9 @@
 # An assistant is an extension role like any other (spec §31.41): same objects, same capability
 # broker, same planner, same audit trail. "AI" is not a bypass around typed semantics.
 #
-# Nothing here is implemented. These are the contracts spec §37 Phase I is built against.
+# Phase I of spec §37 built the package side of this contract (`get assistant`, `ask assistant`
+# through the model broker); v0.10 (`docs/specs/ono_sendai_shell_spec_v0.10_native_ai_assistance.md`)
+# completes the assistant direction. Where the shell departs from a sentence here, an ADR records it.
 
 version: 1
 model_broker_protocol: ono-model/1
