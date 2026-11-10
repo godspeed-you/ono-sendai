@@ -483,6 +483,16 @@ maintenance prelude between the two releases, the rest from the milestone:
   `journalctl --priority`, so an entry without a canonical `PRIORITY` is left out, where it used to
   end the command with `Ono-Sendai-E0908`. `providers.pushdown = false` restores the old path, and
   `explain` names what is handed over.
+- **A `high_memory` landmark names the host's memory as its budget**: its evidence reads
+  `memory 6.00 GiB, 38% of host memory 16.00 GiB`, where it read `… 38% of 16.00 GiB`. A
+  cgroup's memory limit is not read (#307). A script matching the old text needs the two words.
+- **A journal entry whose `PRIORITY` is not one digit `0`–`7`** — `03`, `+2`, `-1`, `8` — is
+  reported as `Ono-Sendai-E0908` by `get journal` and `get log`, where v0.6.3 read it as the
+  number it spells (ADR-0988). journald writes those digits itself; only a client of its native
+  protocol can store anything else.
+- **`ono.link-place/1.same_host_as` is always present**, an empty list where no other link
+  reaches the same machine. A program that writes `ono.link-place/1` records itself has to supply
+  it; Ono's own link map is the only producer the shell has.
 - **A file held open by a writer is `Ono-Sendai-E0305 io.busy`** (ADR-0962), where running it
   answered "found and not executable". The status stays 126.
 - **`get filesystem` answers once per superblock** (#167): two tmpfs mounts are two rows, where

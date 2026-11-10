@@ -35,13 +35,13 @@ git push origin implementation && git push origin --tags
 ```
 
 **The workspace declares `0.6.4`.** `v0.6.4`, System and Spatial Model Stabilization over `v0.6.3`,
-is **implemented on `implementation`, not tagged and not on `main`**: promoting and tagging it is
-the user's (AGENTS.md §12.1). Its note, with the traceability of all 25 milestone issues, is
-`docs/releases/v0.6.4.md`, and its run record `docs/runs/v0.6.4-2026-11-09.md`. Twenty-one of the
-25 issues are closed; **#187, #209, #213 and #221 stay open in the milestone**, each with a comment
-naming what was delivered and what was left, for the user's triage. `v0.6.3` is tagged, published
-(2026-10-08) and on `main` (`b55ff186`). Every earlier release has its note beside it in
-`docs/releases/`, and `gh release list` shows what is published.
+is **qualified for release from this tree**; promoting it to `main`, the `v0.6.4` tag and the GitHub
+release follow the owner's instruction of 2026-11-10, and `gh release list` shows whether it is
+published. Its note, with the traceability of all 25 milestone issues, is
+`docs/releases/v0.6.4.md`, and its run record `docs/runs/v0.6.4-2026-11-09.md`. The milestone is
+settled: 24 issues closed, and **#187** (selector-miss latency, not met) taken out of it and kept
+open as debt. `v0.6.3` is tagged, published (2026-10-08) and on `main` (`b55ff186`). Every earlier
+release has its note beside it in `docs/releases/`.
 
 **`implementation` past v0.6.3.** Thirty-one commits up to `cd125fd7` (2026-10-16), then the
 documentation pass that brings the repository's documents to v0.6.3:
@@ -142,21 +142,22 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## What is left, and why
 
-**v0.6.4 waits for the user's promotion and tag; `v0.6.5` — KUANG/11 Ecosystem Stabilization — is
-the next tranche**, then `v0.6.6`, then v0.7 (above). The known problems are in the tracker, and
-most of them by release milestone (`v0.6.4` … `v0.10.0`). Four issues remain open in `v0.6.4` and
-are the user's to triage — move, split or keep: #187 (a selector miss at Profile M is 577 ms p95
-against 250 ms; what remains is enumerating the profile's sockets and processes by name), #209
-("unusually high traffic" has no rule, `high_memory` measures against the host only), #213 (live
-latency, two-sided cross-host correlation, a second hop on `map links`) and #221 (`enter container`
-as an execution context, declined by ADR-0114 and ADR-0968). `v0.6.2` — the test suite, the harness,
-CI, packaging, release tooling and binary size — and `v0.6.3` — command contracts, errors and
-diagnostics, the shell language, pipelines and completion — are implemented and released.
+**`v0.6.5` — KUANG/11 Ecosystem Stabilization — is the next tranche**, then `v0.6.6`, then v0.7
+(above). The known problems are in the tracker, and most of them by release milestone (`v0.6.5` …
+`v0.10.0`). What v0.6.4 left: **#187** (a selector miss at Profile M is 577 ms p95 against 250 ms;
+the sweep still enumerates every process's descriptors to find socket owners) has no milestone
+and waits for triage; so do **#306** ("unusually high traffic" needs a provider-stated rate) and
+**#307** (`high_memory` against a cgroup's memory limit), split out of #209; **#308–#310** (live
+link latency, two-sided cross-host correlation, a second hop on `map links`), split out of #213,
+are in `v0.6.6`. `enter container` as an execution context is rejected by ADR-0114 and ADR-0968,
+not deferred (#221). `v0.6.2` — the test suite, the harness, CI, packaging, release tooling and
+binary size — and `v0.6.3` — command contracts, errors and diagnostics, the shell language,
+pipelines and completion — are implemented and released.
 
-**The performance baseline was not measured again for v0.6.4.**
-`docs/contracts/hardening/performance_baseline.json` still holds the v0.6.2 rows; the Profile M
-rows measured on `e7bc2130` are in `docs/runs/v0.6.4-2026-11-09.md`. `cargo run --release -p xtask
--- perf --write-baseline` writes the whole baseline and wants a quiet host.
+**The performance baseline was measured again for v0.6.4** (ADR-0989): every §33.2 target holds,
+and every moved row says why. Two rows are worth a look at the next re-measurement:
+`temporal.retention_sweep`'s p95 is one slow iteration of twenty, and
+`spatial.selector_hit_by_sweep` M (188 → 236 ms) is not attributed.
 
 **Unassigned until the user triages them** (AGENTS.md §9): fourteen open issues carry no milestone —
 #282–#289, #293, #294, #297–#299 and #305, the v0.6.3 run's findings filed on 2026-10-08 — and the
@@ -196,7 +197,12 @@ gh issue list --label class-c    # the large ones, a tranche each
 ```
 
 **Found during the v0.6.4 run (2026-11-09 … 2026-11-10).** Outside the milestone's issues, or the
-part of one that was left; each checked against the tracker (no existing issue):
+part of one that was left; each checked against the tracker (no existing issue). The release review
+of 2026-11-10 classified every entry as safely deferred — an honest `unsupported`, a lower bound,
+display text, a feature gap or developer tooling, none a wrong answer. It found one release-blocking
+defect besides, fixed before the release: a journal `PRIORITY` written `03`, `+2` or `-1` was read
+as a number and the priority handover made the answer differ (20444562, ADR-0988); the entry
+"a journal `PRIORITY` outside 0–7 is accepted" was the same defect and is gone with it.
 
 - A cgroup place's `processes` and `services` exits and a namespace place's `members` exit answer
   `unsupported`: `enter cgroup/<path>; look` — no provider joins them from that end (ADR-0971 names
@@ -216,13 +222,22 @@ part of one that was left; each checked against the tracker (no existing issue):
   (`Ono-Sendai-E0908`, exit 1), while `ono.log-record/1` documents `level` as "Null when the journal
   reported no priority". Found with #281; with a priority ceiling handed over the entry is left out
   instead (ADR-0980).
-- A journal `PRIORITY` outside 0–7 is accepted as a record although the schema says 0–7.
 - `get journal` has no `--level` option; only `get log` has one.
 - The shipped `ono --agent` announces no clock identity: `crates/ono-cli/src/main.rs` builds its
   `AgentConfig` without `with_clock(ono_remote::clock_identity(..))`, so `ono.link/1`'s `clock_id`,
   `clock_offset` and `clock_uncertainty` are null on every link (`link host x --transport local;
   get link | select clock_id`), although v0.5 §24.2 has the peer state it and the library tests
   cover it.
+- `ono.log-record/1` contradicts itself: `level` is documented as "Null when the journal reported
+  no priority" while `priority` is `required: true`, and an entry without `PRIORITY` is an E0908
+  (the entry above). One of the two sentences is wrong.
+- The command contract of `enter container` (`docs/contracts/commands/container.yaml`,
+  `ono.container.enter`) names `provider_capability: container.exec`, although the command is a
+  narrowing frame that executes nothing (ADR-0114, ADR-0968; #221 rejected the execution context).
+  A listening agent therefore authorizes `enter container` as the execute action `container.exec`
+  (`crates/ono-cli/src/main.rs`, `with_action_capability`) — the stricter direction, so no safety
+  problem, but `help enter container` and `docs/reference/commands.md` name a capability the
+  command does not use.
 - The perf harness runs `ono` in the caller's real `XDG_*` environment
   (`xtask/src/perf.rs`, `sample`): a measurement reads the developer's configuration and may leave
   history there.
@@ -231,8 +246,6 @@ part of one that was left; each checked against the tracker (no existing issue):
   result is cut off, although `COLUMNS` and `LINES` are set; `stty rows 30 cols 100` typed into the
   session repairs it (cases 107 and 141 do that). `crates/ono-cli/src/spatial/interactive.rs:216`
   falls back to 80×24 only when the size cannot be read at all.
-- AGENTS.md §5.2's v0.7 entry still calls `v0.6.4` "the next tranche"; it is `v0.6.5` once v0.6.4
-  is tagged.
 
 **Found during the maintenance prelude #301–#303 (2026-10-08 … 2026-10-16).** Outside those three
 issues, so not fixed in them; each re-checked against the tracker (no existing issue):
