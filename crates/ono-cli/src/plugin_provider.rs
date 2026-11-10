@@ -195,6 +195,9 @@ impl Provider for PluginProvider {
             query_arguments(query),
             Boundedness::Bounded,
             wanted,
+            // The registry is asked on behalf of no evaluator it can name, so nobody is asked:
+            // the instance's own source answers (ADR-1023).
+            None,
         ))
     }
 
@@ -361,9 +364,10 @@ pub(crate) fn stream_of(
     arguments: serde_json::Map<String, serde_json::Value>,
     boundedness: Boundedness,
     wanted: Option<usize>,
+    consent: Option<Arc<dyn ono_kuang_supervisor::ConsentSource>>,
 ) -> ValueStream {
     ValueStream::spawn(PipelineConfig::new(), boundedness, move |sink| async move {
-        let mut invocation = match plugin.query(target, arguments).await {
+        let mut invocation = match plugin.query_with_consent(target, arguments, consent).await {
             Ok(invocation) => invocation,
             Err(error) => {
                 let _ = sink.fail(crate::kuang_host::wire_error_value(&error)).await;

@@ -315,9 +315,12 @@ pub fn load_plugin_with(
         &declared_schemas,
     )
     .map_err(Flow::Failed)?;
+    // The instance is shared by the foreground and every job (ADR-0995), so whoever loads it
+    // decides nothing about who may be asked: its own source asks nobody, and an invocation
+    // carries the source of the evaluator that runs it (ADR-1023).
     let consent = std::sync::Arc::new(crate::kuang_permissions::ShellConsent::new(
         std::sync::Arc::clone(session.tables()),
-        session.is_interactive(),
+        false,
         package.clone(),
     ));
     let mut config = LoadConfig::new(entry, package.manifest);
@@ -343,8 +346,8 @@ pub fn load_plugin_with(
     config.views = std::sync::Arc::new(crate::kuang_views::ShellViews::new(std::sync::Arc::clone(
         session.theme(),
     )));
-    // Who answers a just-in-time request: a person at this session's terminal, or nobody
-    // (K11P §14, ADR-0603 §2).
+    // Who answers a just-in-time request no invocation's own source answers: nobody
+    // (K11P §14, §20.3, ADR-0603 §2, ADR-1023).
     config.consent = consent;
     let (runtime, _) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
@@ -1061,9 +1064,10 @@ pub fn invoke(
             .map_err(Flow::Failed)?;
         refuse_unconfirmed(declaration(&full), words)?;
         refuse_unconfirmed(hello.as_ref(), words)?;
+        let consent = evaluator_consent(session, &id);
         runtime.block_on(async {
             let invocation = plugin
-                .invoke(&full, arguments)
+                .invoke_with_consent(&full, arguments, consent)
                 .await
                 .map_err(|error| crate::kuang_host::wire_error_value(&error))?;
             Ok::<_, ErrorValue>(collect_unless_interrupted(invocation).await)
@@ -1073,6 +1077,29 @@ pub fn invoke(
         .map_err(Flow::Failed)?
         .ok_or_else(crate::eval::interrupted_flow_now)?;
     delivered(events, &result)
+}
+
+/// Who answers the just-in-time questions of an invocation this evaluator runs: a person at the
+/// terminal of an interactive foreground, nobody in a script or a background job (K11P §14,
+/// §20.3, ADR-1023). The instance is the session's whoever loaded it (ADR-0995); who may be asked
+/// is the evaluator's.
+///
+/// `None` when the package is no longer installed, which leaves the instance's own source — one
+/// that asks nobody — to answer.
+fn evaluator_consent(
+    session: &Session,
+    package: &str,
+) -> Option<std::sync::Arc<dyn ono_kuang_supervisor::ConsentSource>> {
+    let installed = session
+        .with_kuang(|host| host.resolve_installed(package))
+        .ok()?;
+    Some(std::sync::Arc::new(
+        crate::kuang_permissions::ShellConsent::new(
+            std::sync::Arc::clone(session.tables()),
+            session.is_interactive(),
+            installed,
+        ),
+    ))
 }
 
 /// Refuses a run of a contribution whose confirmation policy `words` do not satisfy.
@@ -1488,6 +1515,7 @@ pub fn query(
             ono_pipeline::Boundedness::Unbounded
         };
         let target = crate::plugin_provider::intern_target(target);
+        let consent = evaluator_consent(session, package);
         let _guard = runtime.enter();
         Ok(Answered::Live(crate::plugin_provider::stream_of(
             plugin,
@@ -1495,6 +1523,7 @@ pub fn query(
             arguments,
             boundedness,
             None,
+            consent,
         )))
     }
 }

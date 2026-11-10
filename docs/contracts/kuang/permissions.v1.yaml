@@ -249,6 +249,7 @@ jit:
   rules:
     - "`always for this program` grants `process.exec` scoped to the resolved executable path and nothing wider (K11P §14.3, §34.7)."
     - "Where no one can be asked, the answer is `permission.required` carrying `plugin`, `permission`, `capability`, `requested_scope`, `reason` and a `remedy` command line (K11P §20.3). Nothing is assumed."
+    - "Who can be asked is decided per invocation by the evaluator that runs it, never by whoever loaded the instance: the interactive foreground asks at its terminal; a script, a background job and a caller of the provider registry ask nobody. A host call names no invocation, so the invocation's own answer applies only while it is the one invocation open in the instance; otherwise nobody is asked (ADR-1023)."
     - "`capabilities.check` answers `ask` for a capability a just-in-time permission governs and no decision covers; asking never prompts (protocol.v1.yaml)."
 
 # ---------------------------------------------------------------------------------------------

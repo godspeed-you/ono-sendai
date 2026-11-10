@@ -532,6 +532,7 @@ impl Supervisor {
             permissions,
             package_name,
             consents: 0,
+            invocation_consents: HashMap::new(),
             exec_arguments: Vec::new(),
             temporal: temporal_surface(&contract, &hello, &package_id, authoritative),
             change: change.clone(),
@@ -1241,11 +1242,30 @@ impl LoadedPlugin {
         command: &str,
         arguments: JsonMap<String, Json>,
     ) -> Result<RunningInvocation, WireError> {
+        self.invoke_with_consent(command, arguments, None).await
+    }
+
+    /// Runs a contributed command whose just-in-time questions `consent` answers (ADR-1023).
+    ///
+    /// Who may be asked belongs to whoever runs the invocation — a person's foreground or a
+    /// background job — not to whoever loaded the instance. `None` leaves it to the source the
+    /// instance was loaded with.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Self::invoke`].
+    pub async fn invoke_with_consent(
+        &self,
+        command: &str,
+        arguments: JsonMap<String, Json>,
+        consent: Option<Arc<dyn crate::consent::ConsentSource>>,
+    ) -> Result<RunningInvocation, WireError> {
         let (respond, receive) = oneshot::channel();
         self.to_actor
             .send(ActorMsg::Invoke {
                 command: command.to_owned(),
                 arguments,
+                consent,
                 respond,
             })
             .await
@@ -1264,11 +1284,27 @@ impl LoadedPlugin {
         target: &str,
         options: JsonMap<String, Json>,
     ) -> Result<RunningInvocation, WireError> {
+        self.query_with_consent(target, options, None).await
+    }
+
+    /// Queries a contributed target whose just-in-time questions `consent` answers, as
+    /// [`Self::invoke_with_consent`] runs a command (ADR-1023).
+    ///
+    /// # Errors
+    ///
+    /// As for [`Self::query`].
+    pub async fn query_with_consent(
+        &self,
+        target: &str,
+        options: JsonMap<String, Json>,
+        consent: Option<Arc<dyn crate::consent::ConsentSource>>,
+    ) -> Result<RunningInvocation, WireError> {
         let (respond, receive) = oneshot::channel();
         self.to_actor
             .send(ActorMsg::Query {
                 target: target.to_owned(),
                 options,
+                consent,
                 respond,
             })
             .await
@@ -1406,11 +1442,13 @@ enum ActorMsg {
     Invoke {
         command: String,
         arguments: JsonMap<String, Json>,
+        consent: Option<Arc<dyn crate::consent::ConsentSource>>,
         respond: oneshot::Sender<Result<RunningInvocation, WireError>>,
     },
     Query {
         target: String,
         options: JsonMap<String, Json>,
+        consent: Option<Arc<dyn crate::consent::ConsentSource>>,
         respond: oneshot::Sender<Result<RunningInvocation, WireError>>,
     },
     Demand {
@@ -1679,8 +1717,11 @@ struct Actor {
     /// What the instance was started inside, so a death can be checked against its ceilings
     /// (spec §31.34).
     sandbox: ExecutionEnvelope,
-    /// Who answers a just-in-time request (ADR-0603).
+    /// Who answers a just-in-time request no single invocation's own source answers
+    /// (ADR-0603, ADR-1023).
     consent: Arc<dyn crate::consent::ConsentSource>,
+    /// Who answers for each open invocation, as the evaluator that started it said (ADR-1023).
+    invocation_consents: HashMap<u64, Arc<dyn crate::consent::ConsentSource>>,
     /// The package's permission layer: which families are decided just in time, and under
     /// which human permission (ADR-0600).
     permissions: ono_kuang_protocol::PermissionSet,
@@ -2048,22 +2089,26 @@ impl Actor {
             ActorMsg::Invoke {
                 command,
                 arguments,
+                consent,
                 respond,
             } => {
                 let started = self
                     .start_invocation(InvocationKind::Command(command), arguments)
                     .await;
+                self.remember_consent(&started, consent);
                 let _ = respond.send(started);
                 LoopStep::Continue
             }
             ActorMsg::Query {
                 target,
                 options,
+                consent,
                 respond,
             } => {
                 let started = self
                     .start_invocation(InvocationKind::Target(target), options)
                     .await;
+                self.remember_consent(&started, consent);
                 let _ = respond.send(started);
                 LoopStep::Continue
             }
@@ -2968,6 +3013,41 @@ impl Actor {
         )
     }
 
+    /// Keeps the source the evaluator that started an invocation named for its questions, and
+    /// forgets those of invocations that have ended (ADR-1023).
+    fn remember_consent(
+        &mut self,
+        started: &Result<RunningInvocation, WireError>,
+        consent: Option<Arc<dyn crate::consent::ConsentSource>>,
+    ) {
+        let invocations = &self.invocations;
+        self.invocation_consents
+            .retain(|invocation, _| invocations.contains_key(invocation));
+        if started.is_ok()
+            && let Some(consent) = consent
+        {
+            // `start_invocation` numbers the invocation it opened with the counter's new value.
+            self.invocation_consents
+                .insert(self.invocation_counter, consent);
+        }
+    }
+
+    /// Who answers a just-in-time question now (ADR-1023).
+    ///
+    /// A host call names no invocation, so it is the open invocation's own source only while
+    /// exactly one is open — the rule the audit label follows. Otherwise, and for an invocation
+    /// started without one, the source the instance was loaded with answers.
+    fn consent_source(&self) -> Arc<dyn crate::consent::ConsentSource> {
+        let mut open = self.invocations.keys();
+        match (open.next(), open.next()) {
+            (Some(invocation), None) => self
+                .invocation_consents
+                .get(invocation)
+                .map_or_else(|| Arc::clone(&self.consent), Arc::clone),
+            _ => Arc::clone(&self.consent),
+        }
+    }
+
     /// Asks the consent source about one use the policy does not cover, when the package's
     /// permission layer says the family is decided just in time (K11P §14, ADR-0603).
     ///
@@ -3032,7 +3112,7 @@ impl Actor {
         );
         // Off the runtime's worker threads: a source may wait for a person, and the plugin is
         // waiting for this reply anyway.
-        let source = Arc::clone(&self.consent);
+        let source = self.consent_source();
         let asked = request.clone();
         let answer = tokio::task::spawn_blocking(move || source.consent(&asked))
             .await
