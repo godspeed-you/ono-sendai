@@ -23,7 +23,7 @@ git switch --detach phase-a   # the tree exactly as that phase left it
 ```
 
 Tags so far: `phase-a` … `phase-j` (H, I and J share `63a23ece`); the releases after them are tagged
-by version, `v0.2.0` … `v0.6.3`.
+by version, `v0.2.0` … `v0.6.4`.
 
 **Push after every commit.** AGENTS.md §12.1 leaves `main` alone until the user asks for it, and
 §12.2 asks that `implementation` be pushed freely so work is not lost; the branch and its phase
@@ -35,13 +35,11 @@ git push origin implementation && git push origin --tags
 ```
 
 **The workspace declares `0.6.4`.** `v0.6.4`, System and Spatial Model Stabilization over `v0.6.3`,
-is **qualified for release from this tree**; promoting it to `main`, the `v0.6.4` tag and the GitHub
-release follow the owner's instruction of 2026-11-10, and `gh release list` shows whether it is
-published. Its note, with the traceability of all 25 milestone issues, is
-`docs/releases/v0.6.4.md`, and its run record `docs/runs/v0.6.4-2026-11-09.md`. The milestone is
-settled: 24 issues closed, and **#187** (selector-miss latency, not met) taken out of it and kept
-open as debt. `v0.6.3` is tagged, published (2026-10-08) and on `main` (`b55ff186`). Every earlier
-release has its note beside it in `docs/releases/`.
+is **tagged, published (2026-11-10) and on `main`** (`42a9875e`; release run 42861305537). Its note,
+with the traceability of all 25 milestone issues, is `docs/releases/v0.6.4.md`, and its run record
+`docs/runs/v0.6.4-2026-11-09.md`. The milestone is closed: 24 issues closed, and **#187**
+(selector-miss latency, not met) kept open outside it as debt. Every earlier release has its note
+beside it in `docs/releases/`, and `gh release list` shows what is published.
 
 **`implementation` past v0.6.3.** Thirty-one commits up to `cd125fd7` (2026-10-16), then the
 documentation pass that brings the repository's documents to v0.6.3:
