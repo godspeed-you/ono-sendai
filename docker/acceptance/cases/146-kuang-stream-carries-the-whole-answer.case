@@ -1,0 +1,59 @@
+# Spec §16.5, §31.14, §31.74; external-system-provider §21.4; ADR-0992; issue #154: an
+# invocation's value stream carries its whole answer. A command whose package fails after its
+# values, or stops as "cancelled" though nobody cancelled it, ends in that failure or
+# cancellation at the prompt — never in a clean answer that is silently truncated. A command that
+# completes is unchanged.
+case: a package command that stops short says so on the stream
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  network:
+    outbound: none
+  MANIFEST
+
+  echo "== a command that completes answers its values =="
+  ono -c 'load plugin dev.example.echo; echo:emit --count 2 | to json'
+
+  echo "== one that fails after its values ends in the failure =="
+  ono -c 'load plugin dev.example.echo; echo:emit --count 2 --then fail | to json' 2>&1
+  echo "failed run exit $?"
+
+  echo "== one that stops unasked ends as a cancellation, not as a complete answer =="
+  ono -c 'load plugin dev.example.echo; echo:emit --count 2 --then cancel | to json' 2>&1
+  echo "stopped run exit $?"
+exit: 0
+stdout-contains: [1,2]
+stdout-contains: runtime.trap
+stdout-contains: the emit handler was told to fail after its values
+stdout-contains: failed run exit 1
+stdout-contains: stream.cancelled
+stdout-contains: the package ended the invocation as cancelled without being asked
+stdout-contains: stopped run exit 1
+stdout-not-contains: failed run exit 0
+stdout-not-contains: stopped run exit 0
+stdout-not-contains: panicked
