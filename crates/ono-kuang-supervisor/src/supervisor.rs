@@ -28,7 +28,7 @@ use crate::negotiate::{HostLimits, negotiate};
 use crate::platform::{ConfinementPlatform, NativePlatform};
 use crate::policy::{DenialSource, Evaluation, Policy, ScopeUse, denial_error};
 use crate::report::ConfinementReport;
-use crate::sandbox::Sandbox;
+use crate::sandbox::ExecutionEnvelope;
 use crate::state::StateStore;
 use crate::trail::{AuditTrail, HostClock};
 use ono_kuang_protocol::ExecutionTier;
@@ -261,65 +261,66 @@ impl Supervisor {
             .as_ref()
             .is_some_and(|runtime| runtime.kind == ono_kuang_protocol::RuntimeKind::WasmComponent);
         let (frame_tx, frame_rx) = mpsc::channel(64);
-        let (mut child, stdin, confinement, sandbox): (Runtime, Stdin, ConfinementReport, Sandbox) =
-            if is_component {
-                // Spec §31.10's T2: the component runs inside the runtime Ono embeds, with
-                // nothing but its standard streams (ADR-0569). What the shell reports is the
-                // component's sandbox, and the report says which controls the runtime installs.
-                let sandbox = crate::sandbox::wasm_component(
-                    sandbox.memory_max,
-                    sandbox.cpu_class,
-                    sandbox.working_directory.clone(),
-                );
-                let confinement =
-                    crate::report::parent_only(ExecutionTier::Wasm, &component_controls(&sandbox));
-                if let Some(refusal) = confinement.refusal(&manifest.package.id) {
-                    return Err(refusal);
-                }
-                let (instance, host_in, host_out) =
-                    crate::wasm::WasmInstance::spawn(&program, &compiled, sandbox.memory_max)
-                        .map_err(|failure| match failure {
-                            crate::compiled::LoadFailure::NotCompiled(refusal) => {
-                                refusal.into_error(&manifest.package.id, &program)
-                            }
-                            crate::compiled::LoadFailure::Unreadable(why) => KuangError::new(
-                                KuangErrorCode::PluginConfinementFailed,
-                                format!(
-                                    "`{}` could not be started as a component: {why}",
-                                    manifest.package.id
-                                ),
+        let (mut child, stdin, confinement, sandbox): (
+            Runtime,
+            Stdin,
+            ConfinementReport,
+            ExecutionEnvelope,
+        ) = if is_component {
+            // Spec §31.10's T2: the component runs inside the runtime Ono embeds, with
+            // nothing but its standard streams (ADR-0569). What the shell reports is the
+            // component's sandbox, and the report says which controls the runtime installs.
+            let sandbox = crate::sandbox::wasm_component(
+                sandbox.memory_max,
+                sandbox.cpu_class,
+                sandbox.working_directory.clone(),
+            );
+            let confinement =
+                crate::report::parent_only(ExecutionTier::Wasm, &component_controls(&sandbox));
+            if let Some(refusal) = confinement.refusal(&manifest.package.id) {
+                return Err(refusal);
+            }
+            let (instance, host_in, host_out) =
+                crate::wasm::WasmInstance::spawn(&program, &compiled, sandbox.memory_max).map_err(
+                    |failure| match failure {
+                        crate::compiled::LoadFailure::NotCompiled(refusal) => {
+                            refusal.into_error(&manifest.package.id, &program)
+                        }
+                        crate::compiled::LoadFailure::Unreadable(why) => KuangError::new(
+                            KuangErrorCode::PluginConfinementFailed,
+                            format!(
+                                "`{}` could not be started as a component: {why}",
+                                manifest.package.id
                             ),
-                        })?;
-                tokio::spawn(read_frames(host_out, frame_limits, frame_tx));
-                (
-                    Runtime::Wasm(instance),
-                    Box::new(host_in),
-                    confinement,
-                    sandbox,
-                )
-            } else {
-                let mut command = Command::new(&program);
-                command.args(&args);
-                // v0.4.1 §2.3, §16.3, §18.1: a mandatory control that could not be installed
-                // abandons the spawn here, before a single plugin instruction runs. The package
-                // is not quarantined — it never started, so there is nothing to hold (ADR-0444).
-                let (mut child, confinement) = crate::sandbox::spawn(
-                    &mut command,
-                    &sandbox,
-                    &confinement,
-                    &manifest.package.id,
+                        ),
+                    },
                 )?;
-                let stdin = child.stdin.take().ok_or_else(broken_pipes)?;
-                let stdout = child.stdout.take().ok_or_else(broken_pipes)?;
-                tokio::spawn(read_frames(stdout, frame_limits, frame_tx));
-                let recorded = ono_core::children::Recorded::of(child.id());
-                (
-                    Runtime::Native(child, recorded),
-                    Box::new(stdin),
-                    confinement,
-                    sandbox,
-                )
-            };
+            tokio::spawn(read_frames(host_out, frame_limits, frame_tx));
+            (
+                Runtime::Wasm(instance),
+                Box::new(host_in),
+                confinement,
+                sandbox,
+            )
+        } else {
+            let mut command = Command::new(&program);
+            command.args(&args);
+            // v0.4.1 §2.3, §16.3, §18.1: a mandatory control that could not be installed
+            // abandons the spawn here, before a single plugin instruction runs. The package
+            // is not quarantined — it never started, so there is nothing to hold (ADR-0444).
+            let (mut child, confinement) =
+                crate::sandbox::spawn(&mut command, &sandbox, &confinement, &manifest.package.id)?;
+            let stdin = child.stdin.take().ok_or_else(broken_pipes)?;
+            let stdout = child.stdout.take().ok_or_else(broken_pipes)?;
+            tokio::spawn(read_frames(stdout, frame_limits, frame_tx));
+            let recorded = ono_core::children::Recorded::of(child.id());
+            (
+                Runtime::Native(child, recorded),
+                Box::new(stdin),
+                confinement,
+                sandbox,
+            )
+        };
 
         let deadline = Duration::from_millis(contract.limits.call_deadline_ms);
         let handshake = Handshake {
@@ -824,7 +825,7 @@ type Stdin = Box<dyn AsyncWrite + Send + Unpin>;
 /// The controls the component tier installs by construction, and the ones it does not
 /// (v0.4.1 §16.4, ADR-0569): the report an `inspect plugin` shows for a component.
 fn component_controls(
-    sandbox: &Sandbox,
+    sandbox: &ExecutionEnvelope,
 ) -> Vec<(
     ono_kuang_protocol::Control,
     crate::report::ControlResult,
@@ -1081,7 +1082,7 @@ fn lock<'a, T>(mutex: &'a Mutex<T>) -> std::sync::MutexGuard<'a, T> {
 pub struct LoadedPlugin {
     package_id: String,
     shared: Arc<Mutex<Shared>>,
-    sandbox: Sandbox,
+    sandbox: ExecutionEnvelope,
     confinement: ConfinementReport,
     contract: PluginContract,
     disabled_features: Vec<String>,
@@ -1118,7 +1119,7 @@ impl LoadedPlugin {
 
     /// What the instance was started inside (spec §31.10).
     #[must_use]
-    pub fn sandbox(&self) -> &Sandbox {
+    pub fn envelope(&self) -> &ExecutionEnvelope {
         &self.sandbox
     }
 
@@ -1653,7 +1654,7 @@ struct Actor {
     msg_sender: mpsc::Sender<ActorMsg>,
     /// What the instance was started inside, so a death can be checked against its ceilings
     /// (spec §31.34).
-    sandbox: Sandbox,
+    sandbox: ExecutionEnvelope,
     /// Who answers a just-in-time request (ADR-0603).
     consent: Arc<dyn crate::consent::ConsentSource>,
     /// The package's permission layer: which families are decided just in time, and under

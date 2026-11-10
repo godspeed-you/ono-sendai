@@ -59,8 +59,8 @@ pub use platform::{
 pub use policy::{DenialSource, Evaluation, Grant, Policy, ScopeUse, denial_error};
 pub use report::{ConfinementEntry, ConfinementReport, ControlResult};
 pub use sandbox::{
-    Confinement, Sandbox, allocated_bytes, cpu_nanoseconds, native_process, nice_of, spawn,
-    working_directory,
+    Confinement, ExecutionEnvelope, allocated_bytes, cpu_nanoseconds, native_process, nice_of,
+    spawn, working_directory,
 };
 pub use state::StateStore;
 pub use supervisor::{

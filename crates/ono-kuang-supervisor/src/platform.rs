@@ -34,7 +34,7 @@ use ono_kuang_protocol::Control;
 
 /// The values a pre-exec control needs, computed in the parent before the fork.
 ///
-/// A plain `Copy` record rather than a reference into the [`Sandbox`](crate::Sandbox), because
+/// A plain `Copy` record rather than a reference into the [`ExecutionEnvelope`](crate::ExecutionEnvelope), because
 /// the closure that uses it runs in a forked child where dereferencing anything the parent might
 /// have been mutating is a hazard, and because everything here is a machine word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

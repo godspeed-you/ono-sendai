@@ -35,7 +35,7 @@
 //!
 //! What it deliberately does not claim: this is confinement of *resources and inheritance*, not
 //! of the filesystem or the network. A native-process package can still open any file its user
-//! can. `Sandbox::filesystem` and `Sandbox::network` say so in as many words, because spec §31.16
+//! can. `ExecutionEnvelope::filesystem` and `ExecutionEnvelope::network` say so in as many words, because spec §31.16
 //! forbids presenting a scope as a security boundary when it is not one.
 
 use std::path::{Path, PathBuf};
@@ -50,7 +50,7 @@ use crate::report::{self, ConfinementReport, ControlResult};
 
 /// The confinement one instance was started under, as it was actually applied (spec §31.10).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Sandbox {
+pub struct ExecutionEnvelope {
     /// The named execution tier this instance runs in (v0.4.1 §17.2).
     ///
     /// A name rather than a boolean, so that "which controls are in force" has an answer that
@@ -119,8 +119,8 @@ pub fn native_process(
     memory_max: u64,
     cpu_class: CpuBudget,
     working_directory: PathBuf,
-) -> Sandbox {
-    Sandbox {
+) -> ExecutionEnvelope {
+    ExecutionEnvelope {
         tier: ExecutionTier::NativeConfined,
         memory_max,
         cpu_class,
@@ -156,8 +156,8 @@ pub fn wasm_component(
     memory_max: u64,
     cpu_class: CpuBudget,
     working_directory: PathBuf,
-) -> Sandbox {
-    Sandbox {
+) -> ExecutionEnvelope {
+    ExecutionEnvelope {
         tier: ExecutionTier::Wasm,
         memory_max,
         cpu_class,
@@ -195,7 +195,7 @@ pub fn wasm_component(
 /// artifact itself could not be executed.
 pub fn spawn(
     command: &mut tokio::process::Command,
-    sandbox: &Sandbox,
+    sandbox: &ExecutionEnvelope,
     platform: &Arc<dyn ConfinementPlatform>,
     package: &str,
 ) -> Result<(tokio::process::Child, ConfinementReport), KuangError> {
@@ -254,7 +254,7 @@ pub fn spawn(
 /// they are recorded as applied by construction.
 fn apply(
     command: &mut tokio::process::Command,
-    sandbox: &Sandbox,
+    sandbox: &ExecutionEnvelope,
 ) -> Vec<(Control, ControlResult, Option<String>)> {
     let mut parent = Vec::new();
     match std::fs::create_dir_all(&sandbox.working_directory) {
@@ -301,7 +301,7 @@ fn apply(
 )]
 fn apply_limits(
     command: &mut tokio::process::Command,
-    sandbox: &Sandbox,
+    sandbox: &ExecutionEnvelope,
     platform: &Arc<dyn ConfinementPlatform>,
     outcomes: &Arc<report::Outcomes>,
 ) {
@@ -420,7 +420,7 @@ fn clock_ticks_per_second() -> Option<i128> {
 
 /// The peak allocated memory of a live instance, in bytes, from the kernel's own accounting.
 ///
-/// `VmData` is what `RLIMIT_DATA` bounds, so this and [`Sandbox::memory_max`] measure the same
+/// `VmData` is what `RLIMIT_DATA` bounds, so this and [`ExecutionEnvelope::memory_max`] measure the same
 /// thing — which is what lets the host say a package reached its ceiling instead of guessing
 /// (spec §31.33's `memory/current/limit`, spec §31.34's resource-limit failure class).
 ///
@@ -451,7 +451,7 @@ pub fn allocated_bytes(pid: u32) -> Option<u64> {
 /// high-water mark and not whatever the host's 100 ms sampler happened to see last. Spec §31.34
 /// needs exactly that to tell a resource-limit death from a crash on a machine under load.
 ///
-/// It measures *resident* pages, where [`Sandbox::memory_max`] bounds the data segment, so it is
+/// It measures *resident* pages, where [`ExecutionEnvelope::memory_max`] bounds the data segment, so it is
 /// a lower bound on what the instance had allocated: pages an instance never touched are not
 /// counted, and the host under-claims rather than over-claims the ceiling.
 ///

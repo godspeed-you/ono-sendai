@@ -2288,7 +2288,7 @@ pub async fn discover(
 /// `confinement` fields say in spec §31.16's own vocabulary how far each one reaches: a scope the
 /// host can only check when the package asks it is `broker`, never presented as a boundary.
 fn sandbox_of(instance: &Instance) -> Value {
-    let sandbox = instance.plugin.sandbox();
+    let sandbox = instance.plugin.envelope();
     let bytes = |value: u64| Value::ByteSize(ono_value::ByteSize::from_bytes(u128::from(value)));
     map([
         ("memory_max", bytes(sandbox.memory_max)),
@@ -2514,7 +2514,7 @@ pub fn inspection_record(
                             .as_ref()
                             .map_or(Value::Null, |runtime| bytes(runtime.memory_max))
                     },
-                    |plugin| bytes(plugin.sandbox().memory_max),
+                    |plugin| bytes(plugin.envelope().memory_max),
                 ),
             )?
             .set(

@@ -289,7 +289,7 @@ impl Fixture {
         command
     }
 
-    fn sandbox(&self) -> ono_kuang_supervisor::Sandbox {
+    fn sandbox(&self) -> ono_kuang_supervisor::ExecutionEnvelope {
         native_process(
             512 * 1024 * 1024,
             CpuBudget::Interactive,

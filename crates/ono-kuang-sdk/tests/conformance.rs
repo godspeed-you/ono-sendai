@@ -2332,7 +2332,7 @@ async fn should_load_a_component_under_the_wasm_tier_with_the_controls_the_runti
         "a component is not a process, and a row that does not apply says so"
     );
     assert!(
-        plugin.sandbox().tier == ono_kuang_protocol::ExecutionTier::Wasm,
+        plugin.envelope().tier == ono_kuang_protocol::ExecutionTier::Wasm,
         "the sandbox the shell reports is the component's"
     );
     plugin
