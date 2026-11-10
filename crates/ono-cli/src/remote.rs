@@ -267,7 +267,7 @@ pub(crate) fn piped_names(
                 ErrorValue::new(
                     ErrorCode::TypeMismatch,
                     format!(
-                        "`{spelling}` acts on {schema}/1 records, and {} arrived through the pipe",
+                        "`{spelling}` acts on {schema} records, and {} arrived through the pipe",
                         value.type_name()
                     ),
                 )

@@ -573,6 +573,22 @@ fn should_load_the_piped_packages_when_load_plugin_follows_get_plugin() {
 }
 
 #[test]
+fn should_name_the_plugin_record_it_reads_when_something_else_is_piped_into_load_plugin() {
+    // kuang.yaml `load plugin` reads `ono.plugin` records from its input. The refusal says which
+    // record it reads; since ADR-0996 that record is `ono.plugin/2`, so a refusal naming
+    // `ono.plugin/1` would name a schema nothing produces any more.
+    let home = plugin_home();
+    let run = ono_with_plugins(&home, "get process | take 1 | load plugin");
+    assert!(!run.status().is_success(), "{:?}", run.output());
+    assert!(
+        run.stderr().contains("acts on ono.plugin records")
+            && !run.stderr().contains("ono.plugin/1"),
+        "the refusal names the record without a version nothing produces, got {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
 fn should_refuse_to_ask_when_no_assistant_is_named_after_get_assistant() {
     // kuang.yaml `ask assistant`: input `null | any` — the pipe is context, the assistant is
     // still selected explicitly (spec §7.1). Nothing loaded answers, and that is E0102, not a
