@@ -106,7 +106,7 @@ rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem
 # amalgamation is compiled in rather than linked from the host: the store's format, its WAL
 # semantics and its integrity check are inputs to the acceptance suite, and a distribution's
 # SQLite is not the same input twice.
-rusqlite = { version = "0.38", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 rustix = { version = "1", features = ["process"] }
 # The keyless package signature of ADR-0609 verifies a Fulcio certificate chain and an ECDSA
 # signature offline. `ring` and `rustls-webpki` are already in the graph through `rustls`;
