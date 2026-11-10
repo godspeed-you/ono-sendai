@@ -1,0 +1,62 @@
+# v0.4.1 §2.3, §2.6, §16.3, §54.1; ADR-0445, ADR-0990; issue #197: a plugin child that dies
+# between `fork` and its first confinement control is refused with the reason it died, not with
+# "an earlier mandatory control failed first" about a control nobody refused.
+#
+# The failure is arranged from outside the process, unprivileged: the package's private working
+# directory exists but cannot be entered (mode 000), so the child's `chdir` fails before any
+# control is installed. The launch still fails closed — the package never starts and stays merely
+# installed — and the refusal now names the operating system's reason.
+case: a plugin child that dies before its first control names why
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  network:
+    outbound: none
+  MANIFEST
+
+  echo "== a working directory the child cannot enter stops the launch before any control =="
+  work="$XDG_STATE_HOME/ono/kuang/dev.example.echo/work"
+  mkdir -p "$work"
+  chmod 000 "$work"
+  ono -c 'try { load plugin dev.example.echo } catch e { $e | to json }' 2>&1
+  chmod 755 "$work"
+
+  echo "== the package never started, so it stays merely installed (v0.4.1 18.1) =="
+  ono -c 'get plugin | select state | to json'
+
+  echo "== with the directory usable again, the same package loads =="
+  ono -c 'load plugin dev.example.echo; get plugin | select state | to json'
+exit: 0
+stdout-contains: plugin.confinement_failed
+stdout-contains: the spawn failed before
+stdout-contains: Permission denied (os error 13)
+stdout-contains: "result":"not_attempted"
+stdout-contains: {"state":"installed"}
+stdout-contains: {"state":"loaded"}
+stdout-not-contains: an earlier mandatory control failed first
+stdout-not-contains: panicked

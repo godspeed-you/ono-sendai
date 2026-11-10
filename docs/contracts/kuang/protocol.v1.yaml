@@ -64,6 +64,18 @@ invariants:
     rule: >-
       A stream can carry an error for one element and continue (spec §16.5). A per-element
       failure never collapses into a whole-stream failure unless the policy is `fail-stream`.
+  - id: one-channel-carries-the-answer
+    rule: >-
+      An invocation is answered on two channels, its output stream and its result, and the host
+      makes the stream alone sufficient: a consumer that reads only the stream never takes a
+      failure for a complete or an empty answer (ADR-0992). The stream ends without a terminal
+      event only when the invocation completed, or was cancelled because its consumer asked.
+      An invocation that failed ends its stream with that failure as the last event — the
+      package's own error, or `provider.unavailable` when its failed result named none — and one
+      the package cancelled without being asked ends it with `stream.cancelled`. A package's
+      clean `streams.close` on its output does not end the consumer's stream; the invocation's
+      result does. The result still says how the invocation ended, and a consumer reading both
+      reports the failure once: the stream's terminal event *is* the result's failure.
   - id: binary-representation
     rule: >-
       Values cross in the `ono-value/1` binary encoding with schemas referenced by id, not as
@@ -267,7 +279,12 @@ host_calls:
       error: {type: ono.error/1, nullable: true, doc: "The terminal error, when the producer failed. Null is a normal completion."}
     returns: {type: "null"}
     errors: []
-    doc: Closing with an error is how a plugin reports a partial result honestly rather than truncating silently.
+    doc: >-
+      Closing with an error is how a plugin reports a partial result honestly rather than
+      truncating silently. Closing without one says the values are done, not that the invocation
+      succeeded: the consumer's end of an invocation's output stream stays open until the
+      invocation's result arrives, and carries its failure if it failed
+      (`one-channel-carries-the-answer`).
 
   - id: streams.cancel
     domain: streams
@@ -367,11 +384,16 @@ host_calls:
     params:
       view: {type: string, required: true, doc: "A contributed view id."}
       input: {type: handle<stream>, nullable: true, doc: "The stream the view renders."}
+      invocation: {type: handle<invocation>, nullable: true, doc: "The invocation the view belongs to and dies with. Absent is accepted only while exactly one invocation is open, which then owns the view (ADR-0991)."}
     returns: {type: handle<view>, doc: "The mounted view."}
     errors: [view.protocol_error]
     doc: >-
       Opening a view does not confer terminal ownership. If stdout is redirected the host mounts
       nothing and the command falls back to its declared non-interactive output (spec §31.28).
+      A view belongs to exactly one invocation, as every handle does: the host closes it when
+      that invocation ends, however it ends, and never when another one does. A named invocation
+      that is not open, or no name while several are open, is `view.protocol_error` — the host
+      will not guess whose terminal it is (ADR-0991).
 
   - id: views.submit
     domain: views
@@ -1090,7 +1112,7 @@ plugin_calls:
       input: {type: handle<stream>, nullable: true, doc: "The pipeline's input stream. Null when the command takes none."}
       output: {type: handle<stream>, required: true, doc: "Where the plugin emits its results."}
       invocation: {type: handle<invocation>, required: true, doc: "The invocation every handle the plugin opens will belong to."}
-    returns: {type: record, doc: "`{status: enum[completed, failed, cancelled], error: ono.error/1?}`."}
+    returns: {type: record, doc: "`{status: enum[completed, failed, cancelled], error: ono.error/1?}`. The host also ends the output stream with a `failed` status's error, and a `cancelled` one nobody asked for with `stream.cancelled` (`one-channel-carries-the-answer`)."}
     doc: >-
       A contributed command is an ordinary node in Ono's execution graph, which is what makes
       `explain` able to show it (spec §31.29).
@@ -1112,7 +1134,7 @@ plugin_calls:
       options: {type: record, nullable: true, doc: "Provider options by name, already typed."}
       output: {type: handle<stream>, required: true, doc: "Where the plugin answers, in the target's declared schema."}
       invocation: {type: handle<invocation>, required: true, doc: "The owning invocation."}
-    returns: {type: record, doc: "`{status, error?}`."}
+    returns: {type: record, doc: "`{status, error?}`, and the output stream ends with a failure or an unasked cancellation as `command.invoke`'s does (`one-channel-carries-the-answer`)."}
     doc: >-
       A query against a contributed target, forwarded to the providing package and answered as a
       value stream. Added by ADR-0040: `contributions.v1.yaml` registers targets into the

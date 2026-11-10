@@ -207,41 +207,67 @@ impl ConfinementReport {
     /// branches on the code and an operator reads the row.
     #[must_use]
     pub fn refusal(&self, package: &str) -> Option<KuangError> {
+        self.refusal_after(package, None)
+    }
+
+    /// The refusal of a spawn that failed, with the reason `spawn` itself gave.
+    ///
+    /// A child can die between `fork` and its first control — the standard library changes into
+    /// the working directory there — and then no row reads `failed` and every one the child owns
+    /// reads `not_attempted`. Without a refused control to name, the cause is the error the spawn
+    /// returned, so that is what the detail says (issue #197, ADR-0445 *Consequences*). When a row
+    /// does read `failed`, that row is the cause and the spawn error is only its echo.
+    pub(crate) fn refusal_after(
+        &self,
+        package: &str,
+        spawn_error: Option<&std::io::Error>,
+    ) -> Option<KuangError> {
         let unmet = self.unmet()?;
-        let detail = unmet.platform_detail().unwrap_or(match unmet.result {
-            ControlResult::Skipped => "this platform does not install it",
-            ControlResult::NotAttempted => "an earlier mandatory control failed first",
-            ControlResult::Applied | ControlResult::Failed => "the platform refused it",
-        });
-        let error = KuangError::new(
-            unmet.control.failure_code(),
-            format!(
+        let cause = spawn_error
+            .filter(|_| self.failed().next().is_none())
+            .map(ToString::to_string);
+        let detail = unmet
+            .platform_detail()
+            .or(cause.as_deref())
+            .unwrap_or(match unmet.result {
+                ControlResult::Skipped => "this platform does not install it",
+                ControlResult::NotAttempted => "an earlier mandatory control failed first",
+                ControlResult::Applied | ControlResult::Failed => "the platform refused it",
+            });
+        let message = match (&cause, unmet.result) {
+            (Some(cause), ControlResult::NotAttempted) => format!(
+                "{package} was not started because the spawn failed before {} could be \
+                 installed: {cause}",
+                unmet.control.id()
+            ),
+            _ => format!(
                 "{package} was not started because {} could not be installed: {detail}",
                 unmet.control.id()
             ),
-        )
-        .with_help(format!(
-            "required control: {}\nexecution tier: {}\n{}",
-            unmet.control.id(),
-            self.tier.id(),
-            unmet.control.summary()
-        ))
-        .with_metadata(
-            "control",
-            serde_json::Value::String(unmet.control.id().to_owned()),
-        )
-        .with_metadata(
-            "execution_tier",
-            serde_json::Value::String(self.tier.id().to_owned()),
-        )
-        .with_metadata(
-            "result",
-            serde_json::Value::String(unmet.result.as_str().to_owned()),
-        )
-        .with_metadata(
-            "platform_detail",
-            serde_json::Value::String(detail.to_owned()),
-        );
+        };
+        let error = KuangError::new(unmet.control.failure_code(), message)
+            .with_help(format!(
+                "required control: {}\nexecution tier: {}\n{}",
+                unmet.control.id(),
+                self.tier.id(),
+                unmet.control.summary()
+            ))
+            .with_metadata(
+                "control",
+                serde_json::Value::String(unmet.control.id().to_owned()),
+            )
+            .with_metadata(
+                "execution_tier",
+                serde_json::Value::String(self.tier.id().to_owned()),
+            )
+            .with_metadata(
+                "result",
+                serde_json::Value::String(unmet.result.as_str().to_owned()),
+            )
+            .with_metadata(
+                "platform_detail",
+                serde_json::Value::String(detail.to_owned()),
+            );
         Some(error)
     }
 }

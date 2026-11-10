@@ -767,3 +767,67 @@ async fn should_report_a_named_execution_tier_rather_than_a_sandboxed_boolean() 
         "the tier name resolves to the controls it stands for, which is what a boolean could not do"
     );
 }
+
+// ------------------------------------------------------------------------------------------
+// A child that dies before its first control names why (issue #197, ADR-0445 *Consequences*).
+// ------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn should_name_the_spawn_failure_when_the_child_dies_before_its_first_control() {
+    // Between `fork` and the first control the child can still die: the standard library changes
+    // into the working directory there, and any `pre_exec` registered before the supervisor's
+    // runs there. The page then reads `not_attempted` throughout, which is true, and the refusal
+    // used to say "an earlier mandatory control failed first", which is true of nothing. The
+    // reason is the error `spawn` itself reports, and the operator is owed it (§54.1).
+    let fixture = Fixture::new("dies-early");
+    let mut command = fixture.command();
+    #[allow(
+        unsafe_code,
+        reason = "the one way to make a forked child fail before the supervisor's own pre-exec \
+                  closure runs; the closure allocates nothing (ADR-0443)"
+    )]
+    // SAFETY: the closure only builds an `io::Error` from a raw errno, which allocates nothing
+    // and takes no lock, so it is legal between `fork` and `exec`.
+    unsafe {
+        command.pre_exec(|| Err(std::io::Error::from_raw_os_error(libc::ENOTRECOVERABLE)));
+    }
+    let outcome = spawn(
+        &mut command,
+        &fixture.sandbox(),
+        &NativePlatform::shared(),
+        "example",
+    );
+
+    let Err(error) = outcome else {
+        panic!("a child that died before exec cannot have produced a running plugin");
+    };
+    let cause = std::io::Error::from_raw_os_error(libc::ENOTRECOVERABLE).to_string();
+    assert!(
+        error.message().contains(&cause),
+        "the refusal names what stopped the spawn ({cause}), not a control that never failed: \
+         {error:?}"
+    );
+    assert!(
+        !error
+            .message()
+            .contains("an earlier mandatory control failed first"),
+        "no control failed, so no control can have failed first: {error:?}"
+    );
+    assert_eq!(
+        error
+            .metadata()
+            .get("result")
+            .and_then(serde_json::Value::as_str),
+        Some("not_attempted"),
+        "§2.6: the control the child never reached is still not claimed as applied: {error:?}"
+    );
+    assert_eq!(
+        error
+            .metadata()
+            .get("platform_detail")
+            .and_then(serde_json::Value::as_str),
+        Some(cause.as_str()),
+        "the detail a script reads is the cause as well: {error:?}"
+    );
+    assert!(!fixture.plugin_ran(), "§2.3: nothing was executed");
+}

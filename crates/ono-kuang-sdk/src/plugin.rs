@@ -430,6 +430,7 @@ fn serve<'scope, 'env: 'scope, R: Read + Send, W: Write + Send>(
                 name: invoke.command,
                 arguments: invoke.arguments,
                 output: invoke.output,
+                invocation: invoke.invocation,
                 credit: invoke.credit,
             };
             match admit {
@@ -448,6 +449,7 @@ fn serve<'scope, 'env: 'scope, R: Read + Send, W: Write + Send>(
                 name: query.target,
                 arguments: query.options,
                 output: query.output,
+                invocation: query.invocation,
                 credit: query.credit,
             };
             match admit {
@@ -532,6 +534,7 @@ struct Started {
     name: String,
     arguments: JsonMap<String, Json>,
     output: u64,
+    invocation: u64,
     credit: u32,
 }
 
@@ -558,6 +561,7 @@ fn start<'scope, 'env: 'scope, R: Read + Send, W: Write + Send>(
     };
     let ceiling = ceiling(admit.plugin, shared);
     let invocation = Arc::new(Invocation {
+        id: started.invocation,
         output: started.output,
         state: Mutex::new(InvocationState {
             credit: started.credit,
@@ -630,6 +634,8 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 /// What one invocation owns.
 struct Invocation {
+    /// The invocation handle the host minted; a view this invocation opens names it.
+    id: u64,
     output: u64,
     state: Mutex<InvocationState>,
     wake: Condvar,
@@ -1044,6 +1050,7 @@ impl Ctx<'_> {
         let params = serde_json::to_value(ViewOpenParams {
             view: view.to_owned(),
             input,
+            invocation: Some(self.invocation.id),
         })
         .unwrap_or(Json::Null);
         let answer = self.host_call(method::VIEWS_OPEN, params)?;

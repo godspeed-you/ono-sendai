@@ -20,10 +20,11 @@ use std::io::Write;
 use ono_kuang_protocol::{
     ActionContribution, Answer, ChangeViewContribution, CommandContribution, ContributionSet,
     EffectClassContribution, EmitParams, Envelope, FrameLimits, Hello, Idempotency,
-    ImpactProviderContribution, InitResult, InvokeParams, InvokeResult, InvokeStatus,
-    PACKAGE_FORMAT, ParameterContribution, RecoveryProviderContribution, RiskRuleContribution,
-    SchemaContribution, SchemaFieldContribution, TargetContribution, TransactionContribution,
-    VerificationCheckContribution, VerificationProviderContribution, ViewContribution, method,
+    ImpactProviderContribution, InitResult, InvokeParams, InvokeResult, InvokeStatus, KuangError,
+    KuangErrorCode, PACKAGE_FORMAT, ParameterContribution, RecoveryProviderContribution,
+    RiskRuleContribution, SchemaContribution, SchemaFieldContribution, TargetContribution,
+    TransactionContribution, VerificationCheckContribution, VerificationProviderContribution,
+    ViewContribution, method,
 };
 use ono_kuang_sdk::{Ctx, Outcome, Plugin};
 use ono_value::{Provenance, RecordValue, Value};
@@ -42,6 +43,7 @@ fn main() {
         Some("--misbehave=huge-frame") => misbehave(Mode::HugeFrame),
         Some("--misbehave=bad-hello") => misbehave(Mode::BadHello),
         Some("--misbehave=die") => misbehave(Mode::Die),
+        Some("--misbehave=close-then-fail") => misbehave(Mode::CloseThenFail),
         Some("--misbehave=phantom-target-schema") => misbehave(Mode::PhantomTargetSchema),
         Some("--misbehave=phantom-command-schema") => misbehave(Mode::PhantomCommandSchema),
         Some("--misbehave=action-without-risk") => misbehave(Mode::ActionWithoutRisk),
@@ -1076,6 +1078,10 @@ fn honest_at_most(at_once: u32) -> Plugin {
         })
         .command(&format!("{PACKAGE}.command.emit"), |ctx| {
             let count = int_argument(ctx, "count", 3);
+            // After the values: `fail` ends in a refusal, `cancel` ends as cancelled though
+            // nobody asked — both are endings a consumer reading only the stream must see
+            // (ADR-0992).
+            let then = text_argument(ctx, "then", "");
             for n in 1..=count {
                 match ctx.emit(&Value::Int(i128::from(n))) {
                     Ok(()) => {}
@@ -1086,7 +1092,17 @@ fn honest_at_most(at_once: u32) -> Plugin {
                     Err(ono_kuang_sdk::EmitError::Transport) => return Outcome::Cancelled,
                 }
             }
-            Outcome::Completed
+            match then.as_str() {
+                "fail" => Outcome::Failed(
+                    KuangError::new(
+                        KuangErrorCode::RuntimeTrap,
+                        "the emit handler was told to fail after its values",
+                    )
+                    .into(),
+                ),
+                "cancel" => Outcome::Cancelled,
+                _ => Outcome::Completed,
+            }
         })
         .command(&format!("{PACKAGE}.command.count-forever"), |ctx| {
             let mut n: i128 = 0;
@@ -1652,7 +1668,28 @@ fn honest_at_most(at_once: u32) -> Plugin {
             // selection; the host draws, forwards keys, and owns the exits.
             let count = int_argument(ctx, "count", 3).clamp(1, 1000);
             let broken = int_argument(ctx, "broken", 0) != 0;
+            // `complete`, `fail` or `cancel`: when the view is left with `q`, the handler ends
+            // that way and leaves the view for the host to close, which is what a package that
+            // forgets its views does — the host closes them with *its* invocation (spec §31.28).
+            let end = text_argument(ctx, "end", "");
             let items: Vec<String> = (1..=count).map(|at| format!("item {at}")).collect();
+            if let Some(claim) = ctx.arguments().get("invocation").cloned() {
+                // A package that names the owning invocation itself — another one, or none at
+                // all (`null`) — as a package without this SDK might (ADR-0991).
+                let mut params = json!({"view": format!("{PACKAGE}.view.items")});
+                if !claim.is_null() {
+                    params["invocation"] = claim;
+                }
+                return match ctx.host_call(method::VIEWS_OPEN, params) {
+                    Ok(answer) => {
+                        if let Some(handle) = answer.get("handle").and_then(serde_json::Value::as_u64) {
+                            let _ = ctx.close_view(handle);
+                        }
+                        emit_text(ctx, "opened")
+                    }
+                    Err(error) => Outcome::Failed(error),
+                };
+            }
             let opened = match ctx.open_view(&format!("{PACKAGE}.view.items"), None) {
                 Ok(opened) => opened,
                 Err(error) => return Outcome::Failed(error),
@@ -1685,6 +1722,17 @@ fn honest_at_most(at_once: u32) -> Plugin {
                         Some("down" | "j") => selected = (selected + 1).min(items.len() - 1),
                         Some("up" | "k") => selected = selected.saturating_sub(1),
                         Some("enter") => inspecting = !inspecting,
+                        Some("q") if end == "complete" => return Outcome::Completed,
+                        Some("q") if end == "cancel" => return Outcome::Cancelled,
+                        Some("q") if end == "fail" => {
+                            return Outcome::Failed(
+                                KuangError::new(
+                                    KuangErrorCode::RuntimeTrap,
+                                    "the browse handler was told to fail with its view open",
+                                )
+                                .into(),
+                            );
+                        }
                         Some("q") => break,
                         _ => {}
                     },
@@ -1970,6 +2018,10 @@ enum Mode {
     /// A hello whose command declares an action that mutates and only a read capability, so no
     /// grant the host checks could ever authorise the mutation (ADR-0595).
     ActionWithoutAuthority,
+    /// Emits one value, closes its output stream cleanly, and only then answers the invocation
+    /// as failed: the two channels disagree for as long as a consumer cares to look at one of
+    /// them, which is what ADR-0992 makes impossible to miss.
+    CloseThenFail,
 }
 
 /// An argument that is an object: given as one, or as a string holding JSON — the shell has
@@ -2197,6 +2249,40 @@ fn misbehave(mode: Mode) {
                             error: None,
                         };
                         let _ = ono_kuang_protocol::write_frame(&mut writer, &done, limits);
+                    }
+                    Mode::CloseThenFail => {
+                        let emit = Envelope::Request {
+                            seq: 1000,
+                            method: method::STREAMS_EMIT.to_owned(),
+                            params: serde_json::to_value(EmitParams {
+                                handle: invoke.output,
+                                values: vec![json!(1)],
+                            })
+                            .unwrap_or(serde_json::Value::Null),
+                        };
+                        let close = Envelope::Request {
+                            seq: 1001,
+                            method: method::STREAMS_CLOSE.to_owned(),
+                            params: json!({"handle": invoke.output}),
+                        };
+                        let failed = Envelope::Response {
+                            seq,
+                            result: serde_json::to_value(InvokeResult {
+                                status: InvokeStatus::Failed,
+                                error: Some(
+                                    KuangError::new(
+                                        KuangErrorCode::RuntimeTrap,
+                                        "closed the stream cleanly, then failed",
+                                    )
+                                    .into(),
+                                ),
+                            })
+                            .ok(),
+                            error: None,
+                        };
+                        for frame in [emit, close, failed] {
+                            let _ = ono_kuang_protocol::write_frame(&mut writer, &frame, limits);
+                        }
                     }
                     Mode::Die => {
                         // No frame, no violation: the invocation is in flight and the process is

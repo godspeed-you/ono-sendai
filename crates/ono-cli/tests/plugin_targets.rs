@@ -289,6 +289,49 @@ fn should_report_a_refusing_target_rather_than_an_empty_success() {
     );
 }
 
+/// `echo-tick` declared unbounded, with the option that makes it refuse before emitting anything.
+const REFUSING_TICK: &str = r#"
+targets:
+  - name: echo-tick
+    schema: dev.example.echo.item/1
+    summary: Items emitted until the query is cancelled.
+    identity_doc: Two observations are the same tick when their `seq` matches.
+    answer: unbounded
+    options:
+      - name: refuse
+        type: bool
+        doc: End in a refusal instead of ticking.
+"#;
+
+#[test]
+fn should_report_a_refusal_from_an_endless_answer_once() {
+    // ADR-0992: the supervisor's stream carries the invocation's failure itself, so a consumer
+    // that also read the invocation result reported the one refusal twice. The stream is the
+    // whole answer, and the refusal is said once — and said at all, which ADR-0590 is about.
+    let home = echo_plugin_home(ECHO, REFUSING_TICK);
+    let run = ono_with_plugins(
+        &home,
+        &format!("load plugin {ECHO}; get echo-tick --refuse true | to json"),
+    );
+    assert_ne!(run.status().code(), 0, "{:?}", run.output());
+    let reported: Vec<&str> = run
+        .stderr()
+        .lines()
+        .filter(|line| line.starts_with("ono: "))
+        .collect();
+    assert_eq!(
+        reported.len(),
+        1,
+        "one refusal is one error, got {:?}",
+        run.output()
+    );
+    assert!(
+        reported[0].contains("contribution.refused"),
+        "and it is the package's refusal, got {:?}",
+        run.output()
+    );
+}
+
 // --- a contributed target declares its own options (spec §31.23, ADR-0587) ---------------------
 
 /// The same package, with the target declaring the option a user actually types.

@@ -1852,6 +1852,12 @@ pub struct ViewOpenParams {
     /// The stream the view renders, when it renders one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<u64>,
+    /// The invocation that opens the view and that the view dies with (spec §31.28, ADR-0991).
+    ///
+    /// Absent is accepted only while exactly one invocation is open, which is then the owner;
+    /// with several open the host cannot tell whose view it is and refuses the call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invocation: Option<u64>,
 }
 
 /// The answer to [`method::VIEWS_OPEN`].

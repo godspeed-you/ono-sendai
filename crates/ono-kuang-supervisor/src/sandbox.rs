@@ -234,12 +234,14 @@ pub fn spawn(
         }
         Err(error) => {
             let report = report::build(sandbox.tier, &outcomes, &parent);
-            Err(report.refusal(package).unwrap_or_else(|| {
-                KuangError::new(
-                    KuangErrorCode::LoadRuntimeUnavailable,
-                    format!("cannot start `{package}`: {error}"),
-                )
-            }))
+            Err(report
+                .refusal_after(package, Some(&error))
+                .unwrap_or_else(|| {
+                    KuangError::new(
+                        KuangErrorCode::LoadRuntimeUnavailable,
+                        format!("cannot start `{package}`: {error}"),
+                    )
+                }))
         }
     }
 }
