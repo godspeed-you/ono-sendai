@@ -225,6 +225,7 @@ async fn should_advertise_exactly_what_linux_netlink_serving_address_declares() 
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -1887,6 +1888,7 @@ async fn should_advertise_exactly_what_linux_cgroups_declares() {
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -1941,6 +1943,7 @@ async fn should_advertise_exactly_what_linux_namespaces_declares() {
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
