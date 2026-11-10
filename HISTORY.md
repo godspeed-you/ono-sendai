@@ -111,10 +111,13 @@ build, and a test suite and release tooling that give the same answer on a loade
 quiet one. v0.6.3 stabilized the language and the contracts: a function is a pipeline stage wherever
 it stands, a block streams inside a function and runs as a background job, `to jsonl` writes a live
 stream as it arrives, `explain`'s plan is data, completion answers outside a terminal, and every
-command example runs against the schema its command declares.
+command example runs against the schema its command declares. v0.6.4 stabilized the system and
+spatial model: cgroups, namespaces and addresses became provider targets, a place behind a container
+or a namespace boundary says so, the map searches beyond what it drew, and a selective `where` or a
+`trace` of one object asks the provider for that much.
 
-Three stabilization releases come next, each a milestone cut by subsystem: v0.6.4 for the system
-and spatial model, v0.6.5 for the KUANG/11 ecosystem, v0.6.6 for remote links and change. After
+Two stabilization releases come next, each a milestone cut by subsystem: v0.6.5 for the KUANG/11
+ecosystem, v0.6.6 for remote links and change. After
 them, four further enhancements — v0.7 to v0.10, from rich terminal presentation to native AI
 assistance — are specified and not yet built.
 

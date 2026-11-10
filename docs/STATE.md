@@ -34,11 +34,14 @@ request.
 git push origin implementation && git push origin --tags
 ```
 
-**The workspace declares `0.6.3`.** `v0.6.3`, Language and Contract Stabilization over `v0.6.2`, is
-**tagged, published (2026-10-08) and on `main`** (`b55ff186`). Its note, with the traceability of all
-21 issues (the milestone's 20 and #280, ADR-0929), is `docs/releases/v0.6.3.md`, and its run record
-`docs/runs/v0.6.3-2026-10-07.md`. Every earlier release has its note beside it in `docs/releases/`,
-and `gh release list` shows what is published.
+**The workspace declares `0.6.4`.** `v0.6.4`, System and Spatial Model Stabilization over `v0.6.3`,
+is **implemented on `implementation`, not tagged and not on `main`**: promoting and tagging it is
+the user's (AGENTS.md §12.1). Its note, with the traceability of all 25 milestone issues, is
+`docs/releases/v0.6.4.md`, and its run record `docs/runs/v0.6.4-2026-11-09.md`. Twenty-one of the
+25 issues are closed; **#187, #209, #213 and #221 stay open in the milestone**, each with a comment
+naming what was delivered and what was left, for the user's triage. `v0.6.3` is tagged, published
+(2026-10-08) and on `main` (`b55ff186`). Every earlier release has its note beside it in
+`docs/releases/`, and `gh release list` shows what is published.
 
 **`implementation` past v0.6.3.** Thirty-one commits up to `cd125fd7` (2026-10-16), then the
 documentation pass that brings the repository's documents to v0.6.3:
@@ -59,7 +62,10 @@ documentation pass that brings the repository's documents to v0.6.3:
   child ignoring `SIGTERM`), closed 2026-10-16 without a milestone, with ADR-0957 (a job's relative
   paths mean its start directory; a plan freezes absolute paths), ADR-0958 (every backgrounded line is
   an evaluator job; `fg` changes the attachment, not the result) and ADR-0959 (a leaving shell ends
-  its jobs within one bounded grace). `docs/MIGRATION.md` §14 drafts what they change for v0.6.4.
+  its jobs within one bounded grace). `docs/MIGRATION.md` §14 states what they change for v0.6.4.
+- The milestone `v0.6.4` itself, from `41cc0f31` on the sub-branch `implementation-v064`
+  (2026-11-09 … 2026-11-10), merged back into `implementation`: ADR-0962 … ADR-0987, acceptance
+  cases 130–139, 141–144 and 395.
 
 ---
 
@@ -70,9 +76,9 @@ v0.3, v0.4, v0.4.1, v0.5, v0.6, v0.6.1, v0.7, v0.8, v0.9 and v0.10, enumerated i
 eleven are immutable (AGENTS.md §5.2, ADR-0026). `spec-check` fails if one is missing its checksum
 line in `docs/specs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
 
-**Build order for what remains: v0.6.4, then v0.6.5, then v0.6.6, then v0.7, v0.8, v0.9 and v0.10.**
-v0.4.1, v0.5, v0.6, v0.6.1, v0.6.2 and v0.6.3 are implemented and released (`v0.4.1` … `v0.6.3`).
-Three stabilization tranches come first,
+**Build order for what remains: v0.6.5, then v0.6.6, then v0.7, v0.8, v0.9 and v0.10.**
+v0.4.1, v0.5, v0.6, v0.6.1, v0.6.2 and v0.6.3 are implemented and released (`v0.4.1` … `v0.6.3`);
+v0.6.4 is implemented and waits for its tag. Of three stabilization tranches two remain,
 each a GitHub milestone that is its authoritative inventory, as v0.6.2's and v0.6.3's were
 (ADR-0862, ADR-0929): `v0.6.4` — System and Spatial Model Stabilization (providers, adapters and
 process execution; spatial navigation and the map), `v0.6.5` — KUANG/11 Ecosystem Stabilization
@@ -134,29 +140,25 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [v0.6.4 run | 2026-11-09 | branch `implementation-v064`] **Milestone `v0.6.4` — System and Spatial
-  Model Stabilization**, 25 open issues, from `41cc0f31`. Increments are proven by targeted
-  `cargo test -p <crate> <name>` runs only; `scripts/gate.sh`, `scripts/acceptance.sh` and
-  `scripts/release-check.sh` are deferred to one pass at the end of the run (the host is shared with
-  another build), and acceptance cases are written with their increments and run then. Nothing of
-  this branch merges to `implementation` before that pass is green. Files: the crates each issue
-  names, `docs/contracts/`, `docs/adr/ADR-0962` onwards.
-  **Status at the end of the first session (2026-11-09 night):** closed #167, #186 (ADR-0962),
-  #217, #202, #158, #290 (ADR-0963), #207 (ADR-0964, `get kernel`), #208, #205 (ADR-0965), #138
-  (ADR-0966), #295 (ADR-0967), #220 (case 130), #152 (ADR-0969), #179 (ADR-0970); #221 partly
-  (ADR-0968, case 131; namespace/cgroup/mount edges and `container.exec` left open). Not started:
-  #187 (needs the Profile M release measurement), #206, #209–#213, #216, #281, #296. New acceptance
-  cases 130 and 131 run as root. **The gate, the acceptance suite and `release-check` have not run
-  on this branch yet**; the version is still 0.6.3.
+Nothing is claimed.
 
 ## What is left, and why
 
-**v0.6.4 — System and Spatial Model Stabilization — is the next tranche**, then `v0.6.5` and
-`v0.6.6`, then v0.7 (above); nothing of them is started beyond the prelude above. The known problems
-are in the tracker, and most of them by release milestone (`v0.6.4` … `v0.10.0`); those three
-milestones are the inventories of the stabilization tranches. `v0.6.2` — the test suite, the harness,
+**v0.6.4 waits for the user's promotion and tag; `v0.6.5` — KUANG/11 Ecosystem Stabilization — is
+the next tranche**, then `v0.6.6`, then v0.7 (above). The known problems are in the tracker, and
+most of them by release milestone (`v0.6.4` … `v0.10.0`). Four issues remain open in `v0.6.4` and
+are the user's to triage — move, split or keep: #187 (a selector miss at Profile M is 577 ms p95
+against 250 ms; what remains is enumerating the profile's sockets and processes by name), #209
+("unusually high traffic" has no rule, `high_memory` measures against the host only), #213 (live
+latency, two-sided cross-host correlation, a second hop on `map links`) and #221 (`enter container`
+as an execution context, declined by ADR-0114 and ADR-0968). `v0.6.2` — the test suite, the harness,
 CI, packaging, release tooling and binary size — and `v0.6.3` — command contracts, errors and
 diagnostics, the shell language, pipelines and completion — are implemented and released.
+
+**The performance baseline was not measured again for v0.6.4.**
+`docs/contracts/hardening/performance_baseline.json` still holds the v0.6.2 rows; the Profile M
+rows measured on `e7bc2130` are in `docs/runs/v0.6.4-2026-11-09.md`. `cargo run --release -p xtask
+-- perf --write-baseline` writes the whole baseline and wants a quiet host.
 
 **Unassigned until the user triages them** (AGENTS.md §9): fourteen open issues carry no milestone —
 #282–#289, #293, #294, #297–#299 and #305, the v0.6.3 run's findings filed on 2026-10-08 — and the
@@ -194,6 +196,45 @@ gh issue list --limit 100        # the backlog
 gh issue view <NN>               # the evidence for one problem
 gh issue list --label class-c    # the large ones, a tranche each
 ```
+
+**Found during the v0.6.4 run (2026-11-09 … 2026-11-10).** Outside the milestone's issues, or the
+part of one that was left; each checked against the tracker (no existing issue):
+
+- A cgroup place's `processes` and `services` exits and a namespace place's `members` exit answer
+  `unsupported`: `enter cgroup/<path>; look` — no provider joins them from that end (ADR-0971 names
+  the forward direction only).
+- The netlink targets (`address`, `route`, `neighbor`, `interface`) state no population, so an
+  orientation read bounded below the collection counts what was read: `enter network; look` on a
+  host with more routes than the orientation bound.
+- `follow`'s `Ono-Sendai-E1009` help text carries a run of literal spaces ("It is
+  classified …"): a string continuation lost its backslash in
+  `crates/ono-cli/src/spatial/commands.rs` (the `PermissionState::Unknown` arm).
+- A file whose owner uid has no account keeps `owner — available on request` after
+  `follow owner --resolve`: nothing records that the account database was asked and named nobody
+  (ADR-0973, *Consequences*).
+- A user place's `files` exit reads `unsupported`, while the relation summary would call an
+  expensive empty relation `available on request`; no provider enumerates a user's files.
+- The journal adapter treats a legal journald entry without `PRIORITY` as an adapter defect
+  (`Ono-Sendai-E0908`, exit 1), while `ono.log-record/1` documents `level` as "Null when the journal
+  reported no priority". Found with #281; with a priority ceiling handed over the entry is left out
+  instead (ADR-0980).
+- A journal `PRIORITY` outside 0–7 is accepted as a record although the schema says 0–7.
+- `get journal` has no `--level` option; only `get log` has one.
+- The shipped `ono --agent` announces no clock identity: `crates/ono-cli/src/main.rs` builds its
+  `AgentConfig` without `with_clock(ono_remote::clock_identity(..))`, so `ono.link/1`'s `clock_id`,
+  `clock_offset` and `clock_uncertainty` are null on every link (`link host x --transport local;
+  get link | select clock_id`), although v0.5 §24.2 has the peer state it and the library tests
+  cover it.
+- The perf harness runs `ono` in the caller's real `XDG_*` environment
+  (`xtask/src/perf.rs`, `sample`): a measurement reads the developer's configuration and may leave
+  history there.
+- A terminal that reports a size of 0×0 is taken at its word by the full-screen map: under
+  `script --command ono out < fifo` the map draws about twenty columns by four rows and a search
+  result is cut off, although `COLUMNS` and `LINES` are set; `stty rows 30 cols 100` typed into the
+  session repairs it (cases 107 and 141 do that). `crates/ono-cli/src/spatial/interactive.rs:216`
+  falls back to 80×24 only when the size cannot be read at all.
+- AGENTS.md §5.2's v0.7 entry still calls `v0.6.4` "the next tranche"; it is `v0.6.5` once v0.6.4
+  is tagged.
 
 **Found during the maintenance prelude #301–#303 (2026-10-08 … 2026-10-16).** Outside those three
 issues, so not fixed in them; each re-checked against the tracker (no existing issue):

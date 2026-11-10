@@ -4,7 +4,7 @@ One page per thing that could surprise somebody upgrading, added to as tranches 
 section last. **Two migrations on it are required, each for some people only**: a directly
 listening agent over TCP needs one step (§2), and every compiled KUANG/11 component needs one
 `kuang-compile` after an upgrade that changes the WebAssembly engine (§10) — v0.6.2 to v0.6.3 is
-such an upgrade, and so is v0.6.3 to the release after it. Everything else here is either
+such an upgrade, and so is v0.6.3 to v0.6.4. Everything else here is either
 automatic or a description of a refusal you may now meet.
 
 Sections 1–5 are v0.4.1's, and they are v0.4.1 §63's five in its order: a hardening release that
@@ -17,8 +17,8 @@ script or plugin relies on changed in v0.6.1 (`docs/releases/v0.6.0.md`, `v0.6.1
 *Compatibility*). Section 10 is v0.6.2, the KUANG/11 compiler leaving the shell. Sections 11–13 are
 v0.6.3: one setting name retired, `measure`'s median behind an option, and what a script can now
 see differently; v0.6.3 also moves wasmtime from 47 to 48, so §10's recompile is due once per
-component. Section 14 is a draft for the release after v0.6.3, written as its changes land on
-`implementation`.
+component. Section 14 is v0.6.4: one more recompile, what a job and a plan mean by a path, and what
+the system and spatial model answer differently.
 
 ## 1. Ordinary local use — nothing to do
 
@@ -414,17 +414,19 @@ Each item below is a contract the release made true; check a script that parses 
 - **`ono --complete '<line>' [--cursor N]`** is new (#176, ADR-0945): one `ono.completion/1` JSON
   document of what Tab would offer, with `complete: false` when the set was cut short.
 
-## 14. Draft for the release after v0.6.3
+## 14. What changes with v0.6.4
 
-*(on `implementation` past `v0.6.3`; issues #301–#303; ADR-0957, ADR-0958, ADR-0959, ADR-0961; 80499901, 5b920caf, 6a9a163b)*
+*(issues #301–#303 and the milestone `v0.6.4`; ADR-0957 … ADR-0959, ADR-0961 … ADR-0987;
+`docs/releases/v0.6.4.md`)*
 
-**Not released yet.** What the next release changes for someone upgrading from v0.6.3, as far as
-it has landed:
+What v0.6.4 changes for someone upgrading from v0.6.3. The first seven entries come from the
+maintenance prelude between the two releases, the rest from the milestone:
 
 - **Recompile compiled KUANG/11 components once more.** wasmtime moves from 48.0.5 to 48.0.8 for
   eighteen advisories against it and wasmtime-wasi (RUSTSEC-2026-0352 … -0359, -0361 … -0364,
-  -0378, -0379, -0420, -0422 … -0424), rustls to 0.23.46 for four more, and tokio, rustls-webpki
-  and webpki-roots for three (RUSTSEC-2026-0381, -0382, -0386).
+  -0378, -0379, -0420, -0422 … -0424), rustls to 0.23.46 for four more, tokio, rustls-webpki
+  and webpki-roots for three (RUSTSEC-2026-0381, -0382, -0386), and rusqlite to 0.41.1 for
+  RUSTSEC-2026-0459.
   An artifact is keyed on the exact wasmtime release (§10, ADR-0916), so each compiled component is
   refused once with `Ono-Sendai-K11105`, naming the `kuang-compile` command. Native-process
   packages are unaffected.
@@ -453,6 +455,41 @@ it has landed:
 - **A decimal number in JSON reads as the nearest `f64`** (ADR-0961). Where a provider, a remote
   peer or `from json` sent a number such as `1.04858e132`, v0.6.3 could hold it one unit in the
   last place away (`1.0485799999999999e132`) and log and forward that; it now holds the number sent.
+- **`enter <unit>.service` means the service, and a control group is named by its path**
+  (ADR-0971). `cgroup`, `namespace` and `address` are targets now, so `get cgroup`, `get namespace`
+  and `get address` answer, and a spatial exit that read `unsupported` — a process's `cgroup` and
+  `namespaces`, an interface's `addresses` and `routes`, a process's `endpoints`, a file's `owner`
+  — leads somewhere. A script that tested for `unsupported` on one of them sees a place.
+- **A redirected view follows a stated `COLUMNS`** (ADR-0979, superseding part of ADR-0166).
+  `COLUMNS=80 ono -c 'look' > file` draws 80 columns, where it drew the redirected default. Unset
+  `COLUMNS` for the old width.
+- **`look` at the local root prints the links** (ADR-0985), each with its round trip and when it
+  was last seen, when the session holds one. A session without links prints what it printed.
+- **An object place can carry scope markers** (ADR-0983). A process inside a container is at
+  `local container:<id> /process/<name>`, and one in another pid namespace at
+  `… ns:pid/<inode> …`; `follow` across such a boundary prints `crossing scope: A -> B` on the
+  diagnostic stream. The `scope` of such a place names the container, where it named the host.
+- **The startup horizon waits 150 ms** (ADR-0982). A count whose provider has not answered by then
+  reads `unknown — still being read` and is there on the next view. A `-c` script and a redirected
+  `look` wait for the full answer as before.
+- **`map --cluster user|service|container`** is new (ADR-0981), and the map of a directory draws
+  its entries and clusters the rest by kind, `/etc (files)` (ADR-0976), where it drew one node.
+- **Schemas gained fields, and none lost one.** `ono.kernel/1` is new (`get kernel`) and carries
+  `memory_total`; `ono.process/1` gains `start_ticks`; `ono.service/1` gains `restarts`;
+  `ono.container/1` gains `mounts`; `ono.link-place/1` gains `round_trip`, `last_seen` and
+  `same_host_as`. A consumer that rejects unknown fields needs them added.
+- **A `where` directly after a producer may be answered at the source** (ADR-0980). The answer is
+  the same set of records with one stated exception: `get journal | where priority <= 3` asks
+  `journalctl --priority`, so an entry without a canonical `PRIORITY` is left out, where it used to
+  end the command with `Ono-Sendai-E0908`. `providers.pushdown = false` restores the old path, and
+  `explain` names what is handed over.
+- **A file held open by a writer is `Ono-Sendai-E0305 io.busy`** (ADR-0962), where running it
+  answered "found and not executable". The status stays 126.
+- **`get filesystem` answers once per superblock** (#167): two tmpfs mounts are two rows, where
+  one row stood for both.
+- **A provider written against `ono-provider-api`** sees two additions it may ignore:
+  `Provider::pushdown()` with `Query::pushed()`, and `Query::sought()` (ADR-0980, ADR-0987). Both
+  are advice; a provider that reads neither answers as before.
 
 ## What to read next
 

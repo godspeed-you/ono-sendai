@@ -97,9 +97,9 @@ Each [GitHub release](https://github.com/godspeed-you/ono-sendai/releases) carri
 
 ```bash
 # Debian, Ubuntu and relatives
-sudo apt install ./ono_0.6.3_amd64.deb          # or ono_0.6.3_arm64.deb
+sudo apt install ./ono_0.6.4_amd64.deb          # or ono_0.6.4_arm64.deb
 # Fedora, RHEL and relatives
-sudo dnf install ./ono-0.6.3-1.x86_64.rpm       # or ono-0.6.3-1.aarch64.rpm
+sudo dnf install ./ono-0.6.4-1.x86_64.rpm       # or ono-0.6.4-1.aarch64.rpm
 
 chsh -s /usr/bin/ono                             # make it your login shell
 ```
@@ -137,7 +137,7 @@ before you install anything. `cosign` is the one tool you add
 ([sigstore/cosign](https://github.com/sigstore/cosign)); everything else is coreutils.
 
 ```bash
-VERSION=0.6.3; ARCH=amd64
+VERSION=0.6.4; ARCH=amd64
 BASE=https://github.com/godspeed-you/ono-sendai/releases/download/v$VERSION
 curl -fLO $BASE/ono_${VERSION}_${ARCH}.deb
 curl -fLO $BASE/SHA256SUMS
@@ -509,17 +509,18 @@ in this shell is a side effect of telling the truth about the system.
 
 ## Project status
 
-**Current release: v0.6.3.** All ten phases of the specification are implemented, with the External
+**Current release: v0.6.4.** All ten phases of the specification are implemented, with the External
 Command Adaptation Layer (v0.3), the Spatial Systems Interface (v0.4), the hardening layer (v0.4.1),
 the Temporal & Causal Systems Interface (v0.5) and Prospective Change, Protection & Recovery (v0.6)
 on top of them. v0.6.1 polished v0.6.0; v0.6.2 is the verification foundation under both; v0.6.3
-stabilizes the language and the contracts: functions that are pipeline stages wherever they stand,
-blocks that stream inside functions and run as background jobs, `to jsonl`, an `explain` whose plan
-is data, completion outside a terminal, and command examples run against the schemas their commands
-declare (`docs/releases/v0.6.3.md`). Every ticked box of
+stabilized the language and the contracts; v0.6.4 stabilizes the system and spatial model: cgroups,
+namespaces and addresses as provider targets, container and namespace boundaries marked on the way,
+a map that searches beyond what it drew, a `where` that hands the provider the comparisons it
+declared, and a `trace` that asks for one object where one is asked for
+(`docs/releases/v0.6.4.md`). Every ticked box of
 `docs/ACCEPTANCE.md` names an automated proof, and no box is open. Primary platform is Linux (x86_64
-and aarch64). Three stabilization releases come next, each a milestone in the tracker: v0.6.4
-(system and spatial model), v0.6.5 (KUANG/11 ecosystem) and v0.6.6 (remote links and change). Four
+and aarch64). Two stabilization releases come next, each a milestone in the tracker: v0.6.5
+(KUANG/11 ecosystem) and v0.6.6 (remote links and change). Four
 further enhancement specifications follow them — Presentation Consolidation & Rich TTY (v0.7), Deck
 Workspace Composition (v0.8), Live View Integration (v0.9) and Native AI Assistance (v0.10) — and
 are specified but not yet implemented.
@@ -548,8 +549,8 @@ commands=226
 stripped_bytes.kuang-compile.aarch64-unknown-linux-gnu=5591976
 stripped_bytes.kuang-compile.x86_64-unknown-linux-gnu=7430064
 stripped_bytes.ono.aarch64-unknown-linux-gnu=19418112
-stripped_bytes.ono.x86_64-unknown-linux-gnu=22481248
-stripped_bytes.ono.x86_64-unknown-linux-musl=7379136
+stripped_bytes.ono.x86_64-unknown-linux-gnu=22916992
+stripped_bytes.ono.x86_64-unknown-linux-musl=7579872
 ```
 
 <!-- end generated -->
