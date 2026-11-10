@@ -166,6 +166,7 @@ commands:
       - {name: depth, type: int, doc: "How many hierarchy hops to draw. Two by default: the place, its canonical children and what lies behind them (v0.4 §6.9)."}
       - {name: zoom, type: int, doc: "One of the five canonical levels of §8.1 — 0 SYSTEM, 1 DOMAIN, 2 COLLECTION, 3 ENTITY, 4 DETAIL. A place finer than the level is drawn as its canonical ancestor at it."}
       - {name: expand, type: string, doc: "Draw the members of a cluster instead of the cluster. A view action: it never changes the current place (v0.4 §8.3)."}
+      - {name: cluster, type: string, doc: "Cluster what the view budget did not draw along one of §8.2's other dimensions — `user`, `service` or `container` — where the objects' own records state it. Only the largest groups get a cluster of their own; an object that states none, and the smaller groups, stay counted with their canonical collection, which is the dimension without this option (v0.4 §8.2)."}
       - {name: focus, type: string, doc: "Centre the view on one node. Focus is not navigation and never moves the shell (v0.4 §23.4, §53)."}
       - {name: relations, type: string, doc: "Keep only these relations' edges, comma-separated. Filtering removes edges; it never creates one (v0.4 §6.9, §43.2)."}
       - {name: type, type: string, doc: "Keep only nodes of these spatial types, comma-separated — `process`, `service`, `listener`. It narrows the bounded map rather than re-selecting what fills it, so the answer is always a subset of the same map without it, and what it removed is counted in `hidden` (v0.4 §6.9, §3.3, §43.2)."}
@@ -193,6 +194,7 @@ commands:
       - map --json
       - map --zoom 1
       - map --all --type process
+      - map --cluster user
       - map --live --json
 
   - id: ono.place.map-links

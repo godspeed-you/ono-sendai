@@ -6321,6 +6321,7 @@ Project the bounded, ranked graph around a place — as text, or as a `SpatialMa
 | `--depth` | `int` | How many hierarchy hops to draw. Two by default: the place, its canonical children and what lies behind them (v0.4 §6.9). |
 | `--zoom` | `int` | One of the five canonical levels of §8.1 — 0 SYSTEM, 1 DOMAIN, 2 COLLECTION, 3 ENTITY, 4 DETAIL. A place finer than the level is drawn as its canonical ancestor at it. |
 | `--expand` | `string` | Draw the members of a cluster instead of the cluster. A view action: it never changes the current place (v0.4 §8.3). |
+| `--cluster` | `string` | Cluster what the view budget did not draw along one of §8.2's other dimensions — `user`, `service` or `container` — where the objects' own records state it. Only the largest groups get a cluster of their own; an object that states none, and the smaller groups, stay counted with their canonical collection, which is the dimension without this option (v0.4 §8.2). |
 | `--focus` | `string` | Centre the view on one node. Focus is not navigation and never moves the shell (v0.4 §23.4, §53). |
 | `--relations` | `string` | Keep only these relations' edges, comma-separated. Filtering removes edges; it never creates one (v0.4 §6.9, §43.2). |
 | `--type` | `string` | Keep only nodes of these spatial types, comma-separated — `process`, `service`, `listener`. It narrows the bounded map rather than re-selecting what fills it, so the answer is always a subset of the same map without it, and what it removed is counted in `hidden` (v0.4 §6.9, §3.3, §43.2). |
@@ -6337,6 +6338,7 @@ map
 map --json
 map --zoom 1
 map --all --type process
+map --cluster user
 map --live --json
 ```
 

@@ -88,6 +88,20 @@ impl CommandImpl for Map {
             if let Some(clusters) = words(arguments.option("expand")) {
                 request = request.expand(clusters);
             }
+            if let Some(name) = arguments.option("cluster").and_then(text_of) {
+                let dimension =
+                    ono_spatial_query::ClusterDimension::from_name(&name).ok_or_else(|| {
+                        ErrorValue::new(
+                            ErrorCode::SpatialUnsupported,
+                            format!("`{name}` is not a dimension a map clusters along"),
+                        )
+                        .with_help(
+                            "the dimensions are user, service, container; without one the map \
+                             clusters by canonical collection (spec v0.4 §8.2)",
+                        )
+                    })?;
+                request = request.cluster_by(dimension);
+            }
             if let Some(node) = arguments.option("focus").and_then(text_of) {
                 request = request.focus(node);
             }
@@ -416,6 +430,15 @@ async fn observe(
 ) -> Result<MapHorizon, ErrorValue> {
     let mut horizon = MapHorizon::new();
     horizon.place(place_at(session, center, 0, None));
+
+    // §8.2: a cluster along a dimension groups by the far end of a relation the records state,
+    // and the far end has to be a place for the relation to settle on — the users, the services
+    // or the containers themselves are asked for (ADR-0981).
+    if let Some(dimension) = request.cluster_dimension() {
+        let groups: std::collections::BTreeSet<&'static str> =
+            std::collections::BTreeSet::from([dimension.target()]);
+        view::observe_targets(providers, session, &groups, now).await;
+    }
 
     if let Some(space) = ono_spatial_query::resolve::space_of(center) {
         observe_space(

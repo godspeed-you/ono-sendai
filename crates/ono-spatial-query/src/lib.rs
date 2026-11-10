@@ -33,8 +33,8 @@ pub use discovery::{SpaceSource, TargetPlan, source_of_space, targets_for};
 pub use find::{FindRequest, FoundPlace, find_places};
 pub use landmark::{LandmarkThresholds, landmarks_of as landmarks_of_object};
 pub use map::{
-    EdgeKind, HiddenSummary, HorizonPlace, MAP_NODE_BUDGET, MapCluster, MapEdge, MapHorizon,
-    MapNode, MapRequest, SpatialMap, TEXT_MAP_BUDGET, project as project_map,
+    ClusterDimension, EdgeKind, HiddenSummary, HorizonPlace, MAP_NODE_BUDGET, MapCluster, MapEdge,
+    MapHorizon, MapNode, MapRequest, SpatialMap, TEXT_MAP_BUDGET, project as project_map,
 };
 pub use neighborhood::{NeighborhoodRequest, neighborhood_of};
 pub use place::{Exit, VIEW_BUDGET, declared_children, space_neighborhood};

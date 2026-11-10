@@ -1,0 +1,53 @@
+# v0.4 §8.2 lists the user among the dimensions a map may cluster along; the projection had only
+# the canonical collection (#209). `map --cluster user` groups the processes the view budget did
+# not draw by who runs them (ADR-0981).
+#
+# The container runs too few processes to exceed the budget, so the case starts forty of its
+# own: they are the unprivileged user's, and they are what the cluster counts.
+case: a map clusters the processes it did not draw by their user when asked to
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  for _ in $(seq 40); do sleep 90 & done
+  me=$(id -un)
+  ono -c 'enter compute; enter processes; map --cluster user' > /tmp/by-user.txt
+  ono -c 'enter compute; enter processes; map --cluster user --json' > /tmp/by-user.json
+  ono -c 'enter compute; enter processes; map' > /tmp/by-collection.txt
+
+  echo "== asked for, the user is the dimension (§8.2, ADR-0981) =="
+  prove u1 "the rest is one cluster named after the collection and the user" \
+    "grep -qE '\\+ [0-9]+ more in processes \\(user $me\\)' /tmp/by-user.txt"
+  prove u2 "the cluster's grouping is the dimension's word" \
+    "grep -qF '\"grouping\":\"user\"' /tmp/by-user.json"
+  prove u3 "every process is drawn or counted (§23.6)" \
+    "test \"\$(grep -oE '\"hidden\":\{\"count\":[0-9]+' /tmp/by-user.json | grep -oE '[0-9]+\$')\" = \"\$(grep -oE '\"clustered\":[0-9]+' /tmp/by-user.json | grep -oE '[0-9]+\$')\""
+
+  echo "== without the option the dimension is the canonical collection =="
+  prove u4 "the default map counts the rest with the collection" \
+    "grep -qE '\\+ [0-9]+ more in processes\$' /tmp/by-collection.txt"
+
+  echo "== a dimension the map does not know is refused (§40) =="
+  prove u5 "the refusal names the dimensions there are" \
+    "ono -c 'map --cluster colour' 2>&1 | grep -qF 'user, service, container'"
+
+  kill $(jobs -p) 2>/dev/null || true
+  wait 2>/dev/null || true
+  echo done=ok
+exit: 0
+stdout-contains: PROVED u1
+stdout-contains: PROVED u2
+stdout-contains: PROVED u3
+stdout-contains: PROVED u4
+stdout-contains: PROVED u5
+stdout-contains: done=ok
+stdout-not-contains: FAILED

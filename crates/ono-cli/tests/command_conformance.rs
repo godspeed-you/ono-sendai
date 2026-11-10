@@ -8,7 +8,7 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 131 examples run; 240 are not run, each for the reason listed at the end of this file.
+//! 131 examples run; 241 are not run, each for the reason listed at the end of this file.
 //! 51 of the examples that run may produce no value in a fresh environment, each with the reason it carries; every other one must produce at least one.
 //!
 //! Commands no example of which runs (144):
@@ -1951,6 +1951,7 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.place.map` `map --json` — runs `ono.place.map`, which declares privilege `conditional`
 // - `ono.place.map` `map --zoom 1` — runs `ono.place.map`, which declares privilege `conditional`
 // - `ono.place.map` `map --all --type process` — runs `ono.place.map`, which declares privilege `conditional`
+// - `ono.place.map` `map --cluster user` — runs `ono.place.map`, which declares privilege `conditional`
 // - `ono.place.map` `map --live --json` — runs `ono.place.map`, which declares privilege `conditional`
 // - `ono.place.back` `back` — exempt: returns to the previous place, and a fresh session has not moved (spatial.history_empty).
 // - `ono.place.back` `follow socket :443; back` — runs `ono.place.follow`, which declares privilege `conditional`

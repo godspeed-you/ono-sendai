@@ -370,3 +370,140 @@ fn should_cluster_the_entries_of_a_directory_by_kind_when_they_exceed_the_budget
         "spec §8.2/§23.6: every entry is either drawn or counted by a cluster"
     );
 }
+
+/// `per_user` processes for each of the named users, under the processes collection, with the
+/// users themselves observed — the horizon of `compute/processes` on a shared host.
+fn processes_of(users: &[(i64, &str)], per_user: usize) -> (SpatialIndex, MapHorizon) {
+    let user = |uid: i64, name: &str| {
+        common::record(
+            "ono.user/1",
+            &[
+                ("uid", ono_value::Value::Int(i128::from(uid))),
+                ("name", ono_value::Value::string(name)),
+            ],
+        )
+    };
+    let mut records = Vec::new();
+    for (uid, name) in users {
+        records.push(user(*uid, name));
+    }
+    let mut pid = 2000;
+    for (uid, name) in users {
+        for step in 0..per_user {
+            pid += 1;
+            records.push(common::with(
+                process(pid, &format!("{name}-{step:03}"), "running"),
+                "user",
+                ono_value::Value::Record(std::sync::Arc::new(user(*uid, name))),
+            ));
+        }
+    }
+    let mut index = index();
+    let mut bridge = bridge();
+    bridge.absorb(&mut index, &records, NOW);
+
+    let processes = SpatialId::of_space("compute.processes");
+    let mut horizon = MapHorizon::new();
+    horizon.place(HorizonPlace::new(processes.clone(), 0, None));
+    for entry in index.of_type(SpatialType::Process) {
+        horizon.place(HorizonPlace::new(
+            entry.object().spatial_id().clone(),
+            1,
+            Some((processes.clone(), HierarchyKind::Grouping)),
+        ));
+    }
+    (index, horizon)
+}
+
+#[test]
+fn should_cluster_by_the_user_when_the_map_is_asked_to() {
+    // §8.2 lists the user among the allowed clustering dimensions. Asked for it, the processes
+    // the budget did not draw are grouped by who runs them — a fact each process record states
+    // — and each cluster says how many it stands for (ADR-0981).
+    let (index, horizon) = processes_of(&[(0, "root"), (1000, "ada"), (33, "www-data")], 40);
+    let center = SpatialId::of_space("compute.processes");
+    let project = |request: &MapRequest| {
+        ono_spatial_query::project_map(
+            &index,
+            &center,
+            &horizon,
+            request,
+            &ono_spatial_index::PinRegistry::new(),
+            MAP_NODE_BUDGET,
+            NOW,
+        )
+    };
+
+    let by_user = project(&MapRequest::new().cluster_by(ono_spatial_query::ClusterDimension::User));
+    let mut clusters: Vec<(String, &str)> = by_user
+        .clusters
+        .iter()
+        .map(|cluster| (cluster.label.clone(), cluster.grouping))
+        .collect();
+    clusters.sort();
+    assert_eq!(
+        clusters,
+        [
+            ("processes (user ada)".to_owned(), "user"),
+            ("processes (user root)".to_owned(), "user"),
+            ("processes (user www-data)".to_owned(), "user"),
+        ],
+        "one cluster per user, named after the collection and the user"
+    );
+    let clustered: usize = by_user
+        .clusters
+        .iter()
+        .map(|cluster| cluster.members())
+        .sum();
+    assert_eq!(
+        clustered + by_user.nodes.len(),
+        121,
+        "spec §8.2/§23.6: every process is drawn or counted by a cluster"
+    );
+
+    let default = project(&MapRequest::new());
+    assert!(
+        default
+            .clusters
+            .iter()
+            .all(|cluster| cluster.grouping == "canonical_collection"),
+        "without the request the dimension stays the canonical collection"
+    );
+}
+
+#[test]
+fn should_keep_the_largest_groups_and_count_the_rest_with_the_collection() {
+    // §34.2: a dimension with a group per object would trade one long list for another. The
+    // largest groups get a cluster each; what is left is counted with its collection, so
+    // nothing is dropped and the list of clusters stays short (ADR-0981).
+    let users: Vec<(i64, String)> = (0..20).map(|n| (3000 + n, format!("user{n:02}"))).collect();
+    let named: Vec<(i64, &str)> = users
+        .iter()
+        .map(|(uid, name)| (*uid, name.as_str()))
+        .collect();
+    let (index, horizon) = processes_of(&named, 6);
+    let center = SpatialId::of_space("compute.processes");
+
+    let map = ono_spatial_query::project_map(
+        &index,
+        &center,
+        &horizon,
+        &MapRequest::new().cluster_by(ono_spatial_query::ClusterDimension::User),
+        &ono_spatial_index::PinRegistry::new(),
+        MAP_NODE_BUDGET,
+        NOW,
+    );
+
+    let along = map
+        .clusters
+        .iter()
+        .filter(|cluster| cluster.grouping == "user")
+        .count();
+    assert_eq!(along, 8, "the eight largest groups, got {:?}", map.clusters);
+    let clustered: usize = map.clusters.iter().map(|cluster| cluster.members()).sum();
+    assert_eq!(
+        clustered + map.nodes.len(),
+        121,
+        "every process is drawn or counted"
+    );
+}

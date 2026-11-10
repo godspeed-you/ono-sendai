@@ -153,6 +153,63 @@ pub struct MapRequest {
     types: Vec<SpatialType>,
     expand: Vec<String>,
     focus: Option<String>,
+    cluster: Option<ClusterDimension>,
+}
+
+/// A dimension of §8.2 the caller may ask the map to cluster along, beside the canonical
+/// collection every place has (ADR-0981).
+///
+/// Each is a relation the object's own record states — who runs a process, which service
+/// controls it, which container holds it — so a cluster along it groups by an observed fact
+/// and never by a guess (§2.16).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClusterDimension {
+    /// By the user a process runs as (`process.run_by_user`).
+    User,
+    /// By the service that controls a process (`service.controls_process`).
+    Service,
+    /// By the container that holds a process (`container.contains_process`).
+    Container,
+}
+
+impl ClusterDimension {
+    /// The word `map --cluster` takes and `ono.map-cluster/1`'s `grouping` carries.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ClusterDimension::User => "user",
+            ClusterDimension::Service => "service",
+            ClusterDimension::Container => "container",
+        }
+    }
+
+    /// The dimension with this name, or `None`.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        [Self::User, Self::Service, Self::Container]
+            .into_iter()
+            .find(|dimension| dimension.as_str() == name)
+    }
+
+    /// The declared relation whose far end is the group a place belongs to.
+    const fn relation(self) -> &'static str {
+        match self {
+            ClusterDimension::User => "process.run_by_user",
+            ClusterDimension::Service => "service.controls_process",
+            ClusterDimension::Container => "container.contains_process",
+        }
+    }
+
+    /// The provider target that serves the groups, which the shell asks so the relation the
+    /// records state can settle on a place.
+    #[must_use]
+    pub const fn target(self) -> &'static str {
+        match self {
+            ClusterDimension::User => "user",
+            ClusterDimension::Service => "service",
+            ClusterDimension::Container => "container",
+        }
+    }
 }
 
 impl MapRequest {
@@ -210,6 +267,20 @@ impl MapRequest {
     pub fn focus(mut self, node: impl Into<String>) -> Self {
         self.focus = Some(node.into());
         self
+    }
+
+    /// `--cluster <dimension>` — group what the budget did not draw along one of §8.2's other
+    /// dimensions, where the objects state it.
+    #[must_use]
+    pub fn cluster_by(mut self, dimension: ClusterDimension) -> Self {
+        self.cluster = Some(dimension);
+        self
+    }
+
+    /// The dimension the caller asked to cluster along, where it asked for one.
+    #[must_use]
+    pub fn cluster_dimension(&self) -> Option<ClusterDimension> {
+        self.cluster
     }
 
     /// Whether this request expands a cluster — a §8.3 view action over a map the reader is
@@ -445,7 +516,7 @@ pub fn project(
 
     // 4. What did not fit is clustered rather than truncated (§8.2), and a cluster the caller
     //    named is opened instead — a view action that leaves the place alone (§8.3).
-    let (clusters, opened) = expand(cluster(index, &rest), &request.expand);
+    let (clusters, opened) = expand(cluster(index, &rest, request.cluster), &request.expand);
     for id in opened {
         if let Some(place) = rest.iter().find(|place| place.id == id) {
             drawn.push(place.clone());
@@ -706,6 +777,9 @@ fn split(places: Vec<HorizonPlace>, budget: usize) -> (Vec<HorizonPlace>, Vec<Ho
     (drawn, rest)
 }
 
+/// How many clusters a requested dimension may form before the rest stay with their collection.
+const DIMENSION_CLUSTERS: usize = 8;
+
 /// The clusters that stand for what the budget could not draw (§8.2).
 ///
 /// The dimension is §8.2's first: the canonical collection each object is filed under. It is the
@@ -715,14 +789,75 @@ fn split(places: Vec<HorizonPlace>, budget: usize) -> (Vec<HorizonPlace>, Vec<Ho
 /// The entries of a directory are the exception §15.4 asks for: they are grouped along §8.2's
 /// directory subtree, one cluster per kind of entry, so a crowded directory says how many files
 /// and how many directories it hides rather than how many "more" (ADR-0976).
-fn cluster(index: &SpatialIndex, rest: &[HorizonPlace]) -> Vec<MapCluster> {
-    let mut groups: BTreeMap<(&'static str, String), (String, Vec<SpatialId>)> = BTreeMap::new();
-    for place in rest {
-        let parent = place
+fn cluster(
+    index: &SpatialIndex,
+    rest: &[HorizonPlace],
+    dimension: Option<ClusterDimension>,
+) -> Vec<MapCluster> {
+    let parent_of = |place: &HorizonPlace| {
+        place
             .parent
             .as_ref()
             .map(|(parent, _)| parent.clone())
-            .or_else(|| crate::resolve::parent_of(index, &place.id));
+            .or_else(|| crate::resolve::parent_of(index, &place.id))
+    };
+    // The dimension the caller asked for, where a place's own record states it: the group is
+    // the far end of the relation, under the collection the place is filed in. A place that
+    // states none stays with its collection (§8.2, ADR-0981).
+    let along = |place: &HorizonPlace, parent: Option<&SpatialId>| {
+        let dimension = dimension?;
+        let group = index
+            .get(&place.id)?
+            .edges()
+            .iter()
+            .find(|edge| edge.relation().as_str() == dimension.relation())
+            .and_then(|edge| edge.other_end(&place.id))?;
+        let collection = parent.map_or_else(String::new, |parent| label_of(index, parent));
+        Some((
+            dimension.as_str(),
+            format!(
+                "{}/{group}",
+                parent.map_or_else(String::new, ToString::to_string)
+            ),
+            format!(
+                "{collection} ({} {})",
+                dimension.as_str(),
+                label_of(index, group)
+            )
+            .trim_start()
+            .to_owned(),
+        ))
+    };
+    // A dimension with many groups would trade one long list for another, so only the largest
+    // groups get a cluster of their own; the rest stay counted with their collection (§34.2).
+    let mut sizes: BTreeMap<String, usize> = BTreeMap::new();
+    for place in rest {
+        if let Some((_, key, _)) = along(place, parent_of(place).as_ref()) {
+            *sizes.entry(key).or_default() += 1;
+        }
+    }
+    let mut largest: Vec<(usize, String)> =
+        sizes.into_iter().map(|(key, size)| (size, key)).collect();
+    largest.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    let kept: BTreeSet<String> = largest
+        .into_iter()
+        .take(DIMENSION_CLUSTERS)
+        .map(|(_, key)| key)
+        .collect();
+
+    let mut groups: BTreeMap<(&'static str, String), (String, Vec<SpatialId>)> = BTreeMap::new();
+    for place in rest {
+        let parent = parent_of(place);
+        if let Some((grouping, key, label)) =
+            along(place, parent.as_ref()).filter(|(_, key, _)| kept.contains(key))
+        {
+            groups
+                .entry((grouping, key))
+                .or_insert_with(|| (label, Vec::new()))
+                .1
+                .push(place.id.clone());
+            continue;
+        }
         let (grouping, key, label) = match parent {
             Some(parent) if type_of(index, &parent) == SpatialType::Directory => {
                 let kind = type_of(index, &place.id);

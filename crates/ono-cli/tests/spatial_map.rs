@@ -1387,3 +1387,37 @@ fn should_draw_the_entries_of_a_directory_and_cluster_the_rest_by_kind() {
         "spec §8.2/§23.6: every entry is drawn or counted by a cluster — none is dropped"
     );
 }
+
+#[test]
+fn should_cluster_the_processes_by_their_user_when_the_map_is_asked_to() {
+    // §8.2 lists the user among the dimensions a map may cluster along. `map --cluster user`
+    // groups the processes the budget did not draw by who runs them: this host runs more
+    // processes than the text map draws, the test's own user runs some of them, and each
+    // cluster says which user it stands for and how many processes (ADR-0981).
+    let document = map_at("enter compute; enter processes; ", "--cluster user");
+    let by_user: Vec<&Value> = clusters(&document)
+        .iter()
+        .filter(|cluster| text(cluster, "grouping", "§8.2") == "user")
+        .collect();
+    assert!(
+        !by_user.is_empty(),
+        "spec §8.2: asked for, the user is the dimension the rest is clustered along, got {:?}",
+        clusters(&document)
+    );
+    for cluster in &by_user {
+        let label = text(cluster, "label", "§8.2");
+        assert!(
+            label.starts_with("processes (user ") && cluster["members"].as_i64() > Some(0),
+            "spec §8.2: a cluster names its collection and its user and counts its members, got \
+             {cluster:?}"
+        );
+    }
+
+    let refused = ono("map --cluster colour");
+    assert!(
+        !refused.status().is_success() && refused.stderr().contains("user, service, container"),
+        "a dimension the map does not know is refused, and the refusal names the ones it does; \
+         got {:?}",
+        refused.stderr()
+    );
+}
