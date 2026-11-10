@@ -137,6 +137,8 @@ pub(super) fn run_native_segment(
     // capture — the one fact a full-screen view may not decide for itself (spec v0.4 §29.1).
     let displays = last && stage_has_no_redirection && !capturing;
     let materialization = crate::eval::materialize::limits(session);
+    // Whether a producer may be offered the comparisons of the `where` after it (ADR-0980).
+    let pushdown = session.settings().flag("providers.pushdown") != Some(false);
     // Which stages of this segment run a block, and where each one stands in `bound`.
     //
     // A block stage is bound like any other — same contract, same arguments, same scope — and
@@ -276,6 +278,13 @@ pub(super) fn run_native_segment(
                 .with_adapters(std::sync::Arc::clone(&adapters), resolver.clone())
                 .with_temporal(temporal, registry)
                 .with_display(displays && position == final_stage);
+            // ADR-0980: what the stage directly after this one filters on is offered to this
+            // one. Only a producer reads the offer, and only for comparisons its provider
+            // declared; `providers.pushdown = false` withdraws it.
+            if pushdown && let Some((next, following)) = bound.get(position + 1) {
+                invocation =
+                    invocation.with_pushable(ono_command::pushable_comparisons(next, following));
+            }
             if let Some(previous) = stream.take() {
                 invocation = invocation.with_input(previous);
             }

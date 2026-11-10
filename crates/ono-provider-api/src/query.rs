@@ -14,6 +14,7 @@ pub struct Query {
     selectors: Vec<Selector>,
     options: Vec<(String, Value)>,
     limit: Option<usize>,
+    pushed: Vec<crate::Comparison>,
     directory: Option<std::sync::Arc<std::path::Path>>,
 }
 
@@ -27,6 +28,7 @@ impl Query {
             selectors: Vec::new(),
             options: Vec::new(),
             limit: None,
+            pushed: Vec::new(),
             directory: None,
         }
     }
@@ -73,6 +75,27 @@ impl Query {
     pub fn limit(mut self, limit: usize) -> Self {
         self.limit = Some(limit);
         self
+    }
+
+    /// Hands the provider a comparison the pipeline will decide anyway (ADR-0980).
+    ///
+    /// Unlike a selector, a pushed comparison is advice: it is no part of what the query asks for
+    /// and [`matches`](Self::matches) does not read it. The stage that follows the producer
+    /// decides the same comparison on every record that comes back, so a provider may use it to
+    /// ask its source for less, in part or in full, or leave it alone. It may only ever withhold
+    /// records the comparison rejects. The caller pushes a comparison only where the provider
+    /// declared it ([`Provider::pushdown`](crate::Provider::pushdown)).
+    #[must_use]
+    pub fn pushing(mut self, comparison: crate::Comparison) -> Self {
+        self.pushed.push(comparison);
+        self
+    }
+
+    /// The comparisons handed over with the query, in the order the predicate wrote them; every
+    /// one of them holds for a record the pipeline keeps.
+    #[must_use]
+    pub fn pushed(&self) -> &[crate::Comparison] {
+        &self.pushed
     }
 
     /// Says which directory a relative or omitted path in this query means.

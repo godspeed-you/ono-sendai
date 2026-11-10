@@ -25,6 +25,7 @@ mod capability;
 mod events;
 mod label;
 mod object;
+mod pushdown;
 mod query;
 mod registry;
 mod temporal;
@@ -34,6 +35,7 @@ pub use capability::{Availability, Capability, Risk};
 pub use events::{EventSink, EventStream};
 pub use label::{declared_label, endpoint_label, endpoint_text, label_of};
 pub use object::{EventKind, ObjectEvent, ObjectId, ObjectRef};
+pub use pushdown::{Comparison, ComparisonOperator, LiteralType, PushdownCapability};
 pub use query::{Query, Selector, anchor_path};
 pub use registry::ProviderRegistry;
 pub use temporal::{TemporalCapabilities, TimeWindow, unsupported_history};
@@ -126,6 +128,19 @@ pub trait Provider: Send + Sync + std::fmt::Debug {
     /// its silence as coverage (§7.4, §21.5).
     fn temporal(&self) -> TemporalCapabilities {
         TemporalCapabilities::none()
+    }
+
+    /// The comparisons this provider's source evaluates natively, by target and field (ADR-0980).
+    ///
+    /// A `where` that directly follows the producer hands the provider the comparisons declared
+    /// here, through [`Query::pushed`]; the pipeline decides the whole predicate again over
+    /// whatever comes back. The default declares nothing, and a provider that declares nothing is
+    /// never handed a comparison: it is asked exactly as it was before the capability existed.
+    ///
+    /// A declaration is a promise about meaning, so it is made per field and per operator, in
+    /// `docs/contracts/providers/` first, and the conformance suite holds the two to each other.
+    fn pushdown(&self) -> Vec<PushdownCapability> {
+        Vec::new()
     }
 
     /// The objects or events matching `query` as they were within `window` (spec v0.5 §21.4).

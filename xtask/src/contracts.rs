@@ -96,6 +96,7 @@ pub fn check_contracts(root: &Path) -> Vec<Problem> {
     problems.extend(check_spatial_implementation(root));
     problems.extend(check_provider_claims(root));
     problems.extend(check_provider_temporal_claims(root));
+    problems.extend(check_provider_pushdown_claims(root));
     problems.extend(check_identity_tokens(root));
     problems.extend(check_kuang_contracts(root));
     problems.extend(check_hardening_contracts(root));
@@ -4499,6 +4500,217 @@ pub fn check_provider_temporal_claims(root: &Path) -> Vec<Problem> {
                 ));
             }
         }
+    }
+    problems
+}
+
+/// Checks the `pushdown:` block a provider may declare (ADR-0980).
+///
+/// A provider that declares one promises that its source decides a comparison on a field exactly
+/// as a `where` would, so the pipeline may hand the comparison over and let the source return
+/// less. The promise is about meaning, and the part of it a document can break is checked here:
+///
+/// - the block is optional. A provider that says nothing is handed nothing;
+/// - every entry names a `target` the provider answers, a `field` of that target's schema, the
+///   `type` of literal it is compared with and the `operators` the source evaluates;
+/// - the field is `required` and not `nullable`. A comparison with an unknown value is neither
+///   true nor false, and the `where` counts the record it could not decide (ADR-0014); a source
+///   that filters has no third answer, so the record would disappear uncounted;
+/// - the `type` is the field's own and one of `int`, `string`, `bool` — the literals the v1
+///   predicate subset can carry. An enum's order, a unit's scale and a timestamp's zone are each
+///   a meaning a source may not share (ADR-0222 for `level`);
+/// - the operators come from the closed vocabulary of comparisons, each at most once, and a
+///   field of a target is declared once.
+///
+/// Whether the code declares what the document does is the conformance suite's question
+/// (`xtask conformance`); whether the source really evaluates it that way is the provider's own
+/// equivalence test.
+#[must_use]
+pub fn check_provider_pushdown_claims(root: &Path) -> Vec<Problem> {
+    /// The comparison operators of the language, as a declaration spells them.
+    const OPERATORS: [&str; 6] = ["==", "!=", "<", "<=", ">", ">="];
+    /// The literal types the predicate subset of ADR-0980 carries.
+    const LITERALS: [&str; 3] = ["int", "string", "bool"];
+
+    let contracts = root.join("docs").join("contracts");
+    let providers = contracts.join("providers");
+    if !providers.is_dir() {
+        return Vec::new();
+    }
+    let schema_of_target = target_schemas(&contracts);
+    let mut problems = Vec::new();
+    for path in yaml_files(&providers) {
+        let location = relative(root, &path);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+            continue;
+        };
+        for provider in sequence(&document, "providers") {
+            let id = string_at(provider, "id").unwrap_or_default();
+            let Some(block) = provider.get("pushdown") else {
+                continue;
+            };
+            let Some(entries) = block.as_sequence() else {
+                problems.push(Problem::new(
+                    location.clone(),
+                    format!(
+                        "`{id}` declares a `pushdown:` that is not a list of entries, each with \
+                         `target`, `field`, `type` and `operators` (ADR-0980)"
+                    ),
+                ));
+                continue;
+            };
+            let targets = string_sequence(provider, "targets");
+            let mut seen = BTreeSet::new();
+            for entry in entries {
+                let mut complete = true;
+                for key in ["target", "field", "type", "operators"] {
+                    if entry.get(key).is_none() {
+                        complete = false;
+                        problems.push(Problem::new(
+                            location.clone(),
+                            format!(
+                                "a `pushdown:` entry of `{id}` has no `{key}`; an entry states \
+                                 `target`, `field`, `type` and `operators` (ADR-0980)"
+                            ),
+                        ));
+                    }
+                }
+                if !complete {
+                    continue;
+                }
+                let target = string_at(entry, "target").unwrap_or_default();
+                let field = string_at(entry, "field").unwrap_or_default();
+                let ty = string_at(entry, "type").unwrap_or_default();
+                let about = format!("`{id}` declares a pushdown on `{field}` of `{target}`");
+
+                if !seen.insert((target.clone(), field.clone())) {
+                    problems.push(Problem::new(
+                        location.clone(),
+                        format!("{about} more than once; one entry carries all of its operators"),
+                    ));
+                }
+                if !targets.contains(&target) {
+                    problems.push(Problem::new(
+                        location.clone(),
+                        format!(
+                            "{about}, and `{id}` does not answer `{target}`: its targets are {}",
+                            targets.join(", ")
+                        ),
+                    ));
+                    continue;
+                }
+                problems.extend(
+                    pushdown_field_problems(
+                        &contracts,
+                        schema_of_target.get(&target),
+                        &field,
+                        &ty,
+                        &LITERALS,
+                    )
+                    .into_iter()
+                    .map(|detail| Problem::new(location.clone(), format!("{about}, {detail}"))),
+                );
+
+                let operators = string_sequence(entry, "operators");
+                if operators.is_empty() {
+                    problems.push(Problem::new(
+                        location.clone(),
+                        format!(
+                            "{about} and names no operator; a declaration without one hands \
+                             nothing over and should be left out"
+                        ),
+                    ));
+                }
+                let mut named = BTreeSet::new();
+                for operator in &operators {
+                    if !OPERATORS.contains(&operator.as_str()) {
+                        problems.push(Problem::new(
+                            location.clone(),
+                            format!(
+                                "{about} with the operator `{operator}`, which is not one of {}",
+                                OPERATORS.join(", ")
+                            ),
+                        ));
+                    }
+                    if !named.insert(operator) {
+                        problems.push(Problem::new(
+                            location.clone(),
+                            format!("{about} and names the operator `{operator}` twice"),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    problems
+}
+
+/// The schema id each target of `docs/contracts/targets.yaml` is described by.
+fn target_schemas(contracts: &Path) -> BTreeMap<String, String> {
+    let Ok(text) = std::fs::read_to_string(contracts.join("targets.yaml")) else {
+        return BTreeMap::new();
+    };
+    let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+        return BTreeMap::new();
+    };
+    sequence(&document, "targets")
+        .into_iter()
+        .filter_map(|target| {
+            let schema = target.get("schema").and_then(Yaml::as_str)?;
+            Some((string_at(target, "name")?, schema.to_owned()))
+        })
+        .collect()
+}
+
+/// What is wrong with comparing `field` of the schema `schema` against a literal of type `ty` in
+/// the source, each phrased to follow "declares a pushdown on … of …, ".
+fn pushdown_field_problems(
+    contracts: &Path,
+    schema: Option<&String>,
+    field: &str,
+    ty: &str,
+    literals: &[&str],
+) -> Vec<String> {
+    let Some(schema) = schema else {
+        return vec![
+            "and docs/contracts/targets.yaml gives that target no schema to find the field in"
+                .to_owned(),
+        ];
+    };
+    let declared = schema_file_name(schema)
+        .and_then(|name| std::fs::read_to_string(contracts.join("schemas").join(name)).ok())
+        .and_then(|text| serde_yaml_ng::from_str::<Yaml>(&text).ok());
+    let Some(definition) = declared
+        .as_ref()
+        .and_then(|document| document.get("fields"))
+        .and_then(|fields| fields.get(field))
+    else {
+        return vec![format!("and `{schema}` has no such field")];
+    };
+
+    let mut problems = Vec::new();
+    let required = definition.get("required").and_then(Yaml::as_bool) == Some(true);
+    let nullable = definition.get("nullable").and_then(Yaml::as_bool) == Some(true);
+    if !required || nullable {
+        problems.push(format!(
+            "which `{schema}` does not make `required` and non-nullable. A value that may be \
+             unknown is compared by the pipeline alone: `where` counts the record it could not \
+             decide, and a source that filters would drop it uncounted (ADR-0014)"
+        ));
+    }
+    let actual = string_at(definition, "type").unwrap_or_default();
+    if !literals.contains(&ty) {
+        problems.push(format!(
+            "compared with a `{ty}`; the literals a predicate hands over are {}",
+            literals.join(", ")
+        ));
+    } else if actual != ty {
+        problems.push(format!(
+            "compared with a `{ty}`, and the field is `{actual}` in `{schema}`"
+        ));
     }
     problems
 }

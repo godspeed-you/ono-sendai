@@ -1726,6 +1726,222 @@ fn should_require_this_repositorys_own_providers_to_declare_an_honest_temporal_m
     );
 }
 
+// --- ADR-0980: what a provider declares its source can compare ----------------------------------
+
+/// The pushdown problems of a fixture repository.
+fn pushdown_claim_problems(repo: &Scratch) -> Vec<String> {
+    xtask::contracts::check_provider_pushdown_claims(repo.path())
+        .into_iter()
+        .map(|problem| format!("{} — {}", problem.location, problem.detail))
+        .collect()
+}
+
+/// The consistent registries, with a `process` schema that has one field of each kind a
+/// declaration can get wrong: a required integer, a required string, a nullable integer, an
+/// integer that is neither required nor nullable, and a required byte size.
+fn with_comparable_fields() -> Scratch {
+    let repo = consistent();
+    repo.write(
+        "docs/contracts/schemas/process.v1.yaml",
+        "id: ono.process/1\nname: Process\nsummary: A process.\nidentity: [pid]\nfields:\n  pid:\n    \
+         type: int\n    required: true\n    doc: The process id.\n  name:\n    type: string\n    \
+         required: true\n    doc: Its name.\n  parent:\n    type: int\n    nullable: true\n    doc: \
+         Its parent.\n  nice:\n    type: int\n    doc: Its niceness.\n  memory:\n    type: bytes\n    \
+         required: true\n    doc: Its memory.\ndefault_view:\n  columns: [pid]\n",
+    );
+    repo
+}
+
+/// A provider of `process` whose `pushdown:` block is `entries`.
+fn provider_pushing(entries: &str) -> String {
+    format!(
+        "providers:\n  - id: test.source\n    doc: A source.\n    targets: [process]\n    \
+         capabilities: [process.list]\n    schemas: [ono.process/1]\n    conformance:\n      \
+         process: enumerable\n    pushdown:\n{entries}"
+    )
+}
+
+/// The pushdown problems of a provider declaring `entries`.
+fn pushdown_problems_of(entries: &str) -> Vec<String> {
+    let repo = with_comparable_fields();
+    repo.write(
+        "docs/contracts/providers/test.yaml",
+        provider_pushing(entries),
+    );
+    pushdown_claim_problems(&repo)
+}
+
+/// One honest declaration: a required integer, compared the way a source can.
+const PID_CEILING: &str = "      - target: process\n        field: pid\n        type: int\n        \
+                           operators: [\"==\", \"<=\"]\n";
+
+#[test]
+fn should_accept_a_provider_that_declares_no_pushdown_at_all() {
+    // ADR-0980: the declaration is opt-in. Saying nothing is the honest default, and it means the
+    // provider is asked exactly what it was asked before.
+    let repo = with_comparable_fields();
+    repo.write(
+        "docs/contracts/providers/test.yaml",
+        "providers:\n  - id: test.source\n    doc: A source.\n    targets: [process]\n    \
+         capabilities: [process.list]\n    schemas: [ono.process/1]\n    conformance:\n      \
+         process: enumerable\n",
+    );
+    assert_eq!(pushdown_claim_problems(&repo), Vec::<String>::new());
+}
+
+#[test]
+fn should_accept_a_pushdown_on_a_required_field_of_a_declared_type() {
+    let both = format!(
+        "{PID_CEILING}      - target: process\n        field: name\n        type: string\n        \
+         operators: [\"==\", \"!=\"]\n"
+    );
+    assert_eq!(pushdown_problems_of(&both), Vec::<String>::new());
+}
+
+#[test]
+fn should_reject_a_pushdown_for_a_target_the_provider_does_not_answer() {
+    let found = pushdown_problems_of(&PID_CEILING.replace("target: process", "target: service"));
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.contains("`service`") && problem.contains("does not answer")),
+        "got {found:?}"
+    );
+}
+
+#[test]
+fn should_reject_a_pushdown_on_a_field_the_targets_schema_does_not_have() {
+    let found = pushdown_problems_of(&PID_CEILING.replace("field: pid", "field: pidd"));
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.contains("`pidd`") && problem.contains("no such field")),
+        "got {found:?}"
+    );
+}
+
+#[test]
+fn should_reject_a_pushdown_on_a_field_that_may_be_unknown() {
+    // ADR-0014: a comparison with an unknown value is neither true nor false, and the `where`
+    // counts it. A source that filters has no third answer, so the record would vanish uncounted.
+    for field in ["parent", "nice"] {
+        let found =
+            pushdown_problems_of(&PID_CEILING.replace("field: pid", &format!("field: {field}")));
+        assert!(
+            found
+                .iter()
+                .any(|problem| problem.contains(&format!("`{field}`"))
+                    && problem.contains("may be unknown")),
+            "`{field}` is not a required, non-nullable field; got {found:?}"
+        );
+    }
+}
+
+#[test]
+fn should_reject_a_pushdown_whose_type_is_not_the_fields_type() {
+    let found = pushdown_problems_of(&PID_CEILING.replace("type: int", "type: string"));
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.contains("`string`") && problem.contains("is `int`")),
+        "got {found:?}"
+    );
+}
+
+#[test]
+fn should_reject_a_pushdown_on_a_type_no_literal_of_the_subset_has() {
+    let found = pushdown_problems_of(
+        "      - target: process\n        field: memory\n        type: bytes\n        operators: \
+         [\"<=\"]\n",
+    );
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.contains("`bytes`") && problem.contains("int, string, bool")),
+        "got {found:?}"
+    );
+}
+
+#[test]
+fn should_reject_a_pushdown_with_an_operator_outside_the_vocabulary() {
+    let found = pushdown_problems_of(&PID_CEILING.replace("\"<=\"", "\"=~\""));
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.contains("`=~`") && problem.contains("==, !=, <, <=, >, >=")),
+        "got {found:?}"
+    );
+}
+
+#[test]
+fn should_reject_a_pushdown_that_names_no_operator_or_one_twice() {
+    let none = pushdown_problems_of(&PID_CEILING.replace("[\"==\", \"<=\"]", "[]"));
+    assert!(
+        none.iter()
+            .any(|problem| problem.contains("names no operator")),
+        "got {none:?}"
+    );
+
+    let twice = pushdown_problems_of(&PID_CEILING.replace("\"<=\"", "\"==\""));
+    assert!(
+        twice
+            .iter()
+            .any(|problem| problem.contains("`==`") && problem.contains("twice")),
+        "got {twice:?}"
+    );
+}
+
+#[test]
+fn should_reject_two_pushdown_entries_for_the_same_field_of_the_same_target() {
+    let found = pushdown_problems_of(&format!("{PID_CEILING}{PID_CEILING}"));
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.contains("`pid`") && problem.contains("more than once")),
+        "got {found:?}"
+    );
+}
+
+#[test]
+fn should_reject_a_pushdown_entry_that_leaves_a_key_out() {
+    for key in ["target", "field", "type", "operators"] {
+        let without: String = PID_CEILING
+            .split_inclusive('\n')
+            .filter(|line| !line.trim_start().trim_start_matches("- ").starts_with(key))
+            .collect();
+        // Dropping `target` drops the line that opens the entry; reopen it on the next one.
+        let entry = if key == "target" {
+            without.replacen("        field", "      - field", 1)
+        } else {
+            without
+        };
+        let found = pushdown_problems_of(&entry);
+        assert!(
+            found
+                .iter()
+                .any(|problem| problem.contains(&format!("no `{key}`"))),
+            "an entry without `{key}` says nothing a check can hold it to; got {found:?}"
+        );
+    }
+}
+
+#[test]
+fn should_require_this_repositorys_own_providers_to_declare_only_sound_pushdowns() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let found = xtask::contracts::check_provider_pushdown_claims(root);
+    assert!(
+        found.is_empty(),
+        "the provider registry declares a pushdown its schemas do not support:\n{}",
+        found
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
 // --- v0.4.1 §34.4: a global acquisition is declared and held to the code (ADR-0947) -----------
 
 /// A fixture repository with one command contract file holding `commands`.

@@ -131,6 +131,49 @@ impl ProviderRegistry {
         Ok(self.provider_for(target)?.temporal())
     }
 
+    /// The comparisons the provider answering for `target` evaluates natively on it (ADR-0980).
+    ///
+    /// Empty when nothing answers for the target, and for every provider that declares nothing:
+    /// either way no comparison is handed over, and the query is asked as it always was.
+    #[must_use]
+    pub fn pushdown_of(&self, target: &str) -> Vec<crate::PushdownCapability> {
+        self.provider_for(target)
+            .map(|provider| provider.pushdown())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|capability| capability.target() == target)
+            .collect()
+    }
+
+    /// The comparisons of `offered` a query for `target` hands the provider answering for it: the
+    /// leading ones that provider declared (ADR-0980).
+    ///
+    /// `offered` is what the stage after the producer decides, in the order it decides it. The
+    /// first comparison the provider did not declare ends the handover: it is evaluated before
+    /// everything after it and may fail on a record a later comparison would have withheld. The
+    /// producer that builds the query and the plan that describes it both ask here, so the plan
+    /// cannot say something else than the run does.
+    #[must_use]
+    pub fn handed_over(
+        &self,
+        target: &str,
+        offered: &[crate::Comparison],
+    ) -> Vec<crate::Comparison> {
+        if offered.is_empty() {
+            return Vec::new();
+        }
+        let declared = self.pushdown_of(target);
+        offered
+            .iter()
+            .take_while(|comparison| {
+                declared
+                    .iter()
+                    .any(|capability| capability.accepts(target, comparison))
+            })
+            .cloned()
+            .collect()
+    }
+
     /// The objects or events matching `query` as they were within `window` (v0.5 §21.4).
     ///
     /// # Errors

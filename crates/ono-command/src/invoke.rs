@@ -196,6 +196,7 @@ pub struct Invocation<'a> {
     displays: bool,
     temporal: Arc<TemporalContext>,
     verbs: Option<&'a CommandRegistry>,
+    pushable: Vec<ono_provider_api::Comparison>,
 }
 
 /// Resolves a program name to the path the shell would run, for planning (ADR-0056).
@@ -235,6 +236,7 @@ impl<'a> Invocation<'a> {
             displays: false,
             temporal: present_context(),
             verbs: None,
+            pushable: Vec::new(),
         }
     }
 
@@ -251,6 +253,26 @@ impl<'a> Invocation<'a> {
     pub const fn with_display(mut self, displays: bool) -> Self {
         self.displays = displays;
         self
+    }
+
+    /// Tells a producer which comparisons the stage directly after it will decide on every
+    /// record anyway (ADR-0980).
+    ///
+    /// Only the evaluator can know it, for the reason [`with_display`](Self::with_display)
+    /// gives: a command does not see the stages after it. The comparisons are an offer. A
+    /// producer hands its provider the leading ones the provider declared, and none where the
+    /// provider declared nothing; a command that is no producer ignores them.
+    #[must_use]
+    pub fn with_pushable(mut self, comparisons: Vec<ono_provider_api::Comparison>) -> Self {
+        self.pushable = comparisons;
+        self
+    }
+
+    /// The comparisons the next stage decides on every record, in the order its predicate
+    /// writes them (ADR-0980). Empty unless the evaluator offered some.
+    #[must_use]
+    pub fn pushable(&self) -> &[ono_provider_api::Comparison] {
+        &self.pushable
     }
 
     /// Whether this stage's values will be shown to the user (spec v0.4 §29.1).
@@ -413,6 +435,7 @@ impl<'a> Invocation<'a> {
             displays: self.displays,
             temporal: Arc::clone(&self.temporal),
             verbs: self.verbs,
+            pushable: std::mem::take(&mut self.pushable),
         }
     }
 }

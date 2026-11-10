@@ -71,6 +71,7 @@ async fn should_advertise_exactly_what_container_engine_declares() {
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -164,6 +165,7 @@ async fn should_advertise_exactly_what_linux_netlink_serving_interface_declares(
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -282,6 +284,7 @@ async fn should_advertise_exactly_what_linux_netlink_serving_route_declares() {
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -343,6 +346,7 @@ async fn should_advertise_exactly_what_linux_netlink_serving_neighbor_declares()
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -403,6 +407,7 @@ async fn should_advertise_exactly_what_linux_sock_diag_declares() {
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -498,6 +503,7 @@ async fn should_advertise_exactly_what_linux_packages_declares() {
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -592,6 +598,7 @@ async fn should_advertise_exactly_what_linux_packages_rpm_declares() {
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -685,6 +692,7 @@ async fn should_advertise_exactly_what_linux_procfs_declares() {
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -815,6 +823,7 @@ async fn should_advertise_exactly_what_linux_fs_declares() {
             causal_tokens: false,
             checkpointable: false,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -895,6 +904,7 @@ async fn should_advertise_exactly_what_linux_nss_declares() {
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -983,6 +993,7 @@ async fn should_advertise_exactly_what_ono_session_declares() {
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -1054,6 +1065,7 @@ async fn should_advertise_exactly_what_ono_shell_declares() {
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -1656,6 +1668,7 @@ async fn should_advertise_exactly_what_linux_mountinfo_declares() {
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -1753,6 +1766,7 @@ async fn should_advertise_exactly_what_linux_sysfs_declares() {
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -1811,6 +1825,7 @@ async fn should_advertise_exactly_what_linux_kernel_declares() {
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -1985,6 +2000,7 @@ async fn should_advertise_exactly_what_linux_resolver_declares() {
             causal_tokens: false,
             checkpointable: false,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -2039,6 +2055,7 @@ async fn should_advertise_exactly_what_ono_probe_declares() {
             causal_tokens: false,
             checkpointable: false,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -2101,6 +2118,7 @@ async fn should_advertise_exactly_what_systemd_declares() {
             causal_tokens: true,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -2163,6 +2181,7 @@ async fn should_advertise_exactly_what_systemd_journal_declares() {
             causal_tokens: false,
             checkpointable: false,
         },
+        pushdown: &[],
     }).await;
 }
 
@@ -2263,6 +2282,7 @@ async fn should_advertise_exactly_what_systemd_logind_declares() {
             causal_tokens: false,
             checkpointable: true,
         },
+        pushdown: &[],
     }).await;
 }
 

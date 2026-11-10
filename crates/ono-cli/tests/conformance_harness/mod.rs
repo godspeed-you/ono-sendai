@@ -63,6 +63,22 @@ pub struct Surface {
     pub identity_token: Option<&'static str>,
     /// What it may say about time, as its `temporal:` block declares it (v0.5 §21.1).
     pub temporal: TemporalClaim,
+    /// The comparisons its source evaluates, as its `pushdown:` block declares them (ADR-0980).
+    /// Empty for a provider that declares none.
+    pub pushdown: &'static [PushdownClaim],
+}
+
+/// One entry of a provider's `pushdown:` block: a field of a target its source can compare with
+/// a literal (ADR-0980).
+pub struct PushdownClaim {
+    /// The target the entry is about.
+    pub target: &'static str,
+    /// The field the source compares.
+    pub field: &'static str,
+    /// The type of literal it is compared with, as the schemas spell it.
+    pub ty: &'static str,
+    /// The operators the source evaluates, as the language spells them.
+    pub operators: &'static [&'static str],
 }
 
 /// The six boolean capabilities of v0.5 §21.1, as a provider declaration states them.
@@ -307,6 +323,53 @@ pub async fn assert_surface(surface: &Surface) {
             claimed.checkpointable,
         ],
         "`{}` must claim about time exactly what its `temporal:` block declares, in the order          current_snapshot, live_events, historical_query, exhaustive_events, causal_tokens,          checkpointable (v0.5 §21.1, §36.4)",
+        surface.provider
+    );
+
+    // ADR-0980: a comparison is handed to a provider because the provider declared it, and the
+    // declaration the checks read is the YAML one — `spec-check` holds it against the schemas.
+    // The code must say the same, in both directions: a provider that declares more than its
+    // contract is handed comparisons nothing vetted, and one that declares less leaves the
+    // contract describing an optimisation that does not happen.
+    let mut advertised: Vec<(String, String, String, Vec<String>)> = provider
+        .pushdown()
+        .iter()
+        .map(|capability| {
+            let mut operators: Vec<String> = capability
+                .operators()
+                .iter()
+                .map(|operator| operator.symbol().to_owned())
+                .collect();
+            operators.sort();
+            (
+                capability.target().to_owned(),
+                capability.field().to_owned(),
+                capability.literal().name().to_owned(),
+                operators,
+            )
+        })
+        .collect();
+    advertised.sort();
+    let mut declared: Vec<(String, String, String, Vec<String>)> = surface
+        .pushdown
+        .iter()
+        .map(|claim| {
+            let mut operators: Vec<String> =
+                claim.operators.iter().map(|op| (*op).to_owned()).collect();
+            operators.sort();
+            (
+                claim.target.to_owned(),
+                claim.field.to_owned(),
+                claim.ty.to_owned(),
+                operators,
+            )
+        })
+        .collect();
+    declared.sort();
+    assert_eq!(
+        advertised, declared,
+        "`{}` must declare in code exactly the comparisons its `pushdown:` block declares: \
+         target, field, literal type and operators (ADR-0980)",
         surface.provider
     );
 }

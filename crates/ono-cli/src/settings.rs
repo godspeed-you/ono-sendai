@@ -681,6 +681,13 @@ pub const CATALOGUE: &[SettingSpec] = &[
         range: None,
     },
     SettingSpec {
+        key: "providers.pushdown",
+        ty: SettingType::Bool,
+        description: "Whether a `where` directly after a provider-backed command hands the provider the comparisons it declared it can evaluate natively (ADR-0980). The pipeline decides the whole predicate either way; switching this off makes every provider produce all of its records again.",
+        default: DefaultValue::Bool(true),
+        range: None,
+    },
+    SettingSpec {
         key: "recovery.prefer_read_only_snapshots",
         ty: SettingType::Bool,
         description: "Whether recovery snapshots are made read-only where the mechanism allows it (v0.6 §14.5, §53). A writable recovery point is not the state that was captured.",

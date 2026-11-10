@@ -53,6 +53,17 @@ impl CommandImpl for ProviderProducer {
         if self.follow {
             query = query.option("follow", ono_value::Value::Bool(true));
         }
+        // ADR-0980: the stage after this one decides these comparisons on every record. The
+        // provider is handed the leading ones it declared for the target, so it can ask its
+        // source for less; the first one it did not declare ends the handover, because that one
+        // is evaluated before everything after it and may fail on a record a later comparison
+        // would have withheld.
+        for comparison in ctx
+            .providers()
+            .handed_over(query.target_name(), ctx.pushable())
+        {
+            query = query.pushing(comparison);
+        }
         let stream = ctx.providers().snapshot(&query)?;
         Ok(Outcome::Values(stream))
     }

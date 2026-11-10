@@ -58,8 +58,18 @@ struct Declaration {
     identity_strategy: Option<String>,
     /// The keys of [`TEMPORAL_KEYS`] this provider's `temporal:` block declares as true.
     temporal: BTreeSet<String>,
+    /// The comparisons its `pushdown:` block says its source evaluates (ADR-0980).
+    pushdown: Vec<PushdownDecl>,
     /// The Rust identifier fragment this entry's tests are named after.
     ident: String,
+}
+
+/// One entry of a provider's `pushdown:` block.
+struct PushdownDecl {
+    target: String,
+    field: String,
+    ty: String,
+    operators: Vec<String>,
 }
 
 /// One schema, as `docs/contracts/schemas/*.v1.yaml` fixes it.
@@ -290,6 +300,22 @@ fn write_surface(
         );
     }
     let _ = writeln!(body, "        }},");
+    if declaration.pushdown.is_empty() {
+        let _ = writeln!(body, "        pushdown: &[],");
+    } else {
+        let _ = writeln!(body, "        pushdown: &[");
+        for claim in &declaration.pushdown {
+            let _ = writeln!(
+                body,
+                "            harness::PushdownClaim {{ target: \"{}\", field: \"{}\", ty: \"{}\", operators: &[{}] }},",
+                claim.target,
+                claim.field,
+                claim.ty,
+                quoted(&claim.operators)
+            );
+        }
+        let _ = writeln!(body, "        ],");
+    }
     let _ = writeln!(body, "    }}).await;");
     let _ = writeln!(body, "}}\n");
     Ok(())
@@ -464,6 +490,15 @@ fn read_declarations(spec: &Path) -> Result<Vec<Declaration>, GenerateError> {
                             == Some(true)
                     })
                     .map(ToOwned::to_owned)
+                    .collect(),
+                pushdown: sequence(provider, "pushdown")
+                    .into_iter()
+                    .map(|entry| PushdownDecl {
+                        target: string_at(entry, "target").unwrap_or_default(),
+                        field: string_at(entry, "field").unwrap_or_default(),
+                        ty: string_at(entry, "type").unwrap_or_default(),
+                        operators: string_sequence(entry, "operators"),
+                    })
                     .collect(),
                 identity_strategy: provider
                     .get("spatial")

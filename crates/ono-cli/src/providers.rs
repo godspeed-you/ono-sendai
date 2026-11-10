@@ -220,6 +220,13 @@ impl Provider for TemporalProvider {
         self.inner.temporal()
     }
 
+    fn pushdown(&self) -> Vec<ono_provider_api::PushdownCapability> {
+        // The declaration is the inner provider's. A query at a past coordinate is answered
+        // from the ledger, which reads none of the handed-over comparisons; the `where` that
+        // offered them decides every reconstructed record, as it always does (ADR-0980).
+        self.inner.pushdown()
+    }
+
     fn history(&self, query: &Query, window: &TimeWindow) -> Result<ValueStream, ErrorValue> {
         self.inner.history(query, window)
     }

@@ -60,6 +60,7 @@ mod impls;
 mod invoke;
 mod narrow;
 mod operators;
+mod pushdown;
 mod registry;
 mod suggest;
 
@@ -93,5 +94,6 @@ pub use invoke::{
     Resolver, must_be_awaited, unbound_stable_commands,
 };
 pub use operators::{comparisons_for, operator_symbol};
+pub use pushdown::pushable_comparisons;
 pub use registry::{CommandRegistry, Resolved};
 pub use suggest::closest;
