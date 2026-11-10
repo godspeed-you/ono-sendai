@@ -574,3 +574,45 @@ fn should_leave_a_dimension_the_record_does_not_name_out_of_the_scope() {
         run.output()
     );
 }
+
+#[test]
+fn should_read_the_scope_from_the_package_the_session_loaded() {
+    // ADR-1009 reads a schema's scope from disk when its package is loaded — and read it from
+    // the plugin path the *process* started with, while the session loads packages from its own
+    // (`set env ONO_PLUGIN_PATH`, spec §31.68). Two copies of a package then gave the instance
+    // of one and the scope of the other. The declaration that counts is the one beside the
+    // manifest the instance was loaded from.
+    let home = echo_plugin_home(ECHO, TARGETS);
+    let elsewhere = home.path().join("elsewhere");
+    support::lay_out_echo_package_with(&elsewhere, ECHO, TARGETS, &[]);
+    let package = elsewhere.join(ECHO);
+    let manifest = std::fs::read_to_string(package.join("manifest.yaml")).expect("the manifest");
+    std::fs::write(
+        package.join("manifest.yaml"),
+        manifest.replace(
+            "  targets: [contributions/targets.yaml]",
+            "  targets: [contributions/targets.yaml]\n  schemas: [contributions/schemas.yaml]",
+        ),
+    )
+    .expect("the manifest");
+    std::fs::write(
+        package.join("contributions/schemas.yaml"),
+        "schemas:\n  - id: dev.example.echo.place/1\n    name: EchoPlace\n    scope: [state]\n",
+    )
+    .expect("the schema document");
+    let run = ono_with_plugins(
+        &home,
+        &format!(
+            "set env ONO_PLUGIN_PATH = \"{}\"; get echo-place | where uid == \"u-3\" | enter; \
+             look | to json",
+            elsewhere.display()
+        ),
+    );
+    run.assert_success();
+    assert_eq!(
+        rows(&run)[0]["place"]["scope"].as_str(),
+        Some("plugin:state=degraded"),
+        "the scope is the one the loaded package declares, got {:?}",
+        run.output()
+    );
+}

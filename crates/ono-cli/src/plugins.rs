@@ -412,7 +412,7 @@ pub fn load_plugin_with(
     // `relation.write` contributes no relation at all, so no map has one of its edges to drop.
     crate::spatial::contributions::forget(id);
     if let Some(plugin) = session.plugin(id) {
-        crate::spatial::contributions::adopt(id, &plugin, &shapes);
+        crate::spatial::contributions::adopt(id, &package.directory, &plugin, &shapes);
     }
     Ok(ExitStatus::SUCCESS)
 }

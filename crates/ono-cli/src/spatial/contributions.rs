@@ -45,11 +45,12 @@ fn contributors() -> &'static Mutex<BTreeMap<String, Arc<LoadedPlugin>>> {
 }
 
 /// Takes a freshly loaded package's spatial contributions, if it may make any (§35.5, §36.1).
+/// `directory` is where the package was loaded from.
 ///
 /// The shapes come from the manifest — `contributions.relations: ["process->process"]` — and the
 /// grant from the negotiated contract. A package without the grant is left alone: it is degraded,
 /// `load plugin` says which capability it lacks (§31.17), and no relation of its bears its name.
-pub fn adopt(id: &str, plugin: &Arc<LoadedPlugin>, shapes: &[String]) {
+pub fn adopt(id: &str, directory: &std::path::Path, plugin: &Arc<LoadedPlugin>, shapes: &[String]) {
     use ono_spatial_core::relation::{Awaiting, await_shape, endpoint_type, shape_attributes};
     // A package that has just been loaded may contribute the kind of place another package's
     // shape was waiting for (ADR-1008), whatever this package may contribute itself.
@@ -58,7 +59,7 @@ pub fn adopt(id: &str, plugin: &Arc<LoadedPlugin>, shapes: &[String]) {
     // The scope a package's kinds of place sit in is declared on disk beside their schemas
     // (ADR-1009); it needs no capability, because it says where the package's own places are.
     #[cfg(feature = "kuang")]
-    crate::spatial::lazy::declare_scopes(id);
+    crate::spatial::lazy::declare_scopes(id, directory);
     let Some(granted) = plugin.contract().grant(RELATION_WRITE) else {
         return;
     };

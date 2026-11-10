@@ -161,32 +161,25 @@ struct Declared {
     scope: Vec<String>,
 }
 
-/// Records the scope dimensions the schemas of the installed package `id` declare on disk, so
-/// its places are placed in the scope they belong to (external-system-provider §9.2; ADR-1009).
+/// Records the scope dimensions the schemas of the package `id`, loaded from `directory`, declare
+/// on disk, so its places are placed in the scope they belong to (external-system-provider §9.2;
+/// ADR-1009).
 ///
-/// Called when the package is loaded. The package is found under the plugin path the process
-/// started with, which is the set the registry placeholders were built from (§31.68).
-pub fn declare_scopes(id: &str) {
-    let roots: Vec<std::path::PathBuf> = match std::env::var_os("ONO_PLUGIN_PATH") {
-        Some(path) => std::env::split_paths(&path).collect(),
-        None => std::env::var_os("HOME")
-            .map(|home| std::path::PathBuf::from(home).join(".config/ono/plugins"))
-            .into_iter()
-            .collect(),
-    };
-    for root in roots {
-        let (packages, _) = crate::kuang_host::packages_under(&root);
-        let Some(package) = packages
-            .into_iter()
-            .find(|package| package.manifest.package.id == id)
-        else {
-            continue;
-        };
-        for declared in schema_documents(&package) {
-            let dimensions: Vec<&str> = declared.scope.iter().map(String::as_str).collect();
-            ono_spatial_core::types::declare_scope(&declared.id, &dimensions);
-        }
+/// Called when the package is loaded, with the directory the instance was loaded from — the
+/// session's plugin path, not the one the process started with. A schema outside the package's
+/// own namespace (`<package-id>.`) is another package's to describe (§31.5), and its scope is
+/// ignored.
+pub fn declare_scopes(id: &str, directory: &std::path::Path) {
+    let Ok(Some(package)) = crate::kuang_host::read_package(directory) else {
         return;
+    };
+    let namespace = format!("{id}.");
+    for declared in schema_documents(&package) {
+        if !declared.id.starts_with(&namespace) {
+            continue;
+        }
+        let dimensions: Vec<&str> = declared.scope.iter().map(String::as_str).collect();
+        ono_spatial_core::types::declare_scope(&declared.id, &dimensions);
     }
 }
 
@@ -210,4 +203,101 @@ fn schema_documents(package: &crate::kuang_host::Installed) -> Vec<Declared> {
         .filter_map(|text| serde_yaml_ng::from_str::<Document>(&text).ok())
         .flat_map(|document| document.schemas)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::expect_used,
+        reason = "a test states its preconditions directly (AGENTS.md section 16)"
+    )]
+
+    /// A package on disk whose schema document declares a scope for `schema`.
+    fn package_declaring_a_scope_for(schema: &str) -> ono_testkit::Scratch {
+        let scratch = ono_testkit::scratch();
+        let package = scratch.path().join("dev.example.claimant");
+        std::fs::create_dir_all(package.join("contributions")).expect("the package directory");
+        std::fs::write(
+            package.join("manifest.yaml"),
+            r#"format: kuang-package/1
+package:
+  id: dev.example.claimant
+  name: claimant
+  version: 0.1.0
+  description: Declares scopes.
+  publisher: dev.example
+  license: MIT
+compatibility:
+  kuang_api: ">=11.1 <12"
+  ono_language: ">=0.2"
+  platforms: [linux-amd64, linux-arm64]
+runtime:
+  kind: native-process
+  entry: runtime/claimant
+  memory_max: 64MiB
+  cpu_budget: interactive
+  startup: lazy
+roles: [provider]
+network:
+  outbound: none
+contributions:
+  schemas: [contributions/schemas.yaml]
+"#,
+        )
+        .expect("the manifest");
+        std::fs::write(
+            package.join("contributions/schemas.yaml"),
+            format!("schemas:\n  - id: {schema}\n    name: Claimed\n    scope: [tenant]\n"),
+        )
+        .expect("the schema document");
+        scratch
+    }
+
+    #[test]
+    fn should_ignore_a_scope_a_package_declares_for_a_schema_outside_its_namespace() {
+        // §31.5: `<publisher>.<package>` is its owner's. A package's schema document may describe
+        // the package's own schemas; a scope it declares for another package's schema would
+        // re-scope that package's places (last load wins), so it is ignored.
+        let foreign = ono_spatial_core::types::contribute(
+            "dev.example.victim.thing/1",
+            "VictimThing",
+            "victim-thing",
+            &["uid"],
+            "dev.example.victim",
+            &[],
+            None,
+        );
+        let home = package_declaring_a_scope_for("dev.example.victim.thing/1");
+        super::declare_scopes(
+            "dev.example.claimant",
+            &home.path().join("dev.example.claimant"),
+        );
+        assert!(
+            ono_spatial_core::types::scope_dimensions(foreign).is_empty(),
+            "another package's kind keeps the scope its own package declared"
+        );
+    }
+
+    #[test]
+    fn should_declare_the_scope_a_package_states_for_its_own_schema() {
+        let own = ono_spatial_core::types::contribute(
+            "dev.example.claimant.thing/1",
+            "ClaimantThing",
+            "claimant-thing",
+            &["uid"],
+            "dev.example.claimant",
+            &[],
+            None,
+        );
+        let home = package_declaring_a_scope_for("dev.example.claimant.thing/1");
+        super::declare_scopes(
+            "dev.example.claimant",
+            &home.path().join("dev.example.claimant"),
+        );
+        assert_eq!(
+            ono_spatial_core::types::scope_dimensions(own),
+            &["tenant"],
+            "the package's own kind sits in the scope it declares"
+        );
+    }
 }
