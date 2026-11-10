@@ -39,17 +39,18 @@ run: |
   TAB=$(printf '\t')
 
   mkdir -p /tmp/fixture-141
-  cp "$(command -v sleep)" /tmp/fixture-141/ono-lone-141
-  /tmp/fixture-141/ono-lone-141 150 &
+  cp "$(command -v sleep)" /tmp/fixture-141/zz-lone-141
+  /tmp/fixture-141/zz-lone-141 150 &
   fixture=$!
-  # Enough processes that the root map's thirty nodes cannot hold the fixture as well.
+  # Enough processes that the root map's thirty nodes cannot hold the fixture as well: the map
+  # draws a collection's members in name order, and the fixture's name sorts after `sleep`.
   for _ in $(seq 40); do sleep 150 & done
 
   echo '== the map searches beyond what it drew (§23.3, ADR-0984) =='
   drive /tmp/keys1 /tmp/session1 "
     sleep 3
     printf 'map\n';                  sleep 5
-    printf '/ono-lone-141';          sleep 1
+    printf '/zz-lone-141';          sleep 1
     printf '%s' '${ENTER}';          sleep 5
     printf '%s' '${ESC}';            sleep 2
     printf '%s' '${ESC}';            sleep 2
@@ -59,7 +60,7 @@ run: |
   prove g1 "a name the drawn map does not hold is searched for beyond it" \
     "grep -qaF 'beyond the map' /tmp/session1"
   prove g2 "the place found is shown with what it is" \
-    "grep -qaE 'ono-lone-141 +process' /tmp/session1"
+    "grep -qaE 'zz-lone-141 +process' /tmp/session1"
   prove g3 "searching moved nothing: the prompt is still at the root (§23.4)" \
     "grep -aF 'AFTER-SEARCH' /tmp/session1 | tail -1 | grep -qv 'process/'"
 
@@ -68,16 +69,16 @@ run: |
     sleep 3
     printf 'enter compute\n';        sleep 2
     printf 'enter processes\n';      sleep 6
-    printf 'enter ono-lone';         sleep 1
+    printf 'enter zz-lone';         sleep 1
     printf '%s' '${TAB}';            sleep 3
     printf '\n';                     sleep 3
     printf 'echo AFTER-TAB\n';       sleep 2
     printf 'exit\n';                 sleep 2
   "
   prove t1 "Tab completes the member's name without a look in between" \
-    "grep -qaF 'enter ono-lone-141' /tmp/session2"
+    "grep -qaF 'enter zz-lone-141' /tmp/session2"
   prove t2 "and the completed line enters the process" \
-    "grep -qaF 'process/ono-lone-141://' /tmp/session2"
+    "grep -qaF 'process/zz-lone-141://' /tmp/session2"
 
   kill "$fixture" $(jobs -p) 2>/dev/null || true
   wait 2>/dev/null || true
