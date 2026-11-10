@@ -315,7 +315,10 @@ settings:
   - key: spatial.reduced_motion
     type: bool
     default: false
-    doc: Suppresses animation in live views; motion must mean real change either way (§25.2, §39.4).
+    doc: >-
+      Suppresses transition animation in live views while live updates continue (§39.4). The
+      views of this build draw no transition at all — a frame changes only when the system
+      did (§25.2) — so the setting has nothing to switch off yet, and says so (ADR-0982).
   - key: spatial.remote_search
     type: string
     default: explicit

@@ -441,67 +441,74 @@ async fn observe(
     // its slowest provider rather than the sum of them — which is what made a selector miss at
     // Profile M cost 900 ms (#187). Absorbing stays sequential, because the index is one
     // structure and the order the targets fold in is the order the exits are built in (§29.3).
-    let answers = futures::future::join_all(questions.iter().map(
-        |(target, bound, question)| async move {
-            let answer = match providers.snapshot(question) {
-                Err(error) => Err(error),
-                Ok(stream) => Ok(stream.collect().await),
-            };
-            (*target, *bound, answer)
-        },
-    ))
-    .await;
+    let answers = match horizon_patience() {
+        None => {
+            futures::future::join_all(questions.iter().map(
+                |(target, bound, question)| async move {
+                    let answer = match providers.snapshot(question) {
+                        Err(error) => Err(error),
+                        Ok(stream) => Ok(stream.collect().await),
+                    };
+                    (*target, *bound, answer)
+                },
+            ))
+            .await
+        }
+        // §5: the startup horizon "MUST NOT block startup on expensive global scans", and
+        // providers "SHOULD populate expensive counts asynchronously". Every target is asked on
+        // its own task; what answers inside the patience is the horizon, and what does not is
+        // reported as still being read and arrives in the session when it does (ADR-0982).
+        Some(patience) => {
+            let deadline = tokio::time::Instant::now() + patience;
+            let mut asking = Vec::with_capacity(questions.len());
+            for (target, bound, question) in &questions {
+                let task = providers
+                    .snapshot(question)
+                    .map(|stream| tokio::spawn(async move { stream.collect().await }));
+                asking.push((*target, *bound, task));
+            }
+            let mut answers = Vec::with_capacity(asking.len());
+            let mut late = Vec::new();
+            for (target, bound, task) in asking {
+                match task {
+                    Err(error) => answers.push((target, bound, Err(error))),
+                    Ok(mut task) => match tokio::time::timeout_at(deadline, &mut task).await {
+                        Ok(Ok(collected)) => answers.push((target, bound, Ok(collected))),
+                        // A task that died took its answer with it; the target is asked again
+                        // by the next view.
+                        Ok(Err(_)) => {}
+                        Err(_) => {
+                            observed.refused.insert(
+                                target,
+                                (PermissionState::Unknown, "still being read".to_owned()),
+                            );
+                            late.push((target, bound, task));
+                        }
+                    },
+                }
+            }
+            if !late.is_empty() {
+                let scope = session.current_scope().clone();
+                tokio::spawn(async move {
+                    for (target, bound, task) in late {
+                        let Ok(collected) = task.await else { continue };
+                        let mut session = crate::spatial::spatial_session().await;
+                        // The answer belongs to the host it was asked on (§43.7).
+                        if session.current_scope() != &scope {
+                            continue;
+                        }
+                        let fresh =
+                            answered_by(&mut session, bound, Ok(collected), Timestamp::now());
+                        session.remember(target, fresh);
+                    }
+                });
+            }
+            answers
+        }
+    };
 
     for (target, bound, answer) in answers {
-        let mut fresh = crate::spatial::session::TargetObservation {
-            at: now,
-            places: BTreeMap::new(),
-            refusal: None,
-            served: false,
-            population: None,
-            bounded: false,
-        };
-        match answer {
-            Err(error) => {
-                fresh.refusal = Some((
-                    PermissionState::of_refusal(&error),
-                    error.message().to_owned(),
-                ));
-            }
-            Ok(collected) => {
-                fresh.population = collected.diagnostics().population();
-                fresh.bounded = bound.is_some_and(|bound| collected.values().len() >= bound);
-                if let Some(error) = collected.errors().first() {
-                    fresh.refusal = Some((
-                        PermissionState::of_refusal(error),
-                        error.message().to_owned(),
-                    ));
-                }
-                let records: Vec<RecordValue> = collected
-                    .into_values()
-                    .into_iter()
-                    .filter_map(|value| match value {
-                        Value::Record(record) => Some(RecordValue::clone(&record)),
-                        _ => None,
-                    })
-                    .collect();
-                // A target that answered nothing *and* refused is a refusal, not an empty
-                // collection (§35.2, §42.4).
-                if !records.is_empty() || fresh.refusal.is_none() {
-                    fresh.served = true;
-                    for record in &records {
-                        if let Ok(object) = session.projection_of_object(record) {
-                            fresh
-                                .places
-                                .entry(object.object_type())
-                                .or_default()
-                                .push(object.spatial_id().clone());
-                        }
-                    }
-                    session.absorb(&records, now);
-                }
-            }
-        }
+        let fresh = answered_by(session, bound, answer, now);
         fold(&mut observed, target, &fresh);
         session.remember(target, fresh);
     }
@@ -509,6 +516,89 @@ async fn observe(
     // and nothing was asked (§25.3, §2.17).
     observed.cached = answerable && !asked;
     observed
+}
+
+/// Registers what one target answered, and says what the answer was (§33.1, §35.2, §42.4).
+fn answered_by(
+    session: &mut SpatialSessionState,
+    bound: Option<usize>,
+    answer: Result<ono_pipeline::Collected, ErrorValue>,
+    now: Timestamp,
+) -> crate::spatial::session::TargetObservation {
+    let mut fresh = crate::spatial::session::TargetObservation {
+        at: now,
+        places: BTreeMap::new(),
+        refusal: None,
+        served: false,
+        population: None,
+        bounded: false,
+    };
+    match answer {
+        Err(error) => {
+            fresh.refusal = Some((
+                PermissionState::of_refusal(&error),
+                error.message().to_owned(),
+            ));
+        }
+        Ok(collected) => {
+            fresh.population = collected.diagnostics().population();
+            fresh.bounded = bound.is_some_and(|bound| collected.values().len() >= bound);
+            if let Some(error) = collected.errors().first() {
+                fresh.refusal = Some((
+                    PermissionState::of_refusal(error),
+                    error.message().to_owned(),
+                ));
+            }
+            let records: Vec<RecordValue> = collected
+                .into_values()
+                .into_iter()
+                .filter_map(|value| match value {
+                    Value::Record(record) => Some(RecordValue::clone(&record)),
+                    _ => None,
+                })
+                .collect();
+            // A target that answered nothing *and* refused is a refusal, not an empty
+            // collection (§35.2, §42.4).
+            if !records.is_empty() || fresh.refusal.is_none() {
+                fresh.served = true;
+                for record in &records {
+                    if let Ok(object) = session.projection_of_object(record) {
+                        fresh
+                            .places
+                            .entry(object.object_type())
+                            .or_default()
+                            .push(object.spatial_id().clone());
+                    }
+                }
+                session.absorb(&records, now);
+            }
+        }
+    }
+    fresh
+}
+
+/// How long the view being built waits for a provider before it is drawn without it, in
+/// milliseconds; zero for every view but the startup horizon.
+static HORIZON_PATIENCE_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Sets how long the next views wait for a provider, or that they wait for every one (§5).
+///
+/// The startup horizon is the one view drawn before the user asked for anything, so it is the
+/// one view that may not hold the prompt back: it sets a patience, draws, and clears it.
+pub fn set_horizon_patience(patience: Option<std::time::Duration>) {
+    let millis = patience.map_or(0, |patience| {
+        u64::try_from(patience.as_millis())
+            .unwrap_or(u64::MAX)
+            .max(1)
+    });
+    HORIZON_PATIENCE_MS.store(millis, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn horizon_patience() -> Option<std::time::Duration> {
+    match HORIZON_PATIENCE_MS.load(std::sync::atomic::Ordering::SeqCst) {
+        0 => None,
+        millis => Some(std::time::Duration::from_millis(millis)),
+    }
 }
 
 /// Folds one target's answer into the observation the exits are built from.

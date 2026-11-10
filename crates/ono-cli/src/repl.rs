@@ -881,6 +881,11 @@ fn spatial_place(session: &Session) -> Option<String> {
     Some(format!("/{rest}"))
 }
 
+/// How long the startup horizon waits for a provider: v0.4 §34's "interactive startup to usable
+/// prompt < 150 ms target".
+#[cfg(feature = "spatial")]
+const HORIZON_PATIENCE: std::time::Duration = std::time::Duration::from_millis(150);
+
 /// The compact spatial horizon of spec v0.4 §5, drawn once when an interactive session starts.
 ///
 /// §5: "Starting an interactive Ono session MUST provide enough information to establish place
@@ -897,7 +902,12 @@ fn print_startup_horizon(session: &mut Session, reporter: &Reporter) {
         return;
     }
     let before = session.status();
+    // §5: the horizon "MUST NOT block startup on expensive global scans". A provider that has
+    // not answered inside §34's startup target is drawn as still being read, and its answer
+    // reaches the session when it arrives (ADR-0982).
+    crate::spatial::set_horizon_patience(Some(HORIZON_PATIENCE));
     let _ = run_source(session, "look", reporter);
+    crate::spatial::set_horizon_patience(None);
     session.set_status(before);
 }
 

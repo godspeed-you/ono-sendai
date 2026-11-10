@@ -321,7 +321,7 @@ pub const CATALOGUE: &[SettingSpec] = &[
     SettingSpec {
         key: "spatial.reduced_motion",
         ty: SettingType::Bool,
-        description: "Suppresses animation in live views (spec v0.4 §25.2, §39.4). What is shown is unchanged; only the movement between frames is.",
+        description: "Suppresses transition animation in live views while live updates continue (spec v0.4 §39.4). The views of this build draw no transition — a frame changes only when the system did (§25.2) — so there is nothing for it to switch off yet.",
         default: DefaultValue::Bool(false),
         range: None,
     },

@@ -42,6 +42,7 @@ pub use movement::{Back, Jump, Trail, Up};
 pub use pins::{PinPlace, PinStore, UnpinPlace, pin_path};
 pub use prompt::{at_terminal, mark_interactive, place_segment};
 pub use session::{RemoteHost, SpatialSessionState, spatial_session};
+pub use view::set_horizon_patience;
 
 /// Reads the `spatial.*` settings the spatial layer honours, and hands them to the session state
 /// (spec v0.4 §26.3, §34.2, §47).

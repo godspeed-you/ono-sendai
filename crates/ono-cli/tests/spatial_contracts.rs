@@ -1653,3 +1653,32 @@ fn should_honour_the_configured_landmark_settings_when_the_first_command_enters_
         off.stdout()
     );
 }
+
+#[test]
+fn should_keep_live_updates_and_say_what_reduced_motion_switches_off() {
+    // §39.4: "A `reduced_motion` setting MUST disable transition animation while preserving live
+    // updates." The views of this build draw no transition — §25.2 allows motion only for a real
+    // change, and a frame is repainted only when it differs — so the setting has nothing to
+    // switch off, and its own description says so instead of promising an effect. What it must
+    // never do is quiet a live view: the stream still delivers its first value (ADR-0982).
+    let described =
+        ono("get config | where key == \"spatial.reduced_motion\" | select description | to json");
+    described.assert_success();
+    assert!(
+        described.stdout().contains("nothing for it to switch off"),
+        "§26.3's rule for a setting holds here too: an inspectable setting says what it does; \
+         got {:?}",
+        described.stdout()
+    );
+
+    let live = ono_testkit::Shell::new()
+        .env("ONO_SPATIAL_REDUCED_MOTION", "true")
+        .args(["-c", "map --live --json | take 1 | count | to json"])
+        .run();
+    live.assert_success();
+    assert_eq!(
+        live.stdout().trim(),
+        "[1]",
+        "§39.4: live updates are preserved with reduced motion on"
+    );
+}

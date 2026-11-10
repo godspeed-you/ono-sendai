@@ -101,12 +101,20 @@ struct Session {
 impl Session {
     /// Starts `ono` on a pty of `size`, with colour disabled and a scratch home.
     fn start(size: WindowSize, home: &Path, cwd: &Path) -> Self {
+        Self::start_with(size, home, cwd, &[])
+    }
+
+    /// The same, with further environment variables.
+    fn start_with(size: WindowSize, home: &Path, cwd: &Path, env: &[(&str, String)]) -> Self {
         let mut executor = Executor::detached();
-        let command = Command::new(ono_testkit::ono_binary())
+        let mut command = Command::new(ono_testkit::ono_binary())
             .env("TERM", "xterm")
             .env("NO_COLOR", "1")
             .env("HOME", home.display().to_string())
             .current_dir(cwd);
+        for (name, value) in env {
+            command = command.env(name, value.clone());
+        }
         let pty = executor
             .run_pty(&command, size)
             .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
@@ -1403,4 +1411,141 @@ fn rows_addressed(text: &str) -> BTreeSet<usize> {
         }
     }
     found
+}
+
+/// A container engine that answers at once for everything but the container listing, and holds
+/// that one answer until the test lets it go.
+///
+/// It stands for the provider §5 has in mind: one whose count is expensive. The hold is a gate
+/// rather than a sleep, so the test asserts an order of events and never a duration.
+struct HeldEngine {
+    _sockets: Scratch,
+    socket: PathBuf,
+    release: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl HeldEngine {
+    fn start() -> Self {
+        use std::io::{Read as _, Write as _};
+        use std::sync::atomic::Ordering;
+
+        let sockets = ono_testkit::socket_scratch();
+        let socket = sockets.path().join("docker.sock");
+        let listener =
+            std::os::unix::net::UnixListener::bind(&socket).expect("bind the held engine socket");
+        let release = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let gate = std::sync::Arc::clone(&release);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let gate = std::sync::Arc::clone(&gate);
+                std::thread::spawn(move || {
+                    let mut request = Vec::new();
+                    let mut chunk = [0u8; 2048];
+                    while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        match stream.read(&mut chunk) {
+                            Ok(0) | Err(_) => return,
+                            Ok(count) => request.extend_from_slice(&chunk[..count]),
+                        }
+                    }
+                    let head = String::from_utf8_lossy(&request).into_owned();
+                    let path = head
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap_or_default()
+                        .to_owned();
+                    let body = if path.contains("/containers/json") {
+                        while !gate.load(Ordering::SeqCst) {
+                            std::thread::sleep(Duration::from_millis(20));
+                        }
+                        r#"[{"Id":"abc123def4567890abc123def4567890abc123def4567890abc123def4567890","Names":["/held"],"Image":"nginx:1.27","ImageID":"sha256:0","State":"running","Created":1700000000,"Labels":{}}]"#
+                    } else if path.ends_with("/_ping") {
+                        "OK"
+                    } else if path.contains("/version") {
+                        r#"{"Version":"27.0.0","ApiVersion":"1.45"}"#
+                    } else {
+                        "[]"
+                    };
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                });
+            }
+        });
+        Self {
+            _sockets: sockets,
+            socket,
+            release,
+        }
+    }
+
+    fn url(&self) -> String {
+        format!("unix://{}", self.socket.display())
+    }
+
+    fn release(&self) {
+        self.release
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn should_reach_the_prompt_before_a_slow_provider_answers_and_say_what_is_still_being_read() {
+    // §5: "The startup horizon MUST NOT block startup on expensive global scans. Providers
+    // SHOULD populate expensive counts asynchronously and update the horizon when available."
+    // A container engine that has not answered yet does not hold the first prompt back: the
+    // horizon is drawn with what answered in time, the count that did not is `unknown` and says
+    // why, and the answer is in the session once it arrives — the next `look` has it (ADR-0982).
+    let (home, work) = workspace();
+    let engine = HeldEngine::start();
+    let mut session = Session::start_with(
+        WindowSize::new(24, 100),
+        home.path(),
+        &work,
+        &[("DOCKER_HOST", engine.url())],
+    );
+
+    assert!(
+        session.wait_for("> ", STARTUP),
+        "§5: the prompt arrives while the engine is still holding its answer; saw:\n{}",
+        plain(session.seen())
+    );
+    let horizon = plain(session.seen());
+    assert!(
+        horizon
+            .lines()
+            .any(|line| line.contains("CONTAINERS") && line.contains("still being read")),
+        "§5, §35.2: the count that has not arrived is unknown and says so — never a zero; \
+         saw:\n{horizon}"
+    );
+    engine.release();
+    // The answer arrives in the background; `look` reads it from the session. The loop is a
+    // liveness bound: it ends as soon as the count is there.
+    let deadline = Instant::now() + BUDGET;
+    let mut round = 0;
+    let counted = loop {
+        round += 1;
+        let shown = plain(&session.output_of(&format!("R{round}"), "look"));
+        if shown.lines().any(|line| {
+            line.contains("CONTAINERS")
+                && line
+                    .split_whitespace()
+                    .nth(1)
+                    .is_some_and(|count| count.parse::<u64>().is_ok_and(|count| count >= 1))
+        }) {
+            break true;
+        }
+        if Instant::now() >= deadline {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(300));
+    };
+    assert!(
+        counted,
+        "§5: once the engine answered, the horizon counts its containers; saw:\n{}",
+        plain(session.seen())
+    );
+    session.line("exit");
 }
