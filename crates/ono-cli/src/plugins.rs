@@ -94,6 +94,10 @@ pub struct LoadOptions {
     /// Whether the load reports itself. `load plugin` is an operator asking for a load and is
     /// told what it got; the lazy load behind a contributed command (spec §31.68) is not, because
     /// the operator asked for the command and its answer is the only thing on stdout.
+    ///
+    /// A silent load is that lazy load, so it loads only a package nobody has loaded by the time
+    /// it holds the package's turn: a job and the shell that both reach an unloaded package start
+    /// it once, and the one that waited runs in the instance the other kept (ADR-1026).
     pub silent: bool,
 }
 
@@ -141,6 +145,15 @@ pub fn load_plugin_with(
         .map_err(Flow::Failed)?;
     let canonical = package.manifest.package.id.clone();
     let id = canonical.as_str();
+
+    // One load of a package at a time, whichever evaluator asks: the shell and its jobs share the
+    // host (ADR-0995), and two lazy loads racing each other kept the second instance and shut the
+    // first down under the invocation running in it (ADR-1026).
+    let turn = session.with_kuang(|host| host.load_turn(id));
+    let _turn = await_turn(&turn)?;
+    if options.silent && session.plugin(id).is_some() {
+        return Ok(ExitStatus::SUCCESS);
+    }
 
     // `load` is a transition from `enabled` (lifecycle.v1): a package the operator disabled
     // stays inert until `set plugin --enabled true`.
@@ -415,6 +428,25 @@ pub fn load_plugin_with(
         crate::spatial::contributions::adopt(id, &plugin, &shapes);
     }
     Ok(ExitStatus::SUCCESS)
+}
+
+/// Waits for the turn to load a package, for as long as the load holding it takes — which the
+/// supervisor's handshake deadline bounds — and no longer than the line's own interrupt allows.
+fn await_turn(turn: &std::sync::Mutex<()>) -> Eval<std::sync::MutexGuard<'_, ()>> {
+    loop {
+        match turn.try_lock() {
+            Ok(held) => return Ok(held),
+            // A load that panicked left nothing half-kept in the turn itself; the host's tables
+            // are what it guards the order of.
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => return Ok(poisoned.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                if crate::eval::interrupt_reached() {
+                    return Err(crate::eval::interrupted_flow_now());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+    }
 }
 
 /// A KUANG/11 management command the evaluator runs itself, seeding the rest of the pipeline

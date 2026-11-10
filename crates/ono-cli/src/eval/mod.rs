@@ -24,6 +24,8 @@ pub(crate) use expression::text_of;
 pub use expression::truthy;
 pub(crate) use function::called_function;
 pub use materialize::captured_text;
+#[cfg(feature = "kuang")]
+pub(crate) use pipeline::interrupt_reached;
 pub(crate) use pipeline::interrupted_flow_now;
 pub(crate) use pipeline::is_explain;
 pub use pipeline::output_destination;

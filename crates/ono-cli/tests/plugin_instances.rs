@@ -349,3 +349,60 @@ fn should_count_the_invocation_a_job_holds_open_in_get_plugins_jobs() {
         run.output()
     );
 }
+
+#[test]
+fn should_load_a_package_once_when_a_job_and_the_shell_both_load_it_lazily() {
+    // R-F1 of the v0.6.5 review: a job and the shell share one host (ADR-0995), so both can find
+    // the package not yet loaded and both start it. The second instance replaced the first under
+    // the invocation that was running in it. A lazy load is one load per package however many
+    // evaluators ask at once: the loser of the race runs in the winner's instance. Twenty rounds,
+    // each unloading the package so that the next one loads it lazily again from both sides.
+    let home = plugin_home();
+    let rounds = 20;
+    let answers = home.path().join("answers");
+    std::fs::create_dir_all(&answers).expect("a directory for the jobs' answers");
+    let script: String = (1..=rounds)
+        .map(|round| {
+            format!(
+                "get echo-item --count 3 | to json > '{}/{round}.json' &\n\
+                 get echo-item --count 2 | to json\n\
+                 while (get job | where state == \"running\" | count) > 0 {{ sleep 0.01 }}\n\
+                 unload plugin dev.example.echo | count | to json\n",
+                answers.display()
+            )
+        })
+        .collect();
+    let run = ono(&home, &script);
+
+    run.assert_success();
+    assert!(
+        !run.stderr().contains("Ono-Sendai"),
+        "no invocation failed, in the job or in the shell: {:?}",
+        run.output()
+    );
+    for round in 1..=rounds {
+        let answer =
+            std::fs::read_to_string(answers.join(format!("{round}.json"))).unwrap_or_default();
+        assert_eq!(
+            answer.trim(),
+            "[1,2,3]",
+            "round {round}: the job's invocation was answered: {:?}",
+            run.output()
+        );
+    }
+    assert_eq!(
+        run.stdout().matches("[1,2]").count(),
+        rounds,
+        "every foreground invocation was answered: {:?}",
+        run.output()
+    );
+    let expected: Vec<&str> = (0..rounds)
+        .flat_map(|_| ["lifecycle.load", "lifecycle.unload"])
+        .collect();
+    assert_eq!(
+        lifecycle_trail(&home),
+        expected,
+        "spec §31.37: each round started one instance, so the trail holds one load and one \
+         unload per round"
+    );
+}

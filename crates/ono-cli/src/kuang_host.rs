@@ -224,6 +224,9 @@ pub struct Host {
     /// The artifact stores a component is loaded from, as the session's environment names them
     /// (ADR-0870, ADR-0917); `None` until the session has published them.
     compiled_stores: Option<Vec<PathBuf>>,
+    /// One turn to load per package, shared by every evaluator of the session: a job and the
+    /// shell that both find a package unloaded load it once, not twice (ADR-1026).
+    load_turns: std::collections::BTreeMap<String, Arc<std::sync::Mutex<()>>>,
 }
 
 /// What the operator's trust stores say, as a verification needs it.
@@ -743,6 +746,12 @@ impl Host {
     /// The ids of every loaded package.
     pub fn plugin_ids(&self) -> impl Iterator<Item = &str> {
         self.instances.iter().map(|instance| instance.id.as_str())
+    }
+
+    /// The turn to load `id`. Whoever holds it is the only one loading the package; a lazy load
+    /// that waited for it finds the instance the holder kept and runs in it (ADR-1026).
+    pub fn load_turn(&mut self, id: &str) -> Arc<std::sync::Mutex<()>> {
+        Arc::clone(self.load_turns.entry(id.to_owned()).or_default())
     }
 
     /// Keeps a loaded instance, answering the one it replaces so the caller can shut it down.
