@@ -152,8 +152,12 @@ cases 165–169 for `spatial`; ADR-1010 … 1014 and cases 172–179 for the orc
 - [instances | 2026-11-10] #304, #222, #199 — files: `crates/ono-cli/src/session.rs`,
   `crates/ono-cli/src/kuang_host.rs`, `crates/ono-cli/src/plugins.rs` (instance lookup),
   `docs/contracts/schemas/plugin.v1.yaml`.
-- [orchestrator | 2026-11-10] next: #156 and #224/#129 (after `supervisor`/`instances`), then
-  #203 and #153.
+- [orchestrator | 2026-11-10] #153 — done on `implementation` (24a71820, ADR-1010).
+- [spatial | 2026-11-10] #129, #224 parts (1)–(5) — files: `crates/ono-cli/src/spatial/`,
+  `crates/ono-spatial-*/`, `docs/contracts/kuang/contributions.v1.yaml` (relations and places),
+  `docs/contracts/spatial/`.
+- [orchestrator | 2026-11-10] next: #156, #224 parts (6)–(7), #203 — after `supervisor` and
+  `instances` are merged.
 
 ## What is left, and why
 
