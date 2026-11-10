@@ -29,10 +29,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ono_cli::plugin_provider::PluginProvider;
+use ono_kuang_protocol::Capability;
 use ono_kuang_protocol::{HealthState, Manifest};
-use ono_kuang_supervisor::{LoadConfig, LoadedPlugin, Supervisor};
+use ono_kuang_supervisor::{LoadConfig, LoadedPlugin, Policy, Supervisor};
 use ono_pipeline::StreamEvent;
-use ono_provider_api::{Provider, ProviderRegistry, Query, Selector};
+use ono_provider_api::{Action, ObjectId, Provider, ProviderRegistry, Query, Selector};
 use ono_value::Value;
 
 mod support;
@@ -77,6 +78,15 @@ fn plugin_home() -> ono_testkit::Scratch {
 /// always waiting for demand after the first value, which is the state in which cancellation is
 /// the only thing that can end its handler.
 async fn load(scratch: &ono_testkit::Scratch, queue_depth: u32) -> Arc<LoadedPlugin> {
+    load_under(scratch, queue_depth, Policy::deny_all()).await
+}
+
+/// The same, under the capability policy `policy` the broker enforces.
+async fn load_under(
+    scratch: &ono_testkit::Scratch,
+    queue_depth: u32,
+    policy: Policy,
+) -> Arc<LoadedPlugin> {
     let manifest =
         Manifest::parse(&echo_package_manifest(ECHO)).expect("the fixture manifest is valid");
     let private = scratch.path().join("state");
@@ -84,6 +94,7 @@ async fn load(scratch: &ono_testkit::Scratch, queue_depth: u32) -> Arc<LoadedPlu
     let mut config = LoadConfig::new(example_binary(), manifest);
     config.private_dir = Some(private);
     config.limits.queue_depth = queue_depth;
+    config.policy = policy;
     Arc::new(
         Supervisor::load(config)
             .await
@@ -361,6 +372,203 @@ async fn should_carry_the_querys_own_narrowing_to_the_package() {
         1,
         "the package received `count`, so it emitted one item rather than all three"
     );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+// --- acting on a contributed object (#224 (6), ADR-1012) ----------------------------------------
+
+/// The identity of the place `uid` names, read from the package's own answer, as anything that
+/// acts on an object first observes it.
+async fn place(registry: &ProviderRegistry, uid: &str) -> ObjectId {
+    let values = registry
+        .snapshot(&Query::target("echo-place"))
+        .expect("the registry answers for the places")
+        .collect()
+        .await
+        .into_values();
+    values
+        .iter()
+        .find_map(|value| match value {
+            Value::Record(record) if record.get("uid") == Some(&Value::string(uid)) => {
+                ObjectId::of(record)
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("the package answers for `{uid}`, got {values:?}"))
+}
+
+fn granted_mutation() -> Policy {
+    Policy::deny_all().grant(Capability::ProviderMutate, None)
+}
+
+#[tokio::test]
+async fn should_carry_out_an_action_on_a_contributed_object_when_the_package_holds_provider_mutate()
+{
+    // The generic provider boundary every mutation in the shell goes through reaches a contributed
+    // object: the package's declared `set` action on `echo-place`, under the `provider.mutate`
+    // grant the broker checks before any package code runs, audited as loudly as a denial
+    // (spec §31.37, ADR-0594).
+    let scratch = ono_testkit::scratch();
+    let plugin = load_under(&scratch, 16, granted_mutation()).await;
+    let registry = registry_of(&plugin);
+    let object = place(&registry, "u-3").await;
+
+    let outcome = registry
+        .act(&Action::new("echo-place", "set", object).with("state", Value::string("ready")))
+        .await
+        .expect("a package holding provider.mutate can be asked to act");
+    assert!(
+        outcome.is_success(),
+        "the package carried the action out, got {outcome:?}"
+    );
+    assert!(outcome.changed(), "a real action reports a change");
+    assert!(
+        plugin
+            .audit()
+            .iter()
+            .any(|event| event.capability == "provider.mutate"
+                && event.result == ono_kuang_protocol::AuditResult::Success),
+        "the permitted mutation is in the trail"
+    );
+
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_an_action_on_a_contributed_object_when_provider_mutate_is_not_granted() {
+    // No grant, no attempt: the refusal is the broker's structured denial, an error rather than
+    // a per-object outcome, because the provider could not attempt the action at all.
+    let scratch = ono_testkit::scratch();
+    let plugin = load(&scratch, 16).await;
+    let registry = registry_of(&plugin);
+    let object = place(&registry, "u-3").await;
+
+    let refusal = registry
+        .act(&Action::new("echo-place", "set", object).with("state", Value::string("ready")))
+        .await
+        .expect_err("an action under an ungranted provider.mutate is refused");
+    assert_eq!(
+        refusal.code().name(),
+        "capability.denied",
+        "the broker's denial, got {refusal:?}"
+    );
+    assert!(
+        refusal.message().contains("provider.mutate"),
+        "the denial names the capability, got {refusal:?}"
+    );
+
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_report_an_action_the_system_refused_as_a_failed_outcome_for_that_object() {
+    // Attempted and failed is an outcome, not an error (spec §11.5, §16.5): a bulk action has to
+    // be able to say which object failed and why. The package's refusal names the object it was
+    // handed, which is the proof that it was handed that object.
+    let scratch = ono_testkit::scratch();
+    let plugin = load_under(&scratch, 16, granted_mutation()).await;
+    let registry = registry_of(&plugin);
+    let object = place(&registry, "u-3").await;
+
+    let outcome = registry
+        .act(&Action::new("echo-place", "set", object).with("state", Value::string("rejected")))
+        .await
+        .expect("an attempted action answers with an outcome");
+    assert!(!outcome.is_success(), "the action failed, got {outcome:?}");
+    let error = outcome.error().expect("a failed outcome carries its error");
+    assert!(
+        error
+            .message()
+            .contains("refused state `rejected` for `u-3`"),
+        "the package's own reason, about the object it was handed, got {error:?}"
+    );
+
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_dry_run_an_action_on_a_contributed_object_without_reporting_a_change() {
+    let scratch = ono_testkit::scratch();
+    let plugin = load_under(&scratch, 16, granted_mutation()).await;
+    let registry = registry_of(&plugin);
+    let object = place(&registry, "u-3").await;
+
+    let outcome = registry
+        .act(
+            &Action::new("echo-place", "set", object)
+                .with("state", Value::string("ready"))
+                .as_dry_run(),
+        )
+        .await
+        .expect("the action declares a dry run");
+    assert!(outcome.is_success(), "got {outcome:?}");
+    assert!(!outcome.changed(), "a dry run changes nothing");
+
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_an_operation_the_package_declares_no_action_for() {
+    // A package acts with the actions it declared and no others. `kill` is a word the generic
+    // vocabulary has and this package does not answer to.
+    let scratch = ono_testkit::scratch();
+    let plugin = load_under(&scratch, 16, granted_mutation()).await;
+    let registry = registry_of(&plugin);
+    let object = place(&registry, "u-3").await;
+
+    let refusal = registry
+        .act(&Action::new("echo-place", "kill", object))
+        .await
+        .expect_err("an undeclared operation is refused before anything runs");
+    assert_eq!(
+        refusal.code().name(),
+        "provider.unsupported",
+        "got {refusal:?}"
+    );
+    assert!(
+        refusal.message().contains("kill"),
+        "the refusal names the operation, got {refusal:?}"
+    );
+
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+// --- watching a contributed target (#224 (6), ADR-1013) -----------------------------------------
+
+#[tokio::test]
+async fn should_refuse_to_subscribe_to_a_contributed_target_and_say_why() {
+    // The registry's `subscribe` is what `watch` and the live map ask. A contributed target has no
+    // event vocabulary to answer with, and the refusal says that rather than the generic "cannot
+    // watch for changes" a provider that simply never implemented it gives.
+    let scratch = ono_testkit::scratch();
+    let plugin = load(&scratch, 16).await;
+    let registry = registry_of(&plugin);
+
+    let Err(refusal) = registry.subscribe(&Query::target("echo-item")) else {
+        panic!("a contributed target cannot be subscribed to");
+    };
+    assert_eq!(
+        refusal.code().name(),
+        "provider.unsupported",
+        "got {refusal:?}"
+    );
+    assert!(
+        refusal.message().contains("no event vocabulary"),
+        "the refusal says why, got {refusal:?}"
+    );
+
     plugin
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
         .await;

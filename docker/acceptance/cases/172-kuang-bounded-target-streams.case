@@ -1,0 +1,80 @@
+# Issue #224 (7) (spec §31.23; shell specification §5, §18.2): a contributed target whose answer
+# ends is still passed on as it arrives, as a core provider's answer is. It used to be read to its
+# end first, so its first value waited for its last. `echo-hold --then wait` emits one item and
+# then nothing until the query is cancelled: the only thing that can end it is the `take 1`
+# downstream, so the command returning at all proves the first value travelled on before the
+# package had finished — an ordering, not a clock. And a failure after a value still fails the
+# command rather than reading as a shorter answer (ADR-0992). ADR-1011.
+case: a bounded contributed answer streams, and a failure after a value still fails
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/plugins/dev.example.echo/contributions"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - clock.read
+  network:
+    outbound: none
+  contributions:
+    targets: [contributions/targets.yaml]
+  MANIFEST
+  cat > "$home/plugins/dev.example.echo/contributions/targets.yaml" <<'CONTRIB'
+  targets:
+    - name: echo-item
+      schema: dev.example.echo.item/1
+      summary: Items the example package provides.
+      identity_doc: Two observations are the same item when their `seq` matches.
+    - name: echo-hold
+      schema: dev.example.echo.item/1
+      summary: One item, then what `then` says.
+      identity_doc: Two observations are the same item when their `seq` matches.
+      options:
+        - name: then
+          type: string
+          doc: After the first item, `wait` until cancelled, or `fail`.
+  CONTRIB
+
+  echo "== a bounded answer is still the whole answer =="
+  ono -c 'load plugin dev.example.echo; get echo-item | count | to json'
+
+  echo "== its first value reaches take 1 while the package is still answering =="
+  timeout 60 ono -c 'load plugin dev.example.echo; get echo-hold --then wait | take 1 | select seq | to json' \
+    || echo "MISSING: the first value never reached take 1"
+
+  echo "== a failure after a value fails the command, and says so once =="
+  timeout 60 ono -c 'load plugin dev.example.echo; get echo-hold --then fail | to json' 2>&1 \
+    && echo "MISSING: the failure read as a shorter answer"
+  echo "failed with exit $?"
+  timeout 60 ono -c 'load plugin dev.example.echo; get echo-hold --then fail | to json' 2>&1 \
+    | grep -c '^ono: .*stopped answering after the first item' | sed 's/^/failures reported: /'
+exit: 0
+stdout-contains: 3
+stdout-contains: [{"seq":1}]
+stdout-contains: failed with exit 1
+stdout-contains: failures reported: 1
+stdout-not-contains: MISSING
+stdout-not-contains: panicked

@@ -472,3 +472,101 @@ fn should_refuse_to_render_an_endless_answer_where_nobody_is_watching_it() {
         run.output()
     );
 }
+
+// --- a bounded answer streams too (#224 (7), ADR-1011) ------------------------------------------
+
+/// `echo-hold`, declared bounded: one item, and then what `--then` says — `wait` until the query
+/// is cancelled, or `fail`.
+const HOLDING_TARGETS: &str = r#"
+targets:
+  - name: echo-hold
+    schema: dev.example.echo.item/1
+    summary: One item, then what `then` says.
+    identity_doc: Two observations are the same item when their `seq` matches.
+    options:
+      - name: then
+        type: string
+        doc: After the first item, `wait` until cancelled, or `fail`.
+"#;
+
+#[test]
+fn should_hand_a_bounded_answers_first_value_on_before_the_package_has_emitted_its_last() {
+    // `echo-hold --then wait` emits one item and then waits until the host cancels the query.
+    // The only thing that can end it is the `take 1` downstream, and `take 1` can only act on a
+    // value it was handed. So this command returns exactly when the first value travelled on while the
+    // package was still answering: a host that read the bounded answer to its end first would
+    // wait for the cancellation that only the pipeline could have sent, and never return.
+    // The ordering is the proof; no clock is measured.
+    let home = echo_plugin_home(ECHO, HOLDING_TARGETS);
+    let run = ono_with_plugins(
+        &home,
+        &format!("load plugin {ECHO}; get echo-hold --then wait | take 1 | select seq | to json"),
+    );
+    run.assert_success();
+    let items = last_json(&run);
+    let items = items.as_sequence().expect("a sequence of records");
+    assert_eq!(
+        items.len(),
+        1,
+        "the first value reached `take 1`, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_fail_rather_than_answer_short_when_a_bounded_answer_fails_after_a_value() {
+    // The other half of streaming a bounded answer: a failure after some values must not read as
+    // a clean shorter answer (ADR-0992's single channel). One item, then a failure, is a failed
+    // command that says why — once.
+    let home = echo_plugin_home(ECHO, HOLDING_TARGETS);
+    let run = ono_with_plugins(
+        &home,
+        &format!("load plugin {ECHO}; get echo-hold --then fail | to json"),
+    );
+    assert_ne!(
+        run.status().code(),
+        0,
+        "a failure after a value fails the command, got {:?}",
+        run.output()
+    );
+    let reported: Vec<&str> = run
+        .stderr()
+        .lines()
+        .filter(|line| line.starts_with("ono: "))
+        .collect();
+    assert_eq!(
+        reported.len(),
+        1,
+        "one failure is one error, got {:?}",
+        run.output()
+    );
+    assert!(
+        reported[0].contains("stopped answering after the first item"),
+        "and it is the package's own failure, got {:?}",
+        run.output()
+    );
+}
+
+// --- a contributed target cannot be watched, and says so (#224 (6), ADR-1013) ------------------
+
+#[test]
+fn should_refuse_to_watch_a_contributed_target_and_say_why() {
+    // `watch` needs an event vocabulary for its target (spec §18.2), and a contributed target
+    // declares none. The word used to fall through to whatever program called `watch` was on
+    // PATH, which answered about a command named `echo-item`; the shell now answers itself, with
+    // a structured refusal that names the reason and the read that does work.
+    let home = echo_plugin_home(ECHO, TARGETS);
+    let run = ono_with_plugins(&home, "watch echo-item");
+    assert_ne!(run.status().code(), 0, "{:?}", run.output());
+    let stderr = run.stderr();
+    assert!(
+        stderr.contains("provider.unsupported") && stderr.contains("no event vocabulary"),
+        "the refusal is structured and says why, got {:?}",
+        run.output()
+    );
+    assert!(
+        stderr.contains("get echo-item"),
+        "and it names the read that does answer, got {:?}",
+        run.output()
+    );
+}

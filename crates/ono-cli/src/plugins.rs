@@ -1258,10 +1258,70 @@ pub fn contributed_command(stage: &ono_parser::Stage) -> Option<&'static Command
         .arguments
         .first()
         .and_then(ono_parser::Argument::as_word);
-    let contract = registry
+    match registry
         .find(&name.name, target)
-        .or_else(|| registry.find(&name.name, None))?;
-    (!contract.origin().is_core()).then_some(contract)
+        .or_else(|| registry.find(&name.name, None))
+    {
+        Some(contract) => (!contract.origin().is_core()).then_some(contract),
+        // `watch <contributed target>` has no entry, because nothing can answer it (ADR-1013).
+        // Without one the word went on to whatever program called `watch` was on PATH, which
+        // answered about a command named after the target. The shell answers itself instead.
+        None if name.name == "watch" => {
+            target.and_then(|target| unwatchable_entry(registry, target))
+        }
+        None => None,
+    }
+}
+
+/// The entry `watch <target>` resolves to when a package contributes `target`: never registered,
+/// so `help`, completion and `get command` do not offer a command that only refuses (spec §50),
+/// and answered by [`invoke_contributed`] with the refusal of
+/// [`crate::plugin_provider::unwatchable`] before any package is loaded.
+///
+/// Built once per target and kept, like the target names `intern_target` keeps, because the
+/// dispatch hands contracts around as `&'static`; the total is bounded by the distinct targets
+/// the installed packages declare.
+fn unwatchable_entry(
+    registry: &'static ono_command::CommandRegistry,
+    target: &str,
+) -> Option<&'static CommandContract> {
+    static ENTRIES: std::sync::OnceLock<std::sync::Mutex<Vec<&'static CommandContract>>> =
+        std::sync::OnceLock::new();
+    let read = registry.find("get", Some(target))?;
+    let package = read.origin().package()?;
+    if read.id() != crate::plugin_registry::target_command_id(package, target) {
+        return None;
+    }
+    let entries = ENTRIES.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    let mut entries = entries
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(existing) = entries
+        .iter()
+        .find(|entry| entry.id() == read.id() && entry.origin() == read.origin())
+    {
+        return Some(existing);
+    }
+    let entry = ono_command::ContributedCommand {
+        id: read.id().to_owned(),
+        verb: "watch".to_owned(),
+        target: target.to_owned(),
+        summary: format!("`{target}` cannot be watched (ADR-1013)"),
+        input: None,
+        output: "stream<record>".to_owned(),
+        capabilities: Vec::new(),
+        argument_mode: "words".to_owned(),
+        selectors: Vec::new(),
+        options: Vec::new(),
+        risk: Some("read".to_owned()),
+        examples: Vec::new(),
+        origin: read.origin().clone(),
+    }
+    .into_contract()
+    .ok()?;
+    let entry: &'static CommandContract = Box::leak(Box::new(entry));
+    entries.push(entry);
+    Some(entry)
 }
 
 /// The registry entry `<package>:<command>` names, when the package declared it (spec §31.66).
@@ -1294,15 +1354,17 @@ pub fn contributed_by_namespace(
 /// will not start — or the package's refusal of the invocation.
 /// What a contributed entry answered with.
 ///
-/// Two shapes because a contribution now says which it is (`ADR-0588`). Everything a package
-/// contributed used to be read to its end, which is right for a collection and wrong for a watch:
-/// an answer that does not end never reached the prompt at all. A declared unbounded answer
-/// becomes the stream the pipeline already knows how to run and the live view already knows how
-/// to show (shell specification §18.2, §18.3).
+/// Two shapes: a contributed command's answer is read to its end, and a contributed target's is
+/// a stream. Everything a package contributed used to be read to its end, which is wrong for a
+/// watch — an answer that does not end never reached the prompt at all (ADR-0588) — and wrong for
+/// a bounded target too, whose first value waited for its last (ADR-1011). A target's answer
+/// becomes the stream the pipeline already knows how to run and, when its declaration says it
+/// does not end, the live view already knows how to show (shell specification §18.2, §18.3).
 pub enum Answered {
-    /// A finite answer, read to its end.
+    /// A command's answer, read to its end.
     Values(Vec<Value>),
-    /// An answer that continues until the operator ends it.
+    /// A target's answer, passed on as it arrives. The stream's boundedness is the target's
+    /// declared one, so it says whether the answer ends.
     Live(ono_pipeline::ValueStream),
 }
 
@@ -1326,6 +1388,14 @@ pub fn invoke_contributed(
     // A destructive contribution is confirmed before its package is even started: the refusal
     // is the host's, so nothing of the package's needs to run to give it (ADR-1001).
     refuse_unconfirmed(Some(contract), words)?;
+    // Answered from the declaration, so nothing is started to say it (ADR-1013).
+    if contract.verb() == "watch"
+        && let Some(target) = contract.target()
+    {
+        return Err(Flow::Failed(crate::plugin_provider::unwatchable(
+            package, target,
+        )));
+    }
     if loaded_package(session, package).is_none() {
         load_plugin_with(
             session,
@@ -1375,7 +1445,7 @@ pub fn query(
             "the operating system refused to start the runtime",
         ))
     })?;
-    let outcome = {
+    {
         let runtime = session.runtime_handle().ok_or_else(|| {
             Flow::Failed(ErrorValue::new(
                 ErrorCode::IoPermissionDenied,
@@ -1404,34 +1474,28 @@ pub fn query(
                 ),
             ));
         };
-        // An answer the package declared does not end is not collected. It becomes a stream with
-        // the boundedness the declaration gave it, which is what carries it to the live view of
-        // shell specification §18.3 rather than to a table that would never be drawn (ADR-0588).
-        // Collecting it was not a decision anybody took: it was the only thing the host could do
-        // before a target could say which kind of answer it has.
-        if !registered.contribution.answer.is_bounded() {
-            let target = crate::plugin_provider::intern_target(target);
-            let _guard = runtime.enter();
-            return Ok(Answered::Live(crate::plugin_provider::stream_of(
-                plugin,
-                target,
-                arguments,
-                ono_pipeline::Boundedness::Unbounded,
-                None,
-            )));
-        }
-        runtime.block_on(async {
-            let invocation = plugin
-                .query(target, arguments)
-                .await
-                .map_err(|error| crate::kuang_host::wire_error_value(&error))?;
-            Ok::<_, ErrorValue>(collect_unless_interrupted(invocation).await)
-        })
-    };
-    let (events, result) = outcome
-        .map_err(Flow::Failed)?
-        .ok_or_else(crate::eval::interrupted_flow_now)?;
-    delivered(events, &result).map(Answered::Values)
+        // A target's answer is never collected before it is passed on. It becomes a stream with
+        // the boundedness the declaration gave it: an unbounded one reaches the live view of shell
+        // specification §18.3 rather than a table that would never be drawn (ADR-0588), and a
+        // bounded one reaches the next stage value by value, as a core provider's does — so a
+        // `take 1` finishes on the first value rather than after the last (ADR-1011). The stream
+        // carries the invocation's failure as its last event (ADR-0992), so a failure after some
+        // values fails the pipeline instead of reading as a shorter answer.
+        let boundedness = if registered.contribution.answer.is_bounded() {
+            ono_pipeline::Boundedness::Bounded
+        } else {
+            ono_pipeline::Boundedness::Unbounded
+        };
+        let target = crate::plugin_provider::intern_target(target);
+        let _guard = runtime.enter();
+        Ok(Answered::Live(crate::plugin_provider::stream_of(
+            plugin,
+            target,
+            arguments,
+            boundedness,
+            None,
+        )))
+    }
 }
 
 /// The registry entry for a contributed id, when the registry holds one.

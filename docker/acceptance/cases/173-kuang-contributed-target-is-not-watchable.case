@@ -1,0 +1,70 @@
+# Issue #224 (6) (spec §18.2, §31.23): `watch` folds a target's changes into an event envelope
+# that is a schema per target, `ono.<target>-event/1`, and only the core declares one. A package
+# declares its targets and their records and nothing about their events, so a contributed target
+# cannot be watched. `watch echo-item` used to fall through to the `watch` program on PATH, which
+# re-ran a command named `echo-item` every two seconds until someone pressed Ctrl-C. The shell now
+# refuses itself, says why, names the read that does answer — and starts no package to say it.
+# ADR-1013.
+case: watching a contributed target is refused with the reason, and starts nothing
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/plugins/dev.example.echo/contributions"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - clock.read
+  network:
+    outbound: none
+  contributions:
+    targets: [contributions/targets.yaml]
+  MANIFEST
+  cat > "$home/plugins/dev.example.echo/contributions/targets.yaml" <<'CONTRIB'
+  targets:
+    - name: echo-item
+      schema: dev.example.echo.item/1
+      summary: Items the example package provides.
+      identity_doc: Two observations are the same item when their `seq` matches.
+  CONTRIB
+
+  echo "== watching a contributed target is refused, and says why =="
+  timeout 30 ono -c 'watch echo-item' 2>&1 && echo "MISSING: the watch did not fail"
+  echo "refused with exit $?"
+
+  echo "== the refusal started nothing =="
+  ono -c 'get plugin | where id == "dev.example.echo" | select state | to json'
+
+  echo "== the read it names does answer =="
+  ono -c 'get echo-item | count | to json'
+exit: 0
+stdout-contains: provider.unsupported `echo-item` cannot be watched
+stdout-contains: declares no event vocabulary
+stdout-contains: `get echo-item` reads it
+stdout-contains: refused with exit 1
+stdout-contains: [{"state":"installed"}]
+stdout-contains: 3
+stdout-not-contains: MISSING
+stdout-not-contains: panicked
