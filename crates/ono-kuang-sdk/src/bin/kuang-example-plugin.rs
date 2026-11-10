@@ -55,6 +55,10 @@ fn main() {
         // host's confirmation policy has only the running package's own word to act on (#156,
         // ADR-1001). Kept apart from the default for the same reason as `--change-provider`.
         Some("--destructive") => destructive().run(),
+        // The same command, understated: its hello says `read` for a command that needs
+        // `filesystem.write`, a capability whose risk is `destructive`. The host must not take
+        // the package at its lower word (#156, ADR-1000, ADR-1002).
+        Some("--understated") => understated().run(),
         // The v0.6 §48 surface, kept apart from the default so that every existing conformance
         // assertion about what this package contributes stays exactly as true as it was.
         Some("--change-provider") => change_provider(None).run(),
@@ -170,6 +174,27 @@ fn command_declaring(
     }
 }
 
+/// The risk an honest package states for a command needing `capabilities`: the strongest of
+/// theirs when it is more than reading, and nothing for a reading command, which needs no
+/// statement (ADR-1000). The hello is held to the same floor as a declaration on disk (ADR-1002).
+fn risk_of(capabilities: &[&str]) -> Option<String> {
+    let strongest = capabilities
+        .iter()
+        .filter_map(|id| ono_kuang_protocol::Capability::from_id(id))
+        .map(ono_kuang_protocol::Capability::risk)
+        .max_by_key(|risk| match risk {
+            ono_kuang_protocol::Risk::Read => 0,
+            ono_kuang_protocol::Risk::Observe => 1,
+            ono_kuang_protocol::Risk::Mutate => 2,
+            ono_kuang_protocol::Risk::Destructive => 3,
+        })?;
+    match strongest {
+        ono_kuang_protocol::Risk::Mutate => Some("mutate".to_owned()),
+        ono_kuang_protocol::Risk::Destructive => Some("destructive".to_owned()),
+        ono_kuang_protocol::Risk::Read | ono_kuang_protocol::Risk::Observe => None,
+    }
+}
+
 fn command(
     id_suffix: &str,
     summary: &str,
@@ -190,7 +215,7 @@ fn command(
         // package reads and does not declare has no help line, no completion and no default
         // (spec §31.22, ADR-0587).
         options: vec![count_option()],
-        risk: None,
+        risk: risk_of(capabilities),
         examples: vec![format!("get echo-item | {id_suffix}")],
         action: None,
     }
@@ -631,6 +656,29 @@ fn destructive() -> Plugin {
                 "Remove the record the package keeps, and say so in the audit trail.",
                 "stream<string>",
                 &[],
+            )
+        })
+        .command(&format!("{PACKAGE}.command.wipe"), |ctx| {
+            match ctx.audit_event(json!({"action": "wipe", "detail": "the record was removed"})) {
+                Ok(()) => emit_text(ctx, "wiped"),
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+}
+
+/// The honest package plus `remove echo-record`, whose hello declares `risk: read` while the
+/// command needs `filesystem.write` — a declaration the registry refuses on disk (ADR-1000).
+fn understated() -> Plugin {
+    honest()
+        .contribute_command(CommandContribution {
+            verb: "remove".to_owned(),
+            target: "echo-record".to_owned(),
+            risk: Some("read".to_owned()),
+            ..command_declaring(
+                "wipe",
+                "Remove the record the package keeps, and say so in the audit trail.",
+                "stream<string>",
+                &["filesystem.write"],
             )
         })
         .command(&format!("{PACKAGE}.command.wipe"), |ctx| {
@@ -2170,6 +2218,8 @@ fn misbehave(mode: Mode) {
                     &[],
                 )],
                 Mode::ActionWithoutRisk => vec![CommandContribution {
+                    // Said in so many words: the defect this mode exists for is the missing risk.
+                    risk: None,
                     action: Some(ActionContribution {
                         mutates: true,
                         ..ActionContribution::default()

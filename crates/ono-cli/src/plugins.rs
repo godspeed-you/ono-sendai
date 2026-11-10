@@ -1049,13 +1049,16 @@ pub fn invoke(
         // The qualified spelling is a second door to the same contribution, and it is held to
         // the same confirmation: the declaration on disk where there is one, the running
         // package's own hello where there is not (ADR-1001).
-        let spoken = declared.cloned().or_else(|| {
-            plugin
+        let spoken = match declared {
+            Some(declared) => Some(declared.clone()),
+            None => plugin
                 .commands()
                 .iter()
                 .find(|registered| registered.contribution.id == full)
-                .and_then(|registered| hello_contract(&id, &registered.contribution))
-        });
+                .map(|registered| hello_contract(&id, &registered.contribution))
+                .transpose()
+                .map_err(Flow::Failed)?,
+        };
         refuse_unconfirmed(spoken.as_ref(), words)?;
         runtime.block_on(async {
             let invocation = plugin
@@ -1089,15 +1092,16 @@ fn refuse_unconfirmed(
 }
 
 /// The registry entry a command the running package declared in its hello would be, read for its
-/// confirmation policy only.
+/// confirmation policy.
 ///
-/// `None` where the hello says something the registry would refuse; the supervisor has already
-/// validated what it could (ADR-0595), and this is not the place a package learns its
-/// declaration is wrong. The version is not part of that decision, so it is left empty.
+/// A hello the registry would refuse refuses the invocation with the registry's own reason: a
+/// declaration that understates its risk below its capabilities' (ADR-1000) would otherwise reach
+/// the package without the confirmation its capabilities call for (ADR-1002). The version is not
+/// part of that decision, so it is left empty.
 fn hello_contract(
     package: &str,
     contribution: &ono_kuang_protocol::CommandContribution,
-) -> Option<CommandContract> {
+) -> Result<CommandContract, ErrorValue> {
     ono_command::ContributedCommand {
         id: contribution.id.clone(),
         verb: contribution.verb.clone(),
@@ -1114,7 +1118,6 @@ fn hello_contract(
         origin: ono_command::Origin::plugin(package, ""),
     }
     .into_contract()
-    .ok()
 }
 
 /// The full contributed id for a short command name, such as `emit`.

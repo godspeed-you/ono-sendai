@@ -1296,6 +1296,93 @@ fn should_leave_a_reading_contribution_unconfirmed_beside_a_destructive_one() {
 }
 
 #[test]
+fn should_refuse_a_command_whose_hello_understates_its_risk_without_reaching_the_package() {
+    // ADR-1000 refuses on disk a command that needs a `destructive` capability and declares a
+    // lower risk. The running package's hello is a second declaration of the same command, and a
+    // package must not get past the confirmation gate by saying `read` there instead (#156,
+    // ADR-1002): the invocation is refused as the registry would refuse the declaration, and the
+    // package's code never runs.
+    let home = plugin_home();
+    let binary = ono_testkit::ono_binary()
+        .parent()
+        .expect("the target directory")
+        .join("kuang-example-plugin");
+    let entry = home.path().join("dev.example.echo/runtime/echo");
+    std::fs::remove_file(&entry).expect("the copied runtime");
+    std::fs::write(
+        &entry,
+        format!("#!/bin/sh\nexec '{}' --understated\n", binary.display()),
+    )
+    .expect("the runtime wrapper");
+    let mut permissions = std::fs::metadata(&entry).expect("written").permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&entry, permissions).expect("executable");
+    // The permission and the capability are held — a destructive permission is only ever
+    // enabled by a person at a terminal (K11P §7.5) — so nothing but the declaration stands
+    // between the understated command and a run without `--confirm`.
+    let manifest = home.path().join("dev.example.echo/manifest.yaml");
+    let text = std::fs::read_to_string(&manifest).expect("the manifest");
+    std::fs::write(
+        &manifest,
+        text.replacen(
+            "    - clock.read\n",
+            "    - clock.read\n    - filesystem.write\n",
+            1,
+        ),
+    )
+    .expect("the manifest asking for filesystem.write");
+    let directory = ono_testkit::scratch();
+    let mut shell = support::interactive_shell_with_plugins(&directory, home.path());
+    let timeout = std::time::Duration::from_secs(20);
+    // Each line ends by printing `step <n>`; the typed line reads `"step" "<n>"`, so waiting for
+    // the printed form waits for the line to have run.
+    let run = |shell: &mut ono_testkit::Guarded<ono_process::PtySession>, n: u32, line: &str| {
+        shell
+            .write_all(format!("{line}; echo \"step\" \"{n}\"\n").as_bytes())
+            .expect("the command line");
+        support::read_until(shell, &format!("step {n}"), timeout)
+    };
+    let _ = support::read_until(&mut shell, "> ", timeout);
+    shell
+        .write_all(b"set permission echo filesystem-write --decision allow\n")
+        .expect("the command line");
+    let _ = support::read_until(&mut shell, "[y/N/details]", timeout);
+    shell.write_all(b"y\n").expect("the answer");
+    let granted = run(
+        &mut shell,
+        1,
+        "grant capability filesystem.write --plugin dev.example.echo --scope \"paths=/tmp/**\" --duration always | count | to json",
+    );
+    let loaded = run(
+        &mut shell,
+        2,
+        "load plugin dev.example.echo; get plugin | where state == \"loaded\" | count | to json",
+    );
+    assert!(
+        !granted.contains("Ono-Sendai-") && loaded.contains("[1]"),
+        "the package holds the permission and the capability and loads; saw:\n{granted}\n{loaded}"
+    );
+    for (n, spelling) in [(3, "echo:wipe"), (4, "echo:wipe --confirm")] {
+        let seen = run(&mut shell, n, spelling);
+        assert!(
+            seen.contains("package.invalid") && seen.contains("risk"),
+            "`{spelling}`: a hello that understates a command's risk is refused for it; saw:\n{seen}"
+        );
+        assert!(
+            !seen.contains("wiped"),
+            "`{spelling}`: the package's code never ran; saw:\n{seen}"
+        );
+    }
+    let seen = run(&mut shell, 5, WIPED);
+    assert!(
+        seen.contains("[0]"),
+        "no wipe reached the package's audit trail; saw:\n{seen}"
+    );
+    shell.write_all(b"exit\n").expect("input");
+    let _ = shell.wait();
+}
+
+#[test]
 fn should_refuse_an_unconfirmed_destructive_command_a_package_declares_only_in_its_hello() {
     // A package with no declaration on disk still says what its commands are when it starts.
     // `destructive` there is the same statement, and the host's confirmation policy acts on it
