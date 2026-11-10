@@ -99,3 +99,67 @@ fn should_register_a_reading_contribution_that_declares_no_risk() {
         .into_contract()
         .expect("a reading command needs no risk");
 }
+
+// --- `destructive` asks for `--confirm` the way a core command does (spec §17.4, ADR-1001) ----
+
+#[test]
+fn should_require_a_confirmation_on_every_run_of_a_destructive_contribution() {
+    let contract = declared(&["filesystem.write"], Some("destructive"))
+        .into_contract()
+        .expect("a destructive contribution registers");
+    assert_eq!(
+        contract.confirmation(),
+        ono_command::Confirmation::Always,
+        "a declared `destructive` is the host's confirmation policy, not a label"
+    );
+    let confirm = contract
+        .option("confirm")
+        .expect("the confirmation it requires can be written");
+    assert!(
+        matches!(confirm.declared_type(), ono_command::DeclaredType::Bool),
+        "`--confirm` is a flag, as on a core command"
+    );
+}
+
+#[test]
+fn should_refuse_an_unconfirmed_destructive_contribution_as_a_core_command_is_refused() {
+    // The refusal a core `confirmation: always` command gives, word for word but for its
+    // spelling: same code, same "nothing was changed" remedy (spec §17.4, ADR-0088 §3).
+    let registry = ono_command::CommandRegistry::load().expect("the registry loads");
+    let core = registry
+        .get("ono.change.protect")
+        .expect("protect is declared")
+        .unconfirmed(false)
+        .expect("a core destructive command refuses without --confirm");
+    let contributed = declared(&[], Some("destructive"))
+        .into_contract()
+        .expect("a destructive contribution registers")
+        .unconfirmed(false)
+        .expect("a destructive contribution refuses without --confirm");
+    assert_eq!(contributed.code(), ErrorCode::SafetyConfirmationRequired);
+    assert_eq!(contributed.code(), core.code());
+    assert_eq!(
+        contributed.message(),
+        core.message().replace("protect", "remove echo-record")
+    );
+    assert_eq!(
+        contributed.help(),
+        core.help()
+            .map(|help| help.replace("protect", "remove echo-record"))
+            .as_deref()
+    );
+}
+
+#[test]
+fn should_leave_a_reading_or_mutating_contribution_unconfirmed() {
+    for risk in [None, Some("read"), Some("observe"), Some("mutate")] {
+        let contract = declared(&[], risk)
+            .into_contract()
+            .expect("the contribution registers");
+        assert!(
+            contract.unconfirmed(false).is_none(),
+            "only `destructive` asks every run, as only a core `confirmation: always` does; \
+             {risk:?} asked"
+        );
+    }
+}

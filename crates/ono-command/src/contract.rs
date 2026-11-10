@@ -1577,6 +1577,35 @@ impl ContributedCommand {
                 _ => {}
             }
         }
+        // A declared `destructive` is what a core command's `confirmation: always` is: the host
+        // asks for `--confirm` on every run (spec §17.4; external-system-provider §21.5 —
+        // confirmation is the host's policy, applied to the risk the provider declares). The flag
+        // is then part of the command's declared surface, so `help` and completion offer it as
+        // they do for `protect` (ADR-1001).
+        let destructive = declared_risk == Some(ono_provider_api::Risk::Destructive);
+        let mut options = options;
+        if destructive && !options.iter().any(|option| option.name() == "confirm") {
+            options.extend(parameters_with(
+                vec![RawParameter {
+                    name: "confirm".to_owned(),
+                    declared_type: "bool".to_owned(),
+                    doc: "Required on every run: the contribution declares itself destructive \
+                          (spec §17.4)."
+                        .to_owned(),
+                    repeatable: false,
+                    optional_value: false,
+                    default: None,
+                    execution: None,
+                    values: Vec::new(),
+                }],
+                &refuse,
+            )?);
+        }
+        let confirmation = if destructive {
+            Confirmation::Always
+        } else {
+            Confirmation::Bulk
+        };
         let output = IoType { text: self.output };
         Ok(CommandContract {
             id: self.id,
@@ -1592,7 +1621,7 @@ impl ContributedCommand {
             // what it promises, and says so in its version.
             stability: Stability::Experimental,
             validation_required: false,
-            confirmation: Confirmation::Bulk,
+            confirmation,
             argument_mode,
             input: IoType {
                 text: self.input.unwrap_or_else(|| "null".to_owned()),
